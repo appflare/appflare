@@ -7,6 +7,10 @@
     "lib": ["ES2023"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    // Workspace packages export `dist/` for consumers but list this condition
+    // first, pointing at `src/`. tsc (and Vitest, see vitest.shared.ts) resolve
+    // `@appflare/*` imports to source, so `pnpm check` never needs a build.
+    "customConditions": ["@appflare/source"],
     "moduleDetection": "force",
     "verbatimModuleSyntax": true,
     "isolatedModules": true,

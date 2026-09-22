@@ -1,0 +1,13 @@
+{
+  // Used only by tsdown to emit dist/*.d.ts. Limited to shipped source so the
+  // declaration pass never reaches files outside this package (for example the
+  // root vitest.shared.ts that vitest.config.ts imports). `customConditions` is
+  // cleared so `@appflare/schema` and `@appflare/cf-api` resolve to their built
+  // dist/*.d.ts, which tsdown then inlines (see tsdown.config.ts).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "customConditions": []
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}

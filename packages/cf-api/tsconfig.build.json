@@ -1,0 +1,8 @@
+{
+  // Used only by tsdown to emit dist/*.d.ts. Limited to shipped source so the
+  // declaration pass never reaches files outside this package (for example the
+  // root vitest.shared.ts that vitest.config.ts imports).
+  "extends": "./tsconfig.json",
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}

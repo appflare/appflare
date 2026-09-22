@@ -4,27 +4,45 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "@appflare/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
-  "types": "./src/index.ts",
+  "types": "./dist/index.d.ts",
   "bin": {
-    "appflare-pack": "./src/cli.ts"
+    "appflare-pack": "./bin/appflare-pack.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
   },
   "scripts": {
+    "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "keygen": "node scripts/keygen.mjs"
+    "keygen": "node scripts/keygen.mjs",
+    "test:dist": "node scripts/smoke-dist.mjs"
   },
   "dependencies": {
-    "@appflare/cf-api": "workspace:*",
-    "@appflare/schema": "workspace:*",
+    "@noble/hashes": "1.8.0",
     "ignore": "5.3.1",
     "wrangler": "4.136.2",
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@appflare/pack": "workspace:*"
+    "@appflare/cf-api": "workspace:*",
+    "@appflare/schema": "workspace:*"
   }
 }

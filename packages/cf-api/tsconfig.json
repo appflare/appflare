@@ -1,7 +1,9 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    // vitest.config.ts imports the root vitest.shared.ts with its extension.
+    "allowImportingTsExtensions": true
   },
-  "include": ["src", "vitest.config.ts"]
+  "include": ["src", "vitest.config.ts", "tsdown.config.ts"]
 }

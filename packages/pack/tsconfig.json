@@ -2,10 +2,9 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "types": ["node"],
-    // The CLI runs under Node's native TypeScript support (`node file.ts`), which
-    // requires explicit `.ts` specifiers on relative imports. `noEmit` (inherited)
-    // makes this legal.
+    // Relative imports carry explicit `.ts` specifiers. tsdown resolves them when
+    // bundling to dist/; `noEmit` (inherited) makes them legal for tsc.
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "vitest.config.ts"]
+  "include": ["src", "vitest.config.ts", "tsdown.config.ts"]
 }
