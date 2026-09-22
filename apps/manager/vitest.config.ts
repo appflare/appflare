@@ -12,10 +12,21 @@ import { defineConfig } from "vitest/config";
 // workerd 1.20260815, whose newest supported date is 2026-08-22, one month behind
 // wrangler.jsonc. Tests pin that date; nothing tested here depends on newer flags.
 //
-// vitest.shared.ts is deliberately NOT spread here: it hard-codes the `node`
-// condition, which the Workers pool removes. The pool adds workerd/worker/module/
-// browser itself; the workspace source condition is added directly.
+// Resolution: test files run in Vite's `ssr` environment, which takes its
+// conditions from `ssr.resolve.conditions` (the pool only adjusts the top-level,
+// client `resolve.conditions`). Without `@appflare/source` there, `@appflare/*`
+// resolve through `import` to `dist/`, which does not exist before `pnpm build`
+// (CI runs `pnpm check` first). vitest.shared.ts is deliberately NOT spread: it
+// hard-codes the `node` condition; these are the Workers conditions instead.
 const TEST_COMPATIBILITY_DATE = "2026-08-22";
+const conditions = [
+  "@appflare/source",
+  "workerd",
+  "worker",
+  "module",
+  "browser",
+  "development|production",
+];
 
 export default defineConfig({
   plugins: [
@@ -25,7 +36,8 @@ export default defineConfig({
       miniflare: { compatibilityDate: TEST_COMPATIBILITY_DATE },
     }),
   ],
-  resolve: { conditions: ["@appflare/source"] },
+  resolve: { conditions },
+  ssr: { resolve: { conditions } },
   test: {
     include: ["src/**/*.test.ts"],
   },
