@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appflare.github.io/catalog/schema/v1.json",
+  "title": "Appflare catalog manifest (appflare.jsonc)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "slug": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri"
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[^/\\s]+\\/[^/\\s]+$"
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1
+    },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "maintainers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      },
+      "required": [
+        "ref",
+        "sha"
+      ],
+      "additionalProperties": false
+    },
+    "install": {
+      "type": "object",
+      "properties": {
+        "tier": {
+          "type": "string",
+          "enum": [
+            "artifact",
+            "sandbox",
+            "self-deploying"
+          ]
+        },
+        "packageManager": {
+          "type": "string",
+          "enum": [
+            "pnpm",
+            "npm",
+            "yarn",
+            "bun"
+          ]
+        },
+        "wranglerConfig": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workerName": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "tier",
+        "packageManager",
+        "wranglerConfig",
+        "workerName"
+      ],
+      "additionalProperties": false
+    },
+    "plan": {
+      "type": "string",
+      "enum": [
+        "free",
+        "paid"
+      ]
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "r2",
+          "zone",
+          "email-routing",
+          "workers-ai",
+          "browser-rendering",
+          "containers"
+        ]
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "help": {
+            "type": "string"
+          },
+          "generate": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "generate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "vars": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "help": {
+            "type": "string"
+          },
+          "default": {
+            "type": "string"
+          },
+          "required": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "required"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "postInstall": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "markdown"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "type",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "tokenPermissions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "account",
+              "zone",
+              "user"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "slug",
+    "name",
+    "summary",
+    "homepage",
+    "repo",
+    "license",
+    "categories",
+    "maintainers",
+    "source",
+    "install",
+    "plan",
+    "requires",
+    "secrets",
+    "vars",
+    "postInstall",
+    "tokenPermissions"
+  ],
+  "additionalProperties": false
+}

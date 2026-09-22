@@ -1,0 +1,87 @@
+import { describe, expect, it } from "vitest";
+import { artifactManifestSchema } from "./artifact";
+
+const sha256 = "a".repeat(64);
+const gitSha = "b".repeat(40);
+
+const validArtifact = {
+  format: 1,
+  app: "cut",
+  version: "0.1.0",
+  source: { repo: "MendyLanda/cut", sha: gitSha, ref: "v0.1.0" },
+  builtAt: "2026-09-22T12:00:00Z",
+  builder: "@appflare/pack@0.1.0",
+  keyId: "catalog-2026-09",
+  worker: {
+    name: "cut",
+    mainModule: "index.js",
+    compatibilityDate: "2024-12-30",
+    compatibilityFlags: ["nodejs_compat"],
+    modules: [
+      { name: "index.js", type: "esm", path: "worker/index.js", size: 1, sha256, offset: 0 },
+    ],
+    bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+    migrations: [],
+    crons: [],
+    observability: { enabled: true },
+    placement: null,
+    limits: null,
+  },
+  assets: {
+    config: {
+      html_handling: "auto-trailing-slash",
+      not_found_handling: "none",
+      run_worker_first: false,
+    },
+    binding: "ASSETS",
+    files: [{ route: "/index.html", path: "assets/index.html", size: 1, sha256, offset: 123 }],
+  },
+  d1Migrations: {
+    DB: [{ name: "0001_init.sql", path: "d1/DB/0001_init.sql", size: 1, sha256, offset: 456 }],
+  },
+  catalog: {
+    slug: "cut",
+    name: "Cut",
+    summary: "Self-hosted link shortener on Workers + KV.",
+    homepage: "https://github.com/MendyLanda/cut",
+    repo: "MendyLanda/cut",
+    license: "MIT",
+    categories: ["utilities"],
+    maintainers: ["MendyLanda"],
+    source: { ref: "v0.1.0", sha: gitSha },
+    install: {
+      tier: "artifact",
+      packageManager: "pnpm",
+      wranglerConfig: "wrangler.jsonc",
+      workerName: "cut",
+    },
+    plan: "free",
+    requires: [],
+    secrets: [],
+    vars: [],
+    postInstall: [],
+    tokenPermissions: [],
+  },
+};
+
+describe("artifactManifestSchema", () => {
+  it("accepts a valid artifact manifest that embeds the catalog manifest", () => {
+    const parsed = artifactManifestSchema.parse(validArtifact);
+    expect(parsed.format).toBe(1);
+    expect(parsed.worker.modules[0]?.offset).toBe(0);
+    expect(parsed.catalog.slug).toBe("cut");
+  });
+
+  it("rejects a manifest with a wrong format literal and a non-hex sha256", () => {
+    const invalid = {
+      ...validArtifact,
+      format: 2,
+      worker: {
+        ...validArtifact.worker,
+        modules: [{ ...validArtifact.worker.modules[0], sha256: "nothex" }],
+      },
+    };
+    const result = artifactManifestSchema.safeParse(invalid);
+    expect(result.success).toBe(false);
+  });
+});

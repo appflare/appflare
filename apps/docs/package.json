@@ -1,0 +1,12 @@
+{
+  "name": "@appflare/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run --passWithNoTests"
+  }
+}
