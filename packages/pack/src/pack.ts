@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { createHash, webcrypto } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -31,6 +31,7 @@ import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
 import { parseJsonc } from "./jsonc.ts";
 import { scrubEnv } from "./scrub-env.ts";
+import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
 import { deriveVersion, formatBuildDate } from "./version.ts";
 import {
   classifyModuleType,
@@ -352,16 +353,6 @@ function gitCommitDate(dir: string, childEnv: NodeJS.ProcessEnv): string | null 
   return null;
 }
 
-/** Signs the exact manifest bytes with the base64 PKCS#8 Ed25519 key. */
-async function signManifest(manifestBytes: Uint8Array, keyBase64: string): Promise<string> {
-  const pkcs8 = Buffer.from(keyBase64, "base64");
-  const key = await webcrypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, false, [
-    "sign",
-  ]);
-  const sig = await webcrypto.subtle.sign({ name: "Ed25519" }, key, manifestBytes);
-  return Buffer.from(new Uint8Array(sig)).toString("base64");
-}
-
 function packerVersion(): string {
   const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
@@ -369,9 +360,11 @@ function packerVersion(): string {
 }
 
 /**
- * Packs a wrangler project checkout into a signed artifact.
- * Writes `<slug>-<version>.zip`, `manifest.json`, and (when signing)
- * `manifest.sig` into `outDir`.
+ * Packs a wrangler project checkout into an artifact. Writes
+ * `<slug>-<version>.zip`, `manifest.json`, and (when signing) `manifest.sig` into
+ * `outDir`. With `keyId` but no `signKeyEnv` it produces an "unsigned
+ * intermediate": `manifest.keyId` is set but no signature is written, so a
+ * separate job that never runs app code can sign it later with `sign()` (sign.ts).
  */
 export async function pack(options: PackOptions): Promise<PackResult> {
   const env = options.env ?? process.env;
@@ -381,6 +374,11 @@ export async function pack(options: PackOptions): Promise<PackResult> {
 
   if (options.signKeyEnv && !options.keyId) {
     throw new Error("--key-id is required when signing (--sign-key-env)");
+  }
+  if (options.keyId === UNSIGNED_KEY_ID) {
+    throw new Error(
+      `--key-id "${UNSIGNED_KEY_ID}" is reserved for artifacts packed without a key id`,
+    );
   }
 
   // Resolve the signing key up front so a bad/empty key fails before any work or
@@ -496,7 +494,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     source: { repo: catalog.repo, sha: catalog.source.sha, ref: catalog.source.ref },
     builtAt: new Date().toISOString(),
     builder: `@appflare/pack@${packerVersion()}`,
-    keyId: options.keyId ?? "unsigned",
+    keyId: options.keyId ?? UNSIGNED_KEY_ID,
     worker: {
       name: config.name,
       mainModule,
@@ -525,7 +523,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
 
   // (k) Sign the exact manifest.json bytes (key already resolved above).
   const signature =
-    signKeyBase64 !== undefined ? await signManifest(manifestBytes, signKeyBase64) : null;
+    signKeyBase64 !== undefined ? await signBytes(manifestBytes, signKeyBase64) : null;
 
   // Write everything into a staging dir beside `outDir`, then rename into place at
   // the very end. A failure anywhere above leaves `outDir` untouched, and the

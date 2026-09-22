@@ -3,6 +3,7 @@ import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync } 
 import path from "node:path";
 import { assetHash } from "@appflare/cf-api";
 import { type ArtifactManifest, artifactManifestSchema, signingKeys } from "@appflare/schema";
+import { UNSIGNED_KEY_ID } from "./signing.ts";
 
 /** Options for {@link verify}. */
 export interface VerifyOptions {
@@ -12,6 +13,13 @@ export interface VerifyOptions {
   publicKey?: string;
   /** Fail when the artifact is unsigned or has no `manifest.sig` (catalog CI uses this). */
   requireSigned?: boolean;
+  /**
+   * Skip every signature check (a missing `manifest.sig` is fine for any keyId)
+   * but still check every size, sha256, asset hash, and offset. For verifying an
+   * unsigned intermediate before it is signed. Exclusive with `requireSigned`
+   * and `publicKey`.
+   */
+  hashesOnly?: boolean;
   logger?: (message: string) => void;
 }
 
@@ -74,13 +82,19 @@ function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
 /**
  * Verifies an artifact directory. Checks the
  * manifest signature (against `signingKeys` by keyId, or `--public-key`) unless
- * the artifact is unsigned, then reads exactly `bytes[offset, offset+size)` from
+ * the artifact is unsigned or `hashesOnly` is set, then reads exactly `bytes[offset, offset+size)` from
  * the zip for every recorded worker module, asset, and D1 migration and checks
  * its size and sha256 — never by unzipping. Throws on any mismatch.
  */
 export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   const dir = path.resolve(options.dir);
   const logger = options.logger ?? (() => {});
+  if (options.hashesOnly && options.requireSigned) {
+    throw new Error("--hashes-only and --require-signed are mutually exclusive");
+  }
+  if (options.hashesOnly && options.publicKey) {
+    throw new Error("--hashes-only and --public-key are mutually exclusive");
+  }
 
   const manifestPath = path.join(dir, "manifest.json");
   if (!existsSync(manifestPath)) {
@@ -89,25 +103,35 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   const manifestBytes = readFileSync(manifestPath);
   const manifest = artifactManifestSchema.parse(JSON.parse(manifestBytes.toString("utf8")));
 
-  const unsigned = manifest.keyId === "unsigned";
-  if (options.requireSigned && unsigned) {
-    throw new Error("artifact is unsigned (keyId=unsigned) but --require-signed was given");
-  }
+  const unsigned = manifest.keyId === UNSIGNED_KEY_ID;
+  const sigPath = path.join(dir, "manifest.sig");
   let signed = false;
-  if (options.publicKey) {
-    await verifySignature(dir, manifestBytes, options.publicKey);
-    signed = true;
-  } else if (!unsigned) {
-    const key = signingKeys.find((k) => k.keyId === manifest.keyId);
-    if (!key) {
-      throw new Error(
-        `no trusted signing key matches keyId "${manifest.keyId}"; pass --public-key to verify`,
-      );
-    }
-    await verifySignature(dir, manifestBytes, key.publicKeyBase64);
-    signed = true;
+  if (options.hashesOnly) {
+    logger(`--hashes-only: skipping signature checks (keyId=${manifest.keyId})`);
   } else {
-    logger("artifact is unsigned (keyId=unsigned); checking hashes only");
+    if (options.requireSigned && unsigned) {
+      throw new Error("artifact is unsigned (keyId=unsigned) but --require-signed was given");
+    }
+    // Any artifact that names a key, or is checked against an explicit key, must
+    // carry a signature; report its absence before looking the key up.
+    if ((options.publicKey || !unsigned) && !existsSync(sigPath)) {
+      throw new Error(`manifest.sig not found in ${dir}`);
+    }
+    if (options.publicKey) {
+      await verifySignature(dir, manifestBytes, options.publicKey);
+      signed = true;
+    } else if (!unsigned) {
+      const key = signingKeys.find((k) => k.keyId === manifest.keyId);
+      if (!key) {
+        throw new Error(
+          `no trusted signing key matches keyId "${manifest.keyId}"; pass --public-key to verify`,
+        );
+      }
+      await verifySignature(dir, manifestBytes, key.publicKeyBase64);
+      signed = true;
+    } else {
+      logger("artifact is unsigned (keyId=unsigned); checking hashes only");
+    }
   }
 
   const entries: Addressable[] = [
