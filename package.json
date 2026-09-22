@@ -15,7 +15,8 @@
     "test": "turbo run test",
     "test:dist": "turbo run test:dist",
     "check": "turbo run typecheck lint test",
-    "wrangler": "dotenv -e .env -o -- wrangler"
+    "wrangler": "dotenv -e .env -o -- wrangler",
+    "release:pack": "node scripts/release-pack.ts"
   },
   "devDependencies": {
     "@appflare/pack": "workspace:*",

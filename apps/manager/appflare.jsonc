@@ -1,0 +1,41 @@
+{
+  // Catalog manifest for the manager itself: the manager is packed with
+  // @appflare/pack like any catalog app and released as `manager@<version>` on
+  // appflare/appflare (docs/RELEASING.md). Pack it with `pnpm release:pack`, never
+  // with this file directly: `source` below holds placeholders that
+  // scripts/release-pack.ts overwrites in a temporary copy at build time.
+  "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+  "slug": "appflare",
+  "name": "Appflare",
+  "summary": "A single Worker in your own Cloudflare account that lets you browse a catalog of Cloudflare-native apps, install them, and keep them updated.",
+  "homepage": "https://github.com/appflare/appflare",
+  "repo": "appflare/appflare",
+  "license": "Apache-2.0",
+  "categories": ["platform"],
+  "maintainers": ["MendyLanda"],
+  // Placeholders. At build time `ref` becomes the release version (APPFLARE_VERSION,
+  // e.g. "0.1.0"; the packer derives the artifact version from a semver ref) and
+  // `sha` becomes the commit being built (`git rev-parse HEAD`).
+  "source": { "ref": "0.0.0-dev", "sha": "0000000000000000000000000000000000000000" },
+  "install": {
+    "tier": "artifact",
+    "packageManager": "pnpm",
+    // The Cloudflare Vite plugin's generated config: main is dist/server/index.js,
+    // assets come from dist/client.
+    "wranglerConfig": "dist/server/wrangler.json",
+    "workerName": "appflare"
+  },
+  "plan": "free",
+  "requires": [],
+  // BETTER_AUTH_SECRET and SETUP_TOKEN are set by the CLI at install; CF_API_TOKEN
+  // is stored by the manager itself from the setup wizard.
+  "secrets": [],
+  "vars": [],
+  "postInstall": [
+    {
+      "type": "markdown",
+      "content": "Open {{workerUrl}}/setup with the setup link the installer printed to create the first admin and connect your Cloudflare API token."
+    }
+  ],
+  "tokenPermissions": []
+}

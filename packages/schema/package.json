@@ -31,7 +31,8 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "export-json-schema": "node scripts/export-json-schema.ts"
+    "export-json-schema": "node scripts/export-json-schema.ts",
+    "keygen": "node scripts/keygen.ts"
   },
   "dependencies": {
     "zod": "4.6.5"

@@ -60,6 +60,9 @@
     "crons": ["*/30 * * * *"]
   },
   "vars": {
+    // Local fallback only. vite.config.ts overrides it from the APPFLARE_VERSION
+    // environment variable at build time; the release workflow sets that to the
+    // release version (docs/RELEASING.md).
     "APPFLARE_VERSION": "0.0.0-dev"
   }
   // Secrets (never in this file; set with `pnpm wrangler secret put`):

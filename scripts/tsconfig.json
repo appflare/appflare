@@ -1,0 +1,10 @@
+{
+  // Root release scripts, run directly with Node's type stripping
+  // (`node scripts/release-pack.ts`), so only erasable TypeScript syntax.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "allowImportingTsExtensions": true
+  },
+  "include": ["*.ts"]
+}

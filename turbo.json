@@ -4,6 +4,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "env": ["APPFLARE_VERSION"],
       "outputs": ["dist/**", ".output/**"]
     },
     "typecheck": {},
