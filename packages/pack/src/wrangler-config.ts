@@ -30,6 +30,12 @@ export interface ResolvedWranglerConfig {
       environment?: string;
     }>;
   };
+  workflows?: Array<{
+    binding: string;
+    name: string;
+    class_name?: string;
+    script_name?: string;
+  }>;
   services?: Array<{
     binding: string;
     service?: string;
@@ -119,6 +125,17 @@ export function collectBindings(config: ResolvedWranglerConfig): WorkerBinding[]
       service: svc.service,
       environment: svc.environment,
       entrypoint: svc.entrypoint,
+    });
+  }
+  for (const wf of config.workflows ?? []) {
+    // Upload-metadata shape for a workflow binding (verified against wrangler
+    // 4.136.2: `type: "workflow", name: <binding>, workflow_name, class_name,
+    // script_name`). All four are code/config references, not account ids, so the
+    // whole binding survives to the artifact; the manager passes it through.
+    push("workflow", wf.binding, {
+      workflow_name: wf.name,
+      class_name: wf.class_name,
+      script_name: wf.script_name,
     });
   }
   for (const mail of config.send_email ?? []) {

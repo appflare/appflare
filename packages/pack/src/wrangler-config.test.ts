@@ -53,6 +53,44 @@ describe("collectBindings", () => {
     ]);
   });
 
+  it("records workflow bindings with their code references and no account ids", () => {
+    const config = {
+      workflows: [
+        {
+          binding: "UPDATE",
+          name: "my-worker-update",
+          class_name: "UpdateWorkflow",
+          script_name: "other-worker",
+        },
+      ],
+    } as unknown as ResolvedWranglerConfig;
+
+    expect(collectBindings(config)).toEqual([
+      {
+        type: "workflow",
+        name: "UPDATE",
+        workflow_name: "my-worker-update",
+        class_name: "UpdateWorkflow",
+        script_name: "other-worker",
+      },
+    ]);
+  });
+
+  it("omits an absent workflow script_name (same-script workflow)", () => {
+    const config = {
+      workflows: [{ binding: "UPDATE", name: "my-worker-update", class_name: "UpdateWorkflow" }],
+    } as unknown as ResolvedWranglerConfig;
+
+    const [binding] = collectBindings(config);
+    expect(binding).toEqual({
+      type: "workflow",
+      name: "UPDATE",
+      workflow_name: "my-worker-update",
+      class_name: "UpdateWorkflow",
+    });
+    expect(binding && "script_name" in binding).toBe(false);
+  });
+
   it("returns an empty array when there are no bindings", () => {
     expect(collectBindings({} as ResolvedWranglerConfig)).toEqual([]);
   });
