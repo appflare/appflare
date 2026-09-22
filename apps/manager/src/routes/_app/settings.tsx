@@ -1,15 +1,21 @@
 import { Text } from "@cloudflare/kumo";
 import { createFileRoute } from "@tanstack/react-router";
+import { CloudflareTokenCard } from "../../components/cloudflare-token-card";
 import { PageHeader } from "../../components/page-header";
 import { PlaceholderCard } from "../../components/placeholder-card";
 import { UsersSection } from "../../components/users-section";
+import { getTokenStatus } from "../../server/token.functions";
 import { listUsers } from "../../server/users.functions";
 
-/** `/settings`. Only "Users" is built so far. */
+/** `/settings`: users and the Cloudflare token. */
 export const Route = createFileRoute("/_app/settings")({
-  loader: async ({ context }) => ({
-    users: context.viewer.role === "admin" ? await listUsers() : null,
-  }),
+  loader: async ({ context }) => {
+    const [users, tokenStatus] = await Promise.all([
+      context.viewer.role === "admin" ? listUsers() : null,
+      getTokenStatus(),
+    ]);
+    return { users, tokenStatus };
+  },
   component: SettingsPage,
 });
 
@@ -25,7 +31,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function SettingsPage() {
-  const { users } = Route.useLoaderData();
+  const { users, tokenStatus } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   return (
     <>
@@ -34,11 +40,7 @@ function SettingsPage() {
         <UsersSection users={users} viewerId={viewer.id} />
       </Section>
       <Section title="Cloudflare token">
-        {/* TODO: rotate CF_API_TOKEN with the setup wizard's verify-and-store function. */}
-        <PlaceholderCard
-          title="Cloudflare API token"
-          description="Verify and rotate the account API token Appflare uses to manage apps."
-        />
+        <CloudflareTokenCard status={tokenStatus} canRotate={viewer.role === "admin"} />
       </Section>
       <Section title="Cloudflare Access">
         {/* TODO: Access toggle: self-hosted Access app + JWT verification. */}

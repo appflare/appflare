@@ -45,7 +45,11 @@ export function buildUploadFormData(
   const form = new FormData();
   form.set("metadata", JSON.stringify(metadata));
   for (const module of modules) {
-    const blob = new Blob([module.content], { type: contentTypeFor(module) });
+    // Type-only cast: under the DOM lib (the manager's typecheck compiles this file
+    // from source) `BlobPart` requires `Uint8Array<ArrayBuffer>`, and a
+    // `Uint8Array<ArrayBufferLike>` is rejected even though every runtime accepts it.
+    const parts = [module.content] as ConstructorParameters<typeof Blob>[0];
+    const blob = new Blob(parts, { type: contentTypeFor(module) });
     form.append(module.name, blob, module.name);
   }
   return form;

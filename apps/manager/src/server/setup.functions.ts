@@ -61,6 +61,7 @@ export const createFirstAdmin = createServerFn({ method: "POST" })
     } finally {
       await releaseSettingsLock(env.DB, FIRST_ADMIN_LOCK_KEY, owner);
     }
-    // TODO: the Cloudflare token step follows; SETUP_TOKEN is deleted there.
+    // The Cloudflare token step follows after sign-in (token.functions.ts), which
+    // also deletes SETUP_TOKEN from the Worker.
     return { ok: true as const };
   });

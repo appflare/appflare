@@ -1,14 +1,15 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { AppShell } from "../components/app-shell";
-import { getViewer } from "../server/session.functions";
+import { enterApp } from "../server/gate.functions";
 
 /**
- * Pathless layout for every signed-in page. `getViewer` calls `requireSession()`,
- * which redirects to `/login` (and `/login` on to `/setup` before the first admin
- * exists). This is UX; each server function still enforces its own guard.
+ * Pathless layout for every signed-in page. `enterApp` returns the viewer or
+ * redirects: to `/login` without a session, to `/setup` before the first admin
+ * exists or while the Cloudflare token is not configured. This is
+ * UX; each server function still enforces its own guard.
  */
 export const Route = createFileRoute("/_app")({
-  beforeLoad: async () => ({ viewer: await getViewer() }),
+  beforeLoad: async () => ({ viewer: await enterApp() }),
   component: AppLayout,
 });
 

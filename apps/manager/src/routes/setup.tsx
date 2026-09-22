@@ -1,21 +1,27 @@
-import { Banner, Button, Input, LinkButton, Text } from "@cloudflare/kumo";
-import { WarningCircleIcon } from "@phosphor-icons/react";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
-import { z } from "zod";
-import { AuthLayout } from "../components/auth-layout";
-import { PlaceholderCard } from "../components/placeholder-card";
-import { MIN_PASSWORD_LENGTH } from "../server/schemas";
+import { Banner, Button, Input, LinkButton, Loader, Text } from "@cloudflare/kumo";
 import {
-  checkSetupToken,
-  createFirstAdmin,
-  getSetupStatus,
-  INVALID_SETUP_LINK,
-} from "../server/setup.functions";
+  CheckCircleIcon,
+  InfoIcon,
+  SignOutIcon,
+  WarningCircleIcon,
+  WarningIcon,
+} from "@phosphor-icons/react";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { type FormEvent, useEffect, useState } from "react";
+import { z } from "zod";
+import { authClient } from "../auth/client";
+import { AuthLayout } from "../components/auth-layout";
+import { CloudflareTokenForm, type SavedToken } from "../components/cloudflare-token-form";
+import { enterSetup } from "../server/gate.functions";
+import { MIN_PASSWORD_LENGTH } from "../server/schemas";
+import { checkSetupToken, createFirstAdmin, INVALID_SETUP_LINK } from "../server/setup.functions";
+import { getTokenStatus } from "../server/token.functions";
 
 /**
  * `/setup?token=…`. Before any user exists: validate the
- * setup token, then create the first admin. After that: the Cloudflare token step.
+ * setup token, then create the first admin. After that, signed in as an admin:
+ * the Cloudflare token step. Once the token is configured `/setup` redirects to
+ * `/`; until then every signed-in page redirects here (`_app.tsx`).
  */
 export const Route = createFileRoute("/setup")({
   validateSearch: z.object({ token: z.string().optional() }),
@@ -28,8 +34,9 @@ export const Route = createFileRoute("/setup")({
       // `?token=`, which is why the token is held in memory first.
       stripTokenFromAddressBar();
     }
-    const { needsSetup } = await getSetupStatus();
-    if (!needsSetup) return { step: "cloudflare-token" as const, token: null };
+    // Redirects to /login (users exist, no session) or / (setup complete).
+    const gate = await enterSetup();
+    if (gate.step !== "create-admin") return { step: gate.step, token: null };
     const token = heldToken;
     if (token === null) return { step: "invalid" as const, token: null };
     const { valid } = await checkSetupToken({ data: { token } });
@@ -75,22 +82,124 @@ function SetupPage() {
         </AuthLayout>
       );
     case "cloudflare-token":
-      return (
-        <AuthLayout
-          title="Set up Appflare"
-          description="The admin account exists. Next, connect a Cloudflare API token."
-        >
-          {/* TODO: the Cloudflare API token step (verify, store as CF_API_TOKEN, delete SETUP_TOKEN). */}
-          <PlaceholderCard
-            title="Cloudflare token step"
-            description="Paste an account API token so Appflare can install apps in this account."
-          />
-          <LinkButton href="/login" variant="secondary">
-            Go to sign in
-          </LinkButton>
-        </AuthLayout>
-      );
+      return <CloudflareTokenStep />;
+    case "wait-for-admin":
+      return <WaitForAdminStep />;
   }
+}
+
+/** A member signed in before the token step: nothing to do here but sign out. */
+function WaitForAdminStep() {
+  const router = useRouter();
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function signOut() {
+    setSigningOut(true);
+    await authClient.signOut();
+    await router.navigate({ to: "/login" });
+  }
+
+  return (
+    <AuthLayout title="Set up Appflare">
+      <Banner
+        variant="secondary"
+        icon={<InfoIcon weight="fill" />}
+        title="An admin needs to finish setup"
+        description="Appflare needs a Cloudflare API token before anyone can use it. Ask an admin to sign in and add one."
+      />
+      <Button variant="secondary" icon={<SignOutIcon />} loading={signingOut} onClick={signOut}>
+        Sign out
+      </Button>
+    </AuthLayout>
+  );
+}
+
+/** How often the success card checks whether the redeployed Worker has the token. */
+const SECRET_POLL_MS = 3000;
+
+function CloudflareTokenStep() {
+  const [saved, setSaved] = useState<SavedToken | null>(null);
+  if (saved !== null) return <TokenSavedCard saved={saved} />;
+  return (
+    <AuthLayout
+      width="wide"
+      title="Connect Cloudflare"
+      description="Appflare installs and updates apps in this Cloudflare account with an API token you create. It is stored as an encrypted secret on this Worker and never leaves it."
+    >
+      <CloudflareTokenForm mode="setup" onSaved={setSaved} />
+    </AuthLayout>
+  );
+}
+
+/**
+ * Storing `CF_API_TOKEN` deploys a new version of this Worker. Poll until a
+ * request lands on a version that has the binding.
+ */
+function TokenSavedCard({ saved }: { saved: SavedToken }) {
+  const [hasSecret, setHasSecret] = useState(false);
+
+  useEffect(() => {
+    if (hasSecret) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const status = await getTokenStatus();
+        if (!cancelled && status.hasSecret) setHasSecret(true);
+      } catch {
+        // Transient failures while the new version rolls out; keep polling.
+      }
+    }, SECRET_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [hasSecret]);
+
+  return (
+    <AuthLayout
+      width="wide"
+      title="Cloudflare connected"
+      description={`The token is saved on the Worker "${saved.workerName}" in account ${saved.accountId}.`}
+    >
+      <div className="grid gap-4">
+        <div className="flex items-start gap-2">
+          <span className="flex h-lh items-center">
+            {hasSecret ? (
+              <CheckCircleIcon weight="fill" className="text-kumo-success" />
+            ) : (
+              <Loader size="sm" />
+            )}
+          </span>
+          <Text>
+            {hasSecret
+              ? "Appflare has redeployed itself with the token."
+              : "Appflare is redeploying itself with the token. This takes a few seconds."}
+          </Text>
+        </div>
+        {saved.setupTokenRemoved === false && (
+          <Banner
+            variant="alert"
+            icon={<WarningIcon weight="fill" />}
+            title="The setup token could not be removed"
+            description={
+              <>
+                Appflare could not delete the{" "}
+                <code className="font-mono text-[0.9em]">SETUP_TOKEN</code> secret from its Worker.
+                It is inert now that an admin exists, but you can remove it with{" "}
+                <code className="font-mono text-[0.9em]">
+                  wrangler secret delete SETUP_TOKEN --name {saved.workerName}
+                </code>
+                .
+              </>
+            }
+          />
+        )}
+        <LinkButton href="/" variant="primary">
+          Go to Installed apps
+        </LinkButton>
+      </div>
+    </AuthLayout>
+  );
 }
 
 function CreateAdminStep(props: { token: string }) {

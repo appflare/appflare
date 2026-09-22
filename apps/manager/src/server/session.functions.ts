@@ -1,21 +1,12 @@
-import { createServerFn } from "@tanstack/react-start";
-import { hasRole, type Role } from "../auth/roles";
-import { requireSession } from "./auth.server";
+import type { Role } from "../auth/roles";
 
+/**
+ * The signed-in user as the UI sees it. Produced by `enterApp` (gate.functions.ts),
+ * which also redirects to `/login` when there is no session.
+ */
 export interface Viewer {
   id: string;
   email: string;
   name: string;
   role: Role;
 }
-
-/** The signed-in user. Redirects to `/login` when there is no session. */
-export const getViewer = createServerFn({ method: "GET" }).handler(async (): Promise<Viewer> => {
-  const { user } = await requireSession();
-  return {
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    role: hasRole(user.role, "admin") ? "admin" : "member",
-  };
-});

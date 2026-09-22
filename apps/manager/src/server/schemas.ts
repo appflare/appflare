@@ -21,3 +21,17 @@ export const addUserInput = z.object({
   role: z.enum(ROLES),
 });
 export type AddUserInput = z.infer<typeof addUserInput>;
+
+/**
+ * A pasted Cloudflare API token. Only shape is checked here; Cloudflare decides
+ * validity. The value is never echoed back.
+ */
+export const cfTokenInput = z.object({
+  token: z
+    .string()
+    .trim()
+    .min(1, "Paste the API token.")
+    .max(512, "That is too long to be a Cloudflare API token.")
+    .regex(/^[\x21-\x7e]+$/, "The token contains spaces or unexpected characters."),
+});
+export type CfTokenInput = z.infer<typeof cfTokenInput>;
