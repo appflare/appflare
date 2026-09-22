@@ -1,0 +1,69 @@
+{
+  // The Appflare manager Worker. This is the Cloudflare Vite plugin's
+  // INPUT config: `vite build` writes the deployable OUTPUT config to
+  // `dist/server/wrangler.json` (bundled `main`, resolved `assets.directory`).
+  // Deploy the build output with `pnpm wrangler -c apps/manager/dist/server/wrangler.json deploy`;
+  // pointing `-c` at this file makes wrangler bundle `src/worker.ts` itself, which
+  // cannot resolve TanStack Start's virtual modules.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "appflare",
+  // Pinned to the Appflare Dev account so local wrangler commands cannot target
+  // another account. The packer strips it from release artifacts.
+  "account_id": "e56348678f83352622c33faa66f43c13",
+  "main": "src/worker.ts",
+  // Newest date the pinned workerd (wrangler 4.136.2 -> workerd 1.20260921) supports.
+  "compatibility_date": "2026-09-21",
+  // global_fetch_strictly_public is mandatory: without it
+  // fetches to same-account *.workers.dev hosts fail with `error code: 1042`.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "appflare",
+      "database_id": "75ed4327-ef68-4601-addd-12b869b6e684",
+      // Drizzle migrations; applied by the manager itself at boot,
+      // never by `wrangler d1 migrations apply`.
+      "migrations_dir": "src/db/migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "7617dce5dd164554abece4a7f89620f3"
+    }
+  ],
+  "workflows": [
+    {
+      "binding": "JOBS",
+      "name": "appflare-jobs",
+      "class_name": "JobWorkflow"
+    }
+  ],
+  "assets": {
+    "binding": "ASSETS",
+    // The client build output. The Vite plugin overwrites this with the resolved
+    // client outDir in the generated dist/server/wrangler.json.
+    "directory": "./dist/client",
+    // TanStack Start SPA mode: the prerendered shell is written to /index.html
+    // (vite.config.ts), and every unknown navigation falls back to it.
+    "not_found_handling": "single-page-application",
+    // With SPA fallback, browser navigations (Sec-Fetch-Mode: navigate) that match
+    // no asset are answered with index.html WITHOUT invoking the Worker. Server
+    // routes (/api/auth/*, /api/health) and server functions (/_serverFn/*) must
+    // always reach the Worker, even when opened directly in a browser tab.
+    "run_worker_first": ["/api/*", "/_serverFn/*"]
+  },
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  },
+  "vars": {
+    "APPFLARE_VERSION": "0.0.0-dev"
+  }
+  // Secrets (never in this file; set with `pnpm wrangler secret put`):
+  //   BETTER_AUTH_SECRET  random, set by the CLI at install
+  //   SETUP_TOKEN         random, set by the CLI at install; guards /setup
+  //   CF_API_TOKEN        set by the manager itself from the setup wizard
+}

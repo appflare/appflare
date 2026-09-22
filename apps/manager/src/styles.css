@@ -1,0 +1,9 @@
+/*
+ * Kumo on Tailwind v4 (Kumo installation docs, "For Tailwind CSS users"): Kumo's
+ * tokens must be imported before Tailwind, and Tailwind must be told to scan
+ * Kumo's dist for the utility classes its components use.
+ */
+@import "@cloudflare/kumo/styles/tailwind";
+@import "tailwindcss";
+
+@source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
