@@ -2,15 +2,52 @@
   "name": "@appflare/cli",
   "version": "0.0.0",
   "private": true,
+  "description": "Install and manage Appflare, a self-hosted app manager for Cloudflare, in your own Cloudflare account.",
+  "license": "Apache-2.0",
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
+  "engines": {
+    "node": ">=22"
   },
-  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "@appflare/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "create-appflare": "./bin/appflare.js",
+    "appflare": "./bin/appflare.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
   "scripts": {
+    "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run",
+    "test:dist": "node scripts/smoke-dist.mjs"
+  },
+  "dependencies": {
+    "@clack/prompts": "1.8.1",
+    "wrangler": "4.136.2",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@appflare/pack": "workspace:*",
+    "@appflare/schema": "workspace:*"
   }
 }

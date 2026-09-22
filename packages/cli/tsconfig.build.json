@@ -1,0 +1,11 @@
+{
+  // Used only by tsdown to emit dist/*.d.ts: shipped source only, and
+  // `customConditions` cleared so `@appflare/schema` resolves to its built
+  // dist/*.d.ts, which tsdown inlines (see tsdown.config.ts).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "customConditions": []
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/test-fixtures.ts"]
+}

@@ -1,4 +1,10 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["src", "vitest.config.ts"]
+  "compilerOptions": {
+    "types": ["node"],
+    // Relative imports carry explicit `.ts` specifiers. tsdown resolves them when
+    // bundling to dist/; `noEmit` (inherited) makes them legal for tsc.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "vitest.config.ts", "tsdown.config.ts"]
 }

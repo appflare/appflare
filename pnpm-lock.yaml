@@ -126,7 +126,24 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
-  packages/cli: {}
+  packages/cli:
+    dependencies:
+      '@clack/prompts':
+        specifier: 1.8.1
+        version: 1.8.1
+      wrangler:
+        specifier: 4.136.2
+        version: 4.136.2(@cloudflare/workers-types@5.20260922.1)(@types/node@22.20.4)
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@appflare/pack':
+        specifier: workspace:*
+        version: link:../pack
+      '@appflare/schema':
+        specifier: workspace:*
+        version: link:../schema
 
   packages/pack:
     dependencies:

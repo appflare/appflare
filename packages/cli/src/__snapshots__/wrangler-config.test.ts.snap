@@ -1,0 +1,66 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildWranglerConfig > matches the snapshot for the default name 1`] = `
+{
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "assets",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*",
+    ],
+  },
+  "base_dir": "worker",
+  "compatibility_date": "2026-09-21",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public",
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "appflare",
+    },
+  ],
+  "find_additional_modules": true,
+  "keep_vars": true,
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+    },
+  ],
+  "main": "worker/index.js",
+  "name": "appflare",
+  "no_bundle": true,
+  "observability": {
+    "enabled": true,
+  },
+  "preview_urls": true,
+  "rules": [
+    {
+      "globs": [
+        "index.js",
+        "chunks/a.js",
+      ],
+      "type": "ESModule",
+    },
+  ],
+  "send_metrics": false,
+  "triggers": {
+    "crons": [
+      "*/30 * * * *",
+    ],
+  },
+  "vars": {
+    "APPFLARE_VERSION": "1.2.3",
+  },
+  "workers_dev": true,
+  "workflows": [
+    {
+      "binding": "JOBS",
+      "class_name": "JobWorkflow",
+      "name": "appflare-jobs",
+    },
+  ],
+}
+`;
