@@ -1,0 +1,36 @@
+{
+  // Minimal wrangler project used as a packer fixture.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hello",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "vars": {
+    "GREETING": "Hello"
+  },
+  "kv_namespaces": [
+    // The `id` is account-specific and MUST be stripped by the packer.
+    { "binding": "CACHE", "id": "cafebabecafebabecafebabecafebabe" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hello-db",
+      // account-specific; stripped by the packer.
+      "database_id": "11111111-2222-3333-4444-555555555555",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 0 * * *"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}

@@ -13,6 +13,15 @@ export const sha256Schema = z
   .string()
   .regex(/^[0-9a-f]{64}$/, "must be a 64-character lowercase hex SHA-256");
 
+/**
+ * 32-character lowercase hex BLAKE3 asset hash, exactly wrangler's
+ * `assets-upload-session` id (`blake3(base64(contents) + extension)[:32]`).
+ * Computed by `@appflare/cf-api`'s `assetHash`.
+ */
+export const assetHashSchema = z
+  .string()
+  .regex(/^[0-9a-f]{32}$/, "must be a 32-character lowercase hex BLAKE3 asset hash");
+
 /** Byte offset of a file's data inside the STORE zip. */
 export const offsetSchema = z.int().min(0);
 
@@ -50,6 +59,10 @@ export type WorkerModule = z.infer<typeof workerModuleSchema>;
 /** A static asset file, keyed by its served route. */
 export const assetFileSchema = z.object({
   route: z.string().min(1),
+  // Two hashes on purpose: `sha256` verifies the integrity of a Range slice read
+  // from the zip; `hash` is wrangler's BLAKE3 asset id, which the manager sends
+  // when it opens the assets-upload-session — before it has any file bytes.
+  hash: assetHashSchema,
   ...fileEntryFields,
 });
 export type AssetFile = z.infer<typeof assetFileSchema>;

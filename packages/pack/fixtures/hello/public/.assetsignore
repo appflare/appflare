@@ -1,0 +1,2 @@
+# Ignore the robots file to prove .assetsignore is honored.
+robots.txt

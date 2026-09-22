@@ -1,4 +1,11 @@
 {
   "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // The CLI runs under Node's native TypeScript support (`node file.ts`), which
+    // requires explicit `.ts` specifiers on relative imports. `noEmit` (inherited)
+    // makes this legal.
+    "allowImportingTsExtensions": true
+  },
   "include": ["src", "vitest.config.ts"]
 }

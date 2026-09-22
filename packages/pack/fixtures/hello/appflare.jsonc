@@ -1,0 +1,48 @@
+{
+  // Catalog manifest for the `hello` packer fixture.
+  "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+  "slug": "hello",
+  "name": "Hello",
+  "summary": "Minimal hello Worker fixture used to exercise the packer.",
+  "homepage": "https://github.com/appflare/appflare",
+  "repo": "appflare/appflare",
+  "license": "Apache-2.0",
+  "categories": ["utilities"],
+  "maintainers": ["appflare"],
+  "source": {
+    "ref": "v1.2.3",
+    "sha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "install": {
+    "tier": "artifact",
+    "packageManager": "pnpm",
+    "wranglerConfig": "wrangler.jsonc",
+    "workerName": "hello"
+  },
+  "plan": "free",
+  "requires": [],
+  "secrets": [
+    {
+      "name": "ADMIN_PASSWORD",
+      "label": "Admin password",
+      "help": "Used to sign in to the admin UI.",
+      "generate": true
+    }
+  ],
+  "vars": [
+    {
+      "name": "GREETING",
+      "label": "Greeting",
+      "help": "Shown on the home page.",
+      "default": "Hello",
+      "required": false
+    }
+  ],
+  "postInstall": [
+    {
+      "type": "markdown",
+      "content": "Open {{workerUrl}} to see the greeting."
+    }
+  ],
+  "tokenPermissions": []
+}

@@ -56,6 +56,9 @@ importers:
 
   packages/pack:
     dependencies:
+      '@appflare/cf-api':
+        specifier: workspace:*
+        version: link:../cf-api
       '@appflare/schema':
         specifier: workspace:*
         version: link:../schema

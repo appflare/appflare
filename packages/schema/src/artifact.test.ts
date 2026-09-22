@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { artifactManifestSchema } from "./artifact";
 
 const sha256 = "a".repeat(64);
+const assetBlake3 = "c".repeat(32);
 const gitSha = "b".repeat(40);
 
 const validArtifact = {
@@ -34,7 +35,16 @@ const validArtifact = {
       run_worker_first: false,
     },
     binding: "ASSETS",
-    files: [{ route: "/index.html", path: "assets/index.html", size: 1, sha256, offset: 123 }],
+    files: [
+      {
+        route: "/index.html",
+        path: "assets/index.html",
+        hash: assetBlake3,
+        size: 1,
+        sha256,
+        offset: 123,
+      },
+    ],
   },
   d1Migrations: {
     DB: [{ name: "0001_init.sql", path: "d1/DB/0001_init.sql", size: 1, sha256, offset: 456 }],
@@ -83,5 +93,25 @@ describe("artifactManifestSchema", () => {
     };
     const result = artifactManifestSchema.safeParse(invalid);
     expect(result.success).toBe(false);
+  });
+
+  it("requires a 32-hex BLAKE3 asset hash on every asset file", () => {
+    const missingHash = {
+      ...validArtifact,
+      assets: {
+        ...validArtifact.assets,
+        files: [{ route: "/index.html", path: "assets/index.html", size: 1, sha256, offset: 123 }],
+      },
+    };
+    expect(artifactManifestSchema.safeParse(missingHash).success).toBe(false);
+
+    const badHash = {
+      ...validArtifact,
+      assets: {
+        ...validArtifact.assets,
+        files: [{ ...validArtifact.assets.files[0], hash: "a".repeat(64) }],
+      },
+    };
+    expect(artifactManifestSchema.safeParse(badHash).success).toBe(false);
   });
 });
