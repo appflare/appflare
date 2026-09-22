@@ -1,5 +1,44 @@
 /**
- * Placeholder entry for `@appflare/cf-api` (Cloudflare REST API client).
- * Not implemented yet.
+ * `@appflare/cf-api`: a thin, typed, runtime-agnostic client over the Cloudflare
+ * REST API for the endpoints Appflare uses. Entry `.` is safe in Workers and
+ * Node; the Node-only `loadDevContext` lives at the `./dev` subpath.
  */
-export const packageName = "@appflare/cf-api" as const;
+
+export type { AssetManifestFile, AssetUploadManifest } from "./asset-hash";
+export { assetHash, buildAssetsManifest } from "./asset-hash";
+export type { CloudflareClient } from "./client";
+export { createClient } from "./client";
+export type { CloudflareApiErrorInit, CloudflareError } from "./errors";
+export { CloudflareApiError } from "./errors";
+export type {
+  ClientOptions,
+  CloudflareEnvelope,
+  FetchLike,
+  RequestLog,
+  ResultInfo,
+} from "./http";
+export { CLOUDFLARE_API_BASE } from "./http";
+export type { WorkerModule, WorkerModuleType } from "./modules";
+export { buildUploadFormData, MODULE_CONTENT_TYPES } from "./modules";
+
+export type {
+  AssetBucketFile,
+  AssetBucketResult,
+} from "./namespaces/assets";
+export type { RestoreArgs } from "./namespaces/d1";
+export type { CreateBucketArgs } from "./namespaces/r2";
+export type {
+  CreateVectorizeIndexArgs,
+  VectorizeConfig,
+} from "./namespaces/vectorize";
+export type {
+  CreateDeploymentArgs,
+  UploadVersionArgs,
+} from "./namespaces/versions";
+export type {
+  EnableSubdomainArgs,
+  PutSecretArgs,
+  UploadScriptArgs,
+} from "./namespaces/workers";
+
+export type * from "./types";

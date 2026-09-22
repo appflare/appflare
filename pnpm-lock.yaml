@@ -43,11 +43,35 @@ importers:
 
   apps/manager: {}
 
-  packages/cf-api: {}
+  packages/cf-api:
+    dependencies:
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/cli: {}
 
-  packages/pack: {}
+  packages/pack:
+    dependencies:
+      '@appflare/schema':
+        specifier: workspace:*
+        version: link:../schema
+      ignore:
+        specifier: 5.3.1
+        version: 5.3.1
+      wrangler:
+        specifier: 4.136.2
+        version: 4.136.2(@cloudflare/workers-types@5.20260922.1)(@types/node@22.20.4)
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@appflare/pack':
+        specifier: workspace:*
+        version: 'link:'
 
   packages/schema:
     dependencies:
@@ -780,6 +804,10 @@ packages:
     resolution: {integrity: sha512-6QEf6yqFbETdwGITKq57aYoPfX/3K8XFNwsAlx0C1M7o8cb79sv1M3w+tWuWvIcSbNqrLF7OD7YpZMVVz335hQ==}
     engines: {node: '>=20.0.0'}
 
+  '@noble/hashes@1.8.0':
+    resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
+    engines: {node: ^14.21.3 || >=16}
+
   '@oxc-project/types@0.150.0':
     resolution: {integrity: sha512-rDS5/31E9HfPl/CIzGrn0DOlvBbXFseQ5URJ9sYMfstbKLD/c6Gm9vmRzRGDdAXyOIL4zmO37lc9RIwYqVruZw==}
 
@@ -1189,6 +1217,10 @@ packages:
   human-id@4.2.1:
     resolution: {integrity: sha512-zPGsiS+dWoTZtZ4AtpA9Y+BdSFSNWvnouNlWNoUFyAM6xHOHmdCvqO3k8AIbdamCOv4gUFUVNPf6rJFfc4UiJw==}
     hasBin: true
+
+  ignore@5.3.1:
+    resolution: {integrity: sha512-5Fytz/IraMjqpwfd34ke28PTVMjZjJG2MPn5t7OE4eUCUNf8BAa7b5WUS9/Qvr6mwOQS7Mk6vdsMno5he+T8Xw==}
+    engines: {node: '>= 4'}
 
   import-meta-resolve@4.2.0:
     resolution: {integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==}
@@ -2110,6 +2142,8 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.1
 
+  '@noble/hashes@1.8.0': {}
+
   '@oxc-project/types@0.150.0': {}
 
   '@pnpm/deps.graph-sequencer@1100.0.1': {}
@@ -2405,6 +2439,8 @@ snapshots:
     optional: true
 
   human-id@4.2.1: {}
+
+  ignore@5.3.1: {}
 
   import-meta-resolve@4.2.0: {}
 
