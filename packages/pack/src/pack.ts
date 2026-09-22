@@ -30,6 +30,7 @@ import {
 import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
 import { parseJsonc } from "./jsonc.ts";
+import { scrubEnv } from "./scrub-env.ts";
 import { deriveVersion, formatBuildDate } from "./version.ts";
 import {
   classifyModuleType,
@@ -88,31 +89,6 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-/** Builds a spawn environment with every CLOUDFLARE_ and WRANGLER_ variable removed. */
-function scrubEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(base)) {
-    if (value === undefined) {
-      continue;
-    }
-    if (/^CLOUDFLARE_/i.test(key) || /^WRANGLER_/i.test(key)) {
-      continue;
-    }
-    out[key] = value;
-  }
-  // Added after scrubbing: suppress wrangler's telemetry (an outbound call) and
-  // keep the dry-run non-interactive.
-  out.WRANGLER_SEND_METRICS = "false";
-  out.CI = base.CI ?? "1";
-  // Let the machine's pnpm run in a checkout that pins a different pnpm major
-  // (e.g. Cut pins pnpm 11) without fetching a new pnpm. This covers not just our
-  // own install step but any pnpm the checkout's `build.command` spawns during the
-  // dry-run.
-  out.COREPACK_ENABLE_STRICT = "0";
-  out.npm_config_package_manager_strict = "false";
-  return out;
-}
-
 /** Absolute path to the packer's own wrangler bin (bin/wrangler.js). */
 function resolveWranglerBin(): string {
   const pkgPath = require.resolve("wrangler/package.json");
@@ -127,7 +103,7 @@ function resolveWranglerBin(): string {
 function runInstall(
   checkoutDir: string,
   packageManager: CatalogManifest["install"]["packageManager"],
-  env: NodeJS.ProcessEnv,
+  childEnv: NodeJS.ProcessEnv,
   logger: (m: string) => void,
 ): void {
   let cmd: string;
@@ -165,7 +141,7 @@ function runInstall(
   logger(`installing dependencies with ${cmd} (${packageManager})`);
   const res = spawnSync(cmd, args, {
     cwd: checkoutDir,
-    env: { ...scrubEnv(env), ...extraEnv },
+    env: { ...childEnv, ...extraEnv },
     encoding: "utf8",
     maxBuffer: 128 * 1024 * 1024,
   });
@@ -188,7 +164,7 @@ function runDryRun(
   wranglerConfigPath: string,
   checkoutDir: string,
   outdir: string,
-  env: NodeJS.ProcessEnv,
+  childEnv: NodeJS.ProcessEnv,
   logger: (m: string) => void,
 ): void {
   const wranglerBin = resolveWranglerBin();
@@ -198,7 +174,7 @@ function runDryRun(
     [wranglerBin, "deploy", "--dry-run", "--outdir", outdir, "--config", wranglerConfigPath],
     {
       cwd: checkoutDir,
-      env: scrubEnv(env),
+      env: childEnv,
       encoding: "utf8",
       maxBuffer: 128 * 1024 * 1024,
     },
@@ -361,11 +337,11 @@ function collectD1Migrations(
 }
 
 /** Reads the commit date (YYYYMMDD) of HEAD, or null when `dir` is not a git repo. */
-function gitCommitDate(dir: string): string | null {
+function gitCommitDate(dir: string, childEnv: NodeJS.ProcessEnv): string | null {
   const res = spawnSync(
     "git",
     ["-C", dir, "show", "-s", "--format=%cd", "--date=format:%Y%m%d", "HEAD"],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: childEnv },
   );
   if (res.status === 0) {
     const out = res.stdout.trim();
@@ -416,6 +392,9 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       throw new Error(`sign key env var ${options.signKeyEnv} is not set`);
     }
   }
+  // The key has been read; no child process (install, dry-run, the checkout's
+  // build.command, git) may see it or any other credential.
+  const childEnv = scrubEnv(env, options.signKeyEnv ? [options.signKeyEnv] : []);
 
   // (a) Parse + validate the catalog manifest.
   const catalog: CatalogManifest = catalogManifestSchema.parse(
@@ -424,7 +403,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
 
   // (b) Install dependencies unless disabled.
   if (install) {
-    runInstall(checkoutDir, catalog.install.packageManager, env, logger);
+    runInstall(checkoutDir, catalog.install.packageManager, childEnv, logger);
   }
 
   // (c) Read the resolved wrangler config with wrangler's own reader.
@@ -446,7 +425,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   const outdir = mkdtempSync(path.join(tmpdir(), "appflare-pack-"));
   let modules: CollectedModule[];
   try {
-    runDryRun(wranglerConfigPath, checkoutDir, outdir, env, logger);
+    runDryRun(wranglerConfigPath, checkoutDir, outdir, childEnv, logger);
     // (e) Collect emitted modules.
     modules = collectModules(outdir, config);
   } finally {
@@ -505,7 +484,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   const version = deriveVersion({
     ref: catalog.source.ref,
     sha: catalog.source.sha,
-    commitDate: gitCommitDate(checkoutDir),
+    commitDate: gitCommitDate(checkoutDir, childEnv),
     buildDate: formatBuildDate(new Date()),
   });
 
