@@ -27,6 +27,7 @@ export const startInstall = createServerFn({ method: "POST" })
       return await startInstallCore(
         {
           db: env.DB,
+          workflows: env.JOBS,
           async loadApp(slug) {
             const read = await getCatalogIndex(env);
             if (!read.ok) throw new StartInstallError(read.error);

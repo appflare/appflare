@@ -19,7 +19,11 @@ import { installIdInput, retryUninstallInput, startUninstallInput } from "./unin
 async function start(request: StartUninstallRequest): Promise<{ jobId: string }> {
   try {
     return await startUninstallCore(
-      { db: env.DB, createJob: (id, params) => env.JOBS.create({ id, params }) },
+      {
+        db: env.DB,
+        workflows: env.JOBS,
+        createJob: (id, params) => env.JOBS.create({ id, params }),
+      },
       request,
     );
   } catch (error) {

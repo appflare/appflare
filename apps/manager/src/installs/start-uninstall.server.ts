@@ -2,6 +2,13 @@ import { and, eq, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
+import type { WorkflowLookup } from "../jobs/reconcile.server";
+import {
+  activeSelfUpdateJob,
+  NO_ACTIVE_SELF_UPDATE_SQL,
+  refuseDuringSelfUpdate,
+  selfUpdateBusyMessage,
+} from "../jobs/self-update/guard";
 import type { UninstallJobParams } from "../jobs/uninstall";
 import { DATA_RESOURCE_KINDS, isDataResourceKind } from "./resource-kinds";
 
@@ -22,6 +29,8 @@ export class StartUninstallError extends Error {
 
 export interface StartUninstallDeps {
   db: D1Database;
+  /** The Workflow binding, to settle a self-update whose instance died before refusing to start. */
+  workflows?: WorkflowLookup;
   /** Creates the Workflow instance (`env.JOBS.create`). */
   createJob(id: string, params: UninstallJobParams): Promise<{ id: string }>;
   now?: () => Date;
@@ -48,6 +57,7 @@ export async function startUninstallCore(
   deps: StartUninstallDeps,
   request: StartUninstallRequest,
 ): Promise<{ jobId: string }> {
+  await refuseDuringSelfUpdate(deps.db, deps.workflows, (m) => new StartUninstallError(m));
   const db = createDb(deps.db);
   const now = (deps.now ?? (() => new Date()))();
   const jobId = (deps.newId ?? (() => ulid()))();
@@ -109,7 +119,8 @@ export async function startUninstallCore(
          WHERE EXISTS (SELECT 1 FROM installs WHERE id = ?2 AND status IN (${statuses}))
            AND NOT EXISTS (
              SELECT 1 FROM jobs WHERE install_id = ?2 AND status IN ('queued', 'running')
-           )`,
+           )
+           AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
       )
       .bind(
         jobId,
@@ -133,6 +144,8 @@ export async function startUninstallCore(
       .bind(jobId, request.installId, at, JSON.stringify(deleteResources)),
   ]);
   if (claimed?.meta.changes !== 1) {
+    const selfUpdate = await activeSelfUpdateJob(deps.db);
+    if (selfUpdate !== null) throw new StartUninstallError(selfUpdateBusyMessage(selfUpdate));
     throw new StartUninstallError(
       "Another job of this install is queued or running, or its state changed. Reload the page.",
     );

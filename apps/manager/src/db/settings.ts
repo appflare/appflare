@@ -3,9 +3,10 @@ import type { Database } from "./client";
 import { settings } from "./schema";
 
 /**
- * Keys of the `settings` rows the Cloudflare token step owns (the
- * manager caches its discovered account id and Worker name here). Other rows
- * (`schema_version`, locks) belong to their own modules.
+ * Keys of the `settings` rows read and written through this module: what the
+ * Cloudflare token step discovered (account id, Worker name), caches, and the
+ * self-update history. Other rows (`schema_version`, locks) belong to their
+ * own modules.
  */
 export const SETTING = {
   accountId: "account_id",
@@ -17,6 +18,12 @@ export const SETTING = {
   cfTokenVerifiedAt: "cf_token_verified_at",
   /** The account's workers.dev subdomain (`<name>.<subdomain>.workers.dev`), cached by the install job. */
   accountSubdomain: "account_subdomain",
+  /**
+   * JSON array of the manager's self-updates, oldest first:
+   * `{ version, from, jobId, workerVersionId, at }`. Appended by the
+   * self-update job's last step.
+   */
+  managerVersionHistory: "manager_version_history",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

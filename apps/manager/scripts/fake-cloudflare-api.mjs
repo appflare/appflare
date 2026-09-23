@@ -10,8 +10,11 @@
 //   CF_API_BASE_URL=http://127.0.0.1:8789/client/v4
 //   CF_API_TOKEN=<any non-empty placeholder, never a real token>
 // The account holds one Worker, `appflare`, so the /setup token step can find the
-// manager. Every request is printed as `METHOD path -> status` (never headers or
-// bodies).
+// manager; it starts with one deployed version and the manager's usual bindings
+// (GET /workers/scripts/appflare/bindings), so a self-update can snapshot and
+// upload against it. Uploads replace a script's reported bindings once their
+// version is deployed. Every request is printed as `METHOD path -> status`
+// (never headers or bodies).
 import { createServer } from "node:http";
 import { parseArgs } from "node:util";
 
@@ -24,7 +27,7 @@ const { values } = parseArgs({
 
 const ACCOUNT = "00000000000000000000000000000001";
 const state = {
-  scripts: new Map([["appflare", newScript(["SETUP_TOKEN"])]]),
+  scripts: new Map([["appflare", managerScript()]]),
   kv: [],
   d1: [],
   d1Rows: new Map(),
@@ -41,7 +44,44 @@ const versionId = () => crypto.randomUUID();
 const bookmark = () => `${Date.now().toString(16).padStart(8, "0")}-${id().slice(-8)}`;
 
 function newScript(secrets = []) {
-  return { secrets: new Set(secrets), schedules: [], versions: [], deployments: [] };
+  return {
+    secrets: new Set(secrets),
+    schedules: [],
+    versions: [],
+    deployments: [],
+    /** Non-secret bindings per version id, as the upload sent them. */
+    bindings: new Map(),
+  };
+}
+
+/** The manager as the CLI deploys it: one version serving, D1, KV, its Workflow, assets. */
+function managerScript() {
+  const script = newScript(["SETUP_TOKEN"]);
+  const version = crypto.randomUUID();
+  script.versions.push(version);
+  script.bindings.set(version, [
+    { type: "assets", name: "ASSETS" },
+    { type: "d1", name: "DB", database_id: "00000000-0000-4000-8000-00000000d1d1" },
+    { type: "kv_namespace", name: "KV", namespace_id: "0000000000000000000000000000c0c0" },
+    { type: "workflow", name: "JOBS", workflow_name: "appflare-jobs", class_name: "JobWorkflow" },
+    { type: "plain_text", name: "APPFLARE_VERSION", text: "0.0.0-dev" },
+  ]);
+  deploy(script, version);
+  return script;
+}
+
+/** Bindings of the version serving all traffic, with secrets as names only. */
+function currentBindings(script) {
+  const version = script.deployments[0]?.versions[0]?.version_id;
+  const bindings = (version && script.bindings.get(version)) || [];
+  return [
+    ...bindings
+      .filter((b) => b.type !== "secret_text")
+      .map((b) =>
+        b.type === "d1" ? { type: "d1", name: b.name, database_id: b.id ?? b.database_id } : b,
+      ),
+    ...[...script.secrets].map((name) => ({ type: "secret_text", name })),
+  ];
 }
 
 /** Records a deployment serving `version` at 100% (newest first, as Cloudflare lists them). */
@@ -198,6 +238,7 @@ async function handle(req, url, body) {
     state.scripts.set(script[2], existing);
     const version = versionId();
     existing.versions.push(version);
+    existing.bindings.set(version, metadata.bindings ?? []);
     deploy(existing, version);
     return ok({ id: script[2], deployment_id: version.replace(/-/g, "") });
   }
@@ -210,6 +251,7 @@ async function handle(req, url, body) {
     const metadata = JSON.parse(String(form.get("metadata")));
     const version = versionId();
     s.versions.push(version);
+    s.bindings.set(version, metadata.bindings ?? []);
     console.log(
       `  version ${version} of ${versions[1]}: bindings ${(metadata.bindings ?? [])
         .map((b) => `${b.type}:${b.name}`)
@@ -228,6 +270,12 @@ async function handle(req, url, body) {
       return fail(400, 10220, "this fake deploys one known version at 100% only");
     }
     return ok(deploy(s, only.version_id));
+  }
+  const bindings = /^GET \/workers\/scripts\/([^/]+)\/bindings$/.exec(key);
+  if (bindings) {
+    const s = scriptOf(bindings[1]);
+    if (!s) return fail(404, 10007, "script not found");
+    return ok(currentBindings(s));
   }
   const workflow = /^GET \/workflows\/([^/]+)$/.exec(key);
   if (workflow) return fail(404, 10200, "Workflow not found");

@@ -16,6 +16,12 @@
 // Point the manager at it with CATALOG_INDEX_URL=http://127.0.0.1:8766/index.json
 // in apps/manager/.dev.vars (`pnpm --filter @appflare/manager dev:init` adds it).
 // Only use copies of artifacts: index.json is written into <dir>.
+//
+// Artifacts of the manager itself (`app: "appflare"`, from `pnpm release:pack`) are
+// not catalog apps: they are left out of index.json and listed instead as a
+// GitHub-style releases feed at <base>/releases (tags `manager@<version>`, assets
+// `appflare-<version>.zip`, `manifest.json`, `manifest.sig`). Point the manager's
+// release check at it with MANAGER_RELEASES_URL=http://127.0.0.1:8766/releases.
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -49,6 +55,8 @@ function artifactDirs() {
 /** `<slug>@<version>/<file>` -> absolute path on disk. */
 const files = new Map();
 const apps = [];
+/** The manager's own releases, GitHub-shaped, newest first. */
+const managerReleases = [];
 for (const artifactDir of artifactDirs()) {
   const manifestBytes = readFileSync(join(artifactDir, "manifest.json"));
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
@@ -60,11 +68,26 @@ for (const artifactDir of artifactDirs()) {
     console.error(`skipping ${artifactDir}: missing ${missing.join(", ")}`);
     continue;
   }
-  const tag = `${slug}@${version}`;
+  const isManager = slug === "appflare";
+  const tag = isManager ? `manager@${version}` : `${slug}@${version}`;
   for (const name of [zipName, "manifest.json", "manifest.sig"]) {
     files.set(`/releases/download/${tag}/${name}`, join(artifactDir, name));
   }
   const download = `${base}/releases/download/${tag}`;
+  if (isManager) {
+    managerReleases.push({
+      tag_name: tag,
+      name: tag,
+      draft: false,
+      prerelease: version.includes("-"),
+      published_at: statSync(join(artifactDir, "manifest.json")).mtime.toISOString(),
+      assets: [zipName, "manifest.json", "manifest.sig"].map((name) => ({
+        name,
+        browser_download_url: `${download}/${name}`,
+      })),
+    });
+    continue;
+  }
   const catalog = manifest.catalog ?? {};
   apps.push({
     slug,
@@ -92,8 +115,15 @@ writeFileSync(
 );
 files.set("/index.json", indexPath);
 
+managerReleases.sort((a, b) => b.published_at.localeCompare(a.published_at));
+
 createServer((req, res) => {
   const url = new URL(req.url ?? "/", base);
+  if (req.method === "GET" && url.pathname === "/releases") {
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(managerReleases));
+    console.log(`GET /releases -> 200`);
+    return;
+  }
   const path = files.get(url.pathname);
   if ((req.method !== "GET" && req.method !== "HEAD") || path === undefined || !existsSync(path)) {
     res.writeHead(404, { "content-type": "text/plain" }).end("not found\n");
@@ -132,4 +162,9 @@ createServer((req, res) => {
   console.log(`Serving ${apps.length} artifact(s) from ${dir}`);
   for (const app of apps) console.log(`  ${app.slug} ${app.version}`);
   console.log(`CATALOG_INDEX_URL=${base}/index.json`);
+  if (managerReleases.length > 0) {
+    console.log(`Serving ${managerReleases.length} Appflare release(s)`);
+    for (const r of managerReleases) console.log(`  ${r.tag_name}`);
+    console.log(`MANAGER_RELEASES_URL=${base}/releases`);
+  }
 });

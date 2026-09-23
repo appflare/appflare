@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs } from "../db/schema";
+import { appendSelfUpdateHistory } from "./self-update/record";
 import { StepLog } from "./step-log";
 
 /**
@@ -120,6 +121,9 @@ export async function reconcileJobs(
         .returning({ id: jobs.id });
       if (updated.length === 0) continue;
       await settleUpdating(orm, row, at);
+      // A self-update that completed was promoted; its history entry is written
+      // the same way its last step writes it (and never twice).
+      if (row.kind === "self_update") await appendSelfUpdateHistory(db, row.id, at);
       log.warn("The Workflow instance completed without recording the end of the job.");
     } else if (DEAD.has(status)) {
       const error =

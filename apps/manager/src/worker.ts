@@ -1,6 +1,8 @@
 import handler from "@tanstack/react-start/server-entry";
 import { CatalogError, refreshCatalogIndex } from "./catalog/index.server";
+import { ManagerReleasesError, refreshManagerReleases } from "./catalog/manager-releases.server";
 import { ensureMigrated } from "./db/migrate";
+import { finalizeSelfUpdates } from "./jobs/self-update/record";
 
 /**
  * The manager's Worker entry (custom entry so it can export more than
@@ -10,13 +12,39 @@ import { ensureMigrated } from "./db/migrate";
 
 export { JobWorkflow } from "./jobs/job-workflow";
 
+/** Set once this isolate has looked for a self-update to complete. */
+let selfUpdatesFinalized = false;
+
+/**
+ * A version that a self-update just promoted completes that job on its first
+ * request (the switch may have ended the job's last step). Requests to a
+ * version preview host (the self-update's own check, before the switch) never
+ * do, and do not count as the first request. Never blocks serving: a failure
+ * is logged and retried on the next request.
+ */
+async function finalizeOnce(env: Env, host: string | undefined): Promise<void> {
+  if (selfUpdatesFinalized) return;
+  try {
+    const result = await finalizeSelfUpdates(env, host === undefined ? {} : { host });
+    if (result.completed > 0) {
+      console.log(`self-update completed by version ${env.APPFLARE_VERSION}`);
+    }
+    if (!result.previewHost) selfUpdatesFinalized = true;
+  } catch (error) {
+    console.error("self-update finalization failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 /**
  * Self-migration runs before anything else. If it fails the
  * manager cannot serve correctly, so every request gets a 503 until it succeeds.
  */
-async function migrated(env: Env): Promise<Response | null> {
+async function migrated(env: Env, request?: Request): Promise<Response | null> {
   try {
     await ensureMigrated(env);
+    await finalizeOnce(env, request === undefined ? undefined : new URL(request.url).host);
     return null;
   } catch (error) {
     console.error("self-migration failed", {
@@ -34,13 +62,14 @@ async function migrated(env: Env): Promise<Response | null> {
 
 export default {
   async fetch(request, env) {
-    return (await migrated(env)) ?? handler.fetch(request);
+    return (await migrated(env, request)) ?? handler.fetch(request);
   },
 
   /**
-   * Cron: refresh the catalog index into KV. Update-available is
-   * computed at read time from the cached index, so nothing else is written.
-   * The scheduled handler never starts jobs.
+   * Cron: refresh the catalog index into KV, then check the manager's own
+   * release feed. Update-available (for apps and for Appflare) is computed
+   * at read time from those caches, so nothing else is written. The
+   * scheduled handler never starts jobs.
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
@@ -51,6 +80,12 @@ export default {
       if (!(error instanceof CatalogError)) throw error;
       console.error("catalog refresh failed", { error: error.message });
     }
-    // TODO: check the manager's own release feed.
+    try {
+      const latest = await refreshManagerReleases(env);
+      console.log(`release feed checked: newest Appflare release ${latest?.version ?? "none"}`);
+    } catch (error) {
+      if (!(error instanceof ManagerReleasesError)) throw error;
+      console.error("release feed check failed", { error: error.message });
+    }
   },
 } satisfies ExportedHandler<Env>;

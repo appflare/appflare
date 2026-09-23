@@ -6,6 +6,12 @@ interface ManagerSecrets {
   BETTER_AUTH_SECRET: string;
   SETUP_TOKEN?: string;
   CF_API_TOKEN?: string;
+  /**
+   * Optional GitHub token that can read appflare/appflare's releases. Needed
+   * only while that repository is private; sent only to api.github.com and
+   * github.com, never logged.
+   */
+  GITHUB_TOKEN?: string;
 }
 
 // Optional vars that are not in wrangler.jsonc (code defaults apply when unset):
@@ -15,6 +21,8 @@ interface ManagerOptionalVars {
   CATALOG_INDEX_URL?: string;
   /** Cloudflare API base override for tests and local dev against a fake API. */
   CF_API_BASE_URL?: string;
+  /** The manager's releases API; defaults to `DEFAULT_MANAGER_RELEASES_URL`. */
+  MANAGER_RELEASES_URL?: string;
 }
 
 declare namespace Cloudflare {

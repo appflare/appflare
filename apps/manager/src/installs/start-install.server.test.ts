@@ -305,3 +305,47 @@ describe("startInstallCore", () => {
     expect(install).toEqual({ status: "failed" });
   });
 });
+
+describe("startInstallCore while Appflare updates itself", () => {
+  it("refuses with the self-update's job id, settling a dead one first", async () => {
+    const f = await buildArtifactFixture();
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, kind, status, workflow_instance_id) VALUES ('self', 'self_update', 'running', 'self')",
+    ).run();
+    const running = { get: async () => ({ status: async () => ({ status: "running" }) }) };
+    await expect(
+      startInstallCore({ ...harness(f).deps, workflows: running }, input()),
+    ).rejects.toThrow(/Appflare is updating itself \(job self\).*\/jobs\/self/);
+
+    const dead = { get: async () => ({ status: async () => ({ status: "terminated" }) }) };
+    expect(await startInstallCore({ ...harness(f).deps, workflows: dead }, input())).toEqual({
+      installId: "id1",
+      jobId: "id2",
+    });
+  });
+
+  it("loses the claim atomically to a self-update that starts after its check", async () => {
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    await expect(
+      startInstallCore(
+        {
+          ...h.deps,
+          // Runs after the self-update check and before the claim batch.
+          listAccountWorkers: async () => {
+            await env.DB.prepare(
+              "INSERT INTO jobs (id, kind, status) VALUES ('late', 'self_update', 'queued')",
+            ).run();
+            return [];
+          },
+        },
+        input(),
+      ),
+    ).rejects.toThrow(/Appflare is updating itself \(job late\)/);
+    const counts = await env.DB.prepare(
+      "SELECT (SELECT COUNT(*) FROM installs) AS installs, (SELECT COUNT(*) FROM jobs) AS jobs",
+    ).first();
+    expect(counts).toEqual({ installs: 0, jobs: 1 });
+    expect(h.created).toEqual([]);
+  });
+});

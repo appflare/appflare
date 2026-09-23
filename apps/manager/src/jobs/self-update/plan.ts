@@ -1,0 +1,363 @@
+import type { WorkerBinding as UploadBinding } from "@appflare/cf-api";
+import {
+  type ArtifactManifest,
+  artifactManifestSchema,
+  type SigningKey,
+  signingKeys,
+  verifyManifestSignature,
+} from "@appflare/schema";
+import { z } from "zod";
+import { ArtifactError } from "../install/artifact";
+import { PASSTHROUGH_BINDING_TYPES } from "../install/bindings";
+import {
+  classifyHealthProbe,
+  HEALTH_MAX_ATTEMPTS,
+  type HealthProbe,
+  type HealthVerdict,
+  isEdge1042,
+} from "../install/health";
+
+/**
+ * The pure decisions of the manager's self-update: which signed manifests
+ * describe an Appflare release, which bindings the new version gets, whether
+ * the new version's preview is healthy, and how the version history grows.
+ */
+
+/** The artifact manifest's `app` of every manager release. */
+export const MANAGER_APP = "appflare";
+
+/** The binding that tells a manager build its own version. */
+export const VERSION_BINDING = "APPFLARE_VERSION";
+
+/**
+ * Manager releases are signed with `appflare-*` key ids (today
+ * `appflare-2026-09`); catalog artifacts use `catalog-*` ids. A catalog key
+ * must never be able to replace the manager, even while both ids share one
+ * keypair.
+ */
+export function isManagerKeyId(keyId: string): boolean {
+  return keyId.startsWith("appflare-");
+}
+
+/**
+ * Verifies a manager release's `manifest.json` against `manifest.sig`: the
+ * signature (key selected by the manifest's `keyId`; unknown ids and
+ * `unsigned` are rejected), a manager key id, the schema, `app`, and the
+ * requested version. Throws `ArtifactError`.
+ */
+export async function verifyManagerManifest(
+  manifestBytes: Uint8Array,
+  signatureBase64: string,
+  expectedVersion: string,
+  keys: readonly SigningKey[] = signingKeys,
+): Promise<ArtifactManifest> {
+  let keyId: string;
+  try {
+    ({ keyId } = await verifyManifestSignature(manifestBytes, signatureBase64.trim(), keys));
+  } catch (error) {
+    throw new ArtifactError(error instanceof Error ? error.message : String(error));
+  }
+  if (!isManagerKeyId(keyId)) {
+    throw new ArtifactError(
+      `manifest.json is signed with "${keyId}", which does not sign Appflare releases`,
+    );
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(new TextDecoder().decode(manifestBytes));
+  } catch {
+    throw new ArtifactError("manifest.json is not valid JSON");
+  }
+  const parsed = artifactManifestSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new ArtifactError(
+      `manifest.json is not a valid artifact manifest: ${parsed.error.message}`,
+    );
+  }
+  const manifest = parsed.data;
+  if (manifest.app !== MANAGER_APP) {
+    throw new ArtifactError(`the artifact is "${manifest.app}", not an Appflare release`);
+  }
+  if (manifest.version !== expectedVersion) {
+    throw new ArtifactError(
+      `the artifact is version ${manifest.version}, the release is ${expectedVersion}`,
+    );
+  }
+  if (manifest.worker.migrations.length > 0) {
+    throw new ArtifactError(
+      "the release declares Durable Object migrations, which a self-update cannot apply",
+    );
+  }
+  return manifest;
+}
+
+const currentBindingSchema = z.looseObject({ type: z.string().min(1), name: z.string().min(1) });
+
+export interface SelfUpdateBindings {
+  /** Every binding the new version is uploaded with, except secrets and the assets binding. */
+  bindings: UploadBinding[];
+  /** The D1 database behind `DB`, for the snapshot's bookmark; null when unknown. */
+  databaseId: string | null;
+  /** Why the upload cannot proceed; empty when it can. */
+  problems: string[];
+  /** Bindings copied as the API reported them, without Appflare knowing their type. */
+  warnings: string[];
+}
+
+/** Bindings the manager cannot run without. */
+const REQUIRED: ReadonlyArray<{ name: string; type: string }> = [
+  { name: "DB", type: "d1" },
+  { name: "KV", type: "kv_namespace" },
+  { name: "JOBS", type: "workflow" },
+];
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * The new version's bindings, copied from the running script
+ * (`GET /workers/scripts/<name>/bindings`) rather than from the artifact:
+ * the manager's D1, KV, and Workflow were created for this account, and a
+ * manager installed under another name has its Workflow named after it
+ * (`<name>-jobs`), which must stay bound or every job is lost.
+ *
+ * - `secret_text` bindings are left out; `keep_bindings` carries them.
+ * - The `assets` binding is left out; the upload sends it with the new assets.
+ * - `APPFLARE_VERSION` becomes the new version; another var reported without
+ *   its value is refused rather than emptied.
+ * - A binding of a type Appflare does not know is copied as reported, with a
+ *   warning for the job log.
+ * - A binding the new version declares that the Worker lacks is added when it
+ *   needs no resource (a var, Workers AI, ...); one that needs a resource is
+ *   refused, since the manager does not create resources for itself.
+ */
+export function selfUpdateBindings(input: {
+  current: readonly unknown[];
+  manifest: Pick<ArtifactManifest, "worker" | "assets">;
+  workerName: string;
+  newVersion: string;
+}): SelfUpdateBindings {
+  const { manifest, workerName, newVersion } = input;
+  const problems: string[] = [];
+  const warnings: string[] = [];
+  const out: UploadBinding[] = [];
+  let databaseId: string | null = null;
+  const assetsBinding = manifest.assets.binding;
+
+  for (const raw of input.current) {
+    const parsed = currentBindingSchema.safeParse(raw);
+    if (!parsed.success) continue;
+    const b = parsed.data;
+    switch (b.type) {
+      case "secret_text":
+        continue;
+      case "assets":
+        continue;
+      case "d1": {
+        // The API reports `database_id` (older answers: `id`); uploads take `id`.
+        const id = text(b.database_id) ?? text(b.id);
+        if (id === undefined) {
+          problems.push(`The running Worker reports D1 binding ${b.name} without a database id.`);
+          continue;
+        }
+        if (b.name === "DB") databaseId = id;
+        out.push({ type: "d1", name: b.name, id });
+        continue;
+      }
+      case "kv_namespace": {
+        const id = text(b.namespace_id);
+        if (id === undefined) {
+          problems.push(`The running Worker reports KV binding ${b.name} without a namespace id.`);
+          continue;
+        }
+        out.push({ type: "kv_namespace", name: b.name, namespace_id: id });
+        continue;
+      }
+      case "workflow": {
+        const workflowName = text(b.workflow_name);
+        if (workflowName === undefined) {
+          problems.push(`The running Worker reports Workflow binding ${b.name} without a name.`);
+          continue;
+        }
+        const binding: UploadBinding = {
+          type: "workflow",
+          name: b.name,
+          workflow_name: workflowName,
+        };
+        // The class that implements the Workflow; the new version's own
+        // declaration fills it in if the API left it out.
+        const declared = manifest.worker.bindings.find(
+          (w) => w.type === "workflow" && w.name === b.name,
+        );
+        const className = text(b.class_name) ?? text(declared?.class_name);
+        if (className !== undefined) binding.class_name = className;
+        const scriptName = text(b.script_name);
+        if (scriptName !== undefined && scriptName !== workerName) binding.script_name = scriptName;
+        out.push(binding);
+        continue;
+      }
+      case "plain_text": {
+        if (b.name === VERSION_BINDING) {
+          out.push({ type: "plain_text", name: b.name, text: newVersion });
+        } else if (typeof b.text === "string") {
+          out.push({ type: "plain_text", name: b.name, text: b.text });
+        } else {
+          problems.push(
+            `The running Worker reports variable ${b.name} without its value, so the new version cannot keep it.`,
+          );
+        }
+        continue;
+      }
+      default:
+        // Sent back as the API reported it. Types an install also sends as
+        // recorded carry no account ids; for any other, say so in the log.
+        if (!PASSTHROUGH_BINDING_TYPES.has(b.type)) {
+          warnings.push(
+            `Binding ${b.name} has type "${b.type}", which Appflare does not know; it is copied to the new version as Cloudflare reports it.`,
+          );
+        }
+        out.push({ ...b });
+    }
+  }
+
+  const byName = new Map(out.map((b) => [b.name, b]));
+  for (const wanted of manifest.worker.bindings) {
+    if (wanted.name === assetsBinding || wanted.type === "secret_text") continue;
+    const have = byName.get(wanted.name);
+    if (have !== undefined) {
+      if (have.type !== wanted.type) {
+        problems.push(
+          `Binding ${wanted.name} is a ${have.type} binding on the running Worker and a ${wanted.type} binding in the new version.`,
+        );
+      }
+      continue;
+    }
+    if (PASSTHROUGH_BINDING_TYPES.has(wanted.type)) {
+      const added: UploadBinding = { ...wanted };
+      out.push(added);
+      byName.set(added.name, added);
+    } else {
+      problems.push(
+        `The new version needs a ${wanted.type} binding ${wanted.name}, which the running Worker does not have; Appflare does not create resources for itself.`,
+      );
+    }
+  }
+
+  const version = byName.get(VERSION_BINDING);
+  if (version === undefined) {
+    out.push({ type: "plain_text", name: VERSION_BINDING, text: newVersion });
+  } else if (version.type === "plain_text") {
+    version.text = newVersion;
+  }
+
+  for (const req of REQUIRED) {
+    const b = byName.get(req.name);
+    if (b === undefined || b.type !== req.type) {
+      problems.push(`The running Worker has no ${req.type} binding ${req.name}.`);
+    }
+  }
+  return { bindings: out, databaseId, problems, warnings };
+}
+
+/**
+ * The canary verdict for the new version's preview `/api/health`. Retries
+ * while the preview is not reachable yet (error 1042, a connection error, a
+ * 404 while the route propagates) and on a 5xx for a short grace period (the
+ * first request of the new version migrates the database). Healthy only when
+ * the body is Appflare's health report naming the new version with `db: "ok"`.
+ */
+export function classifyManagerCanary(
+  probe: HealthProbe,
+  expectedVersion: string,
+  attempt: number,
+  elapsedMs: number,
+  maxAttempts: number = HEALTH_MAX_ATTEMPTS,
+): HealthVerdict {
+  const last = attempt >= maxAttempts;
+  if (probe.kind === "error" || isEdge1042(probe) || probe.status >= 500) {
+    const verdict = classifyHealthProbe(probe, attempt, elapsedMs, maxAttempts);
+    return verdict.verdict === "healthy"
+      ? { verdict: "unhealthy", reason: `the preview answered HTTP ${verdict.status}` }
+      : verdict;
+  }
+  if (probe.status === 404) {
+    return last
+      ? { verdict: "unhealthy", reason: `HTTP 404 after ${attempt} attempts` }
+      : { verdict: "retry", reason: "HTTP 404 (the preview is not live yet)" };
+  }
+  let report: { version?: unknown; db?: unknown } | null = null;
+  try {
+    const parsed: unknown = JSON.parse(probe.body ?? probe.bodyStart);
+    if (typeof parsed === "object" && parsed !== null) report = parsed;
+  } catch {
+    // Not JSON: handled below.
+  }
+  if (report === null || typeof report.version !== "string") {
+    return {
+      verdict: "unhealthy",
+      reason: `the preview answered HTTP ${probe.status} without Appflare's health report`,
+    };
+  }
+  if (report.version !== expectedVersion) {
+    return {
+      verdict: "unhealthy",
+      reason: `the preview reports version ${report.version}, not ${expectedVersion}`,
+    };
+  }
+  if (report.db !== "ok") {
+    return {
+      verdict: "unhealthy",
+      reason: `the preview reports its database as ${JSON.stringify(report.db ?? null)}`,
+    };
+  }
+  if (probe.status < 200 || probe.status >= 300) {
+    return { verdict: "unhealthy", reason: `the preview answered HTTP ${probe.status}` };
+  }
+  return { verdict: "healthy", status: probe.status };
+}
+
+export interface VersionHistoryEntry {
+  version: string;
+  /** The version it replaced. */
+  from: string;
+  jobId: string;
+  /** The Workers version that serves it; null when the job did not record one. */
+  workerVersionId: string | null;
+  /** ISO 8601 */
+  at: string;
+}
+
+const historySchema = z.array(
+  z.object({
+    version: z.string(),
+    from: z.string(),
+    jobId: z.string(),
+    workerVersionId: z.string().nullable(),
+    at: z.string(),
+  }),
+);
+
+/** Entries kept in `settings.manager_version_history`. */
+export const VERSION_HISTORY_LIMIT = 50;
+
+export function parseVersionHistory(json: string | undefined | null): VersionHistoryEntry[] {
+  if (json == null) return [];
+  try {
+    const parsed = historySchema.safeParse(JSON.parse(json));
+    return parsed.success ? parsed.data : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Appends one self-update to the history (once per job), keeping the newest entries. */
+export function appendVersionHistory(
+  json: string | undefined | null,
+  entry: VersionHistoryEntry,
+  limit: number = VERSION_HISTORY_LIMIT,
+): string {
+  const history = parseVersionHistory(json);
+  if (!history.some((e) => e.jobId === entry.jobId)) history.push(entry);
+  return JSON.stringify(history.slice(-limit));
+}

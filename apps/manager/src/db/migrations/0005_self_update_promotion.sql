@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `promoting_version` text;

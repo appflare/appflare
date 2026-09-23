@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WORKER_NAME,
   discoverWorkerName,
+  isVersionPreviewHost,
   workerNameCandidates,
   workerNameFromHost,
   workersDevSubdomainFromHost,
@@ -82,5 +83,16 @@ describe("discoverWorkerName", () => {
   it("fails on a custom host without an `appflare` script", () => {
     const result = discoverWorkerName("apps.example.com", scripts());
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("isVersionPreviewHost", () => {
+  it("recognizes the Worker's version preview hosts and nothing else", () => {
+    expect(isVersionPreviewHost("0a1b2c3d-appflare.team.workers.dev", "appflare")).toBe(true);
+    expect(isVersionPreviewHost("0a1b2c3d-appflare.team.workers.dev", null)).toBe(true);
+    expect(isVersionPreviewHost("appflare.team.workers.dev", "appflare")).toBe(false);
+    expect(isVersionPreviewHost("0a1b2c3d-other.team.workers.dev", "appflare")).toBe(false);
+    expect(isVersionPreviewHost("deadbeef-app.team.workers.dev", "deadbeef-app")).toBe(false);
+    expect(isVersionPreviewHost("0a1b2c3d-appflare.example.com", "appflare")).toBe(false);
   });
 });

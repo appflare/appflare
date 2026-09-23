@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { fakeStep } from "../test/fake-step";
-import { JOB_HANDLERS, NOT_IMPLEMENTED, runJob } from "./run-job";
+import { JOB_HANDLERS, runJob } from "./run-job";
 
 beforeEach(async () => {
   await reset();
@@ -17,20 +17,6 @@ beforeEach(async () => {
 });
 
 describe("runJob", () => {
-  it("marks a job of an unimplemented kind failed and ends without retries", async () => {
-    const step = fakeStep();
-    await expect(runJob({ kind: "self_update", jobId: "job1" }, step, env)).rejects.toThrow(
-      /not implemented/,
-    );
-    expect(step.names).toEqual(["mark job failed"]);
-    const row = await env.DB.prepare(
-      "SELECT status, error, finished_at FROM jobs WHERE id = 'job1'",
-    ).first<{ status: string; error: string; finished_at: number | null }>();
-    expect(row?.status).toBe("failed");
-    expect(row?.error).toBe(NOT_IMPLEMENTED);
-    expect(row?.finished_at).not.toBeNull();
-  });
-
   it("rejects a payload without a known kind", async () => {
     await expect(runJob({ kind: "explode", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
       /invalid job payload/,
@@ -59,6 +45,13 @@ describe("runJob", () => {
     );
     await expect(runJob({ kind: "rollback", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
       /invalid rollback job payload/,
+    );
+  });
+
+  it("dispatches self_update to its handler, which rejects a payload without its fields", async () => {
+    expect(JOB_HANDLERS.self_update.name).toBe("runSelfUpdate");
+    await expect(runJob({ kind: "self_update", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
+      /invalid self-update job payload/,
     );
   });
 });

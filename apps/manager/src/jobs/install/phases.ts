@@ -30,6 +30,7 @@ import {
   HEALTH_MAX_ATTEMPTS,
   HEALTH_RETRY_DELAY,
   type HealthProbe,
+  type HealthVerdict,
   probeHealth,
   versionMismatch,
 } from "./health";
@@ -239,6 +240,8 @@ export async function uploadAssetsPhase(
   workerName: string,
   zipUrl: string,
   files: readonly AssetFile[],
+  /** Wraps the step's fetch for the artifact host (the self-update's release feed needs it). */
+  wrapFetch: (fetch: FetchLike) => FetchLike = (fetch) => fetch,
 ): Promise<string | null> {
   if (files.length === 0) return null;
   const session = await steps.run("open assets upload session", 1, async ({ log, cf }) => {
@@ -277,7 +280,7 @@ export async function uploadAssetsPhase(
               `Cloudflare asked for an asset (${hash}) the artifact does not have`,
             );
           }
-          const got = await fetchArtifactFile(fetch, zipUrl, file);
+          const got = await fetchArtifactFile(wrapFetch(fetch), zipUrl, file);
           bytes += got.bytes.byteLength;
           payload.push({ hash, bytes: got.bytes, contentType: assetContentType(file.route) });
         }
@@ -429,6 +432,13 @@ export interface ProbePhaseOptions {
   maxAttempts?: number;
   /** When set, a JSON answer reporting another `version` fails (see `versionMismatch`). */
   expectVersion?: string;
+  /** Replaces the default verdict (`classifyHealthProbe`, any non-5xx is healthy). */
+  classify?: (
+    probe: HealthProbe,
+    attempt: number,
+    elapsedMs: number,
+    maxAttempts: number,
+  ) => HealthVerdict;
 }
 
 /**
@@ -449,7 +459,12 @@ export async function probeUntilHealthy(
     const checked = await steps.run(`${opts.label} check ${attempt}`, 1, async ({ log, fetch }) => {
       const at = steps.now();
       const probe: HealthProbe = await probeHealth(fetch, opts.url);
-      const verdict = classifyHealthProbe(probe, attempt, at - (firstProbeAt ?? at), maxAttempts);
+      const verdict = (opts.classify ?? classifyHealthProbe)(
+        probe,
+        attempt,
+        at - (firstProbeAt ?? at),
+        maxAttempts,
+      );
       if (verdict.verdict === "unhealthy") throw new JobError(verdict.reason);
       const wrong =
         verdict.verdict === "healthy" && opts.expectVersion !== undefined

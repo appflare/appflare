@@ -1,7 +1,13 @@
 import { Badge, Banner, Empty, LayerCard, LinkButton, Loader, Table, Text } from "@cloudflare/kumo";
-import { ArrowRightIcon, ListChecksIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import {
+  ArrowRightIcon,
+  ArrowsClockwiseIcon,
+  ListChecksIcon,
+  WarningCircleIcon,
+} from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useState } from "react";
+import { compareVersions } from "../../../catalog/versions";
 import { formatDateTime, formatTime, jobKindLabel } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
@@ -23,7 +29,9 @@ export const Route = createFileRoute("/_app/jobs/$jobId")({
 
 /**
  * Polls `getJob` every 2 s while the job is queued or running and stops once it
- * has finished (the free plan allows 100k requests a day).
+ * has finished (the free plan allows 100k requests a day). A failed poll (for
+ * example a 5xx or 404 while Appflare switches versions) is retried on the next
+ * tick; an answer without the job never replaces the job already shown.
  */
 function useLiveJob(jobId: string, initial: JobView | null): JobView | null {
   const [job, setJob] = useState(initial);
@@ -35,7 +43,7 @@ function useLiveJob(jobId: string, initial: JobView | null): JobView | null {
     const timer = setInterval(async () => {
       try {
         const next = await getJob({ data: { jobId } });
-        if (!cancelled) setJob(next);
+        if (!cancelled && next !== null) setJob(next);
       } catch {
         // A missed poll is retried on the next tick.
       }
@@ -46,6 +54,58 @@ function useLiveJob(jobId: string, initial: JobView | null): JobView | null {
     };
   }, [jobId, active]);
   return job;
+}
+
+/** A finished self-update's page stops watching for the switch after this long. */
+const SWITCH_WATCH_MS = 5 * 60 * 1000;
+
+/**
+ * A self-update replaces the code serving this page. Polls `/api/health` (a
+ * plain URL every version serves, unlike server functions, whose ids change
+ * between builds) while the job runs, and after it succeeded until a version
+ * at least as new as the target answers (at most a few minutes). Reports
+ * whether an older version still answers. When the target version starts
+ * answering after an older one did, the page reloads once to load the new
+ * version's client.
+ */
+function useVersionSwitch(job: JobView | null): { switching: boolean } {
+  const target = job?.kind === "self_update" ? job.targetVersion : null;
+  const [seen, setSeen] = useState<string | null>(null);
+  const [sawOlder, setSawOlder] = useState(false);
+  /** The answering version is the target or newer (or cannot be compared). */
+  const arrived = seen !== null && target !== null && (compareVersions(seen, target) ?? 0) >= 0;
+  const recentlyFinished =
+    job?.finishedAt == null || Date.now() - new Date(job.finishedAt).getTime() < SWITCH_WATCH_MS;
+  const watching =
+    target !== null &&
+    job !== null &&
+    (isActive(job) || (job.status === "succeeded" && recentlyFinished && !arrived));
+  useEffect(() => {
+    if (!watching || target === null) return;
+    let cancelled = false;
+    async function check() {
+      try {
+        const res = await fetch("/api/health", { cache: "no-store" });
+        const body = (await res.json()) as { version?: unknown };
+        if (cancelled || typeof body.version !== "string") return;
+        const version = body.version;
+        setSeen(version);
+        if ((compareVersions(version, target ?? version) ?? 0) < 0) setSawOlder(true);
+      } catch {
+        // Unreachable during the switch; the next tick retries.
+      }
+    }
+    void check();
+    const timer = setInterval(check, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [watching, target]);
+  useEffect(() => {
+    if (arrived && sawOlder && job?.status !== "failed") window.location.reload();
+  }, [arrived, sawOlder, job?.status]);
+  return { switching: watching && seen !== null && !arrived };
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -62,6 +122,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 function JobPage() {
   const { jobId } = Route.useParams();
   const job = useLiveJob(jobId, Route.useLoaderData());
+  const { switching } = useVersionSwitch(job);
 
   if (job === null) {
     return (
@@ -111,8 +172,19 @@ function JobPage() {
                 <span className="font-mono text-[0.9em]">{job.install.workerName}</span>
               </Row>
             )}
+            {job.targetVersion !== null && (
+              <Row label="Appflare version">
+                <span className="font-mono text-[0.9em]">{job.targetVersion}</span>
+              </Row>
+            )}
             {job.workerVersionId !== null && (
-              <Row label={job.kind === "update" ? "New Worker version" : "Worker version"}>
+              <Row
+                label={
+                  job.kind === "update" || job.kind === "self_update"
+                    ? "New Worker version"
+                    : "Worker version"
+                }
+              >
                 <span className="font-mono text-[0.9em]">{job.workerVersionId}</span>
               </Row>
             )}
@@ -121,6 +193,14 @@ function JobPage() {
           </dl>
         </LayerCard.Primary>
       </LayerCard>
+      {switching && (
+        <Banner
+          variant="secondary"
+          icon={<ArrowsClockwiseIcon />}
+          title="Appflare is switching versions…"
+          description={`The current version keeps serving until ${job.targetVersion ?? "the new version"} has passed its checks and takes over. This page reloads once it answers.`}
+        />
+      )}
       {job.status === "failed" && job.error !== null && (
         <Banner
           variant="error"

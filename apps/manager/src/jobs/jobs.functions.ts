@@ -30,6 +30,8 @@ export interface JobView {
   error: string | null;
   /** The Workers version an update uploaded or a rollback deployed. */
   workerVersionId: string | null;
+  /** A self-update's target Appflare version; null for other kinds. */
+  targetVersion: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   install: {
@@ -41,6 +43,17 @@ export interface JobView {
     status: string;
   } | null;
   logs: JobLogRow[];
+}
+
+/** The `version` a self-update's input names. */
+function targetVersionOf(kind: string, inputJson: string | null): string | null {
+  if (kind !== "self_update" || inputJson === null) return null;
+  try {
+    const version = (JSON.parse(inputJson) as { version?: unknown }).version;
+    return typeof version === "string" ? version : null;
+  } catch {
+    return null;
+  }
 }
 
 function splitData(json: string | null): { requests: string[]; detail: string | null } {
@@ -95,6 +108,7 @@ export const getJob = createServerFn({ method: "GET" })
       status: job.status,
       error: job.error,
       workerVersionId: job.worker_version_id,
+      targetVersion: targetVersionOf(job.kind, job.input_json),
       startedAt: job.started_at?.toISOString() ?? null,
       finishedAt: job.finished_at?.toISOString() ?? null,
       install: installRows[0] ?? null,

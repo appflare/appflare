@@ -4,7 +4,14 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { createDb } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
+import type { WorkflowLookup } from "../jobs/reconcile.server";
 import type { RollbackJobParams } from "../jobs/rollback";
+import {
+  activeSelfUpdateJob,
+  NO_ACTIVE_SELF_UPDATE_SQL,
+  refuseDuringSelfUpdate,
+  selfUpdateBusyMessage,
+} from "../jobs/self-update/guard";
 import { StepLog } from "../jobs/step-log";
 import type { UpdateJobParams } from "../jobs/update";
 import {
@@ -30,6 +37,8 @@ export class VersionActionError extends Error {
 
 export interface StartJobDeps<P> {
   db: D1Database;
+  /** The Workflow binding, to settle a self-update whose instance died before refusing to start. */
+  workflows?: WorkflowLookup;
   /** Creates the Workflow instance (`env.JOBS.create`). */
   createJob(id: string, params: P): Promise<{ id: string }>;
   now?: () => Date;
@@ -69,6 +78,7 @@ async function claim<P extends { jobId: string }>(
   deps: StartJobDeps<P>,
   input: { installId: string; kind: "update" | "rollback"; inputJson: string; params: P },
 ): Promise<{ jobId: string }> {
+  await refuseDuringSelfUpdate(deps.db, deps.workflows, (m) => new VersionActionError(m));
   const now = (deps.now ?? (() => new Date()))();
   const jobId = input.params.jobId;
   const [claimed] = await deps.db.batch([
@@ -79,7 +89,8 @@ async function claim<P extends { jobId: string }>(
          WHERE EXISTS (SELECT 1 FROM installs WHERE id = ?2 AND status = 'installed')
            AND NOT EXISTS (
              SELECT 1 FROM jobs WHERE install_id = ?2 AND status IN ('queued', 'running')
-           )`,
+           )
+           AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
       )
       .bind(jobId, input.installId, input.kind, input.inputJson),
     deps.db
@@ -89,7 +100,10 @@ async function claim<P extends { jobId: string }>(
       )
       .bind(jobId, input.installId, now.getTime()),
   ]);
-  if (claimed?.meta.changes !== 1) throw new VersionActionError(BUSY);
+  if (claimed?.meta.changes !== 1) {
+    const selfUpdate = await activeSelfUpdateJob(deps.db);
+    throw new VersionActionError(selfUpdate === null ? BUSY : selfUpdateBusyMessage(selfUpdate));
+  }
 
   const db = createDb(deps.db);
   let instanceId: string;
@@ -256,6 +270,8 @@ export async function startRollbackCore(
 
 export interface RestoreDatabaseDeps {
   db: D1Database;
+  /** The Workflow binding, to settle a self-update whose instance died before refusing to start. */
+  workflows?: WorkflowLookup;
   /** `d1.restore(databaseId, { bookmark })`, reporting each API call to `onRequest`. */
   restore(
     databaseId: string,
@@ -292,6 +308,7 @@ export async function restoreDatabaseCore(
   deps: RestoreDatabaseDeps,
   request: RestoreDatabaseRequest,
 ): Promise<RestoreDatabaseResult> {
+  await refuseDuringSelfUpdate(deps.db, deps.workflows, (m) => new VersionActionError(m));
   const orm = createDb(deps.db);
   const now = deps.now ?? (() => new Date());
   const install = await readInstall(deps.db, request.installId);
@@ -344,11 +361,15 @@ export async function restoreDatabaseCore(
        WHERE EXISTS (SELECT 1 FROM installs WHERE id = ?2 AND status = 'installed')
          AND NOT EXISTS (
            SELECT 1 FROM jobs WHERE install_id = ?2 AND status IN ('queued', 'running')
-         )`,
+         )
+         AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
     )
     .bind(jobId, install.id, JSON.stringify(input), startedAt.getTime())
     .run();
-  if (claimed.meta.changes !== 1) throw new VersionActionError(BUSY);
+  if (claimed.meta.changes !== 1) {
+    const selfUpdate = await activeSelfUpdateJob(deps.db);
+    throw new VersionActionError(selfUpdate === null ? BUSY : selfUpdateBusyMessage(selfUpdate));
+  }
 
   const log = new StepLog(() => now().getTime());
   log.info(

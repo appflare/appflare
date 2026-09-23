@@ -40,6 +40,10 @@ export interface FakeAccount {
   hasPreview: boolean;
   /** Keys (`METHOD /path`) answered once with this status instead of doing the work. */
   failOnce: Map<string, number>;
+  /** The Worker whose script routes and workers.dev hosts this fake serves. */
+  worker: string;
+  /** What `GET /workers/scripts/<worker>/bindings` answers. */
+  bindings: unknown[];
 }
 
 export const NEW_VERSION = "0a1b2c3d-4e5f-4789-8bcd-ef0123456789";
@@ -68,8 +72,11 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     previewHosts: [],
     hasPreview: true,
     failOnce: new Map(),
+    worker: "cut",
+    bindings: [],
     ...over,
   };
+  const script = `/workers/scripts/${state.worker}`;
   const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
     Response.json({ success: true, errors: [], messages: [], result, ...extra });
   const fail = (status: number, message: string) =>
@@ -94,9 +101,11 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     switch (key) {
       case "GET /workers/subdomain":
         return ok({ subdomain: SUBDOMAIN });
-      case "GET /workers/scripts/cut/deployments":
+      case `GET ${script}/bindings`:
+        return ok(state.bindings);
+      case `GET ${script}/deployments`:
         return ok({ deployments: state.deployments });
-      case "POST /workers/scripts/cut/deployments": {
+      case `POST ${script}/deployments`: {
         state.deployForced.push(url.searchParams.get("force") === "true");
         const body = (await request.json()) as {
           versions: Array<{ version_id: string; percentage: number }>;
@@ -112,7 +121,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
         state.deployments.unshift(deployment);
         return ok(deployment);
       }
-      case "POST /workers/scripts/cut/versions": {
+      case `POST ${script}/versions`: {
         const form = await request.formData();
         const metadata = JSON.parse(String(form.get("metadata"))) as Record<string, unknown>;
         const id = state.versions.length === 0 ? NEW_VERSION : `version-${state.versions.length}`;
@@ -127,7 +136,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
           metadata: { has_preview: state.hasPreview },
         });
       }
-      case "PUT /workers/scripts/cut": {
+      case `PUT ${script}`: {
         // A full deploy: the new version serves at once.
         const form = await request.formData();
         const metadata = JSON.parse(String(form.get("metadata"))) as Record<string, unknown>;
@@ -141,12 +150,12 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
           id: `dep-${state.deployments.length + 1}`,
           versions: [{ version_id: id, percentage: 100 }],
         });
-        return ok({ id: "cut", deployment_id: id.replace(/-/g, "") });
+        return ok({ id: state.worker, deployment_id: id.replace(/-/g, "") });
       }
-      case "POST /workers/scripts/cut/subdomain":
+      case `POST ${script}/subdomain`:
         state.subdomainCalls.push(await request.json());
         return ok({ enabled: true, previews_enabled: true });
-      case "PUT /workers/scripts/cut/schedules": {
+      case `PUT ${script}/schedules`: {
         const body = (await request.json()) as Array<{ cron: string }>;
         state.schedules = body.map((s) => s.cron);
         return ok({ schedules: body });
@@ -161,7 +170,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       }
       case "GET /d1/database":
         return ok(state.d1, { result_info: { page: 1, total_pages: 1 } });
-      case "POST /workers/scripts/cut/assets-upload-session": {
+      case `POST ${script}/assets-upload-session`: {
         const { manifest } = (await request.json()) as {
           manifest: Record<string, { hash: string }>;
         };
@@ -220,8 +229,8 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       return cloudflare(new Request(input, init));
     }
     const host = new URL(input).host;
-    if (host === `cut.${SUBDOMAIN}.workers.dev`) return next(state.health);
-    if (host.endsWith(`-cut.${SUBDOMAIN}.workers.dev`)) {
+    if (host === `${state.worker}.${SUBDOMAIN}.workers.dev`) return next(state.health);
+    if (host.endsWith(`-${state.worker}.${SUBDOMAIN}.workers.dev`)) {
       state.previewHosts.push(host);
       return next(state.previews);
     }

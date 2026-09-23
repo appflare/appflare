@@ -4,6 +4,13 @@ import { ulid } from "ulidx";
 import { createDb } from "../db/client";
 import { installs, jobs } from "../db/schema";
 import type { InstallJobParams } from "../jobs/install";
+import type { WorkflowLookup } from "../jobs/reconcile.server";
+import {
+  activeSelfUpdateJob,
+  NO_ACTIVE_SELF_UPDATE_SQL,
+  refuseDuringSelfUpdate,
+  selfUpdateBusyMessage,
+} from "../jobs/self-update/guard";
 import type { StartInstallInput } from "./install-input";
 
 /**
@@ -28,6 +35,8 @@ export interface CatalogEntry {
 
 export interface StartInstallDeps {
   db: D1Database;
+  /** The Workflow binding, to settle a self-update whose instance died before refusing to start. */
+  workflows?: WorkflowLookup;
   /** The index entry and its verified manifest; throws `StartInstallError` when unavailable. */
   loadApp(slug: string): Promise<CatalogEntry>;
   /** Creates the Workflow instance (`env.JOBS.create`). */
@@ -98,6 +107,7 @@ export async function startInstallCore(
   deps: StartInstallDeps,
   input: StartInstallInput,
 ): Promise<StartInstallResult> {
+  await refuseDuringSelfUpdate(deps.db, deps.workflows, (m) => new StartInstallError(m));
   const { app, manifest } = await deps.loadApp(input.slug);
   const resolved = resolveInstallInput(manifest, input);
   const fixed = hasFixedWorkerName(manifest.catalog.install);
@@ -163,7 +173,8 @@ export async function startInstallCore(
          WHERE NOT EXISTS (
            SELECT 1 FROM installs
            WHERE status != 'uninstalled' AND (worker_name = ?3 OR (?11 = 1 AND app_slug = ?2))
-         )`,
+         )
+           AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
       )
       .bind(
         installId,
@@ -182,11 +193,15 @@ export async function startInstallCore(
       .prepare(
         `INSERT INTO jobs (id, install_id, kind, status, input_json)
          SELECT ?1, ?2, 'install', 'queued', ?3
-         WHERE EXISTS (SELECT 1 FROM installs WHERE id = ?2)`,
+         WHERE EXISTS (SELECT 1 FROM installs WHERE id = ?2)
+           AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
       )
       .bind(jobId, installId, inputJson),
   ]);
   if (claimed?.meta.changes !== 1) {
+    // A self-update that started after the check above wins the claim.
+    const selfUpdate = await activeSelfUpdateJob(deps.db);
+    if (selfUpdate !== null) throw new StartInstallError(selfUpdateBusyMessage(selfUpdate));
     const [clash] = await db
       .select({ status: installs.status, worker: installs.worker_name })
       .from(installs)

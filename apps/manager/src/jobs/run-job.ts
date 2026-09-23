@@ -1,12 +1,11 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import type { FetchLike } from "@appflare/cf-api";
 import type { SigningKey } from "@appflare/schema";
-import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { createDb } from "../db/client";
-import { JOB_KINDS, type JobKind, jobs } from "../db/schema";
+import { JOB_KINDS, type JobKind } from "../db/schema";
 import { runInstall } from "./install";
 import { runRollback } from "./rollback";
+import { runSelfUpdate } from "./self-update";
 import { runUninstall } from "./uninstall";
 import { runUpdate } from "./update";
 
@@ -63,6 +62,10 @@ export interface JobEnv {
   CF_API_TOKEN?: string;
   /** Optional Cloudflare API base override (tests, local dev against a fake API). */
   CF_API_BASE_URL?: string;
+  /** The running manager's version; the self-update compares it with its target. */
+  APPFLARE_VERSION?: string;
+  /** Reads the manager's release assets while its repository is private. Never logged. */
+  GITHUB_TOKEN?: string;
 }
 
 /** Test seams. Production uses the global `fetch`, `signingKeys`, and `Date.now`. */
@@ -81,29 +84,11 @@ export interface JobContext {
 
 export type JobHandler = (ctx: JobContext) => Promise<void>;
 
-export const NOT_IMPLEMENTED = "not implemented";
-
-export async function markJobFailed(db: D1Database, jobId: string, error: string): Promise<void> {
-  await createDb(db)
-    .update(jobs)
-    .set({ status: "failed", error, finished_at: new Date() })
-    .where(eq(jobs.id, jobId));
-}
-
-/** Records the failure on the job row, then ends the instance without retries. */
-const notImplemented: JobHandler = async ({ params, step, env }) => {
-  await step.do("mark job failed", async () => {
-    await markJobFailed(env.DB, params.jobId, NOT_IMPLEMENTED);
-    return null;
-  });
-  throw new NonRetryableError(`job kind "${params.kind}" is ${NOT_IMPLEMENTED}`);
-};
-
 export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   install: runInstall,
   update: runUpdate,
   rollback: runRollback,
-  self_update: notImplemented, // TODO: the self-update job.
+  self_update: runSelfUpdate,
   uninstall: runUninstall,
 };
 

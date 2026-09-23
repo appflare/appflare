@@ -116,6 +116,13 @@ export const jobs = sqliteTable(
     error: text("error"),
     /** The Workers version the job uploaded (update) or deployed (rollback). */
     worker_version_id: text("worker_version_id"),
+    /**
+     * Self-update only: the Appflare version the job is promoting, written
+     * right before the promotion. The new version completes a job left
+     * running only when this names it, so a preview request (which runs the
+     * new code before the switch) can never complete the job.
+     */
+    promoting_version: text("promoting_version"),
     started_at: timestamp("started_at"),
     finished_at: timestamp("finished_at"),
   },
@@ -142,14 +149,16 @@ export const job_logs = sqliteTable(
  * Recovery data taken before an update (glossary: snapshot): the Worker
  * version that was serving, a D1 Time Travel bookmark per database, and the
  * install's catalog state at that moment, so a rollback can put all of it back.
+ * A snapshot of the manager itself (taken by its self-update) has no install:
+ * `install_id` is null, `catalog_version` is the manager's version before the
+ * update and `target_catalog_version` the one it moved to.
  */
 export const snapshots = sqliteTable(
   "snapshots",
   {
     id: text("id").primaryKey(),
-    install_id: text("install_id")
-      .notNull()
-      .references(() => installs.id),
+    /** Null for a snapshot of the manager itself. */
+    install_id: text("install_id").references(() => installs.id),
     /** The update job that took it. */
     job_id: text("job_id")
       .notNull()

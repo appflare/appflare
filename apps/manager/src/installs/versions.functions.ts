@@ -46,6 +46,7 @@ export const startUpdate = createServerFn({ method: "POST" })
       startUpdateCore(
         {
           db: env.DB,
+          workflows: env.JOBS,
           async loadApp(slug) {
             const read = await getCatalogApp(env, slug);
             if (!read.ok) throw new VersionActionError(read.error);
@@ -70,7 +71,11 @@ export const startRollback = createServerFn({ method: "POST" })
     await requireRole("admin");
     return asUserError(() =>
       startRollbackCore(
-        { db: env.DB, createJob: (id, params) => env.JOBS.create({ id, params }) },
+        {
+          db: env.DB,
+          workflows: env.JOBS,
+          createJob: (id, params) => env.JOBS.create({ id, params }),
+        },
         data,
       ),
     );
@@ -88,6 +93,7 @@ export const restoreDatabase = createServerFn({ method: "POST" })
       restoreDatabaseCore(
         {
           db: env.DB,
+          workflows: env.JOBS,
           async restore(databaseId, bookmark, onRequest) {
             const api = await getCfClient(env, { onRequest });
             return api.d1.restore(databaseId, { bookmark });

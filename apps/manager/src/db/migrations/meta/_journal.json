@@ -29,6 +29,20 @@
       "when": 1790149706180,
       "tag": "0003_update_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790151912890,
+      "tag": "0004_manager_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790153056221,
+      "tag": "0005_self_update_promotion",
+      "breakpoints": true
     }
   ]
 }

@@ -77,3 +77,16 @@ export function discoverWorkerName(
     error: `Appflare could not find its own Worker in this account (looked for ${tried}). Make sure the token is for the account Appflare is installed in.`,
   };
 }
+
+/**
+ * Whether `host` is a version preview of the Worker
+ * (`<first 8 hex of the version id>-<worker>.<subdomain>.workers.dev`). With
+ * the Worker name unknown, any `<8 hex>-` first label counts.
+ */
+export function isVersionPreviewHost(host: string, workerName: string | null): boolean {
+  const label = workerNameFromHost(host);
+  if (label === null) return false;
+  const m = /^[0-9a-f]{8}-(.+)$/.exec(label);
+  if (m === null) return false;
+  return workerName === null || m[1] === workerName.toLowerCase();
+}

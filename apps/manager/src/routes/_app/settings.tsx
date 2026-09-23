@@ -1,5 +1,7 @@
 import { Text } from "@cloudflare/kumo";
 import { createFileRoute } from "@tanstack/react-router";
+import { getManagerUpdate } from "../../catalog/manager-releases.functions";
+import { AppflareUpdatesCard } from "../../components/appflare-updates-card";
 import { CloudflareTokenCard } from "../../components/cloudflare-token-card";
 import { PageHeader } from "../../components/page-header";
 import { PlaceholderCard } from "../../components/placeholder-card";
@@ -7,15 +9,16 @@ import { UsersSection } from "../../components/users-section";
 import { getTokenStatus } from "../../server/token.functions";
 import { listUsers } from "../../server/users.functions";
 
-/** `/settings`: users and the Cloudflare token. */
+/** `/settings`: users, the Cloudflare token, and Appflare's own updates. */
 export const Route = createFileRoute("/_app/settings")({
   staticData: { title: "Settings" },
   loader: async ({ context }) => {
-    const [users, tokenStatus] = await Promise.all([
+    const [users, tokenStatus, managerUpdate] = await Promise.all([
       context.viewer.role === "admin" ? listUsers() : null,
       getTokenStatus(),
+      getManagerUpdate(),
     ]);
-    return { users, tokenStatus };
+    return { users, tokenStatus, managerUpdate };
   },
   component: SettingsPage,
 });
@@ -32,7 +35,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function SettingsPage() {
-  const { users, tokenStatus } = Route.useLoaderData();
+  const { users, tokenStatus, managerUpdate } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   return (
     <>
@@ -51,11 +54,7 @@ function SettingsPage() {
         />
       </Section>
       <Section title="Appflare updates">
-        {/* TODO: self-update from the release feed. */}
-        <PlaceholderCard
-          title="Self-update"
-          description="Update this manager to a new signed release, with rollback."
-        />
+        <AppflareUpdatesCard state={managerUpdate} isAdmin={viewer.role === "admin"} />
       </Section>
       <Section title="Danger zone">
         {/* TODO: danger-zone actions (for example removing the manager's stored token). */}
