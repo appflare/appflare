@@ -113,7 +113,13 @@ The token template requests:
 | Account Settings | Read | Finding the account the token belongs to. |
 | Access: Apps and Policies | Edit | Only for [Protect with Cloudflare Access](/security/#protect-with-cloudflare-access): creating, updating, and deleting the Access applications and policy that guard the manager. |
 | Access: Organizations, Identity Providers, and Groups | Read | Only for [Protect with Cloudflare Access](/security/#protect-with-cloudflare-access): reading the Zero Trust organization's team domain and login methods. |
+| Zone | Read | Only for [custom domains](/guides/custom-domains/): listing your domains when you add one to an app. |
+| DNS | Edit | Only for [custom domains](/guides/custom-domains/): seeing, and with your consent replacing, the DNS records at a new domain's hostname. |
+| Workers Routes | Edit | Only for [custom domains](/guides/custom-domains/): attaching an app's Worker to a hostname. |
 | Workers Tail | Read | Not used by the current version. |
+
+The permissions marked "Only for" are optional: you can remove them from the form if
+you will not use that feature, and everything else works without them.
 
 ### Where the token lives
 

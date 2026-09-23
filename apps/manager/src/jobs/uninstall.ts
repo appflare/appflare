@@ -6,6 +6,13 @@ import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import {
+  type DetachOutcome,
+  detachCustomDomain,
+  detachMessage,
+  isPermissionError,
+} from "../installs/custom-domains.server";
+import {
+  CUSTOM_DOMAIN_KIND,
   DATA_RESOURCE_KINDS,
   type DataResourceKind,
   WORKER_BOUND_KINDS,
@@ -20,9 +27,12 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
 /**
  * The `uninstall` job. One API call per step, retried on 429/5xx like the
  * install; a 404 means the object is already gone and counts as deleted, so a
- * retried or repeated uninstall converges. Order: the Worker first (with
- * `?force=true`, which also removes its cron triggers, workers.dev route,
- * secrets, Durable Objects, and Workflows), then each ticked data resource.
+ * retried or repeated uninstall converges. Order: the install's custom domains
+ * first (always; they hold no data, and Cloudflare does not document that
+ * deleting a Worker removes them, so they get calls of their own),
+ * then the Worker (with `?force=true`, which also removes its cron triggers,
+ * workers.dev route, secrets, Durable Objects, and Workflows), then each
+ * ticked data resource.
  * The Worker is deleted only when this install recorded it: an install that
  * failed before its upload never owned a Worker of that name, and the account
  * may hold someone else's. An R2 bucket must be empty before it can be
@@ -81,6 +91,13 @@ interface Target {
   cfId: string | null;
 }
 
+/** A recorded custom domain: `name` is the hostname, `cfId` the domain's id. */
+interface DomainTarget {
+  id: string;
+  hostname: string;
+  cfId: string | null;
+}
+
 export async function runUninstall(ctx: JobContext): Promise<void> {
   const parsed = uninstallJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid uninstall job payload");
@@ -113,6 +130,10 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         const kind = DATA_RESOURCE_KINDS.find((k) => k === r.kind);
         if (kind !== undefined) targets.push({ id: r.id, kind, name: r.name, cfId: r.cf_id });
       }
+      // Custom domains are never kept: they hold no data.
+      const domains: DomainTarget[] = live
+        .filter((r) => r.kind === CUSTOM_DOMAIN_KIND)
+        .map((r) => ({ id: r.id, hostname: r.name, cfId: r.cf_id }));
       const kept = live.filter((r) => r.retained_at !== null).map((r) => r.name);
       // "live": recorded and not deleted yet; "deleted": an earlier run deleted
       // it; "none": this install never recorded a Worker.
@@ -133,6 +154,9 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       }
       log.info(
         `Uninstalling Worker "${install.workerName}". ` +
+          (domains.length > 0
+            ? `Removing custom domains: ${domains.map((d) => d.hostname).join(", ")}. `
+            : "") +
           (targets.length > 0
             ? `Deleting: ${targets.map((t) => `${RESOURCE_LABEL[t.kind]} ${t.name}`).join(", ")}. `
             : "No data resources to delete. ") +
@@ -142,12 +166,37 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         workerName: install.workerName,
         accountId: settings.account_id,
         targets,
+        domains,
         kept,
         worker,
       };
     });
     steps.setAccountId(started.accountId);
     const { workerName } = started;
+
+    for (const domain of started.domains) {
+      await run(`remove custom domain ${domain.hostname}`, async ({ log, cf, orm }) => {
+        let outcome: DetachOutcome;
+        try {
+          outcome = await detachCustomDomain(cf(), {
+            hostname: domain.hostname,
+            cfId: domain.cfId,
+            workerName,
+          });
+        } catch (error) {
+          if (!isPermissionError(error)) throw error;
+          throw new JobError(
+            `Cloudflare refused to remove the custom domain ${domain.hostname} (${errorMessage(error)}). The token needs Workers Routes: Edit on its zone; add it to the token and retry the uninstall`,
+          );
+        }
+        log.info(detachMessage(domain.hostname, outcome));
+        await orm
+          .update(resources)
+          .set({ deleted_at: new Date(now()) })
+          .where(eq(resources.id, domain.id));
+        return {};
+      });
+    }
 
     const workerStep =
       started.worker === "live" ? `delete Worker ${workerName}` : `skip Worker ${workerName}`;

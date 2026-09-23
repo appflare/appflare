@@ -40,6 +40,8 @@ interface World {
   r2: Map<string, string[]>;
   queues: Set<string>;
   vectorize: Set<string>;
+  /** Custom domains by id: hostname and the Worker it serves. */
+  domains: Map<string, { hostname: string; service: string }>;
   calls: string[];
   /** `METHOD /path` keys answered once with this status instead of doing the work. */
   failOnce: Map<string, number>;
@@ -57,6 +59,7 @@ function fakeWorld(over: Partial<World> = {}) {
     r2: new Map([["cut-files", []]]),
     queues: new Set(["q-1"]),
     vectorize: new Set(["cut-vectors"]),
+    domains: new Map(),
     calls: [],
     failOnce: new Map(),
     stuck: new Set(),
@@ -80,7 +83,17 @@ function fakeWorld(over: Partial<World> = {}) {
       world.failOnce.delete(key);
       return fail(failing, "injected failure");
     }
-    let m = /^DELETE \/workers\/scripts\/([^/]+)$/.exec(key);
+    if (key === "GET /workers/domains") {
+      const hostname = url.searchParams.get("hostname");
+      return ok(
+        [...world.domains]
+          .filter(([, d]) => hostname === null || d.hostname === hostname)
+          .map(([id, d]) => ({ id, ...d, zone_id: "z1", zone_name: "example.com" })),
+      );
+    }
+    let m = /^DELETE \/workers\/domains\/([^/]+)$/.exec(key);
+    if (m?.[1]) return world.domains.delete(m[1]) ? ok(null) : gone();
+    m = /^DELETE \/workers\/scripts\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.scripts.delete(m[1]) ? ok(null) : gone();
     m = /^DELETE \/storage\/kv\/namespaces\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.kv.delete(m[1]) ? ok(null) : gone();
@@ -245,6 +258,118 @@ beforeEach(async () => {
   await reset();
   await createMigrator(migrations).ensure(env.DB);
   await writeSettings(createDb(env.DB), { [SETTING.accountId]: ACC });
+});
+
+/** Records custom domains of install `i1` (`resources` kind `domain`). */
+async function seedDomains(domains: Array<{ id: string; hostname: string; cfId: string | null }>) {
+  for (const d of domains) {
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES (?1, 'i1', 'domain', NULL, ?2, ?3, 1)`,
+    )
+      .bind(d.id, d.hostname, d.cfId)
+      .run();
+  }
+}
+
+describe("uninstall job: custom domains", () => {
+  it("removes every custom domain before the Worker, even when the admin keeps all data", async () => {
+    await seedInstall();
+    await seedDomains([
+      { id: "dom-a", hostname: "cut.example.com", cfId: "cfd-a" },
+      // No id recorded: found by hostname, and only if it still serves this Worker.
+      { id: "dom-b", hostname: "www.example.com", cfId: null },
+    ]);
+    const fake = fakeWorld({
+      domains: new Map([
+        ["cfd-a", { hostname: "cut.example.com", service: "cut" }],
+        ["cfd-b", { hostname: "www.example.com", service: "cut" }],
+        ["cfd-other", { hostname: "blog.example.com", service: "blog" }],
+      ]),
+    });
+    // Ticking a domain changes nothing: it is not a data resource.
+    const r = await uninstall({ installId: "i1", deleteResources: ["dom-a"] }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.params.deleteResources).toEqual([]);
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.step.names.slice(0, 4)).toEqual([
+      "start",
+      "remove custom domain cut.example.com",
+      "remove custom domain www.example.com",
+      "delete Worker cut",
+    ]);
+    const calls = fake.world.calls;
+    const worker = calls.indexOf("DELETE /workers/scripts/cut?force=true");
+    expect(calls.indexOf("DELETE /workers/domains/cfd-a")).toBeLessThan(worker);
+    expect(calls.indexOf("DELETE /workers/domains/cfd-b")).toBeLessThan(worker);
+    expect([...fake.world.domains.keys()]).toEqual(["cfd-other"]);
+    expect(r.state("dom-a")).toBe("deleted");
+    expect(r.state("dom-b")).toBe("deleted");
+    for (const id of ALL_DATA) expect(r.state(id)).toBe("retained");
+    expect(r.logs[0]?.message).toContain(
+      "Removing custom domains: cut.example.com, www.example.com.",
+    );
+  });
+
+  it("leaves a hostname alone when no id is recorded and it now serves another Worker", async () => {
+    await seedInstall();
+    await seedDomains([{ id: "dom-b", hostname: "www.example.com", cfId: null }]);
+    const fake = fakeWorld({
+      domains: new Map([["cfd-blog", { hostname: "www.example.com", service: "blog" }]]),
+    });
+    const r = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(fake.world.domains.has("cfd-blog")).toBe(true);
+    expect(fake.world.calls.some((c) => c.startsWith("DELETE /workers/domains/"))).toBe(false);
+    // No longer this install's: recorded as gone from it.
+    expect(r.state("dom-b")).toBe("deleted");
+    expect(r.logs.map((l) => l.message)).toContain(
+      "Custom domain www.example.com now serves another Worker, so it was left alone.",
+    );
+  });
+
+  it("counts a custom domain that is already gone as removed", async () => {
+    await seedInstall();
+    await seedDomains([
+      { id: "dom-a", hostname: "cut.example.com", cfId: "cfd-a" },
+      { id: "dom-b", hostname: "www.example.com", cfId: null },
+    ]);
+    const fake = fakeWorld();
+    const r = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.state("dom-a")).toBe("deleted");
+    expect(r.state("dom-b")).toBe("deleted");
+    const messages = r.logs.map((l) => l.message);
+    expect(messages).toContain("Custom domain cut.example.com was already gone.");
+    expect(messages).toContain("Custom domain www.example.com was already gone.");
+  });
+
+  it("stops before the Worker when the token cannot remove a domain, and a retry finishes", async () => {
+    await seedInstall();
+    await seedDomains([{ id: "dom-a", hostname: "cut.example.com", cfId: "cfd-a" }]);
+    const fake = fakeWorld({
+      domains: new Map([["cfd-a", { hostname: "cut.example.com", service: "cut" }]]),
+      failOnce: new Map([["DELETE /workers/domains/cfd-a", 403]]),
+    });
+    const r = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake);
+
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^remove custom domain cut\.example\.com: .*Workers Routes: Edit/);
+    expect(r.install?.status).toBe("uninstalling");
+    expect(fake.world.scripts.has("cut")).toBe(true);
+    expect(r.state("dom-a")).toBe("live");
+
+    const retry = await uninstall({ installId: "i1", retry: true }, fake);
+    expect(retry.job?.status).toBe("succeeded");
+    expect(retry.state("dom-a")).toBe("deleted");
+    expect(fake.world.domains.size).toBe(0);
+    expect(fake.world.scripts.has("cut")).toBe(false);
+  });
 });
 
 describe("uninstall job", () => {

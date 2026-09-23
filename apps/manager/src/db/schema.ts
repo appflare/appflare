@@ -40,6 +40,7 @@ export const RESOURCE_KINDS = [
   "cron",
   "secret",
   "subdomain",
+  "domain",
 ] as const;
 
 export const JOB_KINDS = ["install", "update", "uninstall", "rollback", "self_update"] as const;

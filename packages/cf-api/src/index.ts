@@ -43,9 +43,23 @@ export type {
   UploadVersionArgs,
 } from "./namespaces/versions";
 export type {
+  AttachWorkerDomainArgs,
+  ListWorkerDomainsArgs,
+  WorkerDomain,
+} from "./namespaces/worker-domains";
+export { DOMAIN_DNS_RECORD_CONFLICT, DOMAIN_ORIGIN_CONFLICT } from "./namespaces/worker-domains";
+export type {
   EnableSubdomainArgs,
   PutSecretArgs,
   UploadScriptArgs,
 } from "./namespaces/workers";
+
+export type {
+  DnsRecord,
+  ListZonesArgs,
+  WorkerRoute,
+  Zone,
+  ZoneStatus,
+} from "./namespaces/zones";
 
 export type * from "./types";

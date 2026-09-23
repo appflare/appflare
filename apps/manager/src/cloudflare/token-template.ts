@@ -33,6 +33,9 @@ export interface PermissionGroup {
 /** The settings feature that puts the manager behind Cloudflare Access. */
 export const ACCESS_FEATURE = "Protect with Cloudflare Access";
 
+/** The install page feature that serves an app on a hostname in one of the account's zones. */
+export const CUSTOM_DOMAINS_FEATURE = "Custom domains";
+
 export const TOKEN_PERMISSION_GROUPS = [
   // Upload, version, deploy, and delete app Workers and the manager itself; their
   // secrets, cron triggers, workers.dev routes, and static assets.
@@ -58,6 +61,13 @@ export const TOKEN_PERMISSION_GROUPS = [
     label: "Access: Organizations, Identity Providers, and Groups",
     onlyFor: ACCESS_FEATURE,
   },
+  // List the zones a custom domain's hostname can be in.
+  { key: "zone", type: "read", label: "Zone", onlyFor: CUSTOM_DOMAINS_FEATURE },
+  // Read the DNS records a new custom domain would replace, and replace them
+  // when the admin agrees.
+  { key: "dns", type: "edit", label: "DNS", onlyFor: CUSTOM_DOMAINS_FEATURE },
+  // What Cloudflare requires on a zone to attach a Worker to one of its hostnames.
+  { key: "workers_routes", type: "edit", label: "Workers Routes", onlyFor: CUSTOM_DOMAINS_FEATURE },
   // Find the account id and name the token belongs to (`GET /accounts`).
   { key: "account_settings", type: "read", label: "Account Settings" },
   // Stream a Worker's live logs while diagnosing an install or update.
@@ -78,6 +88,20 @@ export function splitPermissionGroups(
     required: groups.filter((g) => g.onlyFor === undefined),
     optional: groups.filter((g) => g.onlyFor !== undefined),
   };
+}
+
+/** The optional groups by the feature that uses them, in the order they are listed. */
+export function optionalGroupsByFeature(
+  groups: readonly PermissionGroup[] = TOKEN_PERMISSION_GROUPS,
+): Array<{ feature: string; groups: PermissionGroup[] }> {
+  const byFeature = new Map<string, PermissionGroup[]>();
+  for (const g of groups) {
+    if (g.onlyFor === undefined) continue;
+    const list = byFeature.get(g.onlyFor) ?? [];
+    list.push(g);
+    byFeature.set(g.onlyFor, list);
+  }
+  return [...byFeature].map(([feature, list]) => ({ feature, groups: list }));
 }
 
 /** `Label: Edit` / `Label: Read`, the wording of the dashboard's picker. */

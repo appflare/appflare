@@ -9,6 +9,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
+import { CustomDomainsSection } from "../../../components/custom-domains-section";
 import { formatDateTime, jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
@@ -25,8 +26,9 @@ import {
 import { listSnapshots } from "../../../installs/versions.functions";
 
 /**
- * `/apps/$installId`: status and health, resources, secret names, jobs, the Cloudflare
- * token the app needs for itself (if any), the app's post-install notes, update and rollback, and uninstall. After an uninstall
+ * `/apps/$installId`: status and health, custom domains, resources, secret names, jobs,
+ * the Cloudflare token the app needs for itself (if any), the app's post-install notes,
+ * update and rollback, and uninstall. After an uninstall
  * it shows the `uninstalled` state, the resources that were kept, and the job
  * history.
  */
@@ -126,6 +128,7 @@ function InstallPage() {
           </LayerCard>
         </Section>
       )}
+      {!gone && isAdmin && <CustomDomainsSection install={install} />}
       {install.retained.length > 0 && (
         <Section title="Kept in the account">
           <Text variant="secondary">
@@ -306,10 +309,18 @@ function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boole
           </Row>
           <Row label="URL">
             {install.workerUrl !== null ? (
-              <Link href={install.workerUrl} target="_blank" rel="noopener noreferrer">
-                {install.workerUrl}
-                <Link.ExternalIcon />
-              </Link>
+              <span className="grid gap-1">
+                <Link href={install.workerUrl} target="_blank" rel="noopener noreferrer">
+                  {install.workerUrl}
+                  <Link.ExternalIcon />
+                </Link>
+                {install.domains.map((d) => (
+                  <Link key={d.id} href={d.url} target="_blank" rel="noopener noreferrer">
+                    {d.url}
+                    <Link.ExternalIcon />
+                  </Link>
+                ))}
+              </span>
             ) : install.status === "uninstalled" ? (
               "None; the Worker is deleted"
             ) : (

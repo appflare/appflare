@@ -14,6 +14,7 @@ import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { requireRole, requireSession } from "../server/auth.server";
 import { startInstallInput } from "./install-input";
 import { renderPostInstall, workersDevUrl } from "./post-install";
+import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
 import { StartInstallError, startInstallCore } from "./start-install.server";
 
 /** Installs: start one (admin), list them, and show one. Uninstall lives in `uninstall.functions.ts`. */
@@ -127,6 +128,15 @@ export interface ResourceView {
   cfId: string | null;
 }
 
+/** A custom domain of the install (a `domain` resource). */
+export interface CustomDomainView {
+  /** The `resources` row id. */
+  id: string;
+  hostname: string;
+  /** `https://<hostname>` */
+  url: string;
+}
+
 export interface InstallDetail extends InstallRow {
   currentVersionId: string | null;
   pinSha: string | null;
@@ -136,6 +146,8 @@ export interface InstallDetail extends InstallRow {
   /** Resources an uninstall kept in the account; they remain until deleted by hand. */
   retained: ResourceView[];
   secretNames: string[];
+  /** Custom domains that serve the Worker, in the order they were added. */
+  domains: CustomDomainView[];
   /** Which uninstall action the page offers now. */
   uninstall: "start" | "retry" | null;
   /** The job currently queued or running for this install, if any. */
@@ -245,6 +257,9 @@ export const getInstall = createServerFn({ method: "GET" })
       resources: live.filter((r) => r.kind !== "secret").map(view),
       retained: resourceRows.filter((r) => r.retained_at !== null).map(view),
       secretNames: live.filter((r) => r.kind === "secret").map((r) => r.name),
+      domains: live
+        .filter((r) => r.kind === CUSTOM_DOMAIN_KIND)
+        .map((r) => ({ id: r.id, hostname: r.name, url: `https://${r.name}` })),
       uninstall,
       activeJobId: activeJob?.id ?? null,
       jobs: jobRows.map((j) => ({

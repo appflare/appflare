@@ -8,8 +8,10 @@ import { createR2 } from "./namespaces/r2";
 import { createTokens } from "./namespaces/tokens";
 import { createVectorize } from "./namespaces/vectorize";
 import { createVersions } from "./namespaces/versions";
+import { createWorkerDomains } from "./namespaces/worker-domains";
 import { createWorkers } from "./namespaces/workers";
 import { createWorkflows } from "./namespaces/workflows";
+import { createZones } from "./namespaces/zones";
 
 export interface CloudflareClient {
   readonly accountId: string;
@@ -24,6 +26,8 @@ export interface CloudflareClient {
   readonly vectorize: ReturnType<typeof createVectorize>;
   readonly access: ReturnType<typeof createAccess>;
   readonly workflows: ReturnType<typeof createWorkflows>;
+  readonly zones: ReturnType<typeof createZones>;
+  readonly workerDomains: ReturnType<typeof createWorkerDomains>;
 }
 
 /**
@@ -47,5 +51,7 @@ export function createClient(options: ClientOptions): CloudflareClient {
     vectorize: createVectorize(http),
     access: createAccess(http),
     workflows: createWorkflows(http),
+    zones: createZones(http),
+    workerDomains: createWorkerDomains(http),
   };
 }

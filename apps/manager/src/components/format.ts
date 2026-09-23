@@ -50,6 +50,7 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
   cron: "Cron trigger",
   secret: "Secret",
   subdomain: "workers.dev route",
+  domain: "Custom domain",
 };
 
 export function resourceKindLabel(kind: string): string {

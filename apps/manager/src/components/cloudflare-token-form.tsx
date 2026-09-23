@@ -10,6 +10,8 @@ import { type FormEvent, useRef, useState } from "react";
 import {
   ACCESS_FEATURE,
   accountTokenTemplateUrl,
+  CUSTOM_DOMAINS_FEATURE,
+  optionalGroupsByFeature,
   permissionName,
   splitPermissionGroups,
   userTokenTemplateUrl,
@@ -19,7 +21,14 @@ import { rotateToken, saveToken, verifyToken } from "../server/token.functions";
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
-const { required, optional } = splitPermissionGroups();
+const { required } = splitPermissionGroups();
+const optional = optionalGroupsByFeature();
+
+/** Where each optional feature lives, for the list of what its permissions are for. */
+const FEATURE_PLACES: Readonly<Record<string, string>> = {
+  [ACCESS_FEATURE]: `"${ACCESS_FEATURE}" in Settings`,
+  [CUSTOM_DOMAINS_FEATURE]: "Custom domains on an installed app's page",
+};
 
 export interface SavedToken {
   accountId: string;
@@ -110,11 +119,23 @@ export function CloudflareTokenForm({
             token, and copy it.
           </Text>
           {optional.length > 0 && (
-            <Text variant="secondary">
-              It also selects {optional.map(permissionName).join(" and ")}, needed only for "
-              {ACCESS_FEATURE}" in Settings. You can remove them from the token if you will not use
-              that setting, and add them back later by rotating the token.
-            </Text>
+            <div className="grid gap-1">
+              <Text variant="secondary">
+                It also selects permissions that only one optional feature uses. You can remove them
+                from the token if you will not use that feature, and add them back later by editing
+                or rotating the token:
+              </Text>
+              <ul className="grid gap-1 pl-4">
+                {optional.map(({ feature, groups }) => (
+                  <li key={feature}>
+                    <Text as="span" variant="secondary">
+                      {FEATURE_PLACES[feature] ?? `"${feature}"`}:{" "}
+                      {groups.map(permissionName).join(", ")}
+                    </Text>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">

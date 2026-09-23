@@ -25,6 +25,15 @@ export const WORKER_BOUND_KINDS = [
   "subdomain",
 ] as const;
 
+/**
+ * A custom domain (a hostname in one of the account's zones that serves the
+ * Worker). It holds no data, so an uninstall always removes it, and does so
+ * with its own call before deleting the Worker: Cloudflare does not document
+ * that deleting a Worker removes its custom domains, and removing them first
+ * holds either way.
+ */
+export const CUSTOM_DOMAIN_KIND = "domain" as const;
+
 export function isDataResourceKind(kind: string): kind is DataResourceKind {
   return (DATA_RESOURCE_KINDS as readonly string[]).includes(kind);
 }

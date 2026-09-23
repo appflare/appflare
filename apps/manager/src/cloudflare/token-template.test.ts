@@ -3,6 +3,8 @@ import {
   ACCESS_FEATURE,
   accountTokenTemplateUrl,
   appTokenTemplateUrl,
+  CUSTOM_DOMAINS_FEATURE,
+  optionalGroupsByFeature,
   permissionName,
   resolveAppTokenPermissions,
   splitPermissionGroups,
@@ -32,27 +34,62 @@ describe("token template URLs", () => {
     expect(groupsOf(userTokenTemplateUrl())).toHaveLength(TOKEN_PERMISSION_GROUPS.length);
   });
 
-  it("asks for edit on resource groups and read on account settings, tail, and Access organizations", () => {
+  it("asks for edit on resource groups and read on account settings, tail, Access organizations, and zones", () => {
     const reads = TOKEN_PERMISSION_GROUPS.filter((g) => g.type === "read").map((g) => g.key);
-    expect(reads.sort()).toEqual(["access_acct", "account_settings", "workers_tail"]);
+    expect(reads.sort()).toEqual(["access_acct", "account_settings", "workers_tail", "zone"]);
   });
 
   it("includes the Access groups, marked as used only by the Access setting", () => {
     const { required, optional } = splitPermissionGroups();
-    expect(optional.map(({ key, type }) => ({ key, type }))).toEqual([
+    const access = optional.filter((g) => g.onlyFor === ACCESS_FEATURE);
+    expect(access.map(({ key, type }) => ({ key, type }))).toEqual([
       { key: "access", type: "edit" },
       { key: "access_acct", type: "read" },
     ]);
-    expect(optional.every((g) => g.onlyFor === ACCESS_FEATURE)).toBe(true);
     expect(required.some((g) => g.key.startsWith("access"))).toBe(false);
     expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key: "access", type: "edit" });
     expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({
       key: "access_acct",
       type: "read",
     });
-    expect(optional.map(permissionName)).toEqual([
+    expect(access.map(permissionName)).toEqual([
       "Access: Apps and Policies: Edit",
       "Access: Organizations, Identity Providers, and Groups: Read",
+    ]);
+  });
+
+  it("includes the custom domain groups, marked as used only by custom domains", () => {
+    const { required, optional } = splitPermissionGroups();
+    const domains = optional.filter((g) => g.onlyFor === CUSTOM_DOMAINS_FEATURE);
+    expect(domains.map(({ key, type }) => ({ key, type }))).toEqual([
+      { key: "zone", type: "read" },
+      { key: "dns", type: "edit" },
+      { key: "workers_routes", type: "edit" },
+    ]);
+    expect(required.some((g) => ["zone", "dns", "workers_routes"].includes(g.key))).toBe(false);
+    for (const { key, type } of domains) {
+      expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key, type });
+    }
+  });
+
+  it("groups the optional permissions by the feature that uses them", () => {
+    expect(
+      optionalGroupsByFeature().map(({ feature, groups }) => ({
+        feature,
+        names: groups.map(permissionName),
+      })),
+    ).toEqual([
+      {
+        feature: ACCESS_FEATURE,
+        names: [
+          "Access: Apps and Policies: Edit",
+          "Access: Organizations, Identity Providers, and Groups: Read",
+        ],
+      },
+      {
+        feature: CUSTOM_DOMAINS_FEATURE,
+        names: ["Zone: Read", "DNS: Edit", "Workers Routes: Edit"],
+      },
     ]);
   });
 });

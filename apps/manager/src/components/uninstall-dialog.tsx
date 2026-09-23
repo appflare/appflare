@@ -27,6 +27,7 @@ function usageText(usage: ResourceUsage | undefined): string | null {
 function workerBoundSummary(install: InstallDetail): string[] {
   const out: string[] = [];
   const byKind = (kind: string) => install.resources.filter((r) => r.kind === kind);
+  for (const d of install.domains) out.push(`the custom domain ${d.hostname}`);
   for (const r of byKind("subdomain")) out.push(`the route ${r.name}`);
   const crons = byKind("cron").length;
   if (crons > 0) out.push(`${crons} cron trigger${crons === 1 ? "" : "s"}`);
@@ -42,8 +43,9 @@ function workerBoundSummary(install: InstallDetail): string[] {
 /**
  * The uninstall confirmation of `/apps/$installId` (admins only). Lists the
  * data resources with a checkbox each (all ticked by default) and, where the
- * API reports it cheaply, what they hold; what goes with the Worker is listed
- * without a choice. The admin types the Worker name to confirm. Submitting
+ * API reports it cheaply, what they hold; what goes with the Worker, custom
+ * domains included (they hold no data, and are removed before the Worker), is
+ * listed without a choice. The admin types the Worker name to confirm. Submitting
  * starts the uninstall job and opens its log. In `retry` mode it continues an
  * uninstall that stopped part way, listing only what is left; unticking a
  * resource keeps it (for example a bucket Cloudflare refuses to delete).
@@ -153,6 +155,22 @@ export function UninstallDialog({
             title="Deleting data is permanent"
             description="Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare lists it on this page afterwards."
           />
+          {install.domains.length > 0 && (
+            <div className="grid gap-1.5">
+              <Text bold>Custom domains</Text>
+              <Text variant="secondary">
+                Removed first, before the Worker. A custom domain holds no data, so there is nothing
+                to keep.
+              </Text>
+              <ul className="grid gap-1">
+                {install.domains.map((d) => (
+                  <li key={d.id} className="font-mono text-[0.9em]">
+                    {d.hostname}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {data.length > 0 ? (
             <div className="grid gap-3">
               <Text bold>Data resources</Text>

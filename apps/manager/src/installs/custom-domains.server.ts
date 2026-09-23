@@ -1,0 +1,478 @@
+import {
+  CloudflareApiError,
+  type CloudflareClient,
+  DOMAIN_DNS_RECORD_CONFLICT,
+  DOMAIN_ORIGIN_CONFLICT,
+  type FetchLike,
+  type Zone,
+} from "@appflare/cf-api";
+import { and, eq, isNull } from "drizzle-orm";
+import { ulid } from "ulidx";
+import {
+  CUSTOM_DOMAINS_FEATURE,
+  permissionName,
+  splitPermissionGroups,
+} from "../cloudflare/token-template";
+import { createDb } from "../db/client";
+import { type HealthStatus, installs, resources } from "../db/schema";
+import { healthPathOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
+import { checkHostnameInZone } from "./custom-domain-input";
+import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
+
+/**
+ * Custom domains of an install: a hostname in one of the account's zones that
+ * serves the install's Worker, attached through the Workers custom domains API
+ * and recorded as a resource of kind `domain` (name = hostname, cf_id = the
+ * domain's id). Adding, removing, and a one-off check run in the request, not
+ * as a job: each is one or two API calls.
+ *
+ * The permissions these calls need are optional for the rest of the manager,
+ * so a token without them fails only here, with a message that names them.
+ */
+
+export class CustomDomainError extends Error {
+  override name = "CustomDomainError";
+}
+
+export interface CustomDomainDeps {
+  db: D1Database;
+  api: CloudflareClient;
+  now?: () => Date;
+  newId?: () => string;
+}
+
+/** The permission groups by the dashboard's names, for messages. */
+const PERMISSION = {
+  zone: "Zone: Read",
+  dns: "DNS: Edit",
+  routes: "Workers Routes: Edit",
+} as const;
+
+const ALL_PERMISSIONS = splitPermissionGroups()
+  .optional.filter((g) => g.onlyFor === CUSTOM_DOMAINS_FEATURE)
+  .map(permissionName)
+  .join(", ");
+
+/** Whether Cloudflare refused a call for lack of permission (403, or code 10000/9109). */
+export function isPermissionError(error: unknown): boolean {
+  return (
+    error instanceof CloudflareApiError &&
+    (error.status === 403 || error.errors.some((e) => e.code === 10000 || e.code === 9109))
+  );
+}
+
+function hasCode(error: unknown, code: number): boolean {
+  return error instanceof CloudflareApiError && error.errors.some((e) => e.code === code);
+}
+
+/** Runs a read; null when the token lacks the permission for it. */
+async function unlessForbidden<T>(run: () => Promise<T>): Promise<T | null> {
+  try {
+    return await run();
+  } catch (error) {
+    if (isPermissionError(error)) return null;
+    throw error;
+  }
+}
+
+export interface ZoneOption {
+  id: string;
+  name: string;
+}
+
+export interface DomainOptions {
+  /** Active zones the token can see, by name. */
+  zones: ZoneOption[];
+  /** Zones the token can see that are not active yet, which cannot serve a Worker. */
+  inactiveZones: string[];
+  /**
+   * Permission groups the token lacks, by the dashboard's names. When the token
+   * sees no zone at all this lists all three: without Zone: Read the zone list
+   * is empty rather than refused, so the two cases look the same.
+   */
+  missing: string[];
+  /** The token sees no zone, active or not. */
+  noZones: boolean;
+}
+
+/**
+ * What the add dialog offers: the active zones, and which of the permissions
+ * custom domains need the token lacks. Workers Routes and DNS are probed with
+ * a read on the first active zone (a token can be narrowed to some zones, so
+ * this is a hint, and adding still reports a refusal precisely).
+ */
+export async function getDomainOptionsCore(deps: CustomDomainDeps): Promise<DomainOptions> {
+  const listed = await unlessForbidden(() =>
+    deps.api.zones.listZones({ accountId: deps.api.accountId }),
+  );
+  if (listed === null) {
+    return { zones: [], inactiveZones: [], missing: [PERMISSION.zone], noZones: true };
+  }
+  // A user token can see zones of other accounts; only this account's can serve its Workers.
+  const own = listed.filter((z) => z.account?.id === deps.api.accountId);
+  const active = own.filter(isActive).sort((a, b) => a.name.localeCompare(b.name));
+  const inactiveZones = own.filter((z) => !isActive(z)).map((z) => z.name);
+  if (own.length === 0) {
+    return {
+      zones: [],
+      inactiveZones: [],
+      missing: [PERMISSION.zone, PERMISSION.dns, PERMISSION.routes],
+      noZones: true,
+    };
+  }
+  const missing: string[] = [];
+  const [first] = active;
+  if (first !== undefined) {
+    const [routes, dns] = await Promise.all([
+      unlessForbidden(() => deps.api.zones.listWorkerRoutes(first.id)),
+      unlessForbidden(() => deps.api.zones.listDnsRecords(first.id, { name: first.name })),
+    ]);
+    if (dns === null) missing.push(PERMISSION.dns);
+    if (routes === null) missing.push(PERMISSION.routes);
+  }
+  return {
+    zones: active.map((z) => ({ id: z.id, name: z.name })),
+    inactiveZones,
+    missing,
+    noZones: false,
+  };
+}
+
+function isActive(zone: Zone): boolean {
+  return zone.status === "active" && zone.paused !== true;
+}
+
+/** Address records a custom domain's own record replaces. */
+const ADDRESS_RECORD_TYPES = new Set(["A", "AAAA", "CNAME"]);
+
+export interface ConflictingRecord {
+  type: string;
+  content: string | null;
+}
+
+export type AddCustomDomainResult =
+  | { ok: true; resourceId: string; hostname: string }
+  | {
+      ok: false;
+      /** The hostname has DNS records the domain would replace; ask before replacing them. */
+      reason: "dns-conflict";
+      hostname: string;
+      /** Empty when the records could not be read (the attach call reported them). */
+      records: ConflictingRecord[];
+    };
+
+export interface AddCustomDomainRequest {
+  installId: string;
+  zoneId: string;
+  hostname: string;
+  overrideExistingDnsRecord?: boolean;
+}
+
+/**
+ * Attaches `hostname` in zone `zoneId` to the install's Worker and records it.
+ * Refuses a hostname that serves another Worker (it never moves a domain away
+ * from one), and without the admin's explicit agreement one that has DNS
+ * address records of its own: it then answers `dns-conflict` with the
+ * records, and the admin may retry with `overrideExistingDnsRecord`.
+ */
+export async function addCustomDomainCore(
+  deps: CustomDomainDeps,
+  request: AddCustomDomainRequest,
+): Promise<AddCustomDomainResult> {
+  const orm = createDb(deps.db);
+  const now = deps.now ?? (() => new Date());
+  const install = await readInstall(deps.db, request.installId);
+  // An uninstall or update sets the status when it starts, in the same batch
+  // that records its job.
+  if (install.status !== "installed") {
+    throw new CustomDomainError(
+      `A custom domain can be added only to an installed app; this one is ${install.status}.`,
+    );
+  }
+
+  const zone = await readZone(deps.api, request.zoneId);
+  const checked = checkHostnameInZone(request.hostname, zone.name);
+  if (!checked.ok) throw new CustomDomainError(checked.error);
+  const { hostname } = checked;
+
+  const [recorded] = await orm
+    .select({ id: resources.id })
+    .from(resources)
+    .where(
+      and(
+        eq(resources.install_id, install.id),
+        eq(resources.kind, CUSTOM_DOMAIN_KIND),
+        eq(resources.name, hostname),
+        isNull(resources.deleted_at),
+      ),
+    )
+    .limit(1);
+  if (recorded !== undefined) {
+    throw new CustomDomainError(`${hostname} is already a custom domain of this app.`);
+  }
+
+  // The filter is applied again here: only an exact hostname match counts.
+  const existing = (await deps.api.workerDomains.listDomains({ hostname })).find(
+    (d) => d.hostname.toLowerCase() === hostname,
+  );
+  let domainId: string;
+  if (existing !== undefined && existing.service !== install.workerName) {
+    throw new CustomDomainError(otherWorkerMessage(hostname, existing.service));
+  }
+  if (existing !== undefined) {
+    // Attached to this Worker already (a request that failed after attaching,
+    // or by hand): record it rather than attach it again.
+    domainId = existing.id;
+  } else {
+    if (request.overrideExistingDnsRecord !== true) {
+      const records = await unlessForbidden(() =>
+        deps.api.zones.listDnsRecords(zone.id, { name: hostname }),
+      );
+      const conflicting = (records ?? []).filter((r) => ADDRESS_RECORD_TYPES.has(r.type));
+      if (conflicting.length > 0) {
+        return {
+          ok: false,
+          reason: "dns-conflict",
+          hostname,
+          records: conflicting.map((r) => ({ type: r.type, content: r.content ?? null })),
+        };
+      }
+    }
+    try {
+      const attached = await deps.api.workerDomains.attachDomain({
+        zoneId: zone.id,
+        hostname,
+        service: install.workerName,
+        ...(request.overrideExistingDnsRecord === true ? { overrideExistingDnsRecord: true } : {}),
+      });
+      domainId = attached.id;
+    } catch (error) {
+      if (hasCode(error, DOMAIN_DNS_RECORD_CONFLICT)) {
+        if (request.overrideExistingDnsRecord !== true) {
+          return { ok: false, reason: "dns-conflict", hostname, records: [] };
+        }
+        // Asked to replace them and still refused: some records cannot be
+        // replaced this way.
+        throw new CustomDomainError(
+          `Cloudflare would not replace the DNS records at ${hostname}, even when asked to. Delete them in the Cloudflare dashboard (the domain's DNS records) and add the domain again.`,
+        );
+      }
+      if (hasCode(error, DOMAIN_ORIGIN_CONFLICT)) {
+        throw new CustomDomainError(otherWorkerMessage(hostname, null));
+      }
+      if (isPermissionError(error)) {
+        throw new CustomDomainError(
+          `Cloudflare refused to attach ${hostname}: the token needs ${PERMISSION.routes} on ${zone.name} (and ${PERMISSION.dns} to replace records). Add them to the token and try again.`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  const resourceId = `${install.id}:${CUSTOM_DOMAIN_KIND}:${(deps.newId ?? (() => ulid()))()}`;
+  // Recorded only while the install is not being uninstalled: an uninstall that
+  // started meanwhile reads the install's domains when it runs, and must not
+  // miss this one.
+  const inserted = await deps.db
+    .prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       SELECT ?1, ?2, '${CUSTOM_DOMAIN_KIND}', NULL, ?3, ?4, ?5
+       WHERE EXISTS (
+         SELECT 1 FROM installs WHERE id = ?2 AND status NOT IN ('uninstalling', 'uninstalled')
+       )`,
+    )
+    .bind(resourceId, install.id, hostname, domainId, now().getTime())
+    .run();
+  if (inserted.meta.changes !== 1) {
+    const detached = await deps.api.workerDomains.detachDomain(domainId).then(
+      () => true,
+      (error: unknown) => (error instanceof CloudflareApiError && error.status === 404) || false,
+    );
+    throw new CustomDomainError(
+      detached
+        ? `The app started uninstalling while ${hostname} was being added, so Appflare removed the domain again.`
+        : `The app started uninstalling while ${hostname} was being added, and Appflare could not remove the domain again. It is not recorded on this app, so the uninstall will not remove it; remove it from the Worker in the Cloudflare dashboard (Workers & Pages, the Worker, Domains).`,
+    );
+  }
+  return { ok: true, resourceId, hostname };
+}
+
+function otherWorkerMessage(hostname: string, worker: string | null): string {
+  const which = worker === null ? "another Worker" : `the Worker "${worker}"`;
+  return `${hostname} already serves ${which}. Remove it there first; Appflare does not move a domain away from another Worker.`;
+}
+
+async function readZone(api: CloudflareClient, zoneId: string): Promise<Zone> {
+  let zone: Zone;
+  try {
+    zone = await api.zones.getZone(zoneId);
+  } catch (error) {
+    if (isPermissionError(error) || (error instanceof CloudflareApiError && error.status === 404)) {
+      throw new CustomDomainError(
+        `The Cloudflare token cannot see that zone. It needs ${ALL_PERMISSIONS} on it.`,
+      );
+    }
+    throw error;
+  }
+  // A user token can see zones of other accounts; a Worker can only be
+  // attached to a hostname in its own account's zones.
+  if (zone.account?.id !== api.accountId) {
+    throw new CustomDomainError(
+      `${zone.name} belongs to another Cloudflare account, not the one Appflare runs in.`,
+    );
+  }
+  if (zone.status !== "active" || zone.paused === true) {
+    throw new CustomDomainError(
+      `${zone.name} is not active on Cloudflare yet (${zone.status}), so it cannot serve an app.`,
+    );
+  }
+  return zone;
+}
+
+interface InstallRow {
+  id: string;
+  status: string;
+  workerName: string;
+  manifestJson: string | null;
+}
+
+async function readInstall(db: D1Database, installId: string): Promise<InstallRow> {
+  const [row] = await createDb(db)
+    .select({
+      id: installs.id,
+      status: installs.status,
+      workerName: installs.worker_name,
+      manifestJson: installs.manifest_json,
+    })
+    .from(installs)
+    .where(eq(installs.id, installId))
+    .limit(1);
+  if (row === undefined) throw new CustomDomainError("There is no such install.");
+  return row;
+}
+
+async function readDomain(db: D1Database, request: { installId: string; resourceId: string }) {
+  const [row] = await createDb(db)
+    .select()
+    .from(resources)
+    .where(
+      and(
+        eq(resources.id, request.resourceId),
+        eq(resources.install_id, request.installId),
+        eq(resources.kind, CUSTOM_DOMAIN_KIND),
+        isNull(resources.deleted_at),
+      ),
+    )
+    .limit(1);
+  if (row === undefined) throw new CustomDomainError("That is not a custom domain of this app.");
+  return row;
+}
+
+/**
+ * Detaches the domain from the Worker and marks the resource deleted. A domain
+ * already gone counts as removed. While an uninstall runs, the uninstall
+ * removes the domains itself.
+ */
+export async function removeCustomDomainCore(
+  deps: CustomDomainDeps,
+  request: { installId: string; resourceId: string },
+): Promise<{ hostname: string }> {
+  const install = await readInstall(deps.db, request.installId);
+  if (install.status === "uninstalling" || install.status === "uninstalled") {
+    throw new CustomDomainError("The uninstall removes this app's custom domains.");
+  }
+  const domain = await readDomain(deps.db, request);
+  await detachCustomDomain(deps.api, {
+    hostname: domain.name,
+    cfId: domain.cf_id,
+    workerName: install.workerName,
+  });
+  await createDb(deps.db)
+    .update(resources)
+    .set({ deleted_at: (deps.now ?? (() => new Date()))() })
+    .where(eq(resources.id, domain.id));
+  return { hostname: domain.name };
+}
+
+/**
+ * What detaching a recorded custom domain did: `detached`; `gone` (a 404, or
+ * no domain with that hostname); `not-ours` (no id was recorded and the
+ * hostname now serves another Worker, which is left alone).
+ */
+export type DetachOutcome = "detached" | "gone" | "not-ours";
+
+/**
+ * Detaches one recorded custom domain; shared with the uninstall job. Without
+ * a recorded id the domain is found by hostname, and detached only if it
+ * still serves this install's Worker.
+ */
+export async function detachCustomDomain(
+  api: CloudflareClient,
+  domain: { hostname: string; cfId: string | null; workerName: string },
+): Promise<DetachOutcome> {
+  let id = domain.cfId;
+  if (id === null) {
+    const found = (await api.workerDomains.listDomains({ hostname: domain.hostname })).find(
+      (d) => d.hostname.toLowerCase() === domain.hostname,
+    );
+    if (found === undefined) return "gone";
+    if (found.service !== domain.workerName) return "not-ours";
+    id = found.id;
+  }
+  try {
+    await api.workerDomains.detachDomain(id);
+    return "detached";
+  } catch (error) {
+    if (error instanceof CloudflareApiError && error.status === 404) return "gone";
+    throw error;
+  }
+}
+
+/** One log line for a {@link DetachOutcome}. */
+export function detachMessage(hostname: string, outcome: DetachOutcome): string {
+  switch (outcome) {
+    case "detached":
+      return `Removed custom domain ${hostname}.`;
+    case "gone":
+      return `Custom domain ${hostname} was already gone.`;
+    case "not-ours":
+      return `Custom domain ${hostname} now serves another Worker, so it was left alone.`;
+  }
+}
+
+export interface CustomDomainCheck {
+  hostname: string;
+  url: string;
+  status: HealthStatus;
+  /** What the app answered ("HTTP 200", "connection failed (...)"). */
+  detail: string;
+  /** ISO 8601 */
+  checkedAt: string;
+}
+
+/**
+ * "Check" next to a custom domain: one GET of `https://<hostname><health
+ * path>`, the same probe as the install's "Check now". It is not recorded:
+ * the install's health stays the check of its workers.dev URL, and a new
+ * domain may take a while before its certificate and DNS record are live.
+ */
+export async function checkCustomDomainCore(
+  deps: { db: D1Database; fetch: FetchLike; now?: () => Date },
+  request: { installId: string; resourceId: string },
+): Promise<CustomDomainCheck> {
+  const install = await readInstall(deps.db, request.installId);
+  if (install.status !== "installed") {
+    throw new CustomDomainError(
+      `Only an installed app can be checked; this one is ${install.status}.`,
+    );
+  }
+  const domain = await readDomain(deps.db, request);
+  const url = `https://${domain.name}${healthPathOfManifest(install.manifestJson)}`;
+  const settled = settleHealthProbe(await probeHealth(deps.fetch, url));
+  return {
+    hostname: domain.name,
+    url,
+    ...settled,
+    checkedAt: (deps.now ?? (() => new Date()))().toISOString(),
+  };
+}

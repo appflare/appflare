@@ -41,3 +41,11 @@ app.
 If an app stays **Not verified yet**, open its URL in a browser. If the page loads,
 select **Check now**. If it does not, look at the app's logs in the Cloudflare
 dashboard.
+
+## Custom domains
+
+The recorded check always uses the app's `workers.dev` URL. An app with
+[custom domains](/guides/custom-domains/) has a **Check now** button next to each
+one, which sends the same single request to that hostname and shows the answer
+there without recording it. A new custom domain can take a few minutes before its
+DNS record and certificate are live.

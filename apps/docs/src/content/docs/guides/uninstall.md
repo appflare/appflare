@@ -8,8 +8,11 @@ uninstall deletes and asks you to type the Worker name to confirm.
 
 ## What is always deleted
 
-The Worker itself, which the uninstall deletes first, and everything that only
-exists with it:
+The app's [custom domains](/guides/custom-domains/), which the uninstall removes
+first, each with its own request, so that no domain or DNS record is left pointing
+at a deleted Worker. A custom domain holds no data, so there is nothing to keep.
+
+Then the Worker itself, and everything that only exists with it:
 
 - its `workers.dev` route and cron triggers,
 - its secrets,
