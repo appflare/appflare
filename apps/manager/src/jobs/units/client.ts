@@ -12,12 +12,14 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  * itself. Per job, in the job's invocation:
  *
  *   - 1 per unit call: each asset part, the Worker upload, each D1 migration
- *     file, each R2 page;
+ *     file, each R2 page, the Email Routing check;
  *   - 1 per Cloudflare API step: token check, script list, each resource's
  *     check and create (2 or more), each Workflow name check, the assets
  *     session, d1_migrations create and list per database, each secret, the
  *     cron triggers, the subdomain lookup and route, snapshot reads and
- *     bookmarks and the promotion (updates);
+ *     bookmarks and the promotion (updates); for an app that receives email,
+ *     turning Email Routing on, each routing rule and the catch-all (1 each,
+ *     2 on a retried step), and on uninstall each route (1 to 4);
  *   - 1 per health or canary probe (up to 12 probes for the live check, 6 for
  *     an app's canary, 10 for Appflare's own);
  *   - the manifest and signature (4 with the release redirects) and KV reads;

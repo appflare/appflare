@@ -47,6 +47,7 @@ export default defineConfig({
             { label: "Install an app", slug: "guides/install-apps" },
             { label: "Health checks", slug: "guides/health" },
             { label: "Custom domains", slug: "guides/custom-domains" },
+            { label: "Apps that receive email", slug: "guides/email-apps" },
             { label: "Update and roll back", slug: "guides/updates" },
             { label: "Uninstall an app", slug: "guides/uninstall" },
             { label: "Update Appflare", slug: "guides/update-appflare" },

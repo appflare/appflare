@@ -10,6 +10,7 @@ import {
   WORKER_NAME_PATTERN,
 } from "../installs/install-input";
 import { startInstall } from "../installs/installs.functions";
+import { EmailRoutingFields } from "./email-routing-fields";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
 
 /**
@@ -19,7 +20,9 @@ import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fie
  * the app's account requirements is a checkbox in the page's prerequisites
  * callout; it arrives here as `requirementsConfirmed`. `generate: true`
  * secrets are prefilled with a random value the admin can copy now; it is
- * shown only here. Members see the form disabled.
+ * shown only here. An app that receives email (`install.emailRouting`) also
+ * asks for a zone and previews what the install sets up there. Members see
+ * the form disabled.
  */
 export function InstallForm({
   catalog,
@@ -52,6 +55,9 @@ export function InstallForm({
     Object.fromEntries(catalog.vars.map((v) => [v.name, v.default ?? ""])),
   );
   const [paidConfirmed, setPaidConfirmed] = useState(false);
+  const receivesEmail = catalog.install.emailRouting !== undefined;
+  const [emailZoneId, setEmailZoneId] = useState<string | null>(null);
+  const [emailReady, setEmailReady] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,7 +73,8 @@ export function InstallForm({
     labelValid &&
     !missing &&
     (catalog.plan !== "paid" || paidConfirmed) &&
-    (catalog.requires.length === 0 || requirementsConfirmed);
+    (catalog.requires.length === 0 || requirementsConfirmed) &&
+    (!receivesEmail || (emailZoneId !== null && emailReady));
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -84,6 +91,9 @@ export function InstallForm({
           vars,
           paidConfirmed,
           requirementsConfirmed,
+          ...(receivesEmail && emailZoneId !== null
+            ? { emailRouting: { zoneId: emailZoneId } }
+            : {}),
         },
       });
       await router.navigate({ to: "/jobs/$jobId", params: { jobId } });
@@ -177,6 +187,18 @@ export function InstallForm({
                   />
                 ))}
               </div>
+            )}
+
+            {/* The zone reads are admin-only calls; a member sees no zone field. */}
+            {receivesEmail && canInstall && blockedReason === null && (
+              <EmailRoutingFields
+                slug={catalog.slug}
+                workerName={workerName}
+                disabled={disabled}
+                zoneId={emailZoneId}
+                onZoneChange={setEmailZoneId}
+                onReadyChange={setEmailReady}
+              />
             )}
 
             {catalog.plan === "paid" && (

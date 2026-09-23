@@ -59,6 +59,8 @@ export interface StartInstallResult {
 export interface ResolvedInstallInput {
   secrets: Record<string, string>;
   vars: Record<string, string>;
+  /** The zone for an app that receives email; undefined for any other app. */
+  emailRouting?: { zoneId: string };
 }
 
 /**
@@ -106,7 +108,19 @@ export function resolveInstallInput(
       throw new StartInstallError(`${v.label} (${v.name}) is required.`);
     }
   }
-  return { secrets, vars };
+  if (catalog.install.emailRouting !== undefined && input.emailRouting === undefined) {
+    throw new StartInstallError(
+      `${catalog.name} receives email. Choose the zone whose email it should receive.`,
+    );
+  }
+  if (catalog.install.emailRouting === undefined && input.emailRouting !== undefined) {
+    throw new StartInstallError(`${catalog.name} does not receive email; it takes no zone.`);
+  }
+  return {
+    secrets,
+    vars,
+    ...(input.emailRouting === undefined ? {} : { emailRouting: input.emailRouting }),
+  };
 }
 
 export async function startInstallCore(
@@ -161,6 +175,7 @@ export async function startInstallCore(
     vars: resolved.vars,
     paidConfirmed: input.paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
+    ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
   });
   const [, claimed] = await deps.db.batch([
     deps.db
@@ -246,6 +261,7 @@ export async function startInstallCore(
     vars: resolved.vars,
     paidConfirmed: input.paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
+    ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
   };
   let instanceId: string;
   try {

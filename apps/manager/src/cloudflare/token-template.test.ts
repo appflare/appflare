@@ -4,6 +4,7 @@ import {
   accountTokenTemplateUrl,
   appTokenTemplateUrl,
   CUSTOM_DOMAINS_FEATURE,
+  EMAIL_ROUTING_FEATURE,
   optionalGroupsByFeature,
   permissionName,
   resolveAppTokenPermissions,
@@ -36,7 +37,13 @@ describe("token template URLs", () => {
 
   it("asks for edit on resource groups and read on account settings, tail, Access organizations, and zones", () => {
     const reads = TOKEN_PERMISSION_GROUPS.filter((g) => g.type === "read").map((g) => g.key);
-    expect(reads.sort()).toEqual(["access_acct", "account_settings", "workers_tail", "zone"]);
+    expect(reads.sort()).toEqual([
+      "access_acct",
+      "account_settings",
+      "email_routing_address",
+      "workers_tail",
+      "zone",
+    ]);
   });
 
   it("includes the Access groups, marked as used only by the Access setting", () => {
@@ -72,6 +79,23 @@ describe("token template URLs", () => {
     }
   });
 
+  it("includes the Email Routing groups, marked as used only by Email Routing", () => {
+    const { required, optional } = splitPermissionGroups();
+    const email = optional.filter((g) => g.onlyFor === EMAIL_ROUTING_FEATURE);
+    expect(email.map(({ key, type }) => ({ key, type }))).toEqual([
+      { key: "zone_settings", type: "edit" },
+      { key: "email_routing_rule", type: "edit" },
+      { key: "email_routing_address", type: "read" },
+    ]);
+    expect(required.some((g) => g.key.startsWith("email_routing"))).toBe(false);
+    for (const { key, type } of email) {
+      expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key, type });
+    }
+    // Every key appears once in the link.
+    const keys = groupsOf(accountTokenTemplateUrl()).map((g: { key: string }) => g.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
   it("groups the optional permissions by the feature that uses them", () => {
     expect(
       optionalGroupsByFeature().map(({ feature, groups }) => ({
@@ -89,6 +113,14 @@ describe("token template URLs", () => {
       {
         feature: CUSTOM_DOMAINS_FEATURE,
         names: ["Zone: Read", "DNS: Edit", "Workers Routes: Edit"],
+      },
+      {
+        feature: EMAIL_ROUTING_FEATURE,
+        names: [
+          "Zone Settings: Edit",
+          "Email Routing Rules: Edit",
+          "Email Routing Addresses: Read",
+        ],
       },
     ]);
   });

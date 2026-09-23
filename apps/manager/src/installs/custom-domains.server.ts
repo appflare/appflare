@@ -66,7 +66,7 @@ function hasCode(error: unknown, code: number): boolean {
 }
 
 /** Runs a read; null when the token lacks the permission for it. */
-async function unlessForbidden<T>(run: () => Promise<T>): Promise<T | null> {
+export async function unlessForbidden<T>(run: () => Promise<T>): Promise<T | null> {
   try {
     return await run();
   } catch (error) {
@@ -96,23 +96,38 @@ export interface DomainOptions {
 }
 
 /**
+ * The zones of this account the token can see, active ones first split out and
+ * sorted by name; null when the token may not list zones. A token without
+ * Zone: Read gets an empty list rather than a refusal, so an empty result can
+ * mean either. Shared with Email Routing, which offers the same zones.
+ */
+export async function listAccountZones(
+  api: CloudflareClient,
+): Promise<{ active: Zone[]; inactive: Zone[] } | null> {
+  const listed = await unlessForbidden(() => api.zones.listZones({ accountId: api.accountId }));
+  if (listed === null) return null;
+  // A user token can see zones of other accounts; only this account's can serve its Workers.
+  const own = listed.filter((z) => z.account?.id === api.accountId);
+  return {
+    active: own.filter(isActiveZone).sort((a, b) => a.name.localeCompare(b.name)),
+    inactive: own.filter((z) => !isActiveZone(z)),
+  };
+}
+
+/**
  * What the add dialog offers: the active zones, and which of the permissions
  * custom domains need the token lacks. Workers Routes and DNS are probed with
  * a read on the first active zone (a token can be narrowed to some zones, so
  * this is a hint, and adding still reports a refusal precisely).
  */
 export async function getDomainOptionsCore(deps: CustomDomainDeps): Promise<DomainOptions> {
-  const listed = await unlessForbidden(() =>
-    deps.api.zones.listZones({ accountId: deps.api.accountId }),
-  );
+  const listed = await listAccountZones(deps.api);
   if (listed === null) {
     return { zones: [], inactiveZones: [], missing: [PERMISSION.zone], noZones: true };
   }
-  // A user token can see zones of other accounts; only this account's can serve its Workers.
-  const own = listed.filter((z) => z.account?.id === deps.api.accountId);
-  const active = own.filter(isActive).sort((a, b) => a.name.localeCompare(b.name));
-  const inactiveZones = own.filter((z) => !isActive(z)).map((z) => z.name);
-  if (own.length === 0) {
+  const { active } = listed;
+  const inactiveZones = listed.inactive.map((z) => z.name);
+  if (active.length === 0 && inactiveZones.length === 0) {
     return {
       zones: [],
       inactiveZones: [],
@@ -138,7 +153,8 @@ export async function getDomainOptionsCore(deps: CustomDomainDeps): Promise<Doma
   };
 }
 
-function isActive(zone: Zone): boolean {
+/** Whether a zone serves traffic: active on Cloudflare and not paused. */
+export function isActiveZone(zone: Zone): boolean {
   return zone.status === "active" && zone.paused !== true;
 }
 

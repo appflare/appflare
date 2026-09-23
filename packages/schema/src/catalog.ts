@@ -205,6 +205,79 @@ export const healthModeSchema = z
       'route goes live) are retried. Defaults to `"default"`.',
   );
 export type HealthMode = z.infer<typeof healthModeSchema>;
+/** Most addresses one entry may ask Email Routing to deliver to its Worker. */
+export const EMAIL_ROUTING_MAX_RULES = 10;
+
+/**
+ * An address the manager routes to the app: a local part such as `inbox`
+ * (becoming `inbox@<the zone the admin picks>`) or a full address such as
+ * `inbox@example.com`, which must then be in the zone the admin picks.
+ * The local part is at most 64 lowercase letters and digits, with single `.`,
+ * `_`, `+` or `-` between them (so `a..b` and `.a` are refused).
+ */
+export const EMAIL_ROUTING_ADDRESS_PATTERN =
+  /^(?=[^@]{1,64}(?:@|$))[a-z0-9]+(?:[._+-][a-z0-9]+)*(?:@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)?$/;
+
+/**
+ * Email the app receives through Email Routing. When set, the install form
+ * asks the admin for one of the account's zones, and the install:
+ * turns Email Routing on for that zone if it is off (Cloudflare then adds
+ * its MX, SPF and DKIM records), creates one routing rule per `rules` entry, and
+ * with `catchAll` points the zone's catch-all rule at the app's Worker. The
+ * app's Worker must export an `email` handler. Uninstalling removes the
+ * rules, puts the catch-all back as it was, and turns Email Routing off again
+ * only when the install turned it on and no other rule remains.
+ */
+export const catalogEmailRoutingSchema = z
+  .object({
+    catchAll: z
+      .boolean()
+      .describe(
+        "Send every address of the zone that no other rule matches to the app (the zone's " +
+          "catch-all rule). The install refuses when the catch-all already sends mail somewhere else.",
+      )
+      .optional(),
+    rules: z
+      .array(
+        z
+          .string()
+          .regex(
+            EMAIL_ROUTING_ADDRESS_PATTERN,
+            "must be a lowercase local part such as inbox, or a full address such as inbox@example.com",
+          ),
+      )
+      .max(EMAIL_ROUTING_MAX_RULES)
+      // `uniqueItems` lands in the JSON Schema, so editors flag a repeated address too.
+      .meta({
+        description:
+          "Addresses to route to the app, one routing rule each: a local part such as `inbox` " +
+          "(becomes `inbox@<zone>`) or a full address in the chosen zone. The install refuses an " +
+          "address that already has a rule.",
+        uniqueItems: true,
+      })
+      .optional(),
+  })
+  .refine((v) => v.catchAll === true || (v.rules?.length ?? 0) > 0, {
+    message: "set catchAll to true or list at least one address in rules",
+  })
+  .refine((v) => new Set(v.rules ?? []).size === (v.rules?.length ?? 0), {
+    message: "rules must not list an address twice",
+    path: ["rules"],
+  })
+  // The refinements do not reach the JSON Schema; `anyOf` states the first one
+  // there, so editors refuse `{}` as the parser does.
+  .meta({
+    description:
+      "Email the app receives through Email Routing. The install form asks for one of the " +
+      "account's zones; the install turns Email Routing on there if it is off, then points the " +
+      "listed addresses (and, with `catchAll`, every other address) at the app's Worker, which " +
+      "must export an `email` handler. Uninstalling removes what the install added.",
+    anyOf: [
+      { required: ["catchAll"], properties: { catchAll: { const: true } } },
+      { required: ["rules"], properties: { rules: { minItems: 1 } } },
+    ],
+  });
+export type CatalogEmailRouting = z.infer<typeof catalogEmailRoutingSchema>;
 
 /** How the packer builds and names the app. */
 export const catalogInstallSchema = z.object({
@@ -275,6 +348,12 @@ export const catalogInstallSchema = z.object({
         "(monorepos); it must change whenever `source` moves.",
     )
     .optional(),
+  /**
+   * Email the app receives through Email Routing; see
+   * {@link catalogEmailRoutingSchema}. Optional for the same reason as
+   * `fixedWorkerName`.
+   */
+  emailRouting: catalogEmailRoutingSchema.optional(),
 });
 export type CatalogInstall = z.infer<typeof catalogInstallSchema>;
 

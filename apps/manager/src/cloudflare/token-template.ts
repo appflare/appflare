@@ -11,6 +11,13 @@
  * same page's "Access full management" template pairs `access` (the "Access:
  * Apps and Policies" group) with `access_acct` ("Access: Organizations,
  * Identity Providers, and Groups").
+ *
+ * The Email Routing keys (`email_routing_rule`, `email_routing_address`) are
+ * not in that page's table either. A template key is the dashboard's
+ * permission label without its `_read`/`_write` suffix, which holds for every
+ * key the page does list (`zone_read` is `zone`, `zone_settings_write` is
+ * `zone_settings`, `access_acct_read` is `access_acct`); the dashboard labels
+ * these groups `email_routing_rule_write` and `email_routing_address_read`.
  */
 
 import type { TokenPermission } from "@appflare/schema";
@@ -35,6 +42,13 @@ export const ACCESS_FEATURE = "Protect with Cloudflare Access";
 
 /** The install page feature that serves an app on a hostname in one of the account's zones. */
 export const CUSTOM_DOMAINS_FEATURE = "Custom domains";
+
+/**
+ * The install page feature that delivers a zone's email to an app's Worker.
+ * It also needs Zone: Read and DNS: Edit, listed under custom domains: a
+ * group names one feature, and those two are already in the token.
+ */
+export const EMAIL_ROUTING_FEATURE = "Email Routing";
 
 export const TOKEN_PERMISSION_GROUPS = [
   // Upload, version, deploy, and delete app Workers and the manager itself; their
@@ -68,6 +82,26 @@ export const TOKEN_PERMISSION_GROUPS = [
   { key: "dns", type: "edit", label: "DNS", onlyFor: CUSTOM_DOMAINS_FEATURE },
   // What Cloudflare requires on a zone to attach a Worker to one of its hostnames.
   { key: "workers_routes", type: "edit", label: "Workers Routes", onlyFor: CUSTOM_DOMAINS_FEATURE },
+  // Read whether Email Routing is on for the zone an email app uses, and turn
+  // it on (Cloudflare then adds its MX, SPF and DKIM records) or off again.
+  // Cloudflare's API files these calls under Zone Settings.
+  { key: "zone_settings", type: "edit", label: "Zone Settings", onlyFor: EMAIL_ROUTING_FEATURE },
+  // Create and remove the routing rules, and set the catch-all, that deliver
+  // a zone's email to an app's Worker.
+  {
+    key: "email_routing_rule",
+    type: "edit",
+    label: "Email Routing Rules",
+    onlyFor: EMAIL_ROUTING_FEATURE,
+  },
+  // List the account's verified destination addresses: an app with a
+  // send_email binding can send to those for free on every plan.
+  {
+    key: "email_routing_address",
+    type: "read",
+    label: "Email Routing Addresses",
+    onlyFor: EMAIL_ROUTING_FEATURE,
+  },
   // Find the account id and name the token belongs to (`GET /accounts`).
   { key: "account_settings", type: "read", label: "Account Settings" },
   // Stream a Worker's live logs while diagnosing an install or update.

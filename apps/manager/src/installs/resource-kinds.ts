@@ -48,6 +48,17 @@ export const CUSTOM_DOMAIN_KIND = "domain" as const;
  */
 export const QUEUE_CONSUMER_KIND = "queue_consumer" as const;
 
+/**
+ * Something Appflare set up in Email Routing for the install: a routing rule
+ * that delivers one address to the Worker, the zone's catch-all pointed at
+ * the Worker, or Email Routing itself when Appflare turned it on for the
+ * zone. None holds data, so an uninstall always undoes them, with calls of
+ * their own and before deleting the Worker (a rule pointing at a deleted
+ * Worker would bounce mail). `cf_id` says which one it is and on which zone
+ * (see installs/email-routing.ts).
+ */
+export const EMAIL_ROUTE_KIND = "email_route" as const;
+
 export function isDataResourceKind(kind: string): kind is DataResourceKind {
   return (DATA_RESOURCE_KINDS as readonly string[]).includes(kind);
 }

@@ -8,6 +8,10 @@ uninstall deletes and asks you to type the Worker name to confirm.
 
 ## What is always deleted
 
+For an [app that receives email](/guides/email-apps/#uninstalling), what the install
+set up in Email Routing, first: its routing rules, the catch-all if it still points at
+the app, and Email Routing itself if Appflare turned it on and nothing else uses it.
+
 The app's [custom domains](/guides/custom-domains/), which the uninstall removes
 first, each with its own request, so that no domain or DNS record is left pointing
 at a deleted Worker. A custom domain holds no data, so there is nothing to keep.

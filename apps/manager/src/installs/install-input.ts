@@ -50,6 +50,13 @@ export const startInstallInput = z.object({
    * true. Defaults to false for a client that predates the field.
    */
   requirementsConfirmed: z.boolean().default(false),
+  /**
+   * The zone whose email the app receives, for an app whose manifest sets
+   * `install.emailRouting`; refused for any other app.
+   */
+  emailRouting: z
+    .object({ zoneId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Choose a zone.") })
+    .optional(),
 });
 export type StartInstallInput = z.infer<typeof startInstallInput>;
 

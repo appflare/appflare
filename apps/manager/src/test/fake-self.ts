@@ -60,5 +60,6 @@ export function fakeSelf(
     uploadWorker: (input) => call("uploadWorker", input),
     applyD1Migration: (input) => call("applyD1Migration", input),
     emptyR2Page: (input) => call("emptyR2Page", input),
+    inspectEmailRouting: (input) => call("inspectEmailRouting", input),
   };
 }

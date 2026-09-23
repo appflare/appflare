@@ -2,6 +2,7 @@ import { type ClientOptions, createHttpApi } from "./http";
 import { createAccess } from "./namespaces/access";
 import { createAssets } from "./namespaces/assets";
 import { createD1 } from "./namespaces/d1";
+import { createEmailRouting } from "./namespaces/email-routing";
 import { createKv } from "./namespaces/kv";
 import { createQueues } from "./namespaces/queues";
 import { createR2 } from "./namespaces/r2";
@@ -28,6 +29,7 @@ export interface CloudflareClient {
   readonly workflows: ReturnType<typeof createWorkflows>;
   readonly zones: ReturnType<typeof createZones>;
   readonly workerDomains: ReturnType<typeof createWorkerDomains>;
+  readonly emailRouting: ReturnType<typeof createEmailRouting>;
 }
 
 /**
@@ -53,5 +55,6 @@ export function createClient(options: ClientOptions): CloudflareClient {
     workflows: createWorkflows(http),
     zones: createZones(http),
     workerDomains: createWorkerDomains(http),
+    emailRouting: createEmailRouting(http),
   };
 }

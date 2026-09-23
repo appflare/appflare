@@ -12,9 +12,10 @@ import { type HealthStatus, installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { requireRole, requireSession } from "../server/auth.server";
+import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
 import { startInstallInput } from "./install-input";
 import { renderPostInstall, workersDevUrl } from "./post-install";
-import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
+import { CUSTOM_DOMAIN_KIND, EMAIL_ROUTE_KIND } from "./resource-kinds";
 import { StartInstallError, startInstallCore } from "./start-install.server";
 
 /** Installs: start one (admin), list them, and show one. Uninstall lives in `uninstall.functions.ts`. */
@@ -148,6 +149,8 @@ export interface InstallDetail extends InstallRow {
   secretNames: string[];
   /** Custom domains that serve the Worker, in the order they were added. */
   domains: CustomDomainView[];
+  /** What the install set up in Email Routing, in the order it was set up. */
+  emailRoutes: EmailRouteView[];
   /** Which uninstall action the page offers now. */
   uninstall: "start" | "retry" | null;
   /** The job currently queued or running for this install, if any. */
@@ -162,7 +165,10 @@ export interface InstallDetail extends InstallRow {
     startedAt: string | null;
     finishedAt: string | null;
   }>;
-  /** Markdown with `{{workerUrl}}`/`{{workerName}}` filled in; empty until installed. */
+  /**
+   * Markdown with `{{workerUrl}}`/`{{workerName}}` filled in, then Appflare's
+   * own notes (sending email); empty until installed.
+   */
   postInstall: string[];
   /** Permissions of the Cloudflare token the app needs for itself, from its signed manifest. */
   tokenPermissions: TokenPermission[];
@@ -217,6 +223,7 @@ export const getInstall = createServerFn({ method: "GET" })
         postInstall = manifest.data.catalog.postInstall.map((p) =>
           renderPostInstall(p.content, { workerUrl, workerName: row.worker_name }),
         );
+        if (sendsEmail(manifest.data.worker.bindings)) postInstall.push(SEND_EMAIL_NOTE);
         tokenPermissions = manifest.data.catalog.tokenPermissions;
       }
     }
@@ -254,12 +261,18 @@ export const getInstall = createServerFn({ method: "GET" })
       currentVersionId: row.current_version_id,
       pinSha: row.pin_sha,
       vars: parseVars(row.config_json),
-      resources: live.filter((r) => r.kind !== "secret").map(view),
+      // Email routes are listed under Email; their ids carry encoded state.
+      resources: live.filter((r) => r.kind !== "secret" && r.kind !== EMAIL_ROUTE_KIND).map(view),
       retained: resourceRows.filter((r) => r.retained_at !== null).map(view),
       secretNames: live.filter((r) => r.kind === "secret").map((r) => r.name),
       domains: live
         .filter((r) => r.kind === CUSTOM_DOMAIN_KIND)
         .map((r) => ({ id: r.id, hostname: r.name, url: `https://${r.name}` })),
+      emailRoutes: emailRouteViews(
+        live
+          .filter((r) => r.kind === EMAIL_ROUTE_KIND)
+          .map((r) => ({ id: r.id, name: r.name, cfId: r.cf_id })),
+      ),
       uninstall,
       activeJobId: activeJob?.id ?? null,
       jobs: jobRows.map((j) => ({

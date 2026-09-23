@@ -11,6 +11,7 @@ import {
   ACCESS_FEATURE,
   accountTokenTemplateUrl,
   CUSTOM_DOMAINS_FEATURE,
+  EMAIL_ROUTING_FEATURE,
   optionalGroupsByFeature,
   permissionName,
   splitPermissionGroups,
@@ -28,6 +29,8 @@ const optional = optionalGroupsByFeature();
 const FEATURE_PLACES: Readonly<Record<string, string>> = {
   [ACCESS_FEATURE]: `"${ACCESS_FEATURE}" in Settings`,
   [CUSTOM_DOMAINS_FEATURE]: "Custom domains on an installed app's page",
+  [EMAIL_ROUTING_FEATURE]:
+    "Installing an app that receives email (it also needs Zone: Read and DNS: Edit from the custom domains list)",
 };
 
 export interface SavedToken {

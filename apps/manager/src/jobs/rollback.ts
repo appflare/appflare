@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
 import { QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
 import { healthCheckOfManifest, healthLabel } from "./install/health";
 import { checkLiveHealthPhase, lookupSubdomainPhase, syncCronsPhase } from "./install/phases";
@@ -141,6 +142,17 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       if (!env.CF_API_TOKEN) {
         throw new JobError("the Cloudflare API token is not configured; finish setup first");
       }
+      // TODO: apply `install.emailRouting` changes between versions (create and
+      // delete routing rules, take over or give back the catch-all). The zone the
+      // admin chose and the records of what the install set up exist only from the
+      // install; until an update can reconcile them, the job warns in its log and
+      // leaves Email Routing as the install set it up.
+      const emailChange = emailRoutingChangeWarning(
+        emailRoutingOfManifest(install.manifest_json),
+        emailRoutingOfManifest(snapshot.manifest_json),
+        snapshot.catalog_version ?? "the snapshot's version",
+      );
+      if (emailChange !== null) log.warn(emailChange);
       log.info(
         `Rolling back Worker "${install.worker_name}" from ${install.catalog_version} to ${snapshot.catalog_version ?? "the snapshot's version"} (version ${snapshot.worker_version_id}). D1 databases are not changed.`,
       );

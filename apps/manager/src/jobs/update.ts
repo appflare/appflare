@@ -13,6 +13,7 @@ import { readCachedCatalogApp } from "../catalog/index.server";
 import { createDb } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
 import { healthLabel } from "./install/health";
 import { buildScriptMetadata, resolveVars } from "./install/metadata";
 import {
@@ -198,6 +199,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         vectorizeShapes: vectorizeShapesOf(install.manifest_json),
         // The installed version's queue consumers, to tell which ones change.
         previousConsumers: consumerPlansOf(install.manifest_json),
+        emailRouting: emailRoutingOfManifest(install.manifest_json),
         userVars: parseVars(install.config_json),
         artifacts: app.artifacts,
         digest: app.digest,
@@ -268,6 +270,17 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       for (const secret of newSecrets) {
         log.info(`New secret ${secret.name}: set with the new version.`);
       }
+      // TODO: apply `install.emailRouting` changes between versions (create and
+      // delete routing rules, take over or give back the catch-all). The zone the
+      // admin chose and the records of what the install set up exist only from the
+      // install; until an update can reconcile them, the job warns in its log and
+      // leaves Email Routing as the install set it up.
+      const emailChange = emailRoutingChangeWarning(
+        started.emailRouting,
+        manifest.catalog.install.emailRouting,
+        params.version,
+      );
+      if (emailChange !== null) log.warn(emailChange);
       if (fullDeploy !== null) {
         log.warn(
           `Durable Object migrations up to "${fullDeploy.new_tag}" are pending, so this update deploys the whole Worker at once instead of checking a preview first.`,

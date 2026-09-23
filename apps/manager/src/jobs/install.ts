@@ -18,6 +18,11 @@ import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { workerNameSchema } from "../installs/install-input";
 import { planBindings } from "./install/bindings";
+import {
+  checkEmailRoutingPhase,
+  emailRoutingJobInput,
+  provisionEmailRoutingPhase,
+} from "./install/email-routing";
 import { healthLabel } from "./install/health";
 import { buildScriptMetadata, type CreatedResource, resolveVars } from "./install/metadata";
 import {
@@ -74,6 +79,8 @@ export const installJobParams = z.object({
    * because a job started by an earlier manager version does not carry it.
    */
   requirementsConfirmed: z.boolean().optional(),
+  /** The zone the admin chose, for an app whose manifest sets `install.emailRouting`. */
+  emailRouting: emailRoutingJobInput.optional(),
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
 
@@ -137,7 +144,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         }
         for (const requirement of requires) {
           log.info(
-            `Requires ${requirementLabel(requirement)}: ${requirementSentence(requirement) ?? "see the app's catalog page."}`,
+            `Requires ${requirementLabel(requirement)}: ${requirementSentence(requirement, { provisionsEmailRouting: manifest.catalog.install.emailRouting !== undefined }) ?? "see the app's catalog page."}`,
           );
         }
         if (params.requirementsConfirmed === true) {
@@ -232,6 +239,21 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         return {};
       });
     }
+
+    // Email Routing is checked before anything is created, like R2.
+    const emailRouting = manifest.catalog.install.emailRouting;
+    if (emailRouting !== undefined && params.emailRouting === undefined) {
+      steps.current = "check Email Routing";
+      throw new InstallError("this app receives email; choose a zone for it and install again");
+    }
+    const emailInspection =
+      emailRouting === undefined || params.emailRouting === undefined
+        ? null
+        : await checkEmailRoutingPhase(steps, {
+            zoneId: params.emailRouting.zoneId,
+            config: emailRouting,
+            workerName: params.workerName,
+          });
 
     // 3. Resources: check the name is free, create, then record.
     const created: CreatedResource[] = [];
@@ -434,6 +456,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       log.info(`Enabled https://${host}.`);
       return {};
     });
+
+    // Email Routing rules name the Worker, so they come after its upload.
+    if (emailInspection !== null) {
+      await provisionEmailRoutingPhase(steps, params.installId, emailInspection, params.workerName);
+    }
 
     // 9. Health check at the app's health path, through route propagation
     // and error 1042. Everything is created by now, so the result is recorded

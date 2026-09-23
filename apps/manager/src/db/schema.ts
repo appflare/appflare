@@ -43,6 +43,7 @@ export const RESOURCE_KINDS = [
   "subdomain",
   "ratelimit",
   "domain",
+  "email_route",
 ] as const;
 
 export const JOB_KINDS = ["install", "update", "uninstall", "rollback", "self_update"] as const;

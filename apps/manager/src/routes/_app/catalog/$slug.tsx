@@ -261,7 +261,10 @@ function Prerequisites({
                     {app.requires.map((r) => (
                       <li key={r}>
                         <span className="font-semibold">{requirementLabel(r)}.</span>{" "}
-                        {requirementSentence(r)}
+                        {requirementSentence(r, {
+                          provisionsEmailRouting:
+                            detail.catalog?.install.emailRouting !== undefined,
+                        })}
                       </li>
                     ))}
                   </ul>

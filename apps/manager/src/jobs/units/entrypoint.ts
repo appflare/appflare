@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import type { UnitResult } from "./result";
 import {
   type AssetPartResult,
@@ -31,5 +32,9 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   emptyR2Page(input: unknown): Promise<UnitResult<R2PageResult>> {
     return createJobUnits(this.env).emptyR2Page(input);
+  }
+
+  inspectEmailRouting(input: unknown): Promise<UnitResult<EmailRoutingInspection>> {
+    return createJobUnits(this.env).inspectEmailRouting(input);
   }
 }

@@ -46,7 +46,8 @@ function workerBoundSummary(install: InstallDetail): string[] {
  * data resources with a checkbox each (all ticked by default) and, where the
  * API reports it cheaply, what they hold; what goes with the Worker, custom
  * domains included (they hold no data, and are removed before the Worker), is
- * listed without a choice. The admin types the Worker name to confirm. Submitting
+ * listed without a choice, and so is what the install set up in Email Routing
+ * (removed first). The admin types the Worker name to confirm. Submitting
  * starts the uninstall job and opens its log. In `retry` mode it continues an
  * uninstall that stopped part way, listing only what is left; unticking a
  * resource keeps it (for example a bucket Cloudflare refuses to delete).
@@ -156,6 +157,22 @@ export function UninstallDialog({
             title="Deleting data is permanent"
             description="Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare lists it on this page afterwards."
           />
+          {install.emailRoutes.length > 0 && (
+            <div className="grid gap-1.5">
+              <Text bold>Email Routing</Text>
+              <Text variant="secondary">
+                Undone first, before the Worker, so no mail is sent to a Worker that no longer
+                exists. Nothing here holds data.
+              </Text>
+              <ul className="grid list-disc gap-1 pl-5">
+                {install.emailRoutes.map((r) => (
+                  <li key={r.id}>
+                    <Text as="span">{r.onUninstall}</Text>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {install.domains.length > 0 && (
             <div className="grid gap-1.5">
               <Text bold>Custom domains</Text>

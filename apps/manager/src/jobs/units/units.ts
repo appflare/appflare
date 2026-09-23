@@ -10,12 +10,18 @@ import {
 } from "@appflare/schema";
 import { z } from "zod";
 import { releaseFetch } from "../../catalog/release-fetch";
+import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import { isNotFound, JobError } from "../errors";
 import { artifactReader, fetchArtifactFile } from "../install/artifact";
 import { APPLIED_MIGRATION_SQL, buildMigrationQuery } from "../install/d1-migrations";
 import { uploadModule } from "../install/metadata";
 import { assetContentType } from "../install/mime";
 import { activeVersionId } from "../update/plan";
+import {
+  type EmailRoutingInspectInput,
+  emailRoutingInspectInputSchema,
+  runEmailRoutingInspection,
+} from "./email-routing";
 import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result";
 
 /**
@@ -143,6 +149,8 @@ export interface JobUnitsApi {
   applyD1Migration(input: D1MigrationInput): Promise<UnitResult<D1MigrationResult>>;
   /** Lists one page of an R2 bucket's objects and deletes them. */
   emptyR2Page(input: R2PageInput): Promise<UnitResult<R2PageResult>>;
+  /** Reads a zone's Email Routing state before an email app is installed there. */
+  inspectEmailRouting(input: EmailRoutingInspectInput): Promise<UnitResult<EmailRoutingInspection>>;
 }
 
 /** The unit names, as RPC method names. */
@@ -348,6 +356,11 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
             deleted: listed.items.length,
           };
         }),
+      ),
+
+    inspectEmailRouting: (input) =>
+      parsed(emailRoutingInspectInputSchema, input, "inspectEmailRouting", (request) =>
+        runEmailRoutingInspection(env, deps, request),
       ),
   };
 }

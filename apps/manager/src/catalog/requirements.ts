@@ -37,6 +37,14 @@ export const REQUIREMENTS: Record<Requirement, { label: string; sentence: string
   },
 };
 
+/**
+ * The Email Routing sentence for an app whose manifest sets
+ * `install.emailRouting`: Appflare sets routing up itself, on the zone the
+ * admin chooses in the install form.
+ */
+const EMAIL_ROUTING_PROVISIONED =
+  "The app receives email through Email Routing on a zone of this account that uses Cloudflare DNS. You choose the zone in the install form; Appflare turns Email Routing on there if it is off and points the app's addresses at its Worker. The Cloudflare token needs the Email Routing permissions for that.";
+
 /** Looked up by plain string: a newer catalog may list a requirement this manager does not know yet. */
 const byName: Partial<Record<string, { label: string; sentence: string }>> = REQUIREMENTS;
 
@@ -44,6 +52,16 @@ export function requirementLabel(value: string): string {
   return byName[value]?.label ?? value;
 }
 
-export function requirementSentence(value: string): string | null {
+/**
+ * The sentence for a requirement. `provisionsEmailRouting`: the app's manifest
+ * sets `install.emailRouting`, so the install sets Email Routing up itself.
+ */
+export function requirementSentence(
+  value: string,
+  context: { provisionsEmailRouting?: boolean } = {},
+): string | null {
+  if (value === "email-routing" && context.provisionsEmailRouting === true) {
+    return EMAIL_ROUTING_PROVISIONED;
+  }
   return byName[value]?.sentence ?? null;
 }

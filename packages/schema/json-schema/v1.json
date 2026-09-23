@@ -117,6 +117,49 @@
           "type": "string",
           "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
           "description": "The version shown for this entry when the repository's tag does not describe this app (monorepos); it must change whenever `source` moves."
+        },
+        "emailRouting": {
+          "type": "object",
+          "properties": {
+            "catchAll": {
+              "type": "boolean",
+              "description": "Send every address of the zone that no other rule matches to the app (the zone's catch-all rule). The install refuses when the catch-all already sends mail somewhere else."
+            },
+            "rules": {
+              "maxItems": 10,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(?=[^@]{1,64}(?:@|$))[a-z0-9]+(?:[._+-][a-z0-9]+)*(?:@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)?$"
+              },
+              "description": "Addresses to route to the app, one routing rule each: a local part such as `inbox` (becomes `inbox@<zone>`) or a full address in the chosen zone. The install refuses an address that already has a rule.",
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false,
+          "description": "Email the app receives through Email Routing. The install form asks for one of the account's zones; the install turns Email Routing on there if it is off, then points the listed addresses (and, with `catchAll`, every other address) at the app's Worker, which must export an `email` handler. Uninstalling removes what the install added.",
+          "anyOf": [
+            {
+              "required": [
+                "catchAll"
+              ],
+              "properties": {
+                "catchAll": {
+                  "const": true
+                }
+              }
+            },
+            {
+              "required": [
+                "rules"
+              ],
+              "properties": {
+                "rules": {
+                  "minItems": 1
+                }
+              }
+            }
+          ]
         }
       },
       "required": [

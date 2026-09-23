@@ -53,6 +53,7 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
   subdomain: "workers.dev route",
   ratelimit: "Rate limit",
   domain: "Custom domain",
+  email_route: "Email route",
 };
 
 export function resourceKindLabel(kind: string): string {

@@ -32,6 +32,19 @@ export type {
   AssetBucketResult,
 } from "./namespaces/assets";
 export type { RestoreArgs } from "./namespaces/d1";
+export type {
+  CreateEmailRoutingRuleArgs,
+  EmailRoutingAction,
+  EmailRoutingAddress,
+  EmailRoutingCatchAll,
+  EmailRoutingDnsRecord,
+  EmailRoutingMatcher,
+  EmailRoutingRule,
+  EmailRoutingSettings,
+  EmailRoutingStatus,
+  UpdateEmailRoutingCatchAllArgs,
+} from "./namespaces/email-routing";
+export { EmailRoutingShapeError } from "./namespaces/email-routing";
 export type { CreateBucketArgs } from "./namespaces/r2";
 export { isAddressableObjectKey } from "./namespaces/r2";
 export type {

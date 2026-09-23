@@ -37,3 +37,27 @@ describe.skipIf(dev === null)("cf-api integration (dev account, read-only)", () 
     }
   });
 });
+
+describe.skipIf(dev === null)("cf-api integration: Email Routing (dev account, read-only)", () => {
+  const context = dev as DevContext;
+
+  it("lists destination addresses", async () => {
+    const addresses = await createClient(context).emailRouting.listDestinationAddresses();
+    expect(Array.isArray(addresses)).toBe(true);
+  });
+
+  it("reads a zone's settings, rules, catch-all, and needed records when the account has a zone", async () => {
+    const client = createClient(context);
+    const [zone] = await client.zones.listZones({ accountId: context.accountId });
+    if (zone === undefined) return;
+    const settings = await client.emailRouting.getSettings(zone.id);
+    expect(settings.name).toBe(zone.name);
+    expect(typeof settings.enabled).toBe("boolean");
+    expect(Array.isArray(await client.emailRouting.listRules(zone.id))).toBe(true);
+    const catchAll = await client.emailRouting.getCatchAll(zone.id);
+    expect(catchAll.matchers).toEqual([{ type: "all" }]);
+    // The records routing needs are listed whether or not it is on.
+    const records = await client.emailRouting.getDnsRecords(zone.id);
+    expect(records.some((r) => r.type === "MX")).toBe(true);
+  });
+});

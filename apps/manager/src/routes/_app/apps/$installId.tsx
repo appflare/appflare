@@ -26,7 +26,7 @@ import {
 import { listSnapshots } from "../../../installs/versions.functions";
 
 /**
- * `/apps/$installId`: status and health, custom domains, resources, secret names, jobs,
+ * `/apps/$installId`: status and health, custom domains, email routes, resources, secret names, jobs,
  * the Cloudflare token the app needs for itself (if any), the app's post-install notes,
  * update and rollback, and uninstall. After an uninstall
  * it shows the `uninstalled` state, the resources that were kept, and the job
@@ -129,6 +129,21 @@ function InstallPage() {
         </Section>
       )}
       {!gone && isAdmin && <CustomDomainsSection install={install} />}
+      {!gone && install.emailRoutes.length > 0 && (
+        <Section title="Email">
+          <LayerCard>
+            <LayerCard.Primary className="px-5 py-4">
+              <ul className="grid list-disc gap-1 pl-5">
+                {install.emailRoutes.map((r) => (
+                  <li key={r.id}>
+                    <Text as="span">{r.label}.</Text>
+                  </li>
+                ))}
+              </ul>
+            </LayerCard.Primary>
+          </LayerCard>
+        </Section>
+      )}
       {install.retained.length > 0 && (
         <Section title="Kept in the account">
           <Text variant="secondary">

@@ -15,8 +15,10 @@ import {
   CUSTOM_DOMAIN_KIND,
   DATA_RESOURCE_KINDS,
   type DataResourceKind,
+  EMAIL_ROUTE_KIND,
   WORKER_BOUND_KINDS,
 } from "../installs/resource-kinds";
+import { type EmailRouteRecord, removeEmailRoutesPhase } from "./install/email-routing";
 import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
 import { deleteResource, RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
@@ -28,13 +30,16 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
 /**
  * The `uninstall` job. One API call per step, retried on 429/5xx like the
  * install; a 404 means the object is already gone and counts as deleted, so a
- * retried or repeated uninstall converges. Order: the install's custom domains
- * first (always; they hold no data, and Cloudflare does not document that
- * deleting a Worker removes them, so they get calls of their own), then its
- * queue consumers (no data either; each is removed before the Worker it
- * points at and before the queue it reads), then the Worker (with
- * `?force=true`, which also removes its cron triggers, workers.dev route,
- * secrets, Durable Objects, and Workflows), then each ticked data resource.
+ * retried or repeated uninstall converges. Order: what the install set up in
+ * Email Routing first (its routing rules, the catch-all, then Email Routing
+ * itself if Appflare turned it on and nothing else uses it; mail must not go
+ * to a deleted Worker), then the install's custom domains (always; they hold
+ * no data, and Cloudflare does not document that deleting a Worker removes
+ * them, so they get calls of their own), then its queue consumers (no data
+ * either; each is removed before the Worker it points at and before the queue
+ * it reads), then the Worker (with `?force=true`, which also removes its cron
+ * triggers, workers.dev route, secrets, Durable Objects, and Workflows), then
+ * each ticked data resource.
  * The Worker is deleted only when this install recorded it: an install that
  * failed before its upload never owned a Worker of that name, and the account
  * may hold someone else's. An R2 bucket must be empty before it can be
@@ -136,6 +141,10 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       const domains: DomainTarget[] = live
         .filter((r) => r.kind === CUSTOM_DOMAIN_KIND)
         .map((r) => ({ id: r.id, hostname: r.name, cfId: r.cf_id }));
+      // Email routes are never kept either: mail to a deleted Worker bounces.
+      const emailRoutes: EmailRouteRecord[] = live
+        .filter((r) => r.kind === EMAIL_ROUTE_KIND)
+        .map((r) => ({ id: r.id, name: r.name, cfId: r.cf_id }));
       // Queue consumers are never kept either; they go before the Worker and
       // before any queue they read.
       const consumers = consumerTargets(
@@ -162,6 +171,9 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       }
       log.info(
         `Uninstalling Worker "${install.workerName}". ` +
+          (emailRoutes.length > 0
+            ? `Removing email routes: ${emailRoutes.map((r) => r.name).join(", ")}. `
+            : "") +
           (domains.length > 0
             ? `Removing custom domains: ${domains.map((d) => d.hostname).join(", ")}. `
             : "") +
@@ -176,12 +188,16 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         targets,
         domains,
         consumers,
+        emailRoutes,
         kept,
         worker,
       };
     });
     steps.setAccountId(started.accountId);
     const { workerName } = started;
+
+    // A job started before email routes existed carries no list.
+    await removeEmailRoutesPhase(steps, started.emailRoutes ?? [], workerName);
 
     for (const domain of started.domains) {
       await run(`remove custom domain ${domain.hostname}`, async ({ log, cf, orm }) => {

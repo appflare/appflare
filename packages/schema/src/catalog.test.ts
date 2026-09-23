@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   appHealthMode,
   appHealthPath,
   catalogManifestSchema,
+  EMAIL_ROUTING_MAX_RULES,
   hasFixedWorkerName,
   semverSchema,
 } from "./catalog";
@@ -224,6 +226,78 @@ describe("catalogManifestSchema", () => {
       });
       expect(result.success).toBe(false);
     }
+  });
+});
+
+describe("install.emailRouting", () => {
+  const withRouting = (emailRouting: unknown) =>
+    catalogManifestSchema.safeParse({
+      ...validManifest,
+      install: { ...validManifest.install, emailRouting },
+    });
+
+  it("is optional, so manifests without it keep their parsed shape", () => {
+    const parsed = catalogManifestSchema.parse(validManifest);
+    expect(parsed.install.emailRouting).toBeUndefined();
+    expect("emailRouting" in parsed.install).toBe(false);
+  });
+
+  it("accepts a catch-all, local parts, and full addresses", () => {
+    expect(withRouting({ catchAll: true }).success).toBe(true);
+    expect(withRouting({ rules: ["inbox", "bills+2026", "a.b_c-d"] }).success).toBe(true);
+    expect(withRouting({ rules: ["inbox@example.com", "x@mail.example.co.uk"] }).success).toBe(
+      true,
+    );
+    expect(withRouting({ catchAll: true, rules: ["inbox"] }).success).toBe(true);
+  });
+
+  it("needs a catch-all or at least one address", () => {
+    for (const value of [{}, { catchAll: false }, { rules: [] }, { catchAll: false, rules: [] }]) {
+      expect(withRouting(value).success, JSON.stringify(value)).toBe(false);
+    }
+  });
+
+  it("refuses malformed, uppercase, or duplicate addresses", () => {
+    for (const rule of [
+      "",
+      "Inbox",
+      "-inbox",
+      "inbox.",
+      ".inbox",
+      "a..b",
+      "a.-b",
+      "a..b@example.com",
+      "a".repeat(65),
+      "in box",
+      "a@b",
+      "a@",
+      "@example.com",
+      "a@@b.com",
+      "a@-x.com",
+    ]) {
+      expect(withRouting({ rules: [rule] }).success, rule).toBe(false);
+    }
+    expect(withRouting({ rules: ["inbox", "inbox"] }).success).toBe(false);
+    expect(withRouting({ rules: ["a".repeat(64)] }).success).toBe(true);
+  });
+
+  it("states both rules in the JSON Schema, so editors refuse {} and repeats", () => {
+    const install = z.toJSONSchema(catalogManifestSchema).properties?.install;
+    const routing = typeof install === "object" ? install.properties?.emailRouting : undefined;
+    expect(routing).toMatchObject({
+      anyOf: [
+        { required: ["catchAll"], properties: { catchAll: { const: true } } },
+        { required: ["rules"], properties: { rules: { minItems: 1 } } },
+      ],
+      properties: { rules: { uniqueItems: true, maxItems: EMAIL_ROUTING_MAX_RULES } },
+    });
+    expect(typeof routing === "object" && routing.description).toContain("Email Routing");
+  });
+
+  it("caps the number of addresses", () => {
+    const rules = Array.from({ length: EMAIL_ROUTING_MAX_RULES + 1 }, (_, i) => `box${i}`);
+    expect(withRouting({ rules }).success).toBe(false);
+    expect(withRouting({ rules: rules.slice(1) }).success).toBe(true);
   });
 });
 

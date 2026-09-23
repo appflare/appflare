@@ -4,6 +4,7 @@ import { RESOURCE_KINDS } from "../db/schema";
 import {
   CUSTOM_DOMAIN_KIND,
   DATA_RESOURCE_KINDS,
+  EMAIL_ROUTE_KIND,
   isDataResourceKind,
   QUEUE_CONSUMER_KIND,
   WORKER_BOUND_KINDS,
@@ -26,6 +27,7 @@ describe("resource kinds", () => {
         (WORKER_BOUND_KINDS as readonly string[]).includes(kind),
         kind === CUSTOM_DOMAIN_KIND,
         kind === QUEUE_CONSUMER_KIND,
+        kind === EMAIL_ROUTE_KIND,
       ].filter(Boolean);
       expect(treatments, kind).toHaveLength(1);
     }
@@ -35,5 +37,11 @@ describe("resource kinds", () => {
     expect(isDataResourceKind(CUSTOM_DOMAIN_KIND)).toBe(false);
     expect(isDataResourceKind(QUEUE_CONSUMER_KIND)).toBe(false);
     expect(resourceKindLabel(QUEUE_CONSUMER_KIND)).toBe("Queue consumer");
+  });
+
+  it("records email routes as their own kind, never data to keep", () => {
+    expect(RESOURCE_KINDS).toContain(EMAIL_ROUTE_KIND);
+    expect(resourceKindLabel(EMAIL_ROUTE_KIND)).toBe("Email route");
+    expect(isDataResourceKind(EMAIL_ROUTE_KIND)).toBe(false);
   });
 });
