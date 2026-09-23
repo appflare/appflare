@@ -1,5 +1,50 @@
 # @appflare/manager
 
+## 0.4.0
+
+### Minor Changes
+
+- e9aef76: Apps that bind a Vectorize index can be installed. A wrangler config cannot
+  say how to create the index, so the catalog manifest states it in
+  `resources.vectorize`, keyed by binding name:
+  `{ "dimensions": 1-1536, "metric": "cosine" | "euclidean" | "dot-product" }`.
+  The packer records both on the artifact's Vectorize binding and refuses a
+  Vectorize binding the catalog manifest does not declare (and a declaration for
+  a binding the wrangler config does not have), naming the field to add;
+  `verify` checks the two agree. The artifact schema types the Vectorize binding,
+  and the manager creates the index from it at install, binds it by name, and
+  deletes it on uninstall when ticked. An update whose version changes the
+  dimensions or metric of an index the install already has is refused before
+  anything changes: an index cannot be reshaped in place, so that version needs a
+  fresh install.
+
+### Patch Changes
+
+- 1d222e9: List an app's account requirements on its catalog page with a sentence each, and ask the admin to confirm the account meets them before the Install button enables; installs started without that confirmation are refused. An install that needs an R2 bucket now checks that R2 is enabled before creating anything, and explains how to enable it (a payment method on file, even for the free tier) instead of showing Cloudflare's raw error.
+- 79229be: Show the Cloudflare token an app needs for itself on its catalog page and install page: each permission with its scope and purpose, and a "Create token" link that opens the dashboard's token form with the recognized permissions selected.
+- bba65db: Installing or updating an app with many static asset files no longer fails with
+  "Too many subrequests". The asset upload now reads neighbouring files from the
+  release artifact with a single range request, follows the release download's
+  redirect once per step instead of once per file, and splits an upload group
+  that would not fit one step into several uploads. If the free plan's
+  subrequest limit is reached anyway, the job stops at once with an explanation
+  instead of retrying into the same limit.
+- 9205396: Show on each catalog card when the catalog's nightly install check last passed ("Verified" with the day, the exact time on hover, or "Not verified yet"), and show the account requirements as icons named on hover. The app's catalog page uses the same verified badge, and the token section now says an app's token is stored on the app's Worker, never on the manager's.
+- 5cddddd: The health check at the end of an install, update, or rollback now keeps
+  probing for up to 90 seconds with backoff (2, 3, 5, 8, then every 10 seconds),
+  since a new workers.dev route can take longer than 20 seconds to go live. It no
+  longer fails the job: everything is already created or promoted by then, so the
+  job succeeds, logs a warning when the Worker could not be verified, and records
+  the result on the install (verified, not verified yet, or unhealthy for a 5xx).
+  A plain 404 passes once the window ends, as apps may serve 404 at their root.
+  The install job now probes the catalog's `install.healthPath` like the update
+  job does. The install page shows the health with the time of the last check and
+  a "Check now" button for admins; the installed list flags installs that are
+  unhealthy or not verified yet.
+- Updated dependencies [68d6c97]
+- Updated dependencies [e9aef76]
+  - @appflare/schema@0.3.0
+
 ## 0.3.1
 
 ### Patch Changes
