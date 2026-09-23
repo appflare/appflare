@@ -331,6 +331,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       for (const warning of vars.warnings) log.warn(warning);
       const metadata = buildScriptMetadata({
         manifest,
+        workerName: params.workerName,
         resources: created,
         vars: vars.vars,
         assetsJwt,

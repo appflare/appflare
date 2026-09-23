@@ -1,10 +1,12 @@
-import type {
-  CatalogResources,
-  JsonValue,
-  ModuleType,
-  QueueConsumer,
-  QueueRef,
-  WorkerBinding,
+import {
+  type CatalogResources,
+  type JsonValue,
+  type ModuleType,
+  type QueueConsumer,
+  type QueueRef,
+  SELF_SERVICE,
+  type SelfServiceBinding,
+  type WorkerBinding,
 } from "@appflare/schema";
 
 /**
@@ -51,6 +53,8 @@ export interface ResolvedWranglerConfig {
     service?: string;
     environment?: string;
     entrypoint?: string;
+    props?: unknown;
+    cross_account_grant?: unknown;
   }>;
   ai?: { binding: string } | null;
   browser?: { binding: string } | null;
@@ -103,6 +107,49 @@ export class VectorizeDeclarationError extends Error {
 }
 
 /**
+ * The wrangler config declares a service binding the packer refuses: one to
+ * any Worker other than the app's own, or a self binding carrying more than an
+ * entrypoint. The message names the binding and says why.
+ */
+export class ServiceBindingError extends Error {
+  override name = "ServiceBindingError";
+}
+
+type WranglerService = NonNullable<ResolvedWranglerConfig["services"]>[number];
+
+/**
+ * The artifact's record of a wrangler service binding. A binding to the
+ * app's own Worker (its `service` is the config's own `name`, as OpenNext's
+ * `WORKER_SELF_REFERENCE` is) becomes `{ type: "service", name, service:
+ * "self", entrypoint? }`: the install may run under another Worker name, and
+ * the manager puts that name back when it uploads. Every other service
+ * binding throws {@link ServiceBindingError}: an app must never be able to call
+ * another Worker in the account, least of all the manager.
+ */
+function selfServiceBinding(svc: WranglerService, workerName: string | null | undefined) {
+  if (svc.service === undefined || svc.service !== workerName) {
+    const target = svc.service === undefined ? "no Worker" : `the Worker "${svc.service}"`;
+    throw new ServiceBindingError(
+      `the wrangler config's service binding ${svc.binding} points at ${target}, not at the app's own Worker` +
+        `${workerName ? ` ("${workerName}")` : ""}; Appflare installs self-contained apps and never lets one call another Worker ` +
+        "in the account, so the only service binding an app may have is one to itself",
+    );
+  }
+  const extras = (["environment", "props", "cross_account_grant"] as const).filter(
+    (field) => svc[field] !== undefined,
+  );
+  if (extras.length > 0) {
+    throw new ServiceBindingError(
+      `the wrangler config's service binding ${svc.binding} to the app's own Worker sets ${extras.join(", ")}; ` +
+        "Appflare records a binding to the app's own Worker with nothing but an optional entrypoint",
+    );
+  }
+  const binding: SelfServiceBinding = { type: "service", name: svc.binding, service: SELF_SERVICE };
+  if (svc.entrypoint !== undefined) binding.entrypoint = svc.entrypoint;
+  return binding;
+}
+
+/**
  * Converts wrangler's per-kind binding arrays into the artifact manifest's flat
  * `bindings` array, keeping only the binding NAME, its TYPE, and fields that are
  * not account-specific.
@@ -124,7 +171,9 @@ export class VectorizeDeclarationError extends Error {
  * account that binds it.) `type` values use Cloudflare's
  * upload-metadata binding type names so the manager can pass them through.
  * Unrecognized kinds are intentionally not emitted (extend this as the catalog
- * grows); DO class references and `vars` are handled here too.
+ * grows); DO class references and `vars` are handled here too. A service
+ * binding is recorded only when it points at the app's own Worker, and any
+ * other throws {@link ServiceBindingError}.
  */
 export function collectBindings(
   config: ResolvedWranglerConfig,
@@ -193,11 +242,7 @@ export function collectBindings(
     });
   }
   for (const svc of config.services ?? []) {
-    push("service", svc.binding, {
-      service: svc.service,
-      environment: svc.environment,
-      entrypoint: svc.entrypoint,
-    });
+    bindings.push(selfServiceBinding(svc, config.name));
   }
   for (const wf of config.workflows ?? []) {
     // Upload-metadata shape for a workflow binding (verified against wrangler

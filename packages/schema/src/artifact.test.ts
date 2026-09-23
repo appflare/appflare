@@ -3,8 +3,10 @@ import {
   artifactManifestSchema,
   catalogVarProblems,
   isJsonVarBinding,
+  isSelfServiceBinding,
   isVectorizeBinding,
   queueConsumerProblems,
+  serviceBindingProblem,
 } from "./artifact";
 
 const sha256 = "a".repeat(64);
@@ -262,6 +264,48 @@ describe("json var bindings", () => {
     expect(catalogVarProblems(bindings, [v("EMAIL_ADDRESSES", "inbox@example.com")])).toEqual([
       expect.stringMatching(/^The default of the var EMAIL_ADDRESSES is not valid JSON/),
     ]);
+  });
+});
+
+describe("service bindings", () => {
+  const withBindings = (bindings: unknown[]) => ({
+    ...validArtifact,
+    worker: { ...validArtifact.worker, bindings },
+  });
+  const parseOne = (binding: unknown) => {
+    const parsed = artifactManifestSchema.parse(withBindings([binding])).worker.bindings[0];
+    if (parsed === undefined) throw new Error("expected one binding");
+    return parsed;
+  };
+
+  it("type a binding to the app's own Worker, with or without an entrypoint", () => {
+    for (const binding of [
+      { type: "service", name: "WORKER_SELF_REFERENCE", service: "self" },
+      { type: "service", name: "SELF", service: "self", entrypoint: "Jobs" },
+    ]) {
+      const parsed = parseOne(binding);
+      expect(parsed).toEqual(binding);
+      expect(isSelfServiceBinding(parsed)).toBe(true);
+      expect(serviceBindingProblem(parsed)).toBeNull();
+    }
+  });
+
+  it("still read when they point at another Worker, and say why no app may have one", () => {
+    // Old or hand-edited artifacts keep parsing; the problem is what refuses them.
+    for (const binding of [
+      { type: "service", name: "SELF", service: "appflare", entrypoint: "JobUnits" },
+      { type: "service", name: "API", service: "other-worker" },
+      { type: "service", name: "NOWHERE" },
+      // Anything beyond an entrypoint makes it something other than a plain self binding.
+      { type: "service", name: "ENV", service: "self", environment: "staging" },
+    ]) {
+      const parsed = parseOne(binding);
+      expect(isSelfServiceBinding(parsed)).toBe(false);
+      expect(serviceBindingProblem(parsed)).toMatch(
+        new RegExp(`^Service binding ${binding.name} points at .*may bind only to its own Worker`),
+      );
+    }
+    expect(serviceBindingProblem(parseOne({ type: "ai", name: "AI" }))).toBeNull();
   });
 });
 

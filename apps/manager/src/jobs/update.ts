@@ -406,6 +406,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       // pending ones; the Worker has the others already.
       const { migrations: _all, ...base } = buildScriptMetadata({
         manifest,
+        workerName,
         resources: bound,
         vars: vars.vars,
         assetsJwt,

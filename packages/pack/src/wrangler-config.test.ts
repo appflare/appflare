@@ -6,6 +6,7 @@ import {
   mainModuleName,
   QueueConsumerError,
   type ResolvedWranglerConfig,
+  ServiceBindingError,
   VectorizeDeclarationError,
 } from "./wrangler-config.ts";
 
@@ -199,6 +200,43 @@ describe("collectBindings", () => {
       },
       { type: "images", name: "IMAGES" },
     ]);
+  });
+
+  it("records a service binding to the app's own Worker as service self", () => {
+    const config: ResolvedWranglerConfig = {
+      name: "mailflare",
+      services: [
+        // OpenNext's binding for revalidation and caching.
+        { binding: "WORKER_SELF_REFERENCE", service: "mailflare" },
+        { binding: "JOBS", service: "mailflare", entrypoint: "Jobs" },
+      ],
+    };
+    expect(collectBindings(config)).toEqual([
+      { type: "service", name: "WORKER_SELF_REFERENCE", service: "self" },
+      { type: "service", name: "JOBS", service: "self", entrypoint: "Jobs" },
+    ]);
+  });
+
+  it("refuses a service binding to any other Worker, naming the binding", () => {
+    for (const [services, message] of [
+      [
+        [{ binding: "SELF", service: "appflare", entrypoint: "JobUnits" }],
+        /service binding SELF points at the Worker "appflare", not at the app's own Worker \("cut"\).*never lets one call another Worker/,
+      ],
+      [[{ binding: "API" }], /service binding API points at no Worker/],
+      [
+        [{ binding: "ENV", service: "cut", environment: "staging" }],
+        /service binding ENV to the app's own Worker sets environment/,
+      ],
+      [
+        [{ binding: "P", service: "cut", props: { admin: true } }],
+        /service binding P to the app's own Worker sets props/,
+      ],
+    ] as const) {
+      const config = { name: "cut", services } as unknown as ResolvedWranglerConfig;
+      expect(() => collectBindings(config)).toThrow(ServiceBindingError);
+      expect(() => collectBindings(config)).toThrow(message);
+    }
   });
 
   it("returns an empty array when there are no bindings", () => {

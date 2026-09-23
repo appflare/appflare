@@ -438,6 +438,84 @@ describe("pack with a Vectorize binding", () => {
 });
 
 /**
+ * A copy of the hello fixture whose wrangler config adds `services`, each
+ * pointing at the config's own name unless it says otherwise.
+ */
+function serviceCheckout(
+  parent: string,
+  services: (name: string) => unknown[],
+): { dir: string; manifest: string } {
+  const dir = path.join(parent, "checkout");
+  cpSync(FIXTURE, dir, { recursive: true });
+  const configPath = path.join(dir, "wrangler.jsonc");
+  const config = parseJsonc(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  config.services = services(String(config.name));
+  writeFileSync(configPath, JSON.stringify(config));
+  return { dir, manifest: path.join(dir, "appflare.jsonc") };
+}
+
+describe("pack with a service binding", () => {
+  it("records a binding to the app's own Worker as service self, which verify accepts", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-self-"));
+    const outDir = path.join(parent, "out");
+    try {
+      const checkout = serviceCheckout(parent, (name) => [
+        { binding: "WORKER_SELF_REFERENCE", service: name },
+      ]);
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+      });
+      expect(res.manifest.worker.bindings).toContainEqual({
+        type: "service",
+        name: "WORKER_SELF_REFERENCE",
+        service: "self",
+      });
+      await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true });
+
+      // An artifact edited to point the binding at another Worker fails.
+      const manifestPath = path.join(outDir, "manifest.json");
+      const edited = JSON.parse(readFileSync(manifestPath, "utf8")) as ArtifactManifest;
+      edited.worker.bindings = edited.worker.bindings.map((b) =>
+        b.type === "service" ? { ...b, service: "appflare", entrypoint: "JobUnits" } : b,
+      );
+      writeFileSync(manifestPath, JSON.stringify(edited));
+      await expect(verify({ dir: outDir })).rejects.toThrow(
+        /Service binding WORKER_SELF_REFERENCE points at the Worker "appflare"/,
+      );
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("fails before building or writing anything when one points at another Worker", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-foreign-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = serviceCheckout(parent, () => [
+        { binding: "SELF", service: "appflare", entrypoint: "JobUnits" },
+      ]);
+      await expect(
+        pack({
+          checkoutDir: checkout.dir,
+          manifestPath: checkout.manifest,
+          outDir,
+          install: false,
+          logger: (m) => logs.push(m),
+        }),
+      ).rejects.toThrow(/service binding SELF points at the Worker "appflare"/);
+      expect(existsSync(outDir)).toBe(false);
+      expect(logs.some((l) => l.includes("dry-run"))).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+/**
  * A copy of the fixture whose catalog manifest has a build command: the build
  * writes the wrangler config the packer then reads (as the Cloudflare Vite
  * plugin does) plus a static asset. The config adds queue consumers, a rate

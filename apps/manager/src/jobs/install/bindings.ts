@@ -1,5 +1,6 @@
 import {
   isVectorizeBinding,
+  serviceBindingProblem,
   type VectorizeIndexConfig,
   type WorkerBinding,
 } from "@appflare/schema";
@@ -7,7 +8,8 @@ import {
 /**
  * How the install job treats each binding the packer recorded:
  * some need a backing resource created in the account, Durable Objects are
- * recorded for the resource checklist, the rest are sent as recorded.
+ * recorded for the resource checklist, a service binding to the app's own
+ * Worker is pointed at the install's Worker, the rest are sent as recorded.
  */
 
 /** Binding types that need a backing resource, and the `resources.kind` they become. */
@@ -24,7 +26,8 @@ export type ProvisionedKind = (typeof RESOURCE_BINDINGS)[ResourceBindingType];
 
 /**
  * Binding types sent to the upload exactly as the packer recorded them: they
- * carry no account-specific id (the packer strips ids by allowlist).
+ * carry no account-specific id (the packer strips ids by allowlist). Never
+ * `service`: sent as recorded, one could name any Worker in the account.
  */
 export const PASSTHROUGH_BINDING_TYPES: ReadonlySet<string> = new Set([
   "plain_text",
@@ -178,6 +181,14 @@ export function planBindings(workerName: string, bindings: readonly WorkerBindin
         name,
         className: typeof binding.class_name === "string" ? binding.class_name : binding.name,
       });
+    } else if (binding.type === "service") {
+      // Only a binding to the app's own Worker (`service: "self"`), which the
+      // upload points at this install's Worker. Anything else could reach
+      // another install or the manager's job units, which act with its
+      // account-wide token, so it is refused however the artifact came to
+      // hold it.
+      const problem = serviceBindingProblem(binding);
+      if (problem !== null) plan.problems.push(problem);
     } else if (!PASSTHROUGH_BINDING_TYPES.has(binding.type)) {
       plan.problems.push(
         `Binding ${binding.name} has type "${binding.type}", which Appflare cannot install yet.`,

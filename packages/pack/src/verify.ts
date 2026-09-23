@@ -8,6 +8,7 @@ import {
   catalogVarProblems,
   isVectorizeBinding,
   queueConsumerProblems,
+  serviceBindingProblem,
   signingKeys,
   tooManyModulesMessage,
 } from "@appflare/schema";
@@ -121,7 +122,8 @@ function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
  * the artifact is unsigned or `hashesOnly` is set, then reads exactly `bytes[offset, offset+size)` from
  * the zip for every recorded worker module, asset, and D1 migration and checks
  * its size and sha256 — never by unzipping. Also checks that each Vectorize
- * binding records the index shape the embedded catalog manifest declares. With
+ * binding records the index shape the embedded catalog manifest declares, and
+ * that no service binding points anywhere but the app's own Worker. With
  * `maxModules`, also fails an artifact with more Worker modules than that.
  * Throws on any mismatch.
  */
@@ -183,6 +185,7 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   const problems = [
     ...queueConsumerProblems(manifest.worker),
     ...catalogVarProblems(manifest.worker.bindings, manifest.catalog.vars),
+    ...manifest.worker.bindings.flatMap((b) => serviceBindingProblem(b) ?? []),
   ];
   if (problems.length > 0) {
     throw new Error(problems.join(" "));

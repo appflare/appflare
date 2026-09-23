@@ -18,7 +18,11 @@ app's own repository.
   before `wrangler deploy` (Vite, React Router, OpenNext) and has no `build.command`
   in its wrangler config names that step in `install.buildCommand`.
 - **It is self-contained.** Durable Objects and Workflows must be defined by the app's
-  own Worker, not bound from another Worker.
+  own Worker, not bound from another Worker. The only service binding an app may have
+  is one to its own Worker (its `service` is the wrangler config's own `name`, as
+  OpenNext's `WORKER_SELF_REFERENCE` is), optionally with an `entrypoint`. A service
+  binding to any other Worker fails the pack, because an app must never be able to
+  call another app or Appflare itself.
 - **The Worker has at most 21 modules.** The manager installs apps from inside a
   Workflow on the free plan, which allows 50 subrequests per invocation, and it
   fetches each module as its own subrequest. A build that code-splits into many
@@ -30,7 +34,10 @@ The manager creates KV namespaces, D1 databases, R2 buckets, queues, and Vectori
 indexes for an app, attaches the app's Worker to the queues it consumes (dead-letter
 queues included), and passes through Workers AI, Browser Rendering, Analytics Engine,
 email sending (with its address restrictions), rate limits, Images, version metadata,
-and plain variables. Other binding types cannot be installed yet.
+and plain variables. A service binding to the app's own Worker is pointed at the
+installed Worker, whatever name it is installed under; set `install.fixedWorkerName`
+only when something else in the app needs one fixed name. Other binding types cannot
+be installed yet.
 
 The catalog's install check is stricter for now. It rejects apps with queue,
 Hyperdrive, service, mTLS certificate, or email bindings, so such an app cannot pass

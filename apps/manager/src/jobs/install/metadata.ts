@@ -3,11 +3,12 @@ import type {
   WorkerBinding as UploadBinding,
   WorkerModule,
 } from "@appflare/cf-api";
-import type {
-  ArtifactManifest,
-  ModuleType,
-  PlaceholderValues,
-  WorkerBinding,
+import {
+  type ArtifactManifest,
+  isSelfServiceBinding,
+  type ModuleType,
+  type PlaceholderValues,
+  type WorkerBinding,
 } from "@appflare/schema";
 import { type ResolvedVars, resolveVars, type VarBinding } from "../../installs/install-vars";
 import { workersDevUrl } from "../../installs/post-install";
@@ -77,8 +78,29 @@ export function durableObjectMigrations(
   };
 }
 
+/**
+ * A service binding to the app's own Worker as the upload sends it: aimed at
+ * `workerName`, the install's Worker, whatever name the artifact was built
+ * under. Throws for any other service binding (the install and update plans
+ * refuse those first; see `planBindings`), so nothing but the typed self
+ * binding can ever reach an upload.
+ */
+export function selfServiceUploadBinding(
+  binding: WorkerBinding,
+  workerName: string,
+): UploadBinding {
+  if (!isSelfServiceBinding(binding)) {
+    throw new Error(`service binding ${binding.name} does not point at the app's own Worker`);
+  }
+  const out: UploadBinding = { type: "service", name: binding.name, service: workerName };
+  if (binding.entrypoint !== undefined) out.entrypoint = binding.entrypoint;
+  return out;
+}
+
 export interface ScriptMetadataInput {
   manifest: ArtifactManifest;
+  /** The install's Worker: where a service binding to the app's own Worker points. */
+  workerName: string;
   resources: readonly CreatedResource[];
   /** Workflow binding name -> the account-wide Workflow name the install uses. */
   workflowNames?: Readonly<Record<string, string>>;
@@ -96,7 +118,15 @@ export interface ScriptMetadataInput {
  * together (`keep_bindings` is not used for installs; the script is new).
  */
 export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata {
-  const { manifest, resources, vars, assetsJwt, workflowNames = {}, rateLimitIds = {} } = input;
+  const {
+    manifest,
+    workerName,
+    resources,
+    vars,
+    assetsJwt,
+    workflowNames = {},
+    rateLimitIds = {},
+  } = input;
   const byBinding = new Map(resources.map((r) => [r.binding, r]));
   const bindings: UploadBinding[] = [];
 
@@ -117,6 +147,8 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
         throw new Error(`rate limit binding ${binding.name} has no namespace of its own`);
       }
       bindings.push({ ...binding, namespace_id: namespaceId });
+    } else if (binding.type === "service") {
+      bindings.push(selfServiceUploadBinding(binding, workerName));
     } else if (PASSTHROUGH_BINDING_TYPES.has(binding.type)) {
       bindings.push({ ...binding });
     } else {

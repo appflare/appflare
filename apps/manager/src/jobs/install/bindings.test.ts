@@ -99,18 +99,46 @@ describe("service bindings in catalog apps", () => {
   // act with its account-wide API token) on the `JobUnits` entrypoint, so a
   // `service` binding sent as recorded could point an app at them. Installs
   // and updates both plan through `planBindings`, so refusing it here
-  // refuses it everywhere. Keep `service` out of the pass-through types.
+  // refuses it everywhere. Keep `service` out of the pass-through types: the
+  // one service binding an app may have, to its own Worker, is rewritten at
+  // upload to the install's Worker name, never sent as recorded.
   it("never passes a service binding through", () => {
     expect(PASSTHROUGH_BINDING_TYPES.has("service")).toBe(false);
   });
 
-  it("refuses an app that declares one, whatever it points at", () => {
+  it("refuses one aimed at the manager's job units", () => {
+    const binding = { type: "service", name: "SELF", service: "appflare", entrypoint: "JobUnits" };
+    const plan = planBindings("cut", [binding]);
+    expect(plan.problems).toEqual([
+      expect.stringMatching(
+        /^Service binding SELF points at the Worker "appflare"; an app may bind only to its own Worker/,
+      ),
+    ]);
+  });
+
+  it("accepts a binding to the app's own Worker, whatever the install is called", () => {
+    for (const workerName of ["mailflare", "mail-2"]) {
+      const plan = planBindings(workerName, [
+        { type: "service", name: "WORKER_SELF_REFERENCE", service: "self" },
+        { type: "service", name: "JOBS", service: "self", entrypoint: "Jobs" },
+      ]);
+      expect(plan).toEqual({ resources: [], durableObjects: [], workflows: [], problems: [] });
+    }
+  });
+
+  it("refuses every other target, even in an artifact edited by hand", () => {
+    // The packer never records these; an edited artifact or a manifest from a
+    // different packer could. The plan refuses them before anything is created.
     for (const binding of [
-      { type: "service", name: "SELF", service: "appflare", entrypoint: "JobUnits" },
       { type: "service", name: "API", service: "other-worker" },
+      // The install's own name is still not "self": the artifact cannot know it.
+      { type: "service", name: "NAMED", service: "cut" },
+      { type: "service", name: "NONE" },
+      { type: "service", name: "ENV", service: "self", environment: "staging" },
+      { type: "service", name: "PROPS", service: "self", props: { admin: true } },
     ]) {
       expect(planBindings("cut", [binding]).problems).toEqual([
-        `Binding ${binding.name} has type "service", which Appflare cannot install yet.`,
+        expect.stringMatching(new RegExp(`^Service binding ${binding.name} points at `)),
       ]);
     }
   });

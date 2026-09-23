@@ -4,6 +4,7 @@ import {
   buildScriptMetadata,
   durableObjectMigrations,
   installVars,
+  selfServiceUploadBinding,
   uploadModule,
 } from "./metadata";
 
@@ -144,6 +145,7 @@ describe("buildScriptMetadata", () => {
     });
     const metadata = buildScriptMetadata({
       manifest: f.manifest,
+      workerName: "cut",
       resources: [
         { binding: "CUT_KV", type: "kv_namespace", name: "cut-cut-kv", cfId: "kv-id" },
         { binding: "DB", type: "d1", name: "cut-db", cfId: "d1-uuid" },
@@ -200,6 +202,7 @@ describe("buildScriptMetadata", () => {
     const f = await buildArtifactFixture({ bindings: passthrough });
     const metadata = buildScriptMetadata({
       manifest: f.manifest,
+      workerName: "cut",
       resources: [],
       vars: [],
       assetsJwt: null,
@@ -211,14 +214,63 @@ describe("buildScriptMetadata", () => {
     ]);
     // Never the artifact's id, which other Workers in the account may share.
     expect(() =>
-      buildScriptMetadata({ manifest: f.manifest, resources: [], vars: [], assetsJwt: null }),
+      buildScriptMetadata({
+        manifest: f.manifest,
+        workerName: "cut",
+        resources: [],
+        vars: [],
+        assetsJwt: null,
+      }),
     ).toThrow(/LIMITER has no namespace of its own/);
+  });
+
+  it("points a service binding to the app's own Worker at the install's Worker", async () => {
+    const f = await buildArtifactFixture({
+      bindings: [
+        { type: "service", name: "WORKER_SELF_REFERENCE", service: "self" },
+        { type: "service", name: "JOBS", service: "self", entrypoint: "Jobs" },
+      ],
+    });
+    // The artifact was built as "cut"; this install runs as "mail-2".
+    const metadata = buildScriptMetadata({
+      manifest: f.manifest,
+      workerName: "mail-2",
+      resources: [],
+      vars: [],
+      assetsJwt: null,
+    });
+    expect(metadata.bindings).toEqual([
+      { type: "service", name: "WORKER_SELF_REFERENCE", service: "mail-2" },
+      { type: "service", name: "JOBS", service: "mail-2", entrypoint: "Jobs" },
+    ]);
+  });
+
+  it("never uploads a service binding to another Worker, even one that slipped past the plan", async () => {
+    for (const binding of [
+      { type: "service", name: "SELF", service: "appflare", entrypoint: "JobUnits" },
+      { type: "service", name: "ENV", service: "self", environment: "staging" },
+    ]) {
+      const f = await buildArtifactFixture({ bindings: [binding] });
+      expect(() =>
+        buildScriptMetadata({
+          manifest: f.manifest,
+          workerName: "cut",
+          resources: [],
+          vars: [],
+          assetsJwt: null,
+        }),
+      ).toThrow(`service binding ${binding.name} does not point at the app's own Worker`);
+    }
+    expect(() =>
+      selfServiceUploadBinding({ type: "service", name: "X", service: "other" }, "cut"),
+    ).toThrow(/does not point at the app's own Worker/);
   });
 
   it("sends assets without a binding when the app has none, and nothing when there are no assets", async () => {
     const f = await buildArtifactFixture();
     const withAssets = buildScriptMetadata({
       manifest: f.manifest,
+      workerName: "cut",
       resources: [{ binding: "CUT_KV", type: "kv_namespace", name: "cut-cut-kv", cfId: "kv" }],
       vars: [],
       assetsJwt: "jwt",
@@ -227,6 +279,7 @@ describe("buildScriptMetadata", () => {
     expect(withAssets.bindings?.some((b) => b.type === "assets")).toBe(false);
     const none = buildScriptMetadata({
       manifest: f.manifest,
+      workerName: "cut",
       resources: [{ binding: "CUT_KV", type: "kv_namespace", name: "cut-cut-kv", cfId: "kv" }],
       vars: [],
       assetsJwt: null,
@@ -237,7 +290,13 @@ describe("buildScriptMetadata", () => {
   it("refuses a resource binding that was not created", async () => {
     const f = await buildArtifactFixture();
     expect(() =>
-      buildScriptMetadata({ manifest: f.manifest, resources: [], vars: [], assetsJwt: null }),
+      buildScriptMetadata({
+        manifest: f.manifest,
+        workerName: "cut",
+        resources: [],
+        vars: [],
+        assetsJwt: null,
+      }),
     ).toThrow(/CUT_KV \(kv_namespace\) has no created resource/);
   });
 

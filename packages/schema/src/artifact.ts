@@ -107,6 +107,37 @@ export const jsonVarBindingSchema = z.looseObject({
 });
 export type JsonVarBinding = z.infer<typeof jsonVarBindingSchema>;
 
+/**
+ * What an artifact records as the target of a service binding that points at
+ * the app's own Worker. The packer writes it in place of the Worker's name in
+ * the wrangler config, since an install may run under another name; the
+ * manager replaces it with the install's own Worker name when it uploads.
+ */
+export const SELF_SERVICE = "self";
+
+/**
+ * A service binding to the app's own Worker, as OpenNext's
+ * `WORKER_SELF_REFERENCE` is: the Worker calls itself, optionally at a named
+ * entrypoint. The only service binding an app may have. A binding to any
+ * other Worker is refused, because an app must never reach another install or
+ * the manager (whose job units act with its account-wide API token).
+ *
+ * Loose like every binding shape here, so code can read any field of a
+ * parsed binding; {@link isSelfServiceBinding} is what holds a self binding to
+ * exactly these fields.
+ */
+const selfServiceBindingShape = {
+  type: z.literal("service"),
+  name: z.string().min(1),
+  service: z.literal(SELF_SERVICE),
+  entrypoint: z.string().min(1).optional(),
+};
+export const selfServiceBindingSchema = z.looseObject(selfServiceBindingShape);
+export type SelfServiceBinding = z.infer<typeof selfServiceBindingSchema>;
+
+/** A self binding with nothing but its name and optional entrypoint. */
+const exactSelfServiceBindingSchema = z.strictObject(selfServiceBindingShape);
+
 const STRICT_BINDING_TYPES: Readonly<Record<string, string>> = {
   vectorize: "a vectorize binding must record the index's dimensions and metric",
   json: "a json binding must record its value in `json`",
@@ -117,6 +148,9 @@ const STRICT_BINDING_TYPES: Readonly<Record<string, string>> = {
  * packer. Kept permissive on purpose: the packer records whatever wrangler
  * resolved. A `vectorize` or `json` binding never matches here, so one
  * without its required fields fails to parse instead of reaching the manager.
+ * A `service` binding that is not a {@link selfServiceBindingSchema} parses
+ * here, so an artifact with one still reads and the manager can say why it
+ * refuses to install it ({@link serviceBindingProblem}).
  */
 const otherBindingSchema = z.looseObject({
   type: z
@@ -135,9 +169,36 @@ const otherBindingSchema = z.looseObject({
 export const workerBindingSchema = z.union([
   vectorizeBindingSchema,
   jsonVarBindingSchema,
+  selfServiceBindingSchema,
   otherBindingSchema,
 ]);
 export type WorkerBinding = z.infer<typeof workerBindingSchema>;
+
+/**
+ * Whether a binding is a service binding to the app's own Worker: service
+ * `"self"`, with nothing but its name and an optional entrypoint. A service
+ * binding that carries anything more (an `environment`, `props`) is not one.
+ */
+export function isSelfServiceBinding(binding: WorkerBinding): binding is SelfServiceBinding {
+  return binding.type === "service" && exactSelfServiceBindingSchema.safeParse(binding).success;
+}
+
+/**
+ * Why a binding is a service binding an app may not have, as a sentence, or
+ * null when it is not a service binding or is the app's binding to its own
+ * Worker. Any other service binding would let the app call another Worker in
+ * the account: another install, or the manager and the job units it serves
+ * with its account-wide API token.
+ */
+export function serviceBindingProblem(binding: WorkerBinding): string | null {
+  if (binding.type !== "service" || isSelfServiceBinding(binding)) return null;
+  const target =
+    typeof binding.service === "string" ? `the Worker "${binding.service}"` : "no Worker";
+  return (
+    `Service binding ${binding.name} points at ${target}; an app may bind only to its own Worker ` +
+    `(recorded as service "${SELF_SERVICE}", with nothing but an optional entrypoint), so it can never call another Worker in the account.`
+  );
+}
 
 /**
  * Whether a parsed binding is a `json` var, with its value typed. Sound for

@@ -41,6 +41,7 @@ export {
   mainModuleName,
   QueueConsumerError,
   type ResolvedWranglerConfig,
+  ServiceBindingError,
   VectorizeDeclarationError,
   type WranglerQueueConsumer,
 } from "./wrangler-config.ts";
