@@ -28,6 +28,7 @@ const ACC = "acc0000000000000000000000000000a";
 const TOKEN = "cf-test-token-DO-NOT-LEAK";
 const PASSWORD = "admin-password-DO-NOT-LEAK";
 const HEALTH_URL = "https://cut.appflare-dev.workers.dev/";
+const WORKER_ORIGIN = "https://cut.appflare-dev.workers.dev";
 const VERSION_HEX = "0123456789abcdef0123456789abcdef";
 
 interface FakeState {
@@ -46,6 +47,10 @@ interface FakeState {
   subdomainEnabled: unknown;
   calls: string[];
   health: Array<{ status: number; body: string }>;
+  /** Every URL the health check requested on the Worker's host, in order. */
+  healthUrls: string[];
+  /** Called on each health request (a test's fake clock makes probes slow). */
+  onHealthProbe?: () => void;
   workflows: string[];
   /** Keys (`METHOD /path`) whose next call does its work and then answers 500. */
   failAfter: Set<string>;
@@ -76,6 +81,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       { status: 404, body: "error code: 1042\n" },
       { status: 200, body: "<html>cut</html>" },
     ],
+    healthUrls: [],
     workflows: [],
     failAfter: new Set(),
     r2: [],
@@ -224,7 +230,9 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
   const fetch = async (input: string, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
     if (input.startsWith("https://api.cloudflare.com/")) return cloudflare(request);
-    if (input === HEALTH_URL) {
+    if (input.startsWith(`${WORKER_ORIGIN}/`)) {
+      state.healthUrls.push(input);
+      state.onHealthProbe?.();
       const next = state.health.length > 1 ? state.health.shift() : state.health[0];
       return new Response(next?.body ?? "", { status: next?.status ?? 500 });
     }
@@ -267,20 +275,25 @@ async function install(
   world: Partial<FakeState> = {},
   input: Partial<StartInstallInput> = {},
   paramsOver: Partial<InstallJobParams> = {},
+  clock?: { now: () => number; onSleep: (name: string, duration: string | number) => void },
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeWorld(fixture, world);
   const started = await start(fixture, input);
   const { jobId, installId } = started;
   const params = { ...started.params, ...paramsOver };
-  const step = fakeStep();
+  const step = fakeStep(clock === undefined ? {} : { onSleep: clock.onSleep });
   let error: unknown = null;
   try {
     await runInstall({
       params,
       step,
       env: jobEnv(),
-      deps: { fetch: fake.fetch, signingKeys: fixture.keys },
+      deps: {
+        fetch: fake.fetch,
+        signingKeys: fixture.keys,
+        ...(clock === undefined ? {} : { now: clock.now }),
+      },
     });
   } catch (e) {
     error = e;
@@ -298,6 +311,8 @@ async function install(
       current_version_id: string | null;
       manifest_json: string | null;
       do_migration_tag: string | null;
+      health_status: string | null;
+      health_checked_at: number | null;
     }>();
   const resources = (
     await env.DB.prepare(
@@ -631,12 +646,104 @@ describe("install job", () => {
     expect(fake.state.calls).toEqual([]);
   });
 
-  it("gives up on a Worker that never gets past error 1042", async () => {
-    const r = await install({}, { health: [{ status: 404, body: "error code: 1042" }] });
-    expect(r.job?.error).toBe(
-      "health check 10: 404 error code: 1042 (route not live yet) after 10 attempts",
+  it("keeps probing a route that is slow to go live, with backoff", async () => {
+    const edge = { status: 404, body: "error code: 1042" };
+    const r = await install(
+      {},
+      { health: [edge, edge, edge, edge, edge, { status: 401, body: "" }] },
     );
-    expect(r.step.sleeps.filter((s) => s.startsWith("health wait"))).toHaveLength(9);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names.filter((n) => n.startsWith("health check"))).toHaveLength(6);
+    const waits = r.step.sleeps.flatMap((name, i) =>
+      name.startsWith("health wait") ? [r.step.sleepDurations[i]] : [],
+    );
+    expect(waits).toEqual(["2 seconds", "3 seconds", "5 seconds", "8 seconds", "10 seconds"]);
+    expect(r.installRow?.health_status).toBe("verified");
+  });
+
+  it("still installs a Worker it cannot verify within the window, and says so", async () => {
+    const r = await install({}, { health: [{ status: 404, body: "error code: 1042" }] });
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded", error: null });
+    expect(r.installRow?.status).toBe("installed");
+    expect(r.installRow?.health_status).toBe("unverified");
+    expect(r.installRow?.health_checked_at).not.toBeNull();
+    // 2+3+5+8 s, then every 10 s: probes at 0, 2, 5, 10, 18, 28, ... 88 s.
+    expect(r.step.names.filter((n) => n.startsWith("health check"))).toHaveLength(12);
+    expect(r.step.sleeps.filter((s) => s.startsWith("health wait"))).toHaveLength(11);
+    expect(
+      r.logs.some(
+        (l) =>
+          l.level === "warn" &&
+          l.message.startsWith(`Could not verify ${HEALTH_URL} after 12 attempts`) &&
+          l.message.includes("Open the app to check"),
+      ),
+    ).toBe(true);
+    expect(r.logs.at(-1)?.message).toMatch(/\(health: not verified yet \(404 error code: 1042/);
+  });
+
+  it("ends the window by the clock when probes are slow", async () => {
+    let clock = 1_000_000;
+    const r = await install(
+      {},
+      {
+        health: [{ status: 404, body: "error code: 1042" }],
+        // Each probe takes 10 s (a timeout).
+        onHealthProbe: () => {
+          clock += 10_000;
+        },
+      },
+      {},
+      {},
+      {
+        now: () => clock,
+        onSleep: (_name, duration) => {
+          clock += Number.parseInt(String(duration), 10) * 1000;
+        },
+      },
+    );
+    expect(r.job?.status).toBe("succeeded");
+    // Probes start at 0, 12, 25, 40, 58, 78, 98 s: the seventh is past 90 s.
+    expect(r.step.names.filter((n) => n.startsWith("health check"))).toHaveLength(7);
+    expect(r.installRow?.health_status).toBe("unverified");
+  });
+
+  it("records a Worker that answers only 5xx as unhealthy without failing", async () => {
+    const r = await install({}, { health: [{ status: 502, body: "bad gateway" }] });
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.installRow?.status).toBe("installed");
+    expect(r.installRow?.health_status).toBe("unhealthy");
+    expect(r.logs.some((l) => l.level === "warn" && l.message.includes("server error"))).toBe(true);
+  });
+
+  it("accepts a plain 404 at the root once the window ends", async () => {
+    const r = await install({}, { health: [{ status: 404, body: "Not found" }] });
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names.filter((n) => n.startsWith("health check"))).toHaveLength(12);
+    expect(r.installRow?.health_status).toBe("verified");
+  });
+
+  it("probes the catalog's health path", async () => {
+    const r = await install(
+      {
+        catalog: {
+          install: {
+            tier: "artifact",
+            packageManager: "pnpm",
+            wranglerConfig: "wrangler.jsonc",
+            workerName: "cut",
+            healthPath: "/api/health",
+          },
+        },
+      },
+      { health: [{ status: 200, body: '{"ok":true}' }] },
+    );
+    expect(r.error).toBeNull();
+    expect(r.fake.state.healthUrls).toEqual([`${WORKER_ORIGIN}/api/health`]);
+    expect(r.installRow?.health_status).toBe("verified");
+    // The app's URL, not the health path, is what the admin opens.
+    expect(r.logs.at(-1)?.message).toMatch(new RegExp(`at ${HEALTH_URL} \\(health: verified`));
   });
 
   it("refuses an artifact with more modules than one upload can fetch, before creating anything", async () => {

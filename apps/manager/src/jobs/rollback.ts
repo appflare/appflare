@@ -1,11 +1,12 @@
 import { NonRetryableError } from "cloudflare:workflows";
-import { type ArtifactManifest, appHealthPath, artifactManifestSchema } from "@appflare/schema";
+import { type ArtifactManifest, artifactManifestSchema } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { lookupSubdomainPhase, probeUntilHealthy, syncCronsPhase } from "./install/phases";
+import { healthLabel, healthPathOfManifest } from "./install/health";
+import { checkLiveHealthPhase, lookupSubdomainPhase, syncCronsPhase } from "./install/phases";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
@@ -39,11 +40,6 @@ function parseManifest(manifestJson: string | null): ArtifactManifest | null {
 
 function cronsOf(manifestJson: string | null): string[] | null {
   return parseManifest(manifestJson)?.worker.crons ?? null;
-}
-
-function healthPathOf(manifestJson: string | null): string {
-  const manifest = parseManifest(manifestJson);
-  return manifest === null ? "/" : appHealthPath(manifest.catalog.install);
 }
 
 export async function runRollback(ctx: JobContext): Promise<void> {
@@ -138,7 +134,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         toVersion: snapshot.catalog_version,
         recordedCrons: crons.map((c) => c.name),
         snapshotCrons: cronsOf(snapshot.manifest_json),
-        healthPath: healthPathOf(snapshot.manifest_json),
+        healthPath: healthPathOfManifest(snapshot.manifest_json),
       };
     });
     steps.setAccountId(started.accountId);
@@ -180,18 +176,20 @@ export async function runRollback(ctx: JobContext): Promise<void> {
 
     const subdomain = await lookupSubdomainPhase(steps);
     const url = `https://${workerName}.${subdomain}.workers.dev${started.healthPath}`;
-    const healthy = await probeUntilHealthy(steps, step, {
-      label: "health",
-      url,
-      healthyMessage: "the Worker is serving",
-    });
+    // Recorded rather than fatal: the snapshot's version already serves.
+    const health = await checkLiveHealthPhase(steps, step, url);
 
     await run("finish", 0, async ({ log, orm }) => {
       const at = new Date(now());
       await orm.batch([
         orm
           .update(installs)
-          .set({ status: "installed", updated_at: at })
+          .set({
+            status: "installed",
+            health_status: health.status,
+            health_checked_at: new Date(health.checkedAt),
+            updated_at: at,
+          })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),
         orm
           .update(jobs)
@@ -199,7 +197,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           .where(eq(jobs.id, params.jobId)),
       ]);
       log.info(
-        `Rolled back from ${started.fromVersion} to ${started.toVersion ?? started.versionId} at ${url} (health ${healthy}).`,
+        `Rolled back from ${started.fromVersion} to ${started.toVersion ?? started.versionId} at ${url} (health: ${healthLabel(health)}).`,
       );
       return {};
     });

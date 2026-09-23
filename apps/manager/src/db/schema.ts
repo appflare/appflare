@@ -19,6 +19,14 @@ export const INSTALL_STATUSES = [
   "uninstalled",
 ] as const;
 
+/**
+ * The last health check of an install's Worker URL: `verified` (it answered,
+ * anything but a 5xx), `unverified` (no answer, or the edge's route-not-live
+ * page), `unhealthy` (it answered with a 5xx).
+ */
+export const HEALTH_STATUSES = ["verified", "unverified", "unhealthy"] as const;
+export type HealthStatus = (typeof HEALTH_STATUSES)[number];
+
 export const RESOURCE_KINDS = [
   "worker",
   "kv",
@@ -75,6 +83,10 @@ export const installs = sqliteTable("installs", {
    * `manifest_json`).
    */
   do_migration_tag: text("do_migration_tag"),
+  /** The last health check's result; null until one ran. Never fails a job. */
+  health_status: text("health_status", { enum: HEALTH_STATUSES }),
+  /** When the last health check probed the Worker. */
+  health_checked_at: timestamp("health_checked_at"),
   installed_at: timestamp("installed_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
   /** Set when the uninstall job finishes (status `uninstalled`). */

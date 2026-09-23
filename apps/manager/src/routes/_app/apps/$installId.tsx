@@ -10,6 +10,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { formatDateTime, jobKindLabel, resourceKindLabel } from "../../../components/format";
+import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
@@ -24,7 +25,7 @@ import {
 import { listSnapshots } from "../../../installs/versions.functions";
 
 /**
- * `/apps/$installId`: status, resources, secret names, jobs, the Cloudflare
+ * `/apps/$installId`: status and health, resources, secret names, jobs, the Cloudflare
  * token the app needs for itself (if any), the app's post-install notes, update and rollback, and uninstall. After an uninstall
  * it shows the `uninstalled` state, the resources that were kept, and the job
  * history.
@@ -110,7 +111,7 @@ function InstallPage() {
       />
       <UpdateBanner install={install} isAdmin={isAdmin} />
       <UninstallState install={install} />
-      <Overview install={install} />
+      <Overview install={install} isAdmin={isAdmin} />
       {!gone && (
         <AppTokenPermissions appName={install.name} permissions={install.tokenPermissions} />
       )}
@@ -274,7 +275,7 @@ function UninstallState({ install }: { install: InstallDetail }) {
   );
 }
 
-function Overview({ install }: { install: InstallDetail }) {
+function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
   const vars = Object.entries(install.vars);
   return (
     <LayerCard>
@@ -315,6 +316,16 @@ function Overview({ install }: { install: InstallDetail }) {
               "Not serving yet"
             )}
           </Row>
+          {(install.status === "installed" || install.status === "updating") && (
+            <Row label="Health">
+              <InstallHealth
+                installId={install.id}
+                status={install.healthStatus}
+                checkedAt={install.healthCheckedAt}
+                canCheck={isAdmin && install.status === "installed" && install.activeJobId === null}
+              />
+            </Row>
+          )}
           <Row label="Worker version">
             <span className={mono}>{install.currentVersionId ?? "None yet"}</span>
           </Row>

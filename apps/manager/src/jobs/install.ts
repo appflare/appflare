@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  appHealthPath,
   artifactManifestSchema,
   hasFixedWorkerName,
   indexArtifactsSchema,
@@ -18,6 +19,7 @@ import { workerNameSchema } from "../installs/install-input";
 import { fetchArtifactFile } from "./install/artifact";
 import { planBindings } from "./install/bindings";
 import { ARTIFACT_FETCH_COST } from "./install/budget";
+import { healthLabel } from "./install/health";
 import {
   buildScriptMetadata,
   type CreatedResource,
@@ -26,11 +28,11 @@ import {
 } from "./install/metadata";
 import {
   applyD1MigrationsPhase,
+  checkLiveHealthPhase,
   checkWorkflowNamePhase,
   d1Targets,
   loadVerifiedManifest,
   lookupSubdomainPhase,
-  probeUntilHealthy,
   provisionResourcePhase,
   type ResourceRecord,
   recordResource as recordResourceRow,
@@ -52,7 +54,8 @@ export { API_STEP, toStepError } from "./steps";
  * integrity failures end the job at once (`NonRetryableError`). Each step writes
  * its log lines in one batch. On failure the job records `<step>: <message>`,
  * the install becomes `failed`, and every resource already created stays
- * recorded (no automatic deletion).
+ * recorded (no automatic deletion). The final health check is the exception:
+ * it records what the Worker answered on the install and never fails the job.
  */
 
 /** The Workflow payload `startInstall` creates. Secret VALUES live only here. */
@@ -442,13 +445,15 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    // 9. Health check through route propagation and error 1042.
+    // 9. Health check at the app's health path, through route propagation
+    // and error 1042. Everything is created by now, so the result is recorded
+    // on the install and never fails the job.
     const url = `https://${host}/`;
-    const healthy = await probeUntilHealthy(steps, step, {
-      label: "health",
-      url,
-      healthyMessage: "the Worker is serving",
-    });
+    const health = await checkLiveHealthPhase(
+      steps,
+      step,
+      `https://${host}${appHealthPath(manifest.catalog.install)}`,
+    );
 
     // 10. Record the install.
     await run("finish", 0, async ({ log, orm }) => {
@@ -460,6 +465,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             status: "installed",
             current_version_id: upload.versionId,
             manifest_json: manifestText,
+            health_status: health.status,
+            health_checked_at: new Date(health.checkedAt),
             updated_at: at,
           })
           // Only from `installing`: an install whose job was settled from
@@ -470,7 +477,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           .set({ status: "succeeded", finished_at: at, error: null })
           .where(eq(jobs.id, params.jobId)),
       ]);
-      log.info(`Installed ${params.slug} ${params.version} at ${url} (health ${healthy}).`);
+      log.info(
+        `Installed ${params.slug} ${params.version} at ${url} (health: ${healthLabel(health)}).`,
+      );
       return {};
     });
   } catch (error) {

@@ -251,7 +251,7 @@ describe("update job", () => {
     expect(everything).not.toContain(TOKEN);
     expect(everything).not.toContain("completion-jwt");
     expect(r.logs.at(-1)?.message).toBe(
-      "Updated cut from 1.0.0 to 1.1.0 at https://cut.appflare-dev.workers.dev/ (health 200).",
+      "Updated cut from 1.0.0 to 1.1.0 at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 200)).",
     );
   });
 
@@ -277,9 +277,27 @@ describe("update job", () => {
     );
   });
 
-  it("records a promoted version even when the health check after promotion fails", async () => {
+  it("records the live health check after promotion without failing the update", async () => {
     const r = await update(NEW_APP, { health: [{ status: 503, body: "down" }] });
-    expect(r.job?.error).toBe("health check 10: the Worker answered HTTP 503");
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded", error: null });
+    expect(r.install).toMatchObject({
+      status: "installed",
+      catalog_version: "1.1.0",
+      current_version_id: NEW_VERSION,
+      health_status: "unhealthy",
+    });
+    expect(r.install?.health_checked_at).not.toBeNull();
+    expect(r.step.names.filter((n) => n.startsWith("health check"))).toHaveLength(12);
+    expect(r.logs.some((l) => l.level === "warn" && l.message.includes("server error"))).toBe(true);
+    expect(r.logs.at(-1)?.message).toMatch(/\(health: unhealthy \(HTTP 503\)\)\.$/);
+  });
+
+  it("records a promoted version even when a step after promotion fails", async () => {
+    const r = await update(NEW_APP, {
+      failOnce: new Map([["PUT /workers/scripts/cut/schedules", 400]]),
+    });
+    expect(r.job?.error).toMatch(/^set cron triggers: .*injected failure$/);
     expect(r.install).toMatchObject({
       status: "installed",
       catalog_version: "1.1.0",

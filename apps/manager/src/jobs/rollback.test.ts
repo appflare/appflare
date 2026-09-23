@@ -129,10 +129,23 @@ describe("rollback job", () => {
       manifest_json: OLD_MANIFEST,
       artifact_url: "https://artifacts.test/cut/old.zip",
       pin_sha: "oldsha",
+      health_status: "verified",
     });
     // D1 is never touched by a rollback.
     expect(r.fake.state.calls.some((c) => c.includes("/d1/"))).toBe(false);
     expect(r.fake.state.restores).toEqual([]);
+  });
+
+  it("records a Worker it cannot reach after the rollback without failing", async () => {
+    const r = await rollback({ health: [{ status: 404, body: "error code: 1042" }] });
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded", error: null });
+    expect(r.install).toMatchObject({
+      status: "installed",
+      current_version_id: OLD_VERSION,
+      health_status: "unverified",
+    });
+    expect(r.install?.health_checked_at).not.toBeNull();
   });
 
   it("fails without changing the install when Cloudflare refuses the deployment", async () => {

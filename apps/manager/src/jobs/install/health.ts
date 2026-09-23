@@ -1,9 +1,19 @@
+import { appHealthPath, artifactManifestSchema } from "@appflare/schema";
+import type { HealthStatus } from "../../db/schema";
+
 /**
- * The install's HTTP health check. The manager
- * carries `global_fetch_strictly_public`, so it can fetch its own account's
+ * HTTP health checks of an app's Worker. The manager carries
+ * `global_fetch_strictly_public`, so it can fetch its own account's
  * `*.workers.dev` hosts; right after the subdomain is enabled the route may not
- * have propagated yet (about 3 s), which shows up as a 404 whose body is
- * `error code: 1042`, a DNS/connection error, or a transient 5xx.
+ * have propagated yet (seconds, sometimes tens of seconds), which shows up as a
+ * 404 whose body is `error code: 1042`, a DNS/connection error, or a transient
+ * 5xx.
+ *
+ * Two kinds of check use this module. A canary (a version's preview URL,
+ * before promotion) is attempt-bounded and fails its job when the version does
+ * not serve: `classifyHealthProbe`. The live check (the Worker's own URL, after
+ * the app was created or promoted) is time-bounded and never fails its job;
+ * it records a `HealthStatus`: `decideLiveHealth`.
  */
 
 export const HEALTH_MAX_ATTEMPTS = 10;
@@ -63,6 +73,101 @@ export function classifyHealthProbe(
       : { verdict: "unhealthy", reason: `the Worker answered ${describe(probe)}` };
   }
   return { verdict: "healthy", status: probe.status };
+}
+
+/** How long the live check keeps probing, from its first probe. */
+export const LIVE_HEALTH_WINDOW_MS = 90_000;
+
+/** Waits between live probes: 2, 3, 5, 8, then 10 seconds for every later one. */
+const LIVE_HEALTH_BACKOFF_SECONDS = [2, 3, 5, 8, 10] as const;
+
+/** The wait in seconds after the live check's `attempt`th probe (1-based). */
+export function liveHealthDelaySeconds(attempt: number): number {
+  const i = Math.min(Math.max(attempt, 1), LIVE_HEALTH_BACKOFF_SECONDS.length) - 1;
+  return LIVE_HEALTH_BACKOFF_SECONDS[i] ?? 10;
+}
+
+/** Scheduled waits before the `attempt`th probe, in milliseconds (0 for the first). */
+export function liveHealthScheduledMs(attempt: number): number {
+  let total = 0;
+  for (let a = 1; a < attempt; a++) total += liveHealthDelaySeconds(a) * 1000;
+  return total;
+}
+
+/**
+ * What one live probe says: `pass` settles the check, `retry` keeps probing
+ * (1042, no connection, 5xx), `soft-404` keeps probing too, but passes when
+ * the window ends: an app may serve 404 at its root, and a plain 404 is also
+ * what a route that is still propagating can answer.
+ */
+export type LiveProbeClass = "pass" | "retry" | "soft-404";
+
+export function classifyLiveProbe(probe: HealthProbe): LiveProbeClass {
+  if (probe.kind === "error" || isEdge1042(probe) || probe.status >= 500) return "retry";
+  if (probe.status === 404) return "soft-404";
+  return "pass";
+}
+
+export interface HealthSettlement {
+  status: HealthStatus;
+  /** What the last answer was, for the log and the install page. */
+  detail: string;
+}
+
+/**
+ * The health status one answer records when no more probes follow: any
+ * non-5xx answer other than the 1042 page means the app serves (`verified`),
+ * a 5xx means it serves errors (`unhealthy`), and no answer or the 1042 page
+ * means it could not be reached (`unverified`).
+ */
+export function settleHealthProbe(probe: HealthProbe): HealthSettlement {
+  if (probe.kind === "error" || isEdge1042(probe)) {
+    return { status: "unverified", detail: describe(probe) };
+  }
+  if (probe.status >= 500) return { status: "unhealthy", detail: describe(probe) };
+  return { status: "verified", detail: describe(probe) };
+}
+
+/** One line for a job's final log: "verified (HTTP 200)", "not verified yet (...)". */
+export function healthLabel(s: HealthSettlement): string {
+  const word = { verified: "verified", unverified: "not verified yet", unhealthy: "unhealthy" };
+  return `${word[s.status]} (${s.detail})`;
+}
+
+export type LiveHealthDecision =
+  | ({ done: true } & HealthSettlement)
+  | { done: false; reason: string; delaySeconds: number };
+
+/**
+ * The live check's next move after its `attempt`th probe (1-based), taken
+ * `elapsedMs` after the first. A passing answer settles at once; otherwise it
+ * waits the next backoff delay unless that would pass the window, in which
+ * case the last answer settles the check. `elapsedMs` never counts less than
+ * the waits already scheduled, so the window also ends when the clock does
+ * not move (the engine's sleeps make real time at least that long anyway).
+ */
+export function decideLiveHealth(
+  probe: HealthProbe,
+  attempt: number,
+  elapsedMs: number,
+  windowMs: number = LIVE_HEALTH_WINDOW_MS,
+): LiveHealthDecision {
+  if (classifyLiveProbe(probe) === "pass") return { done: true, ...settleHealthProbe(probe) };
+  const delaySeconds = liveHealthDelaySeconds(attempt);
+  const elapsed = Math.max(elapsedMs, liveHealthScheduledMs(attempt));
+  if (elapsed + delaySeconds * 1000 > windowMs) return { done: true, ...settleHealthProbe(probe) };
+  return { done: false, reason: describe(probe), delaySeconds };
+}
+
+/** The path health checks probe for an install, from its recorded manifest; `/` when unknown. */
+export function healthPathOfManifest(manifestJson: string | null): string {
+  if (manifestJson === null) return "/";
+  try {
+    const parsed = artifactManifestSchema.safeParse(JSON.parse(manifestJson));
+    return parsed.success ? appHealthPath(parsed.data.catalog.install) : "/";
+  } catch {
+    return "/";
+  }
 }
 
 /** Health answers are small; anything longer is not a version report. */

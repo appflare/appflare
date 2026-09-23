@@ -3,12 +3,14 @@ import { PackageIcon, StorefrontIcon } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { formatDateTime } from "../../components/format";
+import { HealthIcon } from "../../components/install-health";
 import { PageHeader } from "../../components/page-header";
 import { StatusBadge } from "../../components/status-badge";
 import { type InstallRow, listInstalls } from "../../installs/installs.functions";
 
 /**
- * `/`: every install with its label, Worker name, status, version, and
+ * `/`: every install with its label, Worker name, status (with an icon when
+ * its last health check did not verify the Worker), version, and
  * update-available. Several installs of one app are listed one by one.
  * Uninstalled installs sit in a collapsed section below.
  */
@@ -101,7 +103,12 @@ function ActiveTable({ rows }: { rows: InstallRow[] }) {
                 )}
               </Table.Cell>
               <Table.Cell>
-                <StatusBadge status={row.status} of="install" />
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={row.status} of="install" />
+                  {row.status === "installed" && (
+                    <HealthIcon status={row.healthStatus} checkedAt={row.healthCheckedAt} />
+                  )}
+                </div>
               </Table.Cell>
               <Table.Cell>
                 <div className="flex flex-wrap items-center gap-2">

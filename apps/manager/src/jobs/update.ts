@@ -15,10 +15,12 @@ import { readSettings, SETTING } from "../db/settings";
 import { hyphenateUuid } from "./install";
 import { fetchArtifactFile } from "./install/artifact";
 import { ARTIFACT_FETCH_COST } from "./install/budget";
+import { healthLabel } from "./install/health";
 import { buildScriptMetadata, resolveVars, uploadModule } from "./install/metadata";
 import {
   type ArtifactRef,
   applyD1MigrationsPhase,
+  checkLiveHealthPhase,
   checkWorkflowNamePhase,
   d1Targets,
   loadVerifiedManifest,
@@ -69,7 +71,8 @@ import {
  *    before anything serves the new version.
  * 7. Apply new D1 migration files, before promotion (as wrangler does).
  * 8. Promote the version to 100% of traffic.
- * 9. Health check on the Worker's own URL.
+ * 9. Health check on the Worker's own URL. The version already serves, so
+ *    the result is recorded on the install and never fails the job.
  *
  * A version that brings Durable Object migrations takes another path from
  * step 5 on: Cloudflare applies those only on a full script upload, which
@@ -529,20 +532,21 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       manifest.worker.crons,
     );
 
-    // 9. Live health check.
+    // 9. Live health check, recorded rather than fatal: the version already serves.
     const url = `https://${workerName}.${subdomain}.workers.dev${healthPath}`;
-    const healthy = await probeUntilHealthy(steps, step, {
-      label: "health",
-      url,
-      healthyMessage: "the Worker is serving",
-    });
+    const health = await checkLiveHealthPhase(steps, step, url);
 
     await run("finish", 0, async ({ log, orm }) => {
       const at = new Date(now());
       await orm.batch([
         orm
           .update(installs)
-          .set({ status: "installed", updated_at: at })
+          .set({
+            status: "installed",
+            health_status: health.status,
+            health_checked_at: new Date(health.checkedAt),
+            updated_at: at,
+          })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),
         orm
           .update(jobs)
@@ -550,7 +554,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           .where(eq(jobs.id, params.jobId)),
       ]);
       log.info(
-        `Updated ${started.slug} from ${started.fromVersion} to ${params.version} at ${url} (health ${healthy}).`,
+        `Updated ${started.slug} from ${started.fromVersion} to ${params.version} at ${url} (health: ${healthLabel(health)}).`,
       );
       return {};
     });

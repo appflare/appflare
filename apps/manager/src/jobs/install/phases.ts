@@ -27,9 +27,11 @@ import {
 } from "./d1-migrations";
 import {
   classifyHealthProbe,
+  decideLiveHealth,
   HEALTH_MAX_ATTEMPTS,
   HEALTH_RETRY_DELAY,
   type HealthProbe,
+  type HealthSettlement,
   type HealthVerdict,
   probeHealth,
   versionMismatch,
@@ -428,7 +430,7 @@ export async function lookupSubdomainPhase(steps: JobSteps): Promise<string> {
 }
 
 export interface ProbePhaseOptions {
-  /** Step names are `<label> check N` and sleeps `<label> wait N` ("health", "canary"). */
+  /** Step names are `<label> check N` and sleeps `<label> wait N` ("canary"). */
   label: string;
   url: string;
   /** What a healthy answer means, for the log ("the Worker is serving"). */
@@ -446,11 +448,12 @@ export interface ProbePhaseOptions {
 }
 
 /**
- * GETs `url` until it serves, through route propagation and error 1042 (the
- * manager carries `global_fetch_strictly_public`, so it can reach its own
- * account's workers.dev hosts): one step per probe, a `step.sleep` between
- * probes. Any non-5xx answer is healthy. Returns the status; throws
- * `JobError` when the URL never serves.
+ * The canary: GETs `url` until it serves, through route propagation and
+ * error 1042 (the manager carries `global_fetch_strictly_public`, so it can
+ * reach its own account's workers.dev hosts): one step per probe, a
+ * `step.sleep` between probes. Any non-5xx answer is healthy. Returns the
+ * status; throws `JobError` when the URL never serves, which fails the job
+ * before anything serves the version.
  */
 export async function probeUntilHealthy(
   steps: JobSteps,
@@ -489,6 +492,58 @@ export async function probeUntilHealthy(
   }
   steps.current = `${opts.label} check`;
   throw new JobError(`${opts.url} never answered`);
+}
+
+export interface LiveHealthResult extends HealthSettlement {
+  /** When the last probe ran (epoch ms). */
+  checkedAt: number;
+}
+
+/**
+ * The live health check of a Worker that already serves (created, or
+ * promoted): GETs `url` with backoff (2, 3, 5, 8, then every 10 s) for up to
+ * 90 seconds after the first probe, through route
+ * propagation, error 1042, and 5xx answers. One step per probe, so each
+ * invocation makes one subrequest plus its log write, and a `step.sleep`
+ * between probes. Never throws for what the Worker answers: by now
+ * everything is created or promoted, so the result is recorded on the install
+ * instead (`verified`, `unverified`, `unhealthy`) and a warning is logged when
+ * the Worker could not be verified.
+ */
+export async function checkLiveHealthPhase(
+  steps: JobSteps,
+  step: StepRunner,
+  url: string,
+): Promise<LiveHealthResult> {
+  let firstProbeAt: number | null = null;
+  for (let attempt = 1; ; attempt++) {
+    const checked = await steps.run(`health check ${attempt}`, 1, async ({ log, fetch }) => {
+      const at = steps.now();
+      const probe = await probeHealth(fetch, url);
+      const decision = decideLiveHealth(probe, attempt, at - (firstProbeAt ?? at));
+      if (!decision.done) {
+        log.warn(`GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`);
+      } else if (decision.status === "verified") {
+        log.info(`GET ${url} -> ${decision.detail}; the Worker is serving.`);
+      } else if (decision.status === "unhealthy") {
+        log.warn(
+          `GET ${url} -> ${decision.detail}: the Worker answers with a server error. Everything was created; open the app to check, or check again from its page.`,
+        );
+      } else {
+        log.warn(
+          `Could not verify ${url} after ${attempt} attempts (${decision.detail}). Everything was created; the route may still be going live. Open the app to check, or check again from its page.`,
+        );
+      }
+      return { at, decision };
+    });
+    firstProbeAt ??= checked.at;
+    const { decision } = checked;
+    if (decision.done) {
+      return { status: decision.status, detail: decision.detail, checkedAt: checked.at };
+    }
+    await step.sleep(`health wait ${attempt}`, `${decision.delaySeconds} seconds`);
+    steps.resetBudget();
+  }
 }
 
 /**

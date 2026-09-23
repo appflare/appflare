@@ -6,6 +6,7 @@ import m0002 from "./0002_uninstall.sql?raw";
 import m0003 from "./0003_update_snapshots.sql?raw";
 import m0004 from "./0004_manager_snapshots.sql?raw";
 import m0005 from "./0005_self_update_promotion.sql?raw";
+import m0006 from "./0006_install_health.sql?raw";
 
 /** Every migration in apply order. `schema_version` counts how many have been applied. */
 export const migrations: readonly { tag: string; sql: string }[] = [
@@ -15,4 +16,5 @@ export const migrations: readonly { tag: string; sql: string }[] = [
   { tag: "0003_update_snapshots", sql: m0003 },
   { tag: "0004_manager_snapshots", sql: m0004 },
   { tag: "0005_self_update_promotion", sql: m0005 },
+  { tag: "0006_install_health", sql: m0006 },
 ];

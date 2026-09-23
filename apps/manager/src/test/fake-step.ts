@@ -5,25 +5,32 @@ import type { StepConfig, StepContext, StepRunner } from "../jobs/run-job";
  * Test-only `WorkflowStep` stand-in: runs each step callback inline, retrying
  * (without delay) up to the step's `retries.limit` unless it throws a
  * `NonRetryableError`, and passes `{ attempt }` like the engine does. Records
- * step and sleep names. Results go through a JSON round trip, as the engine
- * persists them, so a non-JSON step result fails the test.
+ * step and sleep names and sleep durations; `onSleep` lets a test advance a
+ * fake clock. Results go through a JSON round trip, as the engine persists
+ * them, so a non-JSON step result fails the test.
  */
 export interface FakeStep extends StepRunner {
   names: string[];
   sleeps: string[];
+  /** The duration of each sleep, in order. */
+  sleepDurations: Array<string | number>;
   configs: Array<StepConfig | undefined>;
   /** Attempts per step name (only steps that ran more than once). */
   retried: Record<string, number>;
 }
 
-export function fakeStep(): FakeStep {
+export function fakeStep(
+  options: { onSleep?: (name: string, duration: string | number) => void } = {},
+): FakeStep {
   const names: string[] = [];
   const sleeps: string[] = [];
+  const sleepDurations: Array<string | number> = [];
   const configs: Array<StepConfig | undefined> = [];
   const retried: Record<string, number> = {};
   const runner = {
     names,
     sleeps,
+    sleepDurations,
     configs,
     retried,
     async do<T>(
@@ -47,8 +54,10 @@ export function fakeStep(): FakeStep {
         }
       }
     },
-    async sleep(name: string): Promise<void> {
+    async sleep(name: string, duration: string | number): Promise<void> {
       sleeps.push(name);
+      sleepDurations.push(duration);
+      options.onSleep?.(name, duration);
     },
   };
   return runner as FakeStep;

@@ -8,7 +8,7 @@ import { getCatalogIndex } from "../catalog/index.server";
 import { isUpdateAvailable } from "../catalog/versions";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
-import { installs, jobs, resources } from "../db/schema";
+import { type HealthStatus, installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { requireRole, requireSession } from "../server/auth.server";
@@ -68,6 +68,18 @@ export interface InstallRow {
   updatedAt: string;
   /** ISO 8601; null until the install is uninstalled. */
   uninstalledAt: string | null;
+  /** The last health check of the Worker's URL; null until one ran. */
+  healthStatus: HealthStatus | null;
+  /** ISO 8601; when that check ran. */
+  healthCheckedAt: string | null;
+}
+
+/** The health fields of an install row, for the list and the detail page. */
+function healthOf(row: typeof installs.$inferSelect) {
+  return {
+    healthStatus: row.health_status,
+    healthCheckedAt: row.health_checked_at?.toISOString() ?? null,
+  };
 }
 
 async function subdomain(): Promise<string | null> {
@@ -101,6 +113,7 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
         workerUrl: row.status === "installed" ? workersDevUrl(row.worker_name, sub) : null,
         updatedAt: row.updated_at.toISOString(),
         uninstalledAt: row.uninstalled_at?.toISOString() ?? null,
+        ...healthOf(row),
       };
     });
   },
@@ -225,6 +238,7 @@ export const getInstall = createServerFn({ method: "GET" })
       workerUrl: row.status === "installed" ? workerUrl : null,
       updatedAt: row.updated_at.toISOString(),
       uninstalledAt: row.uninstalled_at?.toISOString() ?? null,
+      ...healthOf(row),
       currentVersionId: row.current_version_id,
       pinSha: row.pin_sha,
       vars: parseVars(row.config_json),
