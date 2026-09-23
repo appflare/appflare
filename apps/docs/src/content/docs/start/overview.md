@@ -1,0 +1,64 @@
+---
+title: What Appflare is
+description: A self-hosted app manager that runs as one Worker in your own Cloudflare account.
+---
+
+Appflare is a self-hosted app manager for Cloudflare. It is a single Worker that you
+install into your own Cloudflare account. From its web UI you browse a catalog of
+apps built for Workers, install them into the same account, and keep them updated.
+
+:::caution
+Appflare is pre-release software. Expect rough edges and breaking changes.
+:::
+
+## Why it exists
+
+Cloudflare's "Deploy to Cloudflare" button copies an app's repository into your
+GitHub account. The copy has no link back to the original, so you never hear about
+new versions and have no way to update.
+
+Appflare owns the install instead. It records every resource it creates for an app,
+so it can update the app, roll it back, and uninstall it.
+
+## What it is not
+
+- **Not a hosting service.** Everything runs in your account, on your plan, under
+  your limits. Nobody else runs a server for you.
+- **Not a template gallery.** Apps are installed and run, not forked into a
+  repository you then maintain.
+- **Not affiliated with Cloudflare.** Appflare is an independent open-source
+  project. It is not endorsed or sponsored by Cloudflare, Inc.
+- **No telemetry.** The manager talks to the Cloudflare API, the catalog index and
+  release files on GitHub, and your own apps' URLs for health checks. Nothing else.
+  The installer also turns off wrangler's usage metrics for the commands it runs.
+
+## What gets installed
+
+`npx create-appflare` creates these in your account. (The installer is not on npm
+yet; until it is, run it [from a checkout](/start/install/#from-a-checkout).)
+
+| Resource | Name |
+| --- | --- |
+| Worker | `appflare`, served at `https://appflare.<your-subdomain>.workers.dev` |
+| D1 database | `appflare` |
+| KV namespace | `appflare-kv` |
+| Workflow | `appflare-jobs` |
+| Cron trigger | every 30 minutes |
+
+The D1 database holds users, settings, install records, and job logs. The KV
+namespace caches the catalog. The Workflow runs installs, updates, rollbacks, and
+uninstalls as durable jobs. The cron trigger refreshes the catalog and checks for new
+releases; it never starts a job on its own.
+
+## The parts
+
+- **The manager** is the Worker above, with its web UI.
+- **The installer**, `create-appflare`, puts the manager into your account. The same
+  package, `@appflare/cli`, can check on it, roll it back, and remove it.
+- **The catalog** is a public GitHub repository, `appflare/catalog`. Its CI builds
+  each app from a pinned commit, signs it, and publishes it. See
+  [How the catalog works](/catalog/how-it-works/).
+
+## Next
+
+[Install Appflare](/start/install/).

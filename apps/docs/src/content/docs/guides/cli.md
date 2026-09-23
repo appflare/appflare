@@ -1,0 +1,88 @@
+---
+title: Command line
+description: The status, rollback, and uninstall commands of @appflare/cli.
+---
+
+The installer package also manages the manager from your computer. These commands
+use wrangler and your Cloudflare login, not the manager's UI, so they work even when
+the manager is broken.
+
+```sh
+npx @appflare/cli <command> [options]
+```
+
+:::note[Not on npm yet]
+`@appflare/cli` is not published to npm yet. Until it is, run these commands
+[from a checkout](/start/install/#from-a-checkout), with
+`node packages/cli/bin/appflare.js` in place of `npx @appflare/cli`.
+:::
+
+Every command takes `--name <name>` for a manager installed under another Worker
+name. If your login reaches several accounts, the command asks which one; set
+`CLOUDFLARE_ACCOUNT_ID` to skip the question.
+
+The manager's URL is looked up from your account's `workers.dev` subdomain. Pass
+`--url <url>` to skip that.
+
+## status
+
+```sh
+npx @appflare/cli status
+```
+
+Prints:
+
+- the manager's URL,
+- the Appflare version of the active deployment,
+- the answer of its `/api/health` endpoint,
+- whether a newer release exists, as of the manager's own last check,
+- the active deployment and the recent versions, newest first.
+
+## rollback
+
+```sh
+npx @appflare/cli rollback [--list | --to <version-id>] [--yes]
+```
+
+Redeploys an earlier version of the manager Worker. Without `--to`, it picks the
+version of the previous deployment, the same rule wrangler uses.
+
+| Flag | Meaning |
+| --- | --- |
+| `--list` | Print the recent versions with their ids and dates, and mark the default target. Changes nothing. |
+| `--to <version-id>` | Roll back to this version. |
+| `-y`, `--yes` | Do not ask for confirmation. |
+
+After rolling back, it waits for `/api/health` to report the old version. Only the
+Worker is rolled back; the manager's D1 database stays as it is.
+
+## uninstall
+
+```sh
+npx @appflare/cli uninstall --yes [--purge]
+```
+
+Deletes the manager Worker, and with it its Workflow. `--yes` is required.
+
+Apps you installed with Appflare are never touched. They keep running, and their
+resources stay.
+
+The command first checks that the Worker really is an Appflare manager, by its
+bindings or its `/api/health` answer, and refuses otherwise. An app that happens to
+have the same name is never removed.
+
+| Flag | Meaning |
+| --- | --- |
+| `--yes` | Required. Confirms deleting the Worker. |
+| `--purge` | Also delete the manager's D1 database and KV namespace, with all its data: users, settings, install records, and job history. Asks you to type the manager's name first. |
+| `--i-understand-data-loss` | With `--yes --purge`, skip typing the name. For scripts. |
+
+Without `--purge`, the D1 database and KV namespace stay, and the command prints the
+`wrangler` commands that delete them.
+
+With `--purge`, it deletes exactly the database and namespace the Worker is bound to.
+If the Worker is already gone, it can only match by name: the D1 database named
+`appflare` and the KV namespace titled `appflare-kv` (or the names that follow
+`--name`), and it tells you so.
+
+To remove Appflare and everything it installed, see the [FAQ](/faq/#how-do-i-remove-appflare-entirely).

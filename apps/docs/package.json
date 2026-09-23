@@ -4,9 +4,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "astro sync && tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.3",
+    "astro": "7.3.4"
+  },
+  "devDependencies": {
+    "@appflare/schema": "workspace:*",
+    "@types/node": "22.20.4"
   }
 }

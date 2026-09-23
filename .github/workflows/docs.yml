@@ -1,0 +1,75 @@
+name: docs
+
+# Builds the documentation site (apps/docs) and deploys it as the Worker
+# `appflare-docs`, static assets only. The manifest reference page is generated
+# from @appflare/schema during the build, so schema changes redeploy the site.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/docs/**"
+      - "packages/schema/**"
+      # The site's logos, and the toolchain the build runs with.
+      - "docs/assets/**"
+      - "pnpm-lock.yaml"
+      - "package.json"
+      - "turbo.json"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, never cancelled halfway; a newer push waits and deploys
+# after it.
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: build and deploy docs
+    # x64 runners: Pagefind's search index builds there.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # pnpm 10, the exact version from package.json's packageManager field.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Builds @appflare/schema first (turbo's ^build), then the site.
+      - run: pnpm exec turbo run build --filter=@appflare/docs...
+      - name: Check the site has search
+        run: test -d apps/docs/dist/pagefind
+      # wrangler deploys to the account_id pinned in apps/docs/wrangler.jsonc and
+      # ignores CLOUDFLARE_ACCOUNT_ID when the config has one. Both must name the
+      # same account, or the token in the secret cannot deploy there.
+      - name: Check the pinned account matches the secret
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pinned=$(node --input-type=module -e '
+            import { unstable_readConfig } from "wrangler";
+            process.stdout.write(unstable_readConfig({ config: "apps/docs/wrangler.jsonc" }).account_id ?? "");
+          ')
+          if [[ -z "${CLOUDFLARE_ACCOUNT_ID}" || "${pinned}" != "${CLOUDFLARE_ACCOUNT_ID}" ]]; then
+            echo "::error::apps/docs/wrangler.jsonc account_id does not match the CLOUDFLARE_ACCOUNT_ID secret"
+            exit 1
+          fi
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: "false"
+        run: pnpm wrangler -c apps/docs/wrangler.jsonc deploy

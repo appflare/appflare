@@ -1,0 +1,133 @@
+---
+title: Install Appflare
+description: Requirements, the installer, and the setup wizard.
+---
+
+## Requirements
+
+- **Node.js 22 or newer** on the machine you install from.
+- **A Cloudflare account.** The free Workers plan works. Some apps in the catalog
+  need more, and say so on their catalog page.
+- **A `workers.dev` subdomain** on the account. If the account has none, wrangler
+  offers to register one during the install. That needs a terminal; otherwise
+  register it in the Cloudflare dashboard first.
+- **Permission to create an API token** for the account. An account-owned token
+  needs the Super Administrator role. Other members can use a user token.
+
+## Run the installer
+
+```sh
+npx create-appflare
+```
+
+:::note[Not on npm yet]
+The installer is not published to npm yet, so `npx create-appflare` and
+`npx @appflare/cli` do not work today. Until they do, run it
+[from a checkout](#from-a-checkout).
+:::
+
+### From a checkout
+
+You need Node.js 22 and pnpm.
+
+```sh
+git clone https://github.com/appflare/appflare
+cd appflare
+pnpm install
+pnpm --filter "@appflare/cli..." build
+node packages/cli/bin/appflare.js
+```
+
+`node packages/cli/bin/appflare.js` takes the same options as `npx create-appflare`,
+and the same commands as `npx @appflare/cli`. For example,
+`node packages/cli/bin/appflare.js status` runs `npx @appflare/cli status`.
+
+### What the installer does
+
+1. Checks the Node.js version and your Cloudflare login. If wrangler is not logged
+   in, it opens `wrangler login` in your browser. If your login reaches several
+   accounts, it asks which one. Set `CLOUDFLARE_ACCOUNT_ID` to skip the question.
+2. Refuses to continue if a Worker named `appflare`, a D1 database named
+   `appflare`, or a KV namespace titled `appflare-kv` already exists.
+3. Downloads the latest manager release from
+   [github.com/appflare/appflare/releases](https://github.com/appflare/appflare/releases).
+   It checks the release's Ed25519 signature against the public keys built into the
+   installer, and the sha256 of every file. Nothing is deployed unless all of that
+   passes.
+4. Deploys the manager with `wrangler deploy` from a temporary directory. Wrangler
+   creates the D1 database and KV namespace.
+5. Sets two secrets on the manager to random values: `BETTER_AUTH_SECRET`, which
+   signs sessions, and `SETUP_TOKEN`, which guards the setup wizard.
+6. Waits for the manager to answer, then prints the setup link:
+   `https://appflare.<your-subdomain>.workers.dev/setup?token=…`
+
+The temporary directory is removed at the end. Nothing is written to your current
+directory, and no git repository is created.
+
+### Options
+
+| Flag | Meaning |
+| --- | --- |
+| `--version <x.y.z>` | Install that manager release instead of the latest. |
+| `--name <name>` | Worker name. Defaults to `appflare`. The D1 database and KV namespace follow it. |
+| `-y`, `--yes` | Never ask. Fail where a question would be needed: several accounts, no `workers.dev` subdomain, or a Workflow name that another Worker owns. |
+| `--artifact-dir <dir>` | Install from a downloaded release in `<dir>` instead of fetching it. The signature is still required. |
+
+If GitHub rate-limits the download, set `GITHUB_TOKEN`. The installer sends it only
+to `api.github.com`.
+
+## The setup wizard
+
+Open the setup link. It works once.
+
+### 1. Create the admin account
+
+Enter a name, an email, and a password of at least 12 characters. This first user
+is an admin. You sign in with it next.
+
+### 2. Connect Cloudflare
+
+The manager needs a Cloudflare API token to create and update apps in your account.
+Cloudflare does not let a Worker or wrangler create one, so this step happens in the
+dashboard:
+
+1. Select **Create token**. The dashboard opens an account-owned token form named
+   `Appflare`, with the permissions below already selected. Choose your account,
+   create the token, and copy it. If you are not a Super Administrator, use
+   **Create a user token instead**.
+2. Paste the token and select **Verify**. The manager checks that the token is
+   active, belongs to this account, and can manage Workers. It warns about
+   permissions it cannot confirm.
+3. Select **Save and continue**.
+
+The token template requests:
+
+| Permission | Access | Used for |
+| --- | --- | --- |
+| Workers Scripts | Edit | Uploading, deploying, and deleting app Workers and the manager itself, with their secrets, cron triggers, routes, and static assets. |
+| Workers KV Storage | Edit | KV namespaces for apps that bind KV. |
+| D1 | Edit | D1 databases, app migrations, and Time Travel restores. |
+| Workers R2 Storage | Edit | R2 buckets for apps that bind R2. |
+| Queues | Edit | Queues for apps that use them. |
+| Vectorize | Edit | Vectorize indexes for apps that bind them. |
+| Account Settings | Read | Finding the account the token belongs to. |
+| Access: Apps and Policies | Edit | Not used by the current version. |
+| Workers Tail | Read | Not used by the current version. |
+
+### Where the token lives
+
+The manager stores the token as an encrypted secret, `CF_API_TOKEN`, on its own
+Worker, through the Cloudflare API. Saving it redeploys the manager, which takes a
+few seconds. The token is never shown again, never written to the database, and
+never included in logs. See [Security model](/security/).
+
+After saving, the manager deletes its `SETUP_TOKEN` secret, so the setup link stops
+working.
+
+To replace the token later, open **Settings**, find **Cloudflare API token**, and
+select **Rotate token**. The new token must be for the same account. Revoke the old
+one in the Cloudflare dashboard afterwards.
+
+## Next
+
+[Browse the catalog](/guides/catalog/) and [install an app](/guides/install-apps/).
