@@ -21,7 +21,11 @@ name: release
 #                 the plan
 #   release       contents: write; verifies against the embedded signing keys and
 #                 creates or completes the GitHub Release manager@<version>. The
-#                 only job that creates tags or releases.
+#                 only job that creates tags or releases. Then waits until the
+#                 release's public view lists the three assets.
+#
+# Manual runs (workflow_dispatch) may name a `version` to (re)release that exact
+# version from the commit that set it; without it they behave like a push.
 #
 # Nothing is published to npm in v1.
 
@@ -29,6 +33,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release this manager version (semver, no leading v) from the commit that set it. Empty: the current version."
+        required: false
+        default: ""
+        type: string
 
 permissions: {}
 
@@ -87,7 +97,8 @@ jobs:
   plan:
     name: plan
     needs: version
-    if: needs.version.outputs.has-changesets == 'false'
+    # A requested version is released even while other changesets are pending.
+    if: needs.version.outputs.has-changesets == 'false' || inputs.version != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -96,6 +107,7 @@ jobs:
       release: ${{ steps.plan.outputs.release }}
       version: ${{ steps.plan.outputs.version }}
       sha: ${{ steps.plan.outputs.sha }}
+      latest: ${{ steps.plan.outputs.latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,11 +117,13 @@ jobs:
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="$(jq -r .version apps/manager/package.json)"
+          current="$(jq -r .version apps/manager/package.json)"
+          version="${REQUESTED_VERSION:-${current}}"
           if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error file=apps/manager/package.json::version ${version} is not semver"
+            echo "::error::manager version ${version} is not semver (no leading v)"
             exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
@@ -119,13 +133,26 @@ jobs:
             exit 0
           fi
           tag="manager@${version}"
+          # Only the current version becomes the repository's latest release, so
+          # re-releasing an older version never moves "latest" backwards.
+          if [ "${version}" = "${current}" ]; then
+            echo "latest=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "latest=false" >> "${GITHUB_OUTPUT}"
+          fi
 
           # The version commit: the newest commit that changed the "version" line of
-          # apps/manager/package.json. Every run for this version builds from it, so
-          # commits that land later never end up in this version's artifact.
-          sha="$(git log -1 --format=%H -G'"version"[[:space:]]*:' -- apps/manager/package.json)"
-          if [ -z "${sha}" ] || [ "$(git show "${sha}:apps/manager/package.json" | jq -r .version)" != "${version}" ]; then
-            echo "::error::could not find the commit that set apps/manager/package.json to ${version}"
+          # apps/manager/package.json to this version. Every run for this version
+          # builds from it, so commits that land later never end up in its artifact.
+          sha=""
+          while read -r commit; do
+            if [ "$(git show "${commit}:apps/manager/package.json" | jq -r .version)" = "${version}" ]; then
+              sha="${commit}"
+              break
+            fi
+          done < <(git log --format=%H -G'"version"[[:space:]]*:' -- apps/manager/package.json)
+          if [ -z "${sha}" ]; then
+            echo "::error::no commit set apps/manager/package.json to version ${version}"
             exit 1
           fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
@@ -152,9 +179,13 @@ jobs:
             exit 1
           fi
           if [ "${#ids[@]}" -eq 1 ]; then
-            # The release list omits a draft's assets; read the release itself.
-            state="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ids[0]}" \
-              --jq '[(.draft | tostring), ([.assets[].name] | sort | join(","))] | join(" ")')"
+            # Assets come from the release's own assets endpoint: the list and by-tag
+            # views omit a draft's assets and lag minutes behind for a new release,
+            # which must not trigger a needless re-upload.
+            draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ids[0]}" --jq .draft)"
+            names="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${ids[0]}/assets?per_page=100" \
+              --jq '.[] | select(.state == "uploaded") | .name' | LC_ALL=C sort | paste -sd, -)"
+            state="${draft} ${names}"
             expected="$(printf '%s\n' "appflare-${version}.zip" manifest.json manifest.sig | LC_ALL=C sort | paste -sd, -)"
             if [ "${state}" = "false ${expected}" ]; then
               echo "::notice::${tag} is already released"
@@ -315,7 +346,8 @@ jobs:
     name: GitHub Release
     needs: [plan, build-packer, sign]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Includes up to 15 minutes waiting for the assets to become visible.
+    timeout-minutes: 25
     permissions:
       contents: write
     steps:
@@ -366,6 +398,7 @@ jobs:
           WRITE_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.plan.outputs.version }}
           SHA: ${{ needs.plan.outputs.sha }}
+          LATEST: ${{ needs.plan.outputs.latest }}
         run: |
           set -euo pipefail
           gh_write() { GH_TOKEN="${WRITE_TOKEN}" gh "$@"; }
@@ -402,9 +435,10 @@ jobs:
           fi
           printf '\n---\nBuilt from %s@%s. Signed with key id %s. manifest.json sha256: %s.\n' \
             "${repo}" "${SHA}" "${KEY_ID}" "${digest}" >> "${notes}"
-          prerelease=()
+          # Pre-releases are never "latest"; otherwise only the current version is.
+          flags=("--latest=${LATEST}")
           if [[ "${VERSION}" == *-* ]]; then
-            prerelease=(--prerelease)
+            flags=(--prerelease)
           fi
 
           # Drafts included: the release list is the only lookup that returns them.
@@ -420,18 +454,21 @@ jobs:
               --target "${SHA}" \
               --title "Appflare ${VERSION}" \
               --notes-file "${notes}" \
-              "${prerelease[@]}"
+              "${flags[@]}"
             exit 0
           fi
 
-          # The release list omits a draft's assets; read the release itself.
-          release="$(gh_write api "repos/${repo}/releases/${ids[0]}")"
-          draft="$(jq -r .draft <<< "${release}")"
-          present="$(jq -r '[.assets[].name] | sort | join(",")' <<< "${release}")"
+          # Assets come from the release's own assets endpoint: the list and by-tag
+          # views omit a draft's assets and lag minutes behind for a new release.
+          draft="$(gh_write api "repos/${repo}/releases/${ids[0]}" --jq .draft)"
+          release_assets="$(gh_write api --paginate "repos/${repo}/releases/${ids[0]}/assets?per_page=100" \
+            --jq '.[] | select(.state == "uploaded")' | jq -s .)"
+          present="$(jq -r '[.[].name] | sort | join(",")' <<< "${release_assets}")"
           if [ "${draft}" = false ] && [ "${present}" = "${expected}" ]; then
-            live="$(jq -r '.assets[] | select(.name == "manifest.json") | .digest // ""' <<< "${release}")"
+            live="$(jq -r '.[] | select(.name == "manifest.json") | .digest // ""' <<< "${release_assets}")"
             if [ -z "${live}" ]; then
-              live="sha256:$(gh_write release download "${tag}" --repo "${repo}" --pattern manifest.json --output - | sha256sum | cut -d' ' -f1)"
+              asset_id="$(jq -r '.[] | select(.name == "manifest.json") | .id' <<< "${release_assets}")"
+              live="sha256:$(gh_write api -H "Accept: application/octet-stream" "repos/${repo}/releases/assets/${asset_id}" | sha256sum | cut -d' ' -f1)"
             fi
             if [ "${live}" = "sha256:${digest}" ]; then
               echo "::notice::${tag} is already released with this manifest.json"
@@ -440,7 +477,7 @@ jobs:
             echo "::error::${tag} is published with a different manifest.json (${live}, this build sha256:${digest}); a live release is never replaced"
             exit 1
           fi
-          unexpected="$(jq -r --arg expected "${expected}" '[.assets[].name | select(. as $n | $expected | split(",") | index($n) | not)] | join(",")' <<< "${release}")"
+          unexpected="$(jq -r --arg expected "${expected}" '[.[].name | select(. as $n | $expected | split(",") | index($n) | not)] | join(",")' <<< "${release_assets}")"
           if [ -n "${unexpected}" ]; then
             echo "::error::${tag} has unexpected assets (${unexpected}); remove them by hand"
             exit 1
@@ -454,4 +491,30 @@ jobs:
             --title "Appflare ${VERSION}" \
             --notes-file "${notes}" \
             --draft=false \
-            "${prerelease[@]}"
+            "${flags[@]}"
+      # A new release's assets appear on the public views (by tag, the release
+      # list, `gh release download`), which the CLI and the manager read, only
+      # minutes after they are uploaded. Succeed only once they are visible.
+      - name: Wait until the release lists its three assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="manager@${VERSION}"
+          expected="$(printf '%s\n' "appflare-${VERSION}.zip" manifest.json manifest.sig | LC_ALL=C sort | paste -sd, -)"
+          deadline=$(( $(date +%s) + 15 * 60 ))
+          while :; do
+            names="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
+              --jq '[.assets[].name] | sort | join(",")' 2> /dev/null || true)"
+            if [ "${names}" = "${expected}" ]; then
+              echo "${tag} lists ${names}"
+              exit 0
+            fi
+            if [ "$(date +%s)" -ge "${deadline}" ]; then
+              echo "::error::after 15 minutes ${tag} lists assets [${names}] on GET /releases/tags/${tag}, expected [${expected}]; check the release by hand"
+              exit 1
+            fi
+            echo "${tag} lists [${names}] so far; checking again in 20 s"
+            sleep 20
+          done

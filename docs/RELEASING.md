@@ -34,7 +34,15 @@ Releases, tagged `manager@<version>`. Nothing is published to npm yet.
      them to a draft or partial release and publishes it); the notes are the
      version's changelog section. A published release with all three assets is
      never replaced: the run succeeds if its `manifest.json` is identical and fails
-     otherwise. Versions with a pre-release suffix are
+     otherwise. GitHub shows a new release's assets on its public views (by tag,
+     the release list, `gh release download`) only minutes after the upload, so
+     the job then waits, up to 15 minutes, until the release lists all three.
+
+To release one specific version again (for example after deleting a broken
+release), run the `release` workflow manually on `main` with the `version` input
+set to it (`0.2.0`, no leading `v`). It builds from the commit that set
+`apps/manager/package.json` to that version. Only the current version is marked
+as the repository's latest release. Versions with a pre-release suffix are
      marked as pre-releases.
 
 To pack locally (unsigned unless you pass `--key-id`):
