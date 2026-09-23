@@ -8,6 +8,8 @@ import { confirm, isCancel, select } from "@clack/prompts";
 export interface Ui {
   /** Whether prompts can be shown (stdin and stderr are terminals). */
   readonly interactive: boolean;
+  /** The one-line brand shown when `create-appflare` starts, on a terminal only. */
+  banner(): void;
   step(message: string): void;
   info(message: string): void;
   warn(message: string): void;
@@ -28,11 +30,50 @@ export class CancelledError extends Error {
   }
 }
 
+/** The stream properties colour detection needs; `hasColors` exists only on terminals. */
+export interface ColorTarget {
+  isTTY?: boolean;
+  hasColors?: (env?: NodeJS.ProcessEnv) => boolean;
+}
+
+/**
+ * Whether to colour output on `stream`. A non-empty `NO_COLOR` always turns
+ * colour off (https://no-color.org); otherwise only a terminal that reports
+ * colour support gets it (Node also honours `FORCE_COLOR` and `TERM=dumb` there).
+ */
+export function colorEnabled(env: NodeJS.ProcessEnv, stream: ColorTarget): boolean {
+  if (env.NO_COLOR !== undefined && env.NO_COLOR !== "") {
+    return false;
+  }
+  return Boolean(stream.isTTY && stream.hasColors?.(env));
+}
+
+/** "Appflare" and what it is, on one line; the name bold and the rest dim when `color` is on. */
+export function formatBanner(color: boolean): string {
+  const name = "Appflare";
+  const tagline = "self-hosted app manager for Cloudflare";
+  return color
+    ? `\u001b[1m${name}\u001b[22m \u001b[2m· ${tagline}\u001b[22m`
+    : `${name} · ${tagline}`;
+}
+
+/**
+ * The banner line for `stream`, or `null` when `stream` is not a terminal: pipes
+ * and CI logs get no brand line, only the progress that matters there.
+ */
+export function bannerFor(env: NodeJS.ProcessEnv, stream: ColorTarget): string | null {
+  return stream.isTTY ? formatBanner(colorEnabled(env, stream)) : null;
+}
+
 /** The terminal UI: plain lines on stderr, prompts from @clack/prompts drawn on stderr. */
-export function terminalUi(): Ui {
+export function terminalUi(env: NodeJS.ProcessEnv = process.env): Ui {
   const err = (line: string) => process.stderr.write(`${line}\n`);
   return {
     interactive: Boolean(process.stdin.isTTY && process.stderr.isTTY),
+    banner() {
+      const line = bannerFor(env, process.stderr);
+      if (line !== null) err(line);
+    },
     step: (message) => err(`\n> ${message}`),
     info: (message) => err(`  ${message}`),
     warn: (message) => err(`! ${message}`),

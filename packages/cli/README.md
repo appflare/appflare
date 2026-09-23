@@ -1,3 +1,11 @@
+<!-- Relative paths render on GitHub. npm does not resolve them, so publishing to npm needs absolute image URLs here. -->
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/logo_full_white.svg">
+    <img alt="Appflare" src="../../docs/assets/logo_full.svg" width="160">
+  </picture>
+</p>
+
 # create-appflare / @appflare/cli
 
 Installs [Appflare](https://github.com/appflare/appflare), a self-hosted app manager

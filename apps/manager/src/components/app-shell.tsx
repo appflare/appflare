@@ -1,15 +1,10 @@
 import { Badge, Button, Sidebar, Text } from "@cloudflare/kumo";
-import {
-  CloudIcon,
-  GearIcon,
-  SignOutIcon,
-  SquaresFourIcon,
-  StorefrontIcon,
-} from "@phosphor-icons/react";
+import { GearIcon, SignOutIcon, SquaresFourIcon, StorefrontIcon } from "@phosphor-icons/react";
 import { useLocation, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { authClient } from "../auth/client";
 import type { Viewer } from "../server/session.functions";
+import { Logo } from "./logo";
 
 const NAV = [
   { href: "/", label: "Installed", icon: SquaresFourIcon, exact: true },
@@ -35,7 +30,7 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
       <Sidebar>
         <Sidebar.Header>
           <div className="flex items-center gap-2 px-3 py-1">
-            <CloudIcon size={20} weight="duotone" className="shrink-0 text-kumo-brand" />
+            <Logo height={20} className="text-kumo-strong" />
             <Text variant="heading" as="span">
               Appflare
             </Text>

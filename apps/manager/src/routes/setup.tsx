@@ -24,6 +24,7 @@ import { getTokenStatus } from "../server/token.functions";
  * `/`; until then every signed-in page redirects here (`_app.tsx`).
  */
 export const Route = createFileRoute("/setup")({
+  staticData: { title: "Set up" },
   validateSearch: z.object({ token: z.string().optional() }),
   loaderDeps: ({ search }) => ({ token: search.token }),
   loader: async ({ deps }) => {

@@ -9,6 +9,7 @@ import { getSetupStatus } from "../server/setup.functions";
 
 /** `/login`: Better Auth email + password. */
 export const Route = createFileRoute("/login")({
+  staticData: { title: "Sign in" },
   validateSearch: z.object({ created: z.boolean().optional() }),
   beforeLoad: async () => {
     // Until the first admin exists, everything leads to /setup.

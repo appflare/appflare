@@ -1,6 +1,6 @@
 import { cn, LayerCard, Text } from "@cloudflare/kumo";
-import { CloudIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
+import { Logo } from "./logo";
 
 /**
  * Centered single-card layout for `/setup` and `/login`. `wide` fits the
@@ -20,11 +20,8 @@ export function AuthLayout({
   return (
     <main className="flex min-h-dvh items-center justify-center bg-kumo-recessed px-4 py-10">
       <div className={cn("grid w-full gap-6", width === "wide" ? "max-w-xl" : "max-w-md")}>
-        <div className="flex items-center justify-center gap-2">
-          <CloudIcon size={24} weight="duotone" className="text-kumo-brand" />
-          <Text variant="heading" size="lg" as="span">
-            Appflare
-          </Text>
+        <div className="flex justify-center">
+          <Logo variant="wordmark" height={28} label="Appflare" className="text-kumo-strong" />
         </div>
         <LayerCard>
           <LayerCard.Primary className="grid gap-6 px-6 py-5">

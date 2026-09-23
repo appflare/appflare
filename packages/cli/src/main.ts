@@ -81,6 +81,7 @@ export async function main(argv: string[], ctx: CommandContext): Promise<number>
           return 0;
         }
         rejectPositionals(positionals);
+        ctx.ui.banner();
         await install(
           {
             version: values.version,

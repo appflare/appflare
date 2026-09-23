@@ -215,6 +215,7 @@ export function fakeUi(options: { interactive?: boolean; answers?: (string | boo
   const answers = [...(options.answers ?? [])];
   const ui: import("./ui.ts").Ui = {
     interactive: options.interactive ?? false,
+    banner: () => lines.push("Appflare"),
     step: (m) => lines.push(`> ${m}`),
     info: (m) => lines.push(`  ${m}`),
     warn: (m) => lines.push(`! ${m}`),
