@@ -142,6 +142,17 @@ describe("catalogManifestSchema", () => {
     }
   });
 
+  it("takes optional bump settings with a boolean autoMerge", () => {
+    expect(catalogManifestSchema.parse(validManifest).bump).toBeUndefined();
+    for (const autoMerge of [true, false]) {
+      const parsed = catalogManifestSchema.parse({ ...validManifest, bump: { autoMerge } });
+      expect(parsed.bump).toEqual({ autoMerge });
+    }
+    for (const bump of [{}, { autoMerge: "yes" }, { autoMerge: 1 }, { autoMerge: null }, true]) {
+      expect(catalogManifestSchema.safeParse({ ...validManifest, bump }).success).toBe(false);
+    }
+  });
+
   it("rejects a non-boolean fixedWorkerName", () => {
     for (const fixedWorkerName of ["yes", 1, null]) {
       const result = catalogManifestSchema.safeParse({

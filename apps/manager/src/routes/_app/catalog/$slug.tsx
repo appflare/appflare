@@ -20,7 +20,7 @@ import { type ReactNode, useState } from "react";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
 import { requirementLabel, requirementSentence } from "../../../catalog/requirements";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
-import { PlanBadge, VerifiedBadge } from "../../../components/catalog-badges";
+import { InstallCheckBadge, PlanBadge } from "../../../components/catalog-badges";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
@@ -172,8 +172,8 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
             </>
           )}
           <Row label="Maintainers">{app.maintainers.join(", ")}</Row>
-          <Row label="Last verified">
-            <VerifiedBadge lastVerified={app.lastVerified} />
+          <Row label="Last checked">
+            <InstallCheckBadge lastVerified={app.lastVerified} />
           </Row>
         </dl>
       </LayerCard.Primary>

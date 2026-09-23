@@ -13,7 +13,7 @@ import {
   listCatalog,
   refreshCatalog,
 } from "../../../catalog/catalog.functions";
-import { PlanBadge, RequirementIcons, VerifiedBadge } from "../../../components/catalog-badges";
+import { InstallCheckBadge, PlanBadge, RequirementIcons } from "../../../components/catalog-badges";
 import { formatDateTime } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
@@ -78,7 +78,7 @@ function AppCard({ app }: { app: CatalogListItem }) {
           </Text>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <VerifiedBadge lastVerified={app.lastVerified} />
+          <InstallCheckBadge lastVerified={app.lastVerified} />
           <RequirementIcons requires={app.requires} />
         </div>
         <div className="flex items-center justify-between gap-3">

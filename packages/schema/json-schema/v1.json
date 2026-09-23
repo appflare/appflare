@@ -280,6 +280,20 @@
         }
       },
       "additionalProperties": false
+    },
+    "bump": {
+      "type": "object",
+      "properties": {
+        "autoMerge": {
+          "type": "boolean",
+          "description": "Let the bump bot's pull request merge itself once the required checks, including the install check, pass. For entries whose maintainers trust upstream's tags to be releasable as they are."
+        }
+      },
+      "required": [
+        "autoMerge"
+      ],
+      "additionalProperties": false,
+      "description": "How the catalog's bump bot treats this entry when its upstream moves."
     }
   },
   "required": [

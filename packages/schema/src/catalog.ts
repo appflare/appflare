@@ -174,6 +174,29 @@ export function appHealthPath(install: Pick<CatalogInstall, "healthPath">): stri
   return install.healthPath ?? "/";
 }
 
+/**
+ * How the catalog's bump bot treats an entry when its upstream moves.
+ *
+ * `autoMerge: true` makes the bot's pull request merge itself (squash) once the
+ * required checks, the full install check included, pass. Without it, or with
+ * `false`, a maintainer reviews and merges each bump. Set it for entries whose
+ * maintainers trust upstream's tags to be releasable as they are. The bot does
+ * not auto-merge an entry that sets `install.version`, because a person has to
+ * update that version with each bump.
+ */
+export const catalogBumpSchema = z
+  .object({
+    autoMerge: z
+      .boolean()
+      .describe(
+        "Let the bump bot's pull request merge itself once the required checks, including " +
+          "the install check, pass. For entries whose maintainers trust upstream's tags to be " +
+          "releasable as they are.",
+      ),
+  })
+  .describe("How the catalog's bump bot treats this entry when its upstream moves.");
+export type CatalogBump = z.infer<typeof catalogBumpSchema>;
+
 /** The full catalog manifest, `appflare.jsonc`. */
 export const catalogManifestSchema = z.object({
   $schema: z.url().optional(),
@@ -202,5 +225,10 @@ export const catalogManifestSchema = z.object({
    * before the field existed keep the same parsed shape.
    */
   resources: catalogResourcesSchema.optional(),
+  /**
+   * How the catalog's bump bot treats this entry. Optional for the same reason
+   * as `resources`; omitted means a maintainer merges every bump.
+   */
+  bump: catalogBumpSchema.optional(),
 });
 export type CatalogManifest = z.infer<typeof catalogManifestSchema>;

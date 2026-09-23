@@ -11,31 +11,35 @@ export const PLAN_BADGES: Record<Plan, { variant: "neutral" | "orange"; label: s
   paid: { variant: "orange", label: "Workers Paid" },
 };
 
-export interface VerifiedBadgeCopy {
-  verified: boolean;
+export interface InstallCheckBadgeCopy {
+  checked: boolean;
   /** On the badge: the day, or that there is none yet. */
   label: string;
-  /** In the tooltip: the exact time, or what "not verified" means. */
+  /** In the tooltip: what the check did and exactly when, or that it has not passed yet. */
   tooltip: string;
 }
 
 /**
- * Copy for the index's `lastVerified`: when the catalog's nightly install check
- * last installed this exact version into a test account and got an answer
- * from it. A new version starts unverified; a failing check keeps the previous
+ * Copy for the index's `lastVerified`: when the catalog's nightly job last
+ * reinstalled this exact package into a test account and got an answer from
+ * it. A new version starts unchecked; a failing check keeps the previous
  * date, so an old date means recent checks failed.
+ *
+ * Worded as "install checked" rather than "verified" so it is not confused
+ * with an install's own health status in this account.
  */
-export function verifiedBadgeCopy(lastVerified: string | null): VerifiedBadgeCopy {
+export function installCheckBadgeCopy(lastVerified: string | null): InstallCheckBadgeCopy {
   if (lastVerified === null) {
     return {
-      verified: false,
-      label: "Not verified yet",
-      tooltip: "The catalog's nightly install check has not passed for this version yet.",
+      checked: false,
+      label: "Not checked yet",
+      tooltip:
+        "The catalog's nightly job has not yet reinstalled this version into a test account and seen it answer.",
     };
   }
   return {
-    verified: true,
-    label: `Verified ${formatDate(lastVerified)}`,
-    tooltip: `Install check passed ${formatExactDateTime(lastVerified)}.`,
+    checked: true,
+    label: `Install checked ${formatDate(lastVerified)}`,
+    tooltip: `The catalog's nightly job reinstalled this exact package into a test account on ${formatExactDateTime(lastVerified)}, and it answered.`,
   };
 }

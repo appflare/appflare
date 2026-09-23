@@ -12,11 +12,11 @@ import {
   SparkleIcon,
 } from "@phosphor-icons/react";
 import { requirementLabel } from "../catalog/requirements";
-import { PLAN_BADGES, verifiedBadgeCopy } from "./catalog-badge-copy";
+import { installCheckBadgeCopy, PLAN_BADGES } from "./catalog-badge-copy";
 
 /**
  * What the catalog index says about an app beyond its name: the Workers plan it
- * needs, when the catalog last verified it, and what the account must offer.
+ * needs, when the catalog last checked that it installs, and what the account must offer.
  * The catalog list and each app's page render these same components so their
  * wording always matches.
  */
@@ -28,12 +28,12 @@ export function PlanBadge({ plan }: { plan: Plan }) {
 }
 
 /** The index's `lastVerified`: the day on the badge, the exact time in its tooltip. */
-export function VerifiedBadge({ lastVerified }: { lastVerified: string | null }) {
-  const copy = verifiedBadgeCopy(lastVerified);
+export function InstallCheckBadge({ lastVerified }: { lastVerified: string | null }) {
+  const copy = installCheckBadgeCopy(lastVerified);
   return (
     // Kumo's default trigger is an unstyled button, so keyboard users can open the tooltip too.
     <Tooltip content={copy.tooltip}>
-      {copy.verified ? (
+      {copy.checked ? (
         <Badge variant="success" icon={<SealCheckIcon aria-hidden />}>
           {copy.label}
         </Badge>
