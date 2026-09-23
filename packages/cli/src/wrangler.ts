@@ -165,6 +165,17 @@ export const wranglerArgs = {
    */
   delete: (worker: string): string[] => ["delete", "--name", worker, "--force"],
   d1List: (): string[] => ["d1", "list", "--json"],
+  /** `-y` skips wrangler's confirmation; the CLI confirms first. Looks the database up by name. */
+  d1Delete: (databaseName: string): string[] => ["d1", "delete", databaseName, "-y"],
+  /** By id, never by title; `-y` skips wrangler's confirmation. */
+  kvDelete: (namespaceId: string): string[] => [
+    "kv",
+    "namespace",
+    "delete",
+    "--namespace-id",
+    namespaceId,
+    "-y",
+  ],
   /** Prints JSON without a flag. */
   kvList: (): string[] => ["kv", "namespace", "list"],
   /** Prints `{"type":"oauth"|"api_token",…,"token":…}`. Output must never be shown. */

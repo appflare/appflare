@@ -6,7 +6,7 @@ import type { CommandContext } from "../context.ts";
 import { type FakeHandler, fakeSpawner, fakeUi, LOGGED_IN } from "../test-fixtures.ts";
 import { rollback } from "./rollback.ts";
 import { status } from "./status.ts";
-import { leftoverResources, uninstall } from "./uninstall.ts";
+import { boundResources, deleteCommandFor, hasManagerBindings, uninstall } from "./uninstall.ts";
 
 const deployments = [
   {
@@ -49,6 +49,14 @@ beforeEach(() => {
 afterEach(() => rmSync(tmpRoot, { recursive: true, force: true }));
 
 function setup(overrides: Record<string, FakeHandler> = {}, ui = fakeUi()) {
+  // What /api/health answers; a rollback switches it to the rolled-back version.
+  const health: Record<string, unknown> = {
+    version: "0.2.0",
+    db: "ok",
+    latestVersion: "0.3.0",
+    updateAvailable: true,
+  };
+  const kvDelete: FakeHandler = overrides["kv delete"] ?? (() => ({}));
   const fake = fakeSpawner({
     whoami: () => ({ stdout: LOGGED_IN }),
     "deployments list": () => ({ stdout: JSON.stringify(deployments) }),
@@ -63,9 +71,16 @@ function setup(overrides: Record<string, FakeHandler> = {}, ui = fakeUi()) {
       ),
     }),
     "d1 list": () => ({ stdout: JSON.stringify([{ uuid: "db-uuid", name: "appflare" }]) }),
-    "kv namespace": () => ({ stdout: JSON.stringify([{ id: "kv-id", title: "appflare-kv" }]) }),
+    "kv namespace": (call) =>
+      call.args[2] === "delete"
+        ? kvDelete(call)
+        : { stdout: JSON.stringify([{ id: "kv-id", title: "appflare-kv" }]) },
+    "d1 delete": () => ({}),
     auth: () => ({ stdout: JSON.stringify({ type: "oauth", token: "oauth-secret" }) }),
-    rollback: () => ({}),
+    rollback: () => {
+      health.version = "0.1.0";
+      return {};
+    },
     delete: () => ({}),
     ...overrides,
   });
@@ -78,13 +93,14 @@ function setup(overrides: Record<string, FakeHandler> = {}, ui = fakeUi()) {
       if (url.endsWith("/workers/subdomain")) {
         return Response.json({ success: true, result: { subdomain: "acme" } });
       }
-      return Response.json({ version: "0.2.0", db: "ok" });
+      return Response.json(health);
     },
     spawner: fake.spawner,
     wranglerBin: "/fake/wrangler.js",
     tmpRoot,
+    sleep: async () => {},
   };
-  return { ctx, calls: fake.calls, fetched, ...ui };
+  return { ctx, calls: fake.calls, fetched, health, ...ui };
 }
 
 describe("status", () => {
@@ -109,6 +125,39 @@ describe("status", () => {
     expect(readdirSync(tmpRoot)).toEqual([]);
   });
 
+  it("says when an update is available, and when the manager is up to date", async () => {
+    const t = setup();
+    await status({}, t.ctx);
+    expect(t.results.join("\n")).toContain("Updates:   Update available: 0.3.0 (running 0.2.0)");
+
+    const current = setup();
+    Object.assign(current.health, { latestVersion: "0.2.0", updateAvailable: false });
+    await status({}, current.ctx);
+    expect(current.results.join("\n")).toContain(
+      "Updates:   Up to date (running 0.2.0, latest 0.2.0)",
+    );
+  });
+
+  it("says unknown when the manager reports a latest version but not whether it is newer", async () => {
+    const t = setup();
+    delete t.health.updateAvailable;
+    await status({}, t.ctx);
+    expect(t.results.join("\n")).toMatch(/Updates: {3}unknown \(manager 0\.2\.0 reports 0\.3\.0/);
+  });
+
+  it("handles managers that have not checked, or do not report, releases", async () => {
+    const unchecked = setup();
+    Object.assign(unchecked.health, { latestVersion: null, updateAvailable: false });
+    await status({}, unchecked.ctx);
+    expect(unchecked.results.join("\n")).toContain("has not checked for releases yet");
+
+    const older = setup();
+    delete older.health.latestVersion;
+    delete older.health.updateAvailable;
+    await status({}, older.ctx);
+    expect(older.results.join("\n")).toContain("does not report updates");
+  });
+
   it("uses --url without looking anything up", async () => {
     const t = setup();
     await status({ url: "https://mgr.example.workers.dev" }, t.ctx);
@@ -129,7 +178,9 @@ describe("rollback", () => {
     const call = t.calls.find((c) => c.args[0] === "rollback");
     expect(call?.args.slice(0, 4)).toEqual(["rollback", "v-2", "--name", "appflare"]);
     expect(call?.stdin).toEqual({ kind: "ignore" });
-    expect(t.results).toEqual(['Rolled back "appflare" to version v-2.']);
+    expect(t.results).toEqual([
+      'Rolled back "appflare" to version v-2.\nHealth: ok (version 0.1.0, db ok)',
+    ]);
   });
 
   it("does nothing when the user declines", async () => {
@@ -150,6 +201,38 @@ describe("rollback", () => {
     await expect(rollback({ yes: true, to: "v-3" }, t.ctx)).rejects.toThrow(
       "already the active version",
     );
+  });
+});
+
+describe("rollback --list and health", () => {
+  it("lists versions with ids and dates and changes nothing", async () => {
+    const t = setup();
+    await rollback({ yes: false, list: true }, t.ctx);
+    const report = t.results.join("\n");
+    expect(report).toContain("* v-3  2026-09-22T00:00:00Z");
+    expect(report).toMatch(/v-2 {2}2026-09-22T00:00:00Z.*<- default rollback target/);
+    expect(report).toContain("rollback --name appflare --to <version-id>");
+    expect(t.calls.some((c) => c.args[0] === "rollback")).toBe(false);
+  });
+
+  it("reports when the manager still serves the old version", async () => {
+    const t = setup({ rollback: () => ({}) });
+    t.ctx.healthTimeoutMs = 0;
+    await rollback({ yes: true }, t.ctx);
+    expect(t.results[0]).toContain(
+      "Health: ok (version 0.2.0, db ok); expected 0.1.0, the edge may still be serving the old version",
+    );
+  });
+
+  it("reports a failing manager after the rollback", async () => {
+    const t = setup();
+    t.ctx.fetch = async (url) =>
+      url.endsWith("/workers/subdomain")
+        ? Response.json({ success: true, result: { subdomain: "acme" } })
+        : new Response("boom", { status: 500 });
+    t.ctx.healthTimeoutMs = 0;
+    await rollback({ yes: true }, t.ctx);
+    expect(t.results[0]).toContain("Health: FAILING: HTTP 500 (boom)");
   });
 });
 
@@ -201,12 +284,163 @@ describe("uninstall account choice", () => {
   });
 });
 
-describe("leftoverResources", () => {
+describe("uninstall --purge", () => {
+  const purgeCalls = (calls: { args: string[] }[]) =>
+    calls
+      .filter((c) => c.args.includes("delete"))
+      .map((c) => c.args.filter((a) => a !== "--config" && !a.endsWith("wrangler.json")).join(" "));
+
+  it("deletes the Worker, then its bound D1 and KV, after the name is typed", async () => {
+    const t = setup({}, fakeUi({ interactive: true, answers: ["appflare"] }));
+    await uninstall({ yes: true, purge: true }, t.ctx);
+    expect(purgeCalls(t.calls)).toEqual([
+      "delete --name appflare --force",
+      "d1 delete appflare -y",
+      "kv namespace delete --namespace-id kv-id -y",
+    ]);
+    const report = t.results.join("\n");
+    expect(report).toContain('Deleted the D1 database "appflare" (db-uuid), binding DB.');
+    expect(report).toContain('Deleted the KV namespace "appflare-kv" (kv-id), binding KV.');
+    expect(report).toContain("were not touched");
+    expect(report).not.toContain("NOT deleted");
+  });
+
+  it("deletes nothing when the typed name does not match", async () => {
+    const t = setup({}, fakeUi({ interactive: true, answers: ["appflar"] }));
+    await expect(uninstall({ yes: true, purge: true }, t.ctx)).rejects.toThrow(
+      "did not match; nothing was deleted",
+    );
+    expect(purgeCalls(t.calls)).toEqual([]);
+  });
+
+  it("needs a terminal or all three flags", async () => {
+    const t = setup();
+    await expect(uninstall({ yes: true, purge: true }, t.ctx)).rejects.toThrow(
+      "--yes --purge --i-understand-data-loss",
+    );
+    expect(purgeCalls(t.calls)).toEqual([]);
+    await uninstall({ yes: true, purge: true, iUnderstandDataLoss: true }, t.ctx);
+    expect(purgeCalls(t.calls)).toHaveLength(3);
+    await expect(uninstall({ yes: true, iUnderstandDataLoss: true }, t.ctx)).rejects.toThrow(
+      "only applies to --purge",
+    );
+  });
+
+  it("purges only the resources the manager is bound to, by id, not by name", async () => {
+    const t = setup({
+      "d1 list": () => ({
+        stdout: JSON.stringify([
+          { uuid: "u-other", name: "appflare" },
+          { uuid: "db-uuid", name: "appflare-db-2" },
+        ]),
+      }),
+      "kv namespace": (call) =>
+        call.args[2] === "delete"
+          ? {}
+          : {
+              stdout: JSON.stringify([
+                { id: "kv-other", title: "appflare-kv" },
+                { id: "kv-id", title: "custom" },
+              ]),
+            },
+    });
+    await uninstall({ yes: true, purge: true, iUnderstandDataLoss: true }, t.ctx);
+    expect(purgeCalls(t.calls)).toEqual([
+      "delete --name appflare --force",
+      "d1 delete appflare-db-2 -y",
+      "kv namespace delete --namespace-id kv-id -y",
+    ]);
+    const report = t.results.join("\n");
+    expect(report).not.toContain("u-other");
+    expect(report).not.toContain("kv-other");
+  });
+
+  it("refuses a Worker that is not a manager, even with a <name>-kv namespace", async () => {
+    const appVersion = {
+      id: "v-3",
+      metadata: { created_on: "2026-09-22T00:00:00Z" },
+      resources: {
+        bindings: [
+          { type: "kv_namespace", name: "KV", namespace_id: "kv-id" },
+          { type: "d1", name: "DB", id: "db-uuid" },
+        ],
+      },
+    };
+    const t = setup({ "versions view": () => ({ stdout: JSON.stringify(appVersion) }) });
+    // Answers health like an app, not like a manager (no schemaVersion).
+    Object.assign(t.health, { version: "1.0.0", db: "ok" });
+    await expect(
+      uninstall({ yes: true, purge: true, iUnderstandDataLoss: true }, t.ctx),
+    ).rejects.toThrow('The Worker "appflare" is not an Appflare manager');
+    expect(purgeCalls(t.calls)).toEqual([]);
+    await expect(uninstall({ yes: true }, t.ctx)).rejects.toThrow("not an Appflare manager");
+    expect(purgeCalls(t.calls)).toEqual([]);
+  });
+
+  it("recognizes a manager by its health answer when the bindings differ", async () => {
+    const t = setup({
+      "versions view": () => ({
+        stdout: JSON.stringify({
+          id: "v-3",
+          metadata: { created_on: "2026-09-22T00:00:00Z" },
+          resources: { bindings: [{ type: "d1", name: "DB", id: "db-uuid" }] },
+        }),
+      }),
+    });
+    t.health.schemaVersion = 4;
+    await uninstall({ yes: true, purge: true, iUnderstandDataLoss: true }, t.ctx);
+    expect(purgeCalls(t.calls)).toEqual([
+      "delete --name appflare --force",
+      "d1 delete appflare -y",
+    ]);
+  });
+
+  it("matches by exact name only when the Worker is already gone, and says so", async () => {
+    const t = setup(
+      { "deployments list": () => ({ code: 1, stderr: "[code: 10007]" }) },
+      fakeUi({ interactive: true, answers: ["appflare"] }),
+    );
+    await uninstall({ yes: true, purge: true }, t.ctx);
+    expect(t.lines.join("\n")).toContain("Matching by name");
+    expect(purgeCalls(t.calls)).toEqual([
+      "d1 delete appflare -y",
+      "kv namespace delete --namespace-id kv-id -y",
+    ]);
+    expect(t.results.join("\n")).toContain('There is no Worker named "appflare"');
+  });
+
+  it("reports a failed deletion and still tries the other", async () => {
+    const t = setup({ "d1 delete": () => ({ code: 1 }) });
+    await expect(
+      uninstall({ yes: true, purge: true, iUnderstandDataLoss: true }, t.ctx),
+    ).rejects.toThrow("could not be deleted");
+    const report = t.results.join("\n");
+    expect(report).toContain('FAILED to delete the D1 database "appflare"');
+    expect(report).toContain('Deleted the KV namespace "appflare-kv"');
+    expect(report).toContain("npx wrangler d1 delete appflare");
+  });
+
+  it("stops before any purge when the Worker cannot be deleted", async () => {
+    const t = setup({ delete: () => ({ code: 1 }) });
+    await expect(
+      uninstall({ yes: true, purge: true, iUnderstandDataLoss: true }, t.ctx),
+    ).rejects.toThrow("Nothing else was deleted");
+    expect(purgeCalls(t.calls)).toEqual(["delete --name appflare --force"]);
+  });
+});
+
+describe("boundResources", () => {
   it("falls back to ids when names are unknown and skips other bindings", () => {
-    const leftovers = leftoverResources(version("v", "1").resources.bindings, new Map(), new Map());
-    expect(leftovers.map((l) => l.deleteCommand)).toEqual([
+    const resources = boundResources(version("v", "1").resources.bindings, [], []);
+    expect(resources.map(deleteCommandFor)).toEqual([
       "npx wrangler d1 delete db-uuid",
       "npx wrangler kv namespace delete --namespace-id kv-id",
     ]);
+  });
+  it("recognizes the manager's bindings", () => {
+    expect(hasManagerBindings(version("v", "1").resources.bindings)).toBe(true);
+    expect(
+      hasManagerBindings(version("v", "1").resources.bindings.filter((b) => b.type !== "workflow")),
+    ).toBe(false);
   });
 });

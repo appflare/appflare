@@ -1,6 +1,6 @@
 import { ensureAccount } from "../account.ts";
 import { type CommandContext, wranglerFor } from "../context.ts";
-import { checkHealth } from "../health.ts";
+import { checkHealth, describeHealth, describeUpdate } from "../health.ts";
 import { DEFAULT_WORKER_NAME, validateWorkerName } from "../names.ts";
 import { withWorkdir } from "../workdir.ts";
 import {
@@ -40,7 +40,8 @@ function describeDeployment(deployment: Deployment): string[] {
   return lines;
 }
 
-function describeVersion(version: Version, active: string | null): string {
+/** One line per version for `status` and `rollback --list`. */
+export function describeVersion(version: Version, active: string | null): string {
   const marker = version.id === active ? "*" : " ";
   const message = annotation(version, "workers/message");
   return `  ${marker} ${version.id}  ${version.metadata.created_on}  ${version.metadata.source ?? ""}${message ? `  ${message}` : ""}`.trimEnd();
@@ -49,7 +50,8 @@ function describeVersion(version: Version, active: string | null): string {
 /**
  * `appflare status`: the active deployment and recent versions (from wrangler,
  * so it works when the manager itself is broken), the deployed Appflare
- * version, and `GET /api/health`.
+ * version, `GET /api/health`, and whether a newer release is available (as the
+ * manager's own release check last saw it).
  */
 export async function status(options: StatusOptions, ctx: CommandContext): Promise<void> {
   const name = validateWorkerName(options.name ?? DEFAULT_WORKER_NAME);
@@ -73,13 +75,8 @@ export async function status(options: StatusOptions, ctx: CommandContext): Promi
       `Appflare manager "${name}"`,
       `  URL:       ${url ?? "unknown (pass --url https://<name>.<subdomain>.workers.dev)"}`,
       `  Appflare:  ${(detail && appflareVersionOf(detail)) ?? "unknown"} (active deployment)`,
-      `  Health:    ${
-        health === null
-          ? "not checked (no URL)"
-          : health.ok
-            ? `ok (version ${health.version}, db ${health.db})`
-            : `FAILING: ${health.reason}`
-      }`,
+      `  Health:    ${describeHealth(health)}`,
+      `  Updates:   ${describeUpdate(health)}`,
       "",
       "Active deployment",
       ...(latest ? describeDeployment(latest) : ["  none"]),

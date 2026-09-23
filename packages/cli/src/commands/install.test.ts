@@ -118,6 +118,7 @@ describe("install", () => {
       if (url.endsWith("?per_page=100")) {
         return Response.json([
           {
+            id: 1,
             tag_name: "manager@0.1.0",
             draft: false,
             prerelease: false,

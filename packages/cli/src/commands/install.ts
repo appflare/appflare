@@ -102,7 +102,7 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
       ui.step(`Reading the manager artifact from ${artifactDir}`);
     } else {
       ui.step("Downloading the manager release");
-      const release = await findManagerRelease(ctx.fetch, env, options.version);
+      const release = await findManagerRelease(ctx.fetch, env, options.version, (m) => ui.warn(m));
       artifactDir = path.join(dir, "release");
       await mkdir(artifactDir);
       await downloadManagerRelease(ctx.fetch, env, release, artifactDir);

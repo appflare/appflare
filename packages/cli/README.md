@@ -94,8 +94,15 @@ Without `--yes`, in a terminal, you are asked in each of those cases.
 | `-y`, `--yes` | Never prompt; fail where a question would be needed (see above). |
 | `--allow-unsigned` | Development only. Needs `APPFLARE_DEV=1` and `--artifact-dir`; accepts an artifact without `manifest.sig` and prints a warning. |
 
-`GITHUB_TOKEN`, if set, is sent to `api.github.com` when fetching releases (to get
-around rate limits, or to read a private repository).
+`GITHUB_TOKEN`, if set, is sent to `api.github.com` when fetching releases and
+downloading their files. Set it while the repository is private (for example
+`GITHUB_TOKEN=$(gh auth token) npx create-appflare`), or to get around GitHub's rate
+limits. Without access, GitHub answers 404, and the installer says the repository
+may be private.
+
+A release that was just published can take a few minutes to list all its files.
+If the newest release is still incomplete, the installer installs the previous
+complete release and prints a warning; run it again later for the newest one.
 
 ## Other commands
 
@@ -108,26 +115,40 @@ npx @appflare/cli status [--name appflare] [--url <url>]
 ```
 
 Shows the active deployment, recent versions, the Appflare version that is
-deployed, and the result of `GET /api/health`. It finds the manager's URL by
-reading your account's `workers.dev` subdomain with the credential wrangler already
-has; pass `--url` to skip that.
+deployed, the result of `GET /api/health`, and whether an update is available
+(`Update available: <version>` or `Up to date`, as of the manager's own last check
+for releases). It finds the manager's URL by reading your account's `workers.dev`
+subdomain with the credential wrangler already has; pass `--url` to skip that.
 
 ```sh
-npx @appflare/cli rollback [--name appflare] [--to <version-id>] [--yes]
+npx @appflare/cli rollback [--name appflare] [--list | --to <version-id>] [--yes] [--url <url>]
 ```
 
 Redeploys an earlier version of the manager Worker (the previous deployment, or
-`--to`). Asks for confirmation unless `--yes`. Data in the manager's D1 database is
-not rolled back.
+`--to`). Asks for confirmation unless `--yes`. `--list` prints the recent versions
+with their ids and dates, and changes nothing. After rolling back it checks
+`GET /api/health` and prints the version the manager reports. Data in the manager's
+D1 database is not rolled back.
 
 ```sh
-npx @appflare/cli uninstall --yes [--name appflare]
+npx @appflare/cli uninstall --yes [--name appflare] [--purge [--i-understand-data-loss]] [--url <url>]
 ```
 
 Deletes the manager Worker (and with it, its Workflow). Apps you installed with
-Appflare keep running, and their resources stay. The manager's own D1 database and
-KV namespace are not deleted either; the command lists them with the `wrangler`
-commands that delete them, in case you no longer need the data.
+Appflare are never touched: they keep running, and their resources stay. It first
+checks that the Worker really is an Appflare manager (by its bindings, or by its
+`/api/health` answer) and refuses otherwise, so an app that happens to have the
+name is never removed or purged.
+
+Without `--purge`, the manager's own D1 database and KV namespace stay; the command
+lists them with the `wrangler` commands that delete them. With `--purge`, it also
+deletes them, with all the manager's data (users, settings, install records, job
+history). It deletes exactly the D1 database and KV namespace the manager Worker is
+bound to, by id. If the Worker is already gone, it can only match by name: the D1
+database named exactly `<name>` and the KV namespace titled exactly `<name>-kv`
+(the names the installer gave them), and it tells you it is doing so. Before
+deleting anything, it asks you to type the manager's name. It skips that question
+only when `--yes --purge --i-understand-data-loss` are all given.
 
 Here `--yes` only confirms the deletion. If your login can reach several accounts,
 uninstall still asks which one, or set `CLOUDFLARE_ACCOUNT_ID` (required when it

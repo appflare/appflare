@@ -1,4 +1,4 @@
-import { confirm, isCancel, select } from "@clack/prompts";
+import { confirm, isCancel, select, text } from "@clack/prompts";
 
 /**
  * Everything the CLI says or asks. Progress, warnings, and prompts go to
@@ -16,6 +16,8 @@ export interface Ui {
   /** The command's result, on stdout. */
   result(message: string): void;
   confirm(message: string): Promise<boolean>;
+  /** Free-text input; returns what the user typed. */
+  text(message: string, placeholder?: string): Promise<string>;
   select<T extends string>(
     message: string,
     options: { value: T; label: string; hint?: string }[],
@@ -80,6 +82,13 @@ export function terminalUi(env: NodeJS.ProcessEnv = process.env): Ui {
     result: (message) => process.stdout.write(`${message}\n`),
     async confirm(message) {
       const answer = await confirm({ message, output: process.stderr });
+      if (isCancel(answer)) {
+        throw new CancelledError();
+      }
+      return answer;
+    },
+    async text(message, placeholder) {
+      const answer = await text({ message, placeholder, output: process.stderr });
       if (isCancel(answer)) {
         throw new CancelledError();
       }

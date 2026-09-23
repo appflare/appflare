@@ -221,6 +221,7 @@ export function fakeUi(options: { interactive?: boolean; answers?: (string | boo
     warn: (m) => lines.push(`! ${m}`),
     result: (m) => results.push(m),
     confirm: async () => answers.shift() as boolean,
+    text: async () => answers.shift() as string,
     select: async <T extends string>() => answers.shift() as T,
   };
   return { ui, lines, results };
