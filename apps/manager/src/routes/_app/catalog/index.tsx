@@ -13,9 +13,10 @@ import {
   listCatalog,
   refreshCatalog,
 } from "../../../catalog/catalog.functions";
-import { formatDateTime, requirementLabel } from "../../../components/format";
+import { PlanBadge, RequirementIcons, VerifiedBadge } from "../../../components/catalog-badges";
+import { formatDateTime } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
-import { PlanBadge, StatusBadge } from "../../../components/status-badge";
+import { StatusBadge } from "../../../components/status-badge";
 
 /** `/catalog`: apps from the KV-cached `index.json`. */
 export const Route = createFileRoute("/_app/catalog/")({
@@ -74,18 +75,12 @@ function AppCard({ app }: { app: CatalogListItem }) {
           <Text>{app.summary}</Text>
           <Text variant="secondary" size="sm">
             Version <span className="font-mono text-[0.9em]">{app.version}</span>
-            {app.lastVerified !== null && <> · Verified {formatDateTime(app.lastVerified)}</>}
           </Text>
         </div>
-        {app.requires.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {app.requires.map((r) => (
-              <Badge key={r} variant="outline">
-                Requires {requirementLabel(r)}
-              </Badge>
-            ))}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <VerifiedBadge lastVerified={app.lastVerified} />
+          <RequirementIcons requires={app.requires} />
+        </div>
         <div className="flex items-center justify-between gap-3">
           <InstancesBadge instances={app.instances} />
           <LinkButton href={`/catalog/${app.slug}`} variant="secondary" icon={<ArrowRightIcon />}>

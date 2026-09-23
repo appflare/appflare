@@ -37,8 +37,8 @@ export function AppTokenPermissions({
       </Text>
       <Text variant="secondary">
         {appName} calls the Cloudflare API with a token you create for it. The token belongs to the
-        app, not to Appflare: when the install form asks for it, it is stored as a secret on the
-        app's Worker, never as Appflare's; otherwise the app's setup steps say where it goes.
+        app, not to the manager: when the install form asks for it, it is stored as a secret on the
+        app's Worker, never on the manager's; otherwise the app's setup steps say where it goes.
       </Text>
       <LayerCard className="p-0">
         <Table>

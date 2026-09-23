@@ -30,11 +30,3 @@ export function StatusBadge({ status, of }: { status: string; of: "install" | "j
     </Badge>
   );
 }
-
-export function PlanBadge({ plan }: { plan: string }) {
-  return plan === "paid" ? (
-    <Badge variant="orange">Workers Paid</Badge>
-  ) : (
-    <Badge variant="neutral">Free plan</Badge>
-  );
-}

@@ -1,10 +1,22 @@
 /** Shared display formatting for dates, sizes, and labels. */
 
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+const date = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+const exactDateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "long", timeStyle: "long" });
 const time = new Intl.DateTimeFormat(undefined, { timeStyle: "medium" });
 
 export function formatDateTime(iso: string | null | undefined): string {
   return iso ? dateTime.format(new Date(iso)) : "Not yet";
+}
+
+/** The day only, for badges where the time would be noise. */
+export function formatDate(iso: string): string {
+  return date.format(new Date(iso));
+}
+
+/** Down to the second, with the time zone, for tooltips behind a shorter date. */
+export function formatExactDateTime(iso: string): string {
+  return exactDateTime.format(new Date(iso));
 }
 
 export function formatTime(iso: string): string {
@@ -24,9 +36,6 @@ export function formatBytes(bytes: number): string {
   const digits = unit === 0 || value >= 100 ? 0 : 1;
   return `${value.toFixed(digits)} ${bytesUnits[unit]}`;
 }
-
-/** Catalog `requires` values as product names. */
-export { requirementLabel } from "../catalog/requirements";
 
 /** `resources.kind` values as product names. */
 export const RESOURCE_KIND_LABELS: Record<string, string> = {
