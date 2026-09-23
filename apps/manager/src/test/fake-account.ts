@@ -15,7 +15,12 @@ export const SUBDOMAIN = "appflare-dev";
 export interface FakeAccount {
   /** Newest first, as Cloudflare lists them. */
   deployments: Array<{ id: string; versions: Array<{ version_id: string; percentage: number }> }>;
-  versions: Array<{ id: string; metadata: Record<string, unknown>; modules: string[] }>;
+  versions: Array<{
+    id: string;
+    metadata: Record<string, unknown>;
+    modules: string[];
+    annotations?: Record<string, string>;
+  }>;
   /** `?force=true` of each deployment request, in order. */
   deployForced: boolean[];
   kv: Array<{ id: string; title: string }>;
@@ -50,6 +55,10 @@ export interface FakeAccount {
   worker: string;
   /** What `GET /workers/scripts/<worker>/bindings` answers. */
   bindings: unknown[];
+  /** Other Workers in the account (`GET /workers/scripts` also lists `worker` once deployed). */
+  otherScripts: string[];
+  /** Bodies of `PATCH /workers/workers/<worker>/versions/latest`, in order. */
+  versionPatches: unknown[];
   queues: Array<{ queue_id: string; queue_name: string }>;
   /** Worker consumers per queue id, as their last create or update body left them. */
   consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
@@ -83,6 +92,8 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     failOnce: new Map(),
     worker: "cut",
     bindings: [],
+    otherScripts: [],
+    versionPatches: [],
     queues: [],
     consumers: {},
     ...over,
@@ -112,6 +123,40 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     switch (key) {
       case "GET /workers/subdomain":
         return ok({ subdomain: SUBDOMAIN });
+      case "GET /workers/scripts":
+        return ok(
+          [...(state.deployments.length > 0 ? [state.worker] : []), ...state.otherScripts].map(
+            (id) => ({ id }),
+          ),
+          { result_info: { page: 1, total_pages: 1 } },
+        );
+      case `GET ${script}/versions`: {
+        // Newest first; the serving version counts as uploaded first.
+        const serving = state.deployments.at(-1)?.versions[0]?.version_id;
+        const items = [
+          ...state.versions
+            .map((v, i) => ({
+              id: v.id,
+              number: i + 2,
+              ...(v.annotations === undefined ? {} : { annotations: v.annotations }),
+            }))
+            .reverse(),
+          ...(serving === undefined ? [] : [{ id: serving, number: 1 }]),
+        ];
+        return ok({ items });
+      }
+      case `PATCH /workers/workers/${state.worker}/versions/latest`: {
+        const body = (await request.json()) as { annotations?: Record<string, string> };
+        state.versionPatches.push(body);
+        const id = state.versions.length === 0 ? NEW_VERSION : `version-${state.versions.length}`;
+        state.versions.push({
+          id,
+          metadata: { patch: body },
+          modules: [],
+          ...(body.annotations === undefined ? {} : { annotations: body.annotations }),
+        });
+        return ok({ id, number: state.versions.length + 1 });
+      }
       case `GET ${script}/bindings`:
         return ok(state.bindings);
       case `GET ${script}/deployments`:

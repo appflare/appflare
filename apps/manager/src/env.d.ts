@@ -23,6 +23,14 @@ interface ManagerOptionalVars {
   CF_API_BASE_URL?: string;
   /** The manager's releases API; defaults to `DEFAULT_MANAGER_RELEASES_URL`. */
   MANAGER_RELEASES_URL?: string;
+  /**
+   * Service binding to the sandbox Worker (`appflare-sandbox`, entrypoint
+   * `SandboxBuilds`). Not in wrangler.jsonc: the sandbox Worker is optional
+   * and may not exist when the manager is deployed, so the manager adds the
+   * binding to itself once it does (from Settings, or at its next
+   * self-update). Read it through `sandboxBinding()`.
+   */
+  SANDBOX?: unknown;
 }
 
 declare namespace Cloudflare {

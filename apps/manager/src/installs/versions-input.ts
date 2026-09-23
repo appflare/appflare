@@ -14,6 +14,8 @@ export const startUpdateInput = installIdInput.extend({
   secrets: z.record(z.string().max(200), z.string().max(MAX_SECRET_LENGTH)).optional(),
   /** The admin confirmed that this update cannot check the new version on a preview first. */
   confirmNoPreview: z.boolean().optional(),
+  /** For a sandbox tier app: the admin confirmed the cost of building the new version. */
+  buildConfirmed: z.boolean().optional(),
 });
 export type StartUpdateInput = z.infer<typeof startUpdateInput>;
 

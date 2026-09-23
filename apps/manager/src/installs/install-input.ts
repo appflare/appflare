@@ -51,6 +51,12 @@ export const startInstallInput = z.object({
    */
   requirementsConfirmed: z.boolean().default(false),
   /**
+   * The admin confirmed the cost of building a sandbox tier app in the
+   * account's sandbox Worker (Workers Paid). Refused for such an app when not
+   * true; ignored for others.
+   */
+  buildConfirmed: z.boolean().optional(),
+  /**
    * The zone whose email the app receives, for an app whose manifest sets
    * `install.emailRouting`; refused for any other app.
    */

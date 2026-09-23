@@ -73,6 +73,12 @@ export interface JobEnv {
    * their own invocation.
    */
   SELF?: JobUnitsApi;
+  /**
+   * The sandbox Worker (`appflare-sandbox`) over the `SANDBOX` service
+   * binding, on managers connected to sandbox builds. Read it through
+   * `sandboxBinding()`.
+   */
+  SANDBOX?: unknown;
 }
 
 /** Test seams. Production uses the global `fetch`, `signingKeys`, and `Date.now`. */

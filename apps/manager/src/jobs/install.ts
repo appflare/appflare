@@ -17,6 +17,11 @@ import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { workerNameSchema } from "../installs/install-input";
+import {
+  type ArtifactOrigin,
+  resolveArtifactPhase,
+  sandboxBuildParams,
+} from "./install/artifact-source";
 import { planBindings } from "./install/bindings";
 import {
   checkEmailRoutingPhase,
@@ -30,14 +35,12 @@ import {
   checkLiveHealthPhase,
   checkWorkflowNamePhase,
   d1Targets,
-  loadVerifiedManifest,
   lookupSubdomainPhase,
   provisionResourcePhase,
   type ResourceRecord,
   recordResource as recordResourceRow,
   resourceId,
   uploadAssetsPhase,
-  verifyManifestPhase,
 } from "./install/phases";
 import { attachQueueConsumersPhase, planQueueConsumers } from "./install/queue-consumers";
 import { explainR2Refusal } from "./install/r2-enablement";
@@ -69,8 +72,11 @@ export const installJobParams = z.object({
   slug: z.string().min(1),
   version: z.string().min(1),
   workerName: workerNameSchema,
-  artifacts: indexArtifactsSchema,
-  digest: sha256Schema,
+  /** The signed release; absent for a sandbox tier app, which is built instead. */
+  artifacts: indexArtifactsSchema.optional(),
+  digest: sha256Schema.optional(),
+  /** A sandbox tier app: what the sandbox Worker builds, and the admin's cost confirmation. */
+  build: sandboxBuildParams.optional(),
   secrets: z.record(z.string(), z.string()),
   vars: z.record(z.string(), z.string()),
   paidConfirmed: z.boolean(),
@@ -96,18 +102,19 @@ export async function runInstall(ctx: JobContext): Promise<void> {
   const { step, env, deps } = ctx;
   const db = env.DB;
   const steps = createJobSteps(ctx, params.jobId);
-  const { run, now, baseFetch } = steps;
+  const { run, now } = steps;
 
   async function recordResource(orm: Database, row: ResourceRecord): Promise<void> {
     await recordResourceRow(orm, params.installId, row, new Date(now()));
   }
 
-  const artifact = {
-    slug: params.slug,
-    version: params.version,
-    artifacts: params.artifacts,
-    digest: params.digest,
-  };
+  const origin: ArtifactOrigin | null =
+    params.build !== undefined
+      ? { kind: "sandbox", build: params.build }
+      : params.artifacts !== undefined && params.digest !== undefined
+        ? { kind: "release", artifacts: params.artifacts, digest: params.digest }
+        : null;
+  if (origin === null) throw new NonRetryableError("invalid install job payload: no artifact");
 
   try {
     await run("start", async ({ log, orm }) => {
@@ -119,10 +126,17 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    // 1. Fetch and verify the artifact manifest.
-    await verifyManifestPhase(steps, env.KV, artifact, deps.signingKeys);
-    steps.current = "load artifact manifest";
-    const manifestText = await loadVerifiedManifest(env.KV, baseFetch, artifact);
+    // 1. Fetch and verify the artifact manifest (a sandbox tier app is built first).
+    // TODO: a self-deploying tier app would branch here to run its own installer in
+    // the sandbox Worker; that tier is not supported yet, and the install start
+    // refuses its entries.
+    const source = await resolveArtifactPhase(steps, env, deps.signingKeys, {
+      installId: params.installId,
+      slug: params.slug,
+      version: params.version,
+      origin,
+    });
+    const manifestText = source.manifestText;
     const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
     const plan = planBindings(params.workerName, manifest.worker.bindings);
     const queuePlan = planQueueConsumers(params.workerName, manifest.worker);
@@ -289,8 +303,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const assetsJwt = await uploadAssetsPhase(
       steps,
       params.workerName,
-      params.artifacts.zip,
+      source.zipUrl,
       manifest.assets.files,
+      source.host,
     );
 
     // Vars may name the Worker's URL (`{{workerUrl}}`), so the account's
@@ -327,7 +342,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         const result = settleUnit(
           await steps.units.api.uploadWorker({
             accountId: steps.accountId(),
-            artifact: { zipUrl: params.artifacts.zip, host: { kind: "catalog" } },
+            artifact: { zipUrl: source.zipUrl, host: source.host },
             workerName: params.workerName,
             modules: manifest.worker.modules,
             metadata,
@@ -390,7 +405,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // 6. D1 migrations, wrangler-style.
     for (const target of d1Targets(manifest, created)) {
-      await applyD1MigrationsPhase(steps, params.artifacts.zip, target);
+      await applyD1MigrationsPhase(steps, source.zipUrl, target, undefined, source.host);
     }
 
     // 7. Secrets.
@@ -488,6 +503,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             status: "installed",
             current_version_id: upload.versionId,
             manifest_json: manifestText,
+            artifact_url: source.zipUrl,
+            artifact_digest: source.digest,
+            ...source.provenance,
             health_status: health.status,
             health_checked_at: new Date(health.checkedAt),
             updated_at: at,

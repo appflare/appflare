@@ -11,8 +11,9 @@ import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { type InstallVarField, installVarFields } from "../installs/install-vars";
 import { suggestWorkerName } from "../installs/instance-names";
 import { planBindings } from "../jobs/install/bindings";
+import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
-import { getAppManifest } from "./app-manifest.server";
+import { getCatalogManifest } from "./app-manifest.server";
 import { CatalogError, getCatalogIndex, refreshCatalogIndex } from "./index.server";
 
 /** Catalog browsing. */
@@ -35,6 +36,8 @@ export interface CatalogList {
   updatedAt: string | null;
   /** Why the index is unavailable (nothing cached and the fetch failed). */
   error: string | null;
+  /** Entries of the published catalog this version of Appflare could not read. */
+  unreadable: number;
 }
 
 interface ActiveInstalls {
@@ -74,7 +77,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
   async (): Promise<CatalogList> => {
     await requireSession();
     const [read, active] = await Promise.all([getCatalogIndex(env), activeInstalls()]);
-    if (!read.ok) return { apps: [], updatedAt: read.updatedAt, error: read.error };
+    if (!read.ok) return { apps: [], updatedAt: read.updatedAt, error: read.error, unreadable: 0 };
     return {
       apps: read.index.apps.map((app) => ({
         ...app,
@@ -82,6 +85,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
       })),
       updatedAt: read.updatedAt,
       error: null,
+      unreadable: read.unreadable,
     };
   },
 );
@@ -122,6 +126,13 @@ export interface CatalogDetail {
    * on the form; null when it is not known (the install fills it in).
    */
   subdomain: string | null;
+  /**
+   * False for a sandbox tier app: its bindings come from the wrangler config
+   * at the pinned commit, known only once it is built.
+   */
+  createsKnown: boolean;
+  /** This manager has its `SANDBOX` binding (sandbox tier apps need it). */
+  sandboxConnected: boolean;
 }
 
 /**
@@ -170,6 +181,8 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       fixedWorkerName: false,
       varFields: [],
       subdomain: null,
+      createsKnown: true,
+      sandboxConnected: sandboxBinding(env) !== undefined,
     };
     const read = await getCatalogIndex(env);
     if (!read.ok) return { app: null, error: read.error, ...empty };
@@ -177,28 +190,37 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
     if (app === null) return { app: null, error: null, ...empty };
     const active = await activeInstalls();
     const instances = active.bySlug.get(app.slug) ?? [];
-    const manifest = await getAppManifest(env, app);
+    const manifest = await getCatalogManifest(env, app);
     if (!manifest.ok) return { ...empty, app, instances, error: manifest.error };
-    const { install } = manifest.manifest.catalog;
+    const { install } = manifest.catalog;
     const fixed = hasFixedWorkerName(install);
     const [accountNames, subdomain] = await Promise.all([
       fixed ? [] : accountWorkerNames(session.user.role),
       accountSubdomain(session.user.role),
     ]);
     const taken = fixed ? [] : [...active.workerNames, ...accountNames];
-    const plan = planBindings(install.workerName, manifest.manifest.worker.bindings);
+    const plan =
+      manifest.manifest === null
+        ? null
+        : planBindings(install.workerName, manifest.manifest.worker.bindings);
     return {
+      ...empty,
       app,
-      catalog: manifest.manifest.catalog,
-      creates: plan.resources.map((r) => ({ kind: r.kind, binding: r.binding })),
-      durableObjects: plan.durableObjects.map((d) => d.className),
+      catalog: manifest.catalog,
+      createsKnown: plan !== null,
+      creates: plan?.resources.map((r) => ({ kind: r.kind, binding: r.binding })) ?? [],
+      durableObjects: plan?.durableObjects.map((d) => d.className) ?? [],
       error: null,
       instances,
       suggestedWorkerName: fixed
         ? install.workerName
         : suggestWorkerName(install.workerName, taken),
       fixedWorkerName: fixed,
-      varFields: installVarFields(manifest.manifest),
+      // A sandbox tier app's wrangler config is read only when it is built, so
+      // before that every var is a text field.
+      varFields: installVarFields(
+        manifest.manifest ?? { catalog: manifest.catalog, worker: { bindings: [] } },
+      ),
       subdomain,
     };
   });

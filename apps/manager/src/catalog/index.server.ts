@@ -1,5 +1,6 @@
 import type { FetchLike } from "@appflare/cf-api";
-import { type IndexApp, type IndexJson, indexJsonSchema } from "@appflare/schema";
+import { type IndexApp, type IndexJson, indexAppSchema } from "@appflare/schema";
+import { z } from "zod";
 
 /**
  * The catalog index cache. `index.json` is fetched from the
@@ -36,10 +37,69 @@ export function catalogIndexUrl(env: Pick<CatalogEnv, "CATALOG_INDEX_URL">): str
   return configured ? configured : DEFAULT_CATALOG_INDEX_URL;
 }
 
+const indexEnvelopeSchema = z.object({
+  generatedAt: z.iso.datetime(),
+  apps: z.array(z.unknown()),
+});
+
+/** An index entry this manager could not read, and why. */
+export interface UnreadableEntry {
+  /** The entry's `slug`, when it has a readable one. */
+  slug: string | null;
+  problem: string;
+}
+
+export interface ParsedCatalogIndex {
+  /** Every entry this manager can read. */
+  index: IndexJson;
+  unreadable: UnreadableEntry[];
+  /** What to cache: the envelope with every entry as published, read again on each use. */
+  raw: { generatedAt: string; apps: unknown[] };
+}
+
+/**
+ * `index.json`, keeping every entry this manager can read. An entry it
+ * cannot (a newer tier or field shape) is left out and reported rather than
+ * failing the whole catalog, so a catalog that grows new kinds of entries
+ * never breaks managers that predate them. Null when the envelope itself is
+ * invalid.
+ */
+export function parseCatalogIndex(json: unknown): ParsedCatalogIndex | null {
+  const envelope = indexEnvelopeSchema.safeParse(json);
+  if (!envelope.success) return null;
+  const apps: IndexApp[] = [];
+  const unreadable: UnreadableEntry[] = [];
+  for (const entry of envelope.data.apps) {
+    const app = indexAppSchema.safeParse(entry);
+    if (app.success) {
+      apps.push(app.data);
+      continue;
+    }
+    const slug =
+      typeof entry === "object" &&
+      entry !== null &&
+      "slug" in entry &&
+      typeof entry.slug === "string"
+        ? entry.slug
+        : null;
+    unreadable.push({
+      slug,
+      problem: z.prettifyError(app.error).replace(/\s+/g, " ").slice(0, 300),
+    });
+  }
+  return {
+    index: { generatedAt: envelope.data.generatedAt, apps },
+    unreadable,
+    raw: envelope.data,
+  };
+}
+
 export interface CatalogSnapshot {
   index: IndexJson;
   /** ISO 8601 time of the last successful refresh. */
   updatedAt: string | null;
+  /** Entries of the published index this version of Appflare could not read. */
+  unreadable: number;
 }
 
 /** Fetches, validates, and caches `index.json`. Throws `CatalogError`. */
@@ -70,23 +130,25 @@ export async function refreshCatalogIndex(
   } catch {
     throw new CatalogError(`The catalog at ${url} did not return JSON.`);
   }
-  const parsed = indexJsonSchema.safeParse(json);
-  if (!parsed.success) {
+  const parsed = parseCatalogIndex(json);
+  if (parsed === null) {
     throw new CatalogError(`The catalog at ${url} returned an invalid index.json.`);
   }
-  const text = JSON.stringify(parsed.data);
+  for (const entry of parsed.unreadable) {
+    console.warn("catalog entry left out: this version of Appflare cannot read it", entry);
+  }
+  const text = JSON.stringify(parsed.raw);
   const updatedAt = (opts.now ?? (() => new Date()))().toISOString();
   const cached = await env.KV.get(CATALOG_INDEX_KEY);
   if (cached !== text) await env.KV.put(CATALOG_INDEX_KEY, text);
   await env.KV.put(CATALOG_UPDATED_AT_KEY, updatedAt);
-  return { index: parsed.data, updatedAt };
+  return { index: parsed.index, updatedAt, unreadable: parsed.unreadable.length };
 }
 
-function parseCached(text: string | null): IndexJson | null {
+function parseCached(text: string | null): ParsedCatalogIndex | null {
   if (text === null) return null;
   try {
-    const parsed = indexJsonSchema.safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data : null;
+    return parseCatalogIndex(JSON.parse(text));
   } catch {
     return null;
   }
@@ -105,8 +167,10 @@ export async function getCatalogIndex(
     env.KV.get(CATALOG_INDEX_KEY),
     env.KV.get(CATALOG_UPDATED_AT_KEY),
   ]);
-  const index = parseCached(text);
-  if (index !== null) return { ok: true, index, updatedAt };
+  const cached = parseCached(text);
+  if (cached !== null) {
+    return { ok: true, index: cached.index, updatedAt, unreadable: cached.unreadable.length };
+  }
   try {
     return { ok: true, ...(await refreshCatalogIndex(env, opts)) };
   } catch (error) {
@@ -135,5 +199,7 @@ export async function readCachedCatalogApp(
   kv: KVNamespace,
   slug: string,
 ): Promise<IndexApp | null> {
-  return parseCached(await kv.get(CATALOG_INDEX_KEY))?.apps.find((a) => a.slug === slug) ?? null;
+  return (
+    parseCached(await kv.get(CATALOG_INDEX_KEY))?.index.apps.find((a) => a.slug === slug) ?? null
+  );
 }

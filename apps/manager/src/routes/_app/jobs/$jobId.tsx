@@ -3,6 +3,7 @@ import {
   ArrowRightIcon,
   ArrowsClockwiseIcon,
   ListChecksIcon,
+  ShippingContainerIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
@@ -11,7 +12,12 @@ import { compareVersions } from "../../../catalog/versions";
 import { formatDateTime, formatTime, jobKindLabel } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
-import { getJob, type JobLogRow, type JobView } from "../../../jobs/jobs.functions";
+import {
+  type BuildProgressView,
+  getJob,
+  type JobLogRow,
+  type JobView,
+} from "../../../jobs/jobs.functions";
 
 /** How often the page re-reads a queued or running job. */
 const POLL_MS = 2000;
@@ -209,6 +215,7 @@ function JobPage() {
           description={job.error}
         />
       )}
+      {job.build !== null && <BuildProgress build={job.build} />}
       <section className="grid gap-3">
         <Text variant="heading" as="h2">
           Log
@@ -237,6 +244,43 @@ function JobPage() {
         )}
       </section>
     </>
+  );
+}
+
+/** Live output of the sandbox build the job waits on; the job log gets it when the build ends. */
+function BuildProgress({ build }: { build: BuildProgressView }) {
+  return (
+    <LayerCard>
+      <LayerCard.Secondary className="flex items-center justify-between gap-3">
+        <span className="flex items-center gap-2">
+          <ShippingContainerIcon aria-hidden />
+          Building in your sandbox Worker
+        </span>
+        <div className="flex items-center gap-2">
+          <Loader size="sm" />
+          <Badge variant="info">{build.stage}</Badge>
+        </div>
+      </LayerCard.Secondary>
+      <LayerCard.Primary className="grid gap-2 px-5 py-4">
+        <Text variant="secondary" size="sm">
+          Last output at {formatTime(build.updatedAt)}. The end of the output goes to the log below
+          when the build ends.
+        </Text>
+        <div className="grid gap-0.5 overflow-x-auto">
+          {build.lines.length === 0 ? (
+            <Text variant="mono-secondary">No output yet.</Text>
+          ) : (
+            build.lines.map((line, i) => (
+              // Output lines are not unique; they only ever render in order.
+              // biome-ignore lint/suspicious/noArrayIndexKey: display-only list in output order
+              <Text key={i} variant="mono-secondary">
+                {line.length > 0 ? line : " "}
+              </Text>
+            ))
+          )}
+        </div>
+      </LayerCard.Primary>
+    </LayerCard>
   );
 }
 

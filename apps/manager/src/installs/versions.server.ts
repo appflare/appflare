@@ -1,5 +1,12 @@
 import type { D1TimeTravelRestore, RequestLog } from "@appflare/cf-api";
-import type { ArtifactManifest, CatalogSecret, IndexApp } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  artifactManifestSchema,
+  type CatalogManifest,
+  type CatalogSecret,
+  type IndexApp,
+  type IndexBuild,
+} from "@appflare/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { createDb } from "../db/client";
@@ -132,6 +139,14 @@ export interface StartUpdateDeps extends StartJobDeps<UpdateJobParams> {
   loadApp(slug: string): Promise<IndexApp | null>;
   /** The verified artifact manifest of that entry; throws `VersionActionError` when unavailable. */
   loadManifest(app: IndexApp): Promise<ArtifactManifest>;
+  /**
+   * The verified catalog manifest of a sandbox tier entry, which has no
+   * artifact until the update builds it; throws `VersionActionError` when
+   * unavailable.
+   */
+  loadCatalog?(app: IndexApp): Promise<CatalogManifest>;
+  /** Whether this manager has its `SANDBOX` binding to the sandbox Worker. */
+  sandboxConnected?: boolean;
 }
 
 export interface StartUpdateRequest {
@@ -140,6 +155,8 @@ export interface StartUpdateRequest {
   secrets?: Record<string, string>;
   /** The admin saw that this update cannot check the new version before it serves traffic. */
   confirmNoPreview?: boolean;
+  /** For a sandbox tier app: the admin confirmed the cost of building the new version. */
+  buildConfirmed?: boolean;
 }
 
 /** What the admin must provide or confirm before the update can start. */
@@ -149,6 +166,8 @@ export interface UpdateNeeds {
   needsSecrets: CatalogSecret[];
   /** Why the new version cannot be checked before it serves traffic; null when it can. */
   skipsPreview: string | null;
+  /** A sandbox tier app: the build to confirm (container size, expected minutes); else null. */
+  build: IndexBuild | null;
 }
 
 export type StartUpdateResult = { jobId: string } | UpdateNeeds;
@@ -177,7 +196,32 @@ export async function startUpdateCore(
   if (notNewer !== null) {
     throw new VersionActionError(`There is no newer version to update to: ${notNewer}.`);
   }
-  const manifest = await deps.loadManifest(app);
+  const sandbox = app.tier === "sandbox" ? (app.build ?? null) : null;
+  let catalog: CatalogManifest;
+  let skipPreview: string | null = null;
+  if (sandbox !== null) {
+    if (deps.sandboxConnected !== true) {
+      throw new VersionActionError(
+        `${app.name} is built in this account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in Settings first.`,
+      );
+    }
+    if (deps.loadCatalog === undefined) {
+      throw new VersionActionError(`Appflare cannot update ${app.tier} tier apps here.`);
+    }
+    catalog = await deps.loadCatalog(app);
+    // Whether the built version can be checked on a preview is known only
+    // once it is built. The installed version tells what to expect (a Worker
+    // that implements a Durable Object has no preview), and the job refuses to
+    // skip the check unless the admin confirmed it here.
+    skipPreview = expectedSkipPreview(install.manifest_json, install.do_migration_tag);
+  } else {
+    const manifest = await deps.loadManifest(app);
+    catalog = manifest.catalog;
+    skipPreview = updatePath(
+      manifest,
+      install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
+    ).skipPreview;
+  }
   const recordedSecrets = await createDb(deps.db)
     .select({ name: resources.name })
     .from(resources)
@@ -189,18 +233,20 @@ export async function startUpdateCore(
       ),
     );
   const needed = missingSecrets(
-    manifest.catalog.secrets,
+    catalog.secrets,
     recordedSecrets.map((r) => r.name),
-  );
-  const { skipPreview } = updatePath(
-    manifest,
-    install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
   );
   if (
     (needed.length > 0 && request.secrets === undefined) ||
-    (skipPreview !== null && request.confirmNoPreview !== true)
+    (skipPreview !== null && request.confirmNoPreview !== true) ||
+    (sandbox !== null && request.buildConfirmed !== true)
   ) {
-    return { version: app.version, needsSecrets: needed, skipsPreview: skipPreview };
+    return {
+      version: app.version,
+      needsSecrets: needed,
+      skipsPreview: skipPreview,
+      build: sandbox,
+    };
   }
   const given = request.secrets ?? {};
   const unknown = Object.keys(given).filter((name) => !needed.some((s) => s.name === name));
@@ -224,9 +270,35 @@ export async function startUpdateCore(
       fromVersion: install.catalog_version,
       version: app.version,
       secrets: Object.keys(secrets),
+      ...(sandbox === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
     }),
-    params: { kind: "update", jobId, installId: install.id, version: app.version, secrets },
+    params: {
+      kind: "update",
+      jobId,
+      installId: install.id,
+      version: app.version,
+      secrets,
+      ...(sandbox === null
+        ? {}
+        : { buildConfirmed: true, confirmNoPreview: request.confirmNoPreview === true }),
+    },
   });
+}
+
+/**
+ * For a sandbox tier update: why its new version will likely have no preview
+ * check, judged by the installed version, or null.
+ */
+function expectedSkipPreview(manifestJson: string | null, doTag: string | null): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifestJson ?? "null");
+  } catch {
+    return null;
+  }
+  const manifest = artifactManifestSchema.safeParse(parsed);
+  if (!manifest.success) return null;
+  return updatePath(manifest.data, doTag ?? lastDurableObjectTagOf(manifestJson)).skipPreview;
 }
 
 /** Starts a rollback to a snapshot of this install. */

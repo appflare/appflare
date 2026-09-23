@@ -180,6 +180,7 @@ describe("startUpdateCore: what an update needs first", () => {
       version: "1.1.0",
       needsSecrets: [{ name: "API_KEY", label: "API key", generate: false }],
       skipsPreview: null,
+      build: null,
     });
     expect(first.created).toEqual([]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM jobs").first()).toEqual({ n: 0 });

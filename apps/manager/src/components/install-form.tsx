@@ -1,4 +1,9 @@
-import { type CatalogManifest, hasPlaceholder, renderPlaceholders } from "@appflare/schema";
+import {
+  type CatalogManifest,
+  hasPlaceholder,
+  type IndexBuild,
+  renderPlaceholders,
+} from "@appflare/schema";
 import { Banner, Button, Checkbox, Input, InputArea, LayerCard, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -17,6 +22,7 @@ import {
 import { startInstall } from "../installs/installs.functions";
 import { workersDevUrl } from "../installs/post-install";
 import { EmailRoutingFields } from "./email-routing-fields";
+import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
 
 /**
@@ -46,6 +52,7 @@ export function InstallForm({
   fixedWorkerName,
   blockedReason,
   requirementsConfirmed,
+  sandboxBuild = null,
 }: {
   catalog: CatalogManifest;
   /** One per catalog var (`installVarFields`). */
@@ -61,6 +68,8 @@ export function InstallForm({
   blockedReason: string | null;
   /** The admin ticked "This account meets these requirements" (only asked when `requires` is not empty). */
   requirementsConfirmed: boolean;
+  /** A sandbox tier app's build, whose cost the admin confirms; null for a prebuilt app. */
+  sandboxBuild?: IndexBuild | null;
 }) {
   const router = useRouter();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
@@ -73,6 +82,7 @@ export function InstallForm({
   /** Settings the admin edited; the others follow their default. */
   const [editedVars, setEditedVars] = useState<Record<string, string>>({});
   const [paidConfirmed, setPaidConfirmed] = useState(false);
+  const [buildConfirmed, setBuildConfirmed] = useState(false);
   const receivesEmail = catalog.install.emailRouting !== undefined;
   const [emailZoneId, setEmailZoneId] = useState<string | null>(null);
   const [emailReady, setEmailReady] = useState(false);
@@ -109,6 +119,7 @@ export function InstallForm({
     labelValid &&
     !missing &&
     (catalog.plan !== "paid" || paidConfirmed) &&
+    (sandboxBuild === null || buildConfirmed) &&
     (catalog.requires.length === 0 || requirementsConfirmed) &&
     (!receivesEmail || (emailZoneId !== null && emailReady));
 
@@ -127,6 +138,7 @@ export function InstallForm({
           vars: submittedVars(),
           paidConfirmed,
           requirementsConfirmed,
+          ...(sandboxBuild === null ? {} : { buildConfirmed }),
           ...(receivesEmail && emailZoneId !== null
             ? { emailRouting: { zoneId: emailZoneId } }
             : {}),
@@ -228,6 +240,15 @@ export function InstallForm({
                 zoneId={emailZoneId}
                 onZoneChange={setEmailZoneId}
                 onReadyChange={setEmailReady}
+              />
+            )}
+
+            {sandboxBuild !== null && (
+              <SandboxBuildConfirmation
+                build={sandboxBuild}
+                checked={buildConfirmed}
+                onChange={setBuildConfirmed}
+                action="install"
               />
             )}
 

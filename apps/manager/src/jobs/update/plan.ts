@@ -8,7 +8,7 @@ import {
   type WorkerBinding,
 } from "@appflare/schema";
 import { isUpdateAvailable } from "../../catalog/versions";
-import type { snapshots } from "../../db/schema";
+import type { BuildKind, snapshots } from "../../db/schema";
 import {
   type BindingPlan,
   type DurableObjectPlan,
@@ -381,6 +381,10 @@ export interface InstallState {
   artifact_url: string;
   artifact_digest: string | null;
   pin_sha: string | null;
+  /** Build provenance; absent means a signed artifact. */
+  build_kind?: BuildKind;
+  sandbox_image?: string | null;
+  built_at?: Date | null;
 }
 
 export interface SnapshotInput {
@@ -412,6 +416,9 @@ export function snapshotRow(input: SnapshotInput): typeof snapshots.$inferInsert
     artifact_digest: input.before.artifact_digest,
     pin_sha: input.before.pin_sha,
     do_migration_tag: input.doMigrationTag,
+    build_kind: input.before.build_kind ?? "artifact",
+    sandbox_image: input.before.sandbox_image ?? null,
+    built_at: input.before.built_at ?? null,
     target_catalog_version: input.targetVersion,
   };
 }

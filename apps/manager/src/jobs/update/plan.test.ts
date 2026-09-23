@@ -266,6 +266,9 @@ describe("snapshot shape", () => {
       artifact_digest: "a".repeat(64),
       pin_sha: "b".repeat(40),
       do_migration_tag: "v1",
+      build_kind: "artifact",
+      sandbox_image: null,
+      built_at: null,
       target_catalog_version: "1.1.0",
     });
   });

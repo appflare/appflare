@@ -204,6 +204,25 @@ describe("versions", () => {
     expect(fake.last().url).toBe(`${A}/workers/scripts/hello/versions`);
   });
 
+  it("patchLatestVersion -> PATCH /workers/workers/{name}/versions/latest as a merge patch", async () => {
+    const { fake, client } = make({
+      result: { id: "v9", urls: ["https://v9-hello.x.workers.dev"] },
+    });
+    const patch = {
+      env: {
+        SANDBOX: { type: "service", service: "appflare-sandbox", entrypoint: "SandboxBuilds" },
+      },
+      annotations: { "workers/message": "connect" },
+    };
+    const version = await client.versions.patchLatestVersion("hello", patch);
+    expect(version.id).toBe("v9");
+    const req = fake.last();
+    expect(req.method).toBe("PATCH");
+    expect(req.url).toBe(`${A}/workers/workers/hello/versions/latest`);
+    expect(req.headers.get("content-type")).toBe("application/merge-patch+json");
+    expect(await req.request.json()).toEqual(patch);
+  });
+
   it("listVersions deployable -> ?deployable=true", async () => {
     const { fake, client } = make({ result: { items: [] } });
     await client.versions.listVersions("hello", { deployable: true });

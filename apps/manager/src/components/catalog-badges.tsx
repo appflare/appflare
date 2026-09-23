@@ -1,4 +1,4 @@
-import type { Plan, Requirement } from "@appflare/schema";
+import type { InstallTier, Plan, Requirement } from "@appflare/schema";
 import { Badge, Text, Tooltip } from "@cloudflare/kumo";
 import {
   ArchiveIcon,
@@ -25,6 +25,40 @@ import { installCheckBadgeCopy, PLAN_BADGES } from "./catalog-badge-copy";
 export function PlanBadge({ plan }: { plan: Plan }) {
   const { variant, label } = PLAN_BADGES[plan];
   return <Badge variant={variant}>{label}</Badge>;
+}
+
+const TIER_BADGES: Record<InstallTier, { label: string; tooltip: string }> = {
+  artifact: {
+    label: "Signed release",
+    tooltip: "Built from its pinned commit and signed by the catalog.",
+  },
+  sandbox: {
+    label: "Built in your account",
+    tooltip:
+      "No prebuilt release: your sandbox Worker builds the pinned commit on Workers Paid. The build is not signed.",
+  },
+  "self-deploying": {
+    label: "Self-deploying",
+    tooltip: "Ships its own installer. Appflare cannot install it yet.",
+  },
+};
+
+/** The index's `tier`: how the app gets built. */
+export function TierBadge({ tier }: { tier: InstallTier }) {
+  const { label, tooltip } = TIER_BADGES[tier];
+  return (
+    <Tooltip content={tooltip}>
+      {tier === "artifact" ? (
+        <Badge variant="neutral" icon={<SealCheckIcon aria-hidden />}>
+          {label}
+        </Badge>
+      ) : (
+        <Badge variant="info" icon={<ShippingContainerIcon aria-hidden />}>
+          {label}
+        </Badge>
+      )}
+    </Tooltip>
+  );
 }
 
 /** The index's `lastVerified`: the day on the badge, the exact time in its tooltip. */

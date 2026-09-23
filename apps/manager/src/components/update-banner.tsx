@@ -12,6 +12,7 @@ import { type FormEvent, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { startUpdate } from "../installs/versions.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
+import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
 
 /**
@@ -110,9 +111,12 @@ function UpdateDialog({
   const router = useRouter();
   const [secrets, setSecrets] = useState(() => initialSecretValues(needs.needsSecrets));
   const [confirmed, setConfirmed] = useState(needs.skipsPreview === null);
+  const [buildConfirmed, setBuildConfirmed] = useState(needs.build === null);
+  /** A sandbox build may turn out to have no preview; the admin may accept that up front. */
+  const [allowNoPreview, setAllowNoPreview] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ready = confirmed && secretsComplete(needs.needsSecrets, secrets);
+  const ready = confirmed && buildConfirmed && secretsComplete(needs.needsSecrets, secrets);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -124,7 +128,8 @@ function UpdateDialog({
         data: {
           installId: install.id,
           secrets,
-          confirmNoPreview: needs.skipsPreview !== null,
+          confirmNoPreview: needs.skipsPreview !== null || allowNoPreview,
+          ...(needs.build === null ? {} : { buildConfirmed: true }),
         },
       });
       if ("jobId" in result) {
@@ -164,6 +169,23 @@ function UpdateDialog({
           />
         </div>
         <form className="grid gap-5" onSubmit={onSubmit}>
+          {needs.build !== null && (
+            <SandboxBuildConfirmation
+              build={needs.build}
+              checked={buildConfirmed}
+              onChange={setBuildConfirmed}
+              disabled={pending}
+              action="update"
+            />
+          )}
+          {needs.build !== null && needs.skipsPreview === null && (
+            <Checkbox
+              checked={allowNoPreview}
+              onCheckedChange={(checked: boolean) => setAllowNoPreview(checked)}
+              disabled={pending}
+              label="If the built version cannot be checked on a preview first (it changes or implements Durable Objects), update without that check"
+            />
+          )}
           {needs.skipsPreview !== null && (
             <div className="grid gap-3">
               <Banner

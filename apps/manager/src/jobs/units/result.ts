@@ -56,6 +56,8 @@ export interface UnitEnv {
   CF_API_TOKEN?: string;
   CF_API_BASE_URL?: string;
   GITHUB_TOKEN?: string;
+  /** The sandbox Worker, whose `fetch` serves sandbox builds (artifact host kind `sandbox`). */
+  SANDBOX?: unknown;
 }
 
 /** Test seams; production uses the global `fetch` and `Date.now`. */

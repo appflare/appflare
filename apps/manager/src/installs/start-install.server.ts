@@ -1,10 +1,17 @@
-import { type ArtifactManifest, hasFixedWorkerName, type IndexApp } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  type CatalogManifest,
+  hasFixedWorkerName,
+  type IndexApp,
+  indexAppArtifact,
+} from "@appflare/schema";
 import { and, eq, ne, or } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { requirementLabel } from "../catalog/requirements";
 import { createDb } from "../db/client";
 import { installs, jobs } from "../db/schema";
 import type { InstallJobParams } from "../jobs/install";
+import { sandboxBuildOf } from "../jobs/install/artifact-source";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import {
   activeSelfUpdateJob,
@@ -32,7 +39,26 @@ export class StartInstallError extends Error {
 
 export interface CatalogEntry {
   app: IndexApp;
-  manifest: ArtifactManifest;
+  /**
+   * The catalog manifest and pin: from the signed artifact manifest, or for a
+   * sandbox tier app (built only once the install runs) from its verified
+   * catalog manifest (whose wrangler config bindings are not known yet).
+   */
+  manifest: EntryManifest;
+}
+
+/** What starting an install needs of a manifest. */
+export type EntryManifest = Pick<ArtifactManifest, "catalog" | "source"> & {
+  worker: Pick<ArtifactManifest["worker"], "bindings">;
+};
+
+/** A sandbox tier app's catalog entry, before any artifact of it exists. */
+export function catalogOnlyManifest(catalog: CatalogManifest): EntryManifest {
+  return {
+    catalog,
+    source: { repo: catalog.repo, sha: catalog.source.sha, ref: catalog.source.ref },
+    worker: { bindings: [] },
+  };
 }
 
 export interface StartInstallDeps {
@@ -48,6 +74,8 @@ export interface StartInstallDeps {
    * when absent or failing, the install job's own check refuses the name later.
    */
   listAccountWorkers?(): Promise<string[]>;
+  /** Whether this manager has its `SANDBOX` binding; sandbox tier apps need it. */
+  sandboxConnected?: boolean;
   now?: () => Date;
   newId?: () => string;
 }
@@ -70,7 +98,7 @@ export interface ResolvedInstallInput {
  * prefills `generate: true` secrets, so an empty one means a broken client.
  */
 export function resolveInstallInput(
-  manifest: ArtifactManifest,
+  manifest: Pick<EntryManifest, "catalog" | "worker">,
   input: StartInstallInput,
 ): ResolvedInstallInput {
   const catalog = manifest.catalog;
@@ -135,6 +163,25 @@ export async function startInstallCore(
   await refuseDuringSelfUpdate(deps.db, deps.workflows, (m) => new StartInstallError(m));
   const { app, manifest } = await deps.loadApp(input.slug);
   const resolved = resolveInstallInput(manifest, input);
+  // Where the artifact comes from: the signed release, or a build of the pin
+  // in the account's sandbox Worker, which the admin confirms paying for.
+  const release = indexAppArtifact(app);
+  const build = app.tier === "sandbox" ? (app.build ?? null) : null;
+  if (build === null && (app.tier !== "artifact" || release === null)) {
+    // TODO: self-deploying tier apps (the app's own installer run in the sandbox
+    // Worker) would start here; they are not supported yet.
+    throw new StartInstallError(`Appflare cannot install ${app.tier} tier apps yet.`);
+  }
+  if (build !== null && deps.sandboxConnected !== true) {
+    throw new StartInstallError(
+      `${manifest.catalog.name} is built in this account's sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`,
+    );
+  }
+  if (build !== null && input.buildConfirmed !== true) {
+    throw new StartInstallError(
+      `${manifest.catalog.name} is built in this account's sandbox Worker on Workers Paid. Confirm the build's cost.`,
+    );
+  }
   const fixed = hasFixedWorkerName(manifest.catalog.install);
   const fixedName = manifest.catalog.install.workerName;
   if (fixed && input.workerName !== fixedName) {
@@ -181,6 +228,7 @@ export async function startInstallCore(
     paidConfirmed: input.paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
+    ...(build === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
   });
   const [, claimed] = await deps.db.batch([
     deps.db
@@ -208,8 +256,10 @@ export async function startInstallCore(
         app.slug,
         input.workerName,
         app.version,
-        app.artifacts.zip,
-        app.digest,
+        // A sandbox build's artifact exists only once the job built it; until
+        // then the install points at the catalog manifest it is built from.
+        release?.artifacts.zip ?? build?.manifest ?? "",
+        release?.digest ?? null,
         manifest.source.sha,
         JSON.stringify(resolved.vars),
         now.getTime(),
@@ -260,8 +310,11 @@ export async function startInstallCore(
     slug: app.slug,
     version: app.version,
     workerName: input.workerName,
-    artifacts: app.artifacts,
-    digest: app.digest,
+    ...(build !== null
+      ? { build: sandboxBuildOf(build, true) }
+      : release !== null
+        ? { artifacts: release.artifacts, digest: release.digest }
+        : {}),
     secrets: resolved.secrets,
     vars: resolved.vars,
     paidConfirmed: input.paidConfirmed,

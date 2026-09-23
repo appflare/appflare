@@ -53,7 +53,39 @@ runs. The build itself is `wrangler deploy --dry-run`, with every `CLOUDFLARE_*`
 `WRANGLER_*` variable, GitHub tokens, and the signing key removed from its
 environment. The only thing a build produces is the artifact.
 
-The manager never builds or runs app code. It uploads the files the catalog signed.
+The manager never builds or runs app code. For prebuilt apps it uploads the files the
+catalog signed.
+
+## Sandbox builds
+
+Some apps have no prebuilt release. If you enable the optional sandbox Worker
+(Workers Paid), it builds them in a container in your own account; see
+[Sandbox builds](/guides/builds/). What changes:
+
+- **The catalog still decides what is built.** The index pins the exact commit and
+  the sha256 of the entry's catalog manifest. The manager checks both before it asks
+  for a build, and the build checks out only that commit. This also means that
+  whoever controls the catalog index chooses the repository and commit your sandbox
+  Worker builds, without a signature in between: the index and the catalog manifest
+  are trusted the way the catalog's HTTPS site is. What limits this is the catalog's
+  review of every entry and every change of its pinned commit, and that a build runs
+  with no credentials.
+- **The build has no credentials.** The container holds no Cloudflare token, no API
+  key and no R2 keys. Dependency install scripts do not run. The manager's API token
+  never leaves the manager; it talks to the sandbox Worker only over a service
+  binding, and the sandbox Worker has no public URL.
+- **The output is unsigned, and marked so.** The manager accepts an unsigned
+  `manifest.json` only through that binding, only when its sha256 matches what the
+  build reported, and only when it names the app, the version and the pinned commit
+  and carries the catalog manifest the catalog published. Each file is checked against
+  it before upload, as for a signed artifact. The app's page says it was built in your
+  account, from which commit, with which container image, and that it is unsigned.
+- **Your cost, your confirmation.** Each install and update of such an app asks you to
+  confirm what the build costs on Workers Paid before it starts.
+
+The app's build scripts are still third-party code that runs in your account's
+container with internet access, which is why sandbox tier entries are reviewed by the
+catalog like every other entry.
 
 ## Sign-in and sessions
 

@@ -38,7 +38,8 @@ export interface ArtifactFixture {
   digest: string;
   keys: SigningKey[];
   zip: Uint8Array;
-  index: IndexApp;
+  /** An artifact tier entry: it always has its release artifacts. */
+  index: IndexApp & Required<Pick<IndexApp, "artifacts" | "digest">>;
   /** Serves the zip (Range), manifest, and signature; `null` for other URLs. */
   serve(url: string, init?: RequestInit): Response | null;
 }
@@ -161,7 +162,7 @@ export async function buildArtifactFixture(
     new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, pair.privateKey, manifestBytes)),
   );
   const digest = await sha256Hex(manifestBytes);
-  const index: IndexApp = {
+  const index: ArtifactFixture["index"] = {
     slug: "cut",
     name: "Cut",
     summary: manifest.catalog.summary,

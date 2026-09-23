@@ -3,20 +3,21 @@ import { artifactManifestSchema, renderPlaceholders, type TokenPermission } from
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { getAppManifest } from "../catalog/app-manifest.server";
+import { getCatalogManifest } from "../catalog/app-manifest.server";
 import { getCatalogIndex } from "../catalog/index.server";
 import { isUpdateAvailable } from "../catalog/versions";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
-import { type HealthStatus, installs, jobs, resources } from "../db/schema";
+import { type BuildKind, type HealthStatus, installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
+import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
 import { startInstallInput } from "./install-input";
 import { renderPostInstall, workersDevUrl } from "./post-install";
 import { CUSTOM_DOMAIN_KIND, EMAIL_ROUTE_KIND } from "./resource-kinds";
-import { StartInstallError, startInstallCore } from "./start-install.server";
+import { catalogOnlyManifest, StartInstallError, startInstallCore } from "./start-install.server";
 
 /** Installs: start one (admin), list them, and show one. Uninstall lives in `uninstall.functions.ts`. */
 
@@ -35,11 +36,12 @@ export const startInstall = createServerFn({ method: "POST" })
             if (!read.ok) throw new StartInstallError(read.error);
             const app = read.index.apps.find((a) => a.slug === slug);
             if (app === undefined) throw new StartInstallError(`"${slug}" is not in the catalog.`);
-            const manifest = await getAppManifest(env, app);
-            if (!manifest.ok) throw new StartInstallError(manifest.error);
-            return { app, manifest: manifest.manifest };
+            const entry = await getCatalogManifest(env, app);
+            if (!entry.ok) throw new StartInstallError(entry.error);
+            return { app, manifest: entry.manifest ?? catalogOnlyManifest(entry.catalog) };
           },
           createJob: (id, params) => env.JOBS.create({ id, params }),
+          sandboxConnected: sandboxBinding(env) !== undefined,
           async listAccountWorkers() {
             const api = await getCfClient(env);
             return (await api.workers.listScripts()).map((s) => s.id);
@@ -141,6 +143,8 @@ export interface CustomDomainView {
 export interface InstallDetail extends InstallRow {
   currentVersionId: string | null;
   pinSha: string | null;
+  /** How the running code was built: a signed release, or a sandbox build in this account. */
+  build: { kind: BuildKind; image: string | null; builtAt: string | null };
   /** The settings the admin changed at install, with placeholders filled in. */
   vars: Record<string, string>;
   /** Resources in the account that belong to the install (secrets excluded). */
@@ -261,6 +265,11 @@ export const getInstall = createServerFn({ method: "GET" })
       ...healthOf(row),
       currentVersionId: row.current_version_id,
       pinSha: row.pin_sha,
+      build: {
+        kind: row.build_kind,
+        image: row.sandbox_image,
+        builtAt: row.built_at?.toISOString() ?? null,
+      },
       // As the Worker gets them: placeholders are kept as entered and filled in by the jobs.
       vars: Object.fromEntries(
         Object.entries(parseVars(row.config_json)).map(([name, value]) => [

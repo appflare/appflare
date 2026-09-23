@@ -46,6 +46,21 @@ export const RESOURCE_KINDS = [
   "email_route",
 ] as const;
 
+/**
+ * How an install's running code was built: `artifact`, a release catalog CI
+ * built and signed; `sandbox`, built from the pinned commit by the sandbox
+ * Worker in this account, unsigned.
+ */
+export const BUILD_KINDS = ["artifact", "sandbox"] as const;
+export type BuildKind = (typeof BUILD_KINDS)[number];
+
+/**
+ * Who owns a resource's lifecycle: `appflare`, which created it and deletes
+ * it on uninstall, or `app`, the app's own installer, which the manager only
+ * records and never deletes.
+ */
+export const RESOURCE_MANAGERS = ["appflare", "app"] as const;
+
 export const JOB_KINDS = ["install", "update", "uninstall", "rollback", "self_update"] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -88,6 +103,12 @@ export const installs = sqliteTable("installs", {
    * `manifest_json`).
    */
   do_migration_tag: text("do_migration_tag"),
+  /** How the running code was built (see `BUILD_KINDS`). */
+  build_kind: text("build_kind", { enum: BUILD_KINDS }).notNull().default("artifact"),
+  /** For a sandbox build: the container image that built it. */
+  sandbox_image: text("sandbox_image"),
+  /** For a sandbox build: when the build finished. */
+  built_at: timestamp("built_at"),
   /** The last health check's result; null until one ran. Never fails a job. */
   health_status: text("health_status", { enum: HEALTH_STATUSES }),
   /** When the last health check probed the Worker. */
@@ -115,6 +136,8 @@ export const resources = sqliteTable(
     deleted_at: timestamp("deleted_at"),
     /** Kept in the account when its install was uninstalled, so it stays findable. */
     retained_at: timestamp("retained_at"),
+    /** Who deletes it: Appflare, or the app's own installer (never Appflare). */
+    managed_by: text("managed_by", { enum: RESOURCE_MANAGERS }).notNull().default("appflare"),
   },
   (t) => [index("resources_install_id_idx").on(t.install_id)],
 );
@@ -192,6 +215,10 @@ export const snapshots = sqliteTable(
     artifact_digest: text("artifact_digest"),
     pin_sha: text("pin_sha"),
     do_migration_tag: text("do_migration_tag"),
+    /** The install's build provenance before the update, restored by a rollback. */
+    build_kind: text("build_kind", { enum: BUILD_KINDS }).notNull().default("artifact"),
+    sandbox_image: text("sandbox_image"),
+    built_at: timestamp("built_at"),
     /** The catalog version the update moved to. */
     target_catalog_version: text("target_catalog_version"),
   },

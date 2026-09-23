@@ -37,8 +37,15 @@ export interface StepTools {
 }
 
 export interface JobSteps {
-  /** One `step.do` with logging and error classification. */
-  run<T extends object>(name: string, body: (tools: StepTools) => Promise<T>): Promise<T>;
+  /**
+   * One `step.do` with logging and error classification; `config` replaces
+   * the default {@link API_STEP} retries (a sandbox build needs a long timeout).
+   */
+  run<T extends object>(
+    name: string,
+    body: (tools: StepTools) => Promise<T>,
+    config?: StepConfig,
+  ): Promise<T>;
   /** The step running now, or the phase to blame when a failure happens between steps. */
   current: string;
   /** Cloudflare calls need the account id, which an early step reads from settings. */
@@ -87,9 +94,9 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
       accountId = id;
     },
     accountId: knownAccount,
-    async run(name, body) {
+    async run(name, body, config = API_STEP) {
       steps.current = name;
-      return step.do(name, API_STEP, async (stepCtx) => {
+      return step.do(name, config, async (stepCtx) => {
         const log = new StepLog(now);
         try {
           const value = await body({

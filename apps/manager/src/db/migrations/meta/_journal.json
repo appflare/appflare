@@ -57,6 +57,13 @@
       "when": 1790177728371,
       "tag": "0007_passkeys",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790196421592,
+      "tag": "0008_build_tiers",
+      "breakpoints": true
     }
   ]
 }

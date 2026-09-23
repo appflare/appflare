@@ -18,6 +18,8 @@ import {
   EMAIL_ROUTE_KIND,
   WORKER_BOUND_KINDS,
 } from "../installs/resource-kinds";
+import { sandboxBuildOfInput } from "../sandbox/progress";
+import { cleanupSandboxBuildsPhase } from "./install/artifact-source";
 import { type EmailRouteRecord, removeEmailRoutesPhase } from "./install/email-routing";
 import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
 import { deleteResource, RESOURCE_LABEL } from "./install/resources";
@@ -46,7 +48,9 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
  * deleted, so its objects are listed and deleted first, a page per step,
  * each page one job unit (`emptyR2Page`).
  * Resources the admin kept were marked retained when the uninstall started
- * and are never touched.
+ * and are never touched. An install built in the sandbox Worker has its
+ * builds deleted from the sandbox Worker's bucket last (housekeeping that
+ * never fails the job).
  *
  * On failure the job records `<step>: <message>` and the install stays
  * `uninstalling`, so the install page offers a retry for what is left.
@@ -120,7 +124,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         .set({ status: "running", started_at: new Date(now()) })
         .where(eq(jobs.id, params.jobId));
       const [install] = await orm
-        .select({ workerName: installs.worker_name })
+        .select({ workerName: installs.worker_name, buildKind: installs.build_kind })
         .from(installs)
         .where(eq(installs.id, params.installId))
         .limit(1);
@@ -134,6 +138,10 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       const targets: Target[] = [];
       for (const r of live) {
         if (r.retained_at !== null || !wanted.has(r.id)) continue;
+        // TODO: resources an app's own installer created (`managed_by: "app"`,
+        // self-deploying tier) are removed by that installer, which is not
+        // supported yet; Appflare never deletes them itself.
+        if (r.managed_by === "app") continue;
         const kind = DATA_RESOURCE_KINDS.find((k) => k === r.kind);
         if (kind !== undefined) targets.push({ id: r.id, kind, name: r.name, cfId: r.cf_id });
       }
@@ -191,6 +199,18 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         emailRoutes,
         kept,
         worker,
+        // An install made before builds were recorded is a signed release.
+        // A sandbox build may exist even when the install never recorded one:
+        // an install or update that failed after its build keeps the old
+        // provenance. Any job of the install that asked for a build counts.
+        sandboxBuilt:
+          install.buildKind === "sandbox" ||
+          (
+            await orm
+              .select({ input: jobs.input_json })
+              .from(jobs)
+              .where(eq(jobs.install_id, params.installId))
+          ).some((job) => sandboxBuildOfInput(job.input) !== null),
       };
     });
     steps.setAccountId(started.accountId);
@@ -323,6 +343,11 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           .where(eq(resources.id, target.id));
         return {};
       });
+    }
+
+    // The install's builds in the sandbox Worker's bucket (every version).
+    if (started.sandboxBuilt === true) {
+      await cleanupSandboxBuildsPhase(steps, env, params.installId, []);
     }
 
     await run("finish", async ({ log, orm }) => {

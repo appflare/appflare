@@ -7,6 +7,7 @@ import {
   DEFAULT_CATALOG_INDEX_URL,
   getCatalogApp,
   getCatalogIndex,
+  parseCatalogIndex,
   refreshCatalogIndex,
 } from "./index.server";
 
@@ -142,5 +143,40 @@ describe("catalog index cache", () => {
       ok: true,
       app: null,
     });
+  });
+});
+
+describe("parseCatalogIndex", () => {
+  it("keeps the entries this manager can read and leaves out the rest", () => {
+    const { artifacts: _a, digest: _d, ...entry } = INDEX.apps[0] ?? { artifacts: 0, digest: 0 };
+    const sandbox = {
+      ...entry,
+      slug: "built",
+      tier: "sandbox",
+      build: {
+        pin: "b".repeat(40),
+        manifest: "https://appflare.github.io/catalog/apps/built/appflare.json",
+        manifestDigest: "c".repeat(64),
+      },
+    };
+    const future = { ...INDEX.apps[0], slug: "future", tier: "hologram" };
+    const parsed = parseCatalogIndex({ ...INDEX, apps: [INDEX.apps[0], sandbox, future] });
+    expect(parsed?.index.apps.map((a) => a.slug)).toEqual(["cut", "built"]);
+    expect(parsed?.index.apps[1]?.build?.pin).toBe("b".repeat(40));
+    expect(parsed?.unreadable.map((u) => u.slug)).toEqual(["future"]);
+    expect(parsed?.unreadable[0]?.problem).toMatch(/tier/);
+    expect(parseCatalogIndex({ apps: [] })).toBeNull();
+  });
+
+  it("caches every entry as published and counts the unreadable ones on each read", async () => {
+    const { kv } = fakeKv();
+    const future = { ...INDEX.apps[0], slug: "future", tier: "hologram" };
+    const api = serving({ ...INDEX, apps: [INDEX.apps[0], future] });
+    const refreshed = await refreshCatalogIndex({ KV: kv }, { fetch: api.fetch, now: NOW });
+    expect(refreshed.unreadable).toBe(1);
+    const read = await getCatalogIndex({ KV: kv }, { fetch: api.fetch, now: NOW });
+    expect(read.ok && read.unreadable).toBe(1);
+    expect(read.ok && read.index.apps.map((a) => a.slug)).toEqual(["cut"]);
+    expect(api.urls).toHaveLength(1);
   });
 });

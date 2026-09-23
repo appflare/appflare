@@ -53,6 +53,9 @@ export type {
 } from "./namespaces/vectorize";
 export type {
   CreateDeploymentArgs,
+  EnvBinding,
+  LatestVersionPatch,
+  PatchedVersion,
   UploadVersionArgs,
 } from "./namespaces/versions";
 export type {

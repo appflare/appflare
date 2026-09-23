@@ -50,7 +50,10 @@ export interface ResolvedVars {
   warnings: string[];
 }
 
-type VarManifest = Pick<ArtifactManifest, "catalog" | "worker">;
+/** What the vars need of a manifest: the catalog vars and the wrangler config's bindings. */
+type VarManifest = Pick<ArtifactManifest, "catalog"> & {
+  worker: Pick<ArtifactManifest["worker"], "bindings">;
+};
 
 /** The wrangler config's own vars, by name, placeholders not filled in. */
 function recordedVars(manifest: VarManifest): Map<string, VarBinding> {

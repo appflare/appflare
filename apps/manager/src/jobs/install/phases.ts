@@ -341,6 +341,8 @@ export async function applyD1MigrationsPhase(
   zipUrl: string,
   target: D1Target,
   onMigrated?: () => void,
+  /** Where the zip lives (a sandbox build is read through the sandbox Worker). */
+  host: ArtifactHost = { kind: "catalog" },
 ): Promise<number> {
   if (target.files.length === 0) return 0;
   // Files not yet recorded when this job first listed the database. It rides
@@ -362,7 +364,7 @@ export async function applyD1MigrationsPhase(
         const got = settleUnit(
           await steps.units.api.applyD1Migrations({
             accountId: steps.accountId(),
-            artifact: { zipUrl, host: { kind: "catalog" } },
+            artifact: { zipUrl, host },
             databaseId: target.cfId,
             databaseName: target.name,
             files: [...target.files],

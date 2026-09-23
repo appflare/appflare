@@ -1,3 +1,4 @@
+import type { IndexBuild } from "@appflare/schema";
 import {
   Badge,
   Banner,
@@ -20,11 +21,12 @@ import { type ReactNode, useState } from "react";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
 import { requirementLabel, requirementSentence } from "../../../catalog/requirements";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
-import { InstallCheckBadge, PlanBadge } from "../../../components/catalog-badges";
+import { InstallCheckBadge, PlanBadge, TierBadge } from "../../../components/catalog-badges";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
+import { describeInstance, estimateIndexBuild, formatUsd } from "../../../sandbox/cost";
 
 /**
  * `/catalog/$slug`: app detail, prerequisites, the Cloudflare token the app
@@ -87,10 +89,13 @@ function CatalogEntryPage() {
 
   const { app, catalog } = detail;
   const canInstall = viewer.role === "admin";
+  const sandboxBuild = app.tier === "sandbox" ? (app.build ?? null) : null;
   const blockedReason =
     detail.fixedWorkerName && detail.instances[0] !== undefined
       ? `${app.name} is already installed as "${detail.instances[0].workerName}". It only works under one Worker name, so it installs once per account.`
-      : null;
+      : sandboxBuild !== null && !detail.sandboxConnected
+        ? `${app.name} is built in your account by the sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`
+        : null;
   const installable = catalog !== null && detail.suggestedWorkerName !== null;
   return (
     <>
@@ -132,6 +137,7 @@ function CatalogEntryPage() {
           fixedWorkerName={detail.fixedWorkerName}
           blockedReason={blockedReason}
           requirementsConfirmed={requirementsConfirmed}
+          sandboxBuild={sandboxBuild}
         />
       )}
     </>
@@ -145,13 +151,17 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
         <span>About</span>
-        <PlanBadge plan={app.plan} />
+        <div className="flex items-center gap-2">
+          <TierBadge tier={app.tier} />
+          <PlanBadge plan={app.plan} />
+        </div>
       </LayerCard.Secondary>
       <LayerCard.Primary className="px-5 py-4">
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
           <Row label="Version">
             <span className="font-mono text-[0.9em]">{app.version}</span>
           </Row>
+          {app.tier === "sandbox" && app.build !== undefined && <BuildRow build={app.build} />}
           {catalog !== null && (
             <>
               <Row label="Source">
@@ -180,6 +190,25 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
         </dl>
       </LayerCard.Primary>
     </LayerCard>
+  );
+}
+
+/** A sandbox tier app's build: the pinned commit, the container, and what a build costs. */
+function BuildRow({ build }: { build: IndexBuild }) {
+  const estimate = estimateIndexBuild(build);
+  return (
+    <Row label="Build">
+      <span className="grid gap-0.5">
+        <span>
+          From <span className="font-mono text-[0.9em]">{build.pin.slice(0, 12)}</span> in your
+          sandbox Worker, on Workers Paid
+        </span>
+        <Text as="span" variant="secondary" size="sm">
+          {describeInstance(estimate)} for about {estimate.minutes} minutes: about{" "}
+          {formatUsd(estimate.usd)} a build beyond the included usage
+        </Text>
+      </span>
+    </Row>
   );
 }
 
@@ -286,8 +315,9 @@ function Prerequisites({
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Text variant="secondary" size="sm">
-          The install creates a Worker
-          {creates.length > 0 ? " and:" : ", nothing else."}
+          {!detail.createsKnown
+            ? "The install builds the app first. It creates a Worker and the resources the app's wrangler config declares at the pinned commit."
+            : `The install creates a Worker${creates.length > 0 ? " and:" : ", nothing else."}`}
         </Text>
         {creates.map((c) => (
           <Badge key={c} variant="outline">

@@ -3,6 +3,7 @@ import type { FetchLike, WorkerBinding as UploadBinding, VersionMetadata } from 
 import {
   artifactManifestSchema,
   indexArtifactsSchema,
+  SANDBOX_WORKER_NAME,
   tooManyModulesMessage,
 } from "@appflare/schema";
 import { eq } from "drizzle-orm";
@@ -188,12 +189,21 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       return { versionId };
     });
     const current = await run("read current bindings", async ({ log, cf }) => {
+      const api = cf();
+      // The sandbox Worker is optional; the new version binds it when it exists.
+      const sandboxWorker = (await api.workers.listScripts()).some(
+        (s) => s.id === SANDBOX_WORKER_NAME,
+      );
       const plan = selfUpdateBindings({
-        current: await cf().workers.getBindings(workerName),
+        current: await api.workers.getBindings(workerName),
         manifest,
         workerName,
         newVersion: params.version,
+        sandboxWorker,
       });
+      if (sandboxWorker) {
+        log.info(`The sandbox Worker "${SANDBOX_WORKER_NAME}" exists; the new version binds it.`);
+      }
       const problems = [...plan.problems];
       if (plan.databaseId === null && problems.length === 0) {
         problems.push("The running Worker reports no database id for its DB binding.");

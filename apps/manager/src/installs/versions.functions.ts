@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { hasRole } from "../auth/roles";
-import { getAppManifest } from "../catalog/app-manifest.server";
+import { getAppManifest, getCatalogManifest } from "../catalog/app-manifest.server";
 import { getCatalogApp } from "../catalog/index.server";
 import { getCfClient } from "../cloudflare/client.server";
+import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import {
   listSnapshotsCore,
@@ -57,6 +58,12 @@ export const startUpdate = createServerFn({ method: "POST" })
             if (!read.ok) throw new VersionActionError(read.error);
             return read.manifest;
           },
+          async loadCatalog(app) {
+            const read = await getCatalogManifest(env, app);
+            if (!read.ok) throw new VersionActionError(read.error);
+            return read.catalog;
+          },
+          sandboxConnected: sandboxBinding(env) !== undefined,
           createJob: (id, params) => env.JOBS.create({ id, params }),
         },
         data,

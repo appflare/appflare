@@ -11,6 +11,7 @@ import {
 import { z } from "zod";
 import { releaseFetch } from "../../catalog/release-fetch";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
+import { sandboxFetch } from "../../sandbox/binding";
 import { isNotFound, JobError } from "../errors";
 import { artifactReader } from "../install/artifact";
 import {
@@ -57,11 +58,16 @@ export const SELF_BINDING = "SELF";
 /** The `WorkerEntrypoint` class that serves the units (src/jobs/units/entrypoint.ts). */
 export const JOB_UNITS_ENTRYPOINT = "JobUnits";
 
-/** Where the artifact zip lives: a catalog release, or the manager's own release feed. */
+/**
+ * Where the artifact zip lives: a catalog release, the manager's own release
+ * feed, or a build in the sandbox Worker's bucket, read through the `SANDBOX`
+ * service binding (its URLs are `https://sandbox/builds/...`).
+ */
 export const artifactHostSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("catalog") }),
   /** The release feed may need `GITHUB_TOKEN`, sent only to GitHub (see `releaseFetch`). */
   z.object({ kind: z.literal("release"), userAgent: z.string().min(1) }),
+  z.object({ kind: z.literal("sandbox") }),
 ]);
 export type ArtifactHost = z.infer<typeof artifactHostSchema>;
 
@@ -218,11 +224,20 @@ function parsed<S extends z.ZodType, T>(
   });
 }
 
-/** The fetch that reads the artifact: the release feed's wrapper for the manager's own releases. */
-function artifactFetch(env: UnitEnv, fetch: FetchLike, host: ArtifactHost): FetchLike {
-  return host.kind === "release"
-    ? releaseFetch(fetch, { token: env.GITHUB_TOKEN, userAgent: host.userAgent })
-    : fetch;
+/**
+ * The fetch that reads the artifact: the release feed's wrapper for the
+ * manager's own releases, the sandbox Worker's own `fetch` for a sandbox
+ * build (its objects are reachable only through the service binding).
+ */
+export function artifactFetch(env: UnitEnv, fetch: FetchLike, host: ArtifactHost): FetchLike {
+  switch (host.kind) {
+    case "release":
+      return releaseFetch(fetch, { token: env.GITHUB_TOKEN, userAgent: host.userAgent });
+    case "sandbox":
+      return sandboxFetch(env);
+    case "catalog":
+      return fetch;
+  }
 }
 
 /** The units, run in this invocation with `env`'s secrets. */

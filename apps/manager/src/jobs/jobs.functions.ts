@@ -4,8 +4,16 @@ import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { createDb } from "../db/client";
 import { installs, job_logs, jobs } from "../db/schema";
+import { sandboxBinding } from "../sandbox/binding";
+import {
+  type BuildProgressView,
+  readBuildProgress,
+  sandboxBuildOfInput,
+} from "../sandbox/progress";
 import { requireSession } from "../server/auth.server";
 import { isRestoreJob, reconcileJobs } from "./reconcile.server";
+
+export type { BuildProgressView } from "../sandbox/progress";
 
 /** `/jobs/$jobId`: the job and its log, polled every 2 s while it runs. */
 
@@ -43,6 +51,12 @@ export interface JobView {
     status: string;
   } | null;
   logs: JobLogRow[];
+  /**
+   * The sandbox build the job is waiting on, read live from the sandbox
+   * Worker while it runs (the job log gets its output when it ends); null
+   * otherwise.
+   */
+  build: BuildProgressView | null;
 }
 
 /** The `version` a self-update's input names. */
@@ -101,9 +115,21 @@ export const getJob = createServerFn({ method: "GET" })
             .limit(1),
       db.select().from(job_logs).where(eq(job_logs.job_id, job.id)).orderBy(asc(job_logs.id)),
     ]);
+    const building =
+      (job.status === "queued" || job.status === "running") && job.install_id !== null
+        ? sandboxBuildOfInput(job.input_json)
+        : null;
+    const build =
+      building === null || job.install_id === null
+        ? null
+        : await readBuildProgress(sandboxBinding(env), {
+            installId: job.install_id,
+            version: building.version,
+          });
     return {
       id: job.id,
       kind: job.kind,
+      build,
       restore: isRestoreJob(job),
       status: job.status,
       error: job.error,

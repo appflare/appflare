@@ -13,7 +13,12 @@ import {
   listCatalog,
   refreshCatalog,
 } from "../../../catalog/catalog.functions";
-import { InstallCheckBadge, PlanBadge, RequirementIcons } from "../../../components/catalog-badges";
+import {
+  InstallCheckBadge,
+  PlanBadge,
+  RequirementIcons,
+  TierBadge,
+} from "../../../components/catalog-badges";
 import { formatDateTime } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
@@ -39,6 +44,14 @@ function CatalogPage() {
         <Text variant="secondary" size="sm">
           Catalog updated {formatDateTime(catalog.updatedAt)}.
         </Text>
+      )}
+      {catalog.unreadable > 0 && (
+        <Banner
+          variant="secondary"
+          icon={<WarningCircleIcon weight="fill" />}
+          title={`${catalog.unreadable} ${catalog.unreadable === 1 ? "entry" : "entries"} could not be read`}
+          description="The catalog lists apps this version of Appflare does not understand yet. Update Appflare in Settings to see them."
+        />
       )}
       {catalog.error !== null ? (
         <Empty
@@ -68,7 +81,10 @@ function AppCard({ app }: { app: CatalogListItem }) {
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
         <span className="truncate">{app.name}</span>
-        <PlanBadge plan={app.plan} />
+        <span className="flex shrink-0 items-center gap-2">
+          {app.tier !== "artifact" && <TierBadge tier={app.tier} />}
+          <PlanBadge plan={app.plan} />
+        </span>
       </LayerCard.Secondary>
       <LayerCard.Primary className="grid gap-4 px-5 py-4">
         <div className="grid gap-1.5">

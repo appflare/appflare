@@ -22,6 +22,24 @@ export interface CreateDeploymentArgs {
   force?: boolean;
 }
 
+/** A binding as `env` of a version patch carries it: the binding without its name. */
+export type EnvBinding = { type: string } & Record<string, unknown>;
+
+export interface LatestVersionPatch {
+  /** Bindings to add or replace, by name; `null` removes one. */
+  env?: Record<string, EnvBinding | null>;
+  annotations?: Record<string, string>;
+}
+
+/** The version a patch created. */
+export interface PatchedVersion {
+  id: string;
+  number?: number;
+  /** URLs that always reach this version (its preview URL, when it has one). */
+  urls?: string[];
+  [key: string]: unknown;
+}
+
 /** Worker versions & gradual deployments. */
 export function createVersions(http: HttpApi) {
   return {
@@ -50,6 +68,20 @@ export function createVersions(http: HttpApi) {
         "GET",
         http.acct(`/workers/scripts/${enc(name)}/versions/${enc(versionId)}`),
       );
+    },
+
+    /**
+     * `PATCH /workers/workers/{name}/versions/latest` — creates a new version
+     * from the latest one by applying a JSON Merge Patch (RFC 7396); omitted
+     * fields are inherited. `env` adds or replaces single bindings by name,
+     * the shape wrangler 4 sends for `versions secret put`
+     * (`patchLatestWorkerVersionWithSecrets`). Without `deploy` the new
+     * version serves no traffic until a deployment promotes it.
+     */
+    patchLatestVersion(name: string, patch: LatestVersionPatch): Promise<PatchedVersion> {
+      return http.result("PATCH", http.acct(`/workers/workers/${enc(name)}/versions/latest`), {
+        raw: { body: JSON.stringify(patch), contentType: "application/merge-patch+json" },
+      });
     },
 
     /** `GET /workers/scripts/{name}/deployments` — returns `result.deployments`. */

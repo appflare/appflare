@@ -14,15 +14,18 @@ import { createDb } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
+import {
+  artifactOriginOf,
+  cleanupSandboxBuildsPhase,
+  resolveArtifactPhase,
+} from "./install/artifact-source";
 import { healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
-  type ArtifactRef,
   applyD1MigrationsPhase,
   checkLiveHealthPhase,
   checkWorkflowNamePhase,
   d1Targets,
-  loadVerifiedManifest,
   lookupSubdomainPhase,
   probeUntilHealthy,
   provisionResourcePhase,
@@ -30,7 +33,6 @@ import {
   recordResource,
   syncCronsPhase,
   uploadAssetsPhase,
-  verifyManifestPhase,
 } from "./install/phases";
 import {
   consumerPlansOf,
@@ -65,7 +67,10 @@ import {
  * without downtime and with a way back.
  *
  * 1. Verify the new artifact manifest (signature, schema, slug, version, and
- *    the digest of the cached index entry).
+ *    the digest of the cached index entry). A sandbox tier app is built from
+ *    its pinned commit in the sandbox Worker first, and its unsigned manifest
+ *    is checked against that build instead (see ./install/artifact-source.ts);
+ *    after a successful update only the current and previous builds are kept.
  * 2. Snapshot: the version serving traffic and a D1 Time Travel bookmark per
  *    database, recorded with the install's catalog state.
  * 3. Create resources for bindings new in this version (never delete any).
@@ -105,6 +110,14 @@ export const updateJobParams = z.object({
    * their names.
    */
   secrets: z.record(z.string(), z.string()).default({}),
+  /** For a sandbox tier app: the admin confirmed the build's cost on Workers Paid. */
+  buildConfirmed: z.boolean().optional(),
+  /**
+   * For a sandbox tier app, whose new version is known only once it is built:
+   * the admin accepted that the update may deploy it without a preview check.
+   * Without it the job refuses such a version before anything changes.
+   */
+  confirmNoPreview: z.boolean().optional(),
 });
 export type UpdateJobParams = z.infer<typeof updateJobParams>;
 
@@ -127,7 +140,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   const params = parsed.data;
   const { step, env, deps } = ctx;
   const steps = createJobSteps(ctx, params.jobId);
-  const { run, now, baseFetch } = steps;
+  const { run, now } = steps;
   /** Set once the new version exists / serves traffic, for the failure report. */
   let uploadedVersionId: string | null = null;
   let promoted = false;
@@ -201,24 +214,21 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         previousConsumers: consumerPlansOf(install.manifest_json),
         emailRouting: emailRoutingOfManifest(install.manifest_json),
         userVars: parseVars(install.config_json),
-        artifacts: app.artifacts,
-        digest: app.digest,
+        origin: artifactOriginOf(app, params.buildConfirmed === true),
         resources: recorded,
       };
     });
     steps.setAccountId(started.accountId);
     const { workerName } = started;
-    const ref: ArtifactRef = {
+
+    // 1. The new artifact manifest (a sandbox tier app is built first).
+    const source = await resolveArtifactPhase(steps, env, deps.signingKeys, {
+      installId: params.installId,
       slug: started.slug,
       version: params.version,
-      artifacts: started.artifacts,
-      digest: started.digest,
-    };
-
-    // 1. The new artifact manifest.
-    await verifyManifestPhase(steps, env.KV, ref, deps.signingKeys);
-    steps.current = "load artifact manifest";
-    const manifestText = await loadVerifiedManifest(env.KV, baseFetch, ref);
+      origin: started.origin,
+    });
+    const manifestText = source.manifestText;
     const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
     const diff = diffBindings(
       workerName,
@@ -244,6 +254,17 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
 
     await run("plan update", async ({ log }) => {
       const problems = [...diff.problems, ...queuePlan.problems, ...queueDiff.problems];
+      // A prebuilt version's preview question was asked when the update
+      // started; a sandbox build answers it only now.
+      if (
+        started.origin.kind === "sandbox" &&
+        path.skipPreview !== null &&
+        params.confirmNoPreview !== true
+      ) {
+        problems.push(
+          `${path.skipPreview}. This became known only once the version was built; start the update again and confirm updating without a preview check.`,
+        );
+      }
       for (const secret of newSecrets) {
         if (secretValues[secret.name] === undefined) {
           problems.push(
@@ -367,8 +388,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const assetsJwt = await uploadAssetsPhase(
       steps,
       workerName,
-      started.artifacts.zip,
+      source.zipUrl,
       manifest.assets.files,
+      source.host,
     );
 
     // Vars may name the Worker's URL (`{{workerUrl}}`), so the account's
@@ -408,7 +430,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       return settleUnit(
         await steps.units.api.uploadWorker({
           accountId: steps.accountId(),
-          artifact: { zipUrl: started.artifacts.zip, host: { kind: "catalog" } },
+          artifact: { zipUrl: source.zipUrl, host: source.host },
           workerName,
           modules: manifest.worker.modules,
           metadata,
@@ -455,9 +477,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       current_version_id: versionId,
       catalog_version: params.version,
       manifest_json: manifestText,
-      artifact_url: started.artifacts.zip,
-      artifact_digest: started.digest,
+      artifact_url: source.zipUrl,
+      artifact_digest: source.digest,
       pin_sha: manifest.source.sha,
+      ...source.provenance,
       do_migration_tag: fullDeploy?.new_tag ?? started.appliedDoTag,
     });
 
@@ -467,8 +490,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
      */
     async function migrateDatabases(): Promise<void> {
       for (const target of d1Targets(manifest, bound)) {
-        await applyD1MigrationsPhase(steps, started.artifacts.zip, target, () =>
-          migrated.push(target.name),
+        await applyD1MigrationsPhase(
+          steps,
+          source.zipUrl,
+          target,
+          () => migrated.push(target.name),
+          source.host,
         );
       }
     }
@@ -598,6 +625,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     // 9. Live health check, recorded rather than fatal: the version already serves.
     const url = `https://${workerName}.${subdomain}.workers.dev${healthPath}`;
     const health = await checkLiveHealthPhase(steps, step, url, healthMode);
+
+    // A sandbox build stays in the bucket while it may be needed: the version
+    // now serving and the one before it (which a rollback returns to).
+    if (source.provenance.build_kind === "sandbox") {
+      await cleanupSandboxBuildsPhase(steps, env, params.installId, [
+        params.version,
+        started.fromVersion,
+      ]);
+    }
 
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());

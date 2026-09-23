@@ -81,6 +81,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
               artifact_url: snapshot.artifact_url,
               artifact_digest: snapshot.artifact_digest,
               pin_sha: snapshot.pin_sha,
+              build_kind: snapshot.build_kind,
+              sandbox_image: snapshot.sandbox_image,
+              built_at: snapshot.built_at,
               updated_at: at,
             }
           : { current_version_id: snapshot.worker_version_id, updated_at: at },

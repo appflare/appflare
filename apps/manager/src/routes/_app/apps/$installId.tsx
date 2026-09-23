@@ -355,10 +355,34 @@ function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boole
           <Row label="Worker version">
             <span className={mono}>{install.currentVersionId ?? "None yet"}</span>
           </Row>
-          {install.pinSha !== null && (
-            <Row label="Built from">
-              <span className={mono}>{install.pinSha.slice(0, 12)}</span>
+          {install.build.kind === "sandbox" ? (
+            <Row label="Built">
+              <span className="grid gap-1">
+                <span>
+                  Built in your account from{" "}
+                  <span className={mono}>
+                    {install.pinSha?.slice(0, 12) ?? "an unknown commit"}
+                  </span>{" "}
+                  with image <span className={mono}>{install.build.image ?? "unknown"}</span>,
+                  unsigned
+                </span>
+                {install.build.builtAt !== null && (
+                  <Text as="span" variant="secondary" size="sm">
+                    {formatDateTime(install.build.builtAt)}
+                  </Text>
+                )}
+              </span>
             </Row>
+          ) : (
+            install.pinSha !== null && (
+              <Row label="Built from">
+                <span className={mono}>{install.pinSha.slice(0, 12)}</span>
+                <Text as="span" variant="secondary">
+                  {" "}
+                  (signed release)
+                </Text>
+              </Row>
+            )
           )}
           {vars.map(([name, value]) => (
             <Row key={name} label={name}>
