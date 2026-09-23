@@ -198,6 +198,47 @@ export interface Queue {
   created_on?: string;
 }
 
+/**
+ * Delivery settings of a Worker queue consumer, in the API's names and units
+ * (wrangler's `max_batch_timeout` in seconds is `max_wait_time_ms` here).
+ * `max_concurrency: null` asks for the platform's maximum.
+ */
+export interface QueueConsumerSettings {
+  batch_size?: number;
+  max_retries?: number;
+  max_wait_time_ms?: number;
+  max_concurrency?: number | null;
+  /** Seconds before a retried message is delivered again. */
+  retry_delay?: number;
+}
+
+/**
+ * Body of `POST /queues/{id}/consumers` and `PUT /queues/{id}/consumers/{consumer_id}`
+ * for a Worker consumer (the shape wrangler 4.136.2's `updateQueueConsumers` sends).
+ */
+export interface WorkerQueueConsumerBody {
+  type: "worker";
+  script_name: string;
+  /** The dead-letter queue's NAME, not its id. */
+  dead_letter_queue?: string;
+  settings?: QueueConsumerSettings;
+}
+
+/** A queue consumer as the API returns it (fields the manager reads). */
+export interface QueueConsumerInfo {
+  consumer_id: string;
+  type?: string;
+  queue_name?: string;
+  script_name?: string;
+  /** Some responses name the Worker `script` instead of `script_name`. */
+  script?: string;
+  /** Others name it `service` (wrangler checks `script` and `service`). */
+  service?: string;
+  dead_letter_queue?: string;
+  settings?: QueueConsumerSettings;
+  created_on?: string;
+}
+
 export interface VectorizeIndex {
   name: string;
   description?: string;

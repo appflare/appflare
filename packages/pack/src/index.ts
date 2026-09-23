@@ -6,6 +6,12 @@
 
 /** The most Worker modules Appflare can upload; `verify --max-modules` takes it. */
 export { MAX_WORKER_MODULES } from "@appflare/schema";
+export {
+  BuildCommandError,
+  type BuildCommandOptions,
+  DEFAULT_BUILD_TIMEOUT_MS,
+  runBuildCommand,
+} from "./build-command.ts";
 export { parseJsonc } from "./jsonc.ts";
 export type { PackOptions, PackResult } from "./pack.ts";
 export { describeVersionOrigin, pack, packWarnings } from "./pack.ts";
@@ -25,9 +31,12 @@ export {
 export {
   classifyModuleType,
   collectBindings,
+  collectQueueConsumers,
   mainModuleName,
+  QueueConsumerError,
   type ResolvedWranglerConfig,
   VectorizeDeclarationError,
+  type WranglerQueueConsumer,
 } from "./wrangler-config.ts";
 export type { ZipEntryPlacement } from "./zip.ts";
 export { crc32, ZipStore } from "./zip.ts";

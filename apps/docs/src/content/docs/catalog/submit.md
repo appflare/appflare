@@ -13,8 +13,10 @@ app's own repository.
 - **No proxies, tunnels, or circumvention tools.**
 - **It deploys with wrangler.** If the app works with Cloudflare's Deploy button, it
   should work with Appflare. Bindings, compatibility settings, static assets, Durable
-  Object migrations, and cron triggers all come from the app's own wrangler config;
-  the manifest does not repeat them.
+  Object migrations, queue consumers, and cron triggers all come from the app's own
+  wrangler config; the manifest does not repeat them. An app that needs a build step
+  before `wrangler deploy` (Vite, React Router, OpenNext) and has no `build.command`
+  in its wrangler config names that step in `install.buildCommand`.
 - **It is self-contained.** Durable Objects and Workflows must be defined by the app's
   own Worker, not bound from another Worker.
 - **The Worker has at most 21 modules.** The manager installs apps from inside a
@@ -25,9 +27,10 @@ app's own repository.
   compressed, or one that needs paid features, is `"plan": "paid"`.
 
 The manager creates KV namespaces, D1 databases, R2 buckets, queues, and Vectorize
-indexes for an app, and passes through Workers AI, Browser Rendering, Analytics
-Engine, email sending, version metadata, and plain variables. Other binding types
-cannot be installed yet.
+indexes for an app, attaches the app's Worker to the queues it consumes (dead-letter
+queues included), and passes through Workers AI, Browser Rendering, Analytics Engine,
+email sending (with its address restrictions), rate limits, Images, version metadata,
+and plain variables. Other binding types cannot be installed yet.
 
 The catalog's install check is stricter for now. It rejects apps with queue,
 Hyperdrive, service, mTLS certificate, or email bindings, so such an app cannot pass
@@ -94,6 +97,17 @@ Points that need care:
   `source` moves.
 - **`install.healthPath`.** Set it when `/` returns an error or needs a login, so
   the health check requests a path that answers.
+- **`install.healthMode`.** Set it to `"status-only"` when every route of the app,
+  its health path included, sits behind Cloudflare Access or the app's own sign-in.
+  Such an app can answer the check with an error of its own, and any answer from its
+  Worker then counts as healthy. See [Health checks](/guides/health/#apps-behind-a-sign-in).
+- **`install.buildCommand`.** One command, such as `pnpm --filter @scope/web build`,
+  that the packer runs at the root of the repository after installing dependencies
+  and before bundling. It runs without a shell and without credentials, with the
+  repository's `node_modules/.bin` on its PATH, so pipes, redirects, quotes,
+  variables, and `NAME=value` assignments are refused. `install.wranglerConfig` may
+  name a config the build writes, such as the one the Cloudflare Vite plugin
+  generates.
 - **`secrets` and `vars`.** List every secret and setting the app reads from `env`
   that is not in its wrangler config. Use `"generate": true` for passwords and
   signing keys the user does not need to choose.

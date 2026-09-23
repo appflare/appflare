@@ -12,6 +12,10 @@ The app's [custom domains](/guides/custom-domains/), which the uninstall removes
 first, each with its own request, so that no domain or DNS record is left pointing
 at a deleted Worker. A custom domain holds no data, so there is nothing to keep.
 
+Next, the app's queue consumers: each queue the Worker reads from is detached from
+it, before the Worker and before any queue is deleted. A kept queue stays in your
+account without a consumer.
+
 Then the Worker itself, and everything that only exists with it:
 
 - its `workers.dev` route and cron triggers,

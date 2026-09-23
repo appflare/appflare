@@ -76,6 +76,9 @@ interface FakeState {
   requestsByStep: Record<string, string[]>;
   /** The running step's name; `install` wires it to the fake step. */
   stepOf?: () => string | undefined;
+  queues: Array<{ queue_id: string; queue_name: string }>;
+  /** Consumers per queue id, with the body each was created from. */
+  consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
 }
 
 function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
@@ -107,6 +110,8 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     artifactRedirect: false,
     singleUploads: false,
     requestsByStep: {},
+    queues: [],
+    consumers: {},
     ...over,
   };
   const host = redirectingArtifactHost(fixture);
@@ -240,6 +245,24 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       case "POST /workers/scripts/cut/subdomain":
         state.subdomainEnabled = await request.json();
         return ok({ enabled: true, previews_enabled: true });
+    }
+    if (key === "GET /queues") return ok(state.queues);
+    if (key === "POST /queues") {
+      const { queue_name } = (await request.json()) as { queue_name: string };
+      const queue = { queue_id: `q-${state.queues.length + 1}`, queue_name };
+      state.queues.push(queue);
+      return ok(queue);
+    }
+    const consumers = /^(GET|POST) \/queues\/([^/]+)\/consumers$/.exec(key);
+    if (consumers?.[2] !== undefined) {
+      const queueId = consumers[2];
+      state.consumers[queueId] ??= [];
+      const list = state.consumers[queueId];
+      if (consumers[1] === "GET") return ok(list);
+      const body = (await request.json()) as Record<string, unknown>;
+      const consumer = { ...body, consumer_id: `c-${queueId}-${list.length + 1}` };
+      list.push(consumer);
+      return ok(consumer);
     }
     const singleUpload = /^POST \/workers\/assets\/upload\/([0-9a-f]+)$/.exec(key);
     if (singleUpload?.[1] !== undefined) {
@@ -1067,6 +1090,142 @@ describe("install job", () => {
     expect(install).toEqual({ status: "failed" });
     const job = await env.DB.prepare("SELECT status FROM jobs WHERE id = ?1").bind(jobId).first();
     expect(job).toEqual({ status: "succeeded" });
+  });
+
+  describe("an app with queue consumers", () => {
+    const queueApp: ArtifactFixtureOptions = {
+      bindings: [{ type: "queue", name: "JOBS" }],
+      tweak: (m) => {
+        m.worker.queueConsumers = [
+          {
+            queue: { binding: "JOBS" },
+            max_batch_size: 5,
+            max_batch_timeout: 2,
+            max_retries: 3,
+            dead_letter_queue: { name: "jobs-dlq" },
+          },
+          { queue: { name: "jobs-dlq" } },
+        ];
+      },
+    };
+
+    it("creates the dead-letter queue and attaches each consumer after the upload", async () => {
+      const r = await install(queueApp);
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.queues).toEqual([
+        { queue_id: "q-1", queue_name: "cut-jobs" },
+        { queue_id: "q-2", queue_name: "cut-jobs-dlq" },
+      ]);
+      expect(r.fake.state.consumers).toEqual({
+        "q-1": [
+          {
+            type: "worker",
+            script_name: "cut",
+            dead_letter_queue: "cut-jobs-dlq",
+            settings: { batch_size: 5, max_retries: 3, max_wait_time_ms: 2000 },
+            consumer_id: "c-q-1-1",
+          },
+        ],
+        "q-2": [{ type: "worker", script_name: "cut", consumer_id: "c-q-2-1" }],
+      });
+      const calls = r.fake.state.calls;
+      expect(calls.indexOf("POST /queues/q-1/consumers")).toBeGreaterThan(
+        calls.indexOf("PUT /workers/scripts/cut"),
+      );
+      // Only the producer binding reaches the upload; the dead-letter queue is not bound.
+      expect(r.fake.state.metadata?.bindings).toContainEqual({
+        type: "queue",
+        name: "JOBS",
+        queue_name: "cut-jobs",
+      });
+      expect(JSON.stringify(r.fake.state.metadata?.bindings)).not.toContain("dlq");
+      expect(r.resources).toEqual(
+        expect.arrayContaining([
+          { kind: "queue", binding: "JOBS", name: "cut-jobs", cf_id: "q-1" },
+          { kind: "queue", binding: null, name: "cut-jobs-dlq", cf_id: "q-2" },
+          { kind: "queue_consumer", binding: null, name: "cut-jobs", cf_id: "c-q-1-1" },
+          { kind: "queue_consumer", binding: null, name: "cut-jobs-dlq", cf_id: "c-q-2-1" },
+        ]),
+      );
+    });
+
+    it("does not attach a consumer twice when the response of the first attempt is lost", async () => {
+      const r = await install(queueApp, { failAfter: new Set(["POST /queues/q-1/consumers"]) });
+      expect(r.error).toBeNull();
+      expect(r.fake.state.consumers["q-1"]).toHaveLength(1);
+      expect(r.step.retried["attach consumer to queue cut-jobs"]).toBe(2);
+      expect(r.resources).toContainEqual({
+        kind: "queue_consumer",
+        binding: null,
+        name: "cut-jobs",
+        cf_id: "c-q-1-1",
+      });
+    });
+
+    it("refuses a consumer of a queue the Worker does not bind, before creating anything", async () => {
+      const r = await install({
+        ...queueApp,
+        tweak: (m) => {
+          m.worker.queueConsumers = [{ queue: { binding: "MISSING" } }];
+        },
+      });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(/preflight checks: .*queue binding MISSING/);
+      expect(r.fake.state.queues).toEqual([]);
+    });
+  });
+
+  it("gives each rate limit a namespace of its own instead of the artifact's", async () => {
+    const r = await install({
+      bindings: [
+        {
+          type: "ratelimit",
+          name: "LIMITER",
+          namespace_id: "1001",
+          simple: { limit: 20, period: 60 },
+        },
+      ],
+    });
+    expect(r.error).toBeNull();
+    const bindings = (r.fake.state.metadata?.bindings ?? []) as Array<Record<string, unknown>>;
+    const sent = bindings.find((b) => b.type === "ratelimit");
+    expect(sent).toMatchObject({ name: "LIMITER", simple: { limit: 20, period: 60 } });
+    const id = String(sent?.namespace_id);
+    expect(id).toMatch(/^[1-9]\d*$/);
+    expect(id).not.toBe("1001");
+    expect(Number(id)).toBeLessThanOrEqual(2_147_483_647);
+    expect(r.resources).toContainEqual({
+      kind: "ratelimit",
+      binding: "LIMITER",
+      name: "LIMITER",
+      cf_id: id,
+    });
+  });
+
+  it("verifies an app in status-only mode by any answer of its own Worker", async () => {
+    const r = await install(
+      {
+        catalog: {
+          install: {
+            tier: "artifact",
+            packageManager: "pnpm",
+            wranglerConfig: "wrangler.jsonc",
+            workerName: "cut",
+            healthMode: "status-only",
+          },
+        },
+      },
+      {
+        health: [
+          { status: 404, body: "error code: 1042\n" },
+          { status: 500, body: "Cloudflare Access must be configured in production." },
+        ],
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.fake.state.healthUrls).toHaveLength(2);
+    expect(r.installRow?.health_status).toBe("verified");
   });
 
   it("records the Durable Object migration tag the upload applied", async () => {

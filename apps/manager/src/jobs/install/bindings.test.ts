@@ -24,6 +24,13 @@ describe("planBindings", () => {
       { type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "JobWorkflow" },
       { type: "plain_text", name: "MODE", text: "prod" },
       { type: "ai", name: "AI" },
+      {
+        type: "ratelimit",
+        name: "LIMITER",
+        namespace_id: "1001",
+        simple: { limit: 1, period: 10 },
+      },
+      { type: "images", name: "IMAGES" },
     ]);
     expect(plan.problems).toEqual([]);
     expect(plan.resources.map((r) => [r.kind, r.binding, r.name])).toEqual([

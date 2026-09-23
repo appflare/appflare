@@ -432,6 +432,133 @@ describe("pack with a Vectorize binding", () => {
   }, 120_000);
 });
 
+/**
+ * A copy of the fixture whose catalog manifest has a build command: the build
+ * writes the wrangler config the packer then reads (as the Cloudflare Vite
+ * plugin does) plus a static asset. The config adds queue consumers, a rate
+ * limit, Images, and a restricted send_email binding.
+ */
+function buildCheckout(parent: string, buildCommand: string): { dir: string; manifest: string } {
+  const dir = path.join(parent, "checkout");
+  cpSync(FIXTURE, dir, { recursive: true });
+  const config = parseJsonc(readFileSync(path.join(dir, "wrangler.jsonc"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const generated = {
+    ...config,
+    main: "../src/index.ts",
+    assets: { ...(config.assets as object), directory: "../public" },
+    d1_databases: [{ binding: "DB", database_name: "hello-db", migrations_dir: "../migrations" }],
+    queues: {
+      producers: [{ binding: "JOBS", queue: "hello-jobs" }],
+      consumers: [
+        { queue: "hello-jobs", max_batch_size: 5, max_retries: 3, dead_letter_queue: "hello-dlq" },
+      ],
+    },
+    ratelimits: [{ name: "LIMITER", namespace_id: "1001", simple: { limit: 20, period: 60 } }],
+    images: { binding: "IMAGES" },
+    send_email: [{ name: "EMAIL", allowed_destination_addresses: ["owner@example.com"] }],
+  };
+  writeFileSync(path.join(dir, "wrangler.template.json"), JSON.stringify(generated));
+  writeFileSync(
+    path.join(dir, "build.mjs"),
+    `import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+mkdirSync("dist", { recursive: true });
+copyFileSync("wrangler.template.json", "dist/wrangler.json");
+writeFileSync("public/built.txt", "built by " + process.argv[2]);
+if (process.env.CLOUDFLARE_API_TOKEN) process.exit(9);`,
+  );
+  const catalog = parseJsonc(readFileSync(path.join(dir, "appflare.jsonc"), "utf8")) as {
+    install: Record<string, unknown>;
+  };
+  catalog.install.buildCommand = buildCommand;
+  catalog.install.wranglerConfig = "dist/wrangler.json";
+  const manifest = path.join(parent, "appflare.jsonc");
+  writeFileSync(manifest, JSON.stringify(catalog));
+  return { dir, manifest };
+}
+
+describe("pack with install.buildCommand", () => {
+  it("builds before reading the config, and records consumers and passthrough bindings", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-build-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = buildCheckout(parent, "node build.mjs appflare");
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+        env: { ...process.env, CLOUDFLARE_API_TOKEN: "cf-DO-NOT-LEAK" },
+        logger: (m) => logs.push(m),
+      });
+      const buildAt = logs.findIndex((l) => l.startsWith("running install.buildCommand"));
+      const dryRunAt = logs.findIndex((l) => l.includes("dry-run"));
+      expect(buildAt).toBeGreaterThanOrEqual(0);
+      expect(dryRunAt).toBeGreaterThan(buildAt);
+      expect(res.manifest.catalog.install.buildCommand).toBe("node build.mjs appflare");
+      const built = res.manifest.assets.files.find((f) => f.route === "/built.txt");
+      expect(built).toBeDefined();
+      const zip = readdirSync(outDir).find((f) => f.endsWith(".zip")) as string;
+      expect(
+        readRange(path.join(outDir, zip), built?.offset ?? 0, built?.size ?? 0).toString(),
+      ).toBe("built by appflare");
+
+      expect(res.manifest.worker.queueConsumers).toEqual([
+        {
+          queue: { binding: "JOBS" },
+          max_batch_size: 5,
+          max_retries: 3,
+          dead_letter_queue: { name: "hello-dlq" },
+        },
+      ]);
+      const bindings = res.manifest.worker.bindings;
+      expect(bindings).toContainEqual({ type: "queue", name: "JOBS" });
+      expect(bindings).toContainEqual({
+        type: "ratelimit",
+        name: "LIMITER",
+        namespace_id: "1001",
+        simple: { limit: 20, period: 60 },
+      });
+      expect(bindings).toContainEqual({ type: "images", name: "IMAGES" });
+      expect(bindings).toContainEqual({
+        type: "send_email",
+        name: "EMAIL",
+        allowed_destination_addresses: ["owner@example.com"],
+      });
+      expect(JSON.stringify(res.manifest.worker.bindings)).not.toContain("hello-jobs");
+      await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true });
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("fails with the build's exit code and output, leaving nothing behind", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-build-fail-"));
+    const outDir = path.join(parent, "out");
+    try {
+      const checkout = buildCheckout(parent, "node build.mjs appflare");
+      writeFileSync(
+        path.join(checkout.dir, "build.mjs"),
+        'console.error("Could not resolve entry module index.html"); process.exit(1);',
+      );
+      await expect(
+        pack({
+          checkoutDir: checkout.dir,
+          manifestPath: checkout.manifest,
+          outDir,
+          install: false,
+        }),
+      ).rejects.toThrow(/failed \(exit 1\); last lines of its output:\nCould not resolve entry/);
+      expect(existsSync(outDir)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
 describe("packWarnings", () => {
   const withModules = (count: number) => ({
     app: "demo",

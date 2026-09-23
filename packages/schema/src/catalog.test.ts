@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { appHealthPath, catalogManifestSchema, hasFixedWorkerName, semverSchema } from "./catalog";
+import {
+  appHealthMode,
+  appHealthPath,
+  catalogManifestSchema,
+  hasFixedWorkerName,
+  semverSchema,
+} from "./catalog";
 
 const validManifest = {
   $schema: "https://appflare.github.io/catalog/schema/v1.json",
@@ -150,6 +156,63 @@ describe("catalogManifestSchema", () => {
     }
     for (const bump of [{}, { autoMerge: "yes" }, { autoMerge: 1 }, { autoMerge: null }, true]) {
       expect(catalogManifestSchema.safeParse({ ...validManifest, bump }).success).toBe(false);
+    }
+  });
+
+  it("takes an optional healthMode, defaulting to default", () => {
+    const omitted = catalogManifestSchema.parse(validManifest);
+    expect(omitted.install.healthMode).toBeUndefined();
+    expect(appHealthMode(omitted.install)).toBe("default");
+    for (const healthMode of ["default", "status-only"] as const) {
+      const parsed = catalogManifestSchema.parse({
+        ...validManifest,
+        install: { ...validManifest.install, healthMode },
+      });
+      expect(appHealthMode(parsed.install)).toBe(healthMode);
+    }
+    for (const healthMode of ["status", "any", "", null, true]) {
+      const result = catalogManifestSchema.safeParse({
+        ...validManifest,
+        install: { ...validManifest.install, healthMode },
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it("takes an optional buildCommand that runs without a shell", () => {
+    expect(catalogManifestSchema.parse(validManifest).install.buildCommand).toBeUndefined();
+    for (const buildCommand of [
+      "pnpm --filter @mail2telegram/web build",
+      "npx opennextjs-cloudflare build",
+      "pnpm run build:worker --mode=selfhost",
+    ]) {
+      const parsed = catalogManifestSchema.parse({
+        ...validManifest,
+        install: { ...validManifest.install, buildCommand },
+      });
+      expect(parsed.install.buildCommand).toBe(buildCommand);
+    }
+    const refused: Array<[unknown, string]> = [
+      ["pnpm build && rm -rf /", '"&"'],
+      ["pnpm build | tee log", '"|"'],
+      ["pnpm build > out.txt", '">"'],
+      ["NODE_ENV=production pnpm build", "environment"],
+      ["pnpm build; curl x", '";"'],
+      ['pnpm "build"', '"'],
+      ["pnpm build $HOME", '"$"'],
+      ["pnpm\tbuild", "U+0009"],
+      ["", "letters"],
+      ["   ", "empty"],
+      [`pnpm ${"x".repeat(260)}`, "256"],
+      [42, ""],
+    ];
+    for (const [buildCommand, why] of refused) {
+      const result = catalogManifestSchema.safeParse({
+        ...validManifest,
+        install: { ...validManifest.install, buildCommand },
+      });
+      expect(result.success, String(buildCommand)).toBe(false);
+      expect(result.error?.issues.map((i) => i.message).join(" ")).toContain(why);
     }
   });
 

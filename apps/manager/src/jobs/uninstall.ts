@@ -17,6 +17,7 @@ import {
   type DataResourceKind,
   WORKER_BOUND_KINDS,
 } from "../installs/resource-kinds";
+import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
 import { deleteResource, RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
@@ -29,10 +30,11 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
  * install; a 404 means the object is already gone and counts as deleted, so a
  * retried or repeated uninstall converges. Order: the install's custom domains
  * first (always; they hold no data, and Cloudflare does not document that
- * deleting a Worker removes them, so they get calls of their own),
- * then the Worker (with `?force=true`, which also removes its cron triggers,
- * workers.dev route, secrets, Durable Objects, and Workflows), then each
- * ticked data resource.
+ * deleting a Worker removes them, so they get calls of their own), then its
+ * queue consumers (no data either; each is removed before the Worker it
+ * points at and before the queue it reads), then the Worker (with
+ * `?force=true`, which also removes its cron triggers, workers.dev route,
+ * secrets, Durable Objects, and Workflows), then each ticked data resource.
  * The Worker is deleted only when this install recorded it: an install that
  * failed before its upload never owned a Worker of that name, and the account
  * may hold someone else's. An R2 bucket must be empty before it can be
@@ -134,6 +136,12 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       const domains: DomainTarget[] = live
         .filter((r) => r.kind === CUSTOM_DOMAIN_KIND)
         .map((r) => ({ id: r.id, hostname: r.name, cfId: r.cf_id }));
+      // Queue consumers are never kept either; they go before the Worker and
+      // before any queue they read.
+      const consumers = consumerTargets(
+        params.installId,
+        live.map((r) => ({ id: r.id, kind: r.kind, name: r.name, cfId: r.cf_id })),
+      );
       const kept = live.filter((r) => r.retained_at !== null).map((r) => r.name);
       // "live": recorded and not deleted yet; "deleted": an earlier run deleted
       // it; "none": this install never recorded a Worker.
@@ -167,6 +175,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         accountId: settings.account_id,
         targets,
         domains,
+        consumers,
         kept,
         worker,
       };
@@ -197,6 +206,9 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         return {};
       });
     }
+
+    // A run started before consumers were recorded has none to remove.
+    await removeQueueConsumersPhase(steps, workerName, started.consumers ?? []);
 
     const workerStep =
       started.worker === "live" ? `delete Worker ${workerName}` : `skip Worker ${workerName}`;

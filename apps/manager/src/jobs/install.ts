@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  appHealthMode,
   appHealthPath,
   artifactManifestSchema,
   hasFixedWorkerName,
@@ -33,7 +34,9 @@ import {
   uploadAssetsPhase,
   verifyManifestPhase,
 } from "./install/phases";
+import { attachQueueConsumersPhase, planQueueConsumers } from "./install/queue-consumers";
 import { explainR2Refusal } from "./install/r2-enablement";
+import { assignRateLimitsPhase } from "./install/rate-limits";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
@@ -115,6 +118,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const manifestText = await loadVerifiedManifest(env.KV, baseFetch, artifact);
     const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
     const plan = planBindings(params.workerName, manifest.worker.bindings);
+    const queuePlan = planQueueConsumers(params.workerName, manifest.worker);
+    const toCreate = [...plan.resources, ...queuePlan.queues];
 
     // 2. Preflight.
     const preflight = await run("preflight checks", async ({ log, orm }) => {
@@ -139,7 +144,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           log.info("The admin confirmed this account meets these requirements.");
         }
       }
-      if (plan.problems.length > 0) throw new InstallError(plan.problems.join(" "));
+      const problems = [...plan.problems, ...queuePlan.problems];
+      if (problems.length > 0) throw new InstallError(problems.join(" "));
       // The upload fetches every module in one invocation; refuse before
       // anything is created rather than failing mid-upload.
       const tooMany = tooManyModulesMessage(manifest.worker.modules.length, "This app version");
@@ -179,7 +185,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         throw new InstallError("the Cloudflare API token is not configured; finish setup first");
       }
       log.info(
-        `Preflight passed: plan ${manifest.catalog.plan}, ${plan.resources.length} resource(s) to create.`,
+        `Preflight passed: plan ${manifest.catalog.plan}, ${toCreate.length} resource(s) to create.`,
       );
       return { accountId: settings.account_id };
     });
@@ -216,7 +222,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // An account without R2 refuses every R2 call. Ask once before creating
     // anything, so that failure leaves nothing behind to clean up.
-    const firstBucket = plan.resources.find((r) => r.kind === "r2");
+    const firstBucket = toCreate.find((r) => r.kind === "r2");
     if (firstBucket !== undefined) {
       await run("check R2 is enabled", async ({ log, cf }) => {
         await explainR2Refusal(firstBucket.name, () =>
@@ -229,7 +235,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // 3. Resources: check the name is free, create, then record.
     const created: CreatedResource[] = [];
-    for (const res of plan.resources) {
+    for (const res of toCreate) {
       created.push(await provisionResourcePhase(steps, params.installId, res));
     }
 
@@ -250,6 +256,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         return {};
       });
     }
+
+    const rateLimitIds = await assignRateLimitsPhase(
+      steps,
+      params.installId,
+      manifest.worker.bindings,
+    );
 
     // 4. Static assets.
     const assetsJwt = await uploadAssetsPhase(
@@ -280,6 +292,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         vars: resolveVars(manifest, params.vars),
         assetsJwt,
         workflowNames: Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name])),
+        rateLimitIds,
       });
       try {
         // Every module in ONE multipart request, read and uploaded by one unit.
@@ -372,7 +385,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       });
     }
 
-    // 8. Cron triggers, then the workers.dev route.
+    // 8. Cron triggers, queue consumers, then the workers.dev route.
     const crons = manifest.worker.crons;
     if (crons.length > 0) {
       await run("set cron triggers", async ({ log, cf, orm }) => {
@@ -393,6 +406,15 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         return {};
       });
     }
+
+    // Queue consumers belong to the script, like its cron triggers.
+    await attachQueueConsumersPhase(
+      steps,
+      params.installId,
+      params.workerName,
+      queuePlan.consumers,
+      created,
+    );
 
     const subdomain = await lookupSubdomainPhase(steps);
     const host = `${params.workerName}.${subdomain}.workers.dev`;
@@ -421,6 +443,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       steps,
       step,
       `https://${host}${appHealthPath(manifest.catalog.install)}`,
+      appHealthMode(manifest.catalog.install),
     );
 
     // 10. Record the install.

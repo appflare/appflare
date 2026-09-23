@@ -44,12 +44,14 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
   d1: "D1 database",
   r2: "R2 bucket",
   queue: "Queue",
+  queue_consumer: "Queue consumer",
   vectorize: "Vectorize index",
   durable_object: "Durable Object class",
   workflow: "Workflow",
   cron: "Cron trigger",
   secret: "Secret",
   subdomain: "workers.dev route",
+  ratelimit: "Rate limit",
   domain: "Custom domain",
 };
 

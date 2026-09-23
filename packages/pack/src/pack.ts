@@ -30,6 +30,7 @@ import {
 } from "@appflare/schema";
 import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
+import { DEFAULT_BUILD_TIMEOUT_MS, runBuildCommand } from "./build-command.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { scrubEnv } from "./scrub-env.ts";
 import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
@@ -37,6 +38,7 @@ import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./
 import {
   classifyModuleType,
   collectBindings,
+  collectQueueConsumers,
   mainModuleName,
   type ResolvedWranglerConfig,
 } from "./wrangler-config.ts";
@@ -60,6 +62,8 @@ export interface PackOptions {
   env?: NodeJS.ProcessEnv;
   /** Optional progress logger. */
   logger?: (message: string) => void;
+  /** How long the catalog manifest's `install.buildCommand` may run. Default 15 minutes. */
+  buildTimeoutMs?: number;
 }
 
 /** Result of a successful {@link pack}. */
@@ -170,8 +174,8 @@ function runInstall(
 
 /**
  * Runs `wrangler deploy --dry-run --outdir` with the packer's own wrangler and a
- * scrubbed environment so nothing can reach any account. The checkout's
- * `build.command`, if any, runs as part of this.
+ * scrubbed environment so nothing can reach any account. The wrangler
+ * config's own `build.command`, if any, runs as part of this.
  */
 function runDryRun(
   wranglerConfigPath: string,
@@ -416,6 +420,18 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     runInstall(checkoutDir, catalog.install.packageManager, childEnv, logger);
   }
 
+  // (b2) The catalog's build command, before the wrangler config is read: the
+  // config may be a file the build writes.
+  if (catalog.install.buildCommand !== undefined) {
+    await runBuildCommand({
+      checkoutDir,
+      command: catalog.install.buildCommand,
+      env: childEnv,
+      timeoutMs: options.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
+      logger,
+    });
+  }
+
   // (c) Read the resolved wrangler config with wrangler's own reader.
   const wranglerConfigPath = path.resolve(checkoutDir, catalog.install.wranglerConfig);
   const config = unstable_readConfig({ config: wranglerConfigPath }) as ResolvedWranglerConfig;
@@ -430,8 +446,9 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   if (!config.compatibility_date) {
     throw new Error("wrangler config has no `compatibility_date`");
   }
-  // Before the build, so a missing Vectorize declaration fails fast.
+  // Before bundling, so a missing Vectorize declaration fails fast.
   const bindings = collectBindings(config, catalog.resources);
+  const queueConsumers = collectQueueConsumers(config);
 
   // (d) Bundle the worker via a scrubbed dry-run into a temp outdir.
   const outdir = mkdtempSync(path.join(tmpdir(), "appflare-pack-"));
@@ -519,6 +536,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       bindings,
       migrations: (config.migrations ?? []) as DoMigration[],
       crons: config.triggers?.crons ?? [],
+      ...(queueConsumers.length > 0 ? { queueConsumers } : {}),
       observability: config.observability ?? null,
       placement: config.placement ?? null,
       limits: config.limits ?? null,

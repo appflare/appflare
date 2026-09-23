@@ -49,6 +49,8 @@ interface World {
   stuck: Set<string>;
   /** When set, the bucket listing never runs dry: every page holds fresh keys. */
   endless?: boolean;
+  /** Worker consumers per queue id. */
+  consumers: Map<string, Array<{ consumer_id: string; script_name?: string; service?: string }>>;
 }
 
 function fakeWorld(over: Partial<World> = {}) {
@@ -63,6 +65,7 @@ function fakeWorld(over: Partial<World> = {}) {
     calls: [],
     failOnce: new Map(),
     stuck: new Set(),
+    consumers: new Map(),
     ...over,
   };
   const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
@@ -99,6 +102,16 @@ function fakeWorld(over: Partial<World> = {}) {
     if (m?.[1]) return world.kv.delete(m[1]) ? ok(null) : gone();
     m = /^DELETE \/d1\/database\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.d1.delete(m[1]) ? ok(null) : gone();
+    m = /^GET \/queues\/([^/]+)\/consumers$/.exec(key);
+    if (m?.[1]) return world.queues.has(m[1]) ? ok(world.consumers.get(m[1]) ?? []) : gone();
+    m = /^DELETE \/queues\/([^/]+)\/consumers\/([^/]+)$/.exec(key);
+    if (m?.[1] && m[2]) {
+      const list = world.consumers.get(m[1]) ?? [];
+      const at = list.findIndex((c) => c.consumer_id === m?.[2]);
+      if (at === -1) return gone();
+      list.splice(at, 1);
+      return ok(null);
+    }
     m = /^DELETE \/queues\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.queues.delete(m[1]) ? ok(null) : gone();
     m = /^DELETE \/vectorize\/v2\/indexes\/([^/]+)$/.exec(key);
@@ -369,6 +382,89 @@ describe("uninstall job: custom domains", () => {
     expect(retry.state("dom-a")).toBe("deleted");
     expect(fake.world.domains.size).toBe(0);
     expect(fake.world.scripts.has("cut")).toBe(false);
+  });
+});
+
+describe("uninstall job: queue consumers", () => {
+  /** Two queues of install `i1`, each with a consumer: one with its id, one without. */
+  async function seedConsumers(): Promise<void> {
+    const r = (
+      id: string,
+      kind: string,
+      name: string,
+      cfId: string | null,
+      binding: string | null,
+    ) =>
+      env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES (?1, 'i1', ?2, ?3, ?4, ?5, 1)`,
+      ).bind(id, kind, binding, name, cfId);
+    await env.DB.batch([
+      r("i1:queue:JOBS", "queue", "cut-jobs", "q-jobs", "JOBS"),
+      r("i1:queue:jobs-dlq", "queue", "cut-jobs-dlq", "q-dlq", null),
+      r("i1:queue_consumer:JOBS", "queue_consumer", "cut-jobs", "c-jobs", null),
+      r("i1:queue_consumer:jobs-dlq", "queue_consumer", "cut-jobs-dlq", null, null),
+    ]);
+  }
+  const world = () =>
+    fakeWorld({
+      queues: new Set(["q-1", "q-jobs", "q-dlq"]),
+      consumers: new Map([
+        ["q-jobs", [{ consumer_id: "c-jobs", script_name: "cut" }]],
+        [
+          "q-dlq",
+          [
+            { consumer_id: "c-other", script_name: "someone-else" },
+            // The API may name the Worker `service` instead of `script_name`.
+            { consumer_id: "c-dlq", service: "cut" },
+          ],
+        ],
+      ]),
+    });
+
+  it("removes every consumer before the Worker and before the queues it reads", async () => {
+    await seedInstall();
+    await seedConsumers();
+    const fake = world();
+    const r = await uninstall(
+      { installId: "i1", deleteResources: [...ALL_DATA, "i1:queue:JOBS", "i1:queue:jobs-dlq"] },
+      fake,
+    );
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.step.names.slice(0, 4)).toEqual([
+      "start",
+      "remove consumer of queue cut-jobs",
+      "remove consumer of queue cut-jobs-dlq",
+      "delete Worker cut",
+    ]);
+    const calls = fake.world.calls;
+    const worker = calls.indexOf("DELETE /workers/scripts/cut?force=true");
+    expect(calls.indexOf("DELETE /queues/q-jobs/consumers/c-jobs")).toBeLessThan(worker);
+    // No id recorded: found by the Worker's name, leaving another Worker's consumer alone.
+    expect(calls.indexOf("DELETE /queues/q-dlq/consumers/c-dlq")).toBeLessThan(worker);
+    expect(fake.world.consumers.get("q-dlq")).toEqual([
+      { consumer_id: "c-other", script_name: "someone-else" },
+    ]);
+    expect(calls).toContain("DELETE /queues/q-jobs");
+    expect(r.state("i1:queue_consumer:JOBS")).toBe("deleted");
+    expect(r.state("i1:queue_consumer:jobs-dlq")).toBe("deleted");
+    expect(r.state("i1:queue:jobs-dlq")).toBe("deleted");
+  });
+
+  it("removes consumers even when the admin keeps their queues, and counts gone ones as removed", async () => {
+    await seedInstall();
+    await seedConsumers();
+    const fake = world();
+    fake.world.consumers.set("q-jobs", []);
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.state("i1:queue:JOBS")).toBe("retained");
+    expect(r.state("i1:queue_consumer:JOBS")).toBe("deleted");
+    expect(r.state("i1:queue_consumer:jobs-dlq")).toBe("deleted");
+    expect(r.logs.map((l) => l.message)).toContain(
+      'The consumer of the queue "cut-jobs" was already gone.',
+    );
   });
 });
 

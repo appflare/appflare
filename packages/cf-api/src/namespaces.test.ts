@@ -508,6 +508,54 @@ describe("r2 / queues / vectorize", () => {
     expect(fake.last().url).toBe(`${A}/queues`);
   });
 
+  it("queues.createConsumer -> POST /queues/{id}/consumers with a Worker consumer body", async () => {
+    const { fake, client } = make({
+      result: { consumer_id: "c1", queue_name: "jobs", script_name: "app", type: "worker" },
+    });
+    const body = {
+      type: "worker" as const,
+      script_name: "app",
+      dead_letter_queue: "app-dlq",
+      settings: { batch_size: 10, max_retries: 3, max_wait_time_ms: 2000, max_concurrency: null },
+    };
+    const consumer = await client.queues.createConsumer("q1", body);
+    expect(consumer.consumer_id).toBe("c1");
+    expect(fake.last().method).toBe("POST");
+    expect(fake.last().url).toBe(`${A}/queues/q1/consumers`);
+    expect(await fake.last().request.json()).toEqual(body);
+  });
+
+  it("queues.listConsumers -> GET /queues/{id}/consumers", async () => {
+    const { fake, client } = make({ result: [{ consumer_id: "c1", script_name: "app" }] });
+    expect(await client.queues.listConsumers("q1")).toEqual([
+      { consumer_id: "c1", script_name: "app" },
+    ]);
+    expect(fake.last().url).toBe(`${A}/queues/q1/consumers`);
+  });
+
+  it("queues.updateConsumer -> PUT /queues/{id}/consumers/{consumer_id}", async () => {
+    const { fake, client } = make({ result: { consumer_id: "c1" } });
+    await client.queues.updateConsumer("q1", "c1", {
+      type: "worker",
+      script_name: "app",
+      settings: { batch_size: 5 },
+    });
+    expect(fake.last().method).toBe("PUT");
+    expect(fake.last().url).toBe(`${A}/queues/q1/consumers/c1`);
+    expect(await fake.last().request.json()).toEqual({
+      type: "worker",
+      script_name: "app",
+      settings: { batch_size: 5 },
+    });
+  });
+
+  it("queues.deleteConsumer -> DELETE /queues/{id}/consumers/{consumer_id}", async () => {
+    const { fake, client } = make();
+    await client.queues.deleteConsumer("q1", "c1");
+    expect(fake.last().method).toBe("DELETE");
+    expect(fake.last().url).toBe(`${A}/queues/q1/consumers/c1`);
+  });
+
   it("vectorize.listIndexes -> GET /vectorize/v2/indexes", async () => {
     const { fake, client } = make({ result: [{ name: "idx" }] });
     expect(await client.vectorize.listIndexes()).toEqual([{ name: "idx" }]);

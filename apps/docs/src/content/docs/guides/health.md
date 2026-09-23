@@ -20,6 +20,22 @@ serve nothing at `/`, and a 404 from the app still proves the Worker is running.
 The check never fails the job. Everything was already created by then; the result is
 recorded on the install.
 
+## Apps behind a sign-in
+
+Some apps put every route behind Cloudflare Access or their own sign-in, so a
+request without credentials cannot tell whether the app works. A redirect to a
+sign-in page, a 401, or a 403 already counts as **Verified**, but some of these apps
+answer with an error of their own instead, for example while their sign-in is not
+configured yet.
+
+Such an app sets `install.healthMode` to `"status-only"` in its catalog manifest.
+Any answer from the app's Worker then counts as **Verified**, a 5xx of its own
+included. Connection failures and Cloudflare's own error pages are still treated as
+above: the "not live yet" page (`error code: 1042`) and connection errors are
+retried, and a page Cloudflare serves because the Worker crashed (such as
+`error code: 1101`) still counts as a server error. An update's check of the new
+version before it serves traffic follows the same mode.
+
 ## The results
 
 | Badge | Status | Meaning |

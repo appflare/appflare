@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   classifyModuleType,
   collectBindings,
+  collectQueueConsumers,
   mainModuleName,
+  QueueConsumerError,
   type ResolvedWranglerConfig,
   VectorizeDeclarationError,
 } from "./wrangler-config.ts";
@@ -126,8 +128,117 @@ describe("collectBindings", () => {
     expect(collectBindings(config)).toEqual([{ type: "ai", name: "AI" }]);
   });
 
+  it("keeps a send_email binding's address restrictions, fixed destination first", () => {
+    const config: ResolvedWranglerConfig = {
+      send_email: [
+        {
+          name: "TO_ADMIN",
+          destination_address: "admin@example.com",
+          allowed_destination_addresses: ["ignored@example.com"],
+          allowed_sender_addresses: ["app@example.com"],
+        },
+        { name: "TO_TEAM", allowed_destination_addresses: ["a@example.com", "b@example.com"] },
+        { name: "ANY" },
+      ],
+    };
+    expect(collectBindings(config)).toEqual([
+      {
+        type: "send_email",
+        name: "TO_ADMIN",
+        destination_address: "admin@example.com",
+        allowed_sender_addresses: ["app@example.com"],
+      },
+      {
+        type: "send_email",
+        name: "TO_TEAM",
+        allowed_destination_addresses: ["a@example.com", "b@example.com"],
+      },
+      { type: "send_email", name: "ANY" },
+    ]);
+  });
+
+  it("passes rate limits and Images through with the upload's binding types", () => {
+    const config: ResolvedWranglerConfig = {
+      ratelimits: [
+        { name: "RATE_LIMITER", namespace_id: "1001", simple: { limit: 30, period: 60 } },
+      ],
+      images: { binding: "IMAGES" },
+    };
+    expect(collectBindings(config)).toEqual([
+      {
+        type: "ratelimit",
+        name: "RATE_LIMITER",
+        namespace_id: "1001",
+        simple: { limit: 30, period: 60 },
+      },
+      { type: "images", name: "IMAGES" },
+    ]);
+  });
+
   it("returns an empty array when there are no bindings", () => {
     expect(collectBindings({} as ResolvedWranglerConfig)).toEqual([]);
+  });
+});
+
+describe("collectQueueConsumers", () => {
+  it("names each consumed queue by its producer binding, else by its upstream name", () => {
+    const config: ResolvedWranglerConfig = {
+      queues: {
+        producers: [
+          { binding: "MEMBER_REMOVAL_QUEUE", queue: "flaremo-member-removal" },
+          { binding: "EXPORT", queue: "flaremo-data-export" },
+          { binding: "EXPORT_AGAIN", queue: "flaremo-data-export" },
+        ],
+        consumers: [
+          {
+            queue: "flaremo-member-removal",
+            max_batch_size: 10,
+            max_retries: 5,
+            dead_letter_queue: "flaremo-dlq",
+          },
+          {
+            queue: "flaremo-data-export",
+            type: "worker",
+            max_batch_timeout: 2,
+            max_concurrency: null,
+            retry_delay: 30,
+          },
+          { queue: "flaremo-dlq" },
+        ],
+      },
+    };
+    const consumers = collectQueueConsumers(config);
+    expect(consumers).toEqual([
+      {
+        queue: { binding: "MEMBER_REMOVAL_QUEUE" },
+        max_batch_size: 10,
+        max_retries: 5,
+        dead_letter_queue: { name: "flaremo-dlq" },
+      },
+      {
+        queue: { binding: "EXPORT" },
+        max_batch_timeout: 2,
+        max_concurrency: null,
+        retry_delay: 30,
+      },
+      { queue: { name: "flaremo-dlq" } },
+    ]);
+  });
+
+  it("returns nothing without consumers", () => {
+    expect(collectQueueConsumers({})).toEqual([]);
+    expect(
+      collectQueueConsumers({ queues: { producers: [{ binding: "Q", queue: "q" }] } }),
+    ).toEqual([]);
+  });
+
+  it("refuses an HTTP pull consumer and a queue consumed twice", () => {
+    expect(() =>
+      collectQueueConsumers({ queues: { consumers: [{ queue: "q", type: "http_pull" }] } }),
+    ).toThrow(QueueConsumerError);
+    expect(() =>
+      collectQueueConsumers({ queues: { consumers: [{ queue: "q" }, { queue: "q" }] } }),
+    ).toThrow(/two consumers/);
   });
 });
 

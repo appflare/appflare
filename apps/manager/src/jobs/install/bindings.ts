@@ -35,13 +35,23 @@ export const PASSTHROUGH_BINDING_TYPES: ReadonlySet<string> = new Set([
   "version_metadata",
   "analytics_engine",
   "send_email",
+  // A rate limit's `namespace_id` is replaced with the install's own id
+  // (install/rate-limits.ts): counters are shared account-wide per id.
+  "ratelimit",
+  "images",
 ]);
 
 interface ResourcePlanFields {
+  /** The binding, or for a resource no binding uses, the key it is recorded under. */
   binding: string;
   kind: ProvisionedKind;
   /** `<workerName>-<binding>` (see {@link resourceName}). */
   name: string;
+  /**
+   * True for a resource the Worker does not bind (a queue only a consumer
+   * names): it is recorded without a binding.
+   */
+  unbound?: boolean;
 }
 
 /**

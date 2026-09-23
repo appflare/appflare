@@ -11,6 +11,12 @@ export const DATA_RESOURCE_KINDS = ["kv", "d1", "r2", "queue", "vectorize"] as c
 export type DataResourceKind = (typeof DATA_RESOURCE_KINDS)[number];
 
 /**
+ * A rate limit binding's namespace id, assigned per install. Its counters exist
+ * only while the Worker binds the id, so it goes with the Worker.
+ */
+export const RATE_LIMIT_KIND = "ratelimit" as const;
+
+/**
  * Resources that exist only as part of the Worker. Deleting the Worker with
  * `?force=true` removes its cron triggers, workers.dev route, secrets, Durable
  * Object namespaces (and their data), and the Workflows bound to it, so they
@@ -23,6 +29,7 @@ export const WORKER_BOUND_KINDS = [
   "cron",
   "secret",
   "subdomain",
+  RATE_LIMIT_KIND,
 ] as const;
 
 /**
@@ -33,6 +40,13 @@ export const WORKER_BOUND_KINDS = [
  * holds either way.
  */
 export const CUSTOM_DOMAIN_KIND = "domain" as const;
+
+/**
+ * A queue consumer: the link that delivers a queue's messages to the Worker.
+ * It holds no data, so an uninstall always removes it, with its own call,
+ * before the Worker and before any queue it reads.
+ */
+export const QUEUE_CONSUMER_KIND = "queue_consumer" as const;
 
 export function isDataResourceKind(kind: string): kind is DataResourceKind {
   return (DATA_RESOURCE_KINDS as readonly string[]).includes(kind);

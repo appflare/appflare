@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { ScriptMetadata, VersionMetadata } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  appHealthMode,
   appHealthPath,
   artifactManifestSchema,
   tooManyModulesMessage,
@@ -30,6 +31,13 @@ import {
   uploadAssetsPhase,
   verifyManifestPhase,
 } from "./install/phases";
+import {
+  consumerPlansOf,
+  diffConsumerQueues,
+  planQueueConsumers,
+  syncQueueConsumersPhase,
+} from "./install/queue-consumers";
+import { assignRateLimitsPhase } from "./install/rate-limits";
 import { RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
@@ -188,6 +196,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         appliedDoTag: install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
         // The installed version's index shapes: a kept index cannot change shape.
         vectorizeShapes: vectorizeShapesOf(install.manifest_json),
+        // The installed version's queue consumers, to tell which ones change.
+        previousConsumers: consumerPlansOf(install.manifest_json),
         userVars: parseVars(install.config_json),
         artifacts: app.artifacts,
         digest: app.digest,
@@ -214,6 +224,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       started.resources,
       started.vectorizeShapes,
     );
+    const queuePlan = planQueueConsumers(workerName, manifest.worker);
+    const queueDiff = diffConsumerQueues(queuePlan.queues, started.resources);
     const path = updatePath(manifest, started.appliedDoTag);
     const fullDeploy = path.fullDeploy;
     const newSecrets = missingSecrets(
@@ -226,9 +238,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       if (value !== undefined && value.length > 0) secretValues[secret.name] = value;
     }
     const healthPath = appHealthPath(manifest.catalog.install);
+    const healthMode = appHealthMode(manifest.catalog.install);
 
     await run("plan update", async ({ log }) => {
-      const problems = [...diff.problems];
+      const problems = [...diff.problems, ...queuePlan.problems, ...queueDiff.problems];
       for (const secret of newSecrets) {
         if (secretValues[secret.name] === undefined) {
           problems.push(
@@ -244,6 +257,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       for (const res of diff.toCreate) {
         log.info(`New binding ${res.binding}: creating ${RESOURCE_LABEL[res.kind]} "${res.name}".`);
       }
+      for (const res of queueDiff.toCreate) {
+        log.info(`New queue for a consumer: creating ${RESOURCE_LABEL[res.kind]} "${res.name}".`);
+      }
       for (const row of diff.leftInPlace) {
         log.info(
           `Binding ${row.binding} is not in this version; its ${row.kind} "${row.name}" is left in place.`,
@@ -258,7 +274,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         );
       }
       log.info(
-        `Plan: ${diff.existing.length} resource(s) kept, ${diff.toCreate.length} to create, ${diff.leftInPlace.length} left in place.`,
+        `Plan: ${diff.existing.length + queueDiff.existing.length} resource(s) kept, ${diff.toCreate.length + queueDiff.toCreate.length} to create, ${diff.leftInPlace.length} left in place.`,
       );
       return {};
     });
@@ -322,10 +338,17 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
 
     // 3. Resources for new bindings; nothing is deleted.
     for (const wf of diff.newWorkflows) await checkWorkflowNamePhase(steps, wf);
-    const bound = [...diff.existing];
-    for (const res of diff.toCreate) {
+    const bound = [...diff.existing, ...queueDiff.existing];
+    for (const res of [...diff.toCreate, ...queueDiff.toCreate]) {
       bound.push(await provisionResourcePhase(steps, params.installId, res));
     }
+
+    // Rate limits keep the install's namespaces; a new one gets its own.
+    const rateLimitIds = await assignRateLimitsPhase(
+      steps,
+      params.installId,
+      manifest.worker.bindings,
+    );
 
     // 4. Static assets.
     const assetsJwt = await uploadAssetsPhase(
@@ -345,6 +368,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         vars: resolveVars(manifest, started.userVars),
         assetsJwt,
         workflowNames: diff.workflowNames,
+        rateLimitIds,
       });
       const metadata: ScriptMetadata = {
         ...base,
@@ -473,6 +497,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           healthyMessage: `version ${uploaded.versionId} is serving`,
           maxAttempts: CANARY_MAX_ATTEMPTS,
           expectVersion: params.version,
+          mode: healthMode,
         });
       }
 
@@ -537,9 +562,20 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       manifest.worker.crons,
     );
 
+    // Queue consumers belong to the script too: set them once the version serves.
+    await syncQueueConsumersPhase(steps, {
+      installId: params.installId,
+      workerName,
+      wanted: queuePlan.consumers,
+      // A job started before consumers were tracked has no record of them.
+      previous: started.previousConsumers ?? [],
+      queues: bound,
+      recorded: started.resources,
+    });
+
     // 9. Live health check, recorded rather than fatal: the version already serves.
     const url = `https://${workerName}.${subdomain}.workers.dev${healthPath}`;
-    const health = await checkLiveHealthPhase(steps, step, url);
+    const health = await checkLiveHealthPhase(steps, step, url, healthMode);
 
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());

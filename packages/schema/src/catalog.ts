@@ -26,6 +26,62 @@ export const semverSchema = z
     "must be a semver version such as 1.2.3, without a leading v",
   );
 
+/**
+ * Rules for a catalog manifest's `install.buildCommand`: a single command the
+ * packer runs as a plain argv, without a shell. Anything a shell would
+ * interpret (pipes, redirects, quotes, variables, globs, command separators,
+ * environment assignments) is refused rather than passed through literally,
+ * so what the manifest says is exactly what runs.
+ */
+
+/** The longest build command a manifest may declare. */
+export const MAX_BUILD_COMMAND_LENGTH = 256;
+
+/**
+ * Characters a build command may contain: letters, digits, spaces, and
+ * `@ % + , . / : = _ -`. Enough for `pnpm --filter @scope/web build` or
+ * `npx opennextjs-cloudflare build`; none of them means anything to a shell.
+ */
+export const BUILD_COMMAND_PATTERN = /^[A-Za-z0-9@%+,./:=_ -]+$/;
+
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/** The words of a build command, split on spaces. */
+export function buildCommandArgv(command: string): string[] {
+  return command.split(" ").filter((word) => word.length > 0);
+}
+
+/**
+ * Why `command` cannot be a build command, or null when it can. The message
+ * names the first offending character or word.
+ */
+export function buildCommandProblem(command: string): string | null {
+  if (command.length > MAX_BUILD_COMMAND_LENGTH) {
+    return `is longer than ${MAX_BUILD_COMMAND_LENGTH} characters`;
+  }
+  for (const char of command) {
+    if (!BUILD_COMMAND_PATTERN.test(char)) {
+      const shown = /^[\x21-\x7e]$/.test(char)
+        ? `"${char}"`
+        : `U+${char.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`;
+      return (
+        `contains ${shown}; it runs as one plain command without a shell, so only letters, ` +
+        "digits, spaces, and @ % + , . / : = _ - are allowed (no pipes, redirects, quotes, " +
+        "variables, globs, or command separators)"
+      );
+    }
+  }
+  const argv = buildCommandArgv(command);
+  const program = argv[0];
+  if (program === undefined) return "is empty";
+  const assignment = argv.find((word) => ENV_ASSIGNMENT.test(word));
+  if (assignment !== undefined) {
+    return `sets an environment variable ("${assignment}"); the packer runs the command in a fixed environment, so environment assignments are not allowed`;
+  }
+  if (program.startsWith("-")) return `starts with an option ("${program}") instead of a program`;
+  return null;
+}
+
 /** How an app is built. v1 ships `artifact` only. */
 export const installTierSchema = z.enum(["artifact", "sandbox", "self-deploying"]);
 export type InstallTier = z.infer<typeof installTierSchema>;
@@ -125,6 +181,31 @@ export const catalogSourceSchema = z.object({
 });
 export type CatalogSource = z.infer<typeof catalogSourceSchema>;
 
+/**
+ * How the health check after an install, update, or rollback reads the
+ * Worker's answer.
+ *
+ * - `default`: a redirect or a 4xx counts as verified (the Worker answered),
+ *   a server error (5xx) as unhealthy.
+ * - `status-only`: any answer the Worker itself gives counts as verified,
+ *   server errors included, because an app behind Cloudflare Access or its
+ *   own sign-in answers every unauthenticated request with a redirect, 401,
+ *   403, or an error of its own. Connection failures and Cloudflare's own
+ *   error pages (`error code: 1042` while the route goes live, or a Worker
+ *   that crashed) are still retried or reported as before.
+ */
+export const healthModeSchema = z
+  .enum(["default", "status-only"])
+  .describe(
+    'How the health check reads the Worker\'s answer. `"default"` counts redirects and 4xx ' +
+      'answers as verified and server errors (5xx) as unhealthy. `"status-only"` counts any ' +
+      "answer from the Worker itself as verified, server errors included: use it for apps whose " +
+      "health path sits behind Cloudflare Access or the app's own sign-in. Either way, " +
+      "connection failures and Cloudflare's error pages (such as `error code: 1042` while the " +
+      'route goes live) are retried. Defaults to `"default"`.',
+  );
+export type HealthMode = z.infer<typeof healthModeSchema>;
+
 /** How the packer builds and names the app. */
 export const catalogInstallSchema = z.object({
   tier: installTierSchema,
@@ -150,6 +231,39 @@ export const catalogInstallSchema = z.object({
     .regex(/^\/[^\s?#]*$/, "healthPath is a URL path starting with /, without query or fragment")
     .optional(),
   /**
+   * How the health check reads the Worker's answer. Omitted means `"default"`.
+   * `"status-only"` is for apps whose every route sits behind Cloudflare
+   * Access or the app's own sign-in, so no unauthenticated request can show
+   * whether the app is healthy.
+   */
+  healthMode: healthModeSchema.optional(),
+  /**
+   * One command the packer runs in the checkout after installing
+   * dependencies and before bundling, for apps whose wrangler config has no
+   * `build.command` (Vite, React Router, OpenNext). Optional for the same
+   * reason as `fixedWorkerName`.
+   */
+  buildCommand: z
+    .string()
+    .max(MAX_BUILD_COMMAND_LENGTH)
+    .regex(
+      BUILD_COMMAND_PATTERN,
+      "buildCommand may contain only letters, digits, spaces, and @ % + , . / : = _ -; it runs without a shell",
+    )
+    .superRefine((command, ctx) => {
+      const problem = buildCommandProblem(command);
+      if (problem !== null) ctx.addIssue({ code: "custom", message: `buildCommand ${problem}` });
+    })
+    .describe(
+      "One command the packer runs at the root of the checkout after installing dependencies " +
+        "(with install scripts disabled) and before bundling, for example " +
+        "`pnpm --filter @scope/web build`. Use it when the wrangler config has no `build.command`. " +
+        "It runs as a plain command without a shell, with no credentials in its environment, and " +
+        "the checkout's `node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, " +
+        "and environment assignments are not allowed. At most 256 characters.",
+    )
+    .optional(),
+  /**
    * The version shown for this entry when the repository's tag does not
    * describe this app (monorepos); it must change whenever `source` moves.
    * Omitted means the version comes from `source.ref` when it is a semver tag,
@@ -172,6 +286,11 @@ export function hasFixedWorkerName(install: Pick<CatalogInstall, "fixedWorkerNam
 /** The path health checks probe: `install.healthPath`, else `/`. */
 export function appHealthPath(install: Pick<CatalogInstall, "healthPath">): string {
   return install.healthPath ?? "/";
+}
+
+/** How the health check reads the Worker's answer: `install.healthMode`, else `default`. */
+export function appHealthMode(install: Pick<CatalogInstall, "healthMode">): HealthMode {
+  return install.healthMode ?? "default";
 }
 
 /**

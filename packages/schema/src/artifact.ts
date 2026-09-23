@@ -121,6 +121,41 @@ export function isVectorizeBinding(binding: WorkerBinding): binding is Vectorize
   return binding.type === "vectorize";
 }
 
+/**
+ * A queue the app uses, as the artifact names it. Queue names belong to the
+ * account, so the install creates its own queue for each one and never uses
+ * the upstream name as is:
+ *
+ * - `{ binding }`: the queue the app's producer binding of that name sends
+ *   to; the install creates it for the binding.
+ * - `{ name }`: a queue no producer binding sends to (typically a dead-letter
+ *   queue), by its name in the app's wrangler config; the install creates
+ *   `<workerName>-<name>` for it.
+ */
+export const queueRefSchema = z.union([
+  z.strictObject({ binding: z.string().min(1) }),
+  z.strictObject({ name: z.string().min(1).max(63) }),
+]);
+export type QueueRef = z.infer<typeof queueRefSchema>;
+
+/**
+ * A queue consumer: the app's Worker receives the queue's messages in its
+ * `queue()` handler. Settings keep wrangler's `queues.consumers` names and
+ * units (`max_batch_timeout` and `retry_delay` in seconds); omitted settings
+ * take Cloudflare's defaults, and `max_concurrency: null` asks for the
+ * platform's maximum.
+ */
+export const queueConsumerSchema = z.object({
+  queue: queueRefSchema,
+  max_batch_size: z.int().min(1).optional(),
+  max_batch_timeout: z.number().min(0).optional(),
+  max_retries: z.int().min(0).optional(),
+  dead_letter_queue: queueRefSchema.optional(),
+  max_concurrency: z.int().min(1).nullable().optional(),
+  retry_delay: z.int().min(0).optional(),
+});
+export type QueueConsumer = z.infer<typeof queueConsumerSchema>;
+
 /** A wrangler Durable Object migration entry. Permissive; wrangler owns the shape. */
 export const doMigrationSchema = z.looseObject({ tag: z.string().min(1) });
 export type DoMigration = z.infer<typeof doMigrationSchema>;
@@ -144,11 +179,55 @@ export const artifactWorkerSchema = z.object({
   bindings: z.array(workerBindingSchema),
   migrations: z.array(doMigrationSchema),
   crons: z.array(z.string()),
+  /**
+   * Queues whose messages the Worker consumes. Omitted when there are none,
+   * so artifacts of apps without consumers keep the shape they always had.
+   */
+  queueConsumers: z.array(queueConsumerSchema).optional(),
   observability: workerObservabilitySchema,
   placement: workerPlacementSchema,
   limits: workerLimitsSchema,
 });
 export type ArtifactWorker = z.infer<typeof artifactWorkerSchema>;
+
+/** How a queue reference reads in messages: `queue binding JOBS` or `queue "jobs-dlq"`. */
+export function describeQueueRef(ref: QueueRef): string {
+  return "binding" in ref ? `the queue of binding ${ref.binding}` : `the queue "${ref.name}"`;
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * What is wrong with a Worker's queue consumers, as sentences; empty when
+ * nothing is. A `{ binding }` reference must name one of the Worker's own
+ * `queue` bindings, and a queue is consumed at most once.
+ */
+export function queueConsumerProblems(
+  worker: Pick<ArtifactWorker, "bindings" | "queueConsumers">,
+): string[] {
+  const problems: string[] = [];
+  const queueBindings = new Set(
+    worker.bindings.filter((b) => b.type === "queue").map((b) => b.name),
+  );
+  const seen = new Set<string>();
+  for (const consumer of worker.queueConsumers ?? []) {
+    for (const ref of [consumer.queue, consumer.dead_letter_queue]) {
+      if (ref !== undefined && "binding" in ref && !queueBindings.has(ref.binding)) {
+        problems.push(
+          `A queue consumer names the queue binding ${ref.binding}, but the Worker has no queue binding by that name.`,
+        );
+      }
+    }
+    const key = JSON.stringify(consumer.queue);
+    if (seen.has(key)) {
+      problems.push(`${capitalize(describeQueueRef(consumer.queue))} has more than one consumer.`);
+    }
+    seen.add(key);
+  }
+  return problems;
+}
 
 /** Static-assets router config (wrangler `assets` shape). */
 export const artifactAssetsConfigSchema = z.looseObject({

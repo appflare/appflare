@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { buildArtifactFixture } from "../../test/artifact-fixture";
 import {
   classifyHealthProbe,
   classifyLiveProbe,
   decideLiveHealth,
   type HealthProbe,
+  healthCheckOfManifest,
   healthPathOfManifest,
   isEdge1042,
+  isEdgeErrorPage,
   LIVE_HEALTH_WINDOW_MS,
   liveHealthDelaySeconds,
   settleHealthProbe,
@@ -143,6 +146,74 @@ describe("live health window", () => {
     expect(settleHealthProbe(edge).status).toBe("unverified");
     expect(settleHealthProbe(down).status).toBe("unverified");
     expect(settleHealthProbe(res(503)).status).toBe("unhealthy");
+  });
+});
+
+describe("the status-only health mode", () => {
+  const crashed = res(500, "error code: 1101");
+  const edge = res(404, "error code: 1042");
+  const down: HealthProbe = { kind: "error", message: "connection refused" };
+
+  it("tells Cloudflare's error pages from the Worker's own answers", () => {
+    expect(isEdgeErrorPage(crashed)).toBe(true);
+    expect(isEdgeErrorPage(edge)).toBe(true);
+    expect(isEdgeErrorPage(res(500, "Cloudflare Access must be configured"))).toBe(false);
+    expect(isEdgeErrorPage(down)).toBe(false);
+  });
+
+  it("counts any answer of the Worker itself as verified, its own 5xx included", () => {
+    for (const answer of [
+      res(500, "Cloudflare Access must be configured in production."),
+      res(403, "Missing required CF Access JWT"),
+      res(401),
+      res(302),
+    ]) {
+      expect(classifyLiveProbe(answer, "status-only")).toBe("pass");
+      expect(settleHealthProbe(answer, "status-only").status).toBe("verified");
+      expect(decideLiveHealth(answer, 1, 0, undefined, "status-only")).toMatchObject({
+        done: true,
+        status: "verified",
+      });
+      expect(classifyHealthProbe(answer, 1, 0, 6, "status-only").verdict).toBe("healthy");
+    }
+    // The default still calls the Worker's own 5xx unhealthy.
+    expect(settleHealthProbe(res(500, "oops")).status).toBe("unhealthy");
+    expect(classifyLiveProbe(res(500, "oops"))).toBe("retry");
+  });
+
+  it("still retries the 1042 page and connection errors, and judges a crash page as before", () => {
+    expect(classifyLiveProbe(edge, "status-only")).toBe("retry");
+    expect(classifyLiveProbe(down, "status-only")).toBe("retry");
+    expect(classifyLiveProbe(crashed, "status-only")).toBe("retry");
+    expect(settleHealthProbe(edge, "status-only").status).toBe("unverified");
+    expect(settleHealthProbe(down, "status-only").status).toBe("unverified");
+    expect(settleHealthProbe(crashed, "status-only").status).toBe("unhealthy");
+    expect(classifyHealthProbe(edge, 1, 0, 6, "status-only").verdict).toBe("retry");
+    expect(classifyHealthProbe(crashed, 6, 30_000, 6, "status-only").verdict).toBe("unhealthy");
+    // A plain 404 may be a route still going live: it waits out the window as before.
+    expect(classifyLiveProbe(res(404, "Not found"), "status-only")).toBe("soft-404");
+  });
+});
+
+describe("healthCheckOfManifest", () => {
+  it("reads the path and mode from the recorded catalog manifest", async () => {
+    const f = await buildArtifactFixture({
+      catalog: {
+        install: {
+          tier: "artifact",
+          packageManager: "pnpm",
+          wranglerConfig: "wrangler.jsonc",
+          workerName: "cut",
+          healthPath: "/api/health",
+          healthMode: "status-only",
+        },
+      },
+    });
+    expect(healthCheckOfManifest(JSON.stringify(f.manifest))).toEqual({
+      path: "/api/health",
+      mode: "status-only",
+    });
+    expect(healthCheckOfManifest(null)).toEqual({ path: "/", mode: "default" });
   });
 });
 

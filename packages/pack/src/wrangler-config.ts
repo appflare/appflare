@@ -1,4 +1,10 @@
-import type { CatalogResources, ModuleType, WorkerBinding } from "@appflare/schema";
+import type {
+  CatalogResources,
+  ModuleType,
+  QueueConsumer,
+  QueueRef,
+  WorkerBinding,
+} from "@appflare/schema";
 
 /**
  * A structural view of the subset of wrangler's resolved config
@@ -17,7 +23,10 @@ export interface ResolvedWranglerConfig {
   kv_namespaces?: Array<{ binding: string }>;
   d1_databases?: Array<{ binding: string; migrations_dir?: string | null }>;
   r2_buckets?: Array<{ binding: string }>;
-  queues?: { producers?: Array<{ binding: string; delivery_delay?: number }> };
+  queues?: {
+    producers?: Array<{ binding: string; queue?: string; delivery_delay?: number }>;
+    consumers?: WranglerQueueConsumer[];
+  };
   vectorize?: Array<{ binding: string }>;
   hyperdrive?: Array<{ binding: string }>;
   analytics_engine_datasets?: Array<{ binding: string; dataset?: string }>;
@@ -45,7 +54,18 @@ export interface ResolvedWranglerConfig {
   ai?: { binding: string } | null;
   browser?: { binding: string } | null;
   version_metadata?: { binding: string } | null;
-  send_email?: Array<{ name: string; destination_address?: string }>;
+  send_email?: Array<{
+    name: string;
+    destination_address?: string;
+    allowed_destination_addresses?: string[];
+    allowed_sender_addresses?: string[];
+  }>;
+  ratelimits?: Array<{
+    name: string;
+    namespace_id: string;
+    simple?: { limit: number; period: number };
+  }>;
+  images?: { binding: string } | null;
   assets?: {
     directory?: string;
     binding?: string | null;
@@ -58,6 +78,18 @@ export interface ResolvedWranglerConfig {
   observability?: { enabled?: boolean; [k: string]: unknown } | null;
   placement?: Record<string, unknown> | null;
   limits?: Record<string, unknown> | null;
+}
+
+/** One entry of wrangler's `queues.consumers`. */
+export interface WranglerQueueConsumer {
+  queue: string;
+  type?: string;
+  max_batch_size?: number;
+  max_batch_timeout?: number;
+  max_retries?: number;
+  dead_letter_queue?: string;
+  max_concurrency?: number | null;
+  retry_delay?: number;
 }
 
 /**
@@ -84,7 +116,11 @@ export class VectorizeDeclarationError extends Error {
  * copy only the handful of fields known to be safe, so no account id
  * (`id`/`database_id`/`namespace_id`/`bucket_name`/`index_name`/`certificate_id`,
  * preview ids, queue names, etc.) can ever leak into a published artifact. The
- * user's account fills those in at install time. `type` values use Cloudflare's
+ * user's account fills those in at install time. (A rate limit's
+ * `namespace_id` is recorded as the app's author wrote it, since the upload
+ * shape needs one, but the manager replaces it with an id of each install's
+ * own: Cloudflare shares a namespace's counters across every Worker in the
+ * account that binds it.) `type` values use Cloudflare's
  * upload-metadata binding type names so the manager can pass them through.
  * Unrecognized kinds are intentionally not emitted (extend this as the catalog
  * grows); DO class references and `vars` are handled here too.
@@ -174,7 +210,27 @@ export function collectBindings(
     });
   }
   for (const mail of config.send_email ?? []) {
-    push("send_email", mail.name);
+    // The restrictions are addresses the app's author chose, not account ids.
+    // Same precedence as wrangler's upload: a fixed destination wins over a
+    // list of allowed destinations; allowed senders apply either way.
+    const destination =
+      mail.destination_address !== undefined
+        ? { destination_address: mail.destination_address }
+        : { allowed_destination_addresses: mail.allowed_destination_addresses };
+    push("send_email", mail.name, {
+      ...destination,
+      allowed_sender_addresses: mail.allowed_sender_addresses,
+    });
+  }
+  for (const limit of config.ratelimits ?? []) {
+    // `namespace_id` names the limit's counters, which Cloudflare shares
+    // across every Worker in the account that binds the same id. It is kept
+    // only so the binding stays complete; the manager gives each install an
+    // id of its own before uploading.
+    push("ratelimit", limit.name, { namespace_id: limit.namespace_id, simple: limit.simple });
+  }
+  if (config.images) {
+    push("images", config.images.binding);
   }
   if (config.ai) {
     push("ai", config.ai.binding);
@@ -193,6 +249,62 @@ export function collectBindings(
   }
 
   return bindings;
+}
+
+/** The wrangler config declares a queue consumer the packer cannot record. */
+export class QueueConsumerError extends Error {
+  override name = "QueueConsumerError";
+}
+
+/**
+ * Records wrangler's `queues.consumers` for the artifact. Queue names belong
+ * to the account, so each queue is named the way the install will know it: by
+ * the producer binding that sends to it (the install creates that binding's
+ * queue), else by its upstream name, which the install turns into a queue of
+ * its own (`<workerName>-<name>`). Dead-letter queues follow the same rule.
+ * Settings keep wrangler's names and units. Only Worker consumers are
+ * recorded; an HTTP pull consumer (`type: "http_pull"`) throws
+ * {@link QueueConsumerError}, since nothing in the app's Worker would read it.
+ */
+export function collectQueueConsumers(config: ResolvedWranglerConfig): QueueConsumer[] {
+  const producerOf = new Map<string, string>();
+  for (const producer of config.queues?.producers ?? []) {
+    if (producer.queue !== undefined && !producerOf.has(producer.queue)) {
+      producerOf.set(producer.queue, producer.binding);
+    }
+  }
+  const ref = (queue: string): QueueRef => {
+    const binding = producerOf.get(queue);
+    return binding !== undefined ? { binding } : { name: queue };
+  };
+  const consumers: QueueConsumer[] = [];
+  const seen = new Set<string>();
+  for (const consumer of config.queues?.consumers ?? []) {
+    if (consumer.type !== undefined && consumer.type !== "worker") {
+      throw new QueueConsumerError(
+        `the wrangler config declares a ${consumer.type} consumer for the queue ${consumer.queue}; ` +
+          "Appflare attaches only Worker consumers (the app's own queue() handler)",
+      );
+    }
+    if (seen.has(consumer.queue)) {
+      throw new QueueConsumerError(
+        `the wrangler config declares two consumers for the queue ${consumer.queue}; a Worker consumes a queue once`,
+      );
+    }
+    seen.add(consumer.queue);
+    const out: QueueConsumer = { queue: ref(consumer.queue) };
+    if (consumer.max_batch_size !== undefined) out.max_batch_size = consumer.max_batch_size;
+    if (consumer.max_batch_timeout !== undefined)
+      out.max_batch_timeout = consumer.max_batch_timeout;
+    if (consumer.max_retries !== undefined) out.max_retries = consumer.max_retries;
+    if (consumer.dead_letter_queue !== undefined) {
+      out.dead_letter_queue = ref(consumer.dead_letter_queue);
+    }
+    if (consumer.max_concurrency !== undefined) out.max_concurrency = consumer.max_concurrency;
+    if (consumer.retry_delay !== undefined) out.retry_delay = consumer.retry_delay;
+    consumers.push(out);
+  }
+  return consumers;
 }
 
 /**

@@ -50,7 +50,9 @@ fails for a moment. The log shows every API call as `METHOD path -> status`.
 4. Uploads the app's static assets, then the Worker with every binding filled in.
    Every file is read from the signed release and checked against its sha256 first.
 5. Applies the app's D1 migrations, in the same `d1_migrations` table wrangler uses.
-6. Sets the secrets, the cron triggers, and the `workers.dev` route.
+6. Sets the secrets and the cron triggers, attaches the Worker to each queue it
+   consumes, and enables the `workers.dev` route. A queue that only a consumer names,
+   such as a dead-letter queue, is created in step 3 as `<worker-name>-<queue name>`.
 7. Runs a [health check](/guides/health/).
 
 If a step fails, the job stops and names the step. Everything created so far stays

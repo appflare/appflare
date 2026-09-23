@@ -84,6 +84,8 @@ export interface ScriptMetadataInput {
   vars: Readonly<Record<string, string>>;
   /** The assets completion JWT, or null when the artifact has no assets. */
   assetsJwt: string | null;
+  /** Rate limit binding name -> the install's own namespace id (install/rate-limits.ts). */
+  rateLimitIds?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -92,7 +94,7 @@ export interface ScriptMetadataInput {
  * together (`keep_bindings` is not used for installs; the script is new).
  */
 export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata {
-  const { manifest, resources, vars, assetsJwt, workflowNames = {} } = input;
+  const { manifest, resources, vars, assetsJwt, workflowNames = {}, rateLimitIds = {} } = input;
   const byBinding = new Map(resources.map((r) => [r.binding, r]));
   const bindings: UploadBinding[] = [];
 
@@ -105,6 +107,13 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
       const name = workflowNames[binding.name];
       if (name === undefined) throw new Error(`workflow binding ${binding.name} has no name`);
       bindings.push({ ...binding, workflow_name: name });
+    } else if (binding.type === "ratelimit") {
+      // Never the artifact's id: counters are shared by every Worker binding it.
+      const namespaceId = rateLimitIds[binding.name];
+      if (namespaceId === undefined) {
+        throw new Error(`rate limit binding ${binding.name} has no namespace of its own`);
+      }
+      bindings.push({ ...binding, namespace_id: namespaceId });
     } else if (PASSTHROUGH_BINDING_TYPES.has(binding.type)) {
       bindings.push({ ...binding });
     } else {

@@ -6,6 +6,7 @@ import {
   type ArtifactManifest,
   artifactManifestSchema,
   isVectorizeBinding,
+  queueConsumerProblems,
   signingKeys,
   tooManyModulesMessage,
 } from "@appflare/schema";
@@ -178,6 +179,10 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   }
 
   checkVectorizeBindings(manifest);
+  const consumerProblems = queueConsumerProblems(manifest.worker);
+  if (consumerProblems.length > 0) {
+    throw new Error(consumerProblems.join(" "));
+  }
 
   if (options.maxModules !== undefined) {
     const tooMany = tooManyModulesMessage(

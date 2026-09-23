@@ -85,6 +85,41 @@ describe("buildScriptMetadata", () => {
     expect(metadata.keep_bindings).toBeUndefined();
   });
 
+  it("passes Images and send_email restrictions through, and rate limits with the install's own id", async () => {
+    const passthrough = [
+      {
+        type: "ratelimit",
+        name: "LIMITER",
+        namespace_id: "1001",
+        simple: { limit: 20, period: 60 },
+      },
+      { type: "images", name: "IMAGES" },
+      {
+        type: "send_email",
+        name: "EMAIL",
+        allowed_destination_addresses: ["owner@example.com"],
+        allowed_sender_addresses: ["app@example.com"],
+      },
+      { type: "send_email", name: "ADMIN", destination_address: "admin@example.com" },
+    ];
+    const f = await buildArtifactFixture({ bindings: passthrough });
+    const metadata = buildScriptMetadata({
+      manifest: f.manifest,
+      resources: [],
+      vars: {},
+      assetsJwt: null,
+      rateLimitIds: { LIMITER: "734112" },
+    });
+    expect(metadata.bindings).toEqual([
+      { ...passthrough[0], namespace_id: "734112" },
+      ...passthrough.slice(1),
+    ]);
+    // Never the artifact's id, which other Workers in the account may share.
+    expect(() =>
+      buildScriptMetadata({ manifest: f.manifest, resources: [], vars: {}, assetsJwt: null }),
+    ).toThrow(/LIMITER has no namespace of its own/);
+  });
+
   it("sends assets without a binding when the app has none, and nothing when there are no assets", async () => {
     const f = await buildArtifactFixture();
     const withAssets = buildScriptMetadata({

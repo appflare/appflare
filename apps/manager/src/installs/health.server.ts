@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { createDb } from "../db/client";
 import { type HealthStatus, installs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { healthPathOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
+import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
 import { workersDevUrl } from "./post-install";
 
 /**
@@ -63,10 +63,11 @@ export async function checkInstallHealthCore(
   if (base === null) {
     throw new HealthCheckError("The account's workers.dev subdomain is not known yet.");
   }
-  const url = `${base}${healthPathOfManifest(row.manifestJson)}`;
+  const check = healthCheckOfManifest(row.manifestJson);
+  const url = `${base}${check.path}`;
   const probe = await probeHealth(deps.fetch, url);
   const checkedAt = new Date(now());
-  const settled = settleHealthProbe(probe);
+  const settled = settleHealthProbe(probe, check.mode);
   const written = await orm
     .update(installs)
     .set({ health_status: settled.status, health_checked_at: checkedAt })

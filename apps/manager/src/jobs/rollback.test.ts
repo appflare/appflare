@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { listSnapshotsCore, startRollbackCore } from "../installs/versions.server";
+import { buildArtifactFixture } from "../test/artifact-fixture";
 import { type FakeAccount, fakeAccount, NEW_VERSION, TOKEN } from "../test/fake-account";
 import { fakeStep } from "../test/fake-step";
 import { INSTALL_ID, OLD_MANIFEST, OLD_VERSION, seedInstall } from "../test/seed-install";
@@ -134,6 +135,69 @@ describe("rollback job", () => {
     // D1 is never touched by a rollback.
     expect(r.fake.state.calls.some((c) => c.includes("/d1/"))).toBe(false);
     expect(r.fake.state.restores).toEqual([]);
+  });
+
+  it("gives the snapshot's version the queue consumers it had", async () => {
+    // The snapshot's version consumed JOBS in batches of 10; the current one
+    // changed that and also consumes EXPORT.
+    const snapshotManifest = await buildArtifactFixture({
+      bindings: [
+        { type: "queue", name: "JOBS" },
+        { type: "queue", name: "EXPORT" },
+      ],
+      tweak: (m) => {
+        m.worker.queueConsumers = [{ queue: { binding: "JOBS" }, max_batch_size: 10 }];
+      },
+    });
+    await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+      .bind(JSON.stringify(snapshotManifest.manifest))
+      .run();
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?1 WHERE id = ?2")
+      .bind(
+        JSON.stringify({
+          version: "1.1.0",
+          worker: {
+            migrations: [],
+            queueConsumers: [
+              { queue: { binding: "JOBS" }, max_batch_size: 5 },
+              { queue: { binding: "EXPORT" } },
+            ],
+          },
+        }),
+        INSTALL_ID,
+      )
+      .run();
+    for (const [id, kind, name, cfId] of [
+      ["i1:queue:JOBS", "queue", "cut-jobs", "q-jobs"],
+      ["i1:queue:EXPORT", "queue", "cut-export", "q-export"],
+      ["i1:queue_consumer:JOBS", "queue_consumer", "cut-jobs", "c-jobs"],
+      ["i1:queue_consumer:EXPORT", "queue_consumer", "cut-export", "c-export"],
+    ] as const) {
+      await env.DB.prepare(
+        "INSERT INTO resources (id, install_id, kind, name, cf_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 1)",
+      )
+        .bind(id, INSTALL_ID, kind, name, cfId)
+        .run();
+    }
+    const r = await rollback({
+      consumers: {
+        "q-jobs": [{ consumer_id: "c-jobs", type: "worker", script_name: "cut" }],
+        "q-export": [{ consumer_id: "c-export", type: "worker", script_name: "cut" }],
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.step.names).toContain("update consumer of queue cut-jobs");
+    expect(r.step.names).toContain("remove consumer of queue cut-export");
+    expect(r.fake.state.consumers).toEqual({
+      "q-jobs": [
+        { consumer_id: "c-jobs", type: "worker", script_name: "cut", settings: { batch_size: 10 } },
+      ],
+      "q-export": [],
+    });
+    const exportConsumer = await env.DB.prepare(
+      "SELECT deleted_at FROM resources WHERE id = 'i1:queue_consumer:EXPORT'",
+    ).first<{ deleted_at: number | null }>();
+    expect(exportConsumer?.deleted_at).not.toBeNull();
   });
 
   it("records a Worker it cannot reach after the rollback without failing", async () => {

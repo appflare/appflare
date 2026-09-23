@@ -44,6 +44,9 @@ export interface FakeAccount {
   worker: string;
   /** What `GET /workers/scripts/<worker>/bindings` answers. */
   bindings: unknown[];
+  queues: Array<{ queue_id: string; queue_name: string }>;
+  /** Worker consumers per queue id, as their last create or update body left them. */
+  consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
 }
 
 export const NEW_VERSION = "0a1b2c3d-4e5f-4789-8bcd-ef0123456789";
@@ -74,6 +77,8 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     failOnce: new Map(),
     worker: "cut",
     bindings: [],
+    queues: [],
+    consumers: {},
     ...over,
   };
   const script = `/workers/scripts/${state.worker}`;
@@ -170,6 +175,14 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       }
       case "GET /d1/database":
         return ok(state.d1, { result_info: { page: 1, total_pages: 1 } });
+      case "GET /queues":
+        return ok(state.queues);
+      case "POST /queues": {
+        const { queue_name } = (await request.json()) as { queue_name: string };
+        const queue = { queue_id: `q-new-${state.queues.length + 1}`, queue_name };
+        state.queues.push(queue);
+        return ok(queue);
+      }
       case `POST ${script}/assets-upload-session`: {
         const { manifest } = (await request.json()) as {
           manifest: Record<string, { hash: string }>;
@@ -185,6 +198,35 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
         for (const hash of form.keys()) state.uploadedAssets.add(hash);
         return ok({ jwt: "completion-jwt" });
       }
+    }
+    const consumers = /^(GET|POST) \/queues\/([^/]+)\/consumers$/.exec(key);
+    if (consumers?.[2] !== undefined) {
+      const queueId = consumers[2];
+      state.consumers[queueId] ??= [];
+      const list = state.consumers[queueId];
+      if (consumers[1] === "GET") return ok(list);
+      const consumer = {
+        ...((await request.json()) as Record<string, unknown>),
+        consumer_id: `c-${queueId}-${list.length + 1}`,
+      };
+      list.push(consumer);
+      return ok(consumer);
+    }
+    const consumer = /^(PUT|DELETE) \/queues\/([^/]+)\/consumers\/([^/]+)$/.exec(key);
+    if (consumer?.[2] !== undefined && consumer[3] !== undefined) {
+      const list = state.consumers[consumer[2]] ?? [];
+      const at = list.findIndex((c) => c.consumer_id === consumer[3]);
+      if (at === -1) return fail(404, "consumer not found");
+      if (consumer[1] === "DELETE") {
+        list.splice(at, 1);
+        return ok(null);
+      }
+      const updated = {
+        ...((await request.json()) as Record<string, unknown>),
+        consumer_id: consumer[3],
+      };
+      list[at] = updated;
+      return ok(updated);
     }
     let m = /^GET \/workflows\/([^/]+)$/.exec(key);
     if (m?.[1] !== undefined) {

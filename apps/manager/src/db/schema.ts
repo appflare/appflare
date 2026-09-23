@@ -34,12 +34,14 @@ export const RESOURCE_KINDS = [
   "d1",
   "r2",
   "queue",
+  "queue_consumer",
   "vectorize",
   "durable_object",
   "workflow",
   "cron",
   "secret",
   "subdomain",
+  "ratelimit",
   "domain",
 ] as const;
 

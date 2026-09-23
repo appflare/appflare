@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { artifactManifestSchema, isVectorizeBinding } from "./artifact";
+import { artifactManifestSchema, isVectorizeBinding, queueConsumerProblems } from "./artifact";
 
 const sha256 = "a".repeat(64);
 const assetBlake3 = "c".repeat(32);
@@ -113,6 +113,72 @@ describe("artifactManifestSchema", () => {
       },
     };
     expect(artifactManifestSchema.safeParse(badHash).success).toBe(false);
+  });
+
+  it("takes optional queue consumers that name queues by binding or by name", () => {
+    expect(artifactManifestSchema.parse(validArtifact).worker.queueConsumers).toBeUndefined();
+    const queueConsumers = [
+      {
+        queue: { binding: "JOBS" },
+        max_batch_size: 10,
+        max_batch_timeout: 2.5,
+        max_retries: 5,
+        dead_letter_queue: { name: "jobs-dlq" },
+        max_concurrency: null,
+        retry_delay: 30,
+      },
+      { queue: { name: "jobs-dlq" } },
+    ];
+    const parsed = artifactManifestSchema.parse({
+      ...validArtifact,
+      worker: { ...validArtifact.worker, queueConsumers },
+    });
+    expect(parsed.worker.queueConsumers).toEqual(queueConsumers);
+    for (const consumer of [
+      { queue: "jobs" },
+      { queue: { binding: "JOBS", name: "jobs" } },
+      { queue: { binding: "" } },
+      { queue: { binding: "JOBS" }, max_batch_size: 0 },
+      { queue: { binding: "JOBS" }, max_retries: 1.5 },
+      { queue: { binding: "JOBS" }, dead_letter_queue: "dlq" },
+    ]) {
+      const result = artifactManifestSchema.safeParse({
+        ...validArtifact,
+        worker: { ...validArtifact.worker, queueConsumers: [consumer] },
+      });
+      expect(result.success, JSON.stringify(consumer)).toBe(false);
+    }
+  });
+
+  it("checks that consumers name the Worker's own queue bindings, once each", () => {
+    const bindings = [
+      { type: "queue", name: "JOBS" },
+      { type: "kv_namespace", name: "CACHE" },
+    ];
+    expect(
+      queueConsumerProblems({
+        bindings,
+        queueConsumers: [
+          { queue: { binding: "JOBS" }, dead_letter_queue: { name: "dlq" } },
+          { queue: { name: "dlq" } },
+        ],
+      }),
+    ).toEqual([]);
+    expect(queueConsumerProblems({ bindings })).toEqual([]);
+    expect(
+      queueConsumerProblems({
+        bindings,
+        queueConsumers: [
+          { queue: { binding: "CACHE" } },
+          { queue: { binding: "JOBS" }, dead_letter_queue: { binding: "NOPE" } },
+          { queue: { binding: "JOBS" } },
+        ],
+      }),
+    ).toEqual([
+      "A queue consumer names the queue binding CACHE, but the Worker has no queue binding by that name.",
+      "A queue consumer names the queue binding NOPE, but the Worker has no queue binding by that name.",
+      "The queue of binding JOBS has more than one consumer.",
+    ]);
   });
 
   it("types a Vectorize binding's dimensions and metric and requires both", () => {

@@ -1,12 +1,18 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { type ArtifactManifest, artifactManifestSchema } from "@appflare/schema";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { healthLabel, healthPathOfManifest } from "./install/health";
+import { QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
+import { healthCheckOfManifest, healthLabel } from "./install/health";
 import { checkLiveHealthPhase, lookupSubdomainPhase, syncCronsPhase } from "./install/phases";
+import {
+  consumerPlansOf,
+  recordedQueues,
+  syncQueueConsumersPhase,
+} from "./install/queue-consumers";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
@@ -118,6 +124,18 @@ export async function runRollback(ctx: JobContext): Promise<void> {
             isNull(resources.deleted_at),
           ),
         );
+      // Queue consumers belong to the script: the snapshot's version gets the
+      // consumers it had.
+      const queueRows = await orm
+        .select()
+        .from(resources)
+        .where(
+          and(
+            eq(resources.install_id, params.installId),
+            inArray(resources.kind, ["queue", QUEUE_CONSUMER_KIND]),
+            isNull(resources.deleted_at),
+          ),
+        );
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!env.CF_API_TOKEN) {
@@ -134,7 +152,20 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         toVersion: snapshot.catalog_version,
         recordedCrons: crons.map((c) => c.name),
         snapshotCrons: cronsOf(snapshot.manifest_json),
-        healthPath: healthPathOfManifest(snapshot.manifest_json),
+        queueRows: queueRows.map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          binding: r.binding,
+          name: r.name,
+          cfId: r.cf_id,
+        })),
+        currentConsumers: consumerPlansOf(install.manifest_json),
+        snapshotConsumers:
+          parseManifest(snapshot.manifest_json) === null
+            ? null
+            : consumerPlansOf(snapshot.manifest_json),
+        healthPath: healthCheckOfManifest(snapshot.manifest_json).path,
+        healthMode: healthCheckOfManifest(snapshot.manifest_json).mode,
       };
     });
     steps.setAccountId(started.accountId);
@@ -174,10 +205,24 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       );
     }
 
+    // Null for a job started before consumers were tracked, or a snapshot
+    // without a manifest: nothing is known to sync.
+    if (started.snapshotConsumers != null) {
+      await syncQueueConsumersPhase(steps, {
+        installId: params.installId,
+        workerName,
+        wanted: started.snapshotConsumers,
+        previous: started.currentConsumers,
+        queues: recordedQueues(params.installId, started.queueRows),
+        recorded: started.queueRows,
+      });
+    }
+
     const subdomain = await lookupSubdomainPhase(steps);
     const url = `https://${workerName}.${subdomain}.workers.dev${started.healthPath}`;
-    // Recorded rather than fatal: the snapshot's version already serves.
-    const health = await checkLiveHealthPhase(steps, step, url);
+    // Recorded rather than fatal: the snapshot's version already serves. A
+    // job started before health modes existed has none recorded.
+    const health = await checkLiveHealthPhase(steps, step, url, started.healthMode ?? "default");
 
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());

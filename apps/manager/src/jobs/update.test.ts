@@ -1,6 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { MAX_WORKER_MODULES } from "@appflare/schema";
+import { type ArtifactManifest, MAX_WORKER_MODULES } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -67,6 +67,8 @@ async function update(
   request: { secrets?: Record<string, string> } = {},
   /** `local`: a manager without the `SELF` binding runs the units in the job's invocation. */
   units: "self" | "local" = "self",
+  /** Runs after the install is seeded, before the job starts. */
+  afterSeed?: () => Promise<void>,
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeAccount(fixture, {
@@ -76,6 +78,7 @@ async function update(
     ...world,
   });
   await seedInstall({ resources: RESOURCES, ...seed });
+  await afterSeed?.();
   await cacheIndex(fixture);
   let params: UpdateJobParams | null = null;
   const started = await startUpdateCore(
@@ -593,6 +596,198 @@ describe("update job", () => {
     expect(r.step.names).not.toContain("read current deployment");
     expect(r.fake.state.calls).toEqual([]);
     expect(r.snapshot).toBeNull();
+  });
+
+  it("keeps each rate limit's namespace across updates and gives a new one its own", async () => {
+    const limit = { simple: { limit: 20, period: 60 }, namespace_id: "1001" };
+    const r = await update(
+      {
+        ...NEW_APP,
+        bindings: [
+          ...(NEW_APP.bindings ?? []),
+          { type: "ratelimit", name: "LIMITER", ...limit },
+          { type: "ratelimit", name: "LOGIN", ...limit },
+        ],
+      },
+      {},
+      {
+        resources: [
+          ...RESOURCES,
+          { kind: "ratelimit", binding: "LIMITER", name: "LIMITER", cfId: "555001" },
+        ],
+      },
+    );
+    expect(r.error).toBeNull();
+    const bindings = r.fake.state.versions[0]?.metadata.bindings as Array<Record<string, unknown>>;
+    const sent = Object.fromEntries(
+      bindings.filter((b) => b.type === "ratelimit").map((b) => [b.name, b.namespace_id]),
+    );
+    expect(sent.LIMITER).toBe("555001");
+    expect(sent.LOGIN).toMatch(/^[1-9]\d*$/);
+    expect(sent.LOGIN).not.toBe("1001");
+    expect(r.resources).toContainEqual(
+      expect.objectContaining({ kind: "ratelimit", binding: "LOGIN", cf_id: sent.LOGIN }),
+    );
+  });
+
+  describe("queue consumers", () => {
+    const QUEUE_RESOURCES: SeedResource[] = [
+      ...RESOURCES,
+      { kind: "queue", binding: "JOBS", name: "cut-jobs", cfId: "q-jobs" },
+      { kind: "queue", binding: "EXPORT", name: "cut-export", cfId: "q-export" },
+      { kind: "queue_consumer", binding: "JOBS", name: "cut-jobs", cfId: "c-jobs" },
+      { kind: "queue_consumer", binding: "EXPORT", name: "cut-export", cfId: "c-export" },
+    ];
+    const installedManifest = JSON.stringify({
+      version: "1.0.0",
+      worker: {
+        migrations: [],
+        queueConsumers: [
+          { queue: { binding: "JOBS" }, max_batch_size: 10 },
+          { queue: { binding: "EXPORT" }, max_retries: 2 },
+        ],
+      },
+    });
+    const withConsumers = (
+      queueConsumers: NonNullable<ArtifactManifest["worker"]["queueConsumers"]>,
+    ): ArtifactFixtureOptions => ({
+      ...NEW_APP,
+      bindings: [
+        ...(NEW_APP.bindings ?? []),
+        { type: "queue", name: "JOBS" },
+        { type: "queue", name: "EXPORT" },
+      ],
+      tweak: (m) => {
+        m.worker.queueConsumers = queueConsumers;
+      },
+    });
+    const account = (): Partial<FakeAccount> => ({
+      queues: [
+        { queue_id: "q-jobs", queue_name: "cut-jobs" },
+        { queue_id: "q-export", queue_name: "cut-export" },
+      ],
+      consumers: {
+        "q-jobs": [
+          {
+            consumer_id: "c-jobs",
+            type: "worker",
+            script_name: "cut",
+            settings: { batch_size: 10 },
+          },
+        ],
+        "q-export": [
+          {
+            consumer_id: "c-export",
+            type: "worker",
+            script_name: "cut",
+            settings: { max_retries: 2 },
+          },
+        ],
+      },
+    });
+
+    it("replaces changed settings, attaches new consumers, and removes dropped ones after promotion", async () => {
+      const r = await update(
+        withConsumers([
+          {
+            queue: { binding: "JOBS" },
+            max_batch_size: 5,
+            dead_letter_queue: { name: "jobs-dlq" },
+          },
+          { queue: { name: "jobs-dlq" } },
+        ]),
+        account(),
+        { resources: QUEUE_RESOURCES, manifestJson: installedManifest },
+      );
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      const calls = r.fake.state.calls;
+      expect(calls).toContain("POST /queues");
+      expect(calls.indexOf("PUT /queues/q-jobs/consumers/c-jobs")).toBeGreaterThan(
+        calls.indexOf(`POST /workers/scripts/cut/deployments`),
+      );
+      expect(r.fake.state.consumers).toEqual({
+        "q-jobs": [
+          {
+            consumer_id: "c-jobs",
+            type: "worker",
+            script_name: "cut",
+            dead_letter_queue: "cut-jobs-dlq",
+            settings: { batch_size: 5 },
+          },
+        ],
+        "q-export": [],
+        "q-new-3": [{ consumer_id: "c-q-new-3-1", type: "worker", script_name: "cut" }],
+      });
+      expect(r.resources).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "queue", binding: null, name: "cut-jobs-dlq" }),
+          expect.objectContaining({
+            kind: "queue_consumer",
+            name: "cut-export",
+            deleted_at: expect.any(Number),
+          }),
+          expect.objectContaining({
+            kind: "queue_consumer",
+            name: "cut-jobs-dlq",
+            cf_id: "c-q-new-3-1",
+            deleted_at: null,
+          }),
+        ]),
+      );
+    });
+
+    it("attaches a consumer again that an earlier update removed, reviving its record", async () => {
+      const r = await update(
+        withConsumers([
+          { queue: { binding: "JOBS" }, max_batch_size: 10 },
+          { queue: { binding: "EXPORT" }, max_retries: 2 },
+        ]),
+        { ...account(), consumers: { "q-jobs": account().consumers?.["q-jobs"] ?? [] } },
+        {
+          resources: QUEUE_RESOURCES.filter((q) => q.name !== "cut-export" || q.kind === "queue"),
+          manifestJson: installedManifest,
+        },
+        {},
+        "self",
+        async () => {
+          await env.DB.prepare(
+            `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at, deleted_at)
+             VALUES ('i1:queue_consumer:EXPORT', 'i1', 'queue_consumer', NULL, 'cut-export', 'c-old', 1, 2)`,
+          ).run();
+        },
+      );
+      expect(r.error).toBeNull();
+      expect(r.fake.state.consumers["q-export"]).toEqual([
+        {
+          type: "worker",
+          script_name: "cut",
+          settings: { max_retries: 2 },
+          consumer_id: "c-q-export-1",
+        },
+      ]);
+      expect(r.resources).toContainEqual(
+        expect.objectContaining({
+          kind: "queue_consumer",
+          name: "cut-export",
+          cf_id: "c-q-export-1",
+          deleted_at: null,
+        }),
+      );
+    });
+
+    it("makes no consumer call when nothing about them changed", async () => {
+      const r = await update(
+        withConsumers([
+          { queue: { binding: "JOBS" }, max_batch_size: 10 },
+          { queue: { binding: "EXPORT" }, max_retries: 2 },
+        ]),
+        account(),
+        { resources: QUEUE_RESOURCES, manifestJson: installedManifest },
+      );
+      expect(r.error).toBeNull();
+      expect(r.fake.state.calls.filter((c) => c.includes("/consumers"))).toEqual([]);
+    });
   });
 
   it("refuses a gradual deployment in progress before snapshotting", async () => {

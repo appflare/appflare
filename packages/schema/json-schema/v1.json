@@ -99,6 +99,20 @@
           "type": "string",
           "pattern": "^\\/[^\\s?#]*$"
         },
+        "healthMode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "status-only"
+          ],
+          "description": "How the health check reads the Worker's answer. `\"default\"` counts redirects and 4xx answers as verified and server errors (5xx) as unhealthy. `\"status-only\"` counts any answer from the Worker itself as verified, server errors included: use it for apps whose health path sits behind Cloudflare Access or the app's own sign-in. Either way, connection failures and Cloudflare's error pages (such as `error code: 1042` while the route goes live) are retried. Defaults to `\"default\"`."
+        },
+        "buildCommand": {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9@%+,./:=_ -]+$",
+          "description": "One command the packer runs at the root of the checkout after installing dependencies (with install scripts disabled) and before bundling, for example `pnpm --filter @scope/web build`. Use it when the wrangler config has no `build.command`. It runs as a plain command without a shell, with no credentials in its environment, and the checkout's `node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, and environment assignments are not allowed. At most 256 characters."
+        },
         "version": {
           "type": "string",
           "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",

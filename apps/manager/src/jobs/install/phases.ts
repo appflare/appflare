@@ -30,6 +30,7 @@ import {
   decideLiveHealth,
   HEALTH_MAX_ATTEMPTS,
   HEALTH_RETRY_DELAY,
+  type HealthMode,
   type HealthProbe,
   type HealthSettlement,
   type HealthVerdict,
@@ -182,7 +183,12 @@ export async function provisionResourcePhase(
       }
     }
     const cfId = await explain(() => createResource(api, res));
-    log.info(`Created ${label} "${res.name}" for binding ${res.binding}.`, { id: cfId });
+    log.info(
+      res.unbound === true
+        ? `Created ${label} "${res.name}".`
+        : `Created ${label} "${res.name}" for binding ${res.binding}.`,
+      { id: cfId },
+    );
     return { cfId };
   });
 
@@ -190,7 +196,13 @@ export async function provisionResourcePhase(
     await recordResource(
       orm,
       installId,
-      { kind: res.kind, key: res.binding, binding: res.binding, name: res.name, cfId: made.cfId },
+      {
+        kind: res.kind,
+        key: res.binding,
+        binding: res.unbound === true ? null : res.binding,
+        name: res.name,
+        cfId: made.cfId,
+      },
       new Date(steps.now()),
     );
     return {};
@@ -409,6 +421,8 @@ export interface ProbePhaseOptions {
   maxAttempts?: number;
   /** When set, a JSON answer reporting another `version` fails (see `versionMismatch`). */
   expectVersion?: string;
+  /** How the default verdict reads an answer (the app's `install.healthMode`). */
+  mode?: HealthMode;
   /** Replaces the default verdict (`classifyHealthProbe`, any non-5xx is healthy). */
   classify?: (
     probe: HealthProbe,
@@ -437,12 +451,11 @@ export async function probeUntilHealthy(
     const checked = await steps.run(`${opts.label} check ${attempt}`, async ({ log, fetch }) => {
       const at = steps.now();
       const probe: HealthProbe = await probeHealth(fetch, opts.url);
-      const verdict = (opts.classify ?? classifyHealthProbe)(
-        probe,
-        attempt,
-        at - (firstProbeAt ?? at),
-        maxAttempts,
-      );
+      const elapsed = at - (firstProbeAt ?? at);
+      const verdict =
+        opts.classify !== undefined
+          ? opts.classify(probe, attempt, elapsed, maxAttempts)
+          : classifyHealthProbe(probe, attempt, elapsed, maxAttempts, opts.mode);
       if (verdict.verdict === "unhealthy") throw new JobError(verdict.reason);
       const wrong =
         verdict.verdict === "healthy" && opts.expectVersion !== undefined
@@ -483,13 +496,15 @@ export async function checkLiveHealthPhase(
   steps: JobSteps,
   step: StepRunner,
   url: string,
+  /** How to read the answer (the app's `install.healthMode`). */
+  mode: HealthMode = "default",
 ): Promise<LiveHealthResult> {
   let firstProbeAt: number | null = null;
   for (let attempt = 1; ; attempt++) {
     const checked = await steps.run(`health check ${attempt}`, async ({ log, fetch }) => {
       const at = steps.now();
       const probe = await probeHealth(fetch, url);
-      const decision = decideLiveHealth(probe, attempt, at - (firstProbeAt ?? at));
+      const decision = decideLiveHealth(probe, attempt, at - (firstProbeAt ?? at), undefined, mode);
       if (!decision.done) {
         log.warn(`GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`);
       } else if (decision.status === "verified") {

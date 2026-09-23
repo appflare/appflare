@@ -15,7 +15,7 @@ import {
 } from "../cloudflare/token-template";
 import { createDb } from "../db/client";
 import { type HealthStatus, installs, resources } from "../db/schema";
-import { healthPathOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
+import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
 import { checkHostnameInZone } from "./custom-domain-input";
 import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
 
@@ -467,8 +467,9 @@ export async function checkCustomDomainCore(
     );
   }
   const domain = await readDomain(deps.db, request);
-  const url = `https://${domain.name}${healthPathOfManifest(install.manifestJson)}`;
-  const settled = settleHealthProbe(await probeHealth(deps.fetch, url));
+  const check = healthCheckOfManifest(install.manifestJson);
+  const url = `https://${domain.name}${check.path}`;
+  const settled = settleHealthProbe(await probeHealth(deps.fetch, url), check.mode);
   return {
     hostname: domain.name,
     url,

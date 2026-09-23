@@ -9,7 +9,7 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
-import { isDataResourceKind } from "../installs/resource-kinds";
+import { isDataResourceKind, QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
 import type { ResourceUsage } from "../installs/resource-usage.server";
 import { getResourceUsage, retryUninstall, startUninstall } from "../installs/uninstall.functions";
 import { formatBytes, resourceKindLabel } from "./format";
@@ -29,6 +29,7 @@ function workerBoundSummary(install: InstallDetail): string[] {
   const byKind = (kind: string) => install.resources.filter((r) => r.kind === kind);
   for (const d of install.domains) out.push(`the custom domain ${d.hostname}`);
   for (const r of byKind("subdomain")) out.push(`the route ${r.name}`);
+  for (const r of byKind(QUEUE_CONSUMER_KIND)) out.push(`the consumer of the queue ${r.name}`);
   const crons = byKind("cron").length;
   if (crons > 0) out.push(`${crons} cron trigger${crons === 1 ? "" : "s"}`);
   const secrets = install.secretNames.length;

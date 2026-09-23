@@ -1,4 +1,9 @@
-import { appHealthPath, artifactManifestSchema } from "@appflare/schema";
+import {
+  appHealthMode,
+  appHealthPath,
+  artifactManifestSchema,
+  type HealthMode,
+} from "@appflare/schema";
 import type { HealthStatus } from "../../db/schema";
 
 /**
@@ -14,7 +19,19 @@ import type { HealthStatus } from "../../db/schema";
  * not serve: `classifyHealthProbe`. The live check (the Worker's own URL, after
  * the app was created or promoted) is time-bounded and never fails its job;
  * it records a `HealthStatus`: `decideLiveHealth`.
+ *
+ * Both read the answer by the app's health mode (`install.healthMode`). The
+ * default counts redirects and 4xx answers as serving and a 5xx as a failure.
+ * `status-only` is for apps whose every route sits behind Cloudflare Access
+ * or their own sign-in: no request without credentials can show whether such
+ * an app is healthy, so any answer the Worker itself gives counts, a 5xx of
+ * its own included. Cloudflare's error pages (`error code: <n>`, such as 1042
+ * while the route goes live or 1101 when the Worker crashed) are not the
+ * Worker's answer and are judged as before, and a plain 404 still waits out
+ * the window, since a route that is still going live can answer one too.
  */
+
+export type { HealthMode } from "@appflare/schema";
 
 export const HEALTH_MAX_ATTEMPTS = 10;
 export const HEALTH_RETRY_DELAY = "2 seconds";
@@ -44,6 +61,19 @@ export function isEdge1042(probe: HealthProbe): boolean {
   );
 }
 
+/**
+ * A page Cloudflare serves in the Worker's place (`error code: 1042`, `1101`,
+ * ...): the edge answered, not the app.
+ */
+export function isEdgeErrorPage(probe: HealthProbe): boolean {
+  return probe.kind === "response" && /^error code: \d+/.test(probe.bodyStart.trimStart());
+}
+
+/** Under `status-only`, whether this answer counts as the app serving. */
+function statusOnlyPass(probe: HealthProbe, mode: HealthMode): boolean {
+  return mode === "status-only" && probe.kind === "response" && !isEdgeErrorPage(probe);
+}
+
 function describe(probe: HealthProbe): string {
   if (probe.kind === "error") return `connection failed (${probe.message})`;
   if (isEdge1042(probe)) return "404 error code: 1042 (route not live yet)";
@@ -60,6 +90,7 @@ export function classifyHealthProbe(
   attempt: number,
   elapsedMs: number,
   maxAttempts: number = HEALTH_MAX_ATTEMPTS,
+  mode: HealthMode = "default",
 ): HealthVerdict {
   const last = attempt >= maxAttempts;
   if (probe.kind === "error" || isEdge1042(probe)) {
@@ -67,6 +98,7 @@ export function classifyHealthProbe(
       ? { verdict: "unhealthy", reason: `${describe(probe)} after ${attempt} attempts` }
       : { verdict: "retry", reason: describe(probe) };
   }
+  if (statusOnlyPass(probe, mode)) return { verdict: "healthy", status: probe.status };
   if (probe.status >= 500) {
     return !last && elapsedMs < HEALTH_5XX_GRACE_MS
       ? { verdict: "retry", reason: describe(probe) }
@@ -102,9 +134,14 @@ export function liveHealthScheduledMs(attempt: number): number {
  */
 export type LiveProbeClass = "pass" | "retry" | "soft-404";
 
-export function classifyLiveProbe(probe: HealthProbe): LiveProbeClass {
-  if (probe.kind === "error" || isEdge1042(probe) || probe.status >= 500) return "retry";
+export function classifyLiveProbe(
+  probe: HealthProbe,
+  mode: HealthMode = "default",
+): LiveProbeClass {
+  if (probe.kind === "error" || isEdge1042(probe)) return "retry";
   if (probe.status === 404) return "soft-404";
+  if (statusOnlyPass(probe, mode)) return "pass";
+  if (probe.status >= 500) return "retry";
   return "pass";
 }
 
@@ -120,10 +157,14 @@ export interface HealthSettlement {
  * a 5xx means it serves errors (`unhealthy`), and no answer or the 1042 page
  * means it could not be reached (`unverified`).
  */
-export function settleHealthProbe(probe: HealthProbe): HealthSettlement {
+export function settleHealthProbe(
+  probe: HealthProbe,
+  mode: HealthMode = "default",
+): HealthSettlement {
   if (probe.kind === "error" || isEdge1042(probe)) {
     return { status: "unverified", detail: describe(probe) };
   }
+  if (statusOnlyPass(probe, mode)) return { status: "verified", detail: describe(probe) };
   if (probe.status >= 500) return { status: "unhealthy", detail: describe(probe) };
   return { status: "verified", detail: describe(probe) };
 }
@@ -151,23 +192,45 @@ export function decideLiveHealth(
   attempt: number,
   elapsedMs: number,
   windowMs: number = LIVE_HEALTH_WINDOW_MS,
+  mode: HealthMode = "default",
 ): LiveHealthDecision {
-  if (classifyLiveProbe(probe) === "pass") return { done: true, ...settleHealthProbe(probe) };
+  if (classifyLiveProbe(probe, mode) === "pass") {
+    return { done: true, ...settleHealthProbe(probe, mode) };
+  }
   const delaySeconds = liveHealthDelaySeconds(attempt);
   const elapsed = Math.max(elapsedMs, liveHealthScheduledMs(attempt));
-  if (elapsed + delaySeconds * 1000 > windowMs) return { done: true, ...settleHealthProbe(probe) };
+  if (elapsed + delaySeconds * 1000 > windowMs) {
+    return { done: true, ...settleHealthProbe(probe, mode) };
+  }
   return { done: false, reason: describe(probe), delaySeconds };
+}
+
+/** Where and how an install's health is checked. */
+export interface HealthCheck {
+  path: string;
+  mode: HealthMode;
+}
+
+/**
+ * The path health checks probe for an install and how they read the answer,
+ * from its recorded manifest; `/` and the default mode when unknown.
+ */
+export function healthCheckOfManifest(manifestJson: string | null): HealthCheck {
+  const fallback: HealthCheck = { path: "/", mode: "default" };
+  if (manifestJson === null) return fallback;
+  try {
+    const parsed = artifactManifestSchema.safeParse(JSON.parse(manifestJson));
+    if (!parsed.success) return fallback;
+    const { install } = parsed.data.catalog;
+    return { path: appHealthPath(install), mode: appHealthMode(install) };
+  } catch {
+    return fallback;
+  }
 }
 
 /** The path health checks probe for an install, from its recorded manifest; `/` when unknown. */
 export function healthPathOfManifest(manifestJson: string | null): string {
-  if (manifestJson === null) return "/";
-  try {
-    const parsed = artifactManifestSchema.safeParse(JSON.parse(manifestJson));
-    return parsed.success ? appHealthPath(parsed.data.catalog.install) : "/";
-  } catch {
-    return "/";
-  }
+  return healthCheckOfManifest(manifestJson).path;
 }
 
 /** Health answers are small; anything longer is not a version report. */
