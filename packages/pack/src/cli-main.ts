@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { MAX_WORKER_MODULES } from "@appflare/schema";
-import { pack } from "./pack.ts";
+import { describeVersionOrigin, pack } from "./pack.ts";
 import { sign } from "./sign.ts";
 import { verify } from "./verify.ts";
 
@@ -84,6 +84,7 @@ async function runPack(argv: string[]): Promise<number> {
   });
 
   process.stdout.write(`${result.slug}@${result.version}\n`);
+  process.stdout.write(`  version:   ${describeVersionOrigin(result.versionOrigin)}\n`);
   process.stdout.write(`  zip:       ${result.zipPath} (${result.zipSize} bytes)\n`);
   process.stdout.write(`  manifest:  ${result.manifestJsonPath}\n`);
   if (result.signaturePath) {

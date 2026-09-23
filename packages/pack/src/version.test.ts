@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { deriveVersion, formatBuildDate, semverFromRef } from "./version.ts";
+import {
+  deriveVersion,
+  deriveVersionWithOrigin,
+  formatBuildDate,
+  semverFromRef,
+} from "./version.ts";
 
 describe("semverFromRef", () => {
   it("accepts plain and v-prefixed semver and strips the v", () => {
@@ -42,5 +47,49 @@ describe("deriveVersion", () => {
     expect(deriveVersion({ ref: "main", sha, commitDate: null, buildDate: "20260922" })).toBe(
       "0.0.0-20260922.0123456",
     );
+  });
+
+  it("prefers install.version over a semver tag and over the commit rule", () => {
+    expect(
+      deriveVersionWithOrigin({
+        installVersion: "1.1.10",
+        ref: "v11.0.0",
+        sha,
+        commitDate: "20260101",
+        buildDate: "20260922",
+      }),
+    ).toEqual({ version: "1.1.10", origin: "install.version" });
+    expect(
+      deriveVersion({
+        installVersion: "0.3.0-beta.1",
+        ref: "main",
+        sha,
+        commitDate: null,
+        buildDate: "20260922",
+      }),
+    ).toBe("0.3.0-beta.1");
+  });
+
+  it("names the rule that produced the version", () => {
+    const base = { sha, commitDate: "20260101", buildDate: "20260922" };
+    expect(deriveVersionWithOrigin({ ...base, ref: "v1.4.0" }).origin).toBe("tag");
+    expect(deriveVersionWithOrigin({ ...base, ref: "main" }).origin).toBe("commit");
+    expect(
+      deriveVersionWithOrigin({ ...base, ref: "main", installVersion: undefined }).origin,
+    ).toBe("commit");
+  });
+
+  it("rejects an install.version that is not semver without a leading v", () => {
+    for (const installVersion of ["v1.1.10", "1.1", "", "latest"]) {
+      expect(() =>
+        deriveVersion({
+          installVersion,
+          ref: "v1.0.0",
+          sha,
+          commitDate: null,
+          buildDate: "20260922",
+        }),
+      ).toThrow(/is not a semver version/);
+    }
   });
 });

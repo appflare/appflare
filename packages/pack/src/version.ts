@@ -1,10 +1,13 @@
+import { semverSchema } from "@appflare/schema";
+
 /**
- * Artifact version derivation.
+ * Artifact version derivation, first match wins:
  *
- * If the catalog `source.ref` is a semver tag (optionally `v`-prefixed) the
- * version is that tag without the `v`. Otherwise the version is
- * `0.0.0-<YYYYMMDD>.<first 7 of sha>`, where the date is the commit date when the
- * checkout is a git repo, else the build date.
+ * 1. `install.version` from the catalog manifest, when set. Used when the
+ *    repository's tags do not describe the app (a monorepo of many apps).
+ * 2. The `source.ref` semver tag (optionally `v`-prefixed) without the `v`.
+ * 3. `0.0.0-<YYYYMMDD>.<first 7 of sha>`, where the date is the commit date
+ *    when the checkout is a git repo, else the build date.
  */
 
 // Semver with optional leading `v`, optional pre-release and build metadata.
@@ -26,6 +29,8 @@ export function formatBuildDate(date: Date): string {
 }
 
 export interface DeriveVersionInput {
+  /** The catalog manifest's `install.version`, when set. */
+  installVersion?: string | undefined;
   ref: string;
   sha: string;
   /** `YYYYMMDD` commit date, or null when the checkout is not a git repo. */
@@ -34,12 +39,38 @@ export interface DeriveVersionInput {
   buildDate: string;
 }
 
-/** Derives the artifact `version` string. */
-export function deriveVersion({ ref, sha, commitDate, buildDate }: DeriveVersionInput): string {
+/** Where a derived version came from, in the order the rules are tried. */
+export type VersionOrigin = "install.version" | "tag" | "commit";
+
+/**
+ * Derives the artifact `version` and says which rule produced it. Throws when
+ * `installVersion` is set but is not semver without a leading `v`.
+ */
+export function deriveVersionWithOrigin({
+  installVersion,
+  ref,
+  sha,
+  commitDate,
+  buildDate,
+}: DeriveVersionInput): { version: string; origin: VersionOrigin } {
+  if (installVersion !== undefined) {
+    if (!semverSchema.safeParse(installVersion).success) {
+      throw new Error(
+        `install.version "${installVersion}" is not a semver version such as 1.2.3 ` +
+          "(no leading v)",
+      );
+    }
+    return { version: installVersion, origin: "install.version" };
+  }
   const semver = semverFromRef(ref);
   if (semver) {
-    return semver;
+    return { version: semver, origin: "tag" };
   }
   const date = commitDate ?? buildDate;
-  return `0.0.0-${date}.${sha.slice(0, 7)}`;
+  return { version: `0.0.0-${date}.${sha.slice(0, 7)}`, origin: "commit" };
+}
+
+/** Derives the artifact `version` string (see {@link deriveVersionWithOrigin}). */
+export function deriveVersion(input: DeriveVersionInput): string {
+  return deriveVersionWithOrigin(input).version;
 }

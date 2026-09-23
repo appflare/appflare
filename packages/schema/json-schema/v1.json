@@ -98,6 +98,11 @@
         "healthPath": {
           "type": "string",
           "pattern": "^\\/[^\\s?#]*$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "description": "The version shown for this entry when the repository's tag does not describe this app (monorepos); it must change whenever `source` moves."
         }
       },
       "required": [

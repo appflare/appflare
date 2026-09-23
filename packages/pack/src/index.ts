@@ -8,13 +8,20 @@
 export { MAX_WORKER_MODULES } from "@appflare/schema";
 export { parseJsonc } from "./jsonc.ts";
 export type { PackOptions, PackResult } from "./pack.ts";
-export { pack, packWarnings } from "./pack.ts";
+export { describeVersionOrigin, pack, packWarnings } from "./pack.ts";
 export type { SignOptions, SignResult } from "./sign.ts";
 export { sign } from "./sign.ts";
 export { UNSIGNED_KEY_ID } from "./signing.ts";
 export type { VerifyOptions, VerifyResult } from "./verify.ts";
 export { verify } from "./verify.ts";
-export { deriveVersion, formatBuildDate, semverFromRef } from "./version.ts";
+export {
+  type DeriveVersionInput,
+  deriveVersion,
+  deriveVersionWithOrigin,
+  formatBuildDate,
+  semverFromRef,
+  type VersionOrigin,
+} from "./version.ts";
 export {
   classifyModuleType,
   collectBindings,

@@ -17,6 +17,7 @@ import { assetHash } from "@appflare/cf-api";
 import { type ArtifactManifest, MAX_WORKER_MODULES } from "@appflare/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { main, parseMaxModules } from "./cli-main.ts";
+import { parseJsonc } from "./jsonc.ts";
 import { type PackResult, pack, packWarnings } from "./pack.ts";
 import { verify } from "./verify.ts";
 
@@ -82,6 +83,7 @@ describe("pack + verify (integration)", () => {
   it("packs the fixture with the expected shape", () => {
     expect(result.slug).toBe("hello");
     expect(result.version).toBe("1.2.3"); // from source.ref v1.2.3
+    expect(result.versionOrigin).toBe("tag");
     expect(result.moduleCount).toBe(1);
     expect(result.assetCount).toBe(3); // robots.txt + .assetsignore are ignored
     expect(result.d1MigrationCount).toBe(2);
@@ -278,6 +280,62 @@ describe("pack leaves nothing behind on failure", () => {
       expect(readdirSync(parent)).toEqual([]);
     } finally {
       rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+/** Writes the fixture's catalog manifest with `install.version` set into `dir`. */
+function manifestWithInstallVersion(dir: string, version: unknown): string {
+  const catalog = parseJsonc(readFileSync(FIXTURE_MANIFEST, "utf8")) as {
+    install: Record<string, unknown>;
+  };
+  catalog.install.version = version;
+  const file = path.join(dir, "appflare.jsonc");
+  writeFileSync(file, JSON.stringify(catalog));
+  return file;
+}
+
+describe("pack with install.version", () => {
+  it("takes the version from the catalog manifest over the source.ref tag", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-installversion-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const res = await pack({
+        checkoutDir: FIXTURE,
+        manifestPath: manifestWithInstallVersion(parent, "4.5.6"),
+        outDir,
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      expect(res.version).toBe("4.5.6");
+      expect(res.versionOrigin).toBe("install.version");
+      expect(res.manifest.version).toBe("4.5.6");
+      expect(res.manifest.source.ref).toBe("v1.2.3");
+      expect(res.manifest.catalog.install.version).toBe("4.5.6");
+      expect(path.basename(res.zipPath)).toBe("hello-4.5.6.zip");
+      expect(logs.find((l) => l.startsWith("packed hello@4.5.6"))).toMatch(
+        /\(version from install\.version in the catalog manifest\)/,
+      );
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("fails before writing anything when install.version is not semver", async () => {
+    for (const bad of ["v4.5.6", "4.5", "latest"]) {
+      const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-badversion-"));
+      const manifestPath = manifestWithInstallVersion(parent, bad);
+      const outDir = path.join(parent, "out");
+      try {
+        await expect(
+          pack({ checkoutDir: FIXTURE, manifestPath, outDir, install: false }),
+        ).rejects.toThrow(/must be a semver version such as 1\.2\.3, without a leading v/);
+        expect(existsSync(outDir)).toBe(false);
+        expect(readdirSync(parent)).toEqual(["appflare.jsonc"]);
+      } finally {
+        rmSync(parent, { recursive: true, force: true });
+      }
     }
   }, 120_000);
 });

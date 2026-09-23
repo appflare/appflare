@@ -15,6 +15,17 @@ export const gitShaSchema = z
 /** `owner/repo` GitHub slug. */
 export const ownerRepoSchema = z.string().regex(/^[^/\s]+\/[^/\s]+$/, 'must be "owner/repo"');
 
+/**
+ * A semver version without a leading `v` (`1.2.3`, `2.0.0-rc.1`), as artifact
+ * versions and release tags `<slug>@<version>` carry it.
+ */
+export const semverSchema = z
+  .string()
+  .regex(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+    "must be a semver version such as 1.2.3, without a leading v",
+  );
+
 /** How an app is built. v1 ships `artifact` only. */
 export const installTierSchema = z.enum(["artifact", "sandbox", "self-deploying"]);
 export type InstallTier = z.infer<typeof installTierSchema>;
@@ -111,6 +122,18 @@ export const catalogInstallSchema = z.object({
   healthPath: z
     .string()
     .regex(/^\/[^\s?#]*$/, "healthPath is a URL path starting with /, without query or fragment")
+    .optional(),
+  /**
+   * The version shown for this entry when the repository's tag does not
+   * describe this app (monorepos); it must change whenever `source` moves.
+   * Omitted means the version comes from `source.ref` when it is a semver tag,
+   * else from the pinned commit's date and SHA.
+   */
+  version: semverSchema
+    .describe(
+      "The version shown for this entry when the repository's tag does not describe this app " +
+        "(monorepos); it must change whenever `source` moves.",
+    )
     .optional(),
 });
 export type CatalogInstall = z.infer<typeof catalogInstallSchema>;

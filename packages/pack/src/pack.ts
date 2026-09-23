@@ -33,7 +33,7 @@ import { unstable_readConfig } from "wrangler";
 import { parseJsonc } from "./jsonc.ts";
 import { scrubEnv } from "./scrub-env.ts";
 import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
-import { deriveVersion, formatBuildDate } from "./version.ts";
+import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./version.ts";
 import {
   classifyModuleType,
   collectBindings,
@@ -70,6 +70,11 @@ export interface PackResult {
   signaturePath: string | null;
   slug: string;
   version: string;
+  /**
+   * Which rule produced `version`: the catalog manifest's `install.version`,
+   * the `source.ref` semver tag, or the pinned commit's date and SHA.
+   */
+  versionOrigin: VersionOrigin;
   moduleCount: number;
   assetCount: number;
   d1MigrationCount: number;
@@ -486,7 +491,8 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   if (!mainModule) {
     throw new Error("internal error: no main module identified");
   }
-  const version = deriveVersion({
+  const { version, origin: versionOrigin } = deriveVersionWithOrigin({
+    installVersion: catalog.install.version,
     ref: catalog.source.ref,
     sha: catalog.source.sha,
     commitDate: gitCommitDate(checkoutDir, childEnv),
@@ -565,7 +571,8 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     logger(`warning: ${warning}`);
   }
   logger(
-    `packed ${catalog.slug}@${version}: ${moduleManifest.length} modules, ` +
+    `packed ${catalog.slug}@${version} (${describeVersionOrigin(versionOrigin)}): ` +
+      `${moduleManifest.length} modules, ` +
       `${assetManifest.length} assets, ${d1MigrationCount} migrations, ${zipBytes.length} bytes`,
   );
 
@@ -576,12 +583,25 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     signaturePath,
     slug: catalog.slug,
     version,
+    versionOrigin,
     moduleCount: moduleManifest.length,
     assetCount: assetManifest.length,
     d1MigrationCount,
     zipSize: zipBytes.length,
     warnings,
   };
+}
+
+/** How the pack summary names where the version came from. */
+export function describeVersionOrigin(origin: VersionOrigin): string {
+  switch (origin) {
+    case "install.version":
+      return "version from install.version in the catalog manifest";
+    case "tag":
+      return "version from the source.ref tag";
+    case "commit":
+      return "version from the pinned commit's date and SHA";
+  }
 }
 
 /**

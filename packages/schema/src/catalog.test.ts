@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appHealthPath, catalogManifestSchema, hasFixedWorkerName } from "./catalog";
+import { appHealthPath, catalogManifestSchema, hasFixedWorkerName, semverSchema } from "./catalog";
 
 const validManifest = {
   $schema: "https://appflare.github.io/catalog/schema/v1.json",
@@ -94,6 +94,24 @@ describe("catalogManifestSchema", () => {
     }
   });
 
+  it("takes an optional semver install.version without a leading v", () => {
+    expect(catalogManifestSchema.parse(validManifest).install.version).toBeUndefined();
+    for (const version of ["1.1.10", "0.0.1", "2.0.0-rc.1", "1.0.0+build.5"]) {
+      const parsed = catalogManifestSchema.parse({
+        ...validManifest,
+        install: { ...validManifest.install, version },
+      });
+      expect(parsed.install.version).toBe(version);
+    }
+    for (const version of ["v1.1.10", "1.1", "01.2.3", "1.2.3-", "latest", "", 1]) {
+      const result = catalogManifestSchema.safeParse({
+        ...validManifest,
+        install: { ...validManifest.install, version },
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
   it("rejects a non-boolean fixedWorkerName", () => {
     for (const fixedWorkerName of ["yes", 1, null]) {
       const result = catalogManifestSchema.safeParse({
@@ -102,5 +120,14 @@ describe("catalogManifestSchema", () => {
       });
       expect(result.success).toBe(false);
     }
+  });
+});
+
+describe("semverSchema", () => {
+  it("accepts semver without a leading v and nothing else", () => {
+    expect(semverSchema.safeParse("11.0.0").success).toBe(true);
+    expect(semverSchema.safeParse("1.2.3-beta.1+sha.abc").success).toBe(true);
+    expect(semverSchema.safeParse("v11.0.0").success).toBe(false);
+    expect(semverSchema.safeParse(" 1.2.3").success).toBe(false);
   });
 });
