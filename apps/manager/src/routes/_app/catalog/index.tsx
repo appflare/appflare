@@ -19,6 +19,7 @@ import { PlanBadge, StatusBadge } from "../../../components/status-badge";
 
 /** `/catalog`: apps from the KV-cached `index.json`. */
 export const Route = createFileRoute("/_app/catalog/")({
+  staticData: { title: "Catalog" },
   loader: () => listCatalog(),
   component: CatalogPage,
 });
@@ -86,18 +87,22 @@ function AppCard({ app }: { app: CatalogListItem }) {
           </div>
         )}
         <div className="flex items-center justify-between gap-3">
-          {app.installed !== null ? (
-            <StatusBadge status={app.installed.status} of="install" />
-          ) : (
-            <span />
-          )}
+          <InstancesBadge instances={app.instances} />
           <LinkButton href={`/catalog/${app.slug}`} variant="secondary" icon={<ArrowRightIcon />}>
-            {app.installed !== null ? "Details" : "View and install"}
+            {app.instances.length > 0 ? "Details" : "View and install"}
           </LinkButton>
         </div>
       </LayerCard.Primary>
     </LayerCard>
   );
+}
+
+/** One install shows its status; several show how many there are. */
+function InstancesBadge({ instances }: { instances: CatalogListItem["instances"] }) {
+  const [only] = instances;
+  if (only === undefined) return <span />;
+  if (instances.length === 1) return <StatusBadge status={only.status} of="install" />;
+  return <Badge variant="neutral">{instances.length} installs</Badge>;
 }
 
 /** Admin only: re-fetch `index.json` now instead of waiting for the cron. */

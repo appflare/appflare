@@ -24,6 +24,7 @@ function isActive(job: JobView | null): boolean {
 
 /** `/jobs/$jobId`: the live job log. */
 export const Route = createFileRoute("/_app/jobs/$jobId")({
+  staticData: { title: "Job" },
   loader: ({ params }) => getJob({ data: { jobId: params.jobId } }),
   component: JobPage,
 });
@@ -84,7 +85,8 @@ function JobPage() {
   }
 
   const kind = KIND_LABELS[job.kind] ?? job.kind;
-  const title = job.install !== null ? `${kind} ${job.install.slug}` : kind;
+  const title =
+    job.install !== null ? `${kind} ${job.install.instanceName ?? job.install.workerName}` : kind;
   return (
     <>
       <PageHeader

@@ -91,6 +91,9 @@
         "workerName": {
           "type": "string",
           "minLength": 1
+        },
+        "fixedWorkerName": {
+          "type": "boolean"
         }
       },
       "required": [

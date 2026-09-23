@@ -1,5 +1,5 @@
 import type { HttpApi } from "../http";
-import type { KvNamespace } from "../types";
+import type { CursorPage, KvKey, KvNamespace } from "../types";
 
 const enc = encodeURIComponent;
 
@@ -14,6 +14,24 @@ export function createKv(http: HttpApi) {
     /** `GET /storage/kv/namespaces` (paginated). */
     listNamespaces(): Promise<KvNamespace[]> {
       return http.list("GET", http.acct("/storage/kv/namespaces"));
+    },
+
+    /**
+     * `GET /storage/kv/namespaces/{id}/keys?limit=&cursor=`: ONE page of key
+     * names (Cloudflare allows `limit` 10 to 1000), with the cursor for the next
+     * page (null on the last).
+     */
+    async listKeys(
+      namespaceId: string,
+      opts: { limit?: number; cursor?: string } = {},
+    ): Promise<CursorPage<KvKey>> {
+      const envelope = await http.send(
+        "GET",
+        http.acct(`/storage/kv/namespaces/${enc(namespaceId)}/keys`),
+        { query: { limit: opts.limit, cursor: opts.cursor } },
+      );
+      const items = Array.isArray(envelope.result) ? (envelope.result as KvKey[]) : [];
+      return { items, cursor: envelope.result_info?.cursor || null };
     },
 
     /** `DELETE /storage/kv/namespaces/{id}`. */

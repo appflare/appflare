@@ -93,9 +93,22 @@ export const catalogInstallSchema = z.object({
   tier: installTierSchema,
   packageManager: packageManagerSchema,
   wranglerConfig: z.string().min(1),
+  /** The default Worker name; the installer may change it unless `fixedWorkerName` is set. */
   workerName: z.string().min(1),
+  /**
+   * The app only works under `workerName` (for example, it hard-codes its own
+   * hostname), so it installs at most once per account. Omitted means false.
+   * Optional rather than defaulted so manifests and artifacts written before the
+   * field existed keep the same parsed shape.
+   */
+  fixedWorkerName: z.boolean().optional(),
 });
 export type CatalogInstall = z.infer<typeof catalogInstallSchema>;
+
+/** Whether the app must run under its catalog `workerName` (and so installs once). */
+export function hasFixedWorkerName(install: Pick<CatalogInstall, "fixedWorkerName">): boolean {
+  return install.fixedWorkerName === true;
+}
 
 /** The full catalog manifest, `appflare.jsonc`. */
 export const catalogManifestSchema = z.object({

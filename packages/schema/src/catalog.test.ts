@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogManifestSchema } from "./catalog";
+import { catalogManifestSchema, hasFixedWorkerName } from "./catalog";
 
 const validManifest = {
   $schema: "https://appflare.github.io/catalog/schema/v1.json",
@@ -56,5 +56,33 @@ describe("catalogManifestSchema", () => {
     };
     const result = catalogManifestSchema.safeParse(invalid);
     expect(result.success).toBe(false);
+  });
+
+  it("treats fixedWorkerName as optional and false when omitted", () => {
+    const omitted = catalogManifestSchema.parse(validManifest);
+    expect(omitted.install.fixedWorkerName).toBeUndefined();
+    expect(hasFixedWorkerName(omitted.install)).toBe(false);
+
+    const fixed = catalogManifestSchema.parse({
+      ...validManifest,
+      install: { ...validManifest.install, fixedWorkerName: true },
+    });
+    expect(hasFixedWorkerName(fixed.install)).toBe(true);
+
+    const notFixed = catalogManifestSchema.parse({
+      ...validManifest,
+      install: { ...validManifest.install, fixedWorkerName: false },
+    });
+    expect(hasFixedWorkerName(notFixed.install)).toBe(false);
+  });
+
+  it("rejects a non-boolean fixedWorkerName", () => {
+    for (const fixedWorkerName of ["yes", 1, null]) {
+      const result = catalogManifestSchema.safeParse({
+        ...validManifest,
+        install: { ...validManifest.install, fixedWorkerName },
+      });
+      expect(result.success).toBe(false);
+    }
   });
 });

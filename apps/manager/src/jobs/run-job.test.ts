@@ -43,4 +43,11 @@ describe("runJob", () => {
       /invalid install job payload/,
     );
   });
+
+  it("dispatches uninstall to the uninstall handler, which rejects a payload without its fields", async () => {
+    expect(JOB_HANDLERS.uninstall.name).toBe("runUninstall");
+    await expect(runJob({ kind: "uninstall", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
+      /invalid uninstall job payload/,
+    );
+  });
 });

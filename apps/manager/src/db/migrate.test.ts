@@ -35,6 +35,14 @@ async function tableNames(db: D1Database): Promise<string[]> {
   return results.map((r) => r.name);
 }
 
+async function columnNames(db: D1Database, table: string): Promise<string[]> {
+  const { results } = await db
+    .prepare("SELECT name FROM pragma_table_info(?1)")
+    .bind(table)
+    .all<{ name: string }>();
+  return results.map((r) => r.name);
+}
+
 async function settingValue(db: D1Database, key: string): Promise<string | null> {
   const row = await db
     .prepare("SELECT value FROM settings WHERE key = ?1")
@@ -89,6 +97,24 @@ describe("ensure", () => {
     expect(await tableNames(env.DB)).toEqual(EXPECTED_TABLES);
     expect(await settingValue(env.DB, SCHEMA_VERSION_KEY)).toBe(String(migrations.length));
     expect(await settingValue(env.DB, MIGRATION_LOCK_KEY)).toBeNull();
+  });
+
+  it("adds the uninstall columns on top of a database at the previous version", async () => {
+    const before = migrations.findIndex((m) => m.tag === "0002_uninstall");
+    expect(before).toBeGreaterThan(0);
+    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
+    expect(await columnNames(env.DB, "installs")).not.toContain("uninstalled_at");
+    const outcome = await createMigrator(migrations).ensure(env.DB);
+    expect(outcome.applied).toEqual(migrations.slice(before).map((m) => m.tag));
+    expect(await columnNames(env.DB, "installs")).toContain("uninstalled_at");
+    expect(await columnNames(env.DB, "resources")).toContain("retained_at");
+    // Both are nullable: rows written before the upgrade stay valid.
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
+       VALUES ('i1', 'cut', 'cut', '1', 'u', 'installed', 1, 1)`,
+    ).run();
+    const row = await env.DB.prepare("SELECT uninstalled_at FROM installs WHERE id = 'i1'").first();
+    expect(row).toEqual({ uninstalled_at: null });
   });
 
   it("is a no-op on the second call (no D1 access at all)", async () => {

@@ -9,6 +9,7 @@ import { listUsers } from "../../server/users.functions";
 
 /** `/settings`: users and the Cloudflare token. */
 export const Route = createFileRoute("/_app/settings")({
+  staticData: { title: "Settings" },
   loader: async ({ context }) => {
     const [users, tokenStatus] = await Promise.all([
       context.viewer.role === "admin" ? listUsers() : null,

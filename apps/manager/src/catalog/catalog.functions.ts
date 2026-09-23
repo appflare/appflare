@@ -1,10 +1,13 @@
 import { env } from "cloudflare:workers";
-import type { CatalogManifest, IndexApp } from "@appflare/schema";
+import { type CatalogManifest, hasFixedWorkerName, type IndexApp } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
-import { ne } from "drizzle-orm";
+import { asc, ne } from "drizzle-orm";
 import { z } from "zod";
+import { hasRole } from "../auth/roles";
+import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { installs } from "../db/schema";
+import { suggestWorkerName } from "../installs/instance-names";
 import { planBindings } from "../jobs/install/bindings";
 import { requireRole, requireSession } from "../server/auth.server";
 import { getAppManifest } from "./app-manifest.server";
@@ -16,10 +19,12 @@ export interface InstalledRef {
   installId: string;
   status: string;
   workerName: string;
+  instanceName: string;
 }
 
 export interface CatalogListItem extends IndexApp {
-  installed: InstalledRef | null;
+  /** Installs of this app that are not uninstalled. */
+  instances: InstalledRef[];
 }
 
 export interface CatalogList {
@@ -30,29 +35,49 @@ export interface CatalogList {
   error: string | null;
 }
 
-async function activeInstallsBySlug(): Promise<Map<string, InstalledRef>> {
+interface ActiveInstalls {
+  bySlug: Map<string, InstalledRef[]>;
+  /** Worker names held by any active install, whatever the app. */
+  workerNames: string[];
+}
+
+async function activeInstalls(): Promise<ActiveInstalls> {
   const rows = await createDb(env.DB)
     .select({
       id: installs.id,
       slug: installs.app_slug,
       status: installs.status,
       worker: installs.worker_name,
+      label: installs.instance_name,
     })
     .from(installs)
-    .where(ne(installs.status, "uninstalled"));
-  return new Map(
-    rows.map((r) => [r.slug, { installId: r.id, status: r.status, workerName: r.worker }]),
-  );
+    .where(ne(installs.status, "uninstalled"))
+    .orderBy(asc(installs.installed_at));
+  const bySlug = new Map<string, InstalledRef[]>();
+  for (const r of rows) {
+    const list = bySlug.get(r.slug) ?? [];
+    list.push({
+      installId: r.id,
+      status: r.status,
+      workerName: r.worker,
+      instanceName: r.label ?? r.worker,
+    });
+    bySlug.set(r.slug, list);
+  }
+  return { bySlug, workerNames: rows.map((r) => r.worker) };
 }
 
 /** Any signed-in user. */
 export const listCatalog = createServerFn({ method: "GET" }).handler(
   async (): Promise<CatalogList> => {
     await requireSession();
-    const [read, installed] = await Promise.all([getCatalogIndex(env), activeInstallsBySlug()]);
+    const [read, active] = await Promise.all([getCatalogIndex(env), activeInstalls()]);
     if (!read.ok) return { apps: [], updatedAt: read.updatedAt, error: read.error };
     return {
-      apps: read.index.apps.map((app) => ({ ...app, installed: installed.get(app.slug) ?? null })),
+      apps: read.index.apps.map((app) => ({
+        ...app,
+        instances: active.bySlug.get(app.slug) ?? [],
+      })),
       updatedAt: read.updatedAt,
       error: null,
     };
@@ -82,32 +107,64 @@ export interface CatalogDetail {
   durableObjects: string[];
   /** Why the index or the manifest could not be loaded. */
   error: string | null;
-  installed: InstalledRef | null;
+  /** Installs of this app that are not uninstalled, oldest first. */
+  instances: InstalledRef[];
+  /** Worker name to prefill: the catalog's, or the next free `<name>-N`. */
+  suggestedWorkerName: string | null;
+  /** The app only works under its catalog Worker name, so it installs once. */
+  fixedWorkerName: boolean;
+}
+
+/**
+ * Worker names in the account, for admins only (members cannot install, so
+ * the extra API call would be wasted). Best effort: the install checks again.
+ */
+async function accountWorkerNames(role: string | null | undefined): Promise<string[]> {
+  if (!hasRole(role, "admin")) return [];
+  try {
+    return (await (await getCfClient(env)).workers.listScripts()).map((s) => s.id);
+  } catch {
+    return [];
+  }
 }
 
 /** Any signed-in user. */
 export const getCatalogEntry = createServerFn({ method: "GET" })
   .validator(z.object({ slug: z.string().min(1).max(100) }))
   .handler(async ({ data }): Promise<CatalogDetail> => {
-    await requireSession();
-    const empty = { catalog: null, creates: [], durableObjects: [], installed: null };
+    const session = await requireSession();
+    const empty = {
+      catalog: null,
+      creates: [],
+      durableObjects: [],
+      instances: [],
+      suggestedWorkerName: null,
+      fixedWorkerName: false,
+    };
     const read = await getCatalogIndex(env);
     if (!read.ok) return { app: null, error: read.error, ...empty };
     const app = read.index.apps.find((a) => a.slug === data.slug) ?? null;
     if (app === null) return { app: null, error: null, ...empty };
-    const installed = (await activeInstallsBySlug()).get(app.slug) ?? null;
+    const active = await activeInstalls();
+    const instances = active.bySlug.get(app.slug) ?? [];
     const manifest = await getAppManifest(env, app);
-    if (!manifest.ok) return { ...empty, app, installed, error: manifest.error };
-    const plan = planBindings(
-      manifest.manifest.catalog.install.workerName,
-      manifest.manifest.worker.bindings,
-    );
+    if (!manifest.ok) return { ...empty, app, instances, error: manifest.error };
+    const { install } = manifest.manifest.catalog;
+    const fixed = hasFixedWorkerName(install);
+    const taken = fixed
+      ? []
+      : [...active.workerNames, ...(await accountWorkerNames(session.user.role))];
+    const plan = planBindings(install.workerName, manifest.manifest.worker.bindings);
     return {
       app,
       catalog: manifest.manifest.catalog,
       creates: plan.resources.map((r) => ({ kind: r.kind, binding: r.binding })),
       durableObjects: plan.durableObjects.map((d) => d.className),
       error: null,
-      installed,
+      instances,
+      suggestedWorkerName: fixed
+        ? install.workerName
+        : suggestWorkerName(install.workerName, taken),
+      fixedWorkerName: fixed,
     };
   });

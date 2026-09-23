@@ -1,37 +1,28 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { Buffer } from "node:buffer";
-import {
-  buildAssetsManifest,
-  CloudflareApiError,
-  type CloudflareClient,
-  createClient,
-  type FetchLike,
-} from "@appflare/cf-api";
+import { buildAssetsManifest, CloudflareApiError } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
   artifactManifestSchema,
+  hasFixedWorkerName,
   indexArtifactsSchema,
   sha256Schema,
 } from "@appflare/schema";
-import { and, eq, ne, or } from "drizzle-orm";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../catalog/app-manifest.server";
-import { apiBaseOption } from "../cloudflare/api-base";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, type RESOURCE_KINDS, resources } from "../db/schema";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { workerNameSchema } from "../installs/install-input";
 import {
-  ArtifactError,
-  ArtifactFetchError,
   fetchArtifactFile,
   fetchWhole,
   sha256Hex,
   verifyArtifactManifest,
 } from "./install/artifact";
 import { planBindings } from "./install/bindings";
-import { ARTIFACT_FETCH_COST, fetchCost, SubrequestBudget } from "./install/budget";
-import { countD1 } from "./install/count-d1";
+import { ARTIFACT_FETCH_COST } from "./install/budget";
 import {
   APPLIED_MIGRATION_SQL,
   buildMigrationQuery,
@@ -54,8 +45,11 @@ import {
 } from "./install/metadata";
 import { assetContentType } from "./install/mime";
 import { createResource, findResource, RESOURCE_LABEL } from "./install/resources";
-import type { JobContext, StepConfig } from "./run-job";
+import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
+import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
+
+export { API_STEP, toStepError } from "./steps";
 
 /**
  * The `install` job. Every Cloudflare API call and every
@@ -82,11 +76,6 @@ export const installJobParams = z.object({
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
 
-/** 3 retries with backoff on 429/5xx. */
-export const API_STEP: StepConfig = {
-  retries: { limit: 3, delay: "2 seconds", backoff: "exponential" },
-};
-
 /** Files per assets step: 2 subrequests per Range fetch (GitHub redirects) + the upload. */
 const BULK_FILES_PER_STEP = 19;
 /** Single-file upload mode: 2 per fetch + 1 upload per file. */
@@ -94,40 +83,9 @@ const SINGLE_FILES_PER_STEP = 13;
 /** A single invocation can never make more than this many subrequests (free plan). */
 const INVOCATION_CAP = 48;
 
-/** A failure the job reports as is; never retried. */
-export class InstallError extends Error {
+/** A failure the install reports as is; never retried. */
+export class InstallError extends JobError {
   override name = "InstallError";
-}
-
-/**
- * D1 calls a step makes on top of its estimate (the log flush plus a write or
- * two); D1 calls are subrequests too. The headroom between the budget (40) and
- * the cap (50) covers per-invocation work outside steps (`ensureMigrated`,
- * re-reading the manifest from KV).
- */
-const D1_PER_STEP = 3;
-
-/** Maps any error thrown inside a step to what the Workflow engine should do with it. */
-export function toStepError(error: unknown): Error {
-  if (error instanceof NonRetryableError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  if (error instanceof CloudflareApiError) {
-    return error.status === 429 || error.status >= 500
-      ? new Error(message)
-      : new NonRetryableError(message);
-  }
-  if (error instanceof ArtifactFetchError) {
-    return error.retryable ? new Error(message) : new NonRetryableError(message);
-  }
-  if (error instanceof InstallError || error instanceof ArtifactError) {
-    return new NonRetryableError(message);
-  }
-  return error instanceof Error ? error : new Error(message);
-}
-
-function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/^(NonRetryableError|Error):\s*/, "");
 }
 
 function resourceId(installId: string, kind: string, key: string): string {
@@ -152,90 +110,14 @@ function jwtClaims(jwt: string): Record<string, unknown> {
   }
 }
 
-interface StepTools {
-  log: StepLog;
-  /** Fetch that counts subrequests (redirect hops included). */
-  fetch: FetchLike;
-  /** A cf-api client for this step (logs `METHOD path -> status`). */
-  cf(): CloudflareClient;
-  /** Drizzle over the manager's D1, counted against the step's subrequests. */
-  orm: Database;
-  /** 1-based attempt of this step (Workflows retries a failed step). */
-  attempt: number;
-}
-
 export async function runInstall(ctx: JobContext): Promise<void> {
   const parsed = installJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid install job payload");
   const params = parsed.data;
   const { step, env, deps } = ctx;
   const db = env.DB;
-  const now = deps.now ?? Date.now;
-  const baseFetch: FetchLike = deps.fetch ?? ((input, init) => fetch(input, init));
-  const budget = new SubrequestBudget();
-  let current = "start";
-  let accountId: string | null = null;
-
-  function client(fetchImpl: FetchLike, log: StepLog): CloudflareClient {
-    const token = env.CF_API_TOKEN;
-    if (token === undefined || token.length === 0) {
-      throw new InstallError("the Cloudflare API token is not configured; finish setup first");
-    }
-    if (accountId === null) throw new InstallError("the Cloudflare account is not known yet");
-    return createClient({
-      accountId,
-      token,
-      fetch: fetchImpl,
-      onRequest: log.onRequest,
-      ...apiBaseOption(env),
-    });
-  }
-
-  /** One `step.do` with logging, subrequest counting, and error classification. */
-  async function run<T extends object>(
-    name: string,
-    estimate: number,
-    body: (tools: StepTools) => Promise<T>,
-  ): Promise<T & { subrequests: number }> {
-    if (budget.needsBoundary(estimate + D1_PER_STEP)) {
-      await step.sleep(`budget ${budget.boundary()}`, "1 second");
-    }
-    current = name;
-    const result = await step.do(name, API_STEP, async (stepCtx) => {
-      const log = new StepLog(now);
-      let subrequests = 0;
-      const countedDb = countD1(db, () => {
-        subrequests += 1;
-      });
-      const counted: FetchLike = async (input, init) => {
-        try {
-          const response = await baseFetch(input, init);
-          subrequests += fetchCost(response);
-          return response;
-        } catch (error) {
-          subrequests += 1;
-          throw error;
-        }
-      };
-      try {
-        const value = await body({
-          log,
-          fetch: counted,
-          cf: () => client(counted, log),
-          orm: createDb(countedDb),
-          attempt: stepCtx?.attempt ?? 1,
-        });
-        await log.flush(countedDb, params.jobId);
-        return { ...value, subrequests };
-      } catch (error) {
-        log.error(`${name} failed: ${errorMessage(error)}`);
-        await log.flush(countedDb, params.jobId);
-        throw toStepError(error);
-      }
-    });
-    budget.add(result.subrequests);
-    return result;
-  }
+  const steps = createJobSteps(ctx, params.jobId);
+  const { run, now, baseFetch } = steps;
 
   async function recordResource(
     orm: Database,
@@ -313,7 +195,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       );
       return { keyId: manifest.keyId };
     });
-    current = "load artifact manifest";
+    steps.current = "load artifact manifest";
     const manifestText = await loadManifestText();
     const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
     const plan = planBindings(params.workerName, manifest.worker.bindings);
@@ -337,6 +219,14 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           `the Worker has ${manifest.worker.modules.length} modules; a single upload cannot fetch that many within the free plan's subrequest limit`,
         );
       }
+      // The Worker name is the unique key of an active install; an app whose
+      // Worker name is fixed installs once.
+      const fixed = hasFixedWorkerName(manifest.catalog.install);
+      if (fixed && params.workerName !== manifest.catalog.install.workerName) {
+        throw new InstallError(
+          `this app only works as the Worker "${manifest.catalog.install.workerName}"`,
+        );
+      }
       const clash = await orm
         .select({ id: installs.id, slug: installs.app_slug, worker: installs.worker_name })
         .from(installs)
@@ -344,7 +234,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           and(
             ne(installs.id, params.installId),
             ne(installs.status, "uninstalled"),
-            or(eq(installs.worker_name, params.workerName), eq(installs.app_slug, params.slug)),
+            fixed
+              ? or(eq(installs.worker_name, params.workerName), eq(installs.app_slug, params.slug))
+              : eq(installs.worker_name, params.workerName),
           ),
         )
         .limit(1);
@@ -353,7 +245,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         throw new InstallError(
           other.worker === params.workerName
             ? `another install already uses the Worker name "${params.workerName}"`
-            : `${params.slug} is already installed (one instance per app)`,
+            : `${params.slug} is already installed as "${other.worker}" and only works under one Worker name`,
         );
       }
       const settings = await readSettings(orm, [SETTING.accountId]);
@@ -366,7 +258,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       );
       return { accountId: settings.account_id };
     });
-    accountId = preflight.accountId;
+    steps.setAccountId(preflight.accountId);
 
     await run("verify API token", 2, async ({ log, cf }) => {
       const api = cf();
@@ -550,15 +442,33 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       }
       if (session.buckets.length === 0) completion = session.jwt;
       if (completion === null) {
-        current = "upload assets";
+        steps.current = "upload assets";
         throw new InstallError("Cloudflare did not return an assets completion token");
       }
       assetsJwt = completion;
     }
 
-    // 5. Script upload: every module in ONE multipart request.
+    // 5. Script upload: every module in ONE multipart request. The Worker is
+    // recorded first, with no id yet (pending): an upload whose response is
+    // lost has still created it, and an uninstall deletes a Worker only when
+    // this install recorded it (the name was checked free just before).
+    await run("record Worker name", 0, async ({ orm }) => {
+      await recordResource(orm, {
+        kind: "worker",
+        key: params.workerName,
+        binding: null,
+        name: params.workerName,
+        cfId: null,
+      });
+      return {};
+    });
     const moduleCost = manifest.worker.modules.length * ARTIFACT_FETCH_COST + 2;
-    const upload = await run("upload Worker script", moduleCost, async ({ log, fetch, cf }) => {
+    /** The multipart upload of every module (one request). */
+    async function uploadScript(
+      log: StepTools["log"],
+      fetch: StepTools["fetch"],
+      cf: StepTools["cf"],
+    ): Promise<{ versionId: string | null; scriptId: string }> {
       const modules = [];
       for (const module of manifest.worker.modules) {
         const got = await fetchArtifactFile(fetch, params.artifacts.zip, module);
@@ -587,7 +497,36 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         bindings: (metadata.bindings ?? []).map((b) => `${b.type} ${b.name}`),
       });
       return { versionId, scriptId: result.id ?? params.workerName };
-    });
+    }
+
+    const upload = await run(
+      "upload Worker script",
+      moduleCost,
+      async ({ log, fetch, cf, orm }) => {
+        try {
+          return await uploadScript(log, fetch, cf);
+        } catch (error) {
+          // A refused upload (4xx other than 429) created no Worker. Release the
+          // pending row so an uninstall never deletes a same-named Worker made
+          // elsewhere later.
+          if (error instanceof CloudflareApiError && error.status < 500 && error.status !== 429) {
+            await orm
+              .update(resources)
+              .set({ deleted_at: new Date(now()) })
+              .where(
+                and(
+                  eq(resources.id, resourceId(params.installId, "worker", params.workerName)),
+                  isNull(resources.cf_id),
+                ),
+              );
+            log.warn(
+              `Cloudflare refused the upload; no Worker "${params.workerName}" was created.`,
+            );
+          }
+          throw error;
+        }
+      },
+    );
 
     // The script is live from here on: record it (and the Workflows its upload
     // created) even if a later step fails.
@@ -596,13 +535,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         .update(installs)
         .set({ current_version_id: upload.versionId, updated_at: new Date(now()) })
         .where(eq(installs.id, params.installId));
-      await recordResource(orm, {
-        kind: "worker",
-        key: params.workerName,
-        binding: null,
-        name: params.workerName,
-        cfId: upload.scriptId,
-      });
+      await orm
+        .update(resources)
+        .set({ cf_id: upload.scriptId })
+        .where(eq(resources.id, resourceId(params.installId, "worker", params.workerName)));
       for (const wf of plan.workflows) {
         await recordResource(orm, {
           kind: "workflow",
@@ -756,11 +692,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       healthy = checked.status;
       if (healthy === null) {
         await step.sleep(`health wait ${attempt}`, HEALTH_RETRY_DELAY);
-        budget.reset();
+        steps.resetBudget();
       }
     }
     if (healthy === null) {
-      current = "health check";
+      steps.current = "health check";
       throw new InstallError(`${url} never answered`);
     }
 
@@ -776,7 +712,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             manifest_json: manifestText,
             updated_at: at,
           })
-          .where(eq(installs.id, params.installId)),
+          // Only from `installing`: an install whose job was settled from
+          // outside (or that is being uninstalled) never flips back.
+          .where(and(eq(installs.id, params.installId), eq(installs.status, "installing"))),
         orm
           .update(jobs)
           .set({ status: "succeeded", finished_at: at, error: null })
@@ -786,7 +724,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
   } catch (error) {
-    const reason = `${current}: ${errorMessage(error)}`;
+    const reason = `${steps.current}: ${errorMessage(error)}`;
     await step.do("mark install failed", async () => {
       const orm = createDb(db);
       const at = new Date(now());
@@ -799,7 +737,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         .set({ status: "failed", updated_at: at })
         .where(eq(installs.id, params.installId));
       const log = new StepLog(now);
-      log.error(`Install failed at "${current}". Resources created so far stay recorded.`);
+      log.error(`Install failed at "${steps.current}". Resources created so far stay recorded.`);
       await log.flush(db, params.jobId);
       return {};
     });

@@ -2,7 +2,7 @@ import type { CloudflareClient } from "@appflare/cf-api";
 import type { ResourceBindingPlan } from "./bindings";
 
 /**
- * Finding and creating the backing resources of an install.
+ * Finding, creating, and deleting the backing resources of an install.
  * `findResource` is used before creating (a name that exists is never adopted)
  * and by a retried create step, to pick up what its own failed attempt made.
  */
@@ -58,5 +58,45 @@ export async function createResource(
       await api.vectorize.createIndex({ name: res.name, config: res.vectorize });
       return res.name;
     }
+  }
+}
+
+/** A recorded resource with its own delete call (`resources` row fields). */
+export interface DeletableResource {
+  kind: ResourceBindingPlan["kind"];
+  name: string;
+  /** Namespace, database, or queue id; bucket and index names are their ids. */
+  cfId: string | null;
+}
+
+/**
+ * Deletes the resource with one API call and returns true, or returns false
+ * without a call when no Cloudflare id is recorded to address it by. Throws
+ * `CloudflareApiError` as is (a 404 means it is already gone; the caller
+ * decides what that means).
+ */
+export async function deleteResource(
+  api: CloudflareClient,
+  res: DeletableResource,
+): Promise<boolean> {
+  switch (res.kind) {
+    case "kv":
+      if (res.cfId === null) return false;
+      await api.kv.deleteNamespace(res.cfId);
+      return true;
+    case "d1":
+      if (res.cfId === null) return false;
+      await api.d1.deleteDatabase(res.cfId);
+      return true;
+    case "r2":
+      await api.r2.deleteBucket(res.cfId ?? res.name);
+      return true;
+    case "queue":
+      if (res.cfId === null) return false;
+      await api.queues.deleteQueue(res.cfId);
+      return true;
+    case "vectorize":
+      await api.vectorize.deleteIndex(res.cfId ?? res.name);
+      return true;
   }
 }

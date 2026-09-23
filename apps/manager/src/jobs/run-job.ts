@@ -6,6 +6,7 @@ import { z } from "zod";
 import { createDb } from "../db/client";
 import { JOB_KINDS, type JobKind, jobs } from "../db/schema";
 import { runInstall } from "./install";
+import { runUninstall } from "./uninstall";
 
 /**
  * Job dispatch for `JobWorkflow` (one Workflow class, dispatching on
@@ -98,7 +99,7 @@ export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   update: notImplemented, // TODO: the update job.
   rollback: notImplemented, // TODO: the rollback job.
   self_update: notImplemented, // TODO: the self-update job.
-  uninstall: notImplemented, // TODO: the uninstall job.
+  uninstall: runUninstall,
 };
 
 export async function runJob(

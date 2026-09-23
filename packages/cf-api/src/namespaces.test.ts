@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createClient } from "./client";
 import { type FakeResponseSpec, makeFakeFetch } from "./fake-fetch";
+import { isAddressableObjectKey } from "./namespaces/r2";
 
 const TOKEN = "cf-token-DO-NOT-LEAK-123";
 const ACCOUNT = "acc-123";
@@ -310,6 +311,25 @@ describe("kv", () => {
     expect(await req.request.json()).toEqual({ title: "hello-kv" });
   });
 
+  it("listKeys -> GET /namespaces/{id}/keys?limit=, returns one page and its cursor", async () => {
+    const { fake, client } = make({
+      result: [{ name: "a" }, { name: "b" }],
+      result_info: { count: 2, cursor: "next" },
+    });
+    expect(await client.kv.listKeys("n1", { limit: 1000 })).toEqual({
+      items: [{ name: "a" }, { name: "b" }],
+      cursor: "next",
+    });
+    expect(fake.last().path).toBe(`/client/v4/accounts/${ACCOUNT}/storage/kv/namespaces/n1/keys`);
+    expect(fake.last().query.get("limit")).toBe("1000");
+    expect(fake.last().query.get("cursor")).toBeNull();
+  });
+
+  it("listKeys -> an empty cursor means the last page", async () => {
+    const { client } = make({ result: [], result_info: { count: 0, cursor: "" } });
+    expect(await client.kv.listKeys("n1")).toEqual({ items: [], cursor: null });
+  });
+
   it("deleteNamespace -> DELETE /namespaces/{id}", async () => {
     const { fake, client } = make();
     await client.kv.deleteNamespace("n1");
@@ -415,6 +435,45 @@ describe("r2 / queues / vectorize", () => {
     await client.r2.deleteBucket("b");
     expect(fake.last().method).toBe("DELETE");
     expect(fake.last().url).toBe(`${A}/r2/buckets/b`);
+  });
+
+  it("r2.listObjects -> GET /r2/buckets/{name}/objects?per_page=&cursor=, one page", async () => {
+    const { fake, client } = make({
+      result: [{ key: "a.txt", size: 1 }],
+      result_info: { cursor: "c2", per_page: 30 },
+    });
+    expect(await client.r2.listObjects("b", { perPage: 30, cursor: "c1" })).toEqual({
+      items: [{ key: "a.txt", size: 1 }],
+      cursor: "c2",
+    });
+    expect(fake.last().method).toBe("GET");
+    expect(fake.last().path).toBe(`/client/v4/accounts/${ACCOUNT}/r2/buckets/b/objects`);
+    expect(fake.last().query.get("per_page")).toBe("30");
+    expect(fake.last().query.get("cursor")).toBe("c1");
+  });
+
+  it("r2.listObjects -> no cursor on the last page", async () => {
+    const { client } = make({ result: [] });
+    expect(await client.r2.listObjects("b")).toEqual({ items: [], cursor: null });
+  });
+
+  it("r2.deleteObject -> DELETE /objects/{key}, each key segment encoded, slashes kept", async () => {
+    const { fake, client } = make();
+    await client.r2.deleteObject("b", "a b.jpg");
+    expect(fake.last().method).toBe("DELETE");
+    expect(fake.last().url).toBe(`${A}/r2/buckets/b/objects/a%20b.jpg`);
+    await client.r2.deleteObject("b", "photos/2026/a b?#%.jpg");
+    expect(fake.last().url).toBe(`${A}/r2/buckets/b/objects/photos/2026/a%20b%3F%23%25.jpg`);
+  });
+
+  it("r2.deleteObject -> refuses a key with a dot segment instead of deleting another object", async () => {
+    const { fake, client } = make();
+    expect(() => client.r2.deleteObject("b", "a/../b")).toThrow(RangeError);
+    expect(fake.calls).toHaveLength(0);
+    expect(isAddressableObjectKey("x/.hidden/..y/%2E%2E")).toBe(true);
+    for (const key of [".", "a/..", "./a", "a/../b"]) {
+      expect(isAddressableObjectKey(key)).toBe(false);
+    }
   });
 
   it("queues.createQueue -> POST { queue_name }", async () => {

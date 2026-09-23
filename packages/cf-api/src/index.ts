@@ -27,6 +27,7 @@ export type {
 } from "./namespaces/assets";
 export type { RestoreArgs } from "./namespaces/d1";
 export type { CreateBucketArgs } from "./namespaces/r2";
+export { isAddressableObjectKey } from "./namespaces/r2";
 export type {
   CreateVectorizeIndexArgs,
   VectorizeConfig,

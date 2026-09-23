@@ -1,8 +1,6 @@
-import { Badge, Banner, Empty, LayerCard, Link, LinkButton, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Empty, LayerCard, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
   ArrowLeftIcon,
-  ArrowRightIcon,
-  InfoIcon,
   StorefrontIcon,
   WarningCircleIcon,
   WarningIcon,
@@ -15,9 +13,17 @@ import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
 import { PlanBadge, StatusBadge } from "../../../components/status-badge";
 
-/** `/catalog/$slug`: app detail, prerequisites, and the install form. */
+/**
+ * `/catalog/$slug`: app detail, prerequisites, the installs of this app, and
+ * the install form (an app may be installed several times under different
+ * Worker names, unless its Worker name is fixed).
+ */
 export const Route = createFileRoute("/_app/catalog/$slug")({
   loader: ({ params }) => getCatalogEntry({ data: { slug: params.slug } }),
+  // The deepest route's title wins over the root's "<page> · Appflare".
+  head: ({ loaderData }) => ({
+    meta: [{ title: `${loaderData?.app?.name ?? "Catalog"} · Appflare` }],
+  }),
   component: CatalogEntryPage,
 });
 
@@ -77,29 +83,19 @@ function CatalogEntryPage() {
           description={detail.error}
         />
       )}
-      {detail.installed !== null && (
-        <Banner
-          variant="secondary"
-          icon={<InfoIcon weight="fill" />}
-          title={`${app.name} is installed as "${detail.installed.workerName}".`}
-          description="Appflare installs one instance per app."
-          action={
-            <LinkButton
-              href={`/apps/${detail.installed.installId}`}
-              variant="secondary"
-              icon={<ArrowRightIcon />}
-            >
-              Open install
-            </LinkButton>
-          }
-        />
-      )}
-      {catalog !== null && (
+      <Instances detail={detail} />
+      {catalog !== null && detail.suggestedWorkerName !== null && (
         <InstallForm
+          // A new suggestion (after another install) resets the form.
+          key={detail.suggestedWorkerName}
           catalog={catalog}
           canInstall={viewer.role === "admin"}
+          defaultWorkerName={detail.suggestedWorkerName}
+          fixedWorkerName={detail.fixedWorkerName}
           blockedReason={
-            detail.installed !== null ? `${app.name} is already installed in this account.` : null
+            detail.fixedWorkerName && detail.instances[0] !== undefined
+              ? `${app.name} is already installed as "${detail.instances[0].workerName}". It only works under one Worker name, so it installs once per account.`
+              : null
           }
         />
       )}
@@ -114,12 +110,7 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
         <span>About</span>
-        <div className="flex items-center gap-2">
-          {detail.installed !== null && (
-            <StatusBadge status={detail.installed.status} of="install" />
-          )}
-          <PlanBadge plan={app.plan} />
-        </div>
+        <PlanBadge plan={app.plan} />
       </LayerCard.Secondary>
       <LayerCard.Primary className="px-5 py-4">
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
@@ -154,6 +145,44 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
         </dl>
       </LayerCard.Primary>
     </LayerCard>
+  );
+}
+
+/** Installs of this app that are not uninstalled, with links to each. */
+function Instances({ detail }: { detail: CatalogDetail }) {
+  if (detail.instances.length === 0) return null;
+  return (
+    <section className="grid gap-3">
+      <Text variant="heading" as="h2">
+        Installed in this account
+      </Text>
+      <LayerCard className="p-0">
+        <Table>
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Name</Table.Head>
+              <Table.Head>Worker</Table.Head>
+              <Table.Head>Status</Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {detail.instances.map((instance) => (
+              <Table.Row key={instance.installId}>
+                <Table.Cell>
+                  <Link href={`/apps/${instance.installId}`}>{instance.instanceName}</Link>
+                </Table.Cell>
+                <Table.Cell>
+                  <span className="font-mono text-[0.9em]">{instance.workerName}</span>
+                </Table.Cell>
+                <Table.Cell>
+                  <StatusBadge status={instance.status} of="install" />
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+      </LayerCard>
+    </section>
   );
 }
 

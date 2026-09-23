@@ -54,7 +54,9 @@ export const settings = sqliteTable("settings", {
 export const installs = sqliteTable("installs", {
   id: text("id").primaryKey(),
   app_slug: text("app_slug").notNull(),
+  /** The unique key of an active install: two installs that are not uninstalled never share it. */
   worker_name: text("worker_name").notNull(),
+  /** User-visible label; defaults to the Worker name. */
   instance_name: text("instance_name"),
   catalog_version: text("catalog_version").notNull(),
   artifact_url: text("artifact_url").notNull(),
@@ -69,6 +71,8 @@ export const installs = sqliteTable("installs", {
   manifest_json: text("manifest_json"),
   installed_at: timestamp("installed_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
+  /** Set when the uninstall job finishes (status `uninstalled`). */
+  uninstalled_at: timestamp("uninstalled_at"),
 });
 
 /** A Cloudflare object created for an install (glossary: resource). */
@@ -84,7 +88,10 @@ export const resources = sqliteTable(
     name: text("name").notNull(),
     cf_id: text("cf_id"),
     created_at: timestamp("created_at").notNull(),
+    /** Deleted from the account (by an uninstall). */
     deleted_at: timestamp("deleted_at"),
+    /** Kept in the account when its install was uninstalled, so it stays findable. */
+    retained_at: timestamp("retained_at"),
   },
   (t) => [index("resources_install_id_idx").on(t.install_id)],
 );

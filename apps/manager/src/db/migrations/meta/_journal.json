@@ -15,6 +15,13 @@
       "when": 1790101561164,
       "tag": "0001_rate_limit",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790147391359,
+      "tag": "0002_uninstall",
+      "breakpoints": true
     }
   ]
 }

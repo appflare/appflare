@@ -1,19 +1,35 @@
-import { Badge, Empty, LayerCard, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
-import { ArrowSquareOutIcon, PackageIcon } from "@phosphor-icons/react";
+import { Badge, Banner, Empty, LayerCard, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
+import {
+  ArrowRightIcon,
+  ArrowSquareOutIcon,
+  InfoIcon,
+  PackageIcon,
+  WarningCircleIcon,
+} from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { formatDateTime, resourceKindLabel } from "../../../components/format";
 import { Markdown } from "../../../components/markdown";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
-import { getInstall, type InstallDetail } from "../../../installs/installs.functions";
+import { UninstallDialog } from "../../../components/uninstall-dialog";
+import {
+  getInstall,
+  type InstallDetail,
+  type ResourceView,
+} from "../../../installs/installs.functions";
 
 /**
- * `/apps/$installId`: status, resources, secret names, jobs, and
- * the app's post-install notes.
+ * `/apps/$installId`: status, resources, secret names, jobs, the app's
+ * post-install notes, and uninstall. After an uninstall it shows the
+ * `uninstalled` state, the resources that were kept, and the job history.
  */
 export const Route = createFileRoute("/_app/apps/$installId")({
   loader: ({ params }) => getInstall({ data: { installId: params.installId } }),
+  // The deepest route's title wins over the root's "<page> · Appflare".
+  head: ({ loaderData }) => ({
+    meta: [{ title: `${loaderData?.instanceName ?? "Install"} · Appflare` }],
+  }),
   component: InstallPage,
 });
 
@@ -43,6 +59,8 @@ const mono = "font-mono text-[0.9em]";
 
 function InstallPage() {
   const install = Route.useLoaderData();
+  const { viewer } = Route.useRouteContext();
+  const isAdmin = viewer.role === "admin";
   if (install === null) {
     return (
       <>
@@ -55,26 +73,33 @@ function InstallPage() {
       </>
     );
   }
+  const gone = install.status === "uninstalled";
   return (
     <>
       <PageHeader
-        title={install.name}
-        description={`Worker "${install.workerName}"`}
+        title={install.instanceName}
+        description={`${install.name}, Worker "${install.workerName}"`}
         actions={
-          install.workerUrl !== null ? (
-            <LinkButton
-              href={install.workerUrl}
-              external
-              variant="primary"
-              icon={<ArrowSquareOutIcon />}
-            >
-              Open app
-            </LinkButton>
-          ) : undefined
+          <div className="flex flex-wrap items-center gap-2">
+            {isAdmin && install.uninstall !== null && (
+              <UninstallDialog install={install} mode={install.uninstall} />
+            )}
+            {install.workerUrl !== null && (
+              <LinkButton
+                href={install.workerUrl}
+                external
+                variant="primary"
+                icon={<ArrowSquareOutIcon />}
+              >
+                Open app
+              </LinkButton>
+            )}
+          </div>
         }
       />
+      <UninstallState install={install} />
       <Overview install={install} />
-      {install.postInstall.length > 0 && (
+      {!gone && install.postInstall.length > 0 && (
         <Section title="Next steps">
           <LayerCard>
             <LayerCard.Primary className="grid gap-4 px-5 py-4">
@@ -85,58 +110,44 @@ function InstallPage() {
           </LayerCard>
         </Section>
       )}
-      <Section title="Resources">
-        {install.resources.length === 0 ? (
-          <Text variant="secondary">No resources have been created yet.</Text>
-        ) : (
-          <LayerCard className="p-0">
-            <Table>
-              <Table.Header>
-                <Table.Row>
-                  <Table.Head>Kind</Table.Head>
-                  <Table.Head>Binding</Table.Head>
-                  <Table.Head>Name</Table.Head>
-                  <Table.Head>ID</Table.Head>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {install.resources.map((r) => (
-                  <Table.Row key={r.id}>
-                    <Table.Cell>{resourceKindLabel(r.kind)}</Table.Cell>
-                    <Table.Cell>
-                      <span className={mono}>{r.binding ?? ""}</span>
-                    </Table.Cell>
-                    <Table.Cell>
-                      <span className={mono}>{r.name}</span>
-                    </Table.Cell>
-                    <Table.Cell>
-                      <span className={mono}>{r.cfId ?? ""}</span>
-                    </Table.Cell>
-                  </Table.Row>
+      {install.retained.length > 0 && (
+        <Section title="Kept in the account">
+          <Text variant="secondary">
+            These were kept when the app was uninstalled. Appflare no longer uses them; delete them
+            in the Cloudflare dashboard when you no longer need the data.
+          </Text>
+          <ResourceTable rows={install.retained} />
+        </Section>
+      )}
+      {!gone && (
+        <Section title="Resources">
+          {install.resources.length === 0 ? (
+            <Text variant="secondary">No resources have been created yet.</Text>
+          ) : (
+            <ResourceTable rows={install.resources} />
+          )}
+        </Section>
+      )}
+      {!gone && (
+        <Section title="Secrets">
+          {install.secretNames.length === 0 ? (
+            <Text variant="secondary">No secrets are set.</Text>
+          ) : (
+            <div className="grid gap-1.5">
+              <div className="flex flex-wrap gap-2">
+                {install.secretNames.map((name) => (
+                  <Badge key={name} variant="outline">
+                    {name}
+                  </Badge>
                 ))}
-              </Table.Body>
-            </Table>
-          </LayerCard>
-        )}
-      </Section>
-      <Section title="Secrets">
-        {install.secretNames.length === 0 ? (
-          <Text variant="secondary">No secrets are set.</Text>
-        ) : (
-          <div className="grid gap-1.5">
-            <div className="flex flex-wrap gap-2">
-              {install.secretNames.map((name) => (
-                <Badge key={name} variant="outline">
-                  {name}
-                </Badge>
-              ))}
+              </div>
+              <Text variant="secondary" size="sm">
+                Secret values are stored encrypted on the Worker and cannot be shown.
+              </Text>
             </div>
-            <Text variant="secondary" size="sm">
-              Secret values are stored encrypted on the Worker and cannot be shown.
-            </Text>
-          </div>
-        )}
-      </Section>
+          )}
+        </Section>
+      )}
       <Section title="Jobs">
         <LayerCard className="p-0">
           <Table>
@@ -165,8 +176,86 @@ function InstallPage() {
           </Table>
         </LayerCard>
       </Section>
-      {/* TODO: update and rollback actions; TODO: uninstall. */}
+      {/* TODO: update and rollback actions; the update and rollback jobs do not exist yet. */}
     </>
+  );
+}
+
+function ResourceTable({ rows }: { rows: ResourceView[] }) {
+  return (
+    <LayerCard className="p-0">
+      <Table>
+        <Table.Header>
+          <Table.Row>
+            <Table.Head>Kind</Table.Head>
+            <Table.Head>Binding</Table.Head>
+            <Table.Head>Name</Table.Head>
+            <Table.Head>ID</Table.Head>
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          {rows.map((r) => (
+            <Table.Row key={r.id}>
+              <Table.Cell>{resourceKindLabel(r.kind)}</Table.Cell>
+              <Table.Cell>
+                <span className={mono}>{r.binding ?? ""}</span>
+              </Table.Cell>
+              <Table.Cell>
+                <span className={mono}>{r.name}</span>
+              </Table.Cell>
+              <Table.Cell>
+                <span className={mono}>{r.cfId ?? ""}</span>
+              </Table.Cell>
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
+    </LayerCard>
+  );
+}
+
+/** Where an uninstall stands: running (link to its log), stopped part way, or done. */
+function UninstallState({ install }: { install: InstallDetail }) {
+  if (install.status === "uninstalled") {
+    return (
+      <Banner
+        variant="secondary"
+        icon={<InfoIcon weight="fill" />}
+        title={`Uninstalled ${formatDateTime(install.uninstalledAt)}`}
+        description={
+          install.retained.length > 0
+            ? "The Worker is deleted. The resources listed under Kept in the account are still there."
+            : "The Worker and every resource Appflare created for it are deleted."
+        }
+      />
+    );
+  }
+  if (install.status !== "uninstalling") return null;
+  if (install.activeJobId !== null) {
+    return (
+      <Banner
+        variant="secondary"
+        icon={<InfoIcon weight="fill" />}
+        title="Uninstalling"
+        action={
+          <LinkButton
+            href={`/jobs/${install.activeJobId}`}
+            variant="secondary"
+            icon={<ArrowRightIcon />}
+          >
+            View log
+          </LinkButton>
+        }
+      />
+    );
+  }
+  return (
+    <Banner
+      variant="error"
+      icon={<WarningCircleIcon weight="fill" />}
+      title="The uninstall did not finish"
+      description="Resources already deleted stay deleted. An admin can retry the uninstall to delete what is left, and keep anything Cloudflare refuses to delete."
+    />
   );
 }
 
@@ -183,6 +272,7 @@ function Overview({ install }: { install: InstallDetail }) {
       </LayerCard.Secondary>
       <LayerCard.Primary className="px-5 py-4">
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
+          <Row label="Name">{install.instanceName}</Row>
           <Row label="App">
             <Link href={`/catalog/${install.slug}`}>{install.slug}</Link>
           </Row>
@@ -204,6 +294,8 @@ function Overview({ install }: { install: InstallDetail }) {
                 {install.workerUrl}
                 <Link.ExternalIcon />
               </Link>
+            ) : install.status === "uninstalled" ? (
+              "None; the Worker is deleted"
             ) : (
               "Not serving yet"
             )}

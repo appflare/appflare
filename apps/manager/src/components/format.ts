@@ -11,6 +11,20 @@ export function formatTime(iso: string): string {
   return time.format(new Date(iso));
 }
 
+const bytesUnits = ["bytes", "KB", "MB", "GB", "TB"];
+
+/** A byte count in decimal units, as the Cloudflare dashboard shows sizes. */
+export function formatBytes(bytes: number): string {
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < bytesUnits.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  const digits = unit === 0 || value >= 100 ? 0 : 1;
+  return `${value.toFixed(digits)} ${bytesUnits[unit]}`;
+}
+
 /** Catalog `requires` values as product names. */
 export const REQUIREMENT_LABELS: Record<string, string> = {
   r2: "R2",

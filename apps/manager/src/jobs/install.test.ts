@@ -48,6 +48,8 @@ interface FakeState {
   workflows: string[];
   /** Keys (`METHOD /path`) whose next call does its work and then answers 500. */
   failAfter: Set<string>;
+  /** When set, the script upload is refused with this status. */
+  uploadStatus?: number;
 }
 
 function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
@@ -135,6 +137,12 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         return ok({ jwt: done ? "completion-jwt" : null });
       }
       case "PUT /workers/scripts/cut": {
+        if (state.uploadStatus !== undefined) {
+          return Response.json(
+            { success: false, errors: [{ code: 10021, message: "script refused" }] },
+            { status: state.uploadStatus },
+          );
+        }
         const form = await request.formData();
         state.metadata = JSON.parse(String(form.get("metadata")));
         state.modules = [...form.keys()].filter((k) => k !== "metadata");
@@ -317,6 +325,7 @@ describe("install job", () => {
       "record D1 database cut-db",
       "open assets upload session",
       "upload assets bucket 1/1",
+      "record Worker name",
       "upload Worker script",
       "record Worker script",
       "D1 DB: create d1_migrations table",
@@ -554,5 +563,67 @@ describe("install job", () => {
       "preflight checks: the Cloudflare API token is not configured; finish setup first",
     );
     expect(fake.state.calls).toEqual([]);
+  });
+
+  it("records the Worker before uploading it, so a lost upload response is still owned", async () => {
+    const r = await install({}, { failAfter: new Set(["PUT /workers/scripts/cut"]) });
+    // The upload is retried and succeeds; the row recorded before it gets the id.
+    expect(r.error).toBeNull();
+    expect(r.step.names.indexOf("record Worker name")).toBeLessThan(
+      r.step.names.indexOf("upload Worker script"),
+    );
+    expect(r.resources).toContainEqual({
+      kind: "worker",
+      binding: null,
+      name: "cut",
+      cf_id: "cut",
+    });
+  });
+
+  it("releases the pending Worker row when Cloudflare refuses the upload", async () => {
+    const r = await install({}, { uploadStatus: 400 });
+    expect(r.job?.error).toMatch(/^upload Worker script: /);
+    const row = await env.DB.prepare(
+      "SELECT cf_id, deleted_at FROM resources WHERE kind = 'worker'",
+    ).first<{ cf_id: string | null; deleted_at: number | null }>();
+    expect(row?.cf_id).toBeNull();
+    // Deleted: an uninstall must not treat a same-named Worker as this install's.
+    expect(row?.deleted_at).not.toBeNull();
+  });
+
+  it("keeps the pending Worker row when the upload fails with a 5xx", async () => {
+    const r = await install({}, { uploadStatus: 503 });
+    expect(r.job?.status).toBe("failed");
+    const row = await env.DB.prepare(
+      "SELECT deleted_at FROM resources WHERE kind = 'worker'",
+    ).first<{ deleted_at: number | null }>();
+    expect(row).toEqual({ deleted_at: null });
+  });
+
+  it("does not flip an install that left `installing` back to installed", async () => {
+    const fixture = await buildArtifactFixture();
+    const fake = fakeWorld(fixture, { health: [{ status: 200, body: "ok" }] });
+    const { params, installId, jobId } = await start(fixture);
+    const fetch = async (input: string, init?: RequestInit) => {
+      // The job was settled from outside while it ran.
+      if (input === HEALTH_URL) {
+        await env.DB.prepare("UPDATE installs SET status = 'failed' WHERE id = ?1")
+          .bind(installId)
+          .run();
+      }
+      return fake.fetch(input, init);
+    };
+    await runInstall({
+      params,
+      step: fakeStep(),
+      env: jobEnv(),
+      deps: { fetch, signingKeys: fixture.keys },
+    });
+    const install = await env.DB.prepare("SELECT status FROM installs WHERE id = ?1")
+      .bind(installId)
+      .first();
+    expect(install).toEqual({ status: "failed" });
+    const job = await env.DB.prepare("SELECT status FROM jobs WHERE id = ?1").bind(jobId).first();
+    expect(job).toEqual({ status: "succeeded" });
   });
 });

@@ -11,7 +11,9 @@ import { type FormEvent, useState } from "react";
 import { generateTemporaryPassword } from "../auth/temporary-password";
 import {
   GENERATED_SECRET_LENGTH,
+  INSTANCE_NAME_MAX_LENGTH,
   WORKER_NAME_HINT,
+  WORKER_NAME_MAX_LENGTH,
   WORKER_NAME_PATTERN,
 } from "../installs/install-input";
 import { startInstall } from "../installs/installs.functions";
@@ -22,23 +24,32 @@ function generated(): string {
 
 /**
  * The install form of `/catalog/$slug`, generated from
- * the signed catalog manifest: the Worker name, one field per secret and var, and
- * the Workers Paid confirmation. `generate: true` secrets are prefilled with a
- * random value the admin can copy now; it is shown only here. Members see the
- * form disabled.
+ * the signed catalog manifest: the Worker name, the install's label, one field
+ * per secret and var, and the Workers Paid confirmation. `generate: true`
+ * secrets are prefilled with a random value the admin can copy now; it is
+ * shown only here. Members see the form disabled.
  */
 export function InstallForm({
   catalog,
   canInstall,
+  defaultWorkerName,
+  fixedWorkerName,
   blockedReason,
 }: {
   catalog: CatalogManifest;
   canInstall: boolean;
+  /** The catalog's Worker name, or the next free `<name>-N` when it is taken. */
+  defaultWorkerName: string;
+  /** The app only works under its catalog Worker name; the field is read-only. */
+  fixedWorkerName: boolean;
   /** Why the install is not possible right now (for example, already installed). */
   blockedReason: string | null;
 }) {
   const router = useRouter();
-  const [workerName, setWorkerName] = useState(catalog.install.workerName);
+  const [workerName, setWorkerName] = useState(defaultWorkerName);
+  /** Null while the label follows the Worker name. */
+  const [label, setLabel] = useState<string | null>(null);
+  const instanceName = label ?? workerName;
   const [secrets, setSecrets] = useState<Record<string, string>>(() =>
     Object.fromEntries(catalog.secrets.map((s) => [s.name, s.generate ? generated() : ""])),
   );
@@ -50,11 +61,13 @@ export function InstallForm({
   const [error, setError] = useState<string | null>(null);
 
   const nameValid = WORKER_NAME_PATTERN.test(workerName);
+  const labelValid =
+    instanceName.trim().length > 0 && instanceName.trim().length <= INSTANCE_NAME_MAX_LENGTH;
   const disabled = !canInstall || blockedReason !== null || pending;
   const missing =
     catalog.secrets.some((s) => (secrets[s.name] ?? "").length === 0) ||
     catalog.vars.some((v) => v.required && (vars[v.name] ?? "").trim().length === 0);
-  const ready = nameValid && !missing && (catalog.plan !== "paid" || paidConfirmed);
+  const ready = nameValid && labelValid && !missing && (catalog.plan !== "paid" || paidConfirmed);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -63,7 +76,14 @@ export function InstallForm({
     setError(null);
     try {
       const { jobId } = await startInstall({
-        data: { slug: catalog.slug, workerName, secrets, vars, paidConfirmed },
+        data: {
+          slug: catalog.slug,
+          workerName,
+          instanceName: instanceName.trim(),
+          secrets,
+          vars,
+          paidConfirmed,
+        },
       });
       await router.navigate({ to: "/jobs/$jobId", params: { jobId } });
     } catch (err) {
@@ -92,12 +112,27 @@ export function InstallForm({
               label="Worker name"
               value={workerName}
               onChange={(e) => setWorkerName(e.currentTarget.value.trim())}
+              readOnly={fixedWorkerName}
               autoComplete="off"
               spellCheck={false}
               required
-              maxLength={54}
+              maxLength={WORKER_NAME_MAX_LENGTH}
               error={nameValid ? undefined : `Use ${WORKER_NAME_HINT}`}
-              description={`The app is served at https://${workerName || "<name>"}.<your subdomain>.workers.dev. Resources are named after it.`}
+              description={
+                fixedWorkerName
+                  ? `${catalog.name} only works as the Worker "${workerName}", so it installs once per account.`
+                  : `The app is served at https://${workerName || "<name>"}.<your subdomain>.workers.dev. Resources are named after it. Each install of an app needs its own Worker name.`
+              }
+            />
+            <Input
+              label="Name"
+              value={instanceName}
+              onChange={(e) => setLabel(e.currentTarget.value)}
+              autoComplete="off"
+              required
+              maxLength={INSTANCE_NAME_MAX_LENGTH}
+              error={labelValid ? undefined : `Use 1 to ${INSTANCE_NAME_MAX_LENGTH} characters.`}
+              description="How this install is listed in Appflare. Defaults to the Worker name."
             />
 
             {catalog.secrets.length > 0 && (

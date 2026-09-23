@@ -101,19 +101,109 @@ describe("startInstallCore", () => {
     expect(count?.n).toBe(0);
   });
 
-  it("refuses a second instance of the same app while it is installed", async () => {
+  it("installs a second instance of an app under another Worker name, with its own label", async () => {
+    const f = await buildArtifactFixture();
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version, artifact_url, status, installed_at, updated_at)
+       VALUES ('old', 'cut', 'cut', 'cut', '1', 'u', 'installed', 1, 1)`,
+    ).run();
+    await expect(
+      startInstallCore(harness(f).deps, input({ workerName: "cut-2", instanceName: "Team links" })),
+    ).resolves.toEqual({ installId: "id1", jobId: "id2" });
+    const rows = await env.DB.prepare(
+      "SELECT id, worker_name, instance_name, status FROM installs ORDER BY id",
+    ).all();
+    expect(rows.results).toEqual([
+      { id: "id1", worker_name: "cut-2", instance_name: "Team links", status: "installing" },
+      { id: "old", worker_name: "cut", instance_name: "cut", status: "installed" },
+    ]);
+  });
+
+  it("refuses the same Worker name while any install that is not uninstalled holds it", async () => {
     const f = await buildArtifactFixture();
     await env.DB.prepare(
       `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
-       VALUES ('old', 'cut', 'cut-old', '1', 'u', 'installed', 1, 1)`,
+       VALUES ('old', 'cut', 'cut', '1', 'u', 'installed', 1, 1)`,
+    ).run();
+    for (const status of ["installing", "installed", "updating", "uninstalling"]) {
+      await env.DB.prepare("UPDATE installs SET status = ?1 WHERE id = 'old'").bind(status).run();
+      await expect(startInstallCore(harness(f).deps, input())).rejects.toThrow(
+        'Another install already uses the Worker name "cut".',
+      );
+    }
+    await env.DB.prepare("UPDATE installs SET status = 'uninstalled' WHERE id = 'old'").run();
+    await expect(startInstallCore(harness(f).deps, input())).resolves.toMatchObject({
+      installId: "id1",
+    });
+  });
+
+  it("installs an app with a fixed Worker name once, and only under that name", async () => {
+    const f = await buildArtifactFixture({
+      catalog: {
+        install: {
+          tier: "artifact",
+          packageManager: "pnpm",
+          wranglerConfig: "wrangler.jsonc",
+          workerName: "cut",
+          fixedWorkerName: true,
+        },
+      },
+    });
+    await expect(startInstallCore(harness(f).deps, input({ workerName: "cut-2" }))).rejects.toThrow(
+      'Cut only works as the Worker "cut"; its Worker name cannot be changed.',
+    );
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
+       VALUES ('old', 'cut', 'somewhere-else', '1', 'u', 'installed', 1, 1)`,
     ).run();
     await expect(startInstallCore(harness(f).deps, input())).rejects.toThrow(
-      /Cut is already installed/,
+      'Cut is already installed as "somewhere-else". It only works under one Worker name, so it installs once per account.',
     );
     await env.DB.prepare("UPDATE installs SET status = 'uninstalled' WHERE id = 'old'").run();
     await expect(startInstallCore(harness(f).deps, input())).resolves.toMatchObject({
       installId: "id1",
     });
+  });
+
+  it("refuses a Worker name that already exists in the account, and tolerates a failed listing", async () => {
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    await expect(
+      startInstallCore({ ...h.deps, listAccountWorkers: async () => ["appflare", "cut"] }, input()),
+    ).rejects.toThrow(/A Worker named "cut" already exists in this account/);
+    expect(h.created).toHaveLength(0);
+    await expect(
+      startInstallCore(
+        {
+          ...h.deps,
+          listAccountWorkers: async () => {
+            throw new Error("API unavailable");
+          },
+        },
+        input(),
+      ),
+    ).resolves.toMatchObject({ installId: "id1" });
+  });
+
+  it("lets a failed install that still owns resources block only its own Worker name", async () => {
+    const f = await buildArtifactFixture();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
+         VALUES ('old', 'cut', 'cut', '1', 'u', 'failed', 1, 1)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES ('r1', 'old', 'kv', 'CUT_KV', 'cut-cut-kv', 'kv1', 1)`,
+      ),
+    ]);
+    await expect(
+      startInstallCore(harness(f).deps, input({ workerName: "cut-2" })),
+    ).resolves.toMatchObject({
+      installId: "id1",
+    });
+    const old = await env.DB.prepare("SELECT status FROM installs WHERE id = 'old'").first();
+    expect(old).toEqual({ status: "failed" });
   });
 
   it("retires a failed install that holds no resources, so the app can be retried", async () => {
@@ -125,8 +215,10 @@ describe("startInstallCore", () => {
     await expect(startInstallCore(harness(f).deps, input())).resolves.toMatchObject({
       installId: "id1",
     });
-    const old = await env.DB.prepare("SELECT status FROM installs WHERE id = 'old'").first();
-    expect(old).toEqual({ status: "uninstalled" });
+    const old = await env.DB.prepare(
+      "SELECT status, uninstalled_at FROM installs WHERE id = 'old'",
+    ).first();
+    expect(old).toEqual({ status: "uninstalled", uninstalled_at: NOW.getTime() });
   });
 
   it("keeps blocking on a failed install that still owns resources", async () => {

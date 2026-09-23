@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createDb } from "../db/client";
 import { installs, job_logs, jobs } from "../db/schema";
 import { requireSession } from "../server/auth.server";
+import { reconcileJobs } from "./reconcile.server";
 
 /** `/jobs/$jobId`: the job and its log, polled every 2 s while it runs. */
 
@@ -27,7 +28,14 @@ export interface JobView {
   error: string | null;
   startedAt: string | null;
   finishedAt: string | null;
-  install: { id: string; slug: string; workerName: string; status: string } | null;
+  install: {
+    id: string;
+    slug: string;
+    workerName: string;
+    /** The install's label (`instance_name`); the Worker name when unset. */
+    instanceName: string | null;
+    status: string;
+  } | null;
   logs: JobLogRow[];
 }
 
@@ -52,8 +60,14 @@ export const getJob = createServerFn({ method: "GET" })
   .handler(async ({ data }): Promise<JobView | null> => {
     await requireSession();
     const db = createDb(env.DB);
-    const [job] = await db.select().from(jobs).where(eq(jobs.id, data.jobId)).limit(1);
+    let [job] = await db.select().from(jobs).where(eq(jobs.id, data.jobId)).limit(1);
     if (job === undefined) return null;
+    if (job.status === "queued" || job.status === "running") {
+      if (await reconcileJobs(env.DB, env.JOBS, [job])) {
+        [job] = await db.select().from(jobs).where(eq(jobs.id, data.jobId)).limit(1);
+        if (job === undefined) return null;
+      }
+    }
     const [installRows, logs] = await Promise.all([
       job.install_id === null
         ? Promise.resolve([])
@@ -62,6 +76,7 @@ export const getJob = createServerFn({ method: "GET" })
               id: installs.id,
               slug: installs.app_slug,
               workerName: installs.worker_name,
+              instanceName: installs.instance_name,
               status: installs.status,
             })
             .from(installs)

@@ -126,6 +126,9 @@ export interface D1Database {
   name: string;
   version?: string;
   created_at?: string;
+  /** Database size in bytes (`GET /d1/database/{uuid}`). */
+  file_size?: number;
+  num_tables?: number;
 }
 
 export interface D1QueryResult {
@@ -141,6 +144,27 @@ export interface D1TimeTravelBookmark {
 export interface D1TimeTravelRestore {
   bookmark: string;
   previous_bookmark?: string;
+}
+
+/** One entry of `GET /r2/buckets/{name}/objects` (fields the manager reads). */
+export interface R2Object {
+  key: string;
+  size?: number;
+  etag?: string;
+  last_modified?: string;
+}
+
+/** One page of a cursor-paginated listing. `cursor` is null on the last page. */
+export interface CursorPage<T> {
+  items: T[];
+  cursor: string | null;
+}
+
+/** One entry of `GET /storage/kv/namespaces/{id}/keys`. */
+export interface KvKey {
+  name: string;
+  expiration?: number;
+  metadata?: unknown;
 }
 
 export interface R2Bucket {

@@ -11,7 +11,7 @@ export interface FakeRoute {
   status?: number;
   result?: unknown;
   errors?: Array<{ code: number; message: string }>;
-  result_info?: { page?: number; per_page?: number; total_pages?: number };
+  result_info?: { page?: number; per_page?: number; total_pages?: number; cursor?: string };
 }
 
 export interface FakeCall {
