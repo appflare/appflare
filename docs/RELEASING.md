@@ -11,28 +11,31 @@ Releases, tagged `manager@<version>`. Nothing is published to npm yet.
    runs `changesets/action`. While changesets are pending it opens or updates the
    **chore: version packages** pull request (`pnpm changeset version`: bumps
    `apps/manager/package.json` and writes `apps/manager/CHANGELOG.md`).
+   The Changesets action only versions; it never creates tags or releases. The
+   workflow's own release job is the only thing that tags and publishes.
 3. Merging that pull request releases the new version. With no changesets pending,
-   the workflow releases `apps/manager/package.json`'s version unless the release
-   `manager@<version>` already exists, so a failed run is fixed by re-running it
-   (or by running the workflow manually on `main`).
+   the workflow releases `apps/manager/package.json`'s version, always built from
+   the version commit (the commit that set that version), unless the release
+   `manager@<version>` is already published with its three assets. A draft or
+   partial release is completed, and an existing tag must point at the version
+   commit. So a failed release is fixed by re-running the workflow or by the next
+   push to `main`; commits that landed in between never enter that version.
 4. The release runs in isolated jobs:
    - **build** (no secrets): `APPFLARE_VERSION=<version> pnpm release:pack --out
      dist/release --key-id appflare-2026-09` builds the manager with the version
      baked in, stamps the catalog manifest's `source` with the version and commit,
      packs `apps/manager` into an unsigned intermediate, and checks it.
    - **sign** (holds only `APPFLARE_SIGNING_KEY`, runs only the packer): checks
-     that `manifest.json` is `appflare@<version>` from this commit with key id
+     that `manifest.json` is `appflare@<version>` from the version commit with key id
      `appflare-2026-09`, signs it, and verifies the signature against the public
      keys embedded in `@appflare/schema`.
    - **release**: verifies again and creates the GitHub Release `manager@<version>`
-     with `appflare-<version>.zip`, `manifest.json`, and `manifest.sig`; the notes
-     are the version's changelog section. Versions with a pre-release suffix are
+     with `appflare-<version>.zip`, `manifest.json`, and `manifest.sig` (or uploads
+     them to a draft or partial release and publishes it); the notes are the
+     version's changelog section. A published release with all three assets is
+     never replaced: the run succeeds if its `manifest.json` is identical and fails
+     otherwise. Versions with a pre-release suffix are
      marked as pre-releases.
-
-If a release run fails and unrelated commits land on `main` before it is re-run,
-a new run releases the same version from the later commit, and the changelog will
-not describe those commits. Fix a failed release by re-running the failed workflow
-run (it rebuilds from its original commit), not by pushing.
 
 To pack locally (unsigned unless you pass `--key-id`):
 

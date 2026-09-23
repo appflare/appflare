@@ -3,12 +3,15 @@ name: release
 # Manager releases (docs/RELEASING.md). On every push to main:
 #
 #   version       contents+pull-requests: write; changesets/action opens or updates
-#                 the "chore: version packages" PR while changesets are pending. Runs no
+#                 the "chore: version packages" PR while changesets are pending. It
+#                 only versions: it never creates tags or releases. Runs no
 #                 dependency install scripts.
 #   plan          read-only; once no changesets are pending, releases
-#                 apps/manager/package.json's version unless the GitHub Release
-#                 manager@<version> already exists (so merging the version PR
-#                 releases, and a re-run or manual run publishes whatever is missing)
+#                 apps/manager/package.json's version from the commit that set it
+#                 (the version commit), unless the GitHub Release manager@<version>
+#                 is already published with its three assets. So merging the version
+#                 PR releases, and any later run completes a missing, draft, or
+#                 partial release from that same commit.
 #   build-packer  read-only; builds @appflare/pack into a self-contained bundle,
 #                 never builds or runs manager code
 #   build         read-only, no secrets; builds and packs the manager into an
@@ -17,7 +20,8 @@ name: release
 #                 only a manifest.json whose app, version, source, and keyId match
 #                 the plan
 #   release       contents: write; verifies against the embedded signing keys and
-#                 creates the GitHub Release manager@<version>
+#                 creates or completes the GitHub Release manager@<version>. The
+#                 only job that creates tags or releases.
 #
 # Nothing is published to npm in v1.
 
@@ -74,6 +78,11 @@ jobs:
           commit-message: "chore: version packages"
           pr-title: "chore: version packages"
           github-token: ${{ github.token }}
+          # Versioning only. Tags and releases belong to the release job below.
+          # (Both are read only when a publish-script is set, which it is not;
+          # stated explicitly so adding one later cannot start tagging.)
+          create-github-releases: false
+          push-git-tags: false
 
   plan:
     name: plan
@@ -86,9 +95,12 @@ jobs:
     outputs:
       release: ${{ steps.plan.outputs.release }}
       version: ${{ steps.plan.outputs.version }}
+      sha: ${{ steps.plan.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Full history, to find the commit that set the version.
+          fetch-depth: 0
           persist-credentials: false
       - id: plan
         env:
@@ -104,13 +116,56 @@ jobs:
           if [ "${version}" = "0.0.0" ]; then
             echo "::notice::apps/manager is still 0.0.0; nothing to release"
             echo "release=false" >> "${GITHUB_OUTPUT}"
-          elif gh release view "manager@${version}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
-            echo "::notice::manager@${version} is already released"
-            echo "release=false" >> "${GITHUB_OUTPUT}"
-          else
-            echo "::notice::releasing manager@${version} from ${GITHUB_SHA}"
-            echo "release=true" >> "${GITHUB_OUTPUT}"
+            exit 0
           fi
+          tag="manager@${version}"
+
+          # The version commit: the newest commit that changed the "version" line of
+          # apps/manager/package.json. Every run for this version builds from it, so
+          # commits that land later never end up in this version's artifact.
+          sha="$(git log -1 --format=%H -G'"version"[[:space:]]*:' -- apps/manager/package.json)"
+          if [ -z "${sha}" ] || [ "$(git show "${sha}:apps/manager/package.json" | jq -r .version)" != "${version}" ]; then
+            echo "::error::could not find the commit that set apps/manager/package.json to ${version}"
+            exit 1
+          fi
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+          # An existing tag must point at the version commit.
+          ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" \
+            --jq "map(select(.ref == \"refs/tags/${tag}\")) | .[0] // empty | \"\(.object.type) \(.object.sha)\"")"
+          if [ -n "${ref}" ]; then
+            tag_sha="${ref#* }"
+            if [ "${ref%% *}" = tag ]; then
+              tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}" --jq .object.sha)"
+            fi
+            if [ "${tag_sha}" != "${sha}" ]; then
+              echo "::error::tag ${tag} points at ${tag_sha}, not at the version commit ${sha}; fix or delete the tag by hand"
+              exit 1
+            fi
+          fi
+
+          # Release state, drafts included (the tag lookup does not see drafts).
+          mapfile -t ids < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"${tag}\") | .id")
+          if [ "${#ids[@]}" -gt 1 ]; then
+            echo "::error::${#ids[@]} releases exist for ${tag}; delete the extra ones by hand"
+            exit 1
+          fi
+          if [ "${#ids[@]}" -eq 1 ]; then
+            # The release list omits a draft's assets; read the release itself.
+            state="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ids[0]}" \
+              --jq '[(.draft | tostring), ([.assets[].name] | sort | join(","))] | join(" ")')"
+            expected="$(printf '%s\n' "appflare-${version}.zip" manifest.json manifest.sig | LC_ALL=C sort | paste -sd, -)"
+            if [ "${state}" = "false ${expected}" ]; then
+              echo "::notice::${tag} is already released"
+              echo "release=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+            echo "::notice::${tag} exists but is incomplete (draft=${state%% *}, assets: ${state#* }); completing it from ${sha}"
+          else
+            echo "::notice::releasing ${tag} from ${sha}"
+          fi
+          echo "release=true" >> "${GITHUB_OUTPUT}"
 
   build-packer:
     name: build packer
@@ -161,6 +216,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The version commit; release:pack records it as source.sha.
+          ref: ${{ needs.plan.outputs.sha }}
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -216,6 +273,7 @@ jobs:
       - name: Check against the plan, verify hashes, sign, verify the signature
         env:
           VERSION: ${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.plan.outputs.sha }}
           APPFLARE_SIGNING_KEY: ${{ secrets.APPFLARE_SIGNING_KEY }}
         run: |
           set -euo pipefail
@@ -240,7 +298,7 @@ jobs:
           check .version "${VERSION}"
           check .keyId "${KEY_ID}"
           check .source.repo "${GITHUB_REPOSITORY}"
-          check .source.sha "${GITHUB_SHA}"
+          check .source.sha "${SHA}"
           check .source.ref "${VERSION}"
           node "${pack}" verify release --hashes-only
           node "${pack}" sign release --sign-key-env APPFLARE_SIGNING_KEY --key-id "${KEY_ID}"
@@ -261,9 +319,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      # For the changelog only.
+      # For the changelog only, as of the version commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.plan.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -282,30 +341,55 @@ jobs:
       - name: Verify the signed artifact
         env:
           VERSION: ${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.plan.outputs.sha }}
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/appflare"
           tar -xzf "${RUNNER_TEMP}/appflare-packer/appflare-packer.tgz" -C "${RUNNER_TEMP}/appflare"
           pack="${RUNNER_TEMP}/appflare/packages/pack/bin/appflare-pack.js"
           dir="${RUNNER_TEMP}/release"
-          if [ "$(jq -r .app "${dir}/manifest.json")" != appflare ] || [ "$(jq -r .version "${dir}/manifest.json")" != "${VERSION}" ]; then
-            echo "::error::signed-manager is not appflare@${VERSION}"
+          if [ "$(jq -r .app "${dir}/manifest.json")" != appflare ] \
+            || [ "$(jq -r .version "${dir}/manifest.json")" != "${VERSION}" ] \
+            || [ "$(jq -r .source.sha "${dir}/manifest.json")" != "${SHA}" ]; then
+            echo "::error::signed-manager is not appflare@${VERSION} built from ${SHA}"
             exit 1
           fi
           node "${pack}" verify "${dir}" --require-signed
-      # The write token is visible to gh only, never to the packer.
-      - name: Create the GitHub Release
+      # The write token is visible to gh only, never to the packer. Idempotent:
+      #   no release                          -> create it with the three assets
+      #   draft, or assets missing            -> upload the assets (clobber), set the
+      #                                          notes, publish
+      #   published, complete, same manifest  -> nothing to do
+      #   published, complete, other manifest -> fail; never replace a live release
+      - name: Create or complete the GitHub Release
         env:
           WRITE_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.plan.outputs.sha }}
         run: |
           set -euo pipefail
+          gh_write() { GH_TOKEN="${WRITE_TOKEN}" gh "$@"; }
           dir="${RUNNER_TEMP}/release"
           tag="manager@${VERSION}"
-          if GH_TOKEN="${WRITE_TOKEN}" gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
-            echo "::error::release ${tag} already exists; delete it by hand to re-release"
-            exit 1
+          repo="${GITHUB_REPOSITORY}"
+          assets=("${dir}/appflare-${VERSION}.zip" "${dir}/manifest.json" "${dir}/manifest.sig")
+          expected="$(printf '%s\n' "appflare-${VERSION}.zip" manifest.json manifest.sig | LC_ALL=C sort | paste -sd, -)"
+          digest="$(sha256sum "${dir}/manifest.json" | cut -d' ' -f1)"
+
+          # An existing tag must point at the version commit (re-checked: time has passed since plan).
+          ref="$(gh_write api "repos/${repo}/git/matching-refs/tags/${tag}" \
+            --jq "map(select(.ref == \"refs/tags/${tag}\")) | .[0] // empty | \"\(.object.type) \(.object.sha)\"")"
+          if [ -n "${ref}" ]; then
+            tag_sha="${ref#* }"
+            if [ "${ref%% *}" = tag ]; then
+              tag_sha="$(gh_write api "repos/${repo}/git/tags/${tag_sha}" --jq .object.sha)"
+            fi
+            if [ "${tag_sha}" != "${SHA}" ]; then
+              echo "::error::tag ${tag} points at ${tag_sha}, not at the version commit ${SHA}; fix or delete the tag by hand"
+              exit 1
+            fi
           fi
+
           # Release notes: this version's section of the Changesets changelog.
           notes="${RUNNER_TEMP}/notes.md"
           awk -v heading="## ${VERSION}" '
@@ -316,17 +400,58 @@ jobs:
           if ! grep -q '[^[:space:]]' "${notes}"; then
             echo "No changelog entry for ${VERSION}." > "${notes}"
           fi
-          digest="$(sha256sum "${dir}/manifest.json" | cut -d' ' -f1)"
           printf '\n---\nBuilt from %s@%s. Signed with key id %s. manifest.json sha256: %s.\n' \
-            "${GITHUB_REPOSITORY}" "${GITHUB_SHA}" "${KEY_ID}" "${digest}" >> "${notes}"
+            "${repo}" "${SHA}" "${KEY_ID}" "${digest}" >> "${notes}"
           prerelease=()
           if [[ "${VERSION}" == *-* ]]; then
             prerelease=(--prerelease)
           fi
-          GH_TOKEN="${WRITE_TOKEN}" gh release create "${tag}" \
-            "${dir}/appflare-${VERSION}.zip" "${dir}/manifest.json" "${dir}/manifest.sig" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --target "${GITHUB_SHA}" \
+
+          # Drafts included: the release list is the only lookup that returns them.
+          mapfile -t ids < <(gh_write api --paginate "repos/${repo}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"${tag}\") | .id")
+          if [ "${#ids[@]}" -gt 1 ]; then
+            echo "::error::${#ids[@]} releases exist for ${tag}; delete the extra ones by hand"
+            exit 1
+          fi
+          if [ "${#ids[@]}" -eq 0 ]; then
+            gh_write release create "${tag}" "${assets[@]}" \
+              --repo "${repo}" \
+              --target "${SHA}" \
+              --title "Appflare ${VERSION}" \
+              --notes-file "${notes}" \
+              "${prerelease[@]}"
+            exit 0
+          fi
+
+          # The release list omits a draft's assets; read the release itself.
+          release="$(gh_write api "repos/${repo}/releases/${ids[0]}")"
+          draft="$(jq -r .draft <<< "${release}")"
+          present="$(jq -r '[.assets[].name] | sort | join(",")' <<< "${release}")"
+          if [ "${draft}" = false ] && [ "${present}" = "${expected}" ]; then
+            live="$(jq -r '.assets[] | select(.name == "manifest.json") | .digest // ""' <<< "${release}")"
+            if [ -z "${live}" ]; then
+              live="sha256:$(gh_write release download "${tag}" --repo "${repo}" --pattern manifest.json --output - | sha256sum | cut -d' ' -f1)"
+            fi
+            if [ "${live}" = "sha256:${digest}" ]; then
+              echo "::notice::${tag} is already released with this manifest.json"
+              exit 0
+            fi
+            echo "::error::${tag} is published with a different manifest.json (${live}, this build sha256:${digest}); a live release is never replaced"
+            exit 1
+          fi
+          unexpected="$(jq -r --arg expected "${expected}" '[.assets[].name | select(. as $n | $expected | split(",") | index($n) | not)] | join(",")' <<< "${release}")"
+          if [ -n "${unexpected}" ]; then
+            echo "::error::${tag} has unexpected assets (${unexpected}); remove them by hand"
+            exit 1
+          fi
+          echo "::notice::completing ${tag} (draft=${draft}, assets: ${present:-none})"
+          gh_write release upload "${tag}" "${assets[@]}" --repo "${repo}" --clobber
+          # The notes are regenerated: they carry the digest of the assets just uploaded.
+          gh_write release edit "${tag}" \
+            --repo "${repo}" \
+            --target "${SHA}" \
             --title "Appflare ${VERSION}" \
             --notes-file "${notes}" \
+            --draft=false \
             "${prerelease[@]}"
