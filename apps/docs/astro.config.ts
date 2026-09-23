@@ -50,6 +50,7 @@ export default defineConfig({
             { label: "Apps that receive email", slug: "guides/email-apps" },
             { label: "Update and roll back", slug: "guides/updates" },
             { label: "Uninstall an app", slug: "guides/uninstall" },
+            { label: "Sandbox builds", slug: "guides/builds" },
             { label: "Update Appflare", slug: "guides/update-appflare" },
             { label: "Users and roles", slug: "guides/users" },
             { label: "Command line", slug: "guides/cli" },

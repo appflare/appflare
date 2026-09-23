@@ -67,10 +67,59 @@ Organization Actions secrets of `appflare`:
 | Secret | Used by | Contents |
 |---|---|---|
 | `APPFLARE_SIGNING_KEY` | `sign` jobs here and in `appflare/catalog` | Base64 PKCS#8 Ed25519 private key |
+| `DOCKERHUB_USERNAME` | `sandbox-image.yml` | A Docker Hub account with push access to the `appflare` organization |
+| `DOCKERHUB_TOKEN` | `sandbox-image.yml` | A Docker Hub access token of that account, Read & Write scope |
 | `CLOUDFLARE_API_TOKEN` | later: CI installs into a test account | API token for that account |
 | `CLOUDFLARE_ACCOUNT_ID` | later: same | That account's id |
 
-The release fails with a clear error if `APPFLARE_SIGNING_KEY` is not set.
+The release fails with a clear error if `APPFLARE_SIGNING_KEY` is not set, and the
+sandbox image workflow if either Docker Hub secret is not set.
+
+## The sandbox Worker
+
+The optional sandbox Worker (`apps/sandbox`, `appflare sandbox enable`) is released
+separately from the manager, under its own version (`apps/sandbox/package.json`):
+
+- Git tag and GitHub Release `sandbox@<version>`, with the assets
+  `appflare-sandbox-<version>.zip`, `manifest.json`, and `manifest.sig`, signed with
+  the same key as the manager. `appflare sandbox enable` downloads the newest one.
+- Container image `docker.io/appflare/sandbox:<version>`, which the released Worker
+  names in its `containers` config. Docker Hub, because Cloudflare Containers pull
+  from the Cloudflare registry, Docker Hub, Amazon ECR, and Google Artifact Registry
+  only (not GitHub's registry).
+
+The `release` workflow releases it like the manager: changesets for
+`@appflare/sandbox-worker` bump `apps/sandbox/package.json` in the version pull
+request (while it is `0.0.0`, nothing is released), and once no changesets are
+pending, the `sandbox-*` jobs release that version from its version commit unless
+`sandbox@<version>` is already published with its three assets:
+
+- **sandbox-build** (no secrets): `APPFLARE_VERSION=<version> pnpm release:pack
+  --app sandbox --out dist/sandbox-release --key-id appflare-2026-09` stamps the
+  version into the Worker's config and image tag, packs `apps/sandbox`, and checks it.
+- **sandbox-sign**: checks `manifest.json` against the plan and signs it, as for the
+  manager.
+- **sandbox-image**: calls `.github/workflows/sandbox-image.yml` with the version
+  and the version commit. It builds `apps/sandbox/Dockerfile` for `linux/amd64` from
+  the repository root (the image carries `@appflare/pack` built from the same
+  commit) and pushes `docker.io/appflare/sandbox:<version>`. Image tags are
+  immutable: the workflow never pushes a tag twice, and a re-run for a tag that
+  already holds an image from the same commit only reports it. Its job summary
+  carries the digest.
+- **sandbox-release**: creates or completes the GitHub Release `sandbox@<version>`
+  with the three assets, never as the repository's latest release. Its notes carry
+  the image reference with its digest (`docker.io/appflare/sandbox:<version>@sha256:…`).
+
+The image comes before the release, so a published sandbox Worker release always
+has its image. To release one version again, run the `release` workflow by hand
+with `sandbox_version` set. `sandbox-image.yml` also runs on a pushed tag
+`sandbox@<version>` and by hand with a version whose tag exists.
+
+To pack the sandbox Worker locally (unsigned unless you pass `--key-id`):
+
+```sh
+APPFLARE_VERSION=0.1.0 pnpm release:pack --app sandbox --out /tmp/sandbox-release
+```
 
 ## Hardening when the repository is public
 

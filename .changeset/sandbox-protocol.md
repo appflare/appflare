@@ -1,0 +1,5 @@
+---
+"@appflare/schema": minor
+---
+
+Add the contract between the manager and the optional sandbox Worker, which builds `sandbox` tier apps from their pinned commit inside a Cloudflare Sandbox container in the user's own account: `SANDBOX_PROTOCOL_VERSION`, the build request (install, version, repository, pinned commit, optional subdirectory and build command as argv, wrangler config path, the entry's catalog manifest, and an optional `standard-2` container size), the build result and failure (digest, zip size, object keys, minutes, step, exit code, and the end of the build log), build progress, cleanup, and the helpers that name build objects under `builds/<installId>/<version>/` and the sandbox Worker image `docker.io/appflare/sandbox:<version>`. The catalog manifest's `install.buildCommand` is the only source of the build command (the packer runs it): a request's build command may only repeat it word for word. A request is refused unless its repository, commit, and wrangler config match the catalog manifest, and a build command may not contain shell syntax or set environment variables.

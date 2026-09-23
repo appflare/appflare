@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,11 +33,18 @@ import { parseArgs } from "node:util";
  *    scripts/manager-release.ts (flags, bindings without ids, cron, SPA assets, and a
  *    zip holding nothing but the listed files).
  *
+ * With `--app sandbox` it packs the sandbox Worker (apps/sandbox) instead:
+ * no build step (the packer bundles its source with `wrangler deploy
+ * --dry-run`), the deploy config is apps/sandbox/wrangler.jsonc with the
+ * version stamped in (scripts/sandbox-release.ts), and the checks are the
+ * sandbox Worker's. Its zip is `appflare-sandbox-<version>.zip`.
+ *
  * Signing is deliberately not part of this script: the release workflow signs in
  * a separate job that holds the key and runs no build code.
  */
 
-const USAGE = "usage: APPFLARE_VERSION=<version> pnpm release:pack --out <dir> [--key-id <id>]\n";
+const USAGE =
+  "usage: APPFLARE_VERSION=<version> pnpm release:pack --out <dir> [--key-id <id>] [--app manager|sandbox]\n";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PACK_BIN = path.join(ROOT, "packages", "pack", "bin", "appflare-pack.js");
@@ -85,6 +100,60 @@ function gitHead(): string {
   return sha;
 }
 
+/** `--app sandbox`: stamp the deploy config and the catalog manifest, pack, check. */
+async function packSandbox(options: {
+  outDir: string;
+  keyId: string | undefined;
+  sha: string;
+  version: string;
+  env: NodeJS.ProcessEnv;
+}): Promise<void> {
+  const { outDir, keyId, sha, version, env } = options;
+  const release = await import("./manager-release.ts");
+  const sandbox = await import("./sandbox-release.ts");
+  mkdirSync(path.dirname(sandbox.SANDBOX_RELEASE_WRANGLER), { recursive: true });
+  const config = sandbox.sandboxReleaseWranglerConfig(
+    readFileSync(sandbox.SANDBOX_WRANGLER_SOURCE, "utf8"),
+    version,
+  );
+  writeFileSync(sandbox.SANDBOX_RELEASE_WRANGLER, `${JSON.stringify(config, null, 2)}\n`);
+  const tmp = mkdtempSync(path.join(tmpdir(), "appflare-release-"));
+  try {
+    const manifestPath = path.join(tmp, "appflare.json");
+    const catalog = release.stampCatalogManifest(
+      readFileSync(sandbox.SANDBOX_CATALOG_MANIFEST, "utf8"),
+      { version, sha },
+    );
+    writeFileSync(manifestPath, `${JSON.stringify(catalog, null, 2)}\n`);
+    run(
+      process.execPath,
+      [
+        PACK_BIN,
+        sandbox.SANDBOX_DIR,
+        "--manifest",
+        manifestPath,
+        "--out",
+        outDir,
+        "--no-install",
+        ...(keyId ? ["--key-id", keyId] : []),
+      ],
+      env,
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+  run(process.execPath, [PACK_BIN, "verify", outDir, "--hashes-only"], env);
+  const problems = sandbox.checkSandboxArtifactDir(outDir, {
+    version,
+    sha,
+    keyId: keyId ?? "unsigned",
+  });
+  if (problems.length > 0) {
+    throw new Error(`the packed sandbox Worker artifact is wrong:\n  - ${problems.join("\n  - ")}`);
+  }
+  process.stderr.write("sandbox Worker artifact checks: OK\n");
+}
+
 async function main(argv: string[]): Promise<number> {
   const { values } = parseArgs({
     // `pnpm release:pack -- --out x` passes the `--` through; drop it.
@@ -92,6 +161,7 @@ async function main(argv: string[]): Promise<number> {
     options: {
       out: { type: "string" },
       "key-id": { type: "string" },
+      app: { type: "string", default: "manager" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -101,6 +171,11 @@ async function main(argv: string[]): Promise<number> {
   }
   if (!values.out) {
     process.stderr.write(`error: --out is required\n${USAGE}`);
+    return 1;
+  }
+  const app = values.app;
+  if (app !== "manager" && app !== "sandbox") {
+    process.stderr.write(`error: --app must be manager or sandbox, not "${app}"\n${USAGE}`);
     return 1;
   }
   const version = readEnv("APPFLARE_VERSION");
@@ -120,12 +195,17 @@ async function main(argv: string[]): Promise<number> {
   const sha = gitHead();
   const env = buildEnv(version);
 
+  // Also builds @appflare/schema's dist/, which the sandbox Worker bundles.
   run("pnpm", ["exec", "turbo", "run", "build", "--filter=@appflare/pack..."], env);
   // Imported only now: it loads @appflare/pack and @appflare/schema from dist/.
   const release = await import("./manager-release.ts");
   if (!release.isReleaseVersion(version)) {
     process.stderr.write(`error: APPFLARE_VERSION "${version}" is not semver (no leading v)\n`);
     return 1;
+  }
+  if (app === "sandbox") {
+    await packSandbox({ outDir, keyId, sha, version, env });
+    return 0;
   }
   // Not through turbo: turbo passes only declared env vars to tasks and would
   // replay a cached build baked with another version.

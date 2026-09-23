@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    // The Workers runtime types; src/env.d.ts declares the bindings of
+    // wrangler.jsonc. The pool-workers types add `cloudflare:test` for the tests.
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types"],
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "vitest.config.ts"]
+}

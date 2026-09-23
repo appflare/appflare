@@ -154,6 +154,29 @@ Here `--yes` only confirms the deletion. If your login can reach several account
 uninstall still asks which one, or set `CLOUDFLARE_ACCOUNT_ID` (required when it
 runs without a terminal). It deletes the Worker even if other Workers depend on it.
 
+### Sandbox builds (Workers Paid)
+
+```sh
+npx @appflare/cli sandbox enable [--version <x.y.z>] [--artifact-dir <dir>] [--yes]
+npx @appflare/cli sandbox disable --yes [--purge [--i-understand-data-loss]]
+```
+
+`sandbox enable` deploys (or updates) the optional sandbox Worker,
+`appflare-sandbox`, which builds sandbox tier apps from their pinned commit inside
+Cloudflare Containers in your account. It comes from the signed release
+`sandbox@<version>` (`appflare-sandbox-<version>.zip`, `manifest.json`,
+`manifest.sig`), checked like the manager's, and is deployed with wrangler from a
+temporary directory. It creates the Worker (no public URL), two container
+applications running `docker.io/appflare/sandbox:<version>`, and the R2 bucket
+`appflare-builds`. On a free account it stops with "Sandbox builds need Workers
+Paid". Each build runs a `standard-1` container; a 10-minute build costs about
+US$0.012 beyond the usage Workers Paid includes. The manager's support for
+installing sandbox tier apps through it comes in a following Appflare release.
+
+`sandbox disable --yes` deletes the Worker and its container applications and keeps
+the bucket; `--purge` also empties and deletes the bucket after you type the
+sandbox Worker's name (or with `--i-understand-data-loss`).
+
 ## Privacy
 
 Appflare sends no telemetry. The installer also turns off wrangler's usage metrics

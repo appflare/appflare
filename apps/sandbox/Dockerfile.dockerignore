@@ -1,0 +1,20 @@
+# The sandbox Worker image is built from the repository root, and only the packer is
+# built from it: send exactly the workspace manifests and the packages, nothing
+# else (no local node_modules, build output, or environment files).
+*
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!turbo.json
+!tsconfig.json
+!vitest.shared.ts
+!apps/*/package.json
+!packages/**
+**/node_modules
+**/dist
+**/.turbo
+**/.env
+**/.env.*
+**/.dev.vars
+**/.dev.vars.*
+**/.wrangler

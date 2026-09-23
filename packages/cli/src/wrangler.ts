@@ -30,12 +30,15 @@ export interface SpawnRequest {
   /**
    * `capture`: collect stdout/stderr and return them. `stream`: send the
    * child's stdout and stderr to this process's stderr, keeping stdout free for
-   * the CLI's own result.
+   * the CLI's own result. `tee`: both, so a command's output is shown as it
+   * runs and can still be read afterwards (to explain a failure).
    */
-  output: "capture" | "stream";
+  output: OutputMode;
 }
 
-/** The outcome of a spawned process. `stdout`/`stderr` are empty when streamed. */
+export type OutputMode = "capture" | "stream" | "tee";
+
+/** The outcome of a spawned process. `stdout`/`stderr` are empty when only streamed. */
 export interface SpawnResult {
   code: number;
   stdout: string;
@@ -53,7 +56,8 @@ export const nodeSpawner: Spawner = (request) =>
         : request.stdin.kind === "ignore"
           ? "ignore"
           : "pipe";
-    const out = request.output === "capture" ? "pipe" : process.stderr;
+    const out = request.output === "stream" ? process.stderr : "pipe";
+    const echo = request.output === "tee";
     const child = spawn(request.command, request.args, {
       cwd: request.cwd,
       env: request.env,
@@ -63,9 +67,11 @@ export const nodeSpawner: Spawner = (request) =>
     let stderr = "";
     child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
       stdout += chunk;
+      if (echo) process.stderr.write(chunk);
     });
     child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
       stderr += chunk;
+      if (echo) process.stderr.write(chunk);
     });
     child.on("error", reject);
     child.on("close", (code, signal) => {
@@ -178,6 +184,10 @@ export const wranglerArgs = {
   ],
   /** Prints JSON without a flag. */
   kvList: (): string[] => ["kv", "namespace", "list"],
+  /** Fails while the bucket holds objects. */
+  r2BucketDelete: (bucket: string): string[] => ["r2", "bucket", "delete", bucket],
+  /** By application id; asks nothing when stdin is not a terminal. */
+  containersDelete: (id: string): string[] => ["containers", "delete", id],
   /** Prints `{"type":"oauth"|"api_token",…,"token":…}`. Output must never be shown. */
   authToken: (): string[] => ["auth", "token", "--json"],
 };
@@ -198,7 +208,7 @@ export interface WranglerOptions {
 /** Per-command options for {@link Wrangler.run}. */
 export interface RunOptions {
   stdin?: StdinMode;
-  output?: "capture" | "stream";
+  output?: OutputMode;
   /** Extra environment for this command only. */
   env?: NodeJS.ProcessEnv;
 }

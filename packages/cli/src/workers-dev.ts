@@ -1,10 +1,8 @@
 import { z } from "zod";
+import { CLOUDFLARE_API, wranglerApiToken } from "./api-token.ts";
 import type { FetchLike } from "./release.ts";
-import { parseJsonOutput, type Wrangler, wranglerArgs } from "./wrangler.ts";
+import type { Wrangler } from "./wrangler.ts";
 
-const CLOUDFLARE_API = "https://api.cloudflare.com/client/v4";
-
-const authTokenSchema = z.looseObject({ type: z.string(), token: z.string().optional() });
 const subdomainSchema = z.looseObject({
   success: z.boolean(),
   result: z.looseObject({ subdomain: z.string().min(1) }).nullable(),
@@ -26,16 +24,7 @@ export async function resolveWorkersDevUrl(
   if (!wrangler.accountId) {
     return null;
   }
-  const result = await wrangler.run(wranglerArgs.authToken());
-  if (result.code !== 0) {
-    return null;
-  }
-  let token: string | undefined;
-  try {
-    token = authTokenSchema.parse(parseJsonOutput("auth token", result.stdout)).token;
-  } catch {
-    return null;
-  }
+  const token = await wranglerApiToken(wrangler);
   if (!token) {
     return null;
   }

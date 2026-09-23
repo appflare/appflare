@@ -61,7 +61,7 @@ const FILES = {
   "d1/DB/0000_init.sql": "CREATE TABLE settings (key TEXT PRIMARY KEY);\n",
 };
 
-/** Writes `appflare-<version>.zip`, `manifest.json`, and optionally `manifest.sig` to a temp dir. */
+/** Writes `<app>-<version>.zip`, `manifest.json`, and optionally `manifest.sig` to a temp dir. */
 export async function buildFixtureArtifact(options: FixtureOptions = {}): Promise<Fixture> {
   const version = options.version ?? "0.1.0";
   const dir = mkdtempSync(path.join(tmpdir(), "appflare-cli-fixture-"));
@@ -148,7 +148,7 @@ export async function buildFixtureArtifact(options: FixtureOptions = {}): Promis
   options.mutate?.(manifest);
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
   zip.addFile("manifest.json", manifestBytes);
-  writeFileSync(path.join(dir, `appflare-${manifest.version}.zip`), zip.finish());
+  writeFileSync(path.join(dir, `${manifest.app}-${manifest.version}.zip`), zip.finish());
   writeFileSync(path.join(dir, "manifest.json"), manifestBytes);
   if (options.sign) {
     writeFileSync(
@@ -165,7 +165,7 @@ export interface FakeCall {
   cwd: string;
   env: NodeJS.ProcessEnv;
   stdin: import("./wrangler.ts").StdinMode;
-  output: "capture" | "stream";
+  output: import("./wrangler.ts").OutputMode;
 }
 
 export type FakeHandler = (

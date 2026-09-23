@@ -1,0 +1,57 @@
+{
+  // The Appflare sandbox Worker: an optional Worker, Workers Paid only, that builds
+  // `sandbox` tier apps inside a Cloudflare Sandbox container in the user's own
+  // account. The manager reaches it only through a service binding to the
+  // `SandboxBuilds` entrypoint; it has no public URL.
+  //
+  // Users never deploy this file: `appflare sandbox enable` generates the same
+  // configuration from the sandbox Worker's signed release (packages/cli/src/sandbox-config.ts)
+  // and deploys that. This file is for tests and packing.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "appflare-sandbox",
+  // Pinned to the Appflare Dev account so local wrangler commands cannot target
+  // another account. The packer strips it from release artifacts.
+  "account_id": "e56348678f83352622c33faa66f43c13",
+  "main": "src/index.ts",
+  // Newest date the pinned workerd (wrangler 4.136.2 -> workerd 1.20260921) supports.
+  "compatibility_date": "2026-09-21",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  // One container class per size. Builds run on `standard-1` unless the catalog
+  // entry asks for `standard-2`. The image tag is the sandbox Worker's own version and
+  // is never reused (the release config stamps it; this one is for local use).
+  "containers": [
+    {
+      "name": "appflare-sandbox-standard-1",
+      "class_name": "Sandbox",
+      "image": "docker.io/appflare/sandbox:0.1.0",
+      "instance_type": "standard-1",
+      "max_instances": 2
+    },
+    {
+      "name": "appflare-sandbox-standard-2",
+      "class_name": "LargeSandbox",
+      "image": "docker.io/appflare/sandbox:0.1.0",
+      "instance_type": "standard-2",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "Sandbox", "class_name": "Sandbox" },
+      { "name": "LargeSandbox", "class_name": "LargeSandbox" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox", "LargeSandbox"] }],
+  // Build outputs and logs, under builds/<installId>/<version>/.
+  "r2_buckets": [{ "binding": "BUILDS", "bucket_name": "appflare-builds" }],
+  "vars": {
+    // The sandbox Worker's version; also the tag of the image it runs. The release
+    // config replaces it with the release version.
+    "APPFLARE_VERSION": "0.0.0-dev"
+  }
+}

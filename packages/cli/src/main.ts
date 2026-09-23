@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { install } from "./commands/install.ts";
 import { rollback } from "./commands/rollback.ts";
+import { sandboxDisable, sandboxEnable } from "./commands/sandbox.ts";
 import { status } from "./commands/status.ts";
 import { uninstall } from "./commands/uninstall.ts";
 import type { CommandContext } from "./context.ts";
@@ -13,6 +14,8 @@ Usage:
   npx @appflare/cli status [--name <name>] [--url <url>]
   npx @appflare/cli rollback [--name <name>] [--list | --to <version-id>] [--yes] [--url <url>]
   npx @appflare/cli uninstall --yes [--name <name>] [--purge [--i-understand-data-loss]] [--url <url>]
+  npx @appflare/cli sandbox enable [--version <x.y.z> | --artifact-dir <dir>] [--yes]
+  npx @appflare/cli sandbox disable --yes [--purge [--i-understand-data-loss]]
 
 Install options:
   --version <x.y.z>       manager release to install (default: the latest)
@@ -48,12 +51,26 @@ Uninstall options:
   --url <url>             the manager's URL, to recognize it by /api/health
                           (default: looked up from the account)
 
+Sandbox builds (needs Workers Paid):
+  sandbox enable          deploy or update the sandbox Worker "appflare-sandbox",
+                          which builds sandbox tier apps from their pinned commit
+                          in Cloudflare Containers in your account. --version,
+                          --artifact-dir, --yes and --allow-unsigned work as for
+                          install. Each build runs a standard-1 container; a
+                          10-minute build costs about US$0.012 beyond the usage
+                          Workers Paid includes.
+  sandbox disable --yes   delete the sandbox Worker and its container
+                          applications. The R2 bucket appflare-builds (build
+                          outputs and logs) stays unless --purge is given, which
+                          asks you to type the sandbox Worker's name (or pass
+                          --i-understand-data-loss).
+
 It uses wrangler: log in with \`npx wrangler login\` first, or let the installer
 open the login for you. With several accounts, set CLOUDFLARE_ACCOUNT_ID or pick
 one when asked.
 `;
 
-const COMMANDS = ["install", "status", "rollback", "uninstall", "help"] as const;
+const COMMANDS = ["install", "status", "rollback", "uninstall", "sandbox", "help"] as const;
 type Command = (typeof COMMANDS)[number];
 
 function isCommand(value: string | undefined): value is Command {
@@ -177,6 +194,8 @@ export async function main(argv: string[], ctx: CommandContext): Promise<number>
         );
         return 0;
       }
+      case "sandbox":
+        return await runSandbox(args, ctx);
     }
   } catch (error) {
     if (error instanceof CancelledError) {
@@ -187,6 +206,68 @@ export async function main(argv: string[], ctx: CommandContext): Promise<number>
     process.stderr.write(`\nError: ${message}\n`);
     return 1;
   }
+}
+
+/** `sandbox enable|disable`. */
+async function runSandbox(args: string[], ctx: CommandContext): Promise<number> {
+  const [sub, ...rest] = args;
+  if (sub === "enable") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: {
+        version: { type: "string" },
+        "artifact-dir": { type: "string" },
+        yes: { type: "boolean", short: "y", default: false },
+        "allow-unsigned": { type: "boolean", default: false },
+        help: { type: "boolean", short: "h" },
+      },
+    });
+    if (values.help) {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    rejectPositionals(positionals);
+    await sandboxEnable(
+      {
+        version: values.version,
+        artifactDir: values["artifact-dir"],
+        yes: values.yes,
+        allowUnsigned: values["allow-unsigned"],
+      },
+      ctx,
+    );
+    return 0;
+  }
+  if (sub === "disable") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: {
+        yes: { type: "boolean", short: "y", default: false },
+        purge: { type: "boolean", default: false },
+        "i-understand-data-loss": { type: "boolean", default: false },
+        help: { type: "boolean", short: "h" },
+      },
+    });
+    if (values.help) {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    rejectPositionals(positionals);
+    await sandboxDisable(
+      {
+        yes: values.yes,
+        purge: values.purge,
+        iUnderstandDataLoss: values["i-understand-data-loss"],
+      },
+      ctx,
+    );
+    return 0;
+  }
+  if (sub === undefined || sub === "--help" || sub === "-h") {
+    process.stdout.write(USAGE);
+    return sub === undefined ? 1 : 0;
+  }
+  throw new Error(`unknown sandbox command: ${sub} (use enable or disable)`);
 }
 
 function rejectPositionals(positionals: string[]): void {

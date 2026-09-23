@@ -3,12 +3,42 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { z } from "zod";
-import { artifactZipName } from "./artifact.ts";
+import { artifactZipName, MANAGER_APP, SANDBOX_APP } from "./artifact.ts";
 
-/** Where manager releases are published (docs/RELEASING.md). */
+/** Where manager and sandbox Worker releases are published (docs/RELEASING.md). */
 export const RELEASE_REPO = "appflare/appflare";
 /** Manager release tags are `manager@<version>`. */
 export const RELEASE_TAG_PREFIX = "manager@";
+
+/**
+ * One kind of release in RELEASE_REPO: its tag prefix, its zip's name, and
+ * how messages call it. The manager and the sandbox Worker are released the
+ * same way (`<prefix><version>` with the zip, `manifest.json`, and
+ * `manifest.sig`); only these differ.
+ */
+export interface ReleaseChannel {
+  tagPrefix: string;
+  /** "manager", "sandbox Worker": used in messages. */
+  label: string;
+  /** The artifact's `manifest.app`; its zip is `<app>-<version>.zip`. */
+  app: string;
+  /** What to do later when the newest release is still being published. */
+  laterHint: string;
+}
+
+export const MANAGER_RELEASES: ReleaseChannel = {
+  tagPrefix: RELEASE_TAG_PREFIX,
+  label: "manager",
+  app: MANAGER_APP,
+  laterHint: "or update from the manager later",
+};
+
+export const SANDBOX_RELEASES: ReleaseChannel = {
+  tagPrefix: "sandbox@",
+  label: "sandbox Worker",
+  app: SANDBOX_APP,
+  laterHint: "or run `appflare sandbox enable` again later to update",
+};
 
 const GITHUB_API = "https://api.github.com";
 
@@ -28,8 +58,8 @@ const releaseSchema = z.looseObject({
 export type ReleaseAsset = z.infer<typeof assetSchema>;
 export type Release = z.infer<typeof releaseSchema>;
 
-/** The three downloads of one manager release. */
-export interface ManagerReleaseAssets {
+/** The three downloads of one release. */
+export interface ReleaseAssets {
   version: string;
   tag: string;
   zip: ReleaseAsset;
@@ -37,39 +67,55 @@ export interface ManagerReleaseAssets {
   signature: ReleaseAsset;
 }
 
+/** The three downloads of one manager release. */
+export type ManagerReleaseAssets = ReleaseAssets;
+
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
-/** The API URL that lists releases (`version` unset) or reads `manager@<version>`. */
-export function releaseApiUrl(version?: string): string {
+/** The API URL that lists releases (`version` unset) or reads `<prefix><version>`. */
+export function releaseApiUrl(
+  version?: string,
+  channel: ReleaseChannel = MANAGER_RELEASES,
+): string {
   const base = `${GITHUB_API}/repos/${RELEASE_REPO}/releases`;
   return version === undefined
     ? `${base}?per_page=100`
-    : `${base}/tags/${encodeURIComponent(`${RELEASE_TAG_PREFIX}${version}`)}`;
+    : `${base}/tags/${encodeURIComponent(`${channel.tagPrefix}${version}`)}`;
 }
 
 /**
- * The newest published manager release in a releases listing (GitHub returns
- * newest first). Only `manager@` tags count, so releases of other packages in
- * the repository never shadow the manager; drafts and pre-releases are skipped.
+ * The newest published release of a channel in a releases listing (GitHub
+ * returns newest first). Only the channel's tags count, so releases of other
+ * packages in the repository never shadow it; drafts and pre-releases are
+ * skipped.
  */
-function isPublishedManagerRelease(release: Release): boolean {
-  return release.tag_name.startsWith(RELEASE_TAG_PREFIX) && !release.draft && !release.prerelease;
+function isPublished(release: Release, channel: ReleaseChannel): boolean {
+  return release.tag_name.startsWith(channel.tagPrefix) && !release.draft && !release.prerelease;
 }
 
-export function pickLatestManagerRelease(releases: Release[]): Release {
-  const release = releases.find(isPublishedManagerRelease);
+export function pickLatestRelease(releases: Release[], channel: ReleaseChannel): Release {
+  const release = releases.find((r) => isPublished(r, channel));
   if (!release) {
-    throw new Error(`no published manager release (tag ${RELEASE_TAG_PREFIX}<version>) found`);
+    throw new Error(
+      `no published ${channel.label} release (tag ${channel.tagPrefix}<version>) found`,
+    );
   }
   return release;
 }
 
-/** Picks `appflare-<version>.zip`, `manifest.json`, and `manifest.sig` from a manager release. */
-export function selectReleaseAssets(release: Release): ManagerReleaseAssets {
-  if (!release.tag_name.startsWith(RELEASE_TAG_PREFIX)) {
-    throw new Error(`release ${release.tag_name} is not a manager release`);
+export function pickLatestManagerRelease(releases: Release[]): Release {
+  return pickLatestRelease(releases, MANAGER_RELEASES);
+}
+
+/** Picks `<app>-<version>.zip`, `manifest.json`, and `manifest.sig` from a release. */
+export function selectReleaseAssets(
+  release: Release,
+  channel: ReleaseChannel = MANAGER_RELEASES,
+): ReleaseAssets {
+  if (!release.tag_name.startsWith(channel.tagPrefix)) {
+    throw new Error(`release ${release.tag_name} is not a ${channel.label} release`);
   }
-  const version = release.tag_name.slice(RELEASE_TAG_PREFIX.length);
+  const version = release.tag_name.slice(channel.tagPrefix.length);
   const find = (name: string): ReleaseAsset => {
     const asset = release.assets.find((a) => a.name === name);
     if (!asset) {
@@ -80,7 +126,7 @@ export function selectReleaseAssets(release: Release): ManagerReleaseAssets {
   return {
     version,
     tag: release.tag_name,
-    zip: find(artifactZipName(version)),
+    zip: find(artifactZipName(version, channel.app)),
     manifest: find("manifest.json"),
     signature: find("manifest.sig"),
   };
@@ -156,9 +202,9 @@ async function getJson(
   return response.json();
 }
 
-function isComplete(release: Release): boolean {
+function isComplete(release: Release, channel: ReleaseChannel): boolean {
   try {
-    selectReleaseAssets(release);
+    selectReleaseAssets(release, channel);
     return true;
   } catch {
     return false;
@@ -174,8 +220,9 @@ async function withAssets(
   fetchFn: FetchLike,
   env: NodeJS.ProcessEnv,
   release: Release,
+  channel: ReleaseChannel,
 ): Promise<Release | null> {
-  if (isComplete(release)) {
+  if (isComplete(release, channel)) {
     return release;
   }
   const url = `${GITHUB_API}/repos/${RELEASE_REPO}/releases/${release.id}/assets?per_page=100`;
@@ -183,7 +230,7 @@ async function withAssets(
     .array(assetSchema)
     .parse(await getJson(fetchFn, env, url, `the assets of ${release.tag_name}`));
   const refreshed = { ...release, assets };
-  return isComplete(refreshed) ? refreshed : null;
+  return isComplete(refreshed, channel) ? refreshed : null;
 }
 
 /**
@@ -192,21 +239,32 @@ async function withAssets(
  * published (its assets are not all there yet), falls back to the previous
  * complete release and says so through `warn`.
  */
-export async function findManagerRelease(
+export function findManagerRelease(
   fetchFn: FetchLike,
   env: NodeJS.ProcessEnv,
   version?: string,
   warn: WarnFn = () => {},
-): Promise<ManagerReleaseAssets> {
+): Promise<ReleaseAssets> {
+  return findRelease(MANAGER_RELEASES, fetchFn, env, version, warn);
+}
+
+/** {@link findManagerRelease} for any release channel. */
+export async function findRelease(
+  channel: ReleaseChannel,
+  fetchFn: FetchLike,
+  env: NodeJS.ProcessEnv,
+  version?: string,
+  warn: WarnFn = () => {},
+): Promise<ReleaseAssets> {
   if (version !== undefined) {
-    const tag = `${RELEASE_TAG_PREFIX}${version}`;
-    const url = releaseApiUrl(version);
+    const tag = `${channel.tagPrefix}${version}`;
+    const url = releaseApiUrl(version, channel);
     const response = await fetchFn(url, {
       headers: githubHeaders(env, "application/vnd.github+json", url),
     });
     if (response.status === 404) {
       throw new Error(
-        `There is no manager release ${tag}, or it is not visible. ${accessHint(env)}`,
+        `There is no ${channel.label} release ${tag}, or it is not visible. ${accessHint(env)}`,
       );
     }
     if (response.status === 401 || response.status === 403) {
@@ -216,35 +274,35 @@ export async function findManagerRelease(
       throw new Error(`GitHub answered ${response.status} for release ${tag}`);
     }
     const release = releaseSchema.parse(await response.json());
-    const complete = await withAssets(fetchFn, env, release);
+    const complete = await withAssets(fetchFn, env, release, channel);
     if (!complete) {
       // Throws naming the missing asset.
-      selectReleaseAssets(release);
+      selectReleaseAssets(release, channel);
       throw new Error(`release ${tag} is incomplete`);
     }
-    return selectReleaseAssets(complete);
+    return selectReleaseAssets(complete, channel);
   }
 
   const releases = z
     .array(releaseSchema)
     .parse(await getJson(fetchFn, env, releaseApiUrl(), `the releases of ${RELEASE_REPO}`));
-  const newest = pickLatestManagerRelease(releases);
-  const candidates = releases.filter(isPublishedManagerRelease);
+  const newest = pickLatestRelease(releases, channel);
+  const candidates = releases.filter((r) => isPublished(r, channel));
   for (const candidate of candidates) {
-    const complete = await withAssets(fetchFn, env, candidate);
+    const complete = await withAssets(fetchFn, env, candidate, channel);
     if (complete) {
       if (candidate !== newest) {
         warn(
           `${newest.tag_name} is still being published (its files are not all uploaded yet); ` +
             `installing ${candidate.tag_name} instead. Run again in a few minutes for ` +
-            `${newest.tag_name}, or update from the manager later.`,
+            `${newest.tag_name}, ${channel.laterHint}.`,
         );
       }
-      return selectReleaseAssets(complete);
+      return selectReleaseAssets(complete, channel);
     }
   }
   throw new Error(
-    `no manager release has all its files yet (${newest.tag_name} is still being published); try again in a few minutes`,
+    `no ${channel.label} release has all its files yet (${newest.tag_name} is still being published); try again in a few minutes`,
   );
 }
 
@@ -276,14 +334,17 @@ export async function downloadAsset(
   }
 }
 
-/** Downloads a manager release's three assets into `dir`. */
-export async function downloadManagerRelease(
+/** Downloads a release's three assets into `dir`. */
+export async function downloadRelease(
   fetchFn: FetchLike,
   env: NodeJS.ProcessEnv,
-  release: ManagerReleaseAssets,
+  release: ReleaseAssets,
   dir: string,
 ): Promise<void> {
   for (const asset of [release.manifest, release.signature, release.zip]) {
     await downloadAsset(fetchFn, env, asset, path.join(dir, asset.name));
   }
 }
+
+/** {@link downloadRelease}, by the name the installer has always used. */
+export const downloadManagerRelease = downloadRelease;

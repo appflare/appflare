@@ -1,0 +1,235 @@
+name: sandbox image
+
+# Builds and pushes the sandbox Worker's container image, docker.io/appflare/sandbox:<version>
+# (docs/RELEASING.md), from the sandbox Worker release tag sandbox@<version>:
+#
+#   plan   read-only; resolves the version and its commit (the tag's, or the
+#          `sha` a calling workflow passes), and checks that
+#          apps/sandbox/package.json at that commit has that version.
+#   image  builds apps/sandbox/Dockerfile for linux/amd64 (the platform Cloudflare
+#          Containers run) from that commit and pushes it with DOCKERHUB_USERNAME /
+#          DOCKERHUB_TOKEN. Tags are immutable: an existing tag is never pushed
+#          again. If it already holds an image built from the same commit, the run
+#          succeeds and reports its digest; otherwise it fails. The job summary
+#          carries the digest.
+#
+# Runs on a pushed tag sandbox@<version>, by hand for a version whose tag exists,
+# or from another workflow (workflow_call). The release workflow calls it with the
+# version commit before it creates the tag and the GitHub Release, so a published
+# sandbox Worker release always has its image (a tag created with the workflow
+# token would not start this workflow by itself anyway).
+
+on:
+  push:
+    tags: ["sandbox@*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Sandbox Worker version (semver, no leading v) whose tag sandbox@<version> exists."
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: "Sandbox Worker version (semver, no leading v)."
+        required: true
+        type: string
+      sha:
+        description: "The commit to build. Empty: the commit of the tag sandbox@<version>."
+        required: false
+        default: ""
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+    outputs:
+      digest:
+        description: "The image's manifest digest (sha256:...)."
+        value: ${{ jobs.image.outputs.digest }}
+
+permissions: {}
+
+concurrency:
+  group: sandbox-image-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  IMAGE: docker.io/appflare/sandbox
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Tags and history, to resolve sandbox@<version> to its commit.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_SHA: ${{ inputs.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION}" ]; then
+            version="${INPUT_VERSION}"
+          elif [ "${REF_TYPE}" = tag ] && [[ "${REF_NAME}" == sandbox@* ]]; then
+            version="${REF_NAME#sandbox@}"
+          else
+            echo "::error::run this on a tag sandbox@<version> or pass the version input"
+            exit 1
+          fi
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::sandbox Worker version ${version} is not semver (no leading v)"
+            exit 1
+          fi
+          tag="sandbox@${version}"
+          if [ -n "${INPUT_SHA}" ]; then
+            if ! sha="$(git rev-parse --verify --quiet "${INPUT_SHA}^{commit}")"; then
+              echo "::error::${INPUT_SHA} is not a commit of this repository"
+              exit 1
+            fi
+          elif ! sha="$(git rev-parse --verify --quiet "refs/tags/${tag}^{commit}")"; then
+            echo "::error::the tag ${tag} does not exist; create it on the commit that set apps/sandbox/package.json to ${version}"
+            exit 1
+          fi
+          declared="$(git show "${sha}:apps/sandbox/package.json" | jq -r .version)"
+          if [ "${declared}" != "${version}" ]; then
+            echo "::error::${tag} points at ${sha}, where apps/sandbox/package.json says ${declared}, not ${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::building ${IMAGE}:${version} from ${sha}"
+
+  image:
+    name: build and push the image
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.build.outputs.digest || steps.existing.outputs.digest }}
+    steps:
+      - name: Require the Docker Hub secrets
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          missing=()
+          [ -n "${DOCKERHUB_USERNAME}" ] || missing+=(DOCKERHUB_USERNAME)
+          [ -n "${DOCKERHUB_TOKEN}" ] || missing+=(DOCKERHUB_TOKEN)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error title=Docker Hub secrets are not set::${missing[*]} missing. The sandbox Worker image is pushed to docker.io/appflare/sandbox. Add DOCKERHUB_USERNAME (an account with push access to the appflare organization on Docker Hub) and DOCKERHUB_TOKEN (a Docker Hub access token with Read & Write scope) as Actions secrets of the appflare organization or this repository, then re-run this workflow (docs/RELEASING.md)."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: printf '%s' "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
+      - name: Check that the tag is new
+        id: existing
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ref="${IMAGE}:${VERSION}"
+          if ! docker buildx imagetools inspect "${ref}" > /dev/null 2>&1; then
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          revision="$(docker buildx imagetools inspect "${ref}" --format '{{ index .Image.Config.Labels "org.opencontainers.image.revision" }}' 2> /dev/null || true)"
+          if [ "${revision}" != "${SHA}" ]; then
+            echo "::error::${ref} already exists (built from ${revision:-an unknown commit}, not ${SHA}). Image tags are never pushed twice; release a new sandbox Worker version instead."
+            exit 1
+          fi
+          digest="$(docker buildx imagetools inspect "${ref}" --format '{{ .Manifest.Digest }}')"
+          echo "::notice::${ref} is already published from ${SHA}"
+          echo "exists=true" >> "${GITHUB_OUTPUT}"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+      - name: Build and push
+        id: build
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # A BuildKit container, so the metadata file reports the
+          # digest of the manifest as pushed.
+          docker buildx create --name appflare-sandbox-image --driver docker-container --use
+          # One single-platform manifest, no attestations: exactly the image a
+          # container pulls, and a digest that names it.
+          docker buildx build \
+            --platform linux/amd64 \
+            --file apps/sandbox/Dockerfile \
+            --tag "${IMAGE}:${VERSION}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${SHA}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.licenses=Apache-2.0" \
+            --provenance=false \
+            --sbom=false \
+            --metadata-file "${RUNNER_TEMP}/build-metadata.json" \
+            --push \
+            .
+          digest="$(jq -r '."containerimage.digest"' "${RUNNER_TEMP}/build-metadata.json")"
+          if ! [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::the build reported no image digest"
+            exit 1
+          fi
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+      - name: Report the digest
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          DIGEST: ${{ steps.build.outputs.digest || steps.existing.outputs.digest }}
+          ALREADY: ${{ steps.existing.outputs.exists }}
+        run: |
+          set -euo pipefail
+          # What the registry serves under the tag must be what was just pushed.
+          served="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{ .Manifest.Digest }}')"
+          if [ "${served}" != "${DIGEST}" ]; then
+            echo "::error::${IMAGE}:${VERSION} resolves to ${served}, expected ${DIGEST}"
+            exit 1
+          fi
+          {
+            echo "### ${IMAGE}:${VERSION}"
+            echo
+            if [ "${ALREADY}" = true ]; then
+              echo "Already published; nothing was pushed."
+              echo
+            fi
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tag | \`${IMAGE}:${VERSION}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| Pinned reference | \`${IMAGE}:${VERSION}@${DIGEST}\` |"
+            echo "| Commit | \`${SHA}\` |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "::notice::${IMAGE}:${VERSION}@${DIGEST}"
+      - name: Log out of Docker Hub
+        if: always()
+        run: docker logout docker.io || true

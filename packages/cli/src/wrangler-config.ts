@@ -34,7 +34,7 @@ export interface GeneratedWranglerConfig {
   limits?: Record<string, unknown>;
 }
 
-type WranglerRuleType =
+export type WranglerRuleType =
   | "ESModule"
   | "CommonJS"
   | "Text"
@@ -53,6 +53,23 @@ const RULE_TYPES: Record<ModuleType, WranglerRuleType> = {
   python: "PythonModule",
   "python-requirement": "PythonRequirement",
 };
+
+/**
+ * The module rules that upload an artifact's modules exactly as they are:
+ * one rule per module type, with the exact file names as globs (wrangler's
+ * glob-to-regexp treats only `*` specially without `extended`), so nothing
+ * else is picked up.
+ */
+export function moduleRules(
+  modules: ArtifactManifest["worker"]["modules"],
+): { type: WranglerRuleType; globs: string[] }[] {
+  const rulesByType = new Map<WranglerRuleType, string[]>();
+  for (const module of modules) {
+    const type = RULE_TYPES[module.type];
+    rulesByType.set(type, [...(rulesByType.get(type) ?? []), module.name]);
+  }
+  return [...rulesByType].map(([type, globs]) => ({ type, globs }));
+}
 
 /** The manager's service binding to itself, through which its jobs call their units. */
 export const SELF_BINDING = "SELF";
@@ -97,12 +114,6 @@ export function buildWranglerConfig(
 ): GeneratedWranglerConfig {
   const { worker } = manifest;
   const { name } = options;
-
-  const rulesByType = new Map<WranglerRuleType, string[]>();
-  for (const module of worker.modules) {
-    const type = RULE_TYPES[module.type];
-    rulesByType.set(type, [...(rulesByType.get(type) ?? []), module.name]);
-  }
 
   const d1: { binding: string; database_name: string }[] = [];
   const kv: { binding: string }[] = [];
@@ -168,7 +179,7 @@ export function buildWranglerConfig(
     no_bundle: true,
     find_additional_modules: true,
     base_dir: UNPACKED_WORKER_DIR,
-    rules: [...rulesByType].map(([type, globs]) => ({ type, globs })),
+    rules: moduleRules(worker.modules),
     workers_dev: true,
     preview_urls: true,
     keep_vars: true,

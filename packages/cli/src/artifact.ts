@@ -13,7 +13,16 @@ import {
 /** `manifest.app` of every manager artifact. */
 export const MANAGER_APP = "appflare";
 
-/** A verified manager artifact. */
+/** `manifest.app` of every sandbox Worker artifact (the optional sandbox Worker). */
+export const SANDBOX_APP = "appflare-sandbox";
+
+/** What each artifact is called in messages. */
+const APP_LABELS: Record<string, string> = {
+  [MANAGER_APP]: "the Appflare manager",
+  [SANDBOX_APP]: "the Appflare sandbox Worker",
+};
+
+/** A verified artifact (the manager, or the sandbox Worker). */
 export interface VerifiedArtifact {
   manifest: ArtifactManifest;
   zipPath: string;
@@ -35,17 +44,19 @@ export interface VerifyArtifactOptions {
   keys?: readonly SigningKey[];
   /** When set (a downloaded release), `manifest.version` must equal it. */
   expectedVersion?: string;
+  /** The `manifest.app` required: the manager's by default. */
+  app?: string;
 }
 
-/** The zip file name of a manager artifact version. */
-export function artifactZipName(version: string): string {
-  return `${MANAGER_APP}-${version}.zip`;
+/** The zip file name of an artifact version: `<app>-<version>.zip` (the manager's by default). */
+export function artifactZipName(version: string, app: string = MANAGER_APP): string {
+  return `${app}-${version}.zip`;
 }
 
 /**
  * Checks the Ed25519 signature over the exact
  * `manifest.json` bytes (key picked by `keyId`, unknown ids and "unsigned"
- * rejected), validates the manifest, requires `app: "appflare"`, and checks the
+ * rejected), validates the manifest, requires the expected `app`, and checks the
  * zip is where the manifest says. File hashes are checked while unpacking
  * ({@link unpackArtifact}), before anything is written.
  */
@@ -85,17 +96,19 @@ export async function verifyArtifact(options: VerifyArtifactOptions): Promise<Ve
     throw new Error(`manifest.json is not a valid artifact manifest: ${parsed.error.message}`);
   }
   const manifest = parsed.data;
-  if (manifest.app !== MANAGER_APP) {
-    throw new Error(`this artifact is "${manifest.app}", not the Appflare manager`);
+  const app = options.app ?? MANAGER_APP;
+  if (manifest.app !== app) {
+    throw new Error(`this artifact is "${manifest.app}", not ${APP_LABELS[app] ?? `"${app}"`}`);
   }
   if (options.expectedVersion !== undefined && manifest.version !== options.expectedVersion) {
     throw new Error(
       `the release is ${options.expectedVersion} but its manifest says ${manifest.version}`,
     );
   }
-  const zipPath = path.join(dir, artifactZipName(manifest.version));
+  const zipName = artifactZipName(manifest.version, app);
+  const zipPath = path.join(dir, zipName);
   if (!existsSync(zipPath)) {
-    throw new Error(`${artifactZipName(manifest.version)} not found in ${dir}`);
+    throw new Error(`${zipName} not found in ${dir}`);
   }
   return { manifest, zipPath, keyId };
 }

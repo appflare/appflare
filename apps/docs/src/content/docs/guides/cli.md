@@ -1,6 +1,6 @@
 ---
 title: Command line
-description: The status, rollback, and uninstall commands of @appflare/cli.
+description: The status, rollback, uninstall, and sandbox commands of @appflare/cli.
 ---
 
 The installer package also manages the manager from your computer. These commands
@@ -86,3 +86,14 @@ If the Worker is already gone, it can only match by name: the D1 database named
 `--name`), and it tells you so.
 
 To remove Appflare and everything it installed, see the [FAQ](/faq/#how-do-i-remove-appflare-entirely).
+
+## sandbox
+
+```sh
+npx @appflare/cli sandbox enable [--version <x.y.z>] [--yes]
+npx @appflare/cli sandbox disable --yes [--purge]
+```
+
+Adds, updates, or removes the optional sandbox Worker that builds sandbox tier apps
+in your account. It needs Workers Paid. See [Sandbox builds](/guides/builds/) for
+what it creates, what a build costs, and what `--purge` deletes.

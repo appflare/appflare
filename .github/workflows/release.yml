@@ -27,6 +27,15 @@ name: release
 # Manual runs (workflow_dispatch) may name a `version` to (re)release that exact
 # version from the commit that set it; without it they behave like a push.
 #
+# The sandbox Worker (apps/sandbox) is released by the sandbox-* jobs the same
+# way, from apps/sandbox/package.json's version, as the GitHub Release
+# sandbox@<version> with appflare-sandbox-<version>.zip, manifest.json, and
+# manifest.sig. Between signing and the release, sandbox-image
+# (.github/workflows/sandbox-image.yml) pushes docker.io/appflare/sandbox:<version>
+# from the version commit, so a published sandbox Worker release always has its
+# image; its digest goes into the release notes. A manual run may name a
+# `sandbox_version` to (re)release that version.
+#
 # Nothing is published to npm in v1.
 
 on:
@@ -36,6 +45,11 @@ on:
     inputs:
       version:
         description: "Release this manager version (semver, no leading v) from the commit that set it. Empty: the current version."
+        required: false
+        default: ""
+        type: string
+      sandbox_version:
+        description: "Release this sandbox Worker version (semver, no leading v) from the commit that set it. Empty: the current version."
         required: false
         default: ""
         type: string
@@ -503,6 +517,433 @@ jobs:
           set -euo pipefail
           tag="manager@${VERSION}"
           expected="$(printf '%s\n' "appflare-${VERSION}.zip" manifest.json manifest.sig | LC_ALL=C sort | paste -sd, -)"
+          deadline=$(( $(date +%s) + 15 * 60 ))
+          while :; do
+            names="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
+              --jq '[.assets[].name] | sort | join(",")' 2> /dev/null || true)"
+            if [ "${names}" = "${expected}" ]; then
+              echo "${tag} lists ${names}"
+              exit 0
+            fi
+            if [ "$(date +%s)" -ge "${deadline}" ]; then
+              echo "::error::after 15 minutes ${tag} lists assets [${names}] on GET /releases/tags/${tag}, expected [${expected}]; check the release by hand"
+              exit 1
+            fi
+            echo "${tag} lists [${names}] so far; checking again in 20 s"
+            sleep 20
+          done
+
+  # --------------------------------------------------------------------------
+  # The sandbox Worker (apps/sandbox, `appflare sandbox enable`): released the
+  # same way under its own version and tag sandbox@<version>, with its container
+  # image pushed before the GitHub Release is published.
+  # --------------------------------------------------------------------------
+
+  sandbox-plan:
+    name: sandbox plan
+    needs: version
+    # A requested version is released even while other changesets are pending.
+    if: needs.version.outputs.has-changesets == 'false' || inputs.sandbox_version != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, to find the commit that set the version.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.sandbox_version }}
+        run: |
+          set -euo pipefail
+          current="$(jq -r .version apps/sandbox/package.json)"
+          version="${REQUESTED_VERSION:-${current}}"
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::sandbox Worker version ${version} is not semver (no leading v)"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          if [ "${version}" = "0.0.0" ]; then
+            echo "::notice::apps/sandbox is still 0.0.0; nothing to release"
+            echo "release=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          tag="sandbox@${version}"
+
+          # The version commit: the newest commit that changed the "version" line of
+          # apps/sandbox/package.json to this version.
+          sha=""
+          while read -r commit; do
+            if [ "$(git show "${commit}:apps/sandbox/package.json" | jq -r .version)" = "${version}" ]; then
+              sha="${commit}"
+              break
+            fi
+          done < <(git log --format=%H -G'"version"[[:space:]]*:' -- apps/sandbox/package.json)
+          if [ -z "${sha}" ]; then
+            echo "::error::no commit set apps/sandbox/package.json to version ${version}"
+            exit 1
+          fi
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+          # An existing tag must point at the version commit.
+          ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" \
+            --jq "map(select(.ref == \"refs/tags/${tag}\")) | .[0] // empty | \"\(.object.type) \(.object.sha)\"")"
+          if [ -n "${ref}" ]; then
+            tag_sha="${ref#* }"
+            if [ "${ref%% *}" = tag ]; then
+              tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}" --jq .object.sha)"
+            fi
+            if [ "${tag_sha}" != "${sha}" ]; then
+              echo "::error::tag ${tag} points at ${tag_sha}, not at the version commit ${sha}; fix or delete the tag by hand"
+              exit 1
+            fi
+          fi
+
+          # Release state, drafts included (the tag lookup does not see drafts).
+          mapfile -t ids < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"${tag}\") | .id")
+          if [ "${#ids[@]}" -gt 1 ]; then
+            echo "::error::${#ids[@]} releases exist for ${tag}; delete the extra ones by hand"
+            exit 1
+          fi
+          if [ "${#ids[@]}" -eq 1 ]; then
+            draft="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ids[0]}" --jq .draft)"
+            names="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${ids[0]}/assets?per_page=100" \
+              --jq '.[] | select(.state == "uploaded") | .name' | LC_ALL=C sort | paste -sd, -)"
+            state="${draft} ${names}"
+            expected="$(printf '%s\n' "appflare-sandbox-${version}.zip" manifest.json manifest.sig | LC_ALL=C sort | paste -sd, -)"
+            if [ "${state}" = "false ${expected}" ]; then
+              echo "::notice::${tag} is already released"
+              echo "release=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+            echo "::notice::${tag} exists but is incomplete (draft=${state%% *}, assets: ${state#* }); completing it from ${sha}"
+          else
+            echo "::notice::releasing ${tag} from ${sha}"
+          fi
+          echo "release=true" >> "${GITHUB_OUTPUT}"
+
+  sandbox-build-packer:
+    name: sandbox build packer
+    needs: sandbox-plan
+    if: needs.sandbox-plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - name: Build and bundle @appflare/pack
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm exec turbo run build --filter=@appflare/pack...
+          out="${RUNNER_TEMP}/appflare-packer"
+          rm -rf "${out}"
+          pnpm --filter @appflare/pack deploy --prod --legacy "${out}/packages/pack"
+          tar -C "${out}" -czf "${RUNNER_TEMP}/appflare-packer.tgz" packages
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sandbox-appflare-packer
+          path: ${{ runner.temp }}/appflare-packer.tgz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  sandbox-build:
+    name: build and pack the sandbox Worker
+    needs: sandbox-plan
+    if: needs.sandbox-plan.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # Runs the sandbox Worker's build and its dependencies' code: no secrets,
+    # read-only token, no persisted credentials.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.sandbox-plan.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile
+      - name: Pack an unsigned intermediate, verify hashes
+        env:
+          APPFLARE_VERSION: ${{ needs.sandbox-plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Stamps the version into the Worker's config and image tag, stamps
+          # source.ref/sha, packs with keyId appflare-2026-09 (no signature),
+          # checks the artifact.
+          pnpm release:pack --app sandbox --out dist/sandbox-release --key-id "${KEY_ID}"
+          node packages/pack/bin/appflare-pack.js verify dist/sandbox-release --hashes-only
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-sandbox
+          path: dist/sandbox-release
+          if-no-files-found: error
+          retention-days: 7
+
+  sandbox-sign:
+    name: sandbox sign
+    needs: [sandbox-plan, sandbox-build-packer, sandbox-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Holds the signing key. No checkout, no dependency install, no build: only
+    # the packer bundle, on an artifact that must match the plan before signing.
+    permissions: {}
+    steps:
+      - name: Require APPFLARE_SIGNING_KEY
+        env:
+          APPFLARE_SIGNING_KEY: ${{ secrets.APPFLARE_SIGNING_KEY }}
+        run: |
+          if [ -z "${APPFLARE_SIGNING_KEY}" ]; then
+            echo "::error title=APPFLARE_SIGNING_KEY is not set::Sandbox Worker releases are signed. Add the signing key (base64 PKCS#8 Ed25519, key id appflare-2026-09) as the APPFLARE_SIGNING_KEY Actions secret of the appflare org or this repository, then re-run this workflow (docs/RELEASING.md)."
+            exit 1
+          fi
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Download the packer bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sandbox-appflare-packer
+          path: ${{ runner.temp }}/appflare-packer
+      - name: Download exactly unsigned-sandbox
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned-sandbox
+          path: release
+      - name: Check against the plan, verify hashes, sign, verify the signature
+        env:
+          VERSION: ${{ needs.sandbox-plan.outputs.version }}
+          SHA: ${{ needs.sandbox-plan.outputs.sha }}
+          APPFLARE_SIGNING_KEY: ${{ secrets.APPFLARE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/appflare"
+          tar -xzf "${RUNNER_TEMP}/appflare-packer/appflare-packer.tgz" -C "${RUNNER_TEMP}/appflare"
+          pack="${RUNNER_TEMP}/appflare/packages/pack/bin/appflare-pack.js"
+          expected="$(printf '%s\n' "appflare-sandbox-${VERSION}.zip" manifest.json | LC_ALL=C sort | paste -sd, -)"
+          present="$(find release -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | paste -sd, -)"
+          if [ "${present}" != "${expected}" ]; then
+            echo "::error::unsigned-sandbox holds ${present}, expected ${expected}"
+            exit 1
+          fi
+          check() {
+            local got
+            got="$(jq -r "$1" release/manifest.json)"
+            if [ "${got}" != "$2" ]; then
+              echo "::error::manifest.json $1 is ${got}, expected $2"
+              exit 1
+            fi
+          }
+          check .app appflare-sandbox
+          check .version "${VERSION}"
+          check .keyId "${KEY_ID}"
+          check .source.repo "${GITHUB_REPOSITORY}"
+          check .source.sha "${SHA}"
+          check .source.ref "${VERSION}"
+          node "${pack}" verify release --hashes-only
+          node "${pack}" sign release --sign-key-env APPFLARE_SIGNING_KEY --key-id "${KEY_ID}"
+          # Against the public keys embedded in @appflare/schema at this commit.
+          node "${pack}" verify release --require-signed
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-sandbox
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+
+  # The image the released Worker's containers run, pushed from the version
+  # commit before the release exists. Idempotent: a tag already holding an image
+  # from the same commit is only reported.
+  sandbox-image:
+    name: sandbox image
+    needs: [sandbox-plan, sandbox-sign]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/sandbox-image.yml
+    with:
+      version: ${{ needs.sandbox-plan.outputs.version }}
+      sha: ${{ needs.sandbox-plan.outputs.sha }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  sandbox-release:
+    name: sandbox GitHub Release
+    needs: [sandbox-plan, sandbox-build-packer, sandbox-sign, sandbox-image]
+    runs-on: ubuntu-24.04
+    # Includes up to 15 minutes waiting for the assets to become visible.
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      # For the changelog only, as of the version commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.sandbox-plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - name: Download the packer bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sandbox-appflare-packer
+          path: ${{ runner.temp }}/appflare-packer
+      - name: Download signed-sandbox
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-sandbox
+          path: ${{ runner.temp }}/release
+      # No token in this step: it runs the packer bundle.
+      - name: Verify the signed artifact
+        env:
+          VERSION: ${{ needs.sandbox-plan.outputs.version }}
+          SHA: ${{ needs.sandbox-plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/appflare"
+          tar -xzf "${RUNNER_TEMP}/appflare-packer/appflare-packer.tgz" -C "${RUNNER_TEMP}/appflare"
+          pack="${RUNNER_TEMP}/appflare/packages/pack/bin/appflare-pack.js"
+          dir="${RUNNER_TEMP}/release"
+          if [ "$(jq -r .app "${dir}/manifest.json")" != appflare-sandbox ] \
+            || [ "$(jq -r .version "${dir}/manifest.json")" != "${VERSION}" ] \
+            || [ "$(jq -r .source.sha "${dir}/manifest.json")" != "${SHA}" ]; then
+            echo "::error::signed-sandbox is not appflare-sandbox@${VERSION} built from ${SHA}"
+            exit 1
+          fi
+          node "${pack}" verify "${dir}" --require-signed
+      # The write token is visible to gh only, never to the packer. Idempotent,
+      # as for the manager: a published, complete release with the same
+      # manifest.json is left alone; one with another manifest.json fails.
+      # Sandbox Worker releases never become the repository's latest release,
+      # which stays the manager's.
+      - name: Create or complete the GitHub Release
+        env:
+          WRITE_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.sandbox-plan.outputs.version }}
+          SHA: ${{ needs.sandbox-plan.outputs.sha }}
+          IMAGE_DIGEST: ${{ needs.sandbox-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gh_write() { GH_TOKEN="${WRITE_TOKEN}" gh "$@"; }
+          dir="${RUNNER_TEMP}/release"
+          tag="sandbox@${VERSION}"
+          repo="${GITHUB_REPOSITORY}"
+          assets=("${dir}/appflare-sandbox-${VERSION}.zip" "${dir}/manifest.json" "${dir}/manifest.sig")
+          expected="$(printf '%s\n' "appflare-sandbox-${VERSION}.zip" manifest.json manifest.sig | LC_ALL=C sort | paste -sd, -)"
+          digest="$(sha256sum "${dir}/manifest.json" | cut -d' ' -f1)"
+          if ! [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::the sandbox image job reported no digest"
+            exit 1
+          fi
+
+          # An existing tag must point at the version commit (re-checked: time has passed since plan).
+          ref="$(gh_write api "repos/${repo}/git/matching-refs/tags/${tag}" \
+            --jq "map(select(.ref == \"refs/tags/${tag}\")) | .[0] // empty | \"\(.object.type) \(.object.sha)\"")"
+          if [ -n "${ref}" ]; then
+            tag_sha="${ref#* }"
+            if [ "${ref%% *}" = tag ]; then
+              tag_sha="$(gh_write api "repos/${repo}/git/tags/${tag_sha}" --jq .object.sha)"
+            fi
+            if [ "${tag_sha}" != "${SHA}" ]; then
+              echo "::error::tag ${tag} points at ${tag_sha}, not at the version commit ${SHA}; fix or delete the tag by hand"
+              exit 1
+            fi
+          fi
+
+          # Release notes: this version's section of the sandbox Worker's changelog.
+          notes="${RUNNER_TEMP}/notes.md"
+          awk -v heading="## ${VERSION}" '
+            $0 == heading { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' apps/sandbox/CHANGELOG.md > "${notes}" 2> /dev/null || true
+          if ! grep -q '[^[:space:]]' "${notes}"; then
+            echo "No changelog entry for ${VERSION}." > "${notes}"
+          fi
+          printf '\n---\nBuilt from %s@%s. Signed with key id %s. manifest.json sha256: %s.\nContainer image: docker.io/appflare/sandbox:%s@%s\n' \
+            "${repo}" "${SHA}" "${KEY_ID}" "${digest}" "${VERSION}" "${IMAGE_DIGEST}" >> "${notes}"
+          flags=(--latest=false)
+          if [[ "${VERSION}" == *-* ]]; then
+            flags=(--latest=false --prerelease)
+          fi
+
+          mapfile -t ids < <(gh_write api --paginate "repos/${repo}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"${tag}\") | .id")
+          if [ "${#ids[@]}" -gt 1 ]; then
+            echo "::error::${#ids[@]} releases exist for ${tag}; delete the extra ones by hand"
+            exit 1
+          fi
+          if [ "${#ids[@]}" -eq 0 ]; then
+            gh_write release create "${tag}" "${assets[@]}" \
+              --repo "${repo}" \
+              --target "${SHA}" \
+              --title "Appflare sandbox Worker ${VERSION}" \
+              --notes-file "${notes}" \
+              "${flags[@]}"
+            exit 0
+          fi
+
+          draft="$(gh_write api "repos/${repo}/releases/${ids[0]}" --jq .draft)"
+          release_assets="$(gh_write api --paginate "repos/${repo}/releases/${ids[0]}/assets?per_page=100" \
+            --jq '.[] | select(.state == "uploaded")' | jq -s .)"
+          present="$(jq -r '[.[].name] | sort | join(",")' <<< "${release_assets}")"
+          if [ "${draft}" = false ] && [ "${present}" = "${expected}" ]; then
+            live="$(jq -r '.[] | select(.name == "manifest.json") | .digest // ""' <<< "${release_assets}")"
+            if [ -z "${live}" ]; then
+              asset_id="$(jq -r '.[] | select(.name == "manifest.json") | .id' <<< "${release_assets}")"
+              live="sha256:$(gh_write api -H "Accept: application/octet-stream" "repos/${repo}/releases/assets/${asset_id}" | sha256sum | cut -d' ' -f1)"
+            fi
+            if [ "${live}" = "sha256:${digest}" ]; then
+              echo "::notice::${tag} is already released with this manifest.json"
+              exit 0
+            fi
+            echo "::error::${tag} is published with a different manifest.json (${live}, this build sha256:${digest}); a live release is never replaced"
+            exit 1
+          fi
+          unexpected="$(jq -r --arg expected "${expected}" '[.[].name | select(. as $n | $expected | split(",") | index($n) | not)] | join(",")' <<< "${release_assets}")"
+          if [ -n "${unexpected}" ]; then
+            echo "::error::${tag} has unexpected assets (${unexpected}); remove them by hand"
+            exit 1
+          fi
+          echo "::notice::completing ${tag} (draft=${draft}, assets: ${present:-none})"
+          gh_write release upload "${tag}" "${assets[@]}" --repo "${repo}" --clobber
+          gh_write release edit "${tag}" \
+            --repo "${repo}" \
+            --target "${SHA}" \
+            --title "Appflare sandbox Worker ${VERSION}" \
+            --notes-file "${notes}" \
+            --draft=false \
+            "${flags[@]}"
+      - name: Wait until the release lists its three assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.sandbox-plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="sandbox@${VERSION}"
+          expected="$(printf '%s\n' "appflare-sandbox-${VERSION}.zip" manifest.json manifest.sig | LC_ALL=C sort | paste -sd, -)"
           deadline=$(( $(date +%s) + 15 * 60 ))
           while :; do
             names="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
