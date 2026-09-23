@@ -1,4 +1,4 @@
-import type { ModuleType, WorkerBinding } from "@appflare/schema";
+import type { CatalogResources, ModuleType, WorkerBinding } from "@appflare/schema";
 
 /**
  * A structural view of the subset of wrangler's resolved config
@@ -61,9 +61,24 @@ export interface ResolvedWranglerConfig {
 }
 
 /**
+ * The catalog manifest does not declare the shape of a Vectorize index the
+ * wrangler config binds, or declares one the config does not bind. The
+ * message names the binding and the `appflare.jsonc` field to fix.
+ */
+export class VectorizeDeclarationError extends Error {
+  override name = "VectorizeDeclarationError";
+}
+
+/**
  * Converts wrangler's per-kind binding arrays into the artifact manifest's flat
  * `bindings` array, keeping only the binding NAME, its TYPE, and fields that are
  * not account-specific.
+ *
+ * A Vectorize binding also records the index's `dimensions` and `metric` from
+ * the catalog manifest's `resources.vectorize[<binding>]`: wrangler's config has
+ * no place for them, and the manager must create the index before binding it.
+ * A Vectorize binding without that declaration, or a declaration for a binding
+ * the config does not have, throws {@link VectorizeDeclarationError}.
  *
  * The stripping rule is an allowlist, not a denylist: for each binding kind we
  * copy only the handful of fields known to be safe, so no account id
@@ -74,7 +89,10 @@ export interface ResolvedWranglerConfig {
  * Unrecognized kinds are intentionally not emitted (extend this as the catalog
  * grows); DO class references and `vars` are handled here too.
  */
-export function collectBindings(config: ResolvedWranglerConfig): WorkerBinding[] {
+export function collectBindings(
+  config: ResolvedWranglerConfig,
+  resources?: CatalogResources,
+): WorkerBinding[] {
   const bindings: WorkerBinding[] = [];
   // Spread the optional extras so excess-property checks never fight the
   // schema's loose binding shape, and undefined extras drop out cleanly.
@@ -100,8 +118,25 @@ export function collectBindings(config: ResolvedWranglerConfig): WorkerBinding[]
   for (const producer of config.queues?.producers ?? []) {
     push("queue", producer.binding, { delivery_delay: producer.delivery_delay });
   }
+  const declared = resources?.vectorize ?? {};
+  const bound = new Set<string>();
   for (const v of config.vectorize ?? []) {
-    push("vectorize", v.binding);
+    bound.add(v.binding);
+    const index = Object.hasOwn(declared, v.binding) ? declared[v.binding] : undefined;
+    if (index === undefined) {
+      throw new VectorizeDeclarationError(
+        `the wrangler config binds a Vectorize index as ${v.binding}, but the catalog manifest does not say how to create it; ` +
+          `add resources.vectorize.${v.binding} with { "dimensions": <1-1536>, "metric": "cosine" | "euclidean" | "dot-product" } to appflare.jsonc`,
+      );
+    }
+    push("vectorize", v.binding, { dimensions: index.dimensions, metric: index.metric });
+  }
+  const unbound = Object.keys(declared).filter((binding) => !bound.has(binding));
+  if (unbound.length > 0) {
+    throw new VectorizeDeclarationError(
+      `the catalog manifest declares resources.vectorize.${unbound.join(", resources.vectorize.")}, ` +
+        "but the wrangler config has no Vectorize binding by that name; remove it from appflare.jsonc or fix the binding name",
+    );
   }
   for (const h of config.hyperdrive ?? []) {
     push("hyperdrive", h.binding);

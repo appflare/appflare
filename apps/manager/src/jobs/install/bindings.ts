@@ -1,4 +1,8 @@
-import type { WorkerBinding } from "@appflare/schema";
+import {
+  isVectorizeBinding,
+  type VectorizeIndexConfig,
+  type WorkerBinding,
+} from "@appflare/schema";
 
 /**
  * How the install job treats each binding the packer recorded:
@@ -33,15 +37,21 @@ export const PASSTHROUGH_BINDING_TYPES: ReadonlySet<string> = new Set([
   "send_email",
 ]);
 
-export interface ResourceBindingPlan {
+interface ResourcePlanFields {
   binding: string;
-  type: ResourceBindingType;
   kind: ProvisionedKind;
   /** `<workerName>-<binding>` (see {@link resourceName}). */
   name: string;
-  /** Vectorize only: the index config from the recorded binding. */
-  vectorize?: { dimensions: number; metric: "cosine" | "euclidean" | "dot-product" };
 }
+
+/**
+ * A resource to create for a binding. A Vectorize index always carries the
+ * dimensions and metric the artifact records, since Cloudflare cannot create
+ * one without them.
+ */
+export type ResourceBindingPlan =
+  | (ResourcePlanFields & { type: "vectorize"; vectorize: VectorizeIndexConfig })
+  | (ResourcePlanFields & { type: Exclude<ResourceBindingType, "vectorize"> });
 
 /**
  * A `workflow` binding. Workflow names are account-wide, and uploading a script
@@ -92,52 +102,43 @@ const MAX_NAME_LENGTH: Record<ProvisionedKind, number> = {
   vectorize: 64,
 };
 
-const VECTORIZE_METRICS = new Set(["cosine", "euclidean", "dot-product"]);
-
-function vectorizeConfig(binding: WorkerBinding): ResourceBindingPlan["vectorize"] | undefined {
-  const dimensions = binding.dimensions;
-  const metric = binding.metric;
-  if (
-    typeof dimensions === "number" &&
-    Number.isInteger(dimensions) &&
-    dimensions > 0 &&
-    typeof metric === "string" &&
-    VECTORIZE_METRICS.has(metric)
-  ) {
-    return { dimensions, metric: metric as "cosine" | "euclidean" | "dot-product" };
-  }
-  return undefined;
-}
-
-function isResourceType(type: string): type is ResourceBindingType {
-  return Object.hasOwn(RESOURCE_BINDINGS, type);
+/**
+ * Resource binding types created from the name alone. Vectorize is not one:
+ * its plan needs the index shape, which only a parsed `VectorizeBinding` has.
+ */
+function isNamedResourceType(type: string): type is Exclude<ResourceBindingType, "vectorize"> {
+  return type !== "vectorize" && Object.hasOwn(RESOURCE_BINDINGS, type);
 }
 
 /** Classifies every recorded binding; `problems` lists what blocks the install. */
 export function planBindings(workerName: string, bindings: readonly WorkerBinding[]): BindingPlan {
   const plan: BindingPlan = { resources: [], durableObjects: [], workflows: [], problems: [] };
+  const addResource = (entry: ResourceBindingPlan): void => {
+    const limit = MAX_NAME_LENGTH[entry.kind];
+    if (entry.name.length > limit) {
+      plan.problems.push(
+        `The ${entry.kind} name "${entry.name}" is longer than ${limit} characters; choose a shorter Worker name.`,
+      );
+    }
+    plan.resources.push(entry);
+  };
   for (const binding of bindings) {
-    if (isResourceType(binding.type)) {
-      const kind = RESOURCE_BINDINGS[binding.type];
-      const name = resourceName(workerName, binding.name);
-      const entry: ResourceBindingPlan = { binding: binding.name, type: binding.type, kind, name };
-      if (name.length > MAX_NAME_LENGTH[kind]) {
-        plan.problems.push(
-          `The ${kind} name "${name}" is longer than ${MAX_NAME_LENGTH[kind]} characters; choose a shorter Worker name.`,
-        );
-      }
-      if (binding.type === "vectorize") {
-        const config = vectorizeConfig(binding);
-        if (config === undefined) {
-          // TODO: have @appflare/pack record Vectorize dimensions and metric.
-          plan.problems.push(
-            `Vectorize binding ${binding.name}: the artifact does not record the index's dimensions and metric (@appflare/pack does not capture them yet), so Appflare cannot create the index. Apps with Vectorize bindings cannot be installed yet.`,
-          );
-        } else {
-          entry.vectorize = config;
-        }
-      }
-      plan.resources.push(entry);
+    if (isVectorizeBinding(binding)) {
+      // The artifact schema admits a Vectorize binding only with its index shape.
+      addResource({
+        binding: binding.name,
+        type: "vectorize",
+        kind: RESOURCE_BINDINGS.vectorize,
+        name: resourceName(workerName, binding.name),
+        vectorize: { dimensions: binding.dimensions, metric: binding.metric },
+      });
+    } else if (isNamedResourceType(binding.type)) {
+      addResource({
+        binding: binding.name,
+        type: binding.type,
+        kind: RESOURCE_BINDINGS[binding.type],
+        name: resourceName(workerName, binding.name),
+      });
     } else if (binding.type === "durable_object_namespace") {
       if (typeof binding.script_name === "string" && binding.script_name.length > 0) {
         plan.problems.push(

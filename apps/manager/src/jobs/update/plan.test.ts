@@ -13,6 +13,7 @@ import {
   type RecordedResource,
   snapshotRow,
   updateRefusal,
+  vectorizeShapesOf,
 } from "./plan";
 
 const row = (over: Partial<RecordedResource> & Pick<RecordedResource, "kind" | "name">) => ({
@@ -49,6 +50,53 @@ describe("updateRefusal", () => {
     expect(
       updateRefusal({ installedVersion: "1.0.0", targetVersion: "1.1.0", indexVersion: undefined }),
     ).toBe("the app is no longer in the catalog");
+  });
+});
+
+describe("vectorize index shapes on update", () => {
+  const recorded: RecordedResource[] = [
+    row({ kind: "vectorize", binding: "VECTORIZE", name: "sb-vectorize", cfId: "sb-vectorize" }),
+  ];
+  const bindings = (dimensions: number, metric: "cosine" | "euclidean") => [
+    { type: "vectorize" as const, name: "VECTORIZE", dimensions, metric },
+  ];
+  const installed = { VECTORIZE: { dimensions: 384, metric: "cosine" as const } };
+
+  it("keeps an index whose shape is unchanged", () => {
+    const diff = diffBindings("sb", bindings(384, "cosine"), recorded, installed);
+    expect(diff.problems).toEqual([]);
+    expect(diff.existing).toEqual([
+      { binding: "VECTORIZE", type: "vectorize", name: "sb-vectorize", cfId: "sb-vectorize" },
+    ]);
+  });
+
+  it("refuses a version that changes a kept index's dimensions or metric", () => {
+    const resized = diffBindings("sb", bindings(768, "cosine"), recorded, installed);
+    expect(resized.problems).toEqual([
+      'Binding VECTORIZE uses the Vectorize index "sb-vectorize", created with 384 dimensions (cosine); this version needs 768 dimensions (cosine). A Vectorize index cannot be reshaped in place, so this version needs a fresh install.',
+    ]);
+    expect(resized.existing).toEqual([]);
+    expect(resized.toCreate).toEqual([]);
+    const remetered = diffBindings("sb", bindings(384, "euclidean"), recorded, installed);
+    expect(remetered.problems[0]).toMatch(
+      /384 dimensions \(cosine\); this version needs 384 dimensions \(euclidean\)/,
+    );
+  });
+
+  it("reads the installed shapes from a stored manifest, skipping what it cannot read", () => {
+    const manifest = JSON.stringify({
+      worker: {
+        bindings: [
+          { type: "kv_namespace", name: "OAUTH_KV" },
+          { type: "vectorize", name: "VECTORIZE", dimensions: 384, metric: "cosine" },
+          { type: "vectorize", name: "UNSHAPED" },
+        ],
+      },
+    });
+    expect(vectorizeShapesOf(manifest)).toEqual(installed);
+    expect(vectorizeShapesOf(null)).toEqual({});
+    expect(vectorizeShapesOf("not json")).toEqual({});
+    expect(vectorizeShapesOf(JSON.stringify({ worker: {} }))).toEqual({});
   });
 });
 

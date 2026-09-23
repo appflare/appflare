@@ -244,6 +244,42 @@
         ],
         "additionalProperties": false
       }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "vectorize": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "dimensions": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1536
+              },
+              "metric": {
+                "type": "string",
+                "enum": [
+                  "cosine",
+                  "euclidean",
+                  "dot-product"
+                ]
+              }
+            },
+            "required": [
+              "dimensions",
+              "metric"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": [

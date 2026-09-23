@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { catalogManifestSchema, gitShaSchema, ownerRepoSchema } from "./catalog";
+import {
+  catalogManifestSchema,
+  gitShaSchema,
+  ownerRepoSchema,
+  vectorizeIndexConfigSchema,
+} from "./catalog";
 
 /**
  * Schemas for the machine-generated artifact manifest `manifest.json`.
@@ -75,14 +80,46 @@ export const d1MigrationFileSchema = z.object({
 export type D1MigrationFile = z.infer<typeof d1MigrationFileSchema>;
 
 /**
- * A wrangler binding shape with account-specific ids stripped by the packer.
- * Kept permissive on purpose: the packer records whatever wrangler resolved.
+ * A Vectorize binding. Besides its name it carries the index's dimensions and
+ * metric, which the packer copies from the catalog manifest's
+ * `resources.vectorize`: the manager creates the index before binding it, and
+ * Cloudflare cannot create one without them.
  */
-export const workerBindingSchema = z.looseObject({
-  type: z.string().min(1),
+export const vectorizeBindingSchema = z.looseObject({
+  type: z.literal("vectorize"),
+  name: z.string().min(1),
+  ...vectorizeIndexConfigSchema.shape,
+});
+export type VectorizeBinding = z.infer<typeof vectorizeBindingSchema>;
+
+/**
+ * Any other wrangler binding shape, with account-specific ids stripped by the
+ * packer. Kept permissive on purpose: the packer records whatever wrangler
+ * resolved. A `vectorize` binding never matches here, so one without its
+ * index shape fails to parse instead of reaching the manager.
+ */
+const otherBindingSchema = z.looseObject({
+  type: z
+    .string()
+    .min(1)
+    .refine((type) => type !== "vectorize", {
+      error: "a vectorize binding must record the index's dimensions and metric",
+    }),
   name: z.string().min(1),
 });
+
+/** A binding recorded in the artifact manifest. */
+export const workerBindingSchema = z.union([vectorizeBindingSchema, otherBindingSchema]);
 export type WorkerBinding = z.infer<typeof workerBindingSchema>;
+
+/**
+ * Whether a parsed binding is a Vectorize binding, with its dimensions and
+ * metric typed. Sound for anything `workerBindingSchema` parsed, which lets a
+ * `vectorize` binding through only with both fields.
+ */
+export function isVectorizeBinding(binding: WorkerBinding): binding is VectorizeBinding {
+  return binding.type === "vectorize";
+}
 
 /** A wrangler Durable Object migration entry. Permissive; wrangler owns the shape. */
 export const doMigrationSchema = z.looseObject({ tag: z.string().min(1) });

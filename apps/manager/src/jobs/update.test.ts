@@ -546,6 +546,36 @@ describe("update job", () => {
     expect(r.snapshot).toBeNull();
   });
 
+  it("refuses a version that reshapes a kept Vectorize index, before snapshotting", async () => {
+    const vectorize = (dimensions: number) => ({
+      type: "vectorize" as const,
+      name: "VECTORIZE",
+      dimensions,
+      metric: "cosine" as const,
+    });
+    const r = await update(
+      { ...NEW_APP, bindings: [...(NEW_APP.bindings ?? []), vectorize(768)] },
+      {},
+      {
+        resources: [
+          ...RESOURCES,
+          { kind: "vectorize", binding: "VECTORIZE", name: "cut-vectorize", cfId: "cut-vectorize" },
+        ],
+        manifestJson: JSON.stringify({
+          version: "1.0.0",
+          worker: { migrations: [], bindings: [vectorize(384)] },
+        }),
+      },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      'plan update: Binding VECTORIZE uses the Vectorize index "cut-vectorize", created with 384 dimensions (cosine); this version needs 768 dimensions (cosine). A Vectorize index cannot be reshaped in place, so this version needs a fresh install.',
+    );
+    expect(r.step.names).not.toContain("read current deployment");
+    expect(r.fake.state.calls).toEqual([]);
+    expect(r.snapshot).toBeNull();
+  });
+
   it("refuses a gradual deployment in progress before snapshotting", async () => {
     const r = await update(NEW_APP, {
       deployments: [

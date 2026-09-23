@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash, webcrypto } from "node:crypto";
 import {
   closeSync,
+  cpSync,
   existsSync,
   mkdtempSync,
   openSync,
@@ -336,6 +337,97 @@ describe("pack with install.version", () => {
       } finally {
         rmSync(parent, { recursive: true, force: true });
       }
+    }
+  }, 120_000);
+});
+
+/**
+ * A copy of the hello fixture whose wrangler config also binds a Vectorize
+ * index and Workers AI, with a catalog manifest carrying `resources`.
+ */
+function vectorizeCheckout(parent: string, resources: unknown): { dir: string; manifest: string } {
+  const dir = path.join(parent, "checkout");
+  cpSync(FIXTURE, dir, { recursive: true });
+  const configPath = path.join(dir, "wrangler.jsonc");
+  const config = parseJsonc(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  config.vectorize = [{ binding: "VECTORIZE", index_name: "hello-vectors" }];
+  config.ai = { binding: "AI" };
+  writeFileSync(configPath, JSON.stringify(config));
+  const catalog = parseJsonc(readFileSync(path.join(dir, "appflare.jsonc"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  if (resources !== undefined) catalog.resources = resources;
+  const manifest = path.join(parent, "appflare.jsonc");
+  writeFileSync(manifest, JSON.stringify(catalog));
+  return { dir, manifest };
+}
+
+describe("pack with a Vectorize binding", () => {
+  it("records the declared dimensions and metric, and verify holds them to the catalog", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-vectorize-"));
+    const outDir = path.join(parent, "out");
+    try {
+      const checkout = vectorizeCheckout(parent, {
+        vectorize: { VECTORIZE: { dimensions: 384, metric: "cosine" } },
+      });
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+      });
+      const bindings = res.manifest.worker.bindings;
+      expect(bindings).toContainEqual({
+        type: "vectorize",
+        name: "VECTORIZE",
+        dimensions: 384,
+        metric: "cosine",
+      });
+      expect(bindings).toContainEqual({ type: "ai", name: "AI" });
+      expect(JSON.stringify(res.manifest.worker)).not.toContain("hello-vectors");
+      expect(res.manifest.catalog.resources?.vectorize?.VECTORIZE).toEqual({
+        dimensions: 384,
+        metric: "cosine",
+      });
+      await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true });
+
+      // An artifact whose binding disagrees with its own catalog manifest fails.
+      const manifestPath = path.join(outDir, "manifest.json");
+      const edited = JSON.parse(readFileSync(manifestPath, "utf8")) as ArtifactManifest;
+      edited.catalog.resources = {
+        vectorize: { VECTORIZE: { dimensions: 768, metric: "cosine" } },
+      };
+      writeFileSync(manifestPath, JSON.stringify(edited));
+      await expect(verify({ dir: outDir })).rejects.toThrow(
+        /Vectorize binding VECTORIZE records 384 cosine, but the embedded catalog manifest declares 768 cosine/,
+      );
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("fails before building or writing anything when resources.vectorize is missing", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-novectorize-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = vectorizeCheckout(parent, undefined);
+      await expect(
+        pack({
+          checkoutDir: checkout.dir,
+          manifestPath: checkout.manifest,
+          outDir,
+          install: false,
+          logger: (m) => logs.push(m),
+        }),
+      ).rejects.toThrow(
+        /binds a Vectorize index as VECTORIZE, .*add resources\.vectorize\.VECTORIZE/,
+      );
+      expect(existsSync(outDir)).toBe(false);
+      expect(logs.some((l) => l.includes("dry-run"))).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
     }
   }, 120_000);
 });

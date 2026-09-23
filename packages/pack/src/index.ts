@@ -27,6 +27,7 @@ export {
   collectBindings,
   mainModuleName,
   type ResolvedWranglerConfig,
+  VectorizeDeclarationError,
 } from "./wrangler-config.ts";
 export type { ZipEntryPlacement } from "./zip.ts";
 export { crc32, ZipStore } from "./zip.ts";

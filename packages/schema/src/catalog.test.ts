@@ -112,6 +112,36 @@ describe("catalogManifestSchema", () => {
     }
   });
 
+  it("takes optional Vectorize index settings keyed by binding", () => {
+    expect(catalogManifestSchema.parse(validManifest).resources).toBeUndefined();
+    const parsed = catalogManifestSchema.parse({
+      ...validManifest,
+      resources: { vectorize: { VECTORIZE: { dimensions: 384, metric: "cosine" } } },
+    });
+    expect(parsed.resources?.vectorize?.VECTORIZE).toEqual({ dimensions: 384, metric: "cosine" });
+    for (const metric of ["euclidean", "dot-product"]) {
+      const ok = catalogManifestSchema.safeParse({
+        ...validManifest,
+        resources: { vectorize: { V: { dimensions: 1536, metric } } },
+      });
+      expect(ok.success).toBe(true);
+    }
+    for (const index of [
+      { dimensions: 0, metric: "cosine" },
+      { dimensions: 1537, metric: "cosine" },
+      { dimensions: 384.5, metric: "cosine" },
+      { dimensions: 384, metric: "dot" },
+      { dimensions: 384 },
+      { metric: "cosine" },
+    ]) {
+      const result = catalogManifestSchema.safeParse({
+        ...validManifest,
+        resources: { vectorize: { V: index } },
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
   it("rejects a non-boolean fixedWorkerName", () => {
     for (const fixedWorkerName of ["yes", 1, null]) {
       const result = catalogManifestSchema.safeParse({

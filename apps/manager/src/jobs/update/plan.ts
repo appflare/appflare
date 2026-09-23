@@ -1,5 +1,12 @@
 import type { WorkerDeployment } from "@appflare/cf-api";
-import type { ArtifactManifest, CatalogSecret, DoMigration, WorkerBinding } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  type CatalogSecret,
+  type DoMigration,
+  type VectorizeIndexConfig,
+  vectorizeBindingSchema,
+  type WorkerBinding,
+} from "@appflare/schema";
 import { isUpdateAvailable } from "../../catalog/versions";
 import type { snapshots } from "../../db/schema";
 import {
@@ -79,17 +86,50 @@ const BOUND_KINDS: ReadonlySet<string> = new Set([
   "durable_object",
 ]);
 
+/** Vectorize index shapes by binding name. */
+export type VectorizeShapes = Readonly<Record<string, VectorizeIndexConfig>>;
+
+/**
+ * The dimensions and metric of each Vectorize binding in a stored artifact
+ * manifest (the installed version's), by binding name. Bindings that do not
+ * record a shape, and a manifest that does not parse, contribute nothing.
+ */
+export function vectorizeShapesOf(
+  manifestJson: string | null,
+): Record<string, VectorizeIndexConfig> {
+  const shapes: Record<string, VectorizeIndexConfig> = {};
+  if (manifestJson === null) return shapes;
+  let bindings: unknown;
+  try {
+    bindings = (JSON.parse(manifestJson) as { worker?: { bindings?: unknown } }).worker?.bindings;
+  } catch {
+    return shapes;
+  }
+  if (!Array.isArray(bindings)) return shapes;
+  for (const binding of bindings) {
+    const parsed = vectorizeBindingSchema.safeParse(binding);
+    if (parsed.success) {
+      shapes[parsed.data.name] = { dimensions: parsed.data.dimensions, metric: parsed.data.metric };
+    }
+  }
+  return shapes;
+}
+
 /**
  * Compares the new version's bindings with the install's recorded resources.
  * A binding whose resource is recorded keeps it (same id, same name); a new
  * one gets a resource named as an install would name it. A binding that now
  * needs a different kind of resource than the one recorded under its name is
- * refused: replacing it would mean deleting or orphaning data.
+ * refused: replacing it would mean deleting or orphaning data. So is a kept
+ * Vectorize binding whose dimensions or metric differ from `installedShapes`
+ * (the installed version's): an index cannot be reshaped in place, and every
+ * write the new version makes to the old index would fail.
  */
 export function diffBindings(
   workerName: string,
   bindings: readonly WorkerBinding[],
   recorded: readonly RecordedResource[],
+  installedShapes: VectorizeShapes = {},
 ): BindingDiff {
   const plan = planBindings(workerName, bindings);
   const byBinding = new Map<string, RecordedResource[]>();
@@ -119,6 +159,18 @@ export function diffBindings(
           `The ${res.kind} resource of binding ${res.binding} (${same.name}) is recorded without a Cloudflare id, so the update cannot bind it.`,
         );
         continue;
+      }
+      if (res.type === "vectorize") {
+        const was = Object.hasOwn(installedShapes, res.binding)
+          ? installedShapes[res.binding]
+          : undefined;
+        const now = res.vectorize;
+        if (was !== undefined && (was.dimensions !== now.dimensions || was.metric !== now.metric)) {
+          diff.problems.push(
+            `Binding ${res.binding} uses the Vectorize index "${same.name}", created with ${was.dimensions} dimensions (${was.metric}); this version needs ${now.dimensions} dimensions (${now.metric}). A Vectorize index cannot be reshaped in place, so this version needs a fresh install.`,
+          );
+          continue;
+        }
       }
       diff.existing.push({
         binding: res.binding,

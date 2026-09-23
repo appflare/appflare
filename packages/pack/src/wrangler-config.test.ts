@@ -4,6 +4,7 @@ import {
   collectBindings,
   mainModuleName,
   type ResolvedWranglerConfig,
+  VectorizeDeclarationError,
 } from "./wrangler-config.ts";
 
 describe("collectBindings", () => {
@@ -23,7 +24,9 @@ describe("collectBindings", () => {
       vars: { GREETING: "Hello", COUNT: 3 },
     } as unknown as ResolvedWranglerConfig;
 
-    const bindings = collectBindings(config);
+    const bindings = collectBindings(config, {
+      vectorize: { VEC: { dimensions: 768, metric: "euclidean" } },
+    });
     const serialized = JSON.stringify(bindings);
 
     // No account-specific identifier survives.
@@ -44,7 +47,8 @@ describe("collectBindings", () => {
       { type: "d1", name: "DB" },
       { type: "r2_bucket", name: "BUCKET" },
       { type: "queue", name: "Q", delivery_delay: 5 },
-      { type: "vectorize", name: "VEC" },
+      // The index shape comes from the catalog manifest, never the index name.
+      { type: "vectorize", name: "VEC", dimensions: 768, metric: "euclidean" },
       { type: "hyperdrive", name: "HD" },
       // class_name/script_name are code references, kept.
       { type: "durable_object_namespace", name: "DO", class_name: "Counter", script_name: "other" },
@@ -89,6 +93,37 @@ describe("collectBindings", () => {
       class_name: "UpdateWorkflow",
     });
     expect(binding && "script_name" in binding).toBe(false);
+  });
+
+  it("refuses a Vectorize binding the catalog manifest does not declare, naming the field", () => {
+    const config = {
+      vectorize: [{ binding: "VECTORIZE", index_name: "second-brain-vectors" }],
+    } as unknown as ResolvedWranglerConfig;
+    for (const resources of [undefined, {}, { vectorize: {} }]) {
+      expect(() => collectBindings(config, resources)).toThrow(VectorizeDeclarationError);
+    }
+    expect(() => collectBindings(config)).toThrow(
+      /binds a Vectorize index as VECTORIZE.*add resources\.vectorize\.VECTORIZE with \{ "dimensions"/,
+    );
+    // A declaration under another name does not cover it.
+    expect(() =>
+      collectBindings(config, { vectorize: { VECTORS: { dimensions: 384, metric: "cosine" } } }),
+    ).toThrow(/add resources\.vectorize\.VECTORIZE/);
+  });
+
+  it("refuses a Vectorize declaration for a binding the wrangler config does not have", () => {
+    expect(() =>
+      collectBindings({} as ResolvedWranglerConfig, {
+        vectorize: { OLD_INDEX: { dimensions: 384, metric: "cosine" } },
+      }),
+    ).toThrow(
+      /declares resources\.vectorize\.OLD_INDEX, but the wrangler config has no Vectorize binding/,
+    );
+  });
+
+  it("passes the Workers AI binding through with no resource settings", () => {
+    const config = { ai: { binding: "AI" } } as unknown as ResolvedWranglerConfig;
+    expect(collectBindings(config)).toEqual([{ type: "ai", name: "AI" }]);
   });
 
   it("returns an empty array when there are no bindings", () => {

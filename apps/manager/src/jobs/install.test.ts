@@ -59,6 +59,8 @@ interface FakeState {
   r2: string[];
   /** False: every R2 call is refused the way Cloudflare refuses an account without R2. */
   r2Enabled: boolean;
+  /** Vectorize indexes with the create body each was made from. */
+  vectorize: Array<{ name: string; config: unknown }>;
 }
 
 function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
@@ -86,6 +88,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     failAfter: new Set(),
     r2: [],
     r2Enabled: true,
+    vectorize: [],
     ...over,
   };
   const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
@@ -135,6 +138,13 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         const { name } = (await request.json()) as { name: string };
         state.r2.push(name);
         return ok({ name });
+      }
+      case "GET /vectorize/v2/indexes":
+        return ok(state.vectorize.map(({ name, config }) => ({ name, config })));
+      case "POST /vectorize/v2/indexes": {
+        const body = (await request.json()) as { name: string; config: unknown };
+        state.vectorize.push(body);
+        return ok({ name: body.name, config: body.config });
       }
       case "GET /tokens/verify":
         return ok({ id: "t", status: "active" });
@@ -443,6 +453,74 @@ describe("install job", () => {
     expect(everything).toContain(`POST /accounts/${ACC}/storage/kv/namespaces -> 200`);
     expect(r.logs.some((l) => l.level === "warn" && l.message.includes("1042"))).toBe(true);
     expect(r.logs.at(-1)?.message).toMatch(/^Installed cut 1\.0\.0 at https:\/\/cut\.appflare-dev/);
+  });
+
+  it("creates a Vectorize index with the recorded shape and passes Workers AI through", async () => {
+    // Shaped like second-brain-cloudflare: D1 whose schema the app creates at
+    // runtime (no migration files), a Vectorize index, Workers AI, KV, a var,
+    // and five cron triggers.
+    const crons = ["0 1 * * *", "*/15 * * * *", "0 */6 * * *", "30 2 * * 1", "0 0 1 * *"];
+    const r = await install({
+      bindings: [
+        { type: "d1", name: "DB" },
+        { type: "vectorize", name: "VECTORIZE", dimensions: 384, metric: "cosine" },
+        { type: "ai", name: "AI" },
+        { type: "kv_namespace", name: "OAUTH_KV" },
+        { type: "plain_text", name: "VECTORIZE_GRACE_MS", text: "300000" },
+      ],
+      d1: { DB: [] },
+      crons,
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names).toEqual(
+      expect.arrayContaining([
+        "check Vectorize index cut-vectorize",
+        "create Vectorize index cut-vectorize",
+        "record Vectorize index cut-vectorize",
+        "set cron triggers",
+      ]),
+    );
+    // No migration files: nothing touches the database before the app does.
+    expect(r.step.names.some((n) => n.startsWith("D1 DB"))).toBe(false);
+    expect(r.fake.state.queries).toEqual([]);
+
+    // `POST /vectorize/v2/indexes` with `{ name, config: { dimensions, metric } }`.
+    expect(r.fake.state.vectorize).toEqual([
+      { name: "cut-vectorize", config: { dimensions: 384, metric: "cosine" } },
+    ]);
+    expect(r.resources).toEqual(
+      expect.arrayContaining([
+        { kind: "vectorize", binding: "VECTORIZE", name: "cut-vectorize", cf_id: "cut-vectorize" },
+        ...crons.map((cron) => ({ kind: "cron", binding: null, name: cron, cf_id: null })),
+      ]),
+    );
+    // The upload binds the index by name and sends Workers AI as recorded; the
+    // index shape stays out of the script metadata.
+    expect(r.fake.state.metadata?.bindings).toEqual([
+      { type: "d1", name: "DB", id: "d1-1" },
+      { type: "vectorize", name: "VECTORIZE", index_name: "cut-vectorize" },
+      { type: "ai", name: "AI" },
+      { type: "kv_namespace", name: "OAUTH_KV", namespace_id: "kv-1" },
+      { type: "plain_text", name: "VECTORIZE_GRACE_MS", text: "300000" },
+      { type: "plain_text", name: "HOME_PAGE", text: "admin" },
+    ]);
+    expect(r.fake.state.schedules).toEqual(crons);
+  });
+
+  it("refuses an artifact whose Vectorize binding lacks the index shape, before creating anything", async () => {
+    const r = await install({
+      bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+      tweak: (m) => {
+        m.worker.bindings.push({ type: "vectorize", name: "VECTORIZE" });
+      },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(
+      /^verify artifact manifest: .*a vectorize binding must record the index's dimensions and metric/s,
+    );
+    expect(r.fake.state.vectorize).toEqual([]);
+    expect(r.fake.state.kv).toEqual([]);
   });
 
   it("renames Workflows per install and refuses a name that is taken", async () => {

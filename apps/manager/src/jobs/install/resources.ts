@@ -53,11 +53,11 @@ export async function createResource(
       return (await api.r2.createBucket({ name: res.name })).name ?? res.name;
     case "queue":
       return (await api.queues.createQueue(res.name)).queue_id;
-    case "vectorize": {
-      if (res.vectorize === undefined) throw new Error("missing Vectorize dimensions and metric");
+    case "vectorize":
+      // `POST /vectorize/v2/indexes` with `{ name, config: { dimensions, metric } }`;
+      // an index is addressed by its name, so the name is its id.
       await api.vectorize.createIndex({ name: res.name, config: res.vectorize });
       return res.name;
-    }
   }
 }
 

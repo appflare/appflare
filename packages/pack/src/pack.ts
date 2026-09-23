@@ -430,6 +430,8 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   if (!config.compatibility_date) {
     throw new Error("wrangler config has no `compatibility_date`");
   }
+  // Before the build, so a missing Vectorize declaration fails fast.
+  const bindings = collectBindings(config, catalog.resources);
 
   // (d) Bundle the worker via a scrubbed dry-run into a temp outdir.
   const outdir = mkdtempSync(path.join(tmpdir(), "appflare-pack-"));
@@ -514,7 +516,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       compatibilityDate: config.compatibility_date,
       compatibilityFlags: config.compatibility_flags ?? [],
       modules: moduleManifest,
-      bindings: collectBindings(config),
+      bindings,
       migrations: (config.migrations ?? []) as DoMigration[],
       crons: config.triggers?.crons ?? [],
       observability: config.observability ?? null,

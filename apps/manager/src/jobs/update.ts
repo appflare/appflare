@@ -50,6 +50,7 @@ import {
   snapshotRow,
   updatePath,
   updateRefusal,
+  vectorizeShapesOf,
 } from "./update/plan";
 
 /**
@@ -187,6 +188,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         // Installs made before the tag was recorded applied every migration
         // of the manifest they were installed from.
         appliedDoTag: install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
+        // The installed version's index shapes: a kept index cannot change shape.
+        vectorizeShapes: vectorizeShapesOf(install.manifest_json),
         userVars: parseVars(install.config_json),
         artifacts: app.artifacts,
         digest: app.digest,
@@ -207,7 +210,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     steps.current = "load artifact manifest";
     const manifestText = await loadVerifiedManifest(env.KV, baseFetch, ref);
     const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
-    const diff = diffBindings(workerName, manifest.worker.bindings, started.resources);
+    const diff = diffBindings(
+      workerName,
+      manifest.worker.bindings,
+      started.resources,
+      started.vectorizeShapes,
+    );
     const path = updatePath(manifest, started.appliedDoTag);
     const fullDeploy = path.fullDeploy;
     const newSecrets = missingSecrets(

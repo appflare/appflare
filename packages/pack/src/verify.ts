@@ -5,6 +5,7 @@ import { assetHash } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
   artifactManifestSchema,
+  isVectorizeBinding,
   signingKeys,
   tooManyModulesMessage,
 } from "@appflare/schema";
@@ -76,6 +77,28 @@ async function verifySignature(
   }
 }
 
+/**
+ * Throws unless every Vectorize binding records the same index shape the
+ * embedded catalog manifest declares for it. The manager creates the index
+ * from the binding, so the two must never disagree.
+ */
+function checkVectorizeBindings(manifest: ArtifactManifest): void {
+  const declared = manifest.catalog.resources?.vectorize ?? {};
+  for (const binding of manifest.worker.bindings) {
+    if (!isVectorizeBinding(binding)) {
+      continue;
+    }
+    const index = Object.hasOwn(declared, binding.name) ? declared[binding.name] : undefined;
+    if (index?.dimensions !== binding.dimensions || index.metric !== binding.metric) {
+      const want = index === undefined ? "nothing" : `${index.dimensions} ${index.metric}`;
+      throw new Error(
+        `Vectorize binding ${binding.name} records ${binding.dimensions} ${binding.metric}, ` +
+          `but the embedded catalog manifest declares ${want} for resources.vectorize.${binding.name}`,
+      );
+    }
+  }
+}
+
 function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
   const named = path.join(dir, `${manifest.app}-${manifest.version}.zip`);
   if (existsSync(named)) {
@@ -95,8 +118,10 @@ function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
  * manifest signature (against `signingKeys` by keyId, or `--public-key`) unless
  * the artifact is unsigned or `hashesOnly` is set, then reads exactly `bytes[offset, offset+size)` from
  * the zip for every recorded worker module, asset, and D1 migration and checks
- * its size and sha256 — never by unzipping. With `maxModules`, also fails an
- * artifact with more Worker modules than that. Throws on any mismatch.
+ * its size and sha256 — never by unzipping. Also checks that each Vectorize
+ * binding records the index shape the embedded catalog manifest declares. With
+ * `maxModules`, also fails an artifact with more Worker modules than that.
+ * Throws on any mismatch.
  */
 export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   const dir = path.resolve(options.dir);
@@ -151,6 +176,8 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
       logger("artifact is unsigned (keyId=unsigned); checking hashes only");
     }
   }
+
+  checkVectorizeBindings(manifest);
 
   if (options.maxModules !== undefined) {
     const tooMany = tooManyModulesMessage(

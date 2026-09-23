@@ -92,6 +92,32 @@ export const tokenPermissionSchema = z.object({
 });
 export type TokenPermission = z.infer<typeof tokenPermissionSchema>;
 
+/** How a Vectorize index measures the distance between two vectors. */
+export const vectorizeMetricSchema = z.enum(["cosine", "euclidean", "dot-product"]);
+export type VectorizeMetric = z.infer<typeof vectorizeMetricSchema>;
+
+/**
+ * The fixed shape of a Vectorize index. Cloudflare needs both to create the
+ * index and neither can change afterwards; wrangler's config does not carry
+ * them (`wrangler vectorize create` takes them as flags), so the catalog
+ * manifest states them. Vectorize allows at most 1536 dimensions.
+ */
+export const vectorizeIndexConfigSchema = z.object({
+  dimensions: z.int().min(1).max(1536),
+  metric: vectorizeMetricSchema,
+});
+export type VectorizeIndexConfig = z.infer<typeof vectorizeIndexConfigSchema>;
+
+/**
+ * Settings for resources the app's wrangler config binds but cannot fully
+ * describe. `vectorize` is keyed by binding name and must cover every
+ * Vectorize binding in the wrangler config; the packer refuses one without it.
+ */
+export const catalogResourcesSchema = z.object({
+  vectorize: z.record(z.string().min(1), vectorizeIndexConfigSchema).optional(),
+});
+export type CatalogResources = z.infer<typeof catalogResourcesSchema>;
+
 /** The pinned upstream source a version is built from; the bump bot edits it. */
 export const catalogSourceSchema = z.object({
   ref: z.string().min(1),
@@ -170,5 +196,11 @@ export const catalogManifestSchema = z.object({
   vars: z.array(catalogVarSchema),
   postInstall: z.array(postInstallStepSchema),
   tokenPermissions: z.array(tokenPermissionSchema),
+  /**
+   * Resource settings the wrangler config cannot express, such as a Vectorize
+   * index's dimensions and metric. Optional so manifests and artifacts written
+   * before the field existed keep the same parsed shape.
+   */
+  resources: catalogResourcesSchema.optional(),
 });
 export type CatalogManifest = z.infer<typeof catalogManifestSchema>;

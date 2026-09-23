@@ -46,15 +46,31 @@ describe("planBindings", () => {
     expect(plan.problems[0]).toMatch(/Workflow binding W points at another Worker/);
   });
 
-  it("needs Vectorize dimensions and metric from the recorded binding", () => {
-    expect(planBindings("a", [{ type: "vectorize", name: "IDX" }]).problems[0]).toMatch(
-      /does not record the index's dimensions and metric \(@appflare\/pack does not capture them yet\)/,
-    );
-    const ok = planBindings("a", [
-      { type: "vectorize", name: "IDX", dimensions: 768, metric: "cosine" },
+  it("plans a Vectorize index with the dimensions and metric the binding records", () => {
+    const plan = planBindings("second-brain", [
+      { type: "vectorize", name: "VECTORIZE", dimensions: 384, metric: "cosine" },
+      { type: "ai", name: "AI" },
     ]);
-    expect(ok.problems).toEqual([]);
-    expect(ok.resources[0]?.vectorize).toEqual({ dimensions: 768, metric: "cosine" });
+    expect(plan.problems).toEqual([]);
+    // Workers AI needs no resource; it passes through.
+    expect(plan.resources).toEqual([
+      {
+        binding: "VECTORIZE",
+        type: "vectorize",
+        kind: "vectorize",
+        name: "second-brain-vectorize",
+        vectorize: { dimensions: 384, metric: "cosine" },
+      },
+    ]);
+  });
+
+  it("refuses a Vectorize index name longer than Vectorize allows", () => {
+    const plan = planBindings("a".repeat(60), [
+      { type: "vectorize", name: "VECTORS", dimensions: 768, metric: "euclidean" },
+    ]);
+    expect(plan.problems).toEqual([
+      expect.stringMatching(/The vectorize name "a{60}-vectors" is longer than 64 characters/),
+    ]);
   });
 
   it("refuses binding types it cannot install and names that are too long", () => {

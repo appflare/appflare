@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { artifactManifestSchema } from "./artifact";
+import { artifactManifestSchema, isVectorizeBinding } from "./artifact";
 
 const sha256 = "a".repeat(64);
 const assetBlake3 = "c".repeat(32);
@@ -113,5 +113,35 @@ describe("artifactManifestSchema", () => {
       },
     };
     expect(artifactManifestSchema.safeParse(badHash).success).toBe(false);
+  });
+
+  it("types a Vectorize binding's dimensions and metric and requires both", () => {
+    const withBindings = (bindings: unknown[]) => ({
+      ...validArtifact,
+      worker: { ...validArtifact.worker, bindings },
+    });
+    const parsed = artifactManifestSchema.parse(
+      withBindings([
+        { type: "vectorize", name: "VECTORIZE", dimensions: 384, metric: "cosine" },
+        { type: "ai", name: "AI" },
+      ]),
+    );
+    const [vectorize, ai] = parsed.worker.bindings;
+    if (vectorize === undefined || !isVectorizeBinding(vectorize)) {
+      throw new Error("expected a typed Vectorize binding");
+    }
+    const shape: { dimensions: number; metric: string } = vectorize;
+    expect(shape).toMatchObject({ dimensions: 384, metric: "cosine" });
+    expect(ai && isVectorizeBinding(ai)).toBe(false);
+
+    for (const binding of [
+      { type: "vectorize", name: "VECTORIZE" },
+      { type: "vectorize", name: "VECTORIZE", dimensions: 384 },
+      { type: "vectorize", name: "VECTORIZE", dimensions: 2048, metric: "cosine" },
+      { type: "vectorize", name: "VECTORIZE", dimensions: 384, metric: "manhattan" },
+    ]) {
+      const result = artifactManifestSchema.safeParse(withBindings([binding]));
+      expect(result.success).toBe(false);
+    }
   });
 });
