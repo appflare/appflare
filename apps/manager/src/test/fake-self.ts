@@ -58,7 +58,7 @@ export function fakeSelf(
     calls,
     uploadAssetPart: (input) => call("uploadAssetPart", input),
     uploadWorker: (input) => call("uploadWorker", input),
-    applyD1Migration: (input) => call("applyD1Migration", input),
+    applyD1Migrations: (input) => call("applyD1Migrations", input),
     emptyR2Page: (input) => call("emptyR2Page", input),
     inspectEmailRouting: (input) => call("inspectEmailRouting", input),
   };

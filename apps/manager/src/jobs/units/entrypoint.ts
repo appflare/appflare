@@ -4,7 +4,7 @@ import type { UnitResult } from "./result";
 import {
   type AssetPartResult,
   createJobUnits,
-  type D1MigrationResult,
+  type D1MigrationsResult,
   type R2PageResult,
   type WorkerUploadResult,
 } from "./units";
@@ -26,8 +26,8 @@ export class JobUnits extends WorkerEntrypoint<Env> {
     return createJobUnits(this.env).uploadWorker(input);
   }
 
-  applyD1Migration(input: unknown): Promise<UnitResult<D1MigrationResult>> {
-    return createJobUnits(this.env).applyD1Migration(input);
+  applyD1Migrations(input: unknown): Promise<UnitResult<D1MigrationsResult>> {
+    return createJobUnits(this.env).applyD1Migrations(input);
   }
 
   emptyR2Page(input: unknown): Promise<UnitResult<R2PageResult>> {

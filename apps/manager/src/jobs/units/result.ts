@@ -28,7 +28,12 @@ export interface UnitLog {
 }
 
 /** Why a unit failed, in a shape that survives an RPC call. */
-export type UnitFailure =
+export type UnitFailure = UnitFailureCause & {
+  /** What the unit was working on when it failed (a migration file), named in the message. */
+  subject?: string;
+};
+
+type UnitFailureCause =
   /** A Cloudflare API error, rebuilt as a `CloudflareApiError` so 429/5xx retry and 4xx do not. */
   | {
       kind: "cloudflare";
@@ -67,8 +72,26 @@ export interface UnitTools {
   cf(): CloudflareClient;
 }
 
+/**
+ * An error a unit raises about one item of its work, such as the migration
+ * file whose statement failed: the failure keeps the original error's class
+ * and message and names the item in front of it.
+ */
+export class UnitItemError extends Error {
+  override name = "UnitItemError";
+  constructor(
+    readonly subject: string,
+    override readonly cause: unknown,
+  ) {
+    super(`${subject}: ${errorMessage(cause)}`);
+  }
+}
+
 /** The failure a thrown error becomes, classified the way the step runner would. */
 export function describeFailure(error: unknown): UnitFailure {
+  if (error instanceof UnitItemError) {
+    return { ...describeFailure(error.cause), subject: error.subject };
+  }
   if (error instanceof CloudflareApiError) {
     return {
       kind: "cloudflare",
@@ -87,13 +110,18 @@ export function describeFailure(error: unknown): UnitFailure {
 
 /** The error a step throws for a unit failure; `toStepError` then treats it as the original. */
 export function failureError(failure: UnitFailure): Error {
+  const about = (message: string) =>
+    failure.subject === undefined ? message : `${failure.subject}: ${message}`;
   switch (failure.kind) {
-    case "cloudflare":
-      return new CloudflareApiError(failure);
+    case "cloudflare": {
+      const error = new CloudflareApiError(failure);
+      error.message = about(error.message);
+      return error;
+    }
     case "final":
-      return new NonRetryableError(failure.message);
+      return new NonRetryableError(about(failure.message));
     case "retry":
-      return new Error(failure.message);
+      return new Error(about(failure.message));
   }
 }
 

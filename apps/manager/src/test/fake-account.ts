@@ -40,6 +40,12 @@ export interface FakeAccount {
   hasPreview: boolean;
   /** Keys (`METHOD /path`) answered once with this status instead of doing the work. */
   failOnce: Map<string, number>;
+  /**
+   * The query that applies this migration file answers `status`, `times`
+   * times: without running, or after running when `after` is set (an answer
+   * lost on the way back).
+   */
+  failMigration?: { file: string; status: number; times: number; after?: boolean };
   /** The Worker whose script routes and workers.dev hosts this fake serves. */
   worker: string;
   /** What `GET /workers/scripts/<worker>/bindings` answers. */
@@ -253,6 +259,12 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       const applied = state.applied[m[1]] ?? [];
       state.applied[m[1]] = applied;
       const { sql } = (await request.json()) as { sql: string };
+      const failing = state.failMigration;
+      const failNow =
+        failing !== undefined && failing.times > 0 && sql.endsWith(`values ('${failing.file}');`);
+      if (failNow) failing.times -= 1;
+      if (failNow && failing.after !== true)
+        return fail(failing.status, 'near "BROKEN": syntax error');
       state.queries.push(sql);
       if (sql.startsWith("SELECT")) {
         return ok([
@@ -261,6 +273,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       }
       const inserted = /values \('([^']+)'\);$/.exec(sql);
       if (inserted?.[1] !== undefined) applied.push(inserted[1]);
+      if (failNow) return fail(failing.status, "internal error");
       return ok([{ results: [], success: true, meta: {} }]);
     }
     return fail(404, `no route ${key}`);

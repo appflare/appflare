@@ -520,6 +520,55 @@ describe("update job", () => {
     ).toBe(true);
   });
 
+  it("still names a database whose last migration answer was lost and retried", async () => {
+    const r = await update(NEW_APP, {
+      // 0002 runs, its answer is lost; the retry finds nothing left to apply.
+      failMigration: { file: "0002_hits.sql", status: 500, times: 1, after: true },
+      failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]),
+    });
+    expect(r.step.retried).toEqual({ "D1 DB: apply migrations": 2 });
+    expect(r.fake.state.applied["d1-1"]).toEqual(["0001_init.sql", "0002_hits.sql"]);
+    expect(
+      r.fake.state.queries.filter((q) => q.endsWith("values ('0002_hits.sql');")),
+    ).toHaveLength(1);
+    expect(r.job?.error).toMatch(/^promote version: /);
+    expect(r.logs.map((l) => l.message)).toContain(
+      "cut-db already has every migration this version ships.",
+    );
+    expect(
+      r.logs.some((l) =>
+        l.message.startsWith("The D1 database cut-db is already migrated to the new schema"),
+      ),
+    ).toBe(true);
+  });
+
+  it("names a database that took some migrations before a later one failed", async () => {
+    const DB = [
+      ...(NEW_APP.d1?.DB ?? []),
+      { name: "0003_broken.sql", content: "ALTER TABLE links ADD COLUMN;" },
+    ];
+    const r = await update(
+      { ...NEW_APP, d1: { DB } },
+      { failMigration: { file: "0003_broken.sql", status: 400, times: 1 } },
+    );
+    expect(r.job?.error).toMatch(/^D1 DB: apply migrations: 0003_broken\.sql: /);
+    expect(r.fake.state.applied["d1-1"]).toEqual(["0001_init.sql", "0002_hits.sql"]);
+    expect(
+      r.logs.some((l) =>
+        l.message.startsWith("The D1 database cut-db is already migrated to the new schema"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not name a database whose first new migration failed", async () => {
+    const r = await update(NEW_APP, {
+      failMigration: { file: "0002_hits.sql", status: 400, times: 1 },
+    });
+    expect(r.job?.error).toMatch(/^D1 DB: apply migrations: 0002_hits\.sql: /);
+    expect(r.fake.state.applied["d1-1"]).toEqual(["0001_init.sql"]);
+    expect(r.logs.some((l) => l.message.startsWith("The D1 database"))).toBe(false);
+  });
+
   it("sends no migrations when the Worker already has every one", async () => {
     const migrations = [{ tag: "v1", new_sqlite_classes: ["Room"] }];
     const r = await update(

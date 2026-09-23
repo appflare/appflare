@@ -14,17 +14,12 @@ import { type RESOURCE_KINDS, resources } from "../../db/schema";
 import { readSettings, SETTING, writeSettings } from "../../db/settings";
 import type { StepRunner } from "../run-job";
 import { JobError, type JobSteps } from "../steps";
-import { settleUnit } from "../units/result";
+import { failureError, settleUnit } from "../units/result";
 import type { ArtifactHost } from "../units/units";
 import { cronChanges } from "../update/plan";
 import { fetchWhole, sha256Hex, verifyArtifactManifest } from "./artifact";
 import { planAssetParts } from "./asset-parts";
 import type { ResourceBindingPlan, WorkflowPlan } from "./bindings";
-import {
-  CREATE_MIGRATIONS_TABLE_SQL,
-  LIST_APPLIED_MIGRATIONS_SQL,
-  unappliedMigrations,
-} from "./d1-migrations";
 import {
   classifyHealthProbe,
   decideLiveHealth,
@@ -328,56 +323,69 @@ export interface D1Target {
 /**
  * D1 migrations the way `wrangler d1 migrations apply --remote` does them:
  * ensure `d1_migrations`, list what is applied, then apply each file not yet
- * recorded, in filename order, one file per step. On a database that already
- * has migrations only the new files run. Returns how many files it applied.
+ * recorded, in filename order. On a database that already has migrations only
+ * the new files run. Returns how many files this job applied.
+ *
+ * The work runs in `applyD1Migrations` job units, one step per call: a call
+ * applies as many files as fit its own invocation's subrequest limit (30
+ * small files in one call) and says how many remain, and the next step
+ * continues from there. Each call lists what is applied first, so a retried
+ * step resumes after the last file an earlier attempt recorded.
+ *
+ * `onMigrated` runs once this job is known to have applied a file, before
+ * the phase returns or throws, so a caller can say the database is ahead of
+ * the code that serves even when a later file fails.
  */
 export async function applyD1MigrationsPhase(
   steps: JobSteps,
   zipUrl: string,
   target: D1Target,
+  onMigrated?: () => void,
 ): Promise<number> {
   if (target.files.length === 0) return 0;
-  await steps.run(`D1 ${target.binding}: create d1_migrations table`, async ({ log, cf }) => {
-    await cf().d1.query(target.cfId, CREATE_MIGRATIONS_TABLE_SQL);
-    log.info(`Ensured "d1_migrations" exists in ${target.name}.`);
-    return {};
-  });
-  const listed = await steps.run(
-    `D1 ${target.binding}: list applied migrations`,
-    async ({ log, cf }) => {
-      const results = await cf().d1.query(target.cfId, LIST_APPLIED_MIGRATIONS_SQL);
-      const rows = results[0]?.results ?? [];
-      log.info(`${rows.length} migration(s) already applied to ${target.name}.`);
-      return { applied: rows.map((r) => String(r.name)) };
-    },
-  );
-  const pending = unappliedMigrations(
-    target.files,
-    listed.applied.map((name) => ({ name })),
-  );
-  if (pending.length === 0) {
-    await steps.run(`D1 ${target.binding}: no new migrations`, async ({ log }) => {
-      log.info(`${target.name} already has every migration this version ships.`);
-      return {};
-    });
-    return 0;
-  }
-  for (const file of pending) {
-    await steps.run(`D1 ${target.binding}: apply ${file.name}`, async ({ log, attempt }) =>
-      settleUnit(
-        await steps.units.api.applyD1Migration({
-          accountId: steps.accountId(),
-          artifact: { zipUrl, host: { kind: "catalog" } },
-          databaseId: target.cfId,
-          databaseName: target.name,
-          file,
-          checkApplied: attempt > 1,
-        }),
-        log,
-      ),
+  // Files not yet recorded when this job first listed the database. It rides
+  // on each step's result, so it survives a retried step whose earlier
+  // attempt applied files and lost the answer (the retry finds fewer pending)
+  // and a replay of the steps.
+  let before: number | null = null;
+  // Files still unrecorded as last seen.
+  let left: number | null = null;
+  try {
+    let next: string | null = null;
+    // Every call applies at least one file, so this many calls always suffice.
+    for (let call = 1; call <= target.files.length; call++) {
+      const name: string =
+        next === null
+          ? `D1 ${target.binding}: apply migrations`
+          : `D1 ${target.binding}: apply migrations from ${next}`;
+      const result = await steps.run(name, async ({ log }) => {
+        const got = settleUnit(
+          await steps.units.api.applyD1Migrations({
+            accountId: steps.accountId(),
+            artifact: { zipUrl, host: { kind: "catalog" } },
+            databaseId: target.cfId,
+            databaseName: target.name,
+            files: [...target.files],
+          }),
+          log,
+        );
+        before ??= got.pending;
+        left = got.remaining;
+        if (got.failed !== null) throw failureError(got.failed);
+        return { remaining: got.remaining, next: got.next, before };
+      });
+      before = result.before;
+      left = result.remaining;
+      if (result.remaining === 0) return before;
+      next = result.next;
+    }
+    steps.current = `D1 ${target.binding}: apply migrations`;
+    throw new JobError(
+      `${target.name} still has migrations to apply after ${target.files.length} calls`,
     );
+  } finally {
+    if (before !== null && left !== null && before > left) onMigrated?.();
   }
-  return pending.length;
 }
 
 /** The D1 targets of a manifest: every database resource whose binding ships migrations. */

@@ -11,30 +11,37 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  * still costs the job one subrequest, and so does everything a job does
  * itself. Per job, in the job's invocation:
  *
- *   - 1 per unit call: each asset part, the Worker upload, each D1 migration
- *     file, each R2 page, the Email Routing check;
+ *   - 1 per unit call: each asset part, the Worker upload, each call that
+ *     applies D1 migrations (one per database for up to about 30 small
+ *     files; the call itself makes 2 + 2 + 1 per file), each R2 page, the
+ *     Email Routing check;
  *   - 1 per Cloudflare API step: token check, script list, each resource's
- *     check and create (2 or more), each Workflow name check, the assets
- *     session, d1_migrations create and list per database, each secret, the
- *     cron triggers, the subdomain lookup and route, snapshot reads and
+ *     check and create (2 or more), each Workflow name check, the R2 check,
+ *     the assets session, each secret, the cron triggers, each queue
+ *     consumer, the subdomain lookup and route, snapshot reads and
  *     bookmarks and the promotion (updates); for an app that receives email,
  *     turning Email Routing on, each routing rule and the catch-all (1 each,
  *     2 on a retried step), and on uninstall each route (1 to 4);
  *   - 1 per health or canary probe (up to 12 probes for the live check, 6 for
  *     an app's canary, 10 for Appflare's own);
  *   - the manifest and signature (4 with the release redirects) and KV reads;
- *   - D1: each step's log write and job updates. D1 binding calls did not
- *     count toward the limit when this was measured, but plan as if they do.
+ *   - D1: each step's log write (one batch per step, however many lines a
+ *     unit brought back) and job updates. D1 binding calls did not count
+ *     toward the limit when this was measured, but plan as if they do.
  *
- * Worked example, an install with a KV namespace, a D1 database with 3
- * migrations, 2 asset parts, 2 secrets and a cron: manifest 4 + token 1 +
- * script list 1 + resources 2 x 2 + assets session 1 + parts 2 + upload 1 +
- * D1 table and list 2 + migrations 3 + secrets 2 + cron 1 + subdomain 2 +
- * health 1 to 12 = 26 to 37 fetches, plus about 25 D1 calls. That fits; an
- * app with a dozen resources, many migrations, and a slow first health check
- * can still pass 50 and fail with "Too many subrequests". Splitting a job
- * further means a unit that calls further units itself (the callee has `SELF`
- * too), or a sleep of 5 minutes or more, which does start a fresh invocation.
+ * Worked example, FlareMo: a D1 database with 30 migrations, an R2 bucket,
+ * 2 queues with a consumer each, 2 Vectorize indexes, a rate limit, 3 asset
+ * parts, 2 secrets and a cron. Manifest 4 + token 1 + script list 1 + R2
+ * check 1 + resources 6 x 2 + assets session 1 + parts 3 + upload 1 +
+ * migrations 1 + secrets 2 + cron 1 + consumers 2 + subdomain 2 = 32, plus
+ * health 1 to 12: 33 to 44 fetches, 6 to 17 under 50. With one call per
+ * migration file it was 30 calls plus the table and list steps, 64 to 75,
+ * which is how it failed at the 24th file. What still grows with an app is
+ * its resources (2 each) and its secrets (1 each); an app with many more of
+ * them can still pass 50 and fail with "Too many subrequests". Splitting a
+ * job further means a unit that calls further units itself (the callee has
+ * `SELF` too), or a sleep of 5 minutes or more, which does start a fresh
+ * invocation.
  */
 
 /**

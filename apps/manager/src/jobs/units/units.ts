@@ -12,8 +12,14 @@ import { z } from "zod";
 import { releaseFetch } from "../../catalog/release-fetch";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import { isNotFound, JobError } from "../errors";
-import { artifactReader, fetchArtifactFile } from "../install/artifact";
-import { APPLIED_MIGRATION_SQL, buildMigrationQuery } from "../install/d1-migrations";
+import { artifactReader } from "../install/artifact";
+import {
+  buildMigrationQuery,
+  CREATE_MIGRATIONS_TABLE_SQL,
+  LIST_APPLIED_MIGRATIONS_SQL,
+  nextMigrationBatch,
+  unappliedMigrations,
+} from "../install/d1-migrations";
 import { uploadModule } from "../install/metadata";
 import { assetContentType } from "../install/mime";
 import { activeVersionId } from "../update/plan";
@@ -22,7 +28,15 @@ import {
   emailRoutingInspectInputSchema,
   runEmailRoutingInspection,
 } from "./email-routing";
-import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result";
+import {
+  describeFailure,
+  runUnit,
+  type UnitDeps,
+  type UnitEnv,
+  type UnitFailure,
+  UnitItemError,
+  type UnitResult,
+} from "./result";
 
 /**
  * Job units: the pieces of a job that make many subrequests, each small
@@ -103,19 +117,34 @@ export interface WorkerUploadResult {
   modules: number;
 }
 
-export const d1MigrationInputSchema = z.object({
+export const d1MigrationsInputSchema = z.object({
   accountId: accountIdSchema,
   artifact: artifactSchema,
   databaseId: z.string().min(1),
   databaseName: z.string().min(1),
-  file: d1MigrationFileSchema,
-  /** A retried step first checks whether an earlier attempt already applied the file. */
-  checkApplied: z.boolean(),
+  /**
+   * Every migration file the version ships for this database, in any order.
+   * The call applies the ones `d1_migrations` does not record yet, in
+   * filename order, as many as fit one call (`nextMigrationBatch`).
+   */
+  files: z.array(d1MigrationFileSchema).min(1),
 });
-export type D1MigrationInput = z.infer<typeof d1MigrationInputSchema>;
-export interface D1MigrationResult {
-  /** False when an earlier attempt had already applied the file. */
-  applied: boolean;
+export type D1MigrationsInput = z.infer<typeof d1MigrationsInputSchema>;
+export interface D1MigrationsResult {
+  /** Files `d1_migrations` did not record when this call listed it. */
+  pending: number;
+  /** Files this call applied. */
+  applied: number;
+  /** Files still to apply after this call; the job calls again while any remain. */
+  remaining: number;
+  /** The first file still to apply, or null when none remain. */
+  next: string | null;
+  /**
+   * Why the file after the applied ones failed, naming it, or null. Returned
+   * as part of the value rather than as the call's failure, so the job still
+   * learns what this call applied before it fails the step with this error.
+   */
+  failed: UnitFailure | null;
 }
 
 /** Objects one R2 page lists and deletes: one list call plus one delete per object. */
@@ -145,8 +174,8 @@ export interface JobUnitsApi {
   uploadAssetPart(input: AssetPartInput): Promise<UnitResult<AssetPartResult>>;
   /** Reads every module from the artifact, checks every hash, uploads them in one request. */
   uploadWorker(input: WorkerUploadInput): Promise<UnitResult<WorkerUploadResult>>;
-  /** Applies one D1 migration file the way wrangler does. */
-  applyD1Migration(input: D1MigrationInput): Promise<UnitResult<D1MigrationResult>>;
+  /** Applies the next D1 migration files not yet recorded, the way wrangler does. */
+  applyD1Migrations(input: D1MigrationsInput): Promise<UnitResult<D1MigrationsResult>>;
   /** Lists one page of an R2 bucket's objects and deletes them. */
   emptyR2Page(input: R2PageInput): Promise<UnitResult<R2PageResult>>;
   /** Reads a zone's Email Routing state before an email app is installed there. */
@@ -287,30 +316,52 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
         }),
       ),
 
-    applyD1Migration: (input) =>
-      parsed(d1MigrationInputSchema, input, "applyD1Migration", (migration) =>
-        runUnit(env, deps, migration.accountId, async ({ log, fetch, cf }) => {
+    applyD1Migrations: (input) =>
+      parsed(d1MigrationsInputSchema, input, "applyD1Migrations", (target) =>
+        runUnit(env, deps, target.accountId, async ({ log, fetch, cf }) => {
           const api = cf();
-          const file: D1MigrationFile = migration.file;
-          // A retry must not re-run a file an earlier attempt already applied.
-          if (migration.checkApplied) {
-            const recorded = await api.d1.query(migration.databaseId, APPLIED_MIGRATION_SQL, [
-              file.name,
-            ]);
-            if ((recorded[0]?.results.length ?? 0) > 0) {
-              log.info(`${file.name} was applied by an earlier attempt.`);
-              return { applied: false };
-            }
+          const db = target.databaseId;
+          await api.d1.query(db, CREATE_MIGRATIONS_TABLE_SQL);
+          // Listed on every call, so a retried or later call picks up after
+          // the last file an earlier one recorded and never runs a file twice.
+          const rows = (await api.d1.query(db, LIST_APPLIED_MIGRATIONS_SQL))[0]?.results ?? [];
+          const pending: D1MigrationFile[] = unappliedMigrations(target.files, rows);
+          if (pending.length === 0) {
+            log.info(`${target.databaseName} already has every migration this version ships.`);
+            return { pending: 0, applied: 0, remaining: 0, next: null, failed: null };
           }
-          const got = await fetchArtifactFile(
-            artifactFetch(env, fetch, migration.artifact.host),
-            migration.artifact.zipUrl,
-            file,
+          const batch = nextMigrationBatch(pending);
+          log.info(
+            `${rows.length} migration(s) already applied to ${target.databaseName}; applying ${batch.length} of ${pending.length} new.`,
           );
-          const sql = new TextDecoder().decode(got.bytes);
-          await api.d1.query(migration.databaseId, buildMigrationQuery(sql, file.name));
-          log.info(`Applied ${file.name} to ${migration.databaseName}.`);
-          return { applied: true };
+          const reader = artifactReader(
+            artifactFetch(env, fetch, target.artifact.host),
+            target.artifact.zipUrl,
+          );
+          const contents = await reader.read(batch);
+          let applied = 0;
+          let failed: UnitFailure | null = null;
+          for (const [i, file] of batch.entries()) {
+            const sql = new TextDecoder().decode(contents[i] ?? new Uint8Array(0));
+            // The file and the row that records it, in one query: once the
+            // query succeeds the file counts as applied, whatever fails next.
+            try {
+              await api.d1.query(db, buildMigrationQuery(sql, file.name));
+            } catch (error) {
+              failed = describeFailure(new UnitItemError(file.name, error));
+              break;
+            }
+            applied += 1;
+            log.info(`Applied ${file.name} to ${target.databaseName}.`);
+          }
+          const rest = pending.slice(applied);
+          return {
+            pending: pending.length,
+            applied,
+            remaining: rest.length,
+            next: rest[0]?.name ?? null,
+            failed,
+          };
         }),
       ),
 

@@ -461,12 +461,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       do_migration_tag: fullDeploy?.new_tag ?? started.appliedDoTag,
     });
 
-    /** New D1 migration files, one database at a time; remembers which databases changed. */
+    /**
+     * New D1 migration files, one database at a time; remembers which
+     * databases changed, including one where a later file failed.
+     */
     async function migrateDatabases(): Promise<void> {
       for (const target of d1Targets(manifest, bound)) {
-        if ((await applyD1MigrationsPhase(steps, started.artifacts.zip, target)) > 0) {
-          migrated.push(target.name);
-        }
+        await applyD1MigrationsPhase(steps, started.artifacts.zip, target, () =>
+          migrated.push(target.name),
+        );
       }
     }
 
