@@ -15,6 +15,12 @@ const enc = encodeURIComponent;
 export interface UploadScriptArgs {
   metadata: ScriptMetadata;
   modules: WorkerModule[];
+  /**
+   * `?excludeScript=true`: leave the uploaded modules out of the response, as
+   * wrangler 4.136.2 does on `wrangler deploy`. The result still carries
+   * `deployment_id` (the new version id, possibly without hyphens).
+   */
+  excludeScript?: boolean;
 }
 
 export interface EnableSubdomainArgs {
@@ -40,7 +46,10 @@ export function createWorkers(http: HttpApi) {
     /** `PUT /workers/scripts/{name}` — multipart metadata + module parts. */
     uploadScript(name: string, args: UploadScriptArgs): Promise<ScriptUploadResult> {
       const form = buildUploadFormData(args.metadata, args.modules);
-      return http.result("PUT", http.acct(`/workers/scripts/${enc(name)}`), { form });
+      return http.result("PUT", http.acct(`/workers/scripts/${enc(name)}`), {
+        form,
+        query: args.excludeScript ? { excludeScript: true } : undefined,
+      });
     },
 
     /** `DELETE /workers/scripts/{name}` (`?force=true` also removes referenced resources). */

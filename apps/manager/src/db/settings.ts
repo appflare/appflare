@@ -15,6 +15,8 @@ export const SETTING = {
   cfTokenConfigured: "cf_token_configured",
   /** ISO 8601 time of the last successful verify-and-store. */
   cfTokenVerifiedAt: "cf_token_verified_at",
+  /** The account's workers.dev subdomain (`<name>.<subdomain>.workers.dev`), cached by the install job. */
+  accountSubdomain: "account_subdomain",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

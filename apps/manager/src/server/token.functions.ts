@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { CloudflareApiError } from "@appflare/cf-api";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
+import { apiBaseOption } from "../cloudflare/api-base";
 import { logCfRequest } from "../cloudflare/client.server";
 import type { VerifyTokenResult } from "../cloudflare/verify-token";
 import { createDb } from "../db/client";
@@ -31,6 +32,7 @@ function deps(token: string): TokenFlowDeps {
     token,
     host: new URL(getRequest().url).host,
     onRequest: logCfRequest,
+    ...apiBaseOption(env),
   };
 }
 

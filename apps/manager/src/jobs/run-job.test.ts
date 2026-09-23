@@ -3,19 +3,8 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
-import { NOT_IMPLEMENTED, runJob, type StepRunner } from "./run-job";
-
-/** Runs step callbacks inline and records the step names. */
-function fakeStep(): StepRunner & { names: string[] } {
-  const names: string[] = [];
-  return {
-    names,
-    async do<T>(name: string, callback: () => Promise<T>): Promise<T> {
-      names.push(name);
-      return callback();
-    },
-  };
-}
+import { fakeStep } from "../test/fake-step";
+import { JOB_HANDLERS, NOT_IMPLEMENTED, runJob } from "./run-job";
 
 beforeEach(async () => {
   await reset();
@@ -30,7 +19,7 @@ beforeEach(async () => {
 describe("runJob", () => {
   it("marks a job of an unimplemented kind failed and ends without retries", async () => {
     const step = fakeStep();
-    await expect(runJob({ kind: "install", jobId: "job1" }, step, env.DB)).rejects.toThrow(
+    await expect(runJob({ kind: "update", jobId: "job1" }, step, env)).rejects.toThrow(
       /not implemented/,
     );
     expect(step.names).toEqual(["mark job failed"]);
@@ -43,8 +32,15 @@ describe("runJob", () => {
   });
 
   it("rejects a payload without a known kind", async () => {
-    await expect(runJob({ kind: "explode", jobId: "job1" }, fakeStep(), env.DB)).rejects.toThrow(
+    await expect(runJob({ kind: "explode", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
       /invalid job payload/,
+    );
+  });
+
+  it("dispatches install to the install handler, which rejects a payload without its fields", async () => {
+    expect(JOB_HANDLERS.install.name).toBe("runInstall");
+    await expect(runJob({ kind: "install", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
+      /invalid install job payload/,
     );
   });
 });

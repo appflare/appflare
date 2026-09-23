@@ -22,7 +22,7 @@
     },
     "homepage": {
       "type": "string",
-      "format": "uri"
+      "pattern": "^https:\\/\\/"
     },
     "repo": {
       "type": "string",

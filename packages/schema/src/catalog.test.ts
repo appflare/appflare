@@ -42,6 +42,12 @@ describe("catalogManifestSchema", () => {
     expect(parsed.secrets[0]?.generate).toBe(true);
   });
 
+  it("requires an https homepage", () => {
+    for (const homepage of ["http://example.com", "javascript:alert(1)", "ftp://example.com"]) {
+      expect(catalogManifestSchema.safeParse({ ...validManifest, homepage }).success).toBe(false);
+    }
+  });
+
   it("rejects an invalid manifest (bad plan enum and short sha)", () => {
     const invalid = {
       ...validManifest,

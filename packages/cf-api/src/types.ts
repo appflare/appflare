@@ -63,6 +63,8 @@ export interface ScriptUploadResult {
   id: string;
   etag?: string;
   startup_time_ms?: number;
+  /** The new version id (wrangler reads it as the "Current Version ID"); may lack hyphens. */
+  deployment_id?: string | null;
   [key: string]: unknown;
 }
 
@@ -158,6 +160,14 @@ export interface VectorizeIndex {
   name: string;
   description?: string;
   config?: Record<string, unknown>;
+}
+
+/** `GET /workflows/{name}` (fields the manager reads). */
+export interface WorkflowInfo {
+  id: string;
+  name: string;
+  class_name?: string;
+  script_name?: string;
 }
 
 export interface AccessApp {

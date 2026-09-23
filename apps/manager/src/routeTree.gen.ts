@@ -13,9 +13,12 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
-import { Route as AppCatalogRouteImport } from './routes/_app/catalog'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as AppAppsInstallIdRouteImport } from './routes/_app/apps/$installId'
+import { Route as AppCatalogIndexRouteImport } from './routes/_app/catalog/index'
+import { Route as AppCatalogSlugRouteImport } from './routes/_app/catalog/$slug'
+import { Route as AppJobsJobIdRouteImport } from './routes/_app/jobs/$jobId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const AppRoute = AppRouteImport.update({
@@ -37,11 +40,6 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
-const AppCatalogRoute = AppCatalogRouteImport.update({
-  id: '/catalog',
-  path: '/catalog',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -51,6 +49,26 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppAppsInstallIdRoute = AppAppsInstallIdRouteImport.update({
+  id: '/apps/$installId',
+  path: '/apps/$installId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCatalogIndexRoute = AppCatalogIndexRouteImport.update({
+  id: '/catalog/',
+  path: '/catalog/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCatalogSlugRoute = AppCatalogSlugRouteImport.update({
+  id: '/catalog/$slug',
+  path: '/catalog/$slug',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppJobsJobIdRoute = AppJobsJobIdRouteImport.update({
+  id: '/jobs/$jobId',
+  path: '/jobs/$jobId',
+  getParentRoute: () => AppRoute,
 } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
@@ -62,30 +80,39 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
-  '/catalog': typeof AppCatalogRoute
   '/settings': typeof AppSettingsRoute
   '/api/health': typeof ApiHealthRoute
+  '/apps/$installId': typeof AppAppsInstallIdRoute
+  '/catalog/$slug': typeof AppCatalogSlugRoute
+  '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/catalog/': typeof AppCatalogIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
-  '/catalog': typeof AppCatalogRoute
   '/settings': typeof AppSettingsRoute
   '/api/health': typeof ApiHealthRoute
   '/': typeof AppIndexRoute
+  '/apps/$installId': typeof AppAppsInstallIdRoute
+  '/catalog/$slug': typeof AppCatalogSlugRoute
+  '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/catalog': typeof AppCatalogIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
-  '/_app/catalog': typeof AppCatalogRoute
   '/_app/settings': typeof AppSettingsRoute
   '/api/health': typeof ApiHealthRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/apps/$installId': typeof AppAppsInstallIdRoute
+  '/_app/catalog/$slug': typeof AppCatalogSlugRoute
+  '/_app/jobs/$jobId': typeof AppJobsJobIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/_app/catalog/': typeof AppCatalogIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -93,29 +120,38 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/setup'
-    | '/catalog'
     | '/settings'
     | '/api/health'
+    | '/apps/$installId'
+    | '/catalog/$slug'
+    | '/jobs/$jobId'
     | '/api/auth/$'
+    | '/catalog/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
     | '/setup'
-    | '/catalog'
     | '/settings'
     | '/api/health'
     | '/'
+    | '/apps/$installId'
+    | '/catalog/$slug'
+    | '/jobs/$jobId'
     | '/api/auth/$'
+    | '/catalog'
   id:
     | '__root__'
     | '/_app'
     | '/login'
     | '/setup'
-    | '/_app/catalog'
     | '/_app/settings'
     | '/api/health'
     | '/_app/'
+    | '/_app/apps/$installId'
+    | '/_app/catalog/$slug'
+    | '/_app/jobs/$jobId'
     | '/api/auth/$'
+    | '/_app/catalog/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -156,13 +192,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/catalog': {
-      id: '/_app/catalog'
-      path: '/catalog'
-      fullPath: '/catalog'
-      preLoaderRoute: typeof AppCatalogRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/settings': {
       id: '/_app/settings'
       path: '/settings'
@@ -177,6 +206,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/apps/$installId': {
+      id: '/_app/apps/$installId'
+      path: '/apps/$installId'
+      fullPath: '/apps/$installId'
+      preLoaderRoute: typeof AppAppsInstallIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/catalog/': {
+      id: '/_app/catalog/'
+      path: '/catalog'
+      fullPath: '/catalog/'
+      preLoaderRoute: typeof AppCatalogIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/catalog/$slug': {
+      id: '/_app/catalog/$slug'
+      path: '/catalog/$slug'
+      fullPath: '/catalog/$slug'
+      preLoaderRoute: typeof AppCatalogSlugRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/jobs/$jobId': {
+      id: '/_app/jobs/$jobId'
+      path: '/jobs/$jobId'
+      fullPath: '/jobs/$jobId'
+      preLoaderRoute: typeof AppJobsJobIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -188,15 +245,21 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
-  AppCatalogRoute: typeof AppCatalogRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppAppsInstallIdRoute: typeof AppAppsInstallIdRoute
+  AppCatalogSlugRoute: typeof AppCatalogSlugRoute
+  AppJobsJobIdRoute: typeof AppJobsJobIdRoute
+  AppCatalogIndexRoute: typeof AppCatalogIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppCatalogRoute: AppCatalogRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
+  AppAppsInstallIdRoute: AppAppsInstallIdRoute,
+  AppCatalogSlugRoute: AppCatalogSlugRoute,
+  AppJobsJobIdRoute: AppJobsJobIdRoute,
+  AppCatalogIndexRoute: AppCatalogIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

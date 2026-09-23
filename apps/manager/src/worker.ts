@@ -1,4 +1,5 @@
 import handler from "@tanstack/react-start/server-entry";
+import { CatalogError, refreshCatalogIndex } from "./catalog/index.server";
 import { ensureMigrated } from "./db/migrate";
 
 /**
@@ -36,8 +37,20 @@ export default {
     return (await migrated(env)) ?? handler.fetch(request);
   },
 
+  /**
+   * Cron: refresh the catalog index into KV. Update-available is
+   * computed at read time from the cached index, so nothing else is written.
+   * The scheduled handler never starts jobs.
+   */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
-    // TODO: refresh the catalog index into KV and set update-available per install.
+    try {
+      const { index } = await refreshCatalogIndex(env);
+      console.log(`catalog refreshed: ${index.apps.length} app(s)`);
+    } catch (error) {
+      if (!(error instanceof CatalogError)) throw error;
+      console.error("catalog refresh failed", { error: error.message });
+    }
+    // TODO: check the manager's own release feed.
   },
 } satisfies ExportedHandler<Env>;

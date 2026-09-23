@@ -1,0 +1,808 @@
+import { NonRetryableError } from "cloudflare:workflows";
+import { Buffer } from "node:buffer";
+import {
+  buildAssetsManifest,
+  CloudflareApiError,
+  type CloudflareClient,
+  createClient,
+  type FetchLike,
+} from "@appflare/cf-api";
+import {
+  type ArtifactManifest,
+  artifactManifestSchema,
+  indexArtifactsSchema,
+  sha256Schema,
+} from "@appflare/schema";
+import { and, eq, ne, or } from "drizzle-orm";
+import { z } from "zod";
+import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../catalog/app-manifest.server";
+import { apiBaseOption } from "../cloudflare/api-base";
+import { createDb, type Database } from "../db/client";
+import { installs, jobs, type RESOURCE_KINDS, resources } from "../db/schema";
+import { readSettings, SETTING, writeSettings } from "../db/settings";
+import { workerNameSchema } from "../installs/install-input";
+import {
+  ArtifactError,
+  ArtifactFetchError,
+  fetchArtifactFile,
+  fetchWhole,
+  sha256Hex,
+  verifyArtifactManifest,
+} from "./install/artifact";
+import { planBindings } from "./install/bindings";
+import { ARTIFACT_FETCH_COST, fetchCost, SubrequestBudget } from "./install/budget";
+import { countD1 } from "./install/count-d1";
+import {
+  APPLIED_MIGRATION_SQL,
+  buildMigrationQuery,
+  CREATE_MIGRATIONS_TABLE_SQL,
+  LIST_APPLIED_MIGRATIONS_SQL,
+  unappliedMigrations,
+} from "./install/d1-migrations";
+import {
+  classifyHealthProbe,
+  HEALTH_MAX_ATTEMPTS,
+  HEALTH_RETRY_DELAY,
+  type HealthProbe,
+  probeHealth,
+} from "./install/health";
+import {
+  buildScriptMetadata,
+  type CreatedResource,
+  resolveVars,
+  uploadModule,
+} from "./install/metadata";
+import { assetContentType } from "./install/mime";
+import { createResource, findResource, RESOURCE_LABEL } from "./install/resources";
+import type { JobContext, StepConfig } from "./run-job";
+import { StepLog } from "./step-log";
+
+/**
+ * The `install` job. Every Cloudflare API call and every
+ * artifact transfer is its own `step.do` with retries for 429/5xx; 4xx and
+ * integrity failures end the job at once (`NonRetryableError`). Each step writes
+ * its log lines in one batch. On failure the job records `<step>: <message>`,
+ * the install becomes `failed`, and every resource already created stays
+ * recorded (no automatic deletion).
+ */
+
+/** The Workflow payload `startInstall` creates. Secret VALUES live only here. */
+export const installJobParams = z.object({
+  kind: z.literal("install"),
+  jobId: z.string().min(1),
+  installId: z.string().min(1),
+  slug: z.string().min(1),
+  version: z.string().min(1),
+  workerName: workerNameSchema,
+  artifacts: indexArtifactsSchema,
+  digest: sha256Schema,
+  secrets: z.record(z.string(), z.string()),
+  vars: z.record(z.string(), z.string()),
+  paidConfirmed: z.boolean(),
+});
+export type InstallJobParams = z.infer<typeof installJobParams>;
+
+/** 3 retries with backoff on 429/5xx. */
+export const API_STEP: StepConfig = {
+  retries: { limit: 3, delay: "2 seconds", backoff: "exponential" },
+};
+
+/** Files per assets step: 2 subrequests per Range fetch (GitHub redirects) + the upload. */
+const BULK_FILES_PER_STEP = 19;
+/** Single-file upload mode: 2 per fetch + 1 upload per file. */
+const SINGLE_FILES_PER_STEP = 13;
+/** A single invocation can never make more than this many subrequests (free plan). */
+const INVOCATION_CAP = 48;
+
+/** A failure the job reports as is; never retried. */
+export class InstallError extends Error {
+  override name = "InstallError";
+}
+
+/**
+ * D1 calls a step makes on top of its estimate (the log flush plus a write or
+ * two); D1 calls are subrequests too. The headroom between the budget (40) and
+ * the cap (50) covers per-invocation work outside steps (`ensureMigrated`,
+ * re-reading the manifest from KV).
+ */
+const D1_PER_STEP = 3;
+
+/** Maps any error thrown inside a step to what the Workflow engine should do with it. */
+export function toStepError(error: unknown): Error {
+  if (error instanceof NonRetryableError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof CloudflareApiError) {
+    return error.status === 429 || error.status >= 500
+      ? new Error(message)
+      : new NonRetryableError(message);
+  }
+  if (error instanceof ArtifactFetchError) {
+    return error.retryable ? new Error(message) : new NonRetryableError(message);
+  }
+  if (error instanceof InstallError || error instanceof ArtifactError) {
+    return new NonRetryableError(message);
+  }
+  return error instanceof Error ? error : new Error(message);
+}
+
+function errorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/^(NonRetryableError|Error):\s*/, "");
+}
+
+function resourceId(installId: string, kind: string, key: string): string {
+  return `${installId}:${kind}:${key}`;
+}
+
+/** wrangler's `parseNonHyphenedUuid`: the upload's `deployment_id` may lack hyphens. */
+export function hyphenateUuid(id: string | null | undefined): string | null {
+  if (id == null || id.includes("-")) return id ?? null;
+  if (id.length !== 32) return null;
+  return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`;
+}
+
+/** The JWT's payload claims, or `{}` when it is not a decodable JWT. */
+function jwtClaims(jwt: string): Record<string, unknown> {
+  try {
+    const part = jwt.split(".")[1];
+    if (part === undefined) return {};
+    return JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+interface StepTools {
+  log: StepLog;
+  /** Fetch that counts subrequests (redirect hops included). */
+  fetch: FetchLike;
+  /** A cf-api client for this step (logs `METHOD path -> status`). */
+  cf(): CloudflareClient;
+  /** Drizzle over the manager's D1, counted against the step's subrequests. */
+  orm: Database;
+  /** 1-based attempt of this step (Workflows retries a failed step). */
+  attempt: number;
+}
+
+export async function runInstall(ctx: JobContext): Promise<void> {
+  const parsed = installJobParams.safeParse(ctx.params);
+  if (!parsed.success) throw new NonRetryableError("invalid install job payload");
+  const params = parsed.data;
+  const { step, env, deps } = ctx;
+  const db = env.DB;
+  const now = deps.now ?? Date.now;
+  const baseFetch: FetchLike = deps.fetch ?? ((input, init) => fetch(input, init));
+  const budget = new SubrequestBudget();
+  let current = "start";
+  let accountId: string | null = null;
+
+  function client(fetchImpl: FetchLike, log: StepLog): CloudflareClient {
+    const token = env.CF_API_TOKEN;
+    if (token === undefined || token.length === 0) {
+      throw new InstallError("the Cloudflare API token is not configured; finish setup first");
+    }
+    if (accountId === null) throw new InstallError("the Cloudflare account is not known yet");
+    return createClient({
+      accountId,
+      token,
+      fetch: fetchImpl,
+      onRequest: log.onRequest,
+      ...apiBaseOption(env),
+    });
+  }
+
+  /** One `step.do` with logging, subrequest counting, and error classification. */
+  async function run<T extends object>(
+    name: string,
+    estimate: number,
+    body: (tools: StepTools) => Promise<T>,
+  ): Promise<T & { subrequests: number }> {
+    if (budget.needsBoundary(estimate + D1_PER_STEP)) {
+      await step.sleep(`budget ${budget.boundary()}`, "1 second");
+    }
+    current = name;
+    const result = await step.do(name, API_STEP, async (stepCtx) => {
+      const log = new StepLog(now);
+      let subrequests = 0;
+      const countedDb = countD1(db, () => {
+        subrequests += 1;
+      });
+      const counted: FetchLike = async (input, init) => {
+        try {
+          const response = await baseFetch(input, init);
+          subrequests += fetchCost(response);
+          return response;
+        } catch (error) {
+          subrequests += 1;
+          throw error;
+        }
+      };
+      try {
+        const value = await body({
+          log,
+          fetch: counted,
+          cf: () => client(counted, log),
+          orm: createDb(countedDb),
+          attempt: stepCtx?.attempt ?? 1,
+        });
+        await log.flush(countedDb, params.jobId);
+        return { ...value, subrequests };
+      } catch (error) {
+        log.error(`${name} failed: ${errorMessage(error)}`);
+        await log.flush(countedDb, params.jobId);
+        throw toStepError(error);
+      }
+    });
+    budget.add(result.subrequests);
+    return result;
+  }
+
+  async function recordResource(
+    orm: Database,
+    row: {
+      kind: (typeof RESOURCE_KINDS)[number];
+      key: string;
+      binding: string | null;
+      name: string;
+      cfId: string | null;
+    },
+  ): Promise<void> {
+    await orm
+      .insert(resources)
+      .values({
+        id: resourceId(params.installId, row.kind, row.key),
+        install_id: params.installId,
+        kind: row.kind,
+        binding: row.binding,
+        name: row.name,
+        cf_id: row.cfId,
+        created_at: new Date(now()),
+      })
+      .onConflictDoNothing();
+  }
+
+  /**
+   * The verified `manifest.json` text, by digest: from the KV cache when it holds
+   * the exact bytes, else fetched again. Either way its sha256 must equal the
+   * digest step 1 verified the signature against, so it is the same document.
+   */
+  async function loadManifestText(): Promise<string> {
+    const cached = await env.KV?.get(manifestCacheKey(params.digest));
+    if (cached != null && (await sha256Hex(new TextEncoder().encode(cached))) === params.digest) {
+      return cached;
+    }
+    const fetched = await fetchWhole(baseFetch, params.artifacts.manifest);
+    if ((await sha256Hex(fetched.bytes)) !== params.digest) {
+      throw new InstallError("manifest.json changed since it was verified");
+    }
+    return new TextDecoder().decode(fetched.bytes);
+  }
+
+  try {
+    await run("start", 0, async ({ log, orm }) => {
+      await orm
+        .update(jobs)
+        .set({ status: "running", started_at: new Date(now()) })
+        .where(eq(jobs.id, params.jobId));
+      log.info(`Installing ${params.slug} ${params.version} as Worker "${params.workerName}".`);
+      return {};
+    });
+
+    // 1. Fetch and verify the artifact manifest.
+    await run("verify artifact manifest", 6, async ({ log, fetch }) => {
+      const [manifestFile, sigFile] = [
+        await fetchWhole(fetch, params.artifacts.manifest),
+        await fetchWhole(fetch, params.artifacts.sig),
+      ];
+      const manifest = await verifyArtifactManifest(
+        manifestFile.bytes,
+        new TextDecoder().decode(sigFile.bytes),
+        { slug: params.slug, version: params.version, digest: params.digest },
+        deps.signingKeys,
+      );
+      // Later steps re-read the manifest by digest instead of carrying it in a
+      // step result (Workflows caps step results at 1 MiB).
+      const key = manifestCacheKey(params.digest);
+      if (env.KV !== undefined && (await env.KV.get(key)) === null) {
+        await env.KV.put(key, new TextDecoder().decode(manifestFile.bytes), {
+          expirationTtl: MANIFEST_TTL_SECONDS,
+        });
+      }
+      log.info(
+        `Verified manifest.json for ${manifest.app} ${manifest.version} (key "${manifest.keyId}", digest matches the catalog).`,
+      );
+      return { keyId: manifest.keyId };
+    });
+    current = "load artifact manifest";
+    const manifestText = await loadManifestText();
+    const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
+    const plan = planBindings(params.workerName, manifest.worker.bindings);
+
+    // 2. Preflight.
+    const preflight = await run("preflight checks", 0, async ({ log, orm }) => {
+      if (manifest.catalog.plan === "paid" && !params.paidConfirmed) {
+        throw new InstallError(
+          "this app needs Workers Paid; confirm the account is on Workers Paid to install it",
+        );
+      }
+      for (const requirement of manifest.catalog.requires) {
+        log.warn(
+          `This app requires "${requirement}". Appflare does not check the account for it; the install fails later if it is missing.`,
+        );
+      }
+      if (plan.problems.length > 0) throw new InstallError(plan.problems.join(" "));
+      const moduleCost = manifest.worker.modules.length * ARTIFACT_FETCH_COST + 2;
+      if (moduleCost > INVOCATION_CAP) {
+        throw new InstallError(
+          `the Worker has ${manifest.worker.modules.length} modules; a single upload cannot fetch that many within the free plan's subrequest limit`,
+        );
+      }
+      const clash = await orm
+        .select({ id: installs.id, slug: installs.app_slug, worker: installs.worker_name })
+        .from(installs)
+        .where(
+          and(
+            ne(installs.id, params.installId),
+            ne(installs.status, "uninstalled"),
+            or(eq(installs.worker_name, params.workerName), eq(installs.app_slug, params.slug)),
+          ),
+        )
+        .limit(1);
+      const other = clash[0];
+      if (other !== undefined) {
+        throw new InstallError(
+          other.worker === params.workerName
+            ? `another install already uses the Worker name "${params.workerName}"`
+            : `${params.slug} is already installed (one instance per app)`,
+        );
+      }
+      const settings = await readSettings(orm, [SETTING.accountId]);
+      if (!settings.account_id) throw new InstallError("the Cloudflare account is not known yet");
+      if (!env.CF_API_TOKEN) {
+        throw new InstallError("the Cloudflare API token is not configured; finish setup first");
+      }
+      log.info(
+        `Preflight passed: plan ${manifest.catalog.plan}, ${plan.resources.length} resource(s) to create.`,
+      );
+      return { accountId: settings.account_id };
+    });
+    accountId = preflight.accountId;
+
+    await run("verify API token", 2, async ({ log, cf }) => {
+      const api = cf();
+      let status: string;
+      try {
+        status = (await api.tokens.verify()).status;
+      } catch (error) {
+        if (!(error instanceof CloudflareApiError) || error.status >= 500 || error.status === 429) {
+          throw error;
+        }
+        status = (await api.tokens.verifyUserToken()).status;
+      }
+      if (status !== "active") throw new InstallError(`the API token is ${status}`);
+      log.info("The Cloudflare API token is active.");
+      return {};
+    });
+
+    await run("check Worker name", 2, async ({ log, cf }) => {
+      const scripts = await cf().workers.listScripts();
+      if (scripts.some((s) => s.id === params.workerName)) {
+        throw new InstallError(
+          `a Worker named ${params.workerName} already exists in this account; Appflare does not adopt existing Workers`,
+        );
+      }
+      log.info(`No Worker named "${params.workerName}" exists yet.`);
+      return {};
+    });
+
+    for (const wf of plan.workflows) {
+      await run(`check Workflow ${wf.name}`, 1, async ({ log, cf }) => {
+        let owner: string | null = null;
+        try {
+          owner = (await cf().workflows.getWorkflow(wf.name)).script_name ?? "another script";
+        } catch (error) {
+          if (!(error instanceof CloudflareApiError) || error.status !== 404) throw error;
+        }
+        if (owner !== null) {
+          throw new InstallError(
+            `a Workflow named ${wf.name} already exists in this account (script "${owner}"); Appflare does not adopt existing Workflows`,
+          );
+        }
+        log.info(`No Workflow named "${wf.name}" exists yet.`);
+        return {};
+      });
+    }
+
+    // 3. Resources: check the name is free, create, then record, as three steps so
+    // a retried create never double-creates and a failed record never re-creates.
+    const created: CreatedResource[] = [];
+    for (const res of plan.resources) {
+      const label = RESOURCE_LABEL[res.kind];
+      await run(`check ${label} ${res.name}`, 3, async ({ log, cf }) => {
+        if ((await findResource(cf(), res)) !== null) {
+          throw new InstallError(
+            `a ${label} named ${res.name} already exists in this account; Appflare does not adopt existing resources`,
+          );
+        }
+        log.info(`No ${label} named "${res.name}" exists yet.`);
+        return {};
+      });
+
+      const made = await run(`create ${label} ${res.name}`, 4, async ({ log, cf, attempt }) => {
+        const api = cf();
+        // The check step saw no such name, so on a retry a resource with this name
+        // is the one this step's own earlier attempt created before it failed.
+        if (attempt > 1) {
+          const existing = await findResource(api, res);
+          if (existing !== null) {
+            log.info(`Found the ${label} "${res.name}" an earlier attempt created.`, {
+              id: existing,
+            });
+            return { cfId: existing };
+          }
+        }
+        const cfId = await createResource(api, res);
+        log.info(`Created ${label} "${res.name}" for binding ${res.binding}.`, { id: cfId });
+        return { cfId };
+      });
+
+      await run(`record ${label} ${res.name}`, 0, async ({ orm }) => {
+        await recordResource(orm, {
+          kind: res.kind,
+          key: res.binding,
+          binding: res.binding,
+          name: res.name,
+          cfId: made.cfId,
+        });
+        return {};
+      });
+      created.push({ binding: res.binding, type: res.type, name: res.name, cfId: made.cfId });
+    }
+
+    if (plan.durableObjects.length > 0) {
+      await run("record Durable Object classes", 0, async ({ log, orm }) => {
+        for (const d of plan.durableObjects) {
+          await recordResource(orm, {
+            kind: "durable_object",
+            key: d.binding,
+            binding: d.binding,
+            name: d.className,
+            cfId: null,
+          });
+        }
+        log.info(
+          `Durable Object classes: ${plan.durableObjects.map((d) => d.className).join(", ")} (created by the script upload).`,
+        );
+        return {};
+      });
+    }
+
+    // 4. Static assets.
+    let assetsJwt: string | null = null;
+    const files = manifest.assets.files;
+    if (files.length > 0) {
+      const session = await run("open assets upload session", 1, async ({ log, cf }) => {
+        const result = await cf().assets.createUploadSession(
+          params.workerName,
+          buildAssetsManifest(files.map((f) => ({ route: f.route, hash: f.hash, size: f.size }))),
+        );
+        const needed = result.buckets.reduce((n, b) => n + b.length, 0);
+        log.info(
+          needed === 0
+            ? `All ${files.length} asset files are already stored in this account; nothing to upload.`
+            : `${needed} of ${files.length} asset files need uploading in ${result.buckets.length} bucket(s).`,
+        );
+        return { jwt: result.jwt, buckets: result.buckets };
+      });
+      const single = jwtClaims(session.jwt).wrangler_single_asset_uploads === true;
+      const perStep = single ? SINGLE_FILES_PER_STEP : BULK_FILES_PER_STEP;
+      const byHash = new Map(files.map((f) => [f.hash, f]));
+      let completion: string | null = null;
+      for (const [b, bucket] of session.buckets.entries()) {
+        const parts = Math.max(1, Math.ceil(bucket.length / perStep));
+        for (let p = 0; p < parts; p++) {
+          const hashes = bucket.slice(p * perStep, (p + 1) * perStep);
+          const name =
+            `upload assets bucket ${b + 1}/${session.buckets.length}` +
+            (parts > 1 ? ` part ${p + 1}/${parts}` : "");
+          const cost = hashes.length * (ARTIFACT_FETCH_COST + (single ? 1 : 0)) + (single ? 0 : 1);
+          const uploaded = await run(name, cost, async ({ log, fetch, cf }) => {
+            const api = cf();
+            const payload: Array<{ hash: string; bytes: Uint8Array; contentType: string }> = [];
+            let bytes = 0;
+            for (const hash of hashes) {
+              const file = byHash.get(hash);
+              if (file === undefined) {
+                throw new InstallError(
+                  `Cloudflare asked for an asset (${hash}) the artifact does not have`,
+                );
+              }
+              const got = await fetchArtifactFile(fetch, params.artifacts.zip, file);
+              bytes += got.bytes.byteLength;
+              payload.push({ hash, bytes: got.bytes, contentType: assetContentType(file.route) });
+            }
+            let jwt: string | null = null;
+            if (single) {
+              for (const f of payload) {
+                const res = await api.assets.uploadFile(session.jwt, {
+                  hash: f.hash,
+                  body: f.bytes,
+                  contentType: f.contentType,
+                });
+                jwt = res.jwt ?? jwt;
+              }
+            } else {
+              const res = await api.assets.uploadBucket(
+                session.jwt,
+                payload.map((f) => ({
+                  hash: f.hash,
+                  base64: Buffer.from(f.bytes).toString("base64"),
+                  contentType: f.contentType,
+                })),
+              );
+              jwt = res.jwt ?? null;
+            }
+            log.info(`Uploaded ${payload.length} asset file(s), ${bytes} bytes.`);
+            return { jwt };
+          });
+          completion = uploaded.jwt ?? completion;
+        }
+      }
+      if (session.buckets.length === 0) completion = session.jwt;
+      if (completion === null) {
+        current = "upload assets";
+        throw new InstallError("Cloudflare did not return an assets completion token");
+      }
+      assetsJwt = completion;
+    }
+
+    // 5. Script upload: every module in ONE multipart request.
+    const moduleCost = manifest.worker.modules.length * ARTIFACT_FETCH_COST + 2;
+    const upload = await run("upload Worker script", moduleCost, async ({ log, fetch, cf }) => {
+      const modules = [];
+      for (const module of manifest.worker.modules) {
+        const got = await fetchArtifactFile(fetch, params.artifacts.zip, module);
+        modules.push(uploadModule(module, got.bytes));
+      }
+      const metadata = buildScriptMetadata({
+        manifest,
+        resources: created,
+        vars: resolveVars(manifest, params.vars),
+        assetsJwt,
+        workflowNames: Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name])),
+      });
+      const api = cf();
+      const result = await api.workers.uploadScript(params.workerName, {
+        metadata,
+        modules,
+        excludeScript: true,
+      });
+      let versionId = hyphenateUuid(result.deployment_id);
+      if (versionId === null) {
+        const deployments = await api.versions.listDeployments(params.workerName);
+        versionId = deployments[0]?.versions?.[0]?.version_id ?? null;
+      }
+      log.info(`Uploaded Worker "${params.workerName}" (${modules.length} module(s)).`, {
+        versionId,
+        bindings: (metadata.bindings ?? []).map((b) => `${b.type} ${b.name}`),
+      });
+      return { versionId, scriptId: result.id ?? params.workerName };
+    });
+
+    // The script is live from here on: record it (and the Workflows its upload
+    // created) even if a later step fails.
+    await run("record Worker script", 0, async ({ orm }) => {
+      await orm
+        .update(installs)
+        .set({ current_version_id: upload.versionId, updated_at: new Date(now()) })
+        .where(eq(installs.id, params.installId));
+      await recordResource(orm, {
+        kind: "worker",
+        key: params.workerName,
+        binding: null,
+        name: params.workerName,
+        cfId: upload.scriptId,
+      });
+      for (const wf of plan.workflows) {
+        await recordResource(orm, {
+          kind: "workflow",
+          key: wf.binding,
+          binding: wf.binding,
+          name: wf.name,
+          cfId: null,
+        });
+      }
+      return {};
+    });
+
+    // 6. D1 migrations, wrangler-style.
+    for (const res of created) {
+      if (res.type !== "d1") continue;
+      const migrationFiles = manifest.d1Migrations[res.binding] ?? [];
+      if (migrationFiles.length === 0) continue;
+      await run(`D1 ${res.binding}: create d1_migrations table`, 1, async ({ log, cf }) => {
+        await cf().d1.query(res.cfId, CREATE_MIGRATIONS_TABLE_SQL);
+        log.info(`Ensured "d1_migrations" exists in ${res.name}.`);
+        return {};
+      });
+      const listed = await run(
+        `D1 ${res.binding}: list applied migrations`,
+        1,
+        async ({ log, cf }) => {
+          const results = await cf().d1.query(res.cfId, LIST_APPLIED_MIGRATIONS_SQL);
+          const rows = results[0]?.results ?? [];
+          log.info(`${rows.length} migration(s) already applied to ${res.name}.`);
+          return { applied: rows.map((r) => String(r.name)) };
+        },
+      );
+      const pending = unappliedMigrations(
+        migrationFiles,
+        listed.applied.map((name) => ({ name })),
+      );
+      for (const file of pending) {
+        await run(
+          `D1 ${res.binding}: apply ${file.name}`,
+          ARTIFACT_FETCH_COST + 2,
+          async ({ log, fetch, cf, attempt }) => {
+            const api = cf();
+            // A retry must not re-run a file an earlier attempt already applied.
+            if (attempt > 1) {
+              const recorded = await api.d1.query(res.cfId, APPLIED_MIGRATION_SQL, [file.name]);
+              if ((recorded[0]?.results.length ?? 0) > 0) {
+                log.info(`${file.name} was applied by an earlier attempt.`);
+                return {};
+              }
+            }
+            const got = await fetchArtifactFile(fetch, params.artifacts.zip, file);
+            const sql = new TextDecoder().decode(got.bytes);
+            await api.d1.query(res.cfId, buildMigrationQuery(sql, file.name));
+            log.info(`Applied ${file.name} to ${res.name}.`);
+            return {};
+          },
+        );
+      }
+    }
+
+    // 7. Secrets.
+    for (const secret of manifest.catalog.secrets) {
+      await run(`set secret ${secret.name}`, 1, async ({ log, cf, orm }) => {
+        const value = params.secrets[secret.name];
+        if (value === undefined || value.length === 0) {
+          throw new InstallError(`no value was provided for the secret ${secret.name}`);
+        }
+        await cf().workers.putSecret(params.workerName, { name: secret.name, text: value });
+        await recordResource(orm, {
+          kind: "secret",
+          key: secret.name,
+          binding: secret.name,
+          name: secret.name,
+          cfId: null,
+        });
+        log.info(`Set secret ${secret.name}.`);
+        return {};
+      });
+    }
+
+    // 8. Cron triggers, then the workers.dev route.
+    const crons = manifest.worker.crons;
+    if (crons.length > 0) {
+      await run("set cron triggers", 1, async ({ log, cf, orm }) => {
+        await cf().workers.putSchedules(
+          params.workerName,
+          crons.map((cron) => ({ cron })),
+        );
+        for (const cron of crons) {
+          await recordResource(orm, {
+            kind: "cron",
+            key: cron,
+            binding: null,
+            name: cron,
+            cfId: null,
+          });
+        }
+        log.info(`Set ${crons.length} cron trigger(s): ${crons.join(", ")}.`);
+        return {};
+      });
+    }
+
+    const { subdomain } = await run(
+      "look up workers.dev subdomain",
+      1,
+      async ({ log, cf, orm }) => {
+        const cached = await readSettings(orm, [SETTING.accountSubdomain]);
+        if (cached.account_subdomain) return { subdomain: cached.account_subdomain };
+        const found = (await cf().workers.getAccountSubdomain()).subdomain;
+        await writeSettings(orm, { [SETTING.accountSubdomain]: found }, new Date(now()));
+        log.info(`This account's workers.dev subdomain is "${found}".`);
+        return { subdomain: found };
+      },
+    );
+    const host = `${params.workerName}.${subdomain}.workers.dev`;
+
+    await run("enable workers.dev route", 1, async ({ log, cf, orm }) => {
+      await cf().workers.enableSubdomain(params.workerName, {
+        enabled: true,
+        previews_enabled: true,
+      });
+      await recordResource(orm, {
+        kind: "subdomain",
+        key: host,
+        binding: null,
+        name: host,
+        cfId: null,
+      });
+      log.info(`Enabled https://${host}.`);
+      return {};
+    });
+
+    // 9. Health check through route propagation and error 1042.
+    const url = `https://${host}/`;
+    let firstProbeAt: number | null = null;
+    let healthy: number | null = null;
+    for (let attempt = 1; attempt <= HEALTH_MAX_ATTEMPTS && healthy === null; attempt++) {
+      const checked = await run(`health check ${attempt}`, 1, async ({ log, fetch }) => {
+        const at = now();
+        const probe: HealthProbe = await probeHealth(fetch, url);
+        const verdict = classifyHealthProbe(probe, attempt, at - (firstProbeAt ?? at));
+        if (verdict.verdict === "unhealthy") throw new InstallError(verdict.reason);
+        if (verdict.verdict === "healthy") {
+          log.info(`GET ${url} -> ${verdict.status}; the Worker is serving.`);
+        } else {
+          log.warn(`GET ${url}: ${verdict.reason}; retrying in 2 seconds.`);
+        }
+        return { at, status: verdict.verdict === "healthy" ? verdict.status : null };
+      });
+      firstProbeAt ??= checked.at;
+      healthy = checked.status;
+      if (healthy === null) {
+        await step.sleep(`health wait ${attempt}`, HEALTH_RETRY_DELAY);
+        budget.reset();
+      }
+    }
+    if (healthy === null) {
+      current = "health check";
+      throw new InstallError(`${url} never answered`);
+    }
+
+    // 10. Record the install.
+    await run("finish", 0, async ({ log, orm }) => {
+      const at = new Date(now());
+      await orm.batch([
+        orm
+          .update(installs)
+          .set({
+            status: "installed",
+            current_version_id: upload.versionId,
+            manifest_json: manifestText,
+            updated_at: at,
+          })
+          .where(eq(installs.id, params.installId)),
+        orm
+          .update(jobs)
+          .set({ status: "succeeded", finished_at: at, error: null })
+          .where(eq(jobs.id, params.jobId)),
+      ]);
+      log.info(`Installed ${params.slug} ${params.version} at ${url} (health ${healthy}).`);
+      return {};
+    });
+  } catch (error) {
+    const reason = `${current}: ${errorMessage(error)}`;
+    await step.do("mark install failed", async () => {
+      const orm = createDb(db);
+      const at = new Date(now());
+      await orm
+        .update(jobs)
+        .set({ status: "failed", error: reason, finished_at: at })
+        .where(eq(jobs.id, params.jobId));
+      await orm
+        .update(installs)
+        .set({ status: "failed", updated_at: at })
+        .where(eq(installs.id, params.installId));
+      const log = new StepLog(now);
+      log.error(`Install failed at "${current}". Resources created so far stay recorded.`);
+      await log.flush(db, params.jobId);
+      return {};
+    });
+    throw new NonRetryableError(reason);
+  }
+}

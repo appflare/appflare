@@ -24,6 +24,11 @@ export function createVectorize(http: HttpApi) {
       return http.result("POST", http.acct("/vectorize/v2/indexes"), { json: body });
     },
 
+    /** `GET /vectorize/v2/indexes`: every index in the account (a single page). */
+    listIndexes(): Promise<VectorizeIndex[]> {
+      return http.result("GET", http.acct("/vectorize/v2/indexes"));
+    },
+
     /** `DELETE /vectorize/v2/indexes/{name}`. */
     deleteIndex(name: string): Promise<unknown> {
       return http.result("DELETE", http.acct(`/vectorize/v2/indexes/${enc(name)}`));

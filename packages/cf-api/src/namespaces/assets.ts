@@ -50,5 +50,20 @@ export function createAssets(http: HttpApi) {
         token: sessionJwt,
       });
     },
+
+    /**
+     * `POST /workers/assets/upload/{hash}` with the raw file bytes: the upload
+     * path wrangler 4.136.2 takes when the session JWT carries
+     * `wrangler_single_asset_uploads: true`. Authorized with the session `jwt`.
+     */
+    uploadFile(
+      sessionJwt: string,
+      file: { hash: string; body: string | Uint8Array; contentType?: string },
+    ): Promise<AssetBucketResult> {
+      return http.result("POST", http.acct(`/workers/assets/upload/${enc(file.hash)}`), {
+        raw: { body: file.body, contentType: file.contentType ?? "application/null" },
+        token: sessionJwt,
+      });
+    },
   };
 }

@@ -12,6 +12,6 @@ export class JobWorkflow extends WorkflowEntrypoint<Env, JobParams> {
     // `step.do`'s overloads constrain callback results to `Rpc.Serializable`; our
     // results are plain JSON. View the stub through `StepRunner` and keep calling
     // `do` as a method on it (it is an RPC stub; `.bind` throws).
-    await runJob(event.payload, step as unknown as StepRunner, this.env.DB);
+    await runJob(event.payload, step as unknown as StepRunner, this.env);
   }
 }

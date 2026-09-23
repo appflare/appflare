@@ -1,0 +1,215 @@
+import { reset } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { beforeEach, describe, expect, it } from "vitest";
+import { createMigrator } from "../db/migrate";
+import { migrations } from "../db/migrations/index";
+import type { InstallJobParams } from "../jobs/install";
+import { type ArtifactFixture, buildArtifactFixture } from "../test/artifact-fixture";
+import type { StartInstallInput } from "./install-input";
+import { resolveInstallInput, StartInstallError, startInstallCore } from "./start-install.server";
+
+const NOW = new Date("2026-09-22T12:00:00.000Z");
+
+function harness(fixture: ArtifactFixture, createJob?: (id: string) => Promise<{ id: string }>) {
+  const created: Array<{ id: string; params: InstallJobParams }> = [];
+  let n = 0;
+  return {
+    created,
+    deps: {
+      db: env.DB,
+      loadApp: async (slug: string) => {
+        if (slug !== "cut") throw new StartInstallError(`"${slug}" is not in the catalog.`);
+        return { app: fixture.index, manifest: fixture.manifest };
+      },
+      createJob: async (id: string, params: InstallJobParams) => {
+        created.push({ id, params });
+        return createJob ? createJob(id) : { id };
+      },
+      now: () => NOW,
+      newId: () => `id${++n}`,
+    },
+  };
+}
+
+const input = (over: Partial<StartInstallInput> = {}): StartInstallInput => ({
+  slug: "cut",
+  workerName: "cut",
+  secrets: { ADMIN_PASSWORD: "hunter2-hunter2" },
+  vars: { HOME_PAGE: "admin" },
+  paidConfirmed: false,
+  ...over,
+});
+
+beforeEach(async () => {
+  await reset();
+  await createMigrator(migrations).ensure(env.DB);
+});
+
+describe("startInstallCore", () => {
+  it("records the install and the job, and passes secret values only to the Workflow", async () => {
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    expect(await startInstallCore(h.deps, input())).toEqual({ installId: "id1", jobId: "id2" });
+
+    const install = await env.DB.prepare("SELECT * FROM installs WHERE id = 'id1'").first();
+    expect(install).toMatchObject({
+      app_slug: "cut",
+      worker_name: "cut",
+      instance_name: "cut",
+      status: "installing",
+      catalog_version: "1.0.0",
+      artifact_url: f.index.artifacts.zip,
+      artifact_digest: f.digest,
+      config_json: JSON.stringify({ HOME_PAGE: "admin" }),
+      installed_at: NOW.getTime(),
+    });
+    const job = await env.DB.prepare("SELECT * FROM jobs WHERE id = 'id2'").first<{
+      input_json: string;
+    }>();
+    expect(job).toMatchObject({
+      install_id: "id1",
+      kind: "install",
+      status: "queued",
+      workflow_instance_id: "id2",
+    });
+    expect(job?.input_json).not.toContain("hunter2");
+    expect(JSON.parse(job?.input_json ?? "{}").secrets).toEqual(["ADMIN_PASSWORD"]);
+
+    expect(h.created).toHaveLength(1);
+    expect(h.created[0]?.params).toMatchObject({
+      kind: "install",
+      jobId: "id2",
+      installId: "id1",
+      workerName: "cut",
+      digest: f.digest,
+      secrets: { ADMIN_PASSWORD: "hunter2-hunter2" },
+    });
+  });
+
+  it("refuses a Worker name another install already uses", async () => {
+    const f = await buildArtifactFixture();
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
+       VALUES ('old', 'other-app', 'cut', '1', 'u', 'installed', 1, 1)`,
+    ).run();
+    const h = harness(f);
+    await expect(startInstallCore(h.deps, input())).rejects.toThrow(
+      'Another install already uses the Worker name "cut".',
+    );
+    expect(h.created).toHaveLength(0);
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM jobs").first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("refuses a second instance of the same app while it is installed", async () => {
+    const f = await buildArtifactFixture();
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
+       VALUES ('old', 'cut', 'cut-old', '1', 'u', 'installed', 1, 1)`,
+    ).run();
+    await expect(startInstallCore(harness(f).deps, input())).rejects.toThrow(
+      /Cut is already installed/,
+    );
+    await env.DB.prepare("UPDATE installs SET status = 'uninstalled' WHERE id = 'old'").run();
+    await expect(startInstallCore(harness(f).deps, input())).resolves.toMatchObject({
+      installId: "id1",
+    });
+  });
+
+  it("retires a failed install that holds no resources, so the app can be retried", async () => {
+    const f = await buildArtifactFixture();
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
+       VALUES ('old', 'cut', 'cut', '1', 'u', 'failed', 1, 1)`,
+    ).run();
+    await expect(startInstallCore(harness(f).deps, input())).resolves.toMatchObject({
+      installId: "id1",
+    });
+    const old = await env.DB.prepare("SELECT status FROM installs WHERE id = 'old'").first();
+    expect(old).toEqual({ status: "uninstalled" });
+  });
+
+  it("keeps blocking on a failed install that still owns resources", async () => {
+    const f = await buildArtifactFixture();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
+         VALUES ('old', 'cut', 'cut', '1', 'u', 'failed', 1, 1)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES ('r1', 'old', 'kv', 'CUT_KV', 'cut-cut-kv', 'kv1', 1)`,
+      ),
+    ]);
+    const h = harness(f);
+    await expect(startInstallCore(h.deps, input())).rejects.toThrow(
+      /failed install of the Worker "cut" still owns resources in this account\. Uninstall it first\./,
+    );
+    expect(h.created).toHaveLength(0);
+    const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM installs").first<{ n: number }>();
+    expect(rows?.n).toBe(1);
+  });
+
+  it("requires every secret, including generate:true ones", async () => {
+    const f = await buildArtifactFixture({
+      catalog: {
+        secrets: [
+          { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+          { name: "API_KEY", label: "API key", generate: false },
+        ],
+      },
+    });
+    expect(() => resolveInstallInput(f.manifest, input({ secrets: { API_KEY: "k" } }))).toThrow(
+      "Admin password (ADMIN_PASSWORD) is required.",
+    );
+    expect(() =>
+      resolveInstallInput(f.manifest, input({ secrets: { ADMIN_PASSWORD: "x".repeat(32) } })),
+    ).toThrow("API key (API_KEY) is required.");
+    const resolved = resolveInstallInput(
+      f.manifest,
+      input({ secrets: { ADMIN_PASSWORD: "p", API_KEY: "k" } }),
+    );
+    expect(resolved.secrets).toEqual({ ADMIN_PASSWORD: "p", API_KEY: "k" });
+  });
+
+  it("rejects undeclared names and enforces required vars and the paid confirmation", async () => {
+    const f = await buildArtifactFixture({
+      catalog: {
+        plan: "paid",
+        vars: [{ name: "REGION", label: "Region", required: true }],
+      },
+    });
+    expect(() => resolveInstallInput(f.manifest, input({ vars: { REGION: "eu" } }))).toThrow(
+      /needs Workers Paid/,
+    );
+    expect(() => resolveInstallInput(f.manifest, input({ paidConfirmed: true, vars: {} }))).toThrow(
+      "Region (REGION) is required.",
+    );
+    expect(() =>
+      resolveInstallInput(
+        f.manifest,
+        input({ paidConfirmed: true, vars: { REGION: "eu", EXTRA: "x" }, secrets: { X: "y" } }),
+      ),
+    ).toThrow("Cut does not take: X, EXTRA.");
+    const ok = resolveInstallInput(
+      f.manifest,
+      input({ paidConfirmed: true, vars: { REGION: " eu " } }),
+    );
+    expect(ok.vars).toEqual({ REGION: "eu" });
+  });
+
+  it("marks the job and install failed when the Workflow instance cannot be created", async () => {
+    const f = await buildArtifactFixture();
+    const h = harness(f, async () => {
+      throw new Error("binding unavailable");
+    });
+    await expect(startInstallCore(h.deps, input())).rejects.toThrow(/could not create the job/);
+    const job = await env.DB.prepare("SELECT status, error FROM jobs").first();
+    expect(job).toEqual({
+      status: "failed",
+      error: "start: could not create the job: binding unavailable",
+    });
+    const install = await env.DB.prepare("SELECT status FROM installs").first();
+    expect(install).toEqual({ status: "failed" });
+  });
+});

@@ -103,7 +103,10 @@ export const catalogManifestSchema = z.object({
   slug: z.string().min(1),
   name: z.string().min(1),
   summary: z.string().min(1),
-  homepage: z.url(),
+  /** Shown as a link in the manager; https only (the regex also lands in the JSON Schema). */
+  homepage: z
+    .url({ protocol: /^https$/, error: "must be an https:// URL" })
+    .regex(/^https:\/\//, "must be an https:// URL"),
   repo: ownerRepoSchema,
   license: z.string().min(1),
   categories: z.array(z.string().min(1)),

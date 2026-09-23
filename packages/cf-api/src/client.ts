@@ -9,6 +9,7 @@ import { createTokens } from "./namespaces/tokens";
 import { createVectorize } from "./namespaces/vectorize";
 import { createVersions } from "./namespaces/versions";
 import { createWorkers } from "./namespaces/workers";
+import { createWorkflows } from "./namespaces/workflows";
 
 export interface CloudflareClient {
   readonly accountId: string;
@@ -22,6 +23,7 @@ export interface CloudflareClient {
   readonly queues: ReturnType<typeof createQueues>;
   readonly vectorize: ReturnType<typeof createVectorize>;
   readonly access: ReturnType<typeof createAccess>;
+  readonly workflows: ReturnType<typeof createWorkflows>;
 }
 
 /**
@@ -44,5 +46,6 @@ export function createClient(options: ClientOptions): CloudflareClient {
     queues: createQueues(http),
     vectorize: createVectorize(http),
     access: createAccess(http),
+    workflows: createWorkflows(http),
   };
 }

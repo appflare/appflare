@@ -6,6 +6,7 @@ import {
 } from "@appflare/cf-api";
 import { createDb } from "../db/client";
 import { readSettings, SETTING } from "../db/settings";
+import { apiBaseOption } from "./api-base";
 
 /**
  * The manager's Cloudflare API client, built from its own `CF_API_TOKEN` binding
@@ -35,6 +36,8 @@ export function logCfRequest({ method, path, status }: RequestLog): void {
 export interface CfClientEnv {
   DB: D1Database;
   CF_API_TOKEN?: string;
+  /** Optional API base override (tests, local dev against a fake API). */
+  CF_API_BASE_URL?: string;
 }
 
 export async function getCfClient(
@@ -47,5 +50,11 @@ export async function getCfClient(
   if (accountId === undefined || accountId.length === 0) {
     throw new CfTokenNotConfiguredError("account");
   }
-  return createClient({ accountId, token, fetch: opts.fetch, onRequest: logCfRequest });
+  return createClient({
+    accountId,
+    token,
+    fetch: opts.fetch,
+    onRequest: logCfRequest,
+    ...apiBaseOption(env),
+  });
 }

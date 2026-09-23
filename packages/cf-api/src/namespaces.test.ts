@@ -73,6 +73,17 @@ describe("workers", () => {
     expect(new Uint8Array(await wasm.arrayBuffer())).toEqual(new Uint8Array([0, 97, 115, 109]));
   });
 
+  it("uploadScript excludeScript -> PUT ?excludeScript=true, returns deployment_id", async () => {
+    const { fake, client } = make({ result: { id: "hello", deployment_id: "abc" } });
+    const res = await client.workers.uploadScript("hello", {
+      metadata: { main_module: "index.js" },
+      modules: [{ name: "index.js", content: "export default {};" }],
+      excludeScript: true,
+    });
+    expect(res.deployment_id).toBe("abc");
+    expect(fake.last().query.get("excludeScript")).toBe("true");
+  });
+
   it("deleteScript force -> DELETE ?force=true", async () => {
     const { fake, client } = make();
     await client.workers.deleteScript("hello", { force: true });
@@ -271,6 +282,22 @@ describe("assets", () => {
     expect(await first.text()).toBe("aGk=");
     expect((form.get("def456") as File).type).toBe("application/null");
   });
+
+  it("uploadFile -> POST /workers/assets/upload/{hash}, raw body, bearer = session JWT", async () => {
+    const { fake, client } = make({ result: { jwt: "completion" } });
+    const res = await client.assets.uploadFile("session-jwt-xyz", {
+      hash: "abc123",
+      body: new Uint8Array([104, 105]),
+      contentType: "text/css; charset=utf-8",
+    });
+    expect(res).toEqual({ jwt: "completion" });
+    const req = fake.last();
+    expect(req.method).toBe("POST");
+    expect(req.url).toBe(`${A}/workers/assets/upload/abc123`);
+    expect(req.authorization).toBe("Bearer session-jwt-xyz");
+    expect(req.headers.get("content-type")).toBe("text/css; charset=utf-8");
+    expect(await req.request.text()).toBe("hi");
+  });
 });
 
 describe("kv", () => {
@@ -397,6 +424,37 @@ describe("r2 / queues / vectorize", () => {
     expect(await fake.last().request.json()).toEqual({ queue_name: "q" });
   });
 
+  it("r2.listBuckets -> GET /r2/buckets?name_contains=, follows the cursor", async () => {
+    const pages = [
+      { result: { buckets: [{ name: "a-1" }] }, result_info: { cursor: "c2", per_page: 1000 } },
+      { result: { buckets: [{ name: "a-2" }] }, result_info: { cursor: "", per_page: 1000 } },
+    ];
+    const paged = makeFakeFetch((_req, i) => pages[i]);
+    const c = createClient({ accountId: ACCOUNT, token: TOKEN, fetch: paged.fetch });
+    expect(await c.r2.listBuckets({ nameContains: "a-" })).toEqual([
+      { name: "a-1" },
+      { name: "a-2" },
+    ]);
+    expect(paged.calls).toHaveLength(2);
+    expect(paged.calls[0]?.path).toBe(`/client/v4/accounts/${ACCOUNT}/r2/buckets`);
+    expect(paged.calls[0]?.query.get("name_contains")).toBe("a-");
+    expect(paged.calls[0]?.query.get("cursor")).toBeNull();
+    expect(paged.calls[1]?.query.get("cursor")).toBe("c2");
+  });
+
+  it("queues.listQueues -> GET /queues", async () => {
+    const { fake, client } = make({ result: [{ queue_id: "q1", queue_name: "jobs" }] });
+    expect(await client.queues.listQueues()).toEqual([{ queue_id: "q1", queue_name: "jobs" }]);
+    expect(fake.last().method).toBe("GET");
+    expect(fake.last().url).toBe(`${A}/queues`);
+  });
+
+  it("vectorize.listIndexes -> GET /vectorize/v2/indexes", async () => {
+    const { fake, client } = make({ result: [{ name: "idx" }] });
+    expect(await client.vectorize.listIndexes()).toEqual([{ name: "idx" }]);
+    expect(fake.last().url).toBe(`${A}/vectorize/v2/indexes`);
+  });
+
   it("queues.deleteQueue -> DELETE /queues/{id}", async () => {
     const { fake, client } = make();
     await client.queues.deleteQueue("q1");
@@ -423,6 +481,20 @@ describe("r2 / queues / vectorize", () => {
     await client.vectorize.deleteIndex("idx");
     expect(fake.last().method).toBe("DELETE");
     expect(fake.last().url).toBe(`${A}/vectorize/v2/indexes/idx`);
+  });
+});
+
+describe("workflows", () => {
+  it("getWorkflow -> GET /workflows/{name}", async () => {
+    const { fake, client } = make({ result: { id: "w1", name: "cut-jobs" } });
+    expect(await client.workflows.getWorkflow("cut-jobs")).toEqual({ id: "w1", name: "cut-jobs" });
+    expect(fake.last().method).toBe("GET");
+    expect(fake.last().url).toBe(`${A}/workflows/cut-jobs`);
+  });
+
+  it("getWorkflow surfaces 404 as a CloudflareApiError", async () => {
+    const { client } = make({ status: 404, errors: [{ code: 10200, message: "not found" }] });
+    await expect(client.workflows.getWorkflow("nope")).rejects.toMatchObject({ status: 404 });
   });
 });
 

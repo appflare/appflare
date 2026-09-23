@@ -44,6 +44,8 @@ export interface ResultInfo {
   count?: number;
   total_count?: number;
   total_pages?: number;
+  /** Cursor-paginated endpoints (R2 bucket list) return the next cursor here. */
+  cursor?: string;
 }
 
 export type QueryValue = string | number | boolean | undefined;
@@ -56,6 +58,11 @@ export interface SendOptions {
   form?: FormData;
   /** Bearer token override (e.g. the assets-upload-session JWT). */
   token?: string;
+  /**
+   * Raw request body with an explicit content type (single-file asset uploads).
+   * Mutually exclusive with {@link SendOptions.json} and {@link SendOptions.form}.
+   */
+  raw?: { body: string | Uint8Array; contentType: string };
 }
 
 /**
@@ -119,8 +126,12 @@ export function createHttpApi(options: ClientOptions): HttpApi {
     headers.set("Authorization", `Bearer ${opts.token ?? token}`);
     headers.set("Accept", "application/json");
 
-    let body: string | FormData | undefined;
-    if (opts.form !== undefined) {
+    let body: RequestInit["body"];
+    if (opts.raw !== undefined) {
+      headers.set("Content-Type", opts.raw.contentType);
+      // Type-only cast: under the DOM lib the body type wants `Uint8Array<ArrayBuffer>`.
+      body = opts.raw.body as RequestInit["body"];
+    } else if (opts.form !== undefined) {
       // Let fetch set `Content-Type: multipart/form-data; boundary=...`.
       body = opts.form;
     } else if (opts.json !== undefined) {

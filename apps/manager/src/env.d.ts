@@ -8,11 +8,20 @@ interface ManagerSecrets {
   CF_API_TOKEN?: string;
 }
 
-declare namespace Cloudflare {
-  interface Env extends ManagerSecrets {}
+// Optional vars that are not in wrangler.jsonc (code defaults apply when unset):
+// local overrides go in apps/manager/.dev.vars.
+interface ManagerOptionalVars {
+  /** Catalog `index.json` URL; defaults to `DEFAULT_CATALOG_INDEX_URL`. */
+  CATALOG_INDEX_URL?: string;
+  /** Cloudflare API base override for tests and local dev against a fake API. */
+  CF_API_BASE_URL?: string;
 }
 
-interface Env extends ManagerSecrets {}
+declare namespace Cloudflare {
+  interface Env extends ManagerSecrets, ManagerOptionalVars {}
+}
+
+interface Env extends ManagerSecrets, ManagerOptionalVars {}
 
 // Workers' non-standard constant-time compare. The DOM lib (needed by the React
 // code in the same program) owns the global `crypto` type and lacks it.
