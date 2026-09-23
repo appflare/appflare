@@ -13,6 +13,9 @@ import { parseArgs } from "node:util";
  * 1. builds @appflare/pack (and what it bundles) through turbo;
  * 2. builds the manager with `pnpm --filter @appflare/manager build`, APPFLARE_VERSION
  *    in the environment (vite.config.ts bakes it into the Worker's vars);
+ *    The build also writes dist/server/wrangler.release.json (the generated
+ *    config without the Worker's service binding to itself), which
+ *    apps/manager/appflare.jsonc packs from;
  * 3. stamps apps/manager/appflare.jsonc's placeholder `source` with the version and
  *    `git rev-parse HEAD`, in a temp copy;
  * 4. runs `appflare-pack apps/manager --manifest <copy> --out <dir> --no-install
@@ -134,6 +137,10 @@ async function main(argv: string[]): Promise<number> {
     throw new Error(
       `the build baked APPFLARE_VERSION=${JSON.stringify(built.vars?.APPFLARE_VERSION)}, expected "${version}"`,
     );
+  }
+
+  if (!existsSync(release.MANAGER_RELEASE_WRANGLER)) {
+    throw new Error(`the build did not write ${release.MANAGER_RELEASE_WRANGLER}`);
   }
 
   const tmp = mkdtempSync(path.join(tmpdir(), "appflare-release-"));

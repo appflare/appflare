@@ -20,9 +20,11 @@
   "install": {
     "tier": "artifact",
     "packageManager": "pnpm",
-    // The Cloudflare Vite plugin's generated config: main is dist/server/index.js,
-    // assets come from dist/client.
-    "wranglerConfig": "dist/server/wrangler.json",
+    // The Cloudflare Vite plugin's generated config (main is dist/server/index.js,
+    // assets come from dist/client) without the Worker's service binding to
+    // itself, which the installer and the self-update add by the Worker's own
+    // name. `pnpm build` writes it (scripts/release-wrangler-config.mjs).
+    "wranglerConfig": "dist/server/wrangler.release.json",
     "workerName": "appflare"
   },
   "plan": "free",

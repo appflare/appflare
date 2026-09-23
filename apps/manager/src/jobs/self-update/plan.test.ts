@@ -72,6 +72,61 @@ describe("selfUpdateBindings", () => {
       },
       { type: "plain_text", name: "APPFLARE_VERSION", text: "0.2.0" },
       { type: "plain_text", name: "CATALOG_INDEX_URL", text: "https://example.test/index.json" },
+      // Job units: the service binding to this Worker itself, by its own name.
+      { type: "service", name: "SELF", service: "team-apps", entrypoint: "JobUnits" },
+    ]);
+  });
+
+  it("keeps SELF on the running Worker, whatever the release declares", () => {
+    const plan = selfUpdateBindings({
+      current: [
+        ...CURRENT,
+        { type: "service", name: "SELF", service: "team-apps", environment: "production" },
+        { type: "service", name: "MAILER", service: "mailer", entrypoint: "Send" },
+      ],
+      manifest: {
+        ...MANIFEST,
+        worker: {
+          ...MANIFEST.worker,
+          bindings: [
+            ...MANIFEST.worker.bindings,
+            { type: "service", name: "SELF", service: "appflare", entrypoint: "JobUnits" },
+          ],
+        },
+      },
+      workerName: "team-apps",
+      newVersion: "0.2.0",
+    });
+    expect(plan.problems).toEqual([]);
+    expect(plan.warnings).toEqual([]);
+    expect(plan.bindings.filter((b) => b.type === "service")).toEqual([
+      { type: "service", name: "MAILER", service: "mailer", entrypoint: "Send" },
+      { type: "service", name: "SELF", service: "team-apps", entrypoint: "JobUnits" },
+    ]);
+  });
+
+  it("refuses a SELF that points at another Worker instead of replacing it", () => {
+    const plan = selfUpdateBindings({
+      current: [...CURRENT, { type: "service", name: "SELF", service: "billing" }],
+      manifest: MANIFEST,
+      workerName: "team-apps",
+      newVersion: "0.2.0",
+    });
+    expect(plan.problems).toEqual([
+      'The running Worker\'s service binding SELF points at "billing", not at this Worker ("team-apps"); Appflare needs SELF for its binding to itself. Remove or rename that binding first.',
+    ]);
+    expect(plan.bindings.some((b) => b.name === "SELF")).toBe(false);
+  });
+
+  it("refuses when another kind of binding is already named SELF", () => {
+    const plan = selfUpdateBindings({
+      current: [...CURRENT, { type: "plain_text", name: "SELF", text: "x" }],
+      manifest: MANIFEST,
+      workerName: "team-apps",
+      newVersion: "0.2.0",
+    });
+    expect(plan.problems).toEqual([
+      "The running Worker has a plain_text binding named SELF, which Appflare needs for the service binding to itself.",
     ]);
   });
 

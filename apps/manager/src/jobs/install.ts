@@ -16,16 +16,9 @@ import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { workerNameSchema } from "../installs/install-input";
-import { fetchArtifactFile } from "./install/artifact";
 import { planBindings } from "./install/bindings";
-import { ARTIFACT_FETCH_COST } from "./install/budget";
 import { healthLabel } from "./install/health";
-import {
-  buildScriptMetadata,
-  type CreatedResource,
-  resolveVars,
-  uploadModule,
-} from "./install/metadata";
+import { buildScriptMetadata, type CreatedResource, resolveVars } from "./install/metadata";
 import {
   applyD1MigrationsPhase,
   checkLiveHealthPhase,
@@ -43,10 +36,12 @@ import {
 import { explainR2Refusal } from "./install/r2-enablement";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
-import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
+import { createJobSteps, errorMessage, JobError } from "./steps";
+import { settleUnit } from "./units/result";
 import { lastDurableObjectTag } from "./update/plan";
 
 export { API_STEP, toStepError } from "./steps";
+export { hyphenateUuid } from "./units/units";
 
 /**
  * The `install` job. Every Cloudflare API call and every
@@ -84,13 +79,6 @@ export class InstallError extends JobError {
   override name = "InstallError";
 }
 
-/** wrangler's `parseNonHyphenedUuid`: the upload's `deployment_id` may lack hyphens. */
-export function hyphenateUuid(id: string | null | undefined): string | null {
-  if (id == null || id.includes("-")) return id ?? null;
-  if (id.length !== 32) return null;
-  return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`;
-}
-
 export async function runInstall(ctx: JobContext): Promise<void> {
   const parsed = installJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid install job payload");
@@ -112,7 +100,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
   };
 
   try {
-    await run("start", 0, async ({ log, orm }) => {
+    await run("start", async ({ log, orm }) => {
       await orm
         .update(jobs)
         .set({ status: "running", started_at: new Date(now()) })
@@ -129,7 +117,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const plan = planBindings(params.workerName, manifest.worker.bindings);
 
     // 2. Preflight.
-    const preflight = await run("preflight checks", 0, async ({ log, orm }) => {
+    const preflight = await run("preflight checks", async ({ log, orm }) => {
       if (manifest.catalog.plan === "paid" && !params.paidConfirmed) {
         throw new InstallError(
           "this app needs Workers Paid; confirm the account is on Workers Paid to install it",
@@ -197,7 +185,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     });
     steps.setAccountId(preflight.accountId);
 
-    await run("verify API token", 2, async ({ log, cf }) => {
+    await run("verify API token", async ({ log, cf }) => {
       const api = cf();
       let status: string;
       try {
@@ -213,7 +201,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    await run("check Worker name", 2, async ({ log, cf }) => {
+    await run("check Worker name", async ({ log, cf }) => {
       const scripts = await cf().workers.listScripts();
       if (scripts.some((s) => s.id === params.workerName)) {
         throw new InstallError(
@@ -230,7 +218,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // anything, so that failure leaves nothing behind to clean up.
     const firstBucket = plan.resources.find((r) => r.kind === "r2");
     if (firstBucket !== undefined) {
-      await run("check R2 is enabled", 1, async ({ log, cf }) => {
+      await run("check R2 is enabled", async ({ log, cf }) => {
         await explainR2Refusal(firstBucket.name, () =>
           cf().r2.listBuckets({ nameContains: params.workerName }),
         );
@@ -246,7 +234,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     }
 
     if (plan.durableObjects.length > 0) {
-      await run("record Durable Object classes", 0, async ({ log, orm }) => {
+      await run("record Durable Object classes", async ({ log, orm }) => {
         for (const d of plan.durableObjects) {
           await recordResource(orm, {
             kind: "durable_object",
@@ -275,7 +263,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // recorded first, with no id yet (pending): an upload whose response is
     // lost has still created it, and an uninstall deletes a Worker only when
     // this install recorded it (the name was checked free just before).
-    await run("record Worker name", 0, async ({ orm }) => {
+    await run("record Worker name", async ({ orm }) => {
       await recordResource(orm, {
         kind: "worker",
         key: params.workerName,
@@ -285,18 +273,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       });
       return {};
     });
-    const moduleCost = manifest.worker.modules.length * ARTIFACT_FETCH_COST + 2;
-    /** The multipart upload of every module (one request). */
-    async function uploadScript(
-      log: StepTools["log"],
-      fetch: StepTools["fetch"],
-      cf: StepTools["cf"],
-    ): Promise<{ versionId: string | null; scriptId: string }> {
-      const modules = [];
-      for (const module of manifest.worker.modules) {
-        const got = await fetchArtifactFile(fetch, params.artifacts.zip, module);
-        modules.push(uploadModule(module, got.bytes));
-      }
+    const upload = await run("upload Worker script", async ({ log, orm }) => {
       const metadata = buildScriptMetadata({
         manifest,
         resources: created,
@@ -304,56 +281,47 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         assetsJwt,
         workflowNames: Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name])),
       });
-      const api = cf();
-      const result = await api.workers.uploadScript(params.workerName, {
-        metadata,
-        modules,
-        excludeScript: true,
-      });
-      let versionId = hyphenateUuid(result.deployment_id);
-      if (versionId === null) {
-        const deployments = await api.versions.listDeployments(params.workerName);
-        versionId = deployments[0]?.versions?.[0]?.version_id ?? null;
-      }
-      log.info(`Uploaded Worker "${params.workerName}" (${modules.length} module(s)).`, {
-        versionId,
-        bindings: (metadata.bindings ?? []).map((b) => `${b.type} ${b.name}`),
-      });
-      return { versionId, scriptId: result.id ?? params.workerName };
-    }
-
-    const upload = await run(
-      "upload Worker script",
-      moduleCost,
-      async ({ log, fetch, cf, orm }) => {
-        try {
-          return await uploadScript(log, fetch, cf);
-        } catch (error) {
-          // A refused upload (4xx other than 429) created no Worker. Release the
-          // pending row so an uninstall never deletes a same-named Worker made
-          // elsewhere later.
-          if (error instanceof CloudflareApiError && error.status < 500 && error.status !== 429) {
-            await orm
-              .update(resources)
-              .set({ deleted_at: new Date(now()) })
-              .where(
-                and(
-                  eq(resources.id, resourceId(params.installId, "worker", params.workerName)),
-                  isNull(resources.cf_id),
-                ),
-              );
-            log.warn(
-              `Cloudflare refused the upload; no Worker "${params.workerName}" was created.`,
+      try {
+        // Every module in ONE multipart request, read and uploaded by one unit.
+        const result = settleUnit(
+          await steps.units.api.uploadWorker({
+            accountId: steps.accountId(),
+            artifact: { zipUrl: params.artifacts.zip, host: { kind: "catalog" } },
+            workerName: params.workerName,
+            modules: manifest.worker.modules,
+            metadata,
+            target: "script",
+          }),
+          log,
+        );
+        log.info(`Uploaded Worker "${params.workerName}" (${result.modules} module(s)).`, {
+          versionId: result.versionId,
+          bindings: (metadata.bindings ?? []).map((b) => `${b.type} ${b.name}`),
+        });
+        return { versionId: result.versionId, scriptId: result.scriptId ?? params.workerName };
+      } catch (error) {
+        // A refused upload (4xx other than 429) created no Worker. Release the
+        // pending row so an uninstall never deletes a same-named Worker made
+        // elsewhere later.
+        if (error instanceof CloudflareApiError && error.status < 500 && error.status !== 429) {
+          await orm
+            .update(resources)
+            .set({ deleted_at: new Date(now()) })
+            .where(
+              and(
+                eq(resources.id, resourceId(params.installId, "worker", params.workerName)),
+                isNull(resources.cf_id),
+              ),
             );
-          }
-          throw error;
+          log.warn(`Cloudflare refused the upload; no Worker "${params.workerName}" was created.`);
         }
-      },
-    );
+        throw error;
+      }
+    });
 
     // The script is live from here on: record it (and the Workflows its upload
     // created) even if a later step fails.
-    await run("record Worker script", 0, async ({ orm }) => {
+    await run("record Worker script", async ({ orm }) => {
       await orm
         .update(installs)
         .set({
@@ -386,7 +354,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // 7. Secrets.
     for (const secret of manifest.catalog.secrets) {
-      await run(`set secret ${secret.name}`, 1, async ({ log, cf, orm }) => {
+      await run(`set secret ${secret.name}`, async ({ log, cf, orm }) => {
         const value = params.secrets[secret.name];
         if (value === undefined || value.length === 0) {
           throw new InstallError(`no value was provided for the secret ${secret.name}`);
@@ -407,7 +375,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // 8. Cron triggers, then the workers.dev route.
     const crons = manifest.worker.crons;
     if (crons.length > 0) {
-      await run("set cron triggers", 1, async ({ log, cf, orm }) => {
+      await run("set cron triggers", async ({ log, cf, orm }) => {
         await cf().workers.putSchedules(
           params.workerName,
           crons.map((cron) => ({ cron })),
@@ -429,7 +397,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const subdomain = await lookupSubdomainPhase(steps);
     const host = `${params.workerName}.${subdomain}.workers.dev`;
 
-    await run("enable workers.dev route", 1, async ({ log, cf, orm }) => {
+    await run("enable workers.dev route", async ({ log, cf, orm }) => {
       await cf().workers.enableSubdomain(params.workerName, {
         enabled: true,
         previews_enabled: true,
@@ -456,7 +424,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     );
 
     // 10. Record the install.
-    await run("finish", 0, async ({ log, orm }) => {
+    await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
       await orm.batch([
         orm

@@ -19,6 +19,7 @@ import {
   TOKEN,
 } from "../test/fake-account";
 import { fakeGithub, GITHUB_TOKEN, githubRelease } from "../test/fake-releases";
+import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { reconcileJobs } from "./reconcile.server";
@@ -101,6 +102,8 @@ async function selfUpdate(opts: {
   release?: ArtifactFixture;
   keys?: ArtifactFixture["keys"];
   world?: Partial<FakeAccount>;
+  /** `local`: a manager without the `SELF` binding runs the units in the job's invocation. */
+  units?: "self" | "local";
 }) {
   const release = opts.release ?? (await managerRelease());
   const fake = fakeAccount(release, {
@@ -159,12 +162,13 @@ async function selfUpdate(opts: {
     APPFLARE_VERSION: FROM,
     GITHUB_TOKEN,
   };
+  const self = fakeSelf(jobEnv, { fetch });
   let error: unknown = null;
   try {
     await runSelfUpdate({
       params,
       step,
-      env: jobEnv,
+      env: opts.units === "local" ? jobEnv : { ...jobEnv, SELF: self },
       deps: { fetch, signingKeys: opts.keys ?? release.keys },
     });
   } catch (e) {
@@ -192,6 +196,7 @@ async function selfUpdate(opts: {
     fake,
     github,
     step,
+    self,
     error,
     job,
     snapshot,
@@ -261,8 +266,13 @@ describe("self_update job", () => {
         class_name: "JobWorkflow",
       },
       { type: "plain_text", name: "APPFLARE_VERSION", text: TO },
+      // The running Worker had no SELF binding; the new version gets one to itself.
+      { type: "service", name: "SELF", service: WORKER, entrypoint: "JobUnits" },
       { type: "assets", name: "ASSETS" },
     ]);
+    // The asset part and the version upload ran as units over SELF.
+    expect(r.self.calls.map((c) => c.unit)).toEqual(["uploadAssetPart", "uploadWorker"]);
+    for (const call of r.self.calls) expect(call.subrequests).toBeLessThan(40);
 
     // Canary on the version's own preview, then promotion.
     expect(r.fake.state.previewHosts).toEqual([
@@ -302,6 +312,23 @@ describe("self_update job", () => {
     const text = JSON.stringify(r.logs);
     expect(text).not.toContain(TOKEN);
     expect(text).not.toContain(GITHUB_TOKEN);
+  });
+
+  it("updates a manager without the SELF binding by running the units itself, and adds SELF", async () => {
+    const r = await selfUpdate({ units: "local" });
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded", worker_version_id: NEW_VERSION });
+    expect(r.self.calls).toEqual([]);
+    expect(r.fake.state.versions[0]?.metadata.bindings).toContainEqual({
+      type: "service",
+      name: "SELF",
+      service: WORKER,
+      entrypoint: "JobUnits",
+    });
+    // The release is still read through the feed with the token for GitHub only.
+    for (const q of r.github.requests) {
+      expect(q.authorized).toBe(q.url.startsWith("https://api.github.com/"));
+    }
   });
 
   it("fails before promotion when the preview reports another version", async () => {

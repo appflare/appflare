@@ -22,6 +22,19 @@ export const MANAGER_CATALOG_MANIFEST = path.join(MANAGER_DIR, "appflare.jsonc")
 export const MANAGER_WRANGLER_SOURCE = path.join(MANAGER_DIR, "wrangler.jsonc");
 /** The Cloudflare Vite plugin's generated deploy config. */
 export const MANAGER_BUILT_WRANGLER = path.join(MANAGER_DIR, "dist", "server", "wrangler.json");
+/**
+ * The deploy config a release is packed from: the generated one without the
+ * Worker's service binding to itself. `pnpm --filter @appflare/manager build`
+ * writes it (apps/manager/scripts/release-wrangler-config.mjs), and
+ * apps/manager/appflare.jsonc names it, so every pack of the manager uses it.
+ */
+export const MANAGER_RELEASE_WRANGLER = path.join(
+  MANAGER_DIR,
+  "dist",
+  "server",
+  "wrangler.release.json",
+);
+
 /** The key id manager releases are signed with (packages/schema/src/keys.ts). */
 export const MANAGER_KEY_ID = "appflare-2026-09";
 
@@ -198,6 +211,10 @@ export function managerArtifactProblems(
   expect(
     version?.text === expected.version,
     `APPFLARE_VERSION is ${JSON.stringify(version?.text)}, expected "${expected.version}"`,
+  );
+  expect(
+    !worker.bindings.some((b) => b.type === "service"),
+    "the manifest declares a service binding; the SELF binding is added at install and self-update time, and managers before job units refuse a service binding",
   );
   for (const b of worker.bindings) {
     for (const field of ID_FIELDS) {

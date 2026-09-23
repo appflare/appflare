@@ -1,6 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { ensureMigrated } from "../db/migrate";
 import { type JobParams, runJob, type StepRunner } from "./run-job";
+import { selfUnits } from "./units/client";
 
 /**
  * The one Workflow class (binding `JOBS`). Each job is an instance
@@ -12,6 +13,12 @@ export class JobWorkflow extends WorkflowEntrypoint<Env, JobParams> {
     // `step.do`'s overloads constrain callback results to `Rpc.Serializable`; our
     // results are plain JSON. View the stub through `StepRunner` and keep calling
     // `do` as a method on it (it is an RPC stub; `.bind` throws).
-    await runJob(event.payload, step as unknown as StepRunner, this.env);
+    const self = selfUnits(this.env);
+    const { SELF: _binding, ...env } = this.env;
+    await runJob(
+      event.payload,
+      step as unknown as StepRunner,
+      self === undefined ? env : { ...env, SELF: self },
+    );
   }
 }

@@ -41,6 +41,32 @@ describe("buildWranglerConfig", () => {
     expect(config.workflows?.[0]?.name).toBe("appflare-cli-test-jobs");
   });
 
+  it("binds the manager to its own job units by the name it deploys under", () => {
+    expect(buildWranglerConfig(manifest, { name: "appflare" }).services).toEqual([
+      { binding: "SELF", service: "appflare", entrypoint: "JobUnits" },
+    ]);
+    expect(buildWranglerConfig(manifest, { name: "team-apps" }).services).toEqual([
+      { binding: "SELF", service: "team-apps", entrypoint: "JobUnits" },
+    ]);
+  });
+
+  it("replaces a SELF binding the artifact declares with one to this install", () => {
+    const edited = structuredClone(manifest);
+    edited.worker.bindings.push({
+      type: "service",
+      name: "SELF",
+      service: "appflare",
+      entrypoint: "JobUnits",
+    });
+    expect(buildWranglerConfig(edited, { name: "team-apps" }).services).toEqual([
+      { binding: "SELF", service: "team-apps", entrypoint: "JobUnits" },
+    ]);
+    edited.worker.bindings.push({ type: "service", name: "OTHER", service: "x" });
+    expect(() => buildWranglerConfig(edited, { name: "appflare" })).toThrow(
+      "service binding (OTHER)",
+    );
+  });
+
   it("keeps the assets directory and binding even if the config names others", () => {
     const edited = structuredClone(manifest);
     edited.assets.config = { ...edited.assets.config, directory: "/etc", binding: "X" };

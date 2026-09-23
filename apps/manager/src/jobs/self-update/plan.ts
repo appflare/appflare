@@ -16,6 +16,7 @@ import {
   type HealthVerdict,
   isEdge1042,
 } from "../install/health";
+import { JOB_UNITS_ENTRYPOINT, SELF_BINDING } from "../units/units";
 
 /**
  * The pure decisions of the manager's self-update: which signed manifests
@@ -131,6 +132,14 @@ function text(value: unknown): string | undefined {
  * - A binding the new version declares that the Worker lacks is added when it
  *   needs no resource (a var, Workers AI, ...); one that needs a resource is
  *   refused, since the manager does not create resources for itself.
+ * - `SELF` is always the service binding to this Worker itself (`service:
+ *   <workerName>`, entrypoint `JobUnits`), whether or not the running Worker
+ *   has it yet: a manager deployed before job units existed gains it with
+ *   its next self-update. The release does not declare it, since only the
+ *   running manager knows its own Worker name. A `SELF` the running Worker
+ *   has that points at another Worker, or a binding of another type named
+ *   `SELF`, is refused rather than replaced.
+ * - Other `service` bindings are copied as reported.
  */
 export function selfUpdateBindings(input: {
   current: readonly unknown[];
@@ -144,6 +153,8 @@ export function selfUpdateBindings(input: {
   const out: UploadBinding[] = [];
   let databaseId: string | null = null;
   const assetsBinding = manifest.assets.binding;
+  /** A foreign binding holds the name SELF (already reported as a problem). */
+  let selfTaken = false;
 
   for (const raw of input.current) {
     const parsed = currentBindingSchema.safeParse(raw);
@@ -197,6 +208,31 @@ export function selfUpdateBindings(input: {
         out.push(binding);
         continue;
       }
+      case "service": {
+        if (b.name === SELF_BINDING) {
+          // Re-added below. A SELF that points at another Worker is not one
+          // Appflare made; replacing it could break whatever relies on it.
+          if (text(b.service) !== workerName) {
+            problems.push(
+              `The running Worker's service binding ${SELF_BINDING} points at "${text(b.service) ?? "(no service)"}", not at this Worker ("${workerName}"); Appflare needs ${SELF_BINDING} for its binding to itself. Remove or rename that binding first.`,
+            );
+            selfTaken = true;
+          }
+          continue;
+        }
+        const service = text(b.service);
+        if (service === undefined) {
+          problems.push(`The running Worker reports service binding ${b.name} without a service.`);
+          continue;
+        }
+        const binding: UploadBinding = { type: "service", name: b.name, service };
+        const environment = text(b.environment);
+        if (environment !== undefined) binding.environment = environment;
+        const entrypoint = text(b.entrypoint);
+        if (entrypoint !== undefined) binding.entrypoint = entrypoint;
+        out.push(binding);
+        continue;
+      }
       case "plain_text": {
         if (b.name === VERSION_BINDING) {
           out.push({ type: "plain_text", name: b.name, text: newVersion });
@@ -224,6 +260,7 @@ export function selfUpdateBindings(input: {
   const byName = new Map(out.map((b) => [b.name, b]));
   for (const wanted of manifest.worker.bindings) {
     if (wanted.name === assetsBinding || wanted.type === "secret_text") continue;
+    if (wanted.name === SELF_BINDING && wanted.type === "service") continue;
     const have = byName.get(wanted.name);
     if (have !== undefined) {
       if (have.type !== wanted.type) {
@@ -242,6 +279,25 @@ export function selfUpdateBindings(input: {
         `The new version needs a ${wanted.type} binding ${wanted.name}, which the running Worker does not have; Appflare does not create resources for itself.`,
       );
     }
+  }
+
+  // A SELF service binding to another Worker was refused above.
+  const taken = byName.get(SELF_BINDING);
+  if (selfTaken) {
+    // Nothing is added in its place.
+  } else if (taken !== undefined) {
+    problems.push(
+      `The running Worker has a ${taken.type} binding named ${SELF_BINDING}, which Appflare needs for the service binding to itself.`,
+    );
+  } else {
+    const self: UploadBinding = {
+      type: "service",
+      name: SELF_BINDING,
+      service: workerName,
+      entrypoint: JOB_UNITS_ENTRYPOINT,
+    };
+    out.push(self);
+    byName.set(SELF_BINDING, self);
   }
 
   const version = byName.get(VERSION_BINDING);

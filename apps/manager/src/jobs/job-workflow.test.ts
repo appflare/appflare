@@ -41,10 +41,7 @@ describe("JobWorkflow install", () => {
     );
     await using instance = await introspectWorkflowInstance(env.JOBS, jobId);
     await instance.modify(async (m) => {
-      await m.mockStepResult(
-        { name: "verify artifact manifest" },
-        { keyId: "test-key", subrequests: 0 },
-      );
+      await m.mockStepResult({ name: "verify artifact manifest" }, { keyId: "test-key" });
     });
     let n = 0;
     const ids = await startInstallCore(

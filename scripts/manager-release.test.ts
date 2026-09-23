@@ -12,6 +12,7 @@ import {
   MANAGER_DIR,
   MANAGER_KEY_ID,
   MANAGER_MAX_MODULES,
+  MANAGER_RELEASE_WRANGLER,
   MANAGER_WRANGLER_SOURCE,
   managerArtifactProblems,
   REPO_ROOT,
@@ -30,7 +31,7 @@ describe("stampCatalogManifest", () => {
     expect(stamped.slug).toBe("appflare");
     expect(stamped.install).toMatchObject({
       tier: "artifact",
-      wranglerConfig: "dist/server/wrangler.json",
+      wranglerConfig: "dist/server/wrangler.release.json",
       workerName: "appflare",
     });
   });
@@ -42,6 +43,38 @@ describe("stampCatalogManifest", () => {
   });
 });
 
+describe("the release deploy config", () => {
+  it("drops the SELF service binding and keeps everything else", async () => {
+    const { releaseWranglerConfig } = await import(
+      "../apps/manager/scripts/release-wrangler-config.mjs"
+    );
+    const self = { binding: "SELF", service: "appflare", entrypoint: "JobUnits" };
+    const other = { binding: "MAILER", service: "mailer" };
+    expect(releaseWranglerConfig({ name: "appflare", services: [self] })).toEqual({
+      name: "appflare",
+    });
+    expect(releaseWranglerConfig({ name: "appflare", services: [self, other] })).toEqual({
+      name: "appflare",
+      services: [other],
+    });
+    expect(releaseWranglerConfig({ name: "appflare" })).toEqual({ name: "appflare" });
+  });
+
+  it.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))(
+    "is written by the build: the generated config without SELF",
+    () => {
+      const built = JSON.parse(readFileSync(MANAGER_BUILT_WRANGLER, "utf8")) as {
+        services?: Array<{ binding: string }>;
+      };
+      const release = JSON.parse(readFileSync(MANAGER_RELEASE_WRANGLER, "utf8")) as {
+        services?: unknown;
+      };
+      expect(built.services?.map((s) => s.binding)).toContain("SELF");
+      expect(release.services).toBeUndefined();
+    },
+  );
+});
+
 describe("accountSpecificIds", () => {
   it("collects the pinned account, D1, and KV ids from the source wrangler.jsonc", () => {
     const ids = accountSpecificIds(readFileSync(MANAGER_WRANGLER_SOURCE, "utf8"));
@@ -51,7 +84,7 @@ describe("accountSpecificIds", () => {
 
 // Packs the BUILT manager (`pnpm build` or `pnpm --filter @appflare/manager build`
 // first) exactly as release-pack.ts does, minus the build, and checks the result.
-describe.skipIf(!existsSync(MANAGER_BUILT_WRANGLER))("the packed manager artifact", () => {
+describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))("the packed manager artifact", () => {
   let tmp: string;
   let outDir: string;
   let version: string;

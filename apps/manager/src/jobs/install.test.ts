@@ -14,6 +14,7 @@ import {
   buildArtifactFixture,
   ZIP_URL,
 } from "../test/artifact-fixture";
+import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { redirectingArtifactHost, STORAGE_URL } from "../test/redirecting-host";
 import { API_STEP, type InstallJobParams, runInstall } from "./install";
@@ -329,6 +330,8 @@ async function install(
   input: Partial<StartInstallInput> = {},
   paramsOver: Partial<InstallJobParams> = {},
   clock?: { now: () => number; onSleep: (name: string, duration: string | number) => void },
+  /** `local`: a manager without the `SELF` binding runs the units in the job's invocation. */
+  units: "self" | "local" = "self",
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeWorld(fixture, world);
@@ -337,12 +340,16 @@ async function install(
   const params = { ...started.params, ...paramsOver };
   const step = fakeStep(clock === undefined ? {} : { onSleep: clock.onSleep });
   fake.state.stepOf = () => step.names.at(-1);
+  const self = fakeSelf(jobEnv(), {
+    fetch: fake.fetch,
+    ...(clock === undefined ? {} : { now: clock.now }),
+  });
   let error: unknown = null;
   try {
     await runInstall({
       params,
       step,
-      env: jobEnv(),
+      env: units === "self" ? { ...jobEnv(), SELF: self } : jobEnv(),
       deps: {
         fetch: fake.fetch,
         signingKeys: fixture.keys,
@@ -382,7 +389,7 @@ async function install(
       .bind(jobId)
       .all<{ level: string; message: string; data_json: string | null }>()
   ).results;
-  return { fixture, fake, step, error, job, installRow, resources, logs };
+  return { fixture, fake, step, self, error, job, installRow, resources, logs };
 }
 
 beforeEach(async () => {
@@ -448,9 +455,15 @@ describe("install job", () => {
       "health check 2",
       "finish",
     ]);
-    expect(r.step.sleeps.filter((n) => n.startsWith("health"))).toEqual(["health wait 1"]);
-    // D1 writes count as subrequests too, so a run this long crosses one boundary.
-    expect(r.step.sleeps.filter((n) => n.startsWith("budget"))).toEqual(["budget 1"]);
+    expect(r.step.sleeps).toEqual(["health wait 1"]);
+    // The subrequest-heavy work ran as units over SELF, each in its own invocation.
+    expect(r.self.calls.map((c) => [c.unit, c.subrequests])).toEqual([
+      ["uploadAssetPart", 2], // one range for both files, one upload
+      ["uploadWorker", 2], // one range for the module, one upload
+      ["applyD1Migration", 2], // the file, the query
+      ["applyD1Migration", 2],
+    ]);
+    for (const call of r.self.calls) expect(call.reported).toBe(call.subrequests);
     expect(r.step.configs.every((c) => c === API_STEP)).toBe(true);
 
     // Step 3: resources recorded; step 5: bindings sent with their ids.
@@ -626,15 +639,25 @@ describe("install job", () => {
     expect(r.fake.state.queries.filter((q) => q.startsWith("CREATE TABLE t"))).toHaveLength(1);
   });
 
-  it("counts D1 calls in the subrequest budget", async () => {
-    const assets = Array.from({ length: 12 }, (_, i) => ({
-      route: `/f${i}.txt`,
-      content: `f${i}`,
-    }));
-    const r = await install({ assets });
-    expect(r.error).toBeNull();
-    // 12 files x 2 + upload, plus ~20 steps' D1 writes before it, crosses 40.
-    expect(r.step.sleeps.some((s) => s.startsWith("budget"))).toBe(true);
+  it("runs the units in its own invocation when the Worker has no SELF binding", async () => {
+    const options = {
+      bindings: [{ type: "d1" as const, name: "DB" }],
+      assets: [{ route: "/a.txt", content: "a" }],
+      d1: { DB: [{ name: "0001_init.sql", content: "CREATE TABLE t (id TEXT);" }] },
+    };
+    const remote = await install(options);
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await writeSettings(createDb(env.DB), { [SETTING.accountId]: ACC });
+    const local = await install(options, {}, {}, {}, undefined, "local");
+    expect(local.error).toBeNull();
+    expect(local.job?.status).toBe("succeeded");
+    expect(local.self.calls).toEqual([]);
+    // The same steps, the same Cloudflare calls, the same outcome.
+    expect(local.step.names).toEqual(remote.step.names);
+    expect(local.fake.state.calls).toEqual(remote.fake.state.calls);
+    expect(local.fake.state.applied).toEqual(["0001_init.sql"]);
+    expect(local.logs.map((l) => l.message)).toEqual(remote.logs.map((l) => l.message));
   });
 
   it("uses the session JWT when Cloudflare already has every asset (zero buckets)", async () => {
@@ -717,10 +740,10 @@ describe("install job", () => {
       for (const name of uploadSteps(r)) {
         expect(artifactRequests(r, name)).toEqual([ZIP_URL, STORAGE_URL]);
       }
-      for (const [name, requests] of Object.entries(r.fake.state.requestsByStep)) {
-        // Every step's own requests plus its log write stay within 40.
-        expect(requests.length + 3, name).toBeLessThanOrEqual(40);
-      }
+      // Each part is one unit call: one redirect, one range, 30 or so uploads.
+      const parts = r.self.calls.filter((c) => c.unit === "uploadAssetPart");
+      expect(parts.map((c) => c.subrequests)).toEqual([36, 28]);
+      for (const call of r.self.calls) expect(call.subrequests).toBeLessThan(40);
       expect(r.fake.state.bucketUploads).toBe(60);
       expect((r.fake.state.metadata?.assets as { jwt: string } | undefined)?.jwt).toBe(
         "completion-jwt",
@@ -739,7 +762,7 @@ describe("install job", () => {
       expect(r.step.retried["upload assets bucket 1/1"]).toBeUndefined();
       expect(r.job?.status).toBe("failed");
       expect(r.job?.error).toMatch(
-        /^upload assets bucket 1\/1: GET assets\/f0\.js and 2 more file\(s\) failed: Too many subrequests by single Worker invocation\. Cloudflare allows 50 subrequests per Worker invocation on the free plan, and a retry would run in the same invocation and hit the same limit, so the job stopped instead of retrying\.$/,
+        /^upload assets bucket 1\/1: GET assets\/f0\.js and 2 more file\(s\) failed: Too many subrequests by single Worker invocation\. Cloudflare allows 50 subrequests per Worker invocation on the free plan, and a retry would make the same requests and hit the same limit, so the job stopped instead of retrying\.$/,
       );
     });
   });

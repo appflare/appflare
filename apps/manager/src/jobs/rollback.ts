@@ -86,7 +86,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
   }
 
   try {
-    const started = await run("start", 0, async ({ log, orm }) => {
+    const started = await run("start", async ({ log, orm }) => {
       await orm
         .update(jobs)
         .set({ status: "running", started_at: new Date(now()) })
@@ -142,7 +142,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
 
     // The API call is a step of its own, so the moment it returns the job
     // knows the snapshot's version serves traffic.
-    await run("deploy snapshot version", 1, async ({ log, cf }) => {
+    await run("deploy snapshot version", async ({ log, cf }) => {
       // Forced: without it Cloudflare blocks a rollback to a version whose
       // secrets differ from the current ones (an update may have added one),
       // and the admin already confirmed this rollback explicitly.
@@ -159,7 +159,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       return {};
     });
     deployed = true;
-    await run("record rollback", 0, async ({ orm }) => {
+    await run("record rollback", async ({ orm }) => {
       await recordServing(orm, new Date(now()));
       return {};
     });
@@ -179,7 +179,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     // Recorded rather than fatal: the snapshot's version already serves.
     const health = await checkLiveHealthPhase(steps, step, url);
 
-    await run("finish", 0, async ({ log, orm }) => {
+    await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
       await orm.batch([
         orm

@@ -11,6 +11,7 @@ import { finalizeSelfUpdates } from "./jobs/self-update/record";
  */
 
 export { JobWorkflow } from "./jobs/job-workflow";
+export { JobUnits } from "./jobs/units/entrypoint";
 
 /** Set once this isolate has looked for a self-update to complete. */
 let selfUpdatesFinalized = false;

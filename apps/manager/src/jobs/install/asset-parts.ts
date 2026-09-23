@@ -3,29 +3,30 @@ import { byOffset, SpanBuilder } from "./artifact";
 import { ARTIFACT_FETCH_COST } from "./budget";
 
 /**
- * How the asset upload splits the files Cloudflare asks for into Workflow
- * steps. Each step reads its files with as few Range requests as the zip
- * layout allows (see `artifactReader`) and uploads them, and must stay within
- * the subrequest budget however Cloudflare grouped the files into buckets.
+ * How the asset upload splits the files Cloudflare asks for into parts, one
+ * job unit (`uploadAssetPart`) and one Workflow step each. A part reads its
+ * files with as few Range requests as the zip layout allows (see
+ * `artifactReader`) and uploads them, and must stay within one invocation's
+ * subrequest limit however Cloudflare grouped the files into buckets.
  *
  * Cloudflare's buckets are a grouping, not a unit the upload service
  * requires: the completion token comes back once every file of the session's
  * manifest is stored, and wrangler itself uploads each file of a bucket on
  * its own when the session asks for single-file uploads. So a bucket that
- * does not fit one step is uploaded in several requests, one per step.
+ * does not fit one part is uploaded in several requests, one per part.
  */
 
 /**
- * Subrequests one asset step may make itself. The step runner adds its D1
- * writes (up to 3) to the estimate, so a step stays within 40, leaving room
- * under the free plan's 50 for what an invocation does outside steps.
+ * Subrequests one asset part may make: under 40, which leaves room under the
+ * free plan's 50 when the part runs in the job's own invocation (a manager
+ * without the `SELF` binding) next to the job's other work.
  */
 export const ASSET_STEP_SUBREQUESTS = 36;
 
 /**
- * Bytes one asset step downloads at most, gaps included. A step holds the
+ * Bytes one asset part downloads at most, gaps included. A part holds the
  * bytes, their base64 copy, and the upload body at once; 16 MiB keeps that
- * well inside a Worker's 128 MB. One larger file still gets a step of its own.
+ * well inside a Worker's 128 MB. One larger file still gets a part of its own.
  */
 export const ASSET_STEP_BYTES = 16 * 1024 * 1024;
 
@@ -41,12 +42,12 @@ export interface AssetPart {
   ranges: number;
   /** Bytes those ranges download. */
   bytes: number;
-  /** Worst-case subrequests of the step, besides its D1 writes. */
+  /** Worst-case subrequests of the part. */
   subrequests: number;
 }
 
 /**
- * Worst-case subrequests of a step that reads `ranges` ranges and uploads
+ * Worst-case subrequests of a part that reads `ranges` ranges and uploads
  * `files` files: the first range may be redirected (a release asset is), the
  * rest go to the resolved URL; then one bulk upload, or one upload per file
  * when the session asks for single-file uploads.
@@ -57,7 +58,7 @@ export function assetStepCost(ranges: number, files: number, single: boolean): n
 }
 
 /**
- * Splits one bucket's files into steps: files in zip order, a new step
+ * Splits one bucket's files into parts: files in zip order, a new part
  * whenever the next file would take the current one past the subrequest or
  * byte limit.
  */

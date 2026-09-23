@@ -25,6 +25,7 @@ export interface GeneratedWranglerConfig {
   d1_databases?: { binding: string; database_name: string }[];
   kv_namespaces?: { binding: string }[];
   workflows?: { binding: string; name: string; class_name: string; script_name?: string }[];
+  services: { binding: string; service: string; entrypoint: string }[];
   vars?: Record<string, unknown>;
   triggers: { crons: string[] };
   observability?: Record<string, unknown>;
@@ -52,6 +53,12 @@ const RULE_TYPES: Record<ModuleType, WranglerRuleType> = {
   python: "PythonModule",
   "python-requirement": "PythonRequirement",
 };
+
+/** The manager's service binding to itself, through which its jobs call their units. */
+export const SELF_BINDING = "SELF";
+
+/** The manager's `WorkerEntrypoint` class that serves the job units. */
+export const JOB_UNITS_ENTRYPOINT = "JobUnits";
 
 /**
  * The Workflow name for an install named `name`. Workflow names are unique per
@@ -128,6 +135,14 @@ export function buildWranglerConfig(
       case "assets":
         // Declared through `assets.binding` below.
         break;
+      case "service":
+        // The binding to the manager itself is always added below, by this
+        // install's own name; any other service binding is refused.
+        if (binding.name === SELF_BINDING) break;
+        throw new Error(
+          `the manager artifact has a service binding (${binding.name}) this version of ` +
+            "the installer cannot create; run the latest create-appflare",
+        );
       default:
         throw new Error(
           `the manager artifact has a ${binding.type} binding (${binding.name}) this version of ` +
@@ -170,6 +185,10 @@ export function buildWranglerConfig(
     ...(d1.length > 0 ? { d1_databases: d1 } : {}),
     ...(kv.length > 0 ? { kv_namespaces: kv } : {}),
     ...(workflows.length > 0 ? { workflows } : {}),
+    // The manager's jobs call their subrequest-heavy units over RPC through
+    // this binding to the Worker itself, so each call runs in a fresh
+    // invocation. The service is the name this install deploys under.
+    services: [{ binding: SELF_BINDING, service: name, entrypoint: JOB_UNITS_ENTRYPOINT }],
     ...(Object.keys(vars).length > 0 ? { vars } : {}),
     triggers: { crons: [...worker.crons] },
     ...(worker.observability ? { observability: { ...worker.observability } } : {}),

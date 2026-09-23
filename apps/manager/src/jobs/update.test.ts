@@ -11,6 +11,7 @@ import {
   ZIP_URL,
 } from "../test/artifact-fixture";
 import { type FakeAccount, fakeAccount, NEW_VERSION, TOKEN } from "../test/fake-account";
+import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import {
   cacheIndex,
@@ -64,6 +65,8 @@ async function update(
   world: Partial<FakeAccount> = {},
   seed: Parameters<typeof seedInstall>[0] = {},
   request: { secrets?: Record<string, string> } = {},
+  /** `local`: a manager without the `SELF` binding runs the units in the job's invocation. */
+  units: "self" | "local" = "self",
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeAccount(fixture, {
@@ -91,12 +94,13 @@ async function update(
   if (!("jobId" in started) || params === null) throw new Error("no Workflow params");
   const { jobId } = started;
   const step = fakeStep();
+  const self = fakeSelf(jobEnv(), { fetch: fake.fetch });
   let error: unknown = null;
   try {
     await runUpdate({
       params,
       step,
-      env: jobEnv(),
+      env: units === "self" ? { ...jobEnv(), SELF: self } : jobEnv(),
       deps: { fetch: fake.fetch, signingKeys: fixture.keys },
     });
   } catch (e) {
@@ -128,7 +132,7 @@ async function update(
       .bind(jobId)
       .all<{ level: string; message: string; data_json: string | null }>()
   ).results;
-  return { fixture, fake, step, error, job, install, snapshot, resources, logs };
+  return { fixture, fake, step, self, error, job, install, snapshot, resources, logs };
 }
 
 beforeEach(async () => {
@@ -174,6 +178,13 @@ describe("update job", () => {
     ]);
     expect(r.step.sleeps.filter((s) => s.startsWith("canary"))).toEqual(["canary wait 1"]);
     expect(r.step.configs.every((c) => c === API_STEP)).toBe(true);
+    // Asset part, version upload, and migration ran as units over SELF.
+    expect(r.self.calls.map((c) => c.unit)).toEqual([
+      "uploadAssetPart",
+      "uploadWorker",
+      "applyD1Migration",
+    ]);
+    for (const call of r.self.calls) expect(call.subrequests).toBeLessThan(40);
 
     // The install records the new version and its catalog state.
     expect(r.install).toMatchObject({
@@ -253,6 +264,14 @@ describe("update job", () => {
     expect(r.logs.at(-1)?.message).toBe(
       "Updated cut from 1.0.0 to 1.1.0 at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 200)).",
     );
+  });
+
+  it("runs the units in its own invocation when the Worker has no SELF binding", async () => {
+    const r = await update(NEW_APP, {}, {}, {}, "local");
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded", worker_version_id: NEW_VERSION });
+    expect(r.self.calls).toEqual([]);
+    expect(r.fake.state.applied["d1-1"]).toEqual(["0001_init.sql", "0002_hits.sql"]);
   });
 
   it("fails at the canary without promoting and leaves the uploaded version unpromoted", async () => {

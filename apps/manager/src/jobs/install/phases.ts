@@ -14,20 +14,13 @@ import { type RESOURCE_KINDS, resources } from "../../db/schema";
 import { readSettings, SETTING, writeSettings } from "../../db/settings";
 import type { StepRunner } from "../run-job";
 import { JobError, type JobSteps } from "../steps";
+import { settleUnit } from "../units/result";
+import type { ArtifactHost } from "../units/units";
 import { cronChanges } from "../update/plan";
-import {
-  artifactReader,
-  fetchArtifactFile,
-  fetchWhole,
-  sha256Hex,
-  verifyArtifactManifest,
-} from "./artifact";
+import { fetchWhole, sha256Hex, verifyArtifactManifest } from "./artifact";
 import { planAssetParts } from "./asset-parts";
 import type { ResourceBindingPlan, WorkflowPlan } from "./bindings";
-import { ARTIFACT_FETCH_COST } from "./budget";
 import {
-  APPLIED_MIGRATION_SQL,
-  buildMigrationQuery,
   CREATE_MIGRATIONS_TABLE_SQL,
   LIST_APPLIED_MIGRATIONS_SQL,
   unappliedMigrations,
@@ -44,7 +37,6 @@ import {
   versionMismatch,
 } from "./health";
 import type { CreatedResource } from "./metadata";
-import { assetContentType } from "./mime";
 import { explainR2Refusal } from "./r2-enablement";
 import { createResource, findResource, RESOURCE_LABEL } from "./resources";
 
@@ -52,8 +44,8 @@ import { createResource, findResource, RESOURCE_LABEL } from "./resources";
  * Step sequences the install and update jobs share: verifying the artifact
  * manifest, creating a resource (check, create, record), uploading static
  * assets, applying D1 migrations, and probing a URL until it serves. Each
- * phase runs through the job's step runner, so step names, retries, logging,
- * and the subrequest budget behave the same in every job.
+ * phase runs through the job's step runner, so step names, retries, and
+ * logging behave the same in every job.
  */
 
 /** Where a job finds its artifact: the index entry's URLs and the manifest digest. */
@@ -109,7 +101,7 @@ export async function verifyManifestPhase(
   ref: ArtifactRef,
   keys: readonly SigningKey[] | undefined,
 ): Promise<{ keyId: string }> {
-  return steps.run("verify artifact manifest", 6, async ({ log, fetch }) => {
+  return steps.run("verify artifact manifest", async ({ log, fetch }) => {
     const manifestFile = await fetchWhole(fetch, ref.artifacts.manifest);
     const sigFile = await fetchWhole(fetch, ref.artifacts.sig);
     const manifest = await verifyArtifactManifest(
@@ -166,7 +158,7 @@ export async function provisionResourcePhase(
   // An account without R2 refuses every R2 call; say so instead of the raw error.
   const explain = <T>(call: () => Promise<T>): Promise<T> =>
     res.kind === "r2" ? explainR2Refusal(res.name, call) : call();
-  await steps.run(`check ${label} ${res.name}`, 3, async ({ log, cf }) => {
+  await steps.run(`check ${label} ${res.name}`, async ({ log, cf }) => {
     if ((await explain(() => findResource(cf(), res))) !== null) {
       throw new JobError(
         `a ${label} named ${res.name} already exists in this account; Appflare does not adopt existing resources`,
@@ -176,7 +168,7 @@ export async function provisionResourcePhase(
     return {};
   });
 
-  const made = await steps.run(`create ${label} ${res.name}`, 4, async ({ log, cf, attempt }) => {
+  const made = await steps.run(`create ${label} ${res.name}`, async ({ log, cf, attempt }) => {
     const api = cf();
     // The check step saw no such name, so on a retry a resource with this name
     // is the one this step's own earlier attempt created before it failed.
@@ -194,7 +186,7 @@ export async function provisionResourcePhase(
     return { cfId };
   });
 
-  await steps.run(`record ${label} ${res.name}`, 0, async ({ orm }) => {
+  await steps.run(`record ${label} ${res.name}`, async ({ orm }) => {
     await recordResource(
       orm,
       installId,
@@ -208,7 +200,7 @@ export async function provisionResourcePhase(
 
 /** Step "check Workflow <name>": Workflow names are account-wide and never adopted. */
 export async function checkWorkflowNamePhase(steps: JobSteps, wf: WorkflowPlan): Promise<void> {
-  await steps.run(`check Workflow ${wf.name}`, 1, async ({ log, cf }) => {
+  await steps.run(`check Workflow ${wf.name}`, async ({ log, cf }) => {
     let owner: string | null = null;
     try {
       owner = (await cf().workflows.getWorkflow(wf.name)).script_name ?? "another script";
@@ -238,26 +230,27 @@ function jwtClaims(jwt: string): Record<string, unknown> {
 
 /**
  * Static assets: open an upload session with the manifest's `{route: {hash,
- * size}}` map, then upload every bucket Cloudflare asks for, in budgeted
- * steps. Returns the completion JWT, or null when the artifact has no assets.
+ * size}}` map, then upload every bucket Cloudflare asks for, one step per
+ * part. Returns the completion JWT, or null when the artifact has no assets.
  * Cloudflare deduplicates assets account-wide, so a session may ask for no
  * buckets; its own JWT is then the completion JWT.
  *
- * A step reads its files with as few Range requests as the zip layout
- * allows, following the release-asset redirect once, and a bucket too big
- * for one step is uploaded in parts (`planAssetParts`), so the number of
- * files in a bucket never decides whether the upload fits the budget.
+ * Each part is one job unit (`uploadAssetPart`): it reads its files with as
+ * few Range requests as the zip layout allows, following the release-asset
+ * redirect once, and uploads them. A bucket too big for one unit is uploaded
+ * in parts (`planAssetParts`), so the number of files in a bucket never
+ * decides whether a unit fits its invocation's subrequest limit.
  */
 export async function uploadAssetsPhase(
   steps: JobSteps,
   workerName: string,
   zipUrl: string,
   files: readonly AssetFile[],
-  /** Wraps the step's fetch for the artifact host (the self-update's release feed needs it). */
-  wrapFetch: (fetch: FetchLike) => FetchLike = (fetch) => fetch,
+  /** Where the zip lives (the self-update reads the manager's own release feed). */
+  host: ArtifactHost = { kind: "catalog" },
 ): Promise<string | null> {
   if (files.length === 0) return null;
-  const session = await steps.run("open assets upload session", 1, async ({ log, cf }) => {
+  const session = await steps.run("open assets upload session", async ({ log, cf }) => {
     const result = await cf().assets.createUploadSession(
       workerName,
       buildAssetsManifest(files.map((f) => ({ route: f.route, hash: f.hash, size: f.size }))),
@@ -289,44 +282,18 @@ export async function uploadAssetsPhase(
       const name =
         `upload assets bucket ${b + 1}/${buckets.length}` +
         (parts.length > 1 ? ` part ${p + 1}/${parts.length}` : "");
-      const uploaded = await steps.run(name, part.subrequests, async ({ log, fetch, cf }) => {
-        const api = cf();
-        // One reader per step: it follows the release-asset redirect once and
-        // reads adjacent files with one Range request.
-        const reader = artifactReader(wrapFetch(fetch), zipUrl);
-        const contents = await reader.read(part.files);
-        const payload = part.files.map((file, i) => ({
-          hash: file.hash,
-          bytes: contents[i] ?? new Uint8Array(0),
-          contentType: assetContentType(file.route),
-        }));
-        const bytes = payload.reduce((n, f) => n + f.bytes.byteLength, 0);
-        let jwt: string | null = null;
-        if (single) {
-          for (const f of payload) {
-            const res = await api.assets.uploadFile(session.jwt, {
-              hash: f.hash,
-              body: f.bytes,
-              contentType: f.contentType,
-            });
-            jwt = res.jwt ?? jwt;
-          }
-        } else {
-          const res = await api.assets.uploadBucket(
-            session.jwt,
-            payload.map((f) => ({
-              hash: f.hash,
-              base64: Buffer.from(f.bytes).toString("base64"),
-              contentType: f.contentType,
-            })),
-          );
-          jwt = res.jwt ?? null;
-        }
-        log.info(
-          `Uploaded ${payload.length} asset file(s), ${bytes} bytes, read with ${reader.ranges} range request(s).`,
-        );
-        return { jwt };
-      });
+      const uploaded = await steps.run(name, async ({ log }) =>
+        settleUnit(
+          await steps.units.api.uploadAssetPart({
+            accountId: steps.accountId(),
+            artifact: { zipUrl, host },
+            sessionJwt: session.jwt,
+            single,
+            files: part.files,
+          }),
+          log,
+        ),
+      );
       completion = uploaded.jwt ?? completion;
     }
   }
@@ -358,14 +325,13 @@ export async function applyD1MigrationsPhase(
   target: D1Target,
 ): Promise<number> {
   if (target.files.length === 0) return 0;
-  await steps.run(`D1 ${target.binding}: create d1_migrations table`, 1, async ({ log, cf }) => {
+  await steps.run(`D1 ${target.binding}: create d1_migrations table`, async ({ log, cf }) => {
     await cf().d1.query(target.cfId, CREATE_MIGRATIONS_TABLE_SQL);
     log.info(`Ensured "d1_migrations" exists in ${target.name}.`);
     return {};
   });
   const listed = await steps.run(
     `D1 ${target.binding}: list applied migrations`,
-    1,
     async ({ log, cf }) => {
       const results = await cf().d1.query(target.cfId, LIST_APPLIED_MIGRATIONS_SQL);
       const rows = results[0]?.results ?? [];
@@ -378,32 +344,25 @@ export async function applyD1MigrationsPhase(
     listed.applied.map((name) => ({ name })),
   );
   if (pending.length === 0) {
-    await steps.run(`D1 ${target.binding}: no new migrations`, 0, async ({ log }) => {
+    await steps.run(`D1 ${target.binding}: no new migrations`, async ({ log }) => {
       log.info(`${target.name} already has every migration this version ships.`);
       return {};
     });
     return 0;
   }
   for (const file of pending) {
-    await steps.run(
-      `D1 ${target.binding}: apply ${file.name}`,
-      ARTIFACT_FETCH_COST + 2,
-      async ({ log, fetch, cf, attempt }) => {
-        const api = cf();
-        // A retry must not re-run a file an earlier attempt already applied.
-        if (attempt > 1) {
-          const recorded = await api.d1.query(target.cfId, APPLIED_MIGRATION_SQL, [file.name]);
-          if ((recorded[0]?.results.length ?? 0) > 0) {
-            log.info(`${file.name} was applied by an earlier attempt.`);
-            return {};
-          }
-        }
-        const got = await fetchArtifactFile(fetch, zipUrl, file);
-        const sql = new TextDecoder().decode(got.bytes);
-        await api.d1.query(target.cfId, buildMigrationQuery(sql, file.name));
-        log.info(`Applied ${file.name} to ${target.name}.`);
-        return {};
-      },
+    await steps.run(`D1 ${target.binding}: apply ${file.name}`, async ({ log, attempt }) =>
+      settleUnit(
+        await steps.units.api.applyD1Migration({
+          accountId: steps.accountId(),
+          artifact: { zipUrl, host: { kind: "catalog" } },
+          databaseId: target.cfId,
+          databaseName: target.name,
+          file,
+          checkApplied: attempt > 1,
+        }),
+        log,
+      ),
     );
   }
   return pending.length;
@@ -429,7 +388,6 @@ export function d1Targets(
 export async function lookupSubdomainPhase(steps: JobSteps): Promise<string> {
   const { subdomain } = await steps.run(
     "look up workers.dev subdomain",
-    1,
     async ({ log, cf, orm }) => {
       const cached = await readSettings(orm, [SETTING.accountSubdomain]);
       if (cached.account_subdomain) return { subdomain: cached.account_subdomain };
@@ -476,7 +434,7 @@ export async function probeUntilHealthy(
   const maxAttempts = opts.maxAttempts ?? HEALTH_MAX_ATTEMPTS;
   let firstProbeAt: number | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const checked = await steps.run(`${opts.label} check ${attempt}`, 1, async ({ log, fetch }) => {
+    const checked = await steps.run(`${opts.label} check ${attempt}`, async ({ log, fetch }) => {
       const at = steps.now();
       const probe: HealthProbe = await probeHealth(fetch, opts.url);
       const verdict = (opts.classify ?? classifyHealthProbe)(
@@ -501,7 +459,6 @@ export async function probeUntilHealthy(
     firstProbeAt ??= checked.at;
     if (checked.status !== null) return checked.status;
     await step.sleep(`${opts.label} wait ${attempt}`, HEALTH_RETRY_DELAY);
-    steps.resetBudget();
   }
   steps.current = `${opts.label} check`;
   throw new JobError(`${opts.url} never answered`);
@@ -516,9 +473,8 @@ export interface LiveHealthResult extends HealthSettlement {
  * The live health check of a Worker that already serves (created, or
  * promoted): GETs `url` with backoff (2, 3, 5, 8, then every 10 s) for up to
  * 90 seconds after the first probe, through route
- * propagation, error 1042, and 5xx answers. One step per probe, so each
- * invocation makes one subrequest plus its log write, and a `step.sleep`
- * between probes. Never throws for what the Worker answers: by now
+ * propagation, error 1042, and 5xx answers. One step per probe (one
+ * subrequest plus its log write), and a `step.sleep` between probes. Never throws for what the Worker answers: by now
  * everything is created or promoted, so the result is recorded on the install
  * instead (`verified`, `unverified`, `unhealthy`) and a warning is logged when
  * the Worker could not be verified.
@@ -530,7 +486,7 @@ export async function checkLiveHealthPhase(
 ): Promise<LiveHealthResult> {
   let firstProbeAt: number | null = null;
   for (let attempt = 1; ; attempt++) {
-    const checked = await steps.run(`health check ${attempt}`, 1, async ({ log, fetch }) => {
+    const checked = await steps.run(`health check ${attempt}`, async ({ log, fetch }) => {
       const at = steps.now();
       const probe = await probeHealth(fetch, url);
       const decision = decideLiveHealth(probe, attempt, at - (firstProbeAt ?? at));
@@ -555,7 +511,6 @@ export async function checkLiveHealthPhase(
       return { status: decision.status, detail: decision.detail, checkedAt: checked.at };
     }
     await step.sleep(`health wait ${attempt}`, `${decision.delaySeconds} seconds`);
-    steps.resetBudget();
   }
 }
 
@@ -575,7 +530,7 @@ export async function syncCronsPhase(
   const { changed, added, removed } = cronChanges(recorded, wanted);
   if (!changed) return;
   const want = new Set(wanted);
-  await steps.run("set cron triggers", 1, async ({ log, cf, orm }) => {
+  await steps.run("set cron triggers", async ({ log, cf, orm }) => {
     await cf().workers.putSchedules(
       workerName,
       [...want].map((cron) => ({ cron })),

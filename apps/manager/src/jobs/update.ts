@@ -12,11 +12,8 @@ import { readCachedCatalogApp } from "../catalog/index.server";
 import { createDb } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { hyphenateUuid } from "./install";
-import { fetchArtifactFile } from "./install/artifact";
-import { ARTIFACT_FETCH_COST } from "./install/budget";
 import { healthLabel } from "./install/health";
-import { buildScriptMetadata, resolveVars, uploadModule } from "./install/metadata";
+import { buildScriptMetadata, resolveVars } from "./install/metadata";
 import {
   type ArtifactRef,
   applyD1MigrationsPhase,
@@ -37,6 +34,7 @@ import { RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
+import { settleUnit } from "./units/result";
 import {
   activeVersionId,
   canarySkipReason,
@@ -130,7 +128,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   const migrated: string[] = [];
 
   try {
-    const started = await run("start", 1, async ({ log, orm }) => {
+    const started = await run("start", async ({ log, orm }) => {
       await orm
         .update(jobs)
         .set({ status: "running", started_at: new Date(now()) })
@@ -227,10 +225,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       const value = params.secrets[secret.name];
       if (value !== undefined && value.length > 0) secretValues[secret.name] = value;
     }
-    const moduleCost = manifest.worker.modules.length * ARTIFACT_FETCH_COST + 2;
     const healthPath = appHealthPath(manifest.catalog.install);
 
-    await run("plan update", 0, async ({ log }) => {
+    await run("plan update", async ({ log }) => {
       const problems = [...diff.problems];
       for (const secret of newSecrets) {
         if (secretValues[secret.name] === undefined) {
@@ -267,7 +264,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     });
 
     // 2. Snapshot, before anything changes.
-    const deployed = await run("read current deployment", 1, async ({ log, cf }) => {
+    const deployed = await run("read current deployment", async ({ log, cf }) => {
       const versionId = activeVersionId(await cf().versions.listDeployments(workerName));
       if (versionId === null) {
         throw new JobError(
@@ -286,14 +283,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     for (const db of started.resources) {
       if (db.kind !== "d1" || db.cfId === null) continue;
       const databaseId = db.cfId;
-      const got = await run(`bookmark D1 ${db.name}`, 1, async ({ log, cf }) => {
+      const got = await run(`bookmark D1 ${db.name}`, async ({ log, cf }) => {
         const { bookmark } = await cf().d1.bookmark(databaseId);
         log.info(`Time Travel bookmark of ${db.name}: ${bookmark}.`);
         return { bookmark };
       });
       bookmarks.push({ databaseId, bookmark: got.bookmark });
     }
-    await run("record snapshot", 0, async ({ log, orm }) => {
+    await run("record snapshot", async ({ log, orm }) => {
       const [install] = await orm
         .select()
         .from(installs)
@@ -338,13 +335,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       manifest.assets.files,
     );
 
-    /** Every module fetched, and the metadata of the upload (never logged: it holds new secret values). */
-    async function buildUpload(fetch: StepTools["fetch"]) {
-      const modules = [];
-      for (const module of manifest.worker.modules) {
-        const got = await fetchArtifactFile(fetch, started.artifacts.zip, module);
-        modules.push(uploadModule(module, got.bytes));
-      }
+    /** The metadata of the upload (never logged: it holds new secret values). */
+    function uploadMetadata(): ScriptMetadata {
       // Durable Object migrations go only to a full deploy, and only the
       // pending ones; the Worker has the others already.
       const { migrations: _all, ...base } = buildScriptMetadata({
@@ -361,7 +353,25 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         keep_bindings: ["secret_text"],
       };
       if (fullDeploy !== null) metadata.migrations = fullDeploy;
-      return { modules, metadata };
+      return metadata;
+    }
+    /** Every module read from the artifact and uploaded in ONE multipart request (one unit). */
+    async function uploadWorker(
+      log: StepTools["log"],
+      metadata: ScriptMetadata,
+      target: "script" | "version",
+    ) {
+      return settleUnit(
+        await steps.units.api.uploadWorker({
+          accountId: steps.accountId(),
+          artifact: { zipUrl: started.artifacts.zip, host: { kind: "catalog" } },
+          workerName,
+          modules: manifest.worker.modules,
+          metadata,
+          target,
+        }),
+        log,
+      );
     }
     const bindingList = (metadata: ScriptMetadata) =>
       (metadata.bindings ?? []).map((b) => `${b.type} ${b.name}`);
@@ -419,31 +429,26 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     let subdomain: string;
     if (fullDeploy === null) {
       // 5. The new version: every module in ONE multipart request.
-      const uploaded = await run(
-        "upload Worker version",
-        moduleCost,
-        async ({ log, fetch, cf }) => {
-          const { modules, metadata } = await buildUpload(fetch);
-          const versionMetadata: VersionMetadata = {
-            ...metadata,
-            annotations: {
-              "workers/message": `Appflare: ${started.slug} ${params.version}`,
-              "workers/tag": params.version,
-            },
-          };
-          const result = await cf().versions.uploadVersion(workerName, {
-            metadata: versionMetadata,
-            modules,
-          });
-          log.info(
-            `Uploaded version ${result.id} (${modules.length} module(s)); it serves no traffic yet.`,
-            { versionId: result.id, bindings: bindingList(metadata) },
-          );
-          return { versionId: result.id, hasPreview: result.metadata?.has_preview ?? null };
-        },
-      );
+      const uploaded = await run("upload Worker version", async ({ log }) => {
+        const metadata: VersionMetadata = {
+          ...uploadMetadata(),
+          annotations: {
+            "workers/message": `Appflare: ${started.slug} ${params.version}`,
+            "workers/tag": params.version,
+          },
+        };
+        const result = await uploadWorker(log, metadata, "version");
+        if (result.versionId === null) {
+          throw new JobError("Cloudflare did not report the id of the uploaded version");
+        }
+        log.info(
+          `Uploaded version ${result.versionId} (${result.modules} module(s)); it serves no traffic yet.`,
+          { versionId: result.versionId, bindings: bindingList(metadata) },
+        );
+        return { versionId: result.versionId, hasPreview: result.hasPreview };
+      });
       uploadedVersionId = uploaded.versionId;
-      await run("record Worker version", 0, async ({ orm }) => {
+      await run("record Worker version", async ({ orm }) => {
         await recordUpload(orm, uploaded.versionId);
         return {};
       });
@@ -452,12 +457,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       subdomain = await lookupSubdomainPhase(steps);
       const skip = path.skipPreview ?? canarySkipReason(uploaded.hasPreview, 0);
       if (skip !== null) {
-        await run("skip canary", 0, async ({ log }) => {
+        await run("skip canary", async ({ log }) => {
           log.warn(`${skip}.`);
           return {};
         });
       } else {
-        await run("enable version previews", 1, async ({ log, cf }) => {
+        await run("enable version previews", async ({ log, cf }) => {
           await cf().workers.enableSubdomain(workerName, { enabled: true, previews_enabled: true });
           log.info("Preview URLs are enabled for this Worker.");
           return {};
@@ -476,7 +481,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
 
       // 8. Promote. The API call is a step of its own, so the moment it
       // returns the job knows the new version serves traffic.
-      await run("promote version", 1, async ({ log, cf }) => {
+      await run("promote version", async ({ log, cf }) => {
         await cf().versions.createDeployment(workerName, {
           versions: [{ version_id: uploaded.versionId, percentage: 100 }],
           annotations: { "workers/message": `Appflare: update to ${params.version}` },
@@ -489,34 +494,26 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     } else {
       // 5-8 for Durable Object migrations: D1 first, then one full deploy.
       await migrateDatabases();
-      await run("skip canary", 0, async ({ log }) => {
+      await run("skip canary", async ({ log }) => {
         log.warn(`${FULL_DEPLOY_REASON}.`);
         return {};
       });
-      const deployed = await run("deploy Worker script", moduleCost, async ({ log, fetch, cf }) => {
-        const { modules, metadata } = await buildUpload(fetch);
-        const api = cf();
-        const result = await api.workers.uploadScript(workerName, {
-          metadata,
-          modules,
-          excludeScript: true,
-        });
-        const versionId =
-          hyphenateUuid(result.deployment_id) ??
-          activeVersionId(await api.versions.listDeployments(workerName));
-        if (versionId === null) {
+      const deployed = await run("deploy Worker script", async ({ log }) => {
+        const metadata = uploadMetadata();
+        const result = await uploadWorker(log, metadata, "script");
+        if (result.versionId === null) {
           throw new JobError("Cloudflare did not report the id of the deployed version");
         }
         log.info(
-          `Deployed version ${versionId} to all traffic with Durable Object migrations up to "${fullDeploy.new_tag}".`,
-          { versionId, bindings: bindingList(metadata) },
+          `Deployed version ${result.versionId} to all traffic with Durable Object migrations up to "${fullDeploy.new_tag}".`,
+          { versionId: result.versionId, bindings: bindingList(metadata) },
         );
-        return { versionId };
+        return { versionId: result.versionId };
       });
       uploadedVersionId = deployed.versionId;
       promoted = true;
       servingRecord = servingState(deployed.versionId);
-      await run("record Worker version", 0, async ({ orm }) => {
+      await run("record Worker version", async ({ orm }) => {
         await recordUpload(orm, deployed.versionId);
         return {};
       });
@@ -524,7 +521,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     }
 
     const record = servingRecord;
-    await run("record promotion", 0, async ({ orm }) => {
+    await run("record promotion", async ({ orm }) => {
       await orm
         .update(installs)
         .set({ ...record, updated_at: new Date(now()) })
@@ -544,7 +541,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const url = `https://${workerName}.${subdomain}.workers.dev${healthPath}`;
     const health = await checkLiveHealthPhase(steps, step, url);
 
-    await run("finish", 0, async ({ log, orm }) => {
+    await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
       await orm.batch([
         orm

@@ -7,6 +7,7 @@ import { runInstall } from "./install";
 import { runRollback } from "./rollback";
 import { runSelfUpdate } from "./self-update";
 import { runUninstall } from "./uninstall";
+import type { JobUnitsApi } from "./units/units";
 import { runUpdate } from "./update";
 
 /**
@@ -66,6 +67,12 @@ export interface JobEnv {
   APPFLARE_VERSION?: string;
   /** Reads the manager's release assets while its repository is private. Never logged. */
   GITHUB_TOKEN?: string;
+  /**
+   * The manager's own job units over its `SELF` service binding. Absent on a
+   * manager deployed before the binding existed; jobs then run the units in
+   * their own invocation.
+   */
+  SELF?: JobUnitsApi;
 }
 
 /** Test seams. Production uses the global `fetch`, `signingKeys`, and `Date.now`. */

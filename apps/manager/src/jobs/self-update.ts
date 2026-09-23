@@ -12,9 +12,7 @@ import { releaseFetch } from "../catalog/release-fetch";
 import { createDb } from "../db/client";
 import { jobs, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { fetchArtifactFile, fetchWhole, sha256Hex } from "./install/artifact";
-import { ARTIFACT_FETCH_COST } from "./install/budget";
-import { uploadModule } from "./install/metadata";
+import { fetchWhole, sha256Hex } from "./install/artifact";
 import {
   loadVerifiedManifest,
   lookupSubdomainPhase,
@@ -30,6 +28,8 @@ import {
 import { recordStep } from "./self-update/record";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
+import { settleUnit } from "./units/result";
+import type { ArtifactHost } from "./units/units";
 import { activeVersionId, bookmarksJson, previewUrl } from "./update/plan";
 
 /**
@@ -106,13 +106,15 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
 
   const steps = createJobSteps(ctx, params.jobId);
   const { run } = steps;
-  const feed = (fetch: FetchLike) =>
-    releaseFetch(fetch, { token: env.GITHUB_TOKEN, userAgent: `Appflare/${params.fromVersion}` });
+  const userAgent = `Appflare/${params.fromVersion}`;
+  const feed = (fetch: FetchLike) => releaseFetch(fetch, { token: env.GITHUB_TOKEN, userAgent });
+  /** Units read the release zip through the feed too, with their own Worker's GitHub token. */
+  const releaseHost: ArtifactHost = { kind: "release", userAgent };
   /** Set once the new version exists, for the failure report. */
   let uploadedVersionId: string | null = null;
 
   try {
-    const started = await run("start", 1, async ({ log, orm }) => {
+    const started = await run("start", async ({ log, orm }) => {
       await orm
         .update(jobs)
         .set({ status: "running", started_at: new Date(now()) })
@@ -137,7 +139,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
     const { workerName } = started;
 
     // 1. The release manifest.
-    const verified = await run("verify release manifest", 6, async ({ log, fetch }) => {
+    const verified = await run("verify release manifest", async ({ log, fetch }) => {
       const manifestFile = await fetchWhole(feed(fetch), params.artifacts.manifest);
       const sigFile = await fetchWhole(feed(fetch), params.artifacts.sig);
       const manifest = await verifyManagerManifest(
@@ -166,8 +168,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
         }),
       ),
     );
-    const moduleCost = manifest.worker.modules.length * ARTIFACT_FETCH_COST + 2;
-    await run("check release shape", 0, async ({ log }) => {
+    await run("check release shape", async ({ log }) => {
       const count = manifest.worker.modules.length;
       const tooMany = tooManyModulesMessage(count, "The release");
       if (tooMany !== null) throw new JobError(tooMany);
@@ -176,7 +177,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
     });
 
     // 2. Snapshot, before anything changes.
-    const deployed = await run("read current deployment", 1, async ({ log, cf }) => {
+    const deployed = await run("read current deployment", async ({ log, cf }) => {
       const versionId = activeVersionId(await cf().versions.listDeployments(workerName));
       if (versionId === null) {
         throw new JobError(
@@ -186,7 +187,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       log.info(`Version ${versionId} (Appflare ${params.fromVersion}) serves all traffic.`);
       return { versionId };
     });
-    const current = await run("read current bindings", 1, async ({ log, cf }) => {
+    const current = await run("read current bindings", async ({ log, cf }) => {
       const plan = selfUpdateBindings({
         current: await cf().workers.getBindings(workerName),
         manifest,
@@ -204,12 +205,12 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       });
       return { bindings: plan.bindings, databaseId: plan.databaseId };
     });
-    const bookmark = await run("bookmark Appflare database", 1, async ({ log, cf }) => {
+    const bookmark = await run("bookmark Appflare database", async ({ log, cf }) => {
       const got = await cf().d1.bookmark(current.databaseId);
       log.info(`Time Travel bookmark of Appflare's database: ${got.bookmark}.`);
       return { bookmark: got.bookmark };
     });
-    await run("record snapshot", 0, async ({ log, orm }) => {
+    await run("record snapshot", async ({ log, orm }) => {
       await orm
         .insert(snapshots)
         .values({
@@ -238,7 +239,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       workerName,
       params.artifacts.zip,
       manifest.assets.files,
-      feed,
+      releaseHost,
     );
     if (assetsJwt === null) {
       steps.current = "upload assets";
@@ -246,12 +247,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
     }
 
     // 4. The new version: every module in ONE multipart request.
-    const uploaded = await run("upload Worker version", moduleCost, async ({ log, fetch, cf }) => {
-      const modules = [];
-      for (const module of manifest.worker.modules) {
-        const got = await fetchArtifactFile(feed(fetch), params.artifacts.zip, module);
-        modules.push(uploadModule(module, got.bytes));
-      }
+    const uploaded = await run("upload Worker version", async ({ log }) => {
       const bindings: UploadBinding[] = [...current.bindings];
       if (manifest.assets.binding) bindings.push({ type: "assets", name: manifest.assets.binding });
       const metadata: VersionMetadata = {
@@ -276,20 +272,35 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       if (manifest.worker.limits) {
         metadata.limits = manifest.worker.limits as VersionMetadata["limits"];
       }
-      const result = await cf().versions.uploadVersion(workerName, { metadata, modules });
-      if (result.metadata?.has_preview === false) {
+      // Every module in ONE multipart request, read and uploaded by one unit.
+      const result = settleUnit(
+        await steps.units.api.uploadWorker({
+          accountId: steps.accountId(),
+          artifact: { zipUrl: params.artifacts.zip, host: releaseHost },
+          workerName,
+          modules: manifest.worker.modules,
+          metadata,
+          target: "version",
+        }),
+        log,
+      );
+      const versionId = result.versionId;
+      if (versionId === null) {
+        throw new JobError("Cloudflare did not report the id of the uploaded version");
+      }
+      if (result.hasPreview === false) {
         throw new JobError(
-          `Cloudflare serves no preview of version ${result.id}, so it cannot be checked before it serves traffic`,
+          `Cloudflare serves no preview of version ${versionId}, so it cannot be checked before it serves traffic`,
         );
       }
       log.info(
-        `Uploaded version ${result.id} (Appflare ${params.version}, ${modules.length} module(s)); it serves no traffic yet.`,
-        { versionId: result.id, bindings: bindings.map((b) => `${b.type} ${b.name}`) },
+        `Uploaded version ${versionId} (Appflare ${params.version}, ${result.modules} module(s)); it serves no traffic yet.`,
+        { versionId, bindings: bindings.map((b) => `${b.type} ${b.name}`) },
       );
-      return { versionId: result.id };
+      return { versionId };
     });
     uploadedVersionId = uploaded.versionId;
-    await run("record Worker version", 0, async ({ orm }) => {
+    await run("record Worker version", async ({ orm }) => {
       await orm
         .update(jobs)
         .set({ worker_version_id: uploaded.versionId })
@@ -299,7 +310,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
 
     // 5. Canary on the version's preview URL.
     const subdomain = await lookupSubdomainPhase(steps);
-    await run("enable version previews", 1, async ({ log, cf }) => {
+    await run("enable version previews", async ({ log, cf }) => {
       await cf().workers.enableSubdomain(workerName, { enabled: true, previews_enabled: true });
       log.info("Preview URLs are enabled for Appflare's Worker.");
       return {};
@@ -316,14 +327,14 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
     // 6. Promote: the last real step. The marker comes first: only a job
     // that reached this point can be completed by the new version (whose code
     // also served the canary above, before any switch).
-    await run("mark promotion", 0, async ({ orm }) => {
+    await run("mark promotion", async ({ orm }) => {
       await orm
         .update(jobs)
         .set({ promoting_version: params.version })
         .where(eq(jobs.id, params.jobId));
       return {};
     });
-    await run("promote version", 1, async ({ log, cf }) => {
+    await run("promote version", async ({ log, cf }) => {
       await cf().versions.createDeployment(workerName, {
         versions: [{ version_id: uploaded.versionId, percentage: 100 }],
         annotations: { "workers/message": `Appflare: self-update to ${params.version}` },

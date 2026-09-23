@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planBindings, resourceName } from "./bindings";
+import { PASSTHROUGH_BINDING_TYPES, planBindings, resourceName } from "./bindings";
 
 describe("resourceName", () => {
   it("is <workerName>-<binding lowercased, _ -> ->", () => {
@@ -83,5 +83,28 @@ describe("planBindings", () => {
     expect(plan.problems[0]).toMatch(/"hyperdrive"/);
     expect(plan.problems[1]).toMatch(/longer than 63/);
     expect(plan.problems[2]).toMatch(/another Worker/);
+  });
+});
+
+describe("service bindings in catalog apps", () => {
+  // An app must never be able to bind to another Worker in the account, and
+  // above all not to the manager: the manager serves its job units (which
+  // act with its account-wide API token) on the `JobUnits` entrypoint, so a
+  // `service` binding sent as recorded could point an app at them. Installs
+  // and updates both plan through `planBindings`, so refusing it here
+  // refuses it everywhere. Keep `service` out of the pass-through types.
+  it("never passes a service binding through", () => {
+    expect(PASSTHROUGH_BINDING_TYPES.has("service")).toBe(false);
+  });
+
+  it("refuses an app that declares one, whatever it points at", () => {
+    for (const binding of [
+      { type: "service", name: "SELF", service: "appflare", entrypoint: "JobUnits" },
+      { type: "service", name: "API", service: "other-worker" },
+    ]) {
+      expect(planBindings("cut", [binding]).problems).toEqual([
+        `Binding ${binding.name} has type "service", which Appflare cannot install yet.`,
+      ]);
+    }
   });
 });

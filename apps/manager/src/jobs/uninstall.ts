@@ -1,5 +1,5 @@
 import { NonRetryableError } from "cloudflare:workflows";
-import { CloudflareApiError, isAddressableObjectKey } from "@appflare/cf-api";
+import { CloudflareApiError } from "@appflare/cf-api";
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createDb } from "../db/client";
@@ -14,6 +14,8 @@ import { deleteResource, RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, isNotFound, JobError } from "./steps";
+import { settleUnit } from "./units/result";
+import { R2_PAGE_MAX_OBJECTS } from "./units/units";
 
 /**
  * The `uninstall` job. One API call per step, retried on 429/5xx like the
@@ -24,7 +26,8 @@ import { createJobSteps, errorMessage, isNotFound, JobError } from "./steps";
  * The Worker is deleted only when this install recorded it: an install that
  * failed before its upload never owned a Worker of that name, and the account
  * may hold someone else's. An R2 bucket must be empty before it can be
- * deleted, so its objects are listed and deleted a page per step first.
+ * deleted, so its objects are listed and deleted first, a page per step,
+ * each page one job unit (`emptyR2Page`).
  * Resources the admin kept were marked retained when the uninstall started
  * and are never touched.
  *
@@ -43,17 +46,33 @@ export const uninstallJobParams = z.object({
 export type UninstallJobParams = z.infer<typeof uninstallJobParams>;
 
 /**
- * R2 objects deleted per step: one list call plus one delete per object, well
- * inside the per-invocation subrequest budget.
+ * R2 objects deleted per step: one job unit lists a page and deletes each
+ * object on it (one subrequest per object, plus the list call). Over `SELF`
+ * the unit has an invocation of its own, so a page can be as large as a unit
+ * allows.
  */
-export const R2_OBJECTS_PER_STEP = 30;
+export const R2_OBJECTS_PER_STEP = R2_PAGE_MAX_OBJECTS;
 
 /**
- * Pages of R2 objects one run deletes (6,000 objects) before it stops and asks
- * for a retry, which continues where it stopped. This keeps a run well inside
- * the Workflows limit on steps per instance.
+ * R2 objects per page when the unit runs in the job's own invocation (a
+ * manager without the `SELF` binding): 31 subrequests, what a page always
+ * cost there, leaving the rest of the 50 to the job's other steps.
  */
-export const R2_MAX_PAGES_PER_RUN = 200;
+export const R2_OBJECTS_PER_LOCAL_STEP = 30;
+
+/**
+ * Pages of R2 objects one run deletes, across all buckets, before it stops
+ * and asks for a retry, which continues where it stopped. Every page is one
+ * call from the job's own invocation, whose subrequest limit (50 on Workers
+ * Free) the whole run shares, so a run stays well inside it (see
+ * units/client.ts). Without the `SELF` binding the page itself runs in the
+ * job's own invocation, so a run deletes one page
+ * ({@link R2_MAX_LOCAL_PAGES_PER_RUN}).
+ */
+export const R2_MAX_PAGES_PER_RUN = 20;
+
+/** Pages one run deletes without the `SELF` binding. */
+export const R2_MAX_LOCAL_PAGES_PER_RUN = 1;
 
 interface Target {
   id: string;
@@ -71,7 +90,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
   const { run, now } = steps;
 
   try {
-    const started = await run("start", 0, async ({ log, orm }) => {
+    const started = await run("start", async ({ log, orm }) => {
       await orm
         .update(jobs)
         .set({ status: "running", started_at: new Date(now()) })
@@ -132,7 +151,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
 
     const workerStep =
       started.worker === "live" ? `delete Worker ${workerName}` : `skip Worker ${workerName}`;
-    await run(workerStep, started.worker === "live" ? 1 : 0, async ({ log, cf, orm }) => {
+    await run(workerStep, async ({ log, cf, orm }) => {
       if (started.worker === "live") {
         try {
           await cf().workers.deleteScript(workerName, { force: true });
@@ -164,6 +183,11 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       return {};
     });
 
+    /** R2 pages this run deleted, and the objects on them. */
+    let r2Pages = 0;
+    let r2Deleted = 0;
+    const r2PageLimit = steps.units.remote ? R2_MAX_PAGES_PER_RUN : R2_MAX_LOCAL_PAGES_PER_RUN;
+    const r2PerPage = steps.units.remote ? R2_OBJECTS_PER_STEP : R2_OBJECTS_PER_LOCAL_STEP;
     for (const target of started.targets) {
       const label = RESOURCE_LABEL[target.kind];
       if (target.kind === "r2") {
@@ -172,58 +196,32 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         // start again. A first key seen twice means a delete did not take.
         let previousFirst: string | null = null;
         for (let page = 1; ; page++) {
-          if (page > R2_MAX_PAGES_PER_RUN) {
+          if (r2Pages >= r2PageLimit) {
             steps.current = `empty ${label} ${target.name}`;
             throw new JobError(
-              `deleted ${R2_MAX_PAGES_PER_RUN * R2_OBJECTS_PER_STEP} objects from ${target.name} and more remain; retry the uninstall to continue`,
+              `one run deletes at most ${r2PageLimit * r2PerPage} R2 objects (${r2PageLimit} page(s) of ${r2PerPage}); this run deleted ${r2Deleted}, and ${target.name} ${page === 1 ? "is not emptied yet" : "still holds more"}. Retry the uninstall to continue`,
             );
           }
-          const emptied = await run(
-            `empty ${label} ${target.name} page ${page}`,
-            1 + R2_OBJECTS_PER_STEP,
-            async ({ log, cf }) => {
-              const api = cf();
-              let listed: Awaited<ReturnType<typeof api.r2.listObjects>>;
-              try {
-                listed = await api.r2.listObjects(bucket, { perPage: R2_OBJECTS_PER_STEP });
-              } catch (error) {
-                if (!isNotFound(error)) throw error;
-                log.info(`${label} "${target.name}" was already gone.`);
-                return { more: false, first: null };
-              }
-              const first = listed.items[0]?.key ?? null;
-              if (first !== null && first === previousFirst) {
-                throw new JobError(
-                  `the object "${first}" is still listed after it was deleted; retry the uninstall in a minute`,
-                );
-              }
-              const unreachable = listed.items.find((o) => !isAddressableObjectKey(o.key));
-              if (unreachable !== undefined) {
-                throw new JobError(
-                  `the object "${unreachable.key}" cannot be deleted through the Cloudflare API because its key has a "." or ".." path segment; delete it with the S3 API, or retry the uninstall and keep this bucket`,
-                );
-              }
-              for (const object of listed.items) {
-                try {
-                  await api.r2.deleteObject(bucket, object.key);
-                } catch (error) {
-                  if (!isNotFound(error)) throw error;
-                }
-              }
-              log.info(
-                listed.items.length === 0
-                  ? `${label} "${target.name}" is empty.`
-                  : `Deleted ${listed.items.length} object(s) from ${label} "${target.name}".`,
-              );
-              return { more: listed.items.length > 0 && listed.cursor !== null, first };
-            },
+          r2Pages += 1;
+          const emptied = await run(`empty ${label} ${target.name} page ${page}`, async ({ log }) =>
+            settleUnit(
+              await steps.units.api.emptyR2Page({
+                accountId: steps.accountId(),
+                bucket,
+                name: target.name,
+                perPage: r2PerPage,
+                previousFirst,
+              }),
+              log,
+            ),
           );
+          r2Deleted += emptied.deleted;
           if (!emptied.more) break;
           previousFirst = emptied.first;
         }
       }
 
-      await run(`delete ${label} ${target.name}`, 1, async ({ log, cf, orm }) => {
+      await run(`delete ${label} ${target.name}`, async ({ log, cf, orm }) => {
         try {
           if (await deleteResource(cf(), target)) log.info(`Deleted ${label} "${target.name}".`);
           else {
@@ -250,7 +248,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       });
     }
 
-    await run("finish", 0, async ({ log, orm }) => {
+    await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
       await orm.batch([
         orm

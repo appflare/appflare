@@ -6,7 +6,6 @@ import {
   assetStepCost,
   planAssetParts,
 } from "./asset-parts";
-import { SUBREQUEST_BUDGET } from "./budget";
 
 /** `count` files of `size` bytes, `gap` bytes apart, in shuffled order. */
 function files(count: number, size: number, gap = 30): AssetFile[] {
@@ -21,8 +20,8 @@ function files(count: number, size: number, gap = 30): AssetFile[] {
   return out.reverse();
 }
 
-/** The step runner adds up to 3 D1 calls (its log write) to each step's estimate. */
-const D1_PER_STEP = 3;
+/** Every job unit stays under this many subrequests per call. */
+const UNIT_LIMIT = 40;
 
 describe("planAssetParts", () => {
   it("keeps a bucket of 30 small files in one step: one range, one redirect, one upload", () => {
@@ -35,12 +34,12 @@ describe("planAssetParts", () => {
     );
   });
 
-  it("splits single-file uploads so no step passes the budget", () => {
+  it("splits single-file uploads so no part passes the unit limit", () => {
     const parts = planAssetParts(files(80, 2_000), true);
     expect(parts.map((p) => p.files.length)).toEqual([34, 34, 12]);
     for (const part of parts) {
       expect(part.subrequests).toBe(assetStepCost(1, part.files.length, true));
-      expect(part.subrequests + D1_PER_STEP).toBeLessThanOrEqual(SUBREQUEST_BUDGET);
+      expect(part.subrequests).toBeLessThan(UNIT_LIMIT);
     }
   });
 

@@ -10,11 +10,14 @@ import {
   type StartUninstallRequest,
   startUninstallCore,
 } from "../installs/start-uninstall.server";
+import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import type { JobEnv } from "./run-job";
 import { API_STEP } from "./steps";
 import {
+  R2_MAX_LOCAL_PAGES_PER_RUN,
   R2_MAX_PAGES_PER_RUN,
+  R2_OBJECTS_PER_LOCAL_STEP,
   R2_OBJECTS_PER_STEP,
   runUninstall,
   type UninstallJobParams,
@@ -193,15 +196,21 @@ async function start(request: StartUninstallRequest) {
   return { jobId, params: params as UninstallJobParams };
 }
 
-async function uninstall(request: StartUninstallRequest, fake: ReturnType<typeof fakeWorld>) {
+async function uninstall(
+  request: StartUninstallRequest,
+  fake: ReturnType<typeof fakeWorld>,
+  /** `local`: a manager without the `SELF` binding runs the units in the job's invocation. */
+  units: "self" | "local" = "self",
+) {
   const { jobId, params } = await start(request);
   const step = fakeStep();
+  const self = fakeSelf(jobEnv(), { fetch: fake.fetch, now: () => NOW });
   let error: unknown = null;
   try {
     await runUninstall({
       params,
       step,
-      env: jobEnv(),
+      env: units === "self" ? { ...jobEnv(), SELF: self } : jobEnv(),
       deps: { fetch: fake.fetch, now: () => NOW },
     });
   } catch (e) {
@@ -229,7 +238,7 @@ async function uninstall(request: StartUninstallRequest, fake: ReturnType<typeof
       .bind(jobId)
       .all<{ level: string; message: string; data_json: string | null }>()
   ).results;
-  return { jobId, params, step, error, job, install, state, logs };
+  return { jobId, params, step, self, error, job, install, state, logs };
 }
 
 beforeEach(async () => {
@@ -265,8 +274,13 @@ describe("uninstall job", () => {
       "finish",
     ]);
     expect(r.step.configs.every((c) => c === API_STEP)).toBe(true);
-    // Each page of object deletions starts in a fresh invocation.
-    expect(r.step.sleeps.filter((s) => s.startsWith("budget")).length).toBeGreaterThanOrEqual(1);
+    // Each page of object deletions is one unit call over SELF, in its own invocation.
+    expect(r.step.sleeps).toEqual([]);
+    expect(r.self.calls.map((c) => c.unit)).toEqual(["emptyR2Page", "emptyR2Page"]);
+    for (const call of r.self.calls) {
+      expect(call.subrequests).toBeLessThan(40);
+      expect(call.reported).toBe(call.subrequests);
+    }
     expect(fake.world.calls).toContain(`DELETE /workers/scripts/cut?force=true`);
     expect(fake.world.calls).toContain(
       `GET /r2/buckets/cut-files/objects?per_page=${R2_OBJECTS_PER_STEP}`,
@@ -376,9 +390,58 @@ describe("uninstall job", () => {
       R2_MAX_PAGES_PER_RUN,
     );
     expect(r.job?.error).toBe(
-      `empty R2 bucket cut-files: deleted ${R2_MAX_PAGES_PER_RUN * R2_OBJECTS_PER_STEP} objects from cut-files and more remain; retry the uninstall to continue`,
+      `empty R2 bucket cut-files: one run deletes at most ${R2_MAX_PAGES_PER_RUN * R2_OBJECTS_PER_STEP} R2 objects (${R2_MAX_PAGES_PER_RUN} page(s) of ${R2_OBJECTS_PER_STEP}); this run deleted ${R2_MAX_PAGES_PER_RUN * R2_OBJECTS_PER_STEP}, and cut-files still holds more. Retry the uninstall to continue`,
     );
     expect(r.install?.status).toBe("uninstalling");
+    // A full page is one list call and one delete per object: under 40 per unit call.
+    expect(new Set(r.self.calls.map((c) => c.subrequests))).toEqual(
+      new Set([1 + R2_OBJECTS_PER_STEP]),
+    );
+    expect(1 + R2_OBJECTS_PER_STEP).toBeLessThan(40);
+  });
+
+  it("deletes one page of 30 per run when the Worker has no SELF binding", async () => {
+    await seedInstall();
+    const fake = fakeWorld({ endless: true });
+    const r = await uninstall({ installId: "i1", deleteResources: ["r2"] }, fake, "local");
+    expect(r.self.calls).toEqual([]);
+    expect(R2_MAX_LOCAL_PAGES_PER_RUN).toBe(1);
+    expect(r.step.names.filter((n) => n.startsWith("empty R2 bucket"))).toEqual([
+      "empty R2 bucket cut-files page 1",
+    ]);
+    // What a page cost before job units: one list and 30 deletes in the job's invocation.
+    expect(fake.world.calls).toContain(
+      `GET /r2/buckets/cut-files/objects?per_page=${R2_OBJECTS_PER_LOCAL_STEP}`,
+    );
+    expect(
+      fake.world.calls.filter((c) => c.startsWith("DELETE /r2/buckets/cut-files/objects/")),
+    ).toHaveLength(R2_OBJECTS_PER_LOCAL_STEP);
+    expect(r.job?.error).toBe(
+      `empty R2 bucket cut-files: one run deletes at most ${R2_OBJECTS_PER_LOCAL_STEP} R2 objects (1 page(s) of ${R2_OBJECTS_PER_LOCAL_STEP}); this run deleted ${R2_OBJECTS_PER_LOCAL_STEP}, and cut-files still holds more. Retry the uninstall to continue`,
+    );
+  });
+
+  it("names a bucket it has not reached as not emptied yet when the cap stops the run", async () => {
+    await seedInstall();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('r2b', 'i1', 'r2', 'MORE', 'cut-more', 'cut-more', 1)`,
+    ).run();
+    const fake = fakeWorld({
+      r2: new Map([
+        ["cut-files", ["a.txt"]],
+        ["cut-more", ["b.txt"]],
+      ]),
+    });
+    const r = await uninstall({ installId: "i1", deleteResources: ["r2", "r2b"] }, fake, "local");
+    expect(r.step.names.filter((n) => n.startsWith("empty R2 bucket"))).toEqual([
+      "empty R2 bucket cut-files page 1",
+    ]);
+    expect(r.job?.error).toBe(
+      `empty R2 bucket cut-more: one run deletes at most ${R2_OBJECTS_PER_LOCAL_STEP} R2 objects (1 page(s) of ${R2_OBJECTS_PER_LOCAL_STEP}); this run deleted 1, and cut-more is not emptied yet. Retry the uninstall to continue`,
+    );
+    expect(r.state("r2")).toBe("deleted");
+    expect(r.state("r2b")).toBe("live");
   });
 
   it("refuses an object key it cannot address rather than deleting another one", async () => {

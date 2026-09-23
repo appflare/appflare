@@ -42,6 +42,16 @@
       "class_name": "JobWorkflow"
     }
   ],
+  // The manager's own job units (src/jobs/units), reached over RPC so each call
+  // runs in a fresh invocation with its own subrequest limit. `service` is this
+  // Worker's own name; an install under another name binds that name instead.
+  "services": [
+    {
+      "binding": "SELF",
+      "service": "appflare",
+      "entrypoint": "JobUnits"
+    }
+  ],
   "assets": {
     "binding": "ASSETS",
     // The client build output. The Vite plugin overwrites this with the resolved

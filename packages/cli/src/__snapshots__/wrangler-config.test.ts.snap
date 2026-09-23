@@ -46,6 +46,13 @@ exports[`buildWranglerConfig > matches the snapshot for the default name 1`] = `
     },
   ],
   "send_metrics": false,
+  "services": [
+    {
+      "binding": "SELF",
+      "entrypoint": "JobUnits",
+      "service": "appflare",
+    },
+  ],
   "triggers": {
     "crons": [
       "*/30 * * * *",
