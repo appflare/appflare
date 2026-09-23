@@ -1,6 +1,7 @@
 import { type ArtifactManifest, hasFixedWorkerName, type IndexApp } from "@appflare/schema";
 import { and, eq, ne, or } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { requirementLabel } from "../catalog/requirements";
 import { createDb } from "../db/client";
 import { installs, jobs } from "../db/schema";
 import type { InstallJobParams } from "../jobs/install";
@@ -73,6 +74,11 @@ export function resolveInstallInput(
   if (catalog.plan === "paid" && !input.paidConfirmed) {
     throw new StartInstallError(
       `${catalog.name} needs Workers Paid. Confirm that this account is on Workers Paid.`,
+    );
+  }
+  if (catalog.requires.length > 0 && !input.requirementsConfirmed) {
+    throw new StartInstallError(
+      `${catalog.name} needs: ${catalog.requires.map(requirementLabel).join(", ")}. Confirm that this account meets these requirements.`,
     );
   }
   const declaredSecrets = new Set(catalog.secrets.map((s) => s.name));
@@ -154,6 +160,7 @@ export async function startInstallCore(
     secrets: Object.keys(resolved.secrets),
     vars: resolved.vars,
     paidConfirmed: input.paidConfirmed,
+    requirementsConfirmed: input.requirementsConfirmed,
   });
   const [, claimed] = await deps.db.batch([
     deps.db
@@ -238,6 +245,7 @@ export async function startInstallCore(
     secrets: resolved.secrets,
     vars: resolved.vars,
     paidConfirmed: input.paidConfirmed,
+    requirementsConfirmed: input.requirementsConfirmed,
   };
   let instanceId: string;
   try {

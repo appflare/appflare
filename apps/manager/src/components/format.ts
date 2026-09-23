@@ -26,18 +26,7 @@ export function formatBytes(bytes: number): string {
 }
 
 /** Catalog `requires` values as product names. */
-export const REQUIREMENT_LABELS: Record<string, string> = {
-  r2: "R2",
-  zone: "A zone on this account",
-  "email-routing": "Email Routing",
-  "workers-ai": "Workers AI",
-  "browser-rendering": "Browser Rendering",
-  containers: "Containers",
-};
-
-export function requirementLabel(value: string): string {
-  return REQUIREMENT_LABELS[value] ?? value;
-}
+export { requirementLabel } from "../catalog/requirements";
 
 /** `resources.kind` values as product names. */
 export const RESOURCE_KIND_LABELS: Record<string, string> = {

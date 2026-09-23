@@ -60,6 +60,7 @@ describe("JobWorkflow install", () => {
         secrets: { ADMIN_PASSWORD: "x".repeat(32) },
         vars: {},
         paidConfirmed: false,
+        requirementsConfirmed: false,
       },
     );
     expect(ids.jobId).toBe(jobId);

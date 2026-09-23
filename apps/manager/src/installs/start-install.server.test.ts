@@ -37,6 +37,7 @@ const input = (over: Partial<StartInstallInput> = {}): StartInstallInput => ({
   secrets: { ADMIN_PASSWORD: "hunter2-hunter2" },
   vars: { HOME_PAGE: "admin" },
   paidConfirmed: false,
+  requirementsConfirmed: false,
   ...over,
 });
 
@@ -288,6 +289,32 @@ describe("startInstallCore", () => {
       input({ paidConfirmed: true, vars: { REGION: " eu " } }),
     );
     expect(ok.vars).toEqual({ REGION: "eu" });
+  });
+
+  it("refuses an app with account requirements until they are confirmed", async () => {
+    const f = await buildArtifactFixture({ catalog: { requires: ["r2", "zone"] } });
+    expect(() => resolveInstallInput(f.manifest, input())).toThrow(
+      "Cut needs: R2, A zone on this account. Confirm that this account meets these requirements.",
+    );
+    expect(() =>
+      resolveInstallInput(f.manifest, input({ requirementsConfirmed: true })),
+    ).not.toThrow();
+
+    const h = harness(f);
+    await expect(startInstallCore(h.deps, input())).rejects.toBeInstanceOf(StartInstallError);
+    expect(h.created).toHaveLength(0);
+    const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM installs").first<{ n: number }>();
+    expect(rows?.n).toBe(0);
+
+    await startInstallCore(h.deps, input({ requirementsConfirmed: true }));
+    expect(h.created[0]?.params.requirementsConfirmed).toBe(true);
+    const job = await env.DB.prepare("SELECT input_json FROM jobs").first<{ input_json: string }>();
+    expect(JSON.parse(job?.input_json ?? "{}").requirementsConfirmed).toBe(true);
+  });
+
+  it("does not ask for the confirmation when the app has no account requirements", async () => {
+    const f = await buildArtifactFixture();
+    expect(() => resolveInstallInput(f.manifest, input())).not.toThrow();
   });
 
   it("marks the job and install failed when the Workflow instance cannot be created", async () => {

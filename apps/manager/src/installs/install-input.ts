@@ -44,6 +44,12 @@ export const startInstallInput = z.object({
   secrets: z.record(z.string().max(200), z.string().max(MAX_VALUE_LENGTH)),
   vars: z.record(z.string().max(200), z.string().max(MAX_VALUE_LENGTH)),
   paidConfirmed: z.boolean(),
+  /**
+   * The admin confirmed the account meets the app's `requires` (R2 enabled, a
+   * zone, and so on). Refused when the app lists requirements and this is not
+   * true. Defaults to false for a client that predates the field.
+   */
+  requirementsConfirmed: z.boolean().default(false),
 });
 export type StartInstallInput = z.infer<typeof startInstallInput>;
 

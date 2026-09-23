@@ -51,6 +51,9 @@ interface FakeState {
   failAfter: Set<string>;
   /** When set, the script upload is refused with this status. */
   uploadStatus?: number;
+  r2: string[];
+  /** False: every R2 call is refused the way Cloudflare refuses an account without R2. */
+  r2Enabled: boolean;
 }
 
 function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
@@ -75,6 +78,8 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     ],
     workflows: [],
     failAfter: new Set(),
+    r2: [],
+    r2Enabled: true,
     ...over,
   };
   const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
@@ -104,7 +109,27 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         { status: 403 },
       );
     }
+    if (path.startsWith("/r2/") && !state.r2Enabled) {
+      return Response.json(
+        {
+          success: false,
+          errors: [{ code: 10042, message: "Please enable R2 through the Cloudflare Dashboard." }],
+        },
+        { status: 403 },
+      );
+    }
     switch (key) {
+      case "GET /r2/buckets": {
+        const contains = url.searchParams.get("name_contains") ?? "";
+        return ok({
+          buckets: state.r2.filter((n) => n.includes(contains)).map((name) => ({ name })),
+        });
+      }
+      case "POST /r2/buckets": {
+        const { name } = (await request.json()) as { name: string };
+        state.r2.push(name);
+        return ok({ name });
+      }
       case "GET /tokens/verify":
         return ok({ id: "t", status: "active" });
       case "GET /workers/scripts":
@@ -229,6 +254,7 @@ async function start(fixture: ArtifactFixture, over: Partial<StartInstallInput> 
       secrets: { ADMIN_PASSWORD: PASSWORD },
       vars: { HOME_PAGE: "admin" },
       paidConfirmed: false,
+      requirementsConfirmed: false,
       ...over,
     },
   );
@@ -236,10 +262,17 @@ async function start(fixture: ArtifactFixture, over: Partial<StartInstallInput> 
   return { ...ids, params: params as InstallJobParams };
 }
 
-async function install(options: ArtifactFixtureOptions = {}, world: Partial<FakeState> = {}) {
+async function install(
+  options: ArtifactFixtureOptions = {},
+  world: Partial<FakeState> = {},
+  input: Partial<StartInstallInput> = {},
+  paramsOver: Partial<InstallJobParams> = {},
+) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeWorld(fixture, world);
-  const { params, jobId, installId } = await start(fixture);
+  const started = await start(fixture, input);
+  const { jobId, installId } = started;
+  const params = { ...started.params, ...paramsOver };
   const step = fakeStep();
   let error: unknown = null;
   try {
@@ -524,6 +557,60 @@ describe("install job", () => {
     expect(r.resources).toEqual([
       { kind: "kv", binding: "CUT_KV", name: "cut-cut-kv", cf_id: "kv-1" },
     ]);
+  });
+
+  describe("an app that requires R2", () => {
+    const r2App: ArtifactFixtureOptions = {
+      catalog: { requires: ["r2"] },
+      bindings: [
+        { type: "kv_namespace", name: "CUT_KV" },
+        { type: "r2_bucket", name: "FILES" },
+      ],
+    };
+
+    it("creates and records the bucket, and logs the confirmed requirement", async () => {
+      const r = await install(r2App, {}, { requirementsConfirmed: true });
+      expect(r.error).toBeNull();
+      expect(r.fake.state.r2).toEqual(["cut-files"]);
+      expect(r.resources).toContainEqual({
+        kind: "r2",
+        binding: "FILES",
+        name: "cut-files",
+        cf_id: "cut-files",
+      });
+      const messages = r.logs.map((l) => l.message);
+      expect(messages).toContain(
+        "Requires R2: R2 must be enabled on the account, which needs a payment method on file even on the free tier.",
+      );
+      expect(messages).toContain("The admin confirmed this account meets these requirements.");
+      expect(messages).toContain("R2 is enabled on this account.");
+    });
+
+    it("stops before creating anything when R2 is not enabled, and says what to do", async () => {
+      const r = await install(r2App, { r2Enabled: false }, { requirementsConfirmed: true });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        "check R2 is enabled: R2 is not enabled on this Cloudflare account, so the R2 bucket cut-files cannot be created. Enable R2 in the Cloudflare dashboard under R2 Object Storage. Cloudflare asks for a payment method on file before enabling R2, even though its free tier costs nothing. Then try again.",
+      );
+      expect(r.installRow?.status).toBe("failed");
+      expect(r.resources).toEqual([]);
+      expect(r.fake.state.calls).not.toContain("POST /storage/kv/namespaces");
+      // Not retried: the refusal is a 4xx.
+      expect(r.fake.state.calls.filter((c) => c === "GET /r2/buckets")).toHaveLength(1);
+    });
+
+    it("refuses a job whose requirements were explicitly not confirmed", async () => {
+      const r = await install(
+        r2App,
+        {},
+        { requirementsConfirmed: true },
+        { requirementsConfirmed: false },
+      );
+      expect(r.job?.error).toBe(
+        "preflight checks: this app needs R2; confirm the account meets these requirements to install it",
+      );
+      expect(r.fake.state.calls).toEqual([]);
+    });
   });
 
   it("rejects an artifact whose manifest does not match the catalog digest", async () => {

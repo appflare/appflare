@@ -36,6 +36,7 @@ import {
 } from "./health";
 import type { CreatedResource } from "./metadata";
 import { assetContentType } from "./mime";
+import { explainR2Refusal } from "./r2-enablement";
 import { createResource, findResource, RESOURCE_LABEL } from "./resources";
 
 /**
@@ -153,8 +154,11 @@ export async function provisionResourcePhase(
   res: ResourceBindingPlan,
 ): Promise<CreatedResource> {
   const label = RESOURCE_LABEL[res.kind];
+  // An account without R2 refuses every R2 call; say so instead of the raw error.
+  const explain = <T>(call: () => Promise<T>): Promise<T> =>
+    res.kind === "r2" ? explainR2Refusal(res.name, call) : call();
   await steps.run(`check ${label} ${res.name}`, 3, async ({ log, cf }) => {
-    if ((await findResource(cf(), res)) !== null) {
+    if ((await explain(() => findResource(cf(), res))) !== null) {
       throw new JobError(
         `a ${label} named ${res.name} already exists in this account; Appflare does not adopt existing resources`,
       );
@@ -168,7 +172,7 @@ export async function provisionResourcePhase(
     // The check step saw no such name, so on a retry a resource with this name
     // is the one this step's own earlier attempt created before it failed.
     if (attempt > 1) {
-      const existing = await findResource(api, res);
+      const existing = await explain(() => findResource(api, res));
       if (existing !== null) {
         log.info(`Found the ${label} "${res.name}" an earlier attempt created.`, {
           id: existing,
@@ -176,7 +180,7 @@ export async function provisionResourcePhase(
         return { cfId: existing };
       }
     }
-    const cfId = await createResource(api, res);
+    const cfId = await explain(() => createResource(api, res));
     log.info(`Created ${label} "${res.name}" for binding ${res.binding}.`, { id: cfId });
     return { cfId };
   });

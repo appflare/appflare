@@ -10,6 +10,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
+import { requirementLabel, requirementSentence } from "../catalog/requirements";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -37,6 +38,7 @@ import {
   uploadAssetsPhase,
   verifyManifestPhase,
 } from "./install/phases";
+import { explainR2Refusal } from "./install/r2-enablement";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
@@ -66,6 +68,11 @@ export const installJobParams = z.object({
   secrets: z.record(z.string(), z.string()),
   vars: z.record(z.string(), z.string()),
   paidConfirmed: z.boolean(),
+  /**
+   * The admin confirmed the account meets the app's `requires`. Optional
+   * because a job started by an earlier manager version does not carry it.
+   */
+  requirementsConfirmed: z.boolean().optional(),
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
 
@@ -125,10 +132,21 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           "this app needs Workers Paid; confirm the account is on Workers Paid to install it",
         );
       }
-      for (const requirement of manifest.catalog.requires) {
-        log.warn(
-          `This app requires "${requirement}". Appflare does not check the account for it; the install fails later if it is missing.`,
-        );
+      const { requires } = manifest.catalog;
+      if (requires.length > 0) {
+        if (params.requirementsConfirmed === false) {
+          throw new InstallError(
+            `this app needs ${requires.map(requirementLabel).join(", ")}; confirm the account meets these requirements to install it`,
+          );
+        }
+        for (const requirement of requires) {
+          log.info(
+            `Requires ${requirementLabel(requirement)}: ${requirementSentence(requirement) ?? "see the app's catalog page."}`,
+          );
+        }
+        if (params.requirementsConfirmed === true) {
+          log.info("The admin confirmed this account meets these requirements.");
+        }
       }
       if (plan.problems.length > 0) throw new InstallError(plan.problems.join(" "));
       // The upload fetches every module in one invocation; refuse before
@@ -204,6 +222,19 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     });
 
     for (const wf of plan.workflows) await checkWorkflowNamePhase(steps, wf);
+
+    // An account without R2 refuses every R2 call. Ask once before creating
+    // anything, so that failure leaves nothing behind to clean up.
+    const firstBucket = plan.resources.find((r) => r.kind === "r2");
+    if (firstBucket !== undefined) {
+      await run("check R2 is enabled", 1, async ({ log, cf }) => {
+        await explainR2Refusal(firstBucket.name, () =>
+          cf().r2.listBuckets({ nameContains: params.workerName }),
+        );
+        log.info("R2 is enabled on this account.");
+        return {};
+      });
+    }
 
     // 3. Resources: check the name is free, create, then record.
     const created: CreatedResource[] = [];

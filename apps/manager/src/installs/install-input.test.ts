@@ -15,6 +15,17 @@ describe("WORKER_NAME_PATTERN", () => {
   });
 });
 
+describe("requirementsConfirmed", () => {
+  const base = { slug: "cut", workerName: "cut", secrets: {}, vars: {}, paidConfirmed: false };
+
+  it("defaults to false for a client that does not send it", () => {
+    expect(startInstallInput.parse(base).requirementsConfirmed).toBe(false);
+    expect(
+      startInstallInput.parse({ ...base, requirementsConfirmed: true }).requirementsConfirmed,
+    ).toBe(true);
+  });
+});
+
 describe("instanceName", () => {
   const base = { slug: "cut", workerName: "cut", secrets: {}, vars: {}, paidConfirmed: false };
 

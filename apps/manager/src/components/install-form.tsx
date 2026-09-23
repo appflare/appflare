@@ -15,7 +15,9 @@ import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fie
 /**
  * The install form of `/catalog/$slug`, generated from
  * the signed catalog manifest: the Worker name, the install's label, one field
- * per secret and var, and the Workers Paid confirmation. `generate: true`
+ * per secret and var, and the Workers Paid confirmation. The confirmation of
+ * the app's account requirements is a checkbox in the page's prerequisites
+ * callout; it arrives here as `requirementsConfirmed`. `generate: true`
  * secrets are prefilled with a random value the admin can copy now; it is
  * shown only here. Members see the form disabled.
  */
@@ -25,6 +27,7 @@ export function InstallForm({
   defaultWorkerName,
   fixedWorkerName,
   blockedReason,
+  requirementsConfirmed,
 }: {
   catalog: CatalogManifest;
   canInstall: boolean;
@@ -34,6 +37,8 @@ export function InstallForm({
   fixedWorkerName: boolean;
   /** Why the install is not possible right now (for example, already installed). */
   blockedReason: string | null;
+  /** The admin ticked "This account meets these requirements" (only asked when `requires` is not empty). */
+  requirementsConfirmed: boolean;
 }) {
   const router = useRouter();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
@@ -57,7 +62,12 @@ export function InstallForm({
   const missing =
     !secretsComplete(catalog.secrets, secrets) ||
     catalog.vars.some((v) => v.required && (vars[v.name] ?? "").trim().length === 0);
-  const ready = nameValid && labelValid && !missing && (catalog.plan !== "paid" || paidConfirmed);
+  const ready =
+    nameValid &&
+    labelValid &&
+    !missing &&
+    (catalog.plan !== "paid" || paidConfirmed) &&
+    (catalog.requires.length === 0 || requirementsConfirmed);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -73,6 +83,7 @@ export function InstallForm({
           secrets,
           vars,
           paidConfirmed,
+          requirementsConfirmed,
         },
       });
       await router.navigate({ to: "/jobs/$jobId", params: { jobId } });

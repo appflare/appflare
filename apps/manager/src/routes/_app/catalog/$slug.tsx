@@ -1,4 +1,14 @@
-import { Badge, Banner, Empty, LayerCard, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
+import {
+  Badge,
+  Banner,
+  Checkbox,
+  Empty,
+  LayerCard,
+  Link,
+  LinkButton,
+  Table,
+  Text,
+} from "@cloudflare/kumo";
 import {
   ArrowLeftIcon,
   StorefrontIcon,
@@ -6,18 +16,21 @@ import {
   WarningIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
+import { requirementLabel, requirementSentence } from "../../../catalog/requirements";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
-import { formatDateTime, requirementLabel, resourceKindLabel } from "../../../components/format";
+import { formatDateTime, resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
 import { PlanBadge, StatusBadge } from "../../../components/status-badge";
 
 /**
  * `/catalog/$slug`: app detail, prerequisites, the Cloudflare token the app
- * needs for itself (if any), the installs of this app, and the install form (an app may be installed several times under different
- * Worker names, unless its Worker name is fixed).
+ * needs for itself (if any), the installs of this app, and the install form (an
+ * app may be installed several times under different Worker names, unless its
+ * Worker name is fixed). When the app lists account requirements, the admin
+ * confirms them in the prerequisites callout before the Install button enables.
  */
 export const Route = createFileRoute("/_app/catalog/$slug")({
   loader: ({ params }) => getCatalogEntry({ data: { slug: params.slug } }),
@@ -43,6 +56,7 @@ function CatalogEntryPage() {
   const detail = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   const { slug } = Route.useParams();
+  const [requirementsConfirmed, setRequirementsConfirmed] = useState(false);
   const back = (
     <LinkButton href="/catalog" variant="ghost" icon={<ArrowLeftIcon />}>
       Catalog
@@ -71,11 +85,28 @@ function CatalogEntryPage() {
   }
 
   const { app, catalog } = detail;
+  const canInstall = viewer.role === "admin";
+  const blockedReason =
+    detail.fixedWorkerName && detail.instances[0] !== undefined
+      ? `${app.name} is already installed as "${detail.instances[0].workerName}". It only works under one Worker name, so it installs once per account.`
+      : null;
+  const installable = catalog !== null && detail.suggestedWorkerName !== null;
   return (
     <>
       <PageHeader title={app.name} description={app.summary} actions={back} />
       <AboutCard detail={detail} />
-      <Prerequisites detail={detail} />
+      <Prerequisites
+        detail={detail}
+        confirmation={
+          installable
+            ? {
+                checked: requirementsConfirmed,
+                onChange: setRequirementsConfirmed,
+                disabled: !canInstall || blockedReason !== null,
+              }
+            : null
+        }
+      />
       {catalog !== null && (
         <AppTokenPermissions appName={app.name} permissions={catalog.tokenPermissions} />
       )}
@@ -93,14 +124,11 @@ function CatalogEntryPage() {
           // A new suggestion (after another install) resets the form.
           key={detail.suggestedWorkerName}
           catalog={catalog}
-          canInstall={viewer.role === "admin"}
+          canInstall={canInstall}
           defaultWorkerName={detail.suggestedWorkerName}
           fixedWorkerName={detail.fixedWorkerName}
-          blockedReason={
-            detail.fixedWorkerName && detail.instances[0] !== undefined
-              ? `${app.name} is already installed as "${detail.instances[0].workerName}". It only works under one Worker name, so it installs once per account.`
-              : null
-          }
+          blockedReason={blockedReason}
+          requirementsConfirmed={requirementsConfirmed}
         />
       )}
     </>
@@ -190,33 +218,63 @@ function Instances({ detail }: { detail: CatalogDetail }) {
   );
 }
 
-/** Plan, account requirements, and what the install creates. */
-function Prerequisites({ detail }: { detail: CatalogDetail }) {
+interface RequirementsConfirmation {
+  checked: boolean;
+  onChange(checked: boolean): void;
+  disabled: boolean;
+}
+
+/**
+ * Plan, account requirements, and what the install creates. Each requirement
+ * gets one sentence; `confirmation` (shown only when the install form is)
+ * holds the checkbox that enables the Install button.
+ */
+function Prerequisites({
+  detail,
+  confirmation,
+}: {
+  detail: CatalogDetail;
+  confirmation: RequirementsConfirmation | null;
+}) {
   const { app } = detail;
   if (app === null) return null;
   const creates = [
     ...detail.creates.map((c) => `${resourceKindLabel(c.kind)} for ${c.binding}`),
     ...detail.durableObjects.map((d) => `Durable Object class ${d}`),
   ];
+  const paid = app.plan === "paid";
   return (
     <div className="grid gap-3">
-      {(app.plan === "paid" || app.requires.length > 0) && (
+      {(paid || app.requires.length > 0) && (
         <Banner
           variant="alert"
           icon={<WarningIcon weight="fill" />}
           title="Before you install"
           description={
-            <span className="grid gap-1">
-              {app.plan === "paid" && (
-                <span>This app needs the Workers Paid plan on this account.</span>
-              )}
+            <div className="grid gap-2">
+              {paid && <span>This app needs the Workers Paid plan on this account.</span>}
               {app.requires.length > 0 && (
-                <span>
-                  It also needs: {app.requires.map(requirementLabel).join(", ")}. Appflare does not
-                  check these; the install fails if one is missing.
-                </span>
+                <>
+                  <span>{paid ? "It also needs:" : "This app needs:"}</span>
+                  <ul className="grid list-disc gap-1 pl-5">
+                    {app.requires.map((r) => (
+                      <li key={r}>
+                        <span className="font-semibold">{requirementLabel(r)}.</span>{" "}
+                        {requirementSentence(r)}
+                      </li>
+                    ))}
+                  </ul>
+                  {confirmation !== null && (
+                    <Checkbox
+                      label="This account meets these requirements"
+                      checked={confirmation.checked}
+                      disabled={confirmation.disabled}
+                      onCheckedChange={(checked: boolean) => confirmation.onChange(checked)}
+                    />
+                  )}
+                </>
               )}
-            </span>
+            </div>
           }
         />
       )}
