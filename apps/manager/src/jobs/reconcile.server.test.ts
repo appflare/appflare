@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { startUninstallCore } from "../installs/start-uninstall.server";
-import { type ActiveJobRow, reconcileJobs, type WorkflowLookup } from "./reconcile.server";
+import {
+  type ActiveJobRow,
+  RESTORE_STALE_MS,
+  reconcileJobs,
+  type WorkflowLookup,
+} from "./reconcile.server";
 
 const NOW = new Date("2026-09-23T12:00:00.000Z");
 
@@ -138,5 +143,66 @@ describe("reconcileJobs", () => {
     expect((await job("j3"))?.status).toBe("queued");
     // No instance id recorded yet and none found: it may still be being created.
     expect((await job("j4"))?.status).toBe("queued");
+  });
+
+  it("returns an install from updating to installed when its update or rollback died", async () => {
+    await seed("updating", [["j1", "update", "running", "j1"]]);
+    await reconcileJobs(
+      env.DB,
+      fakeWorkflows({ j1: { status: "errored", error: { message: "boom" } } }).binding,
+      await rows(),
+      () => NOW,
+    );
+    expect((await job("j1"))?.status).toBe("failed");
+    expect(await env.DB.prepare("SELECT status FROM installs WHERE id = 'i1'").first()).toEqual({
+      status: "installed",
+    });
+
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await seed("updating", [["j1", "rollback", "running", "j1"]]);
+    await reconcileJobs(env.DB, fakeWorkflows({}).binding, await rows(), () => NOW);
+    expect((await job("j1"))?.error).toBe("the job's Workflow instance no longer exists");
+    expect(await env.DB.prepare("SELECT status FROM installs WHERE id = 'i1'").first()).toEqual({
+      status: "installed",
+    });
+
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await seed("updating", [["j1", "update", "running", "j1"]]);
+    await reconcileJobs(
+      env.DB,
+      fakeWorkflows({ j1: { status: "complete" } }).binding,
+      await rows(),
+      () => NOW,
+    );
+    expect((await job("j1"))?.status).toBe("succeeded");
+    expect(await env.DB.prepare("SELECT status FROM installs WHERE id = 'i1'").first()).toEqual({
+      status: "installed",
+    });
+  });
+
+  it("fails a database restore whose request never recorded its end, once it is stale", async () => {
+    await seed("installed", []);
+    const startedAt = NOW.getTime() - RESTORE_STALE_MS - 1;
+    await env.DB.prepare(
+      `INSERT INTO jobs (id, install_id, kind, status, input_json, started_at)
+       VALUES ('r1', 'i1', 'rollback', 'running', '{"restore":true}', ?1),
+              ('r2', 'i1', 'rollback', 'running', '{"restore":true}', ?2)`,
+    )
+      .bind(startedAt, NOW.getTime() - 1000)
+      .run();
+    const wf = fakeWorkflows({});
+    const restoreRows = (
+      await env.DB.prepare(
+        "SELECT id, kind, status, install_id, workflow_instance_id, input_json, started_at FROM jobs ORDER BY id",
+      ).all<ActiveJobRow & { started_at: number }>()
+    ).results.map((r) => ({ ...r, started_at: new Date(r.started_at) }));
+    expect(await reconcileJobs(env.DB, wf.binding, restoreRows, () => NOW)).toBe(true);
+    // Restores have no Workflow instance to ask about.
+    expect(wf.asked).toEqual([]);
+    expect((await job("r1"))?.status).toBe("failed");
+    expect((await job("r1"))?.error).toMatch(/^the restore request ended without recording/);
+    expect((await job("r2"))?.status).toBe("running");
   });
 });

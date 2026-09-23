@@ -102,12 +102,27 @@ export const catalogInstallSchema = z.object({
    * field existed keep the same parsed shape.
    */
   fixedWorkerName: z.boolean().optional(),
+  /**
+   * The path the manager probes to tell whether the app serves, for example
+   * `/api/health`. When it answers JSON with a string `version`, an update's
+   * check of the new version requires that version. Omitted means `/`;
+   * optional for the same reason as `fixedWorkerName`.
+   */
+  healthPath: z
+    .string()
+    .regex(/^\/[^\s?#]*$/, "healthPath is a URL path starting with /, without query or fragment")
+    .optional(),
 });
 export type CatalogInstall = z.infer<typeof catalogInstallSchema>;
 
 /** Whether the app must run under its catalog `workerName` (and so installs once). */
 export function hasFixedWorkerName(install: Pick<CatalogInstall, "fixedWorkerName">): boolean {
   return install.fixedWorkerName === true;
+}
+
+/** The path health checks probe: `install.healthPath`, else `/`. */
+export function appHealthPath(install: Pick<CatalogInstall, "healthPath">): string {
+  return install.healthPath ?? "/";
 }
 
 /** The full catalog manifest, `appflare.jsonc`. */

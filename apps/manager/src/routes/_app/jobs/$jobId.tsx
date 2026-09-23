@@ -2,21 +2,13 @@ import { Badge, Banner, Empty, LayerCard, LinkButton, Loader, Table, Text } from
 import { ArrowRightIcon, ListChecksIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useState } from "react";
-import { formatDateTime, formatTime } from "../../../components/format";
+import { formatDateTime, formatTime, jobKindLabel } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
 import { getJob, type JobLogRow, type JobView } from "../../../jobs/jobs.functions";
 
 /** How often the page re-reads a queued or running job. */
 const POLL_MS = 2000;
-
-const KIND_LABELS: Record<string, string> = {
-  install: "Install",
-  update: "Update",
-  uninstall: "Uninstall",
-  rollback: "Rollback",
-  self_update: "Appflare update",
-};
 
 function isActive(job: JobView | null): boolean {
   return job !== null && (job.status === "queued" || job.status === "running");
@@ -84,7 +76,7 @@ function JobPage() {
     );
   }
 
-  const kind = KIND_LABELS[job.kind] ?? job.kind;
+  const kind = jobKindLabel(job.kind, job.restore);
   const title =
     job.install !== null ? `${kind} ${job.install.instanceName ?? job.install.workerName}` : kind;
   return (
@@ -117,6 +109,11 @@ function JobPage() {
             {job.install !== null && (
               <Row label="Worker">
                 <span className="font-mono text-[0.9em]">{job.install.workerName}</span>
+              </Row>
+            )}
+            {job.workerVersionId !== null && (
+              <Row label={job.kind === "update" ? "New Worker version" : "Worker version"}>
+                <span className="font-mono text-[0.9em]">{job.workerVersionId}</span>
               </Row>
             )}
             <Row label="Started">{formatDateTime(job.startedAt)}</Row>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogManifestSchema, hasFixedWorkerName } from "./catalog";
+import { appHealthPath, catalogManifestSchema, hasFixedWorkerName } from "./catalog";
 
 const validManifest = {
   $schema: "https://appflare.github.io/catalog/schema/v1.json",
@@ -74,6 +74,24 @@ describe("catalogManifestSchema", () => {
       install: { ...validManifest.install, fixedWorkerName: false },
     });
     expect(hasFixedWorkerName(notFixed.install)).toBe(false);
+  });
+
+  it("takes an optional healthPath, defaulting to /", () => {
+    const omitted = catalogManifestSchema.parse(validManifest);
+    expect(omitted.install.healthPath).toBeUndefined();
+    expect(appHealthPath(omitted.install)).toBe("/");
+    const set = catalogManifestSchema.parse({
+      ...validManifest,
+      install: { ...validManifest.install, healthPath: "/api/health" },
+    });
+    expect(appHealthPath(set.install)).toBe("/api/health");
+    for (const healthPath of ["api/health", "/a b", "/x?y=1", ""]) {
+      const result = catalogManifestSchema.safeParse({
+        ...validManifest,
+        install: { ...validManifest.install, healthPath },
+      });
+      expect(result.success).toBe(false);
+    }
   });
 
   it("rejects a non-boolean fixedWorkerName", () => {

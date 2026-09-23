@@ -259,7 +259,12 @@ async function install(options: ArtifactFixtureOptions = {}, world: Partial<Fake
   }>();
   const installRow = await env.DB.prepare("SELECT * FROM installs WHERE id = ?1")
     .bind(installId)
-    .first<{ status: string; current_version_id: string | null; manifest_json: string | null }>();
+    .first<{
+      status: string;
+      current_version_id: string | null;
+      manifest_json: string | null;
+      do_migration_tag: string | null;
+    }>();
   const resources = (
     await env.DB.prepare(
       "SELECT kind, binding, name, cf_id FROM resources WHERE install_id = ?1 ORDER BY rowid",
@@ -625,5 +630,21 @@ describe("install job", () => {
     expect(install).toEqual({ status: "failed" });
     const job = await env.DB.prepare("SELECT status FROM jobs WHERE id = ?1").bind(jobId).first();
     expect(job).toEqual({ status: "succeeded" });
+  });
+
+  it("records the Durable Object migration tag the upload applied", async () => {
+    const r = await install({
+      bindings: [{ type: "durable_object_namespace", name: "ROOMS", class_name: "Room" }],
+      migrations: [
+        { tag: "v1", new_sqlite_classes: ["Room"] },
+        { tag: "v2", new_sqlite_classes: ["Lobby"] },
+      ],
+    });
+    expect(r.error).toBeNull();
+    expect(r.fake.state.metadata?.migrations).toEqual({
+      new_tag: "v2",
+      steps: [{ new_sqlite_classes: ["Room"] }, { new_sqlite_classes: ["Lobby"] }],
+    });
+    expect(r.installRow?.do_migration_tag).toBe("v2");
   });
 });

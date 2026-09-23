@@ -42,7 +42,11 @@ export interface CfClientEnv {
 
 export async function getCfClient(
   env: CfClientEnv,
-  opts: { fetch?: FetchLike } = {},
+  opts: {
+    fetch?: FetchLike;
+    /** Also sees every request (`METHOD path -> status`), e.g. to put it in a job log. */
+    onRequest?: (entry: RequestLog) => void;
+  } = {},
 ): Promise<CloudflareClient> {
   const token = env.CF_API_TOKEN;
   if (token === undefined || token.length === 0) throw new CfTokenNotConfiguredError("token");
@@ -54,7 +58,10 @@ export async function getCfClient(
     accountId,
     token,
     fetch: opts.fetch,
-    onRequest: logCfRequest,
+    onRequest: (entry) => {
+      logCfRequest(entry);
+      opts.onRequest?.(entry);
+    },
     ...apiBaseOption(env),
   });
 }

@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { createDb } from "../db/client";
+import { createDb, type Database } from "../db/client";
 import { installs, jobs } from "../db/schema";
 import { StepLog } from "./step-log";
 
@@ -10,7 +10,14 @@ import { StepLog } from "./step-log";
  * for good, which would also block every later job of its install. Pages that
  * show a job call this first: an instance that errored, was terminated, or is
  * unknown fails its job; one that completed succeeds it. A failed install job
- * also fails its install, so the install can be retried or uninstalled.
+ * also fails its install, so the install can be retried or uninstalled; a
+ * failed update or rollback returns its install from `updating` to
+ * `installed` (the version record changes only inside the job, when it
+ * promotes, so it is already right).
+ *
+ * A database restore runs inside a server function, not a Workflow; its job
+ * row has no instance. One still `running` after {@link RESTORE_STALE_MS}
+ * lost its request midway and is failed.
  */
 
 /** The part of a Workflow binding this reads (`env.JOBS`). */
@@ -24,9 +31,51 @@ export interface ActiveJobRow {
   status: string;
   install_id: string | null;
   workflow_instance_id: string | null;
+  input_json?: string | null;
+  started_at?: Date | null;
 }
 
 const DEAD = new Set(["errored", "terminated", "unknown"]);
+
+/** A restore request that has not recorded its end after this long never will. */
+export const RESTORE_STALE_MS = 5 * 60 * 1000;
+
+/** Whether the job row is a database restore (it has no Workflow instance). */
+export function isRestoreJob(row: Pick<ActiveJobRow, "kind" | "input_json">): boolean {
+  if (row.kind !== "rollback" || row.input_json == null) return false;
+  try {
+    return (JSON.parse(row.input_json) as { restore?: unknown }).restore === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Settles a restore row whose request died; true when it changed. */
+async function reconcileRestore(db: D1Database, row: ActiveJobRow, at: Date): Promise<boolean> {
+  const started = row.started_at?.getTime() ?? null;
+  if (started !== null && at.getTime() - started < RESTORE_STALE_MS) return false;
+  const error =
+    "the restore request ended without recording its result; check the database's Time Travel history in the Cloudflare dashboard";
+  const updated = await createDb(db)
+    .update(jobs)
+    .set({ status: "failed", error, finished_at: at })
+    .where(and(eq(jobs.id, row.id), inArray(jobs.status, ["queued", "running"])))
+    .returning({ id: jobs.id });
+  if (updated.length === 0) return false;
+  const log = new StepLog(() => at.getTime());
+  log.error(`Stopped: ${error}.`);
+  await log.flush(db, row.id);
+  return true;
+}
+
+/** An update or rollback that ended, one way or another, leaves its install `installed`. */
+async function settleUpdating(orm: Database, row: ActiveJobRow, at: Date): Promise<void> {
+  if ((row.kind !== "update" && row.kind !== "rollback") || row.install_id === null) return;
+  await orm
+    .update(installs)
+    .set({ status: "installed", updated_at: at })
+    .where(and(eq(installs.id, row.install_id), eq(installs.status, "updating")));
+}
 
 /** Returns true when a row changed (callers then re-read). */
 export async function reconcileJobs(
@@ -38,6 +87,10 @@ export async function reconcileJobs(
   let changed = false;
   for (const row of rows) {
     if (row.status !== "queued" && row.status !== "running") continue;
+    if (isRestoreJob(row)) {
+      if (await reconcileRestore(db, row, now())) changed = true;
+      continue;
+    }
     let status: string;
     let message: string | undefined;
     try {
@@ -66,6 +119,7 @@ export async function reconcileJobs(
         .where(and(eq(jobs.id, row.id), inArray(jobs.status, ["queued", "running"])))
         .returning({ id: jobs.id });
       if (updated.length === 0) continue;
+      await settleUpdating(orm, row, at);
       log.warn("The Workflow instance completed without recording the end of the job.");
     } else if (DEAD.has(status)) {
       const error =
@@ -84,6 +138,7 @@ export async function reconcileJobs(
           .set({ status: "failed", updated_at: at })
           .where(and(eq(installs.id, row.install_id), eq(installs.status, "installing")));
       }
+      await settleUpdating(orm, row, at);
       // An uninstall leaves its install `uninstalling`; the install page offers a retry.
       log.error(`Stopped: ${error}.`);
     } else {

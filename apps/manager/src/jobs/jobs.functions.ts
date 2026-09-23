@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createDb } from "../db/client";
 import { installs, job_logs, jobs } from "../db/schema";
 import { requireSession } from "../server/auth.server";
-import { reconcileJobs } from "./reconcile.server";
+import { isRestoreJob, reconcileJobs } from "./reconcile.server";
 
 /** `/jobs/$jobId`: the job and its log, polled every 2 s while it runs. */
 
@@ -24,8 +24,12 @@ export interface JobLogRow {
 export interface JobView {
   id: string;
   kind: string;
+  /** A database restore (recorded as a `rollback` job). */
+  restore: boolean;
   status: "queued" | "running" | "succeeded" | "failed";
   error: string | null;
+  /** The Workers version an update uploaded or a rollback deployed. */
+  workerVersionId: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   install: {
@@ -87,8 +91,10 @@ export const getJob = createServerFn({ method: "GET" })
     return {
       id: job.id,
       kind: job.kind,
+      restore: isRestoreJob(job),
       status: job.status,
       error: job.error,
+      workerVersionId: job.worker_version_id,
       startedAt: job.started_at?.toISOString() ?? null,
       finishedAt: job.finished_at?.toISOString() ?? null,
       install: installRows[0] ?? null,

@@ -1,7 +1,8 @@
 // A small, stateful, in-memory fake of the Cloudflare REST API endpoints the
-// manager uses, for exercising the setup token step and the install
-// Workflow in local dev without any Cloudflare account. It never forwards
-// anything to Cloudflare. Local dev only.
+// manager uses, for exercising the setup token step and the install, update,
+// and rollback Workflows (versions, deployments, D1 Time Travel) in local dev
+// without any Cloudflare account. It never forwards anything to Cloudflare.
+// Local dev only.
 //
 //   node scripts/fake-cloudflare-api.mjs [--port 8789] [--subdomain appflare-local]
 //
@@ -23,7 +24,7 @@ const { values } = parseArgs({
 
 const ACCOUNT = "00000000000000000000000000000001";
 const state = {
-  scripts: new Map([["appflare", { secrets: new Set(["SETUP_TOKEN"]), schedules: [] }]]),
+  scripts: new Map([["appflare", newScript(["SETUP_TOKEN"])]]),
   kv: [],
   d1: [],
   d1Rows: new Map(),
@@ -34,6 +35,27 @@ const state = {
   counter: 0,
 };
 const id = () => (++state.counter).toString(16).padStart(32, "0");
+/** A version id shaped like Cloudflare's (a hyphenated UUID). */
+const versionId = () => crypto.randomUUID();
+/** D1 Time Travel bookmarks sort by time, like Cloudflare's. */
+const bookmark = () => `${Date.now().toString(16).padStart(8, "0")}-${id().slice(-8)}`;
+
+function newScript(secrets = []) {
+  return { secrets: new Set(secrets), schedules: [], versions: [], deployments: [] };
+}
+
+/** Records a deployment serving `version` at 100% (newest first, as Cloudflare lists them). */
+function deploy(script, version) {
+  const deployment = {
+    id: crypto.randomUUID(),
+    created_on: new Date().toISOString(),
+    source: "api",
+    strategy: "percentage",
+    versions: [{ version_id: version, percentage: 100 }],
+  };
+  script.deployments.unshift(deployment);
+  return deployment;
+}
 
 const ok = (result, extra = {}) => [
   200,
@@ -100,6 +122,16 @@ async function handle(req, url, body) {
     state.d1Rows.set(db.uuid, []);
     return ok(db);
   }
+  const timeTravel = /^(GET|POST) \/d1\/database\/([^/]+)\/time_travel\/(bookmark|restore)$/.exec(
+    key,
+  );
+  if (timeTravel) {
+    if (!state.d1Rows.has(timeTravel[2])) return fail(404, 7404, "database not found");
+    if (timeTravel[3] === "bookmark") return ok({ bookmark: bookmark() });
+    const target = url.searchParams.get("bookmark");
+    if (!target) return fail(400, 7400, "bookmark is required");
+    return ok({ bookmark: target, previous_bookmark: bookmark(), message: "restored (fake)" });
+  }
   const query = /^POST \/d1\/database\/([^/]+)\/query$/.exec(key);
   if (query) {
     const applied = state.d1Rows.get(query[1]);
@@ -162,10 +194,43 @@ async function handle(req, url, body) {
         .map((b) => `${b.type}:${b.name}`)
         .join(", ")}${metadata.assets ? ", assets" : ""}`,
     );
-    state.scripts.set(script[2], { secrets: new Set(), schedules: [] });
-    return ok({ id: script[2], deployment_id: id() });
+    const existing = state.scripts.get(script[2]) ?? newScript();
+    state.scripts.set(script[2], existing);
+    const version = versionId();
+    existing.versions.push(version);
+    deploy(existing, version);
+    return ok({ id: script[2], deployment_id: version.replace(/-/g, "") });
   }
   const scriptOf = (name) => state.scripts.get(name);
+  const versions = /^POST \/workers\/scripts\/([^/]+)\/versions$/.exec(key);
+  if (versions) {
+    const s = scriptOf(versions[1]);
+    if (!s) return fail(404, 10007, "script not found");
+    const form = await formFields(req, body);
+    const metadata = JSON.parse(String(form.get("metadata")));
+    const version = versionId();
+    s.versions.push(version);
+    console.log(
+      `  version ${version} of ${versions[1]}: bindings ${(metadata.bindings ?? [])
+        .map((b) => `${b.type}:${b.name}`)
+        .join(", ")}, keep ${(metadata.keep_bindings ?? []).join(", ") || "nothing"}`,
+    );
+    return ok({ id: version, number: s.versions.length, metadata: { has_preview: true } });
+  }
+  const deployments = /^(GET|POST) \/workers\/scripts\/([^/]+)\/deployments$/.exec(key);
+  if (deployments) {
+    const s = scriptOf(deployments[2]);
+    if (!s) return fail(404, 10007, "script not found");
+    if (deployments[1] === "GET") return ok({ deployments: s.deployments });
+    const { versions: split } = json();
+    const only = split?.length === 1 ? split[0] : null;
+    if (only?.percentage !== 100 || !s.versions.includes(only.version_id)) {
+      return fail(400, 10220, "this fake deploys one known version at 100% only");
+    }
+    return ok(deploy(s, only.version_id));
+  }
+  const workflow = /^GET \/workflows\/([^/]+)$/.exec(key);
+  if (workflow) return fail(404, 10200, "Workflow not found");
   const secrets = /^(PUT|GET) \/workers\/scripts\/([^/]+)\/secrets$/.exec(key);
   if (secrets) {
     const s = scriptOf(secrets[2]);

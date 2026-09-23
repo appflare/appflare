@@ -6,7 +6,9 @@ import { z } from "zod";
 import { createDb } from "../db/client";
 import { JOB_KINDS, type JobKind, jobs } from "../db/schema";
 import { runInstall } from "./install";
+import { runRollback } from "./rollback";
 import { runUninstall } from "./uninstall";
+import { runUpdate } from "./update";
 
 /**
  * Job dispatch for `JobWorkflow` (one Workflow class, dispatching on
@@ -53,7 +55,10 @@ export type JobParams = z.infer<typeof jobParams>;
 /** Bindings and vars a job reads. */
 export interface JobEnv {
   DB: D1Database;
-  /** The catalog cache; the install job reads the verified manifest from it by digest. */
+  /**
+   * The catalog cache: jobs read verified manifests from it by digest, and the
+   * update job reads the cached index entry of the app.
+   */
   KV?: KVNamespace;
   CF_API_TOKEN?: string;
   /** Optional Cloudflare API base override (tests, local dev against a fake API). */
@@ -96,8 +101,8 @@ const notImplemented: JobHandler = async ({ params, step, env }) => {
 
 export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   install: runInstall,
-  update: notImplemented, // TODO: the update job.
-  rollback: notImplemented, // TODO: the rollback job.
+  update: runUpdate,
+  rollback: runRollback,
   self_update: notImplemented, // TODO: the self-update job.
   uninstall: runUninstall,
 };

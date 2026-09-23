@@ -2,8 +2,8 @@ import type { HttpApi } from "../http";
 import { buildUploadFormData, type WorkerModule } from "../modules";
 import type {
   DeploymentVersion,
-  ScriptUploadResult,
   VersionMetadata,
+  VersionUploadResult,
   WorkerDeployment,
   WorkerVersion,
 } from "../types";
@@ -26,7 +26,7 @@ export interface CreateDeploymentArgs {
 export function createVersions(http: HttpApi) {
   return {
     /** `POST /workers/scripts/{name}/versions` — multipart, same builder as uploadScript. */
-    uploadVersion(name: string, args: UploadVersionArgs): Promise<ScriptUploadResult> {
+    uploadVersion(name: string, args: UploadVersionArgs): Promise<VersionUploadResult> {
       const form = buildUploadFormData(args.metadata, args.modules);
       return http.result("POST", http.acct(`/workers/scripts/${enc(name)}/versions`), { form });
     },

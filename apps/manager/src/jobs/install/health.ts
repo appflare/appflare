@@ -12,7 +12,13 @@ export const HEALTH_RETRY_DELAY = "2 seconds";
 export const HEALTH_5XX_GRACE_MS = 20_000;
 
 export type HealthProbe =
-  | { kind: "response"; status: number; bodyStart: string }
+  | {
+      kind: "response";
+      status: number;
+      bodyStart: string;
+      /** The body up to {@link HEALTH_BODY_LIMIT} characters, for the version check. */
+      body?: string;
+    }
   | { kind: "error"; message: string };
 
 export type HealthVerdict =
@@ -59,6 +65,28 @@ export function classifyHealthProbe(
   return { verdict: "healthy", status: probe.status };
 }
 
+/** Health answers are small; anything longer is not a version report. */
+export const HEALTH_BODY_LIMIT = 4096;
+
+/**
+ * The version rule of an update's check of the new version: when the app
+ * answers JSON with a string `version` (as a health endpoint such as
+ * `/api/health` does), it must equal the version being installed; any other
+ * answer says nothing about the version, and the usual non-5xx rule decides.
+ * Returns why the answer is wrong, or null.
+ */
+export function versionMismatch(probe: HealthProbe, expected: string): string | null {
+  if (probe.kind !== "response" || probe.body === undefined) return null;
+  let reported: unknown;
+  try {
+    reported = (JSON.parse(probe.body) as { version?: unknown } | null)?.version;
+  } catch {
+    return null;
+  }
+  if (typeof reported !== "string" || reported === expected) return null;
+  return `the app reports version ${reported}, not ${expected}`;
+}
+
 /** GETs `url` once; never throws. Reads at most the start of the body. */
 export async function probeHealth(
   fetchImpl: (input: string, init?: RequestInit) => Promise<Response>,
@@ -72,7 +100,12 @@ export async function probeHealth(
       headers: { "user-agent": "Appflare health check" },
     });
     const text = await response.text();
-    return { kind: "response", status: response.status, bodyStart: text.slice(0, 200) };
+    return {
+      kind: "response",
+      status: response.status,
+      bodyStart: text.slice(0, 200),
+      body: text.slice(0, HEALTH_BODY_LIMIT),
+    };
   } catch (error) {
     return { kind: "error", message: error instanceof Error ? error.message : String(error) };
   }

@@ -10,7 +10,7 @@ import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { reconcileJobs } from "../jobs/reconcile.server";
+import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { requireRole, requireSession } from "../server/auth.server";
 import { startInstallInput } from "./install-input";
 import { renderPostInstall, workersDevUrl } from "./post-install";
@@ -129,6 +129,8 @@ export interface InstallDetail extends InstallRow {
   jobs: Array<{
     id: string;
     kind: string;
+    /** A database restore (recorded as a `rollback` job). */
+    restore: boolean;
     status: string;
     error: string | null;
     startedAt: string | null;
@@ -229,6 +231,7 @@ export const getInstall = createServerFn({ method: "GET" })
       jobs: jobRows.map((j) => ({
         id: j.id,
         kind: j.kind,
+        restore: isRestoreJob(j),
         status: j.status,
         error: j.error,
         startedAt: j.started_at?.toISOString() ?? null,

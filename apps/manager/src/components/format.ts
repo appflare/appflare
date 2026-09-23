@@ -57,3 +57,17 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
 export function resourceKindLabel(kind: string): string {
   return RESOURCE_KIND_LABELS[kind] ?? kind;
 }
+
+/** `jobs.kind` values as page titles; a database restore is recorded as a `rollback` job. */
+export const JOB_KIND_LABELS: Record<string, string> = {
+  install: "Install",
+  update: "Update",
+  uninstall: "Uninstall",
+  rollback: "Rollback",
+  self_update: "Appflare update",
+};
+
+export function jobKindLabel(kind: string, restore = false): string {
+  if (restore) return "Database restore";
+  return JOB_KIND_LABELS[kind] ?? kind;
+}

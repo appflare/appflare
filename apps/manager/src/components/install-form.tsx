@@ -1,26 +1,16 @@
 import type { CatalogManifest } from "@appflare/schema";
-import { Banner, Button, Checkbox, Input, LayerCard, SensitiveInput, Text } from "@cloudflare/kumo";
-import {
-  ArrowsClockwiseIcon,
-  DownloadSimpleIcon,
-  InfoIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react";
+import { Banner, Button, Checkbox, Input, LayerCard, Text } from "@cloudflare/kumo";
+import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
-import { generateTemporaryPassword } from "../auth/temporary-password";
 import {
-  GENERATED_SECRET_LENGTH,
   INSTANCE_NAME_MAX_LENGTH,
   WORKER_NAME_HINT,
   WORKER_NAME_MAX_LENGTH,
   WORKER_NAME_PATTERN,
 } from "../installs/install-input";
 import { startInstall } from "../installs/installs.functions";
-
-function generated(): string {
-  return generateTemporaryPassword(GENERATED_SECRET_LENGTH);
-}
+import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
 
 /**
  * The install form of `/catalog/$slug`, generated from
@@ -51,7 +41,7 @@ export function InstallForm({
   const [label, setLabel] = useState<string | null>(null);
   const instanceName = label ?? workerName;
   const [secrets, setSecrets] = useState<Record<string, string>>(() =>
-    Object.fromEntries(catalog.secrets.map((s) => [s.name, s.generate ? generated() : ""])),
+    initialSecretValues(catalog.secrets),
   );
   const [vars, setVars] = useState<Record<string, string>>(() =>
     Object.fromEntries(catalog.vars.map((v) => [v.name, v.default ?? ""])),
@@ -65,7 +55,7 @@ export function InstallForm({
     instanceName.trim().length > 0 && instanceName.trim().length <= INSTANCE_NAME_MAX_LENGTH;
   const disabled = !canInstall || blockedReason !== null || pending;
   const missing =
-    catalog.secrets.some((s) => (secrets[s.name] ?? "").length === 0) ||
+    !secretsComplete(catalog.secrets, secrets) ||
     catalog.vars.some((v) => v.required && (vars[v.name] ?? "").trim().length === 0);
   const ready = nameValid && labelValid && !missing && (catalog.plan !== "paid" || paidConfirmed);
 
@@ -144,46 +134,12 @@ export function InstallForm({
                     names.
                   </Text>
                 </div>
-                {catalog.secrets.map((secret) =>
-                  secret.generate ? (
-                    <div key={secret.name} className="grid gap-2">
-                      <SensitiveInput
-                        label={`${secret.label} (${secret.name})`}
-                        value={secrets[secret.name] ?? ""}
-                        onValueChange={(value: string) =>
-                          setSecrets((s) => ({ ...s, [secret.name]: value }))
-                        }
-                        description={`${secret.help ? `${secret.help} ` : ""}Generated for you. Copy it now: it is shown only here and cannot be read back after the install.`}
-                      />
-                      <div>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          icon={<ArrowsClockwiseIcon />}
-                          onClick={() => setSecrets((s) => ({ ...s, [secret.name]: generated() }))}
-                        >
-                          Regenerate
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <Input
-                      key={secret.name}
-                      label={`${secret.label} (${secret.name})`}
-                      type="password"
-                      autoComplete="off"
-                      spellCheck={false}
-                      passwordManagerIgnore
-                      required
-                      onChange={(e) => {
-                        const value = e.currentTarget.value;
-                        setSecrets((s) => ({ ...s, [secret.name]: value }));
-                      }}
-                      description={secret.help}
-                    />
-                  ),
-                )}
+                <SecretFields
+                  secrets={catalog.secrets}
+                  values={secrets}
+                  onChange={(name, value) => setSecrets((s) => ({ ...s, [name]: value }))}
+                  after="the install"
+                />
               </div>
             )}
 

@@ -1,6 +1,5 @@
 import { NonRetryableError } from "cloudflare:workflows";
-import { Buffer } from "node:buffer";
-import { buildAssetsManifest, CloudflareApiError } from "@appflare/cf-api";
+import { CloudflareApiError } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
   artifactManifestSchema,
@@ -10,44 +9,37 @@ import {
 } from "@appflare/schema";
 import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
-import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../catalog/app-manifest.server";
 import { createDb, type Database } from "../db/client";
-import { installs, jobs, type RESOURCE_KINDS, resources } from "../db/schema";
-import { readSettings, SETTING, writeSettings } from "../db/settings";
+import { installs, jobs, resources } from "../db/schema";
+import { readSettings, SETTING } from "../db/settings";
 import { workerNameSchema } from "../installs/install-input";
-import {
-  fetchArtifactFile,
-  fetchWhole,
-  sha256Hex,
-  verifyArtifactManifest,
-} from "./install/artifact";
+import { fetchArtifactFile } from "./install/artifact";
 import { planBindings } from "./install/bindings";
 import { ARTIFACT_FETCH_COST } from "./install/budget";
-import {
-  APPLIED_MIGRATION_SQL,
-  buildMigrationQuery,
-  CREATE_MIGRATIONS_TABLE_SQL,
-  LIST_APPLIED_MIGRATIONS_SQL,
-  unappliedMigrations,
-} from "./install/d1-migrations";
-import {
-  classifyHealthProbe,
-  HEALTH_MAX_ATTEMPTS,
-  HEALTH_RETRY_DELAY,
-  type HealthProbe,
-  probeHealth,
-} from "./install/health";
 import {
   buildScriptMetadata,
   type CreatedResource,
   resolveVars,
   uploadModule,
 } from "./install/metadata";
-import { assetContentType } from "./install/mime";
-import { createResource, findResource, RESOURCE_LABEL } from "./install/resources";
+import {
+  applyD1MigrationsPhase,
+  checkWorkflowNamePhase,
+  d1Targets,
+  loadVerifiedManifest,
+  lookupSubdomainPhase,
+  probeUntilHealthy,
+  provisionResourcePhase,
+  type ResourceRecord,
+  recordResource as recordResourceRow,
+  resourceId,
+  uploadAssetsPhase,
+  verifyManifestPhase,
+} from "./install/phases";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
+import { lastDurableObjectTag } from "./update/plan";
 
 export { API_STEP, toStepError } from "./steps";
 
@@ -76,10 +68,6 @@ export const installJobParams = z.object({
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
 
-/** Files per assets step: 2 subrequests per Range fetch (GitHub redirects) + the upload. */
-const BULK_FILES_PER_STEP = 19;
-/** Single-file upload mode: 2 per fetch + 1 upload per file. */
-const SINGLE_FILES_PER_STEP = 13;
 /** A single invocation can never make more than this many subrequests (free plan). */
 const INVOCATION_CAP = 48;
 
@@ -88,26 +76,11 @@ export class InstallError extends JobError {
   override name = "InstallError";
 }
 
-function resourceId(installId: string, kind: string, key: string): string {
-  return `${installId}:${kind}:${key}`;
-}
-
 /** wrangler's `parseNonHyphenedUuid`: the upload's `deployment_id` may lack hyphens. */
 export function hyphenateUuid(id: string | null | undefined): string | null {
   if (id == null || id.includes("-")) return id ?? null;
   if (id.length !== 32) return null;
   return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`;
-}
-
-/** The JWT's payload claims, or `{}` when it is not a decodable JWT. */
-function jwtClaims(jwt: string): Record<string, unknown> {
-  try {
-    const part = jwt.split(".")[1];
-    if (part === undefined) return {};
-    return JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
 }
 
 export async function runInstall(ctx: JobContext): Promise<void> {
@@ -119,46 +92,16 @@ export async function runInstall(ctx: JobContext): Promise<void> {
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now, baseFetch } = steps;
 
-  async function recordResource(
-    orm: Database,
-    row: {
-      kind: (typeof RESOURCE_KINDS)[number];
-      key: string;
-      binding: string | null;
-      name: string;
-      cfId: string | null;
-    },
-  ): Promise<void> {
-    await orm
-      .insert(resources)
-      .values({
-        id: resourceId(params.installId, row.kind, row.key),
-        install_id: params.installId,
-        kind: row.kind,
-        binding: row.binding,
-        name: row.name,
-        cf_id: row.cfId,
-        created_at: new Date(now()),
-      })
-      .onConflictDoNothing();
+  async function recordResource(orm: Database, row: ResourceRecord): Promise<void> {
+    await recordResourceRow(orm, params.installId, row, new Date(now()));
   }
 
-  /**
-   * The verified `manifest.json` text, by digest: from the KV cache when it holds
-   * the exact bytes, else fetched again. Either way its sha256 must equal the
-   * digest step 1 verified the signature against, so it is the same document.
-   */
-  async function loadManifestText(): Promise<string> {
-    const cached = await env.KV?.get(manifestCacheKey(params.digest));
-    if (cached != null && (await sha256Hex(new TextEncoder().encode(cached))) === params.digest) {
-      return cached;
-    }
-    const fetched = await fetchWhole(baseFetch, params.artifacts.manifest);
-    if ((await sha256Hex(fetched.bytes)) !== params.digest) {
-      throw new InstallError("manifest.json changed since it was verified");
-    }
-    return new TextDecoder().decode(fetched.bytes);
-  }
+  const artifact = {
+    slug: params.slug,
+    version: params.version,
+    artifacts: params.artifacts,
+    digest: params.digest,
+  };
 
   try {
     await run("start", 0, async ({ log, orm }) => {
@@ -171,32 +114,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     });
 
     // 1. Fetch and verify the artifact manifest.
-    await run("verify artifact manifest", 6, async ({ log, fetch }) => {
-      const [manifestFile, sigFile] = [
-        await fetchWhole(fetch, params.artifacts.manifest),
-        await fetchWhole(fetch, params.artifacts.sig),
-      ];
-      const manifest = await verifyArtifactManifest(
-        manifestFile.bytes,
-        new TextDecoder().decode(sigFile.bytes),
-        { slug: params.slug, version: params.version, digest: params.digest },
-        deps.signingKeys,
-      );
-      // Later steps re-read the manifest by digest instead of carrying it in a
-      // step result (Workflows caps step results at 1 MiB).
-      const key = manifestCacheKey(params.digest);
-      if (env.KV !== undefined && (await env.KV.get(key)) === null) {
-        await env.KV.put(key, new TextDecoder().decode(manifestFile.bytes), {
-          expirationTtl: MANIFEST_TTL_SECONDS,
-        });
-      }
-      log.info(
-        `Verified manifest.json for ${manifest.app} ${manifest.version} (key "${manifest.keyId}", digest matches the catalog).`,
-      );
-      return { keyId: manifest.keyId };
-    });
+    await verifyManifestPhase(steps, env.KV, artifact, deps.signingKeys);
     steps.current = "load artifact manifest";
-    const manifestText = await loadManifestText();
+    const manifestText = await loadVerifiedManifest(env.KV, baseFetch, artifact);
     const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
     const plan = planBindings(params.workerName, manifest.worker.bindings);
 
@@ -287,68 +207,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    for (const wf of plan.workflows) {
-      await run(`check Workflow ${wf.name}`, 1, async ({ log, cf }) => {
-        let owner: string | null = null;
-        try {
-          owner = (await cf().workflows.getWorkflow(wf.name)).script_name ?? "another script";
-        } catch (error) {
-          if (!(error instanceof CloudflareApiError) || error.status !== 404) throw error;
-        }
-        if (owner !== null) {
-          throw new InstallError(
-            `a Workflow named ${wf.name} already exists in this account (script "${owner}"); Appflare does not adopt existing Workflows`,
-          );
-        }
-        log.info(`No Workflow named "${wf.name}" exists yet.`);
-        return {};
-      });
-    }
+    for (const wf of plan.workflows) await checkWorkflowNamePhase(steps, wf);
 
-    // 3. Resources: check the name is free, create, then record, as three steps so
-    // a retried create never double-creates and a failed record never re-creates.
+    // 3. Resources: check the name is free, create, then record.
     const created: CreatedResource[] = [];
     for (const res of plan.resources) {
-      const label = RESOURCE_LABEL[res.kind];
-      await run(`check ${label} ${res.name}`, 3, async ({ log, cf }) => {
-        if ((await findResource(cf(), res)) !== null) {
-          throw new InstallError(
-            `a ${label} named ${res.name} already exists in this account; Appflare does not adopt existing resources`,
-          );
-        }
-        log.info(`No ${label} named "${res.name}" exists yet.`);
-        return {};
-      });
-
-      const made = await run(`create ${label} ${res.name}`, 4, async ({ log, cf, attempt }) => {
-        const api = cf();
-        // The check step saw no such name, so on a retry a resource with this name
-        // is the one this step's own earlier attempt created before it failed.
-        if (attempt > 1) {
-          const existing = await findResource(api, res);
-          if (existing !== null) {
-            log.info(`Found the ${label} "${res.name}" an earlier attempt created.`, {
-              id: existing,
-            });
-            return { cfId: existing };
-          }
-        }
-        const cfId = await createResource(api, res);
-        log.info(`Created ${label} "${res.name}" for binding ${res.binding}.`, { id: cfId });
-        return { cfId };
-      });
-
-      await run(`record ${label} ${res.name}`, 0, async ({ orm }) => {
-        await recordResource(orm, {
-          kind: res.kind,
-          key: res.binding,
-          binding: res.binding,
-          name: res.name,
-          cfId: made.cfId,
-        });
-        return {};
-      });
-      created.push({ binding: res.binding, type: res.type, name: res.name, cfId: made.cfId });
+      created.push(await provisionResourcePhase(steps, params.installId, res));
     }
 
     if (plan.durableObjects.length > 0) {
@@ -370,83 +234,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     }
 
     // 4. Static assets.
-    let assetsJwt: string | null = null;
-    const files = manifest.assets.files;
-    if (files.length > 0) {
-      const session = await run("open assets upload session", 1, async ({ log, cf }) => {
-        const result = await cf().assets.createUploadSession(
-          params.workerName,
-          buildAssetsManifest(files.map((f) => ({ route: f.route, hash: f.hash, size: f.size }))),
-        );
-        const needed = result.buckets.reduce((n, b) => n + b.length, 0);
-        log.info(
-          needed === 0
-            ? `All ${files.length} asset files are already stored in this account; nothing to upload.`
-            : `${needed} of ${files.length} asset files need uploading in ${result.buckets.length} bucket(s).`,
-        );
-        return { jwt: result.jwt, buckets: result.buckets };
-      });
-      const single = jwtClaims(session.jwt).wrangler_single_asset_uploads === true;
-      const perStep = single ? SINGLE_FILES_PER_STEP : BULK_FILES_PER_STEP;
-      const byHash = new Map(files.map((f) => [f.hash, f]));
-      let completion: string | null = null;
-      for (const [b, bucket] of session.buckets.entries()) {
-        const parts = Math.max(1, Math.ceil(bucket.length / perStep));
-        for (let p = 0; p < parts; p++) {
-          const hashes = bucket.slice(p * perStep, (p + 1) * perStep);
-          const name =
-            `upload assets bucket ${b + 1}/${session.buckets.length}` +
-            (parts > 1 ? ` part ${p + 1}/${parts}` : "");
-          const cost = hashes.length * (ARTIFACT_FETCH_COST + (single ? 1 : 0)) + (single ? 0 : 1);
-          const uploaded = await run(name, cost, async ({ log, fetch, cf }) => {
-            const api = cf();
-            const payload: Array<{ hash: string; bytes: Uint8Array; contentType: string }> = [];
-            let bytes = 0;
-            for (const hash of hashes) {
-              const file = byHash.get(hash);
-              if (file === undefined) {
-                throw new InstallError(
-                  `Cloudflare asked for an asset (${hash}) the artifact does not have`,
-                );
-              }
-              const got = await fetchArtifactFile(fetch, params.artifacts.zip, file);
-              bytes += got.bytes.byteLength;
-              payload.push({ hash, bytes: got.bytes, contentType: assetContentType(file.route) });
-            }
-            let jwt: string | null = null;
-            if (single) {
-              for (const f of payload) {
-                const res = await api.assets.uploadFile(session.jwt, {
-                  hash: f.hash,
-                  body: f.bytes,
-                  contentType: f.contentType,
-                });
-                jwt = res.jwt ?? jwt;
-              }
-            } else {
-              const res = await api.assets.uploadBucket(
-                session.jwt,
-                payload.map((f) => ({
-                  hash: f.hash,
-                  base64: Buffer.from(f.bytes).toString("base64"),
-                  contentType: f.contentType,
-                })),
-              );
-              jwt = res.jwt ?? null;
-            }
-            log.info(`Uploaded ${payload.length} asset file(s), ${bytes} bytes.`);
-            return { jwt };
-          });
-          completion = uploaded.jwt ?? completion;
-        }
-      }
-      if (session.buckets.length === 0) completion = session.jwt;
-      if (completion === null) {
-        steps.current = "upload assets";
-        throw new InstallError("Cloudflare did not return an assets completion token");
-      }
-      assetsJwt = completion;
-    }
+    const assetsJwt = await uploadAssetsPhase(
+      steps,
+      params.workerName,
+      params.artifacts.zip,
+      manifest.assets.files,
+    );
 
     // 5. Script upload: every module in ONE multipart request. The Worker is
     // recorded first, with no id yet (pending): an upload whose response is
@@ -533,7 +326,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     await run("record Worker script", 0, async ({ orm }) => {
       await orm
         .update(installs)
-        .set({ current_version_id: upload.versionId, updated_at: new Date(now()) })
+        .set({
+          current_version_id: upload.versionId,
+          // The upload applied every Durable Object migration the manifest has.
+          do_migration_tag: lastDurableObjectTag(manifest.worker.migrations),
+          updated_at: new Date(now()),
+        })
         .where(eq(installs.id, params.installId));
       await orm
         .update(resources)
@@ -552,51 +350,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     });
 
     // 6. D1 migrations, wrangler-style.
-    for (const res of created) {
-      if (res.type !== "d1") continue;
-      const migrationFiles = manifest.d1Migrations[res.binding] ?? [];
-      if (migrationFiles.length === 0) continue;
-      await run(`D1 ${res.binding}: create d1_migrations table`, 1, async ({ log, cf }) => {
-        await cf().d1.query(res.cfId, CREATE_MIGRATIONS_TABLE_SQL);
-        log.info(`Ensured "d1_migrations" exists in ${res.name}.`);
-        return {};
-      });
-      const listed = await run(
-        `D1 ${res.binding}: list applied migrations`,
-        1,
-        async ({ log, cf }) => {
-          const results = await cf().d1.query(res.cfId, LIST_APPLIED_MIGRATIONS_SQL);
-          const rows = results[0]?.results ?? [];
-          log.info(`${rows.length} migration(s) already applied to ${res.name}.`);
-          return { applied: rows.map((r) => String(r.name)) };
-        },
-      );
-      const pending = unappliedMigrations(
-        migrationFiles,
-        listed.applied.map((name) => ({ name })),
-      );
-      for (const file of pending) {
-        await run(
-          `D1 ${res.binding}: apply ${file.name}`,
-          ARTIFACT_FETCH_COST + 2,
-          async ({ log, fetch, cf, attempt }) => {
-            const api = cf();
-            // A retry must not re-run a file an earlier attempt already applied.
-            if (attempt > 1) {
-              const recorded = await api.d1.query(res.cfId, APPLIED_MIGRATION_SQL, [file.name]);
-              if ((recorded[0]?.results.length ?? 0) > 0) {
-                log.info(`${file.name} was applied by an earlier attempt.`);
-                return {};
-              }
-            }
-            const got = await fetchArtifactFile(fetch, params.artifacts.zip, file);
-            const sql = new TextDecoder().decode(got.bytes);
-            await api.d1.query(res.cfId, buildMigrationQuery(sql, file.name));
-            log.info(`Applied ${file.name} to ${res.name}.`);
-            return {};
-          },
-        );
-      }
+    for (const target of d1Targets(manifest, created)) {
+      await applyD1MigrationsPhase(steps, params.artifacts.zip, target);
     }
 
     // 7. Secrets.
@@ -641,18 +396,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       });
     }
 
-    const { subdomain } = await run(
-      "look up workers.dev subdomain",
-      1,
-      async ({ log, cf, orm }) => {
-        const cached = await readSettings(orm, [SETTING.accountSubdomain]);
-        if (cached.account_subdomain) return { subdomain: cached.account_subdomain };
-        const found = (await cf().workers.getAccountSubdomain()).subdomain;
-        await writeSettings(orm, { [SETTING.accountSubdomain]: found }, new Date(now()));
-        log.info(`This account's workers.dev subdomain is "${found}".`);
-        return { subdomain: found };
-      },
-    );
+    const subdomain = await lookupSubdomainPhase(steps);
     const host = `${params.workerName}.${subdomain}.workers.dev`;
 
     await run("enable workers.dev route", 1, async ({ log, cf, orm }) => {
@@ -673,32 +417,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // 9. Health check through route propagation and error 1042.
     const url = `https://${host}/`;
-    let firstProbeAt: number | null = null;
-    let healthy: number | null = null;
-    for (let attempt = 1; attempt <= HEALTH_MAX_ATTEMPTS && healthy === null; attempt++) {
-      const checked = await run(`health check ${attempt}`, 1, async ({ log, fetch }) => {
-        const at = now();
-        const probe: HealthProbe = await probeHealth(fetch, url);
-        const verdict = classifyHealthProbe(probe, attempt, at - (firstProbeAt ?? at));
-        if (verdict.verdict === "unhealthy") throw new InstallError(verdict.reason);
-        if (verdict.verdict === "healthy") {
-          log.info(`GET ${url} -> ${verdict.status}; the Worker is serving.`);
-        } else {
-          log.warn(`GET ${url}: ${verdict.reason}; retrying in 2 seconds.`);
-        }
-        return { at, status: verdict.verdict === "healthy" ? verdict.status : null };
-      });
-      firstProbeAt ??= checked.at;
-      healthy = checked.status;
-      if (healthy === null) {
-        await step.sleep(`health wait ${attempt}`, HEALTH_RETRY_DELAY);
-        steps.resetBudget();
-      }
-    }
-    if (healthy === null) {
-      steps.current = "health check";
-      throw new InstallError(`${url} never answered`);
-    }
+    const healthy = await probeUntilHealthy(steps, step, {
+      label: "health",
+      url,
+      healthyMessage: "the Worker is serving",
+    });
 
     // 10. Record the install.
     await run("finish", 0, async ({ log, orm }) => {

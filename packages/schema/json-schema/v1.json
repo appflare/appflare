@@ -94,6 +94,10 @@
         },
         "fixedWorkerName": {
           "type": "boolean"
+        },
+        "healthPath": {
+          "type": "string",
+          "pattern": "^\\/[^\\s?#]*$"
         }
       },
       "required": [

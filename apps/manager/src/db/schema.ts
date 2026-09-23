@@ -69,6 +69,12 @@ export const installs = sqliteTable("installs", {
   config_json: text("config_json"),
   /** Snapshot of the artifact manifest the install was made from. */
   manifest_json: text("manifest_json"),
+  /**
+   * The last Durable Object migration tag applied to the Worker; null when it
+   * has none (or, for installs made before this was recorded, the last tag of
+   * `manifest_json`).
+   */
+  do_migration_tag: text("do_migration_tag"),
   installed_at: timestamp("installed_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
   /** Set when the uninstall job finishes (status `uninstalled`). */
@@ -108,6 +114,8 @@ export const jobs = sqliteTable(
     /** Job input with secret values removed (names only). */
     input_json: text("input_json"),
     error: text("error"),
+    /** The Workers version the job uploaded (update) or deployed (rollback). */
+    worker_version_id: text("worker_version_id"),
     started_at: timestamp("started_at"),
     finished_at: timestamp("finished_at"),
   },
@@ -130,7 +138,11 @@ export const job_logs = sqliteTable(
   (t) => [index("job_logs_job_id_idx").on(t.job_id)],
 );
 
-/** Recovery data taken before an update (glossary: snapshot). */
+/**
+ * Recovery data taken before an update (glossary: snapshot): the Worker
+ * version that was serving, a D1 Time Travel bookmark per database, and the
+ * install's catalog state at that moment, so a rollback can put all of it back.
+ */
 export const snapshots = sqliteTable(
   "snapshots",
   {
@@ -138,6 +150,7 @@ export const snapshots = sqliteTable(
     install_id: text("install_id")
       .notNull()
       .references(() => installs.id),
+    /** The update job that took it. */
     job_id: text("job_id")
       .notNull()
       .references(() => jobs.id),
@@ -145,6 +158,16 @@ export const snapshots = sqliteTable(
     /** `{ [database_id]: bookmark }` */
     d1_bookmarks_json: text("d1_bookmarks_json").notNull(),
     taken_at: timestamp("taken_at").notNull(),
+    /** The install's `catalog_version` before the update. */
+    catalog_version: text("catalog_version"),
+    /** The install's `manifest_json` before the update. */
+    manifest_json: text("manifest_json"),
+    artifact_url: text("artifact_url"),
+    artifact_digest: text("artifact_digest"),
+    pin_sha: text("pin_sha"),
+    do_migration_tag: text("do_migration_tag"),
+    /** The catalog version the update moved to. */
+    target_catalog_version: text("target_catalog_version"),
   },
   (t) => [index("snapshots_install_id_idx").on(t.install_id)],
 );

@@ -96,8 +96,26 @@ export interface WorkerVersion {
   resources?: Record<string, unknown>;
 }
 
+/**
+ * `POST /workers/scripts/{name}/versions` result: `id` is the new version id
+ * (wrangler 4.136.2 reads `result.id` and `result.metadata.has_preview`).
+ */
+export interface VersionUploadResult {
+  id: string;
+  number?: number;
+  startup_time_ms?: number;
+  metadata?: {
+    /** False when Cloudflare serves no preview URL for the version (Workers with Durable Objects). */
+    has_preview?: boolean;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+/** `GET /workers/scripts/{name}/deployments` lists the deployment serving traffic first. */
 export interface WorkerDeployment {
   id: string;
+  created_on?: string;
   source?: string;
   strategy?: string;
   versions?: Array<{ version_id: string; percentage: number }>;

@@ -19,7 +19,7 @@ beforeEach(async () => {
 describe("runJob", () => {
   it("marks a job of an unimplemented kind failed and ends without retries", async () => {
     const step = fakeStep();
-    await expect(runJob({ kind: "update", jobId: "job1" }, step, env)).rejects.toThrow(
+    await expect(runJob({ kind: "self_update", jobId: "job1" }, step, env)).rejects.toThrow(
       /not implemented/,
     );
     expect(step.names).toEqual(["mark job failed"]);
@@ -48,6 +48,17 @@ describe("runJob", () => {
     expect(JOB_HANDLERS.uninstall.name).toBe("runUninstall");
     await expect(runJob({ kind: "uninstall", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
       /invalid uninstall job payload/,
+    );
+  });
+
+  it("dispatches update and rollback to their handlers, which reject payloads without their fields", async () => {
+    expect(JOB_HANDLERS.update.name).toBe("runUpdate");
+    expect(JOB_HANDLERS.rollback.name).toBe("runRollback");
+    await expect(runJob({ kind: "update", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
+      /invalid update job payload/,
+    );
+    await expect(runJob({ kind: "rollback", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
+      /invalid rollback job payload/,
     );
   });
 });

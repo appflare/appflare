@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyHealthProbe, type HealthProbe, isEdge1042 } from "./health";
+import { classifyHealthProbe, type HealthProbe, isEdge1042, versionMismatch } from "./health";
 
 const res = (status: number, bodyStart = ""): HealthProbe => ({
   kind: "response",
@@ -39,5 +39,24 @@ describe("classifyHealthProbe", () => {
     expect(classifyHealthProbe(res(200), 1, 0).verdict).toBe("healthy");
     expect(classifyHealthProbe(res(302), 1, 0).verdict).toBe("healthy");
     expect(classifyHealthProbe(res(401), 1, 0).verdict).toBe("healthy");
+  });
+});
+
+describe("versionMismatch", () => {
+  const probe = (body: string) => ({
+    kind: "response" as const,
+    status: 200,
+    bodyStart: body,
+    body,
+  });
+  it("requires a JSON version to match and ignores anything else", () => {
+    expect(versionMismatch(probe('{"version":"1.1.0"}'), "1.1.0")).toBeNull();
+    expect(versionMismatch(probe('{"version":"1.0.0"}'), "1.1.0")).toBe(
+      "the app reports version 1.0.0, not 1.1.0",
+    );
+    expect(versionMismatch(probe('{"ok":true}'), "1.1.0")).toBeNull();
+    expect(versionMismatch(probe('{"version":2}'), "1.1.0")).toBeNull();
+    expect(versionMismatch(probe("<html>ok</html>"), "1.1.0")).toBeNull();
+    expect(versionMismatch({ kind: "error", message: "x" }, "1.1.0")).toBeNull();
   });
 });

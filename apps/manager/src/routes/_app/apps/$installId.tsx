@@ -8,27 +8,37 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { formatDateTime, resourceKindLabel } from "../../../components/format";
+import { formatDateTime, jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { Markdown } from "../../../components/markdown";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
 import { UninstallDialog } from "../../../components/uninstall-dialog";
+import { UpdateBanner } from "../../../components/update-banner";
+import { VersionsSection } from "../../../components/versions-section";
 import {
   getInstall,
   type InstallDetail,
   type ResourceView,
 } from "../../../installs/installs.functions";
+import { listSnapshots } from "../../../installs/versions.functions";
 
 /**
  * `/apps/$installId`: status, resources, secret names, jobs, the app's
- * post-install notes, and uninstall. After an uninstall it shows the
- * `uninstalled` state, the resources that were kept, and the job history.
+ * post-install notes, update and rollback, and uninstall. After an uninstall
+ * it shows the `uninstalled` state, the resources that were kept, and the job
+ * history.
  */
 export const Route = createFileRoute("/_app/apps/$installId")({
-  loader: ({ params }) => getInstall({ data: { installId: params.installId } }),
+  loader: async ({ params }) => {
+    const [install, snapshots] = await Promise.all([
+      getInstall({ data: { installId: params.installId } }),
+      listSnapshots({ data: { installId: params.installId } }),
+    ]);
+    return { install, snapshots };
+  },
   // The deepest route's title wins over the root's "<page> · Appflare".
   head: ({ loaderData }) => ({
-    meta: [{ title: `${loaderData?.instanceName ?? "Install"} · Appflare` }],
+    meta: [{ title: `${loaderData?.install?.instanceName ?? "Install"} · Appflare` }],
   }),
   component: InstallPage,
 });
@@ -58,7 +68,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 const mono = "font-mono text-[0.9em]";
 
 function InstallPage() {
-  const install = Route.useLoaderData();
+  const { install, snapshots } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   const isAdmin = viewer.role === "admin";
   if (install === null) {
@@ -97,6 +107,7 @@ function InstallPage() {
           </div>
         }
       />
+      <UpdateBanner install={install} isAdmin={isAdmin} />
       <UninstallState install={install} />
       <Overview install={install} />
       {!gone && install.postInstall.length > 0 && (
@@ -148,6 +159,7 @@ function InstallPage() {
           )}
         </Section>
       )}
+      {!gone && <VersionsSection install={install} snapshots={snapshots} isAdmin={isAdmin} />}
       <Section title="Jobs">
         <LayerCard className="p-0">
           <Table>
@@ -163,7 +175,7 @@ function InstallPage() {
               {install.jobs.map((job) => (
                 <Table.Row key={job.id}>
                   <Table.Cell>
-                    <Link href={`/jobs/${job.id}`}>{job.kind}</Link>
+                    <Link href={`/jobs/${job.id}`}>{jobKindLabel(job.kind, job.restore)}</Link>
                   </Table.Cell>
                   <Table.Cell>
                     <StatusBadge status={job.status} of="job" />
@@ -176,7 +188,6 @@ function InstallPage() {
           </Table>
         </LayerCard>
       </Section>
-      {/* TODO: update and rollback actions; the update and rollback jobs do not exist yet. */}
     </>
   );
 }
