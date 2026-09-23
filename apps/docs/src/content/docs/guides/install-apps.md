@@ -20,7 +20,12 @@ their names. Some secrets are generated for you: the field is filled with a rand
 32-character value that you can copy, replace, or regenerate. Copy it before you
 install. It is shown only on this form and cannot be read back afterwards.
 
-**Settings.** Plain-text variables on the app's Worker, for example a home page URL.
+**Settings.** Variables on the app's Worker, for example a home page URL. A setting
+starts with the app's default. When the default names the app's own address, the
+form shows it filled in for the Worker name you typed, and the install fills in the
+real workers.dev address (also when you attach a custom domain later). Only settings
+you change are stored; the others follow the app's default on each update. Settings marked JSON take a JSON value, such as `["inbox@example.com"]`,
+and the form checks it before you can install.
 
 Select **Install**. The manager starts an install job and opens its live log.
 

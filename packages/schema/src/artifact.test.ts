@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { artifactManifestSchema, isVectorizeBinding, queueConsumerProblems } from "./artifact";
+import {
+  artifactManifestSchema,
+  catalogVarProblems,
+  isJsonVarBinding,
+  isVectorizeBinding,
+  queueConsumerProblems,
+} from "./artifact";
 
 const sha256 = "a".repeat(64);
 const assetBlake3 = "c".repeat(32);
@@ -209,5 +215,64 @@ describe("artifactManifestSchema", () => {
       const result = artifactManifestSchema.safeParse(withBindings([binding]));
       expect(result.success).toBe(false);
     }
+  });
+});
+
+describe("json var bindings", () => {
+  const withBindings = (bindings: unknown[]) => ({
+    ...validArtifact,
+    worker: { ...validArtifact.worker, bindings },
+  });
+
+  it("parse with any JSON value and are told apart from other bindings", () => {
+    for (const json of [[], { a: [1, "x"] }, 3, false, null, "text"]) {
+      const parsed = artifactManifestSchema.parse(
+        withBindings([{ type: "json", name: "V", json }]),
+      );
+      const binding = parsed.worker.bindings[0];
+      if (binding === undefined) throw new Error("expected one binding");
+      expect(isJsonVarBinding(binding)).toBe(true);
+      expect(binding).toEqual({ type: "json", name: "V", json });
+    }
+  });
+
+  it("must carry their value", () => {
+    const result = artifactManifestSchema.safeParse(withBindings([{ type: "json", name: "V" }]));
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain("must record its value in `json`");
+  });
+
+  it("require a catalog default that is JSON text", () => {
+    const bindings = [
+      { type: "json", name: "EMAIL_ADDRESSES", json: [] },
+      { type: "plain_text", name: "GREETING", text: "Hi" },
+    ];
+    const v = (name: string, value: string) => ({
+      name,
+      label: name,
+      default: value,
+      required: false,
+    });
+    expect(
+      catalogVarProblems(bindings, [
+        v("EMAIL_ADDRESSES", '["{{workerName}}@example.com"]'),
+        v("GREETING", "not json, and it need not be"),
+      ]),
+    ).toEqual([]);
+    expect(catalogVarProblems(bindings, [v("EMAIL_ADDRESSES", "inbox@example.com")])).toEqual([
+      expect.stringMatching(/^The default of the var EMAIL_ADDRESSES is not valid JSON/),
+    ]);
+  });
+});
+
+describe("worker.wranglerConfig", () => {
+  it("is optional and records the declared and effective config", () => {
+    expect(artifactManifestSchema.parse(validArtifact).worker.wranglerConfig).toBeUndefined();
+    const wranglerConfig = { declared: "wrangler.jsonc", effective: "build/server/wrangler.json" };
+    const parsed = artifactManifestSchema.parse({
+      ...validArtifact,
+      worker: { ...validArtifact.worker, wranglerConfig },
+    });
+    expect(parsed.worker.wranglerConfig).toEqual(wranglerConfig);
   });
 });

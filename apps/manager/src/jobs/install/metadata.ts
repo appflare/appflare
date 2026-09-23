@@ -3,7 +3,14 @@ import type {
   WorkerBinding as UploadBinding,
   WorkerModule,
 } from "@appflare/cf-api";
-import type { ArtifactManifest, ModuleType, WorkerBinding } from "@appflare/schema";
+import type {
+  ArtifactManifest,
+  ModuleType,
+  PlaceholderValues,
+  WorkerBinding,
+} from "@appflare/schema";
+import { type ResolvedVars, resolveVars, type VarBinding } from "../../installs/install-vars";
+import { workersDevUrl } from "../../installs/post-install";
 import { PASSTHROUGH_BINDING_TYPES, type ResourceBindingType } from "./bindings";
 
 /**
@@ -23,27 +30,21 @@ export interface CreatedResource {
 }
 
 /**
- * The value of every var the app gets as a `plain_text` binding: the manifest's
- * recorded `vars` (wrangler config defaults), overridden by each catalog var's
- * user value, else its catalog `default`. A catalog var left blank with no default
- * is not sent at all.
+ * Every var the install's Worker gets (`resolveVars`), with `{{workerUrl}}`
+ * and `{{workerName}}` filled in from its Worker name and the account's
+ * workers.dev subdomain. The job logs the warnings: a stored value the app
+ * can no longer read falls back to the default instead of failing the job.
  */
-export function resolveVars(
-  manifest: ArtifactManifest,
+export function installVars(
+  manifest: Pick<ArtifactManifest, "catalog" | "worker">,
   userVars: Readonly<Record<string, string>>,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const binding of manifest.worker.bindings) {
-    if (binding.type === "plain_text" && typeof binding.text === "string") {
-      out[binding.name] = binding.text;
-    }
-  }
-  for (const v of manifest.catalog.vars) {
-    const entered = userVars[v.name];
-    if (entered !== undefined && entered.length > 0) out[v.name] = entered;
-    else if (v.default !== undefined) out[v.name] = v.default;
-  }
-  return out;
+  worker: { workerName: string; subdomain: string },
+): ResolvedVars {
+  const placeholders: PlaceholderValues = {
+    workerName: worker.workerName,
+    workerUrl: workersDevUrl(worker.workerName, worker.subdomain),
+  };
+  return resolveVars(manifest, userVars, placeholders);
 }
 
 function resourceBinding(binding: WorkerBinding, created: CreatedResource): UploadBinding {
@@ -81,7 +82,8 @@ export interface ScriptMetadataInput {
   resources: readonly CreatedResource[];
   /** Workflow binding name -> the account-wide Workflow name the install uses. */
   workflowNames?: Readonly<Record<string, string>>;
-  vars: Readonly<Record<string, string>>;
+  /** Every var the Worker gets (`resolveVars` in installs/install-vars.ts). */
+  vars: readonly VarBinding[];
   /** The assets completion JWT, or null when the artifact has no assets. */
   assetsJwt: string | null;
   /** Rate limit binding name -> the install's own namespace id (install/rate-limits.ts). */
@@ -89,8 +91,8 @@ export interface ScriptMetadataInput {
 }
 
 /**
- * Every binding is sent explicitly with ids filled in from `resources`; `vars`
- * become `plain_text`; the `assets` binding and `assets: { jwt, config }` go
+ * Every binding is sent explicitly with ids filled in from `resources`; vars
+ * come from `vars` only (`plain_text` or `json`, placeholders filled in); the `assets` binding and `assets: { jwt, config }` go
  * together (`keep_bindings` is not used for installs; the script is new).
  */
 export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata {
@@ -99,7 +101,8 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
   const bindings: UploadBinding[] = [];
 
   for (const binding of manifest.worker.bindings) {
-    if (binding.type === "plain_text") continue; // re-added from `vars` below
+    // Vars are re-added from `vars` below, with the install's values.
+    if (binding.type === "plain_text" || binding.type === "json") continue;
     const created = byBinding.get(binding.name);
     if (created !== undefined) {
       bindings.push(resourceBinding(binding, created));
@@ -120,9 +123,7 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
       throw new Error(`binding ${binding.name} (${binding.type}) has no created resource`);
     }
   }
-  for (const [name, text] of Object.entries(vars)) {
-    bindings.push({ type: "plain_text", name, text });
-  }
+  for (const v of vars) bindings.push({ ...v });
 
   const metadata: ScriptMetadata = {
     main_module: manifest.worker.mainModule,

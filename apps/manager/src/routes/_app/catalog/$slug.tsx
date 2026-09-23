@@ -125,6 +125,8 @@ function CatalogEntryPage() {
           // A new suggestion (after another install) resets the form.
           key={detail.suggestedWorkerName}
           catalog={catalog}
+          varFields={detail.varFields}
+          subdomain={detail.subdomain}
           canInstall={canInstall}
           defaultWorkerName={detail.suggestedWorkerName}
           fixedWorkerName={detail.fixedWorkerName}

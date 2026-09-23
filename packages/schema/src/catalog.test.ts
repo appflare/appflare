@@ -6,6 +6,9 @@ import {
   catalogManifestSchema,
   EMAIL_ROUTING_MAX_RULES,
   hasFixedWorkerName,
+  hasPlaceholder,
+  renderJsonPlaceholders,
+  renderPlaceholders,
   semverSchema,
 } from "./catalog";
 
@@ -307,5 +310,43 @@ describe("semverSchema", () => {
     expect(semverSchema.safeParse("1.2.3-beta.1+sha.abc").success).toBe(true);
     expect(semverSchema.safeParse("v11.0.0").success).toBe(false);
     expect(semverSchema.safeParse(" 1.2.3").success).toBe(false);
+  });
+});
+
+describe("install placeholders", () => {
+  const values = { workerUrl: "https://inbox.acme.workers.dev", workerName: "inbox" };
+
+  it("fill in the Worker URL and name, with or without spaces inside the braces", () => {
+    expect(renderPlaceholders("{{workerUrl}}/api and {{ workerName }}", values)).toBe(
+      "https://inbox.acme.workers.dev/api and inbox",
+    );
+    expect(renderPlaceholders("{{other}} stays", values)).toBe("{{other}} stays");
+    expect(hasPlaceholder("x {{ workerUrl }}")).toBe(true);
+    expect(hasPlaceholder("{{other}}")).toBe(false);
+  });
+
+  it("keep {{workerUrl}} while the URL is unknown", () => {
+    expect(renderPlaceholders("{{workerUrl}} {{workerName}}", { ...values, workerUrl: null })).toBe(
+      "{{workerUrl}} inbox",
+    );
+  });
+
+  it("fill in strings inside JSON values, never keys", () => {
+    expect(
+      renderJsonPlaceholders(
+        { "{{workerName}}": ["{{workerUrl}}", 1, true, null, { u: "{{workerName}}" }] },
+        values,
+      ),
+    ).toEqual({
+      "{{workerName}}": ["https://inbox.acme.workers.dev", 1, true, null, { u: "inbox" }],
+    });
+    expect(renderJsonPlaceholders(3, values)).toBe(3);
+  });
+
+  it("keep a __proto__ key as an own property", () => {
+    const parsed = JSON.parse('{"__proto__":{"u":"{{workerName}}"},"a":1}');
+    const rendered = renderJsonPlaceholders(parsed, values);
+    expect(JSON.stringify(rendered)).toBe('{"__proto__":{"u":"inbox"},"a":1}');
+    expect(Object.getPrototypeOf(rendered)).toBe(Object.prototype);
   });
 });

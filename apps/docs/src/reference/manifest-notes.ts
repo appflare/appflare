@@ -41,7 +41,7 @@ export const manifestFieldNotes: FieldNotes = {
   plan: 'The Workers plan the app needs. Use `"paid"` when it cannot run on the free plan.',
   requires: "Account features the app needs beyond Workers. Shown on the catalog page.",
   secrets: "Secrets the install form asks for.",
-  vars: "Plain-text settings the install form asks for.",
+  vars: "Settings the install form asks for. Each reaches the Worker as a variable: text, or JSON when the wrangler config gives it a value that is not a string.",
   postInstall: "Instructions shown after a successful install.",
   tokenPermissions:
     "Permissions for a Cloudflare API token the app needs for itself. The user creates that token; it is stored as the app's secret, never the manager's.",
@@ -52,7 +52,7 @@ export const manifestFieldNotes: FieldNotes = {
   "install.tier": 'Only `"artifact"` is installable today: a signed bundle built by the catalog.',
   "install.packageManager": "The package manager used to install the app's dependencies.",
   "install.wranglerConfig":
-    "Path of the wrangler config inside the repository, for example `wrangler.jsonc`.",
+    "Path of the app's own wrangler config inside the repository, for example `wrangler.jsonc`. When the build leaves a `.wrangler/deploy/config.json` redirect beside it (as the Cloudflare Vite plugin does), the packer builds from the config it points at, as `wrangler deploy` does.",
   "install.workerName": "The default Worker name. The user can change it at install.",
   "install.fixedWorkerName":
     "Set to `true` when the app only works under `workerName`. It can then be installed once per account.",
@@ -66,7 +66,6 @@ export const manifestFieldNotes: FieldNotes = {
   "vars[].name": "The variable's name as the Worker reads it from `env`.",
   "vars[].label": "Label of the form field.",
   "vars[].help": "Help text under the form field.",
-  "vars[].default": "Value the form starts with.",
   "vars[].required": "When `true`, the install form does not accept an empty value.",
   "postInstall[].type": "Only Markdown steps exist today.",
   "postInstall[].content":

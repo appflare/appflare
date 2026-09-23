@@ -13,6 +13,7 @@ import {
   selfUpdateBusyMessage,
 } from "../jobs/self-update/guard";
 import type { StartInstallInput } from "./install-input";
+import { installVarFields, missingRequiredVar, varValueProblem } from "./install-vars";
 
 /**
  * Starting an install: validate the form against the signed catalog manifest,
@@ -100,13 +101,17 @@ export function resolveInstallInput(
     }
     secrets[secret.name] = value;
   }
+  // Values are stored as entered, placeholders included, and filled in by
+  // each install and update job.
   const vars: Record<string, string> = {};
-  for (const v of catalog.vars) {
-    const value = (input.vars[v.name] ?? "").trim();
-    if (value.length > 0) vars[v.name] = value;
-    else if (v.required && v.default === undefined) {
-      throw new StartInstallError(`${v.label} (${v.name}) is required.`);
+  for (const field of installVarFields(manifest)) {
+    const value = (input.vars[field.name] ?? "").trim();
+    if (missingRequiredVar(field, value)) {
+      throw new StartInstallError(`${field.label} (${field.name}) is required.`);
     }
+    const problem = varValueProblem(field, value);
+    if (problem !== null) throw new StartInstallError(problem);
+    if (value.length > 0) vars[field.name] = value;
   }
   if (catalog.install.emailRouting !== undefined && input.emailRouting === undefined) {
     throw new StartInstallError(

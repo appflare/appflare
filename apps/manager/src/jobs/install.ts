@@ -24,7 +24,7 @@ import {
   provisionEmailRoutingPhase,
 } from "./install/email-routing";
 import { healthLabel } from "./install/health";
-import { buildScriptMetadata, type CreatedResource, resolveVars } from "./install/metadata";
+import { buildScriptMetadata, type CreatedResource, installVars } from "./install/metadata";
 import {
   applyD1MigrationsPhase,
   checkLiveHealthPhase,
@@ -293,6 +293,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       manifest.assets.files,
     );
 
+    // Vars may name the Worker's URL (`{{workerUrl}}`), so the account's
+    // workers.dev subdomain is known before the upload.
+    const subdomain = await lookupSubdomainPhase(steps);
+
     // 5. Script upload: every module in ONE multipart request. The Worker is
     // recorded first, with no id yet (pending): an upload whose response is
     // lost has still created it, and an uninstall deletes a Worker only when
@@ -308,10 +312,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
     const upload = await run("upload Worker script", async ({ log, orm }) => {
+      const vars = installVars(manifest, params.vars, { workerName: params.workerName, subdomain });
+      for (const warning of vars.warnings) log.warn(warning);
       const metadata = buildScriptMetadata({
         manifest,
         resources: created,
-        vars: resolveVars(manifest, params.vars),
+        vars: vars.vars,
         assetsJwt,
         workflowNames: Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name])),
         rateLimitIds,
@@ -438,7 +444,6 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       created,
     );
 
-    const subdomain = await lookupSubdomainPhase(steps);
     const host = `${params.workerName}.${subdomain}.workers.dev`;
 
     await run("enable workers.dev route", async ({ log, cf, orm }) => {

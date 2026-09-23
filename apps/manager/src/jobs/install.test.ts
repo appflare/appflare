@@ -57,6 +57,8 @@ interface FakeState {
   workflows: string[];
   /** Keys (`METHOD /path`) whose next call does its work and then answers 500. */
   failAfter: Set<string>;
+  /** The query that applies this migration file answers `status`, without running, `times` times. */
+  failMigration?: { file: string; status: number; times: number };
   /** When set, the script upload is refused with this status. */
   uploadStatus?: number;
   r2: string[];
@@ -272,6 +274,18 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     const d1Query = /^POST \/d1\/database\/([^/]+)\/query$/.exec(key);
     if (d1Query) {
       const { sql } = (await request.json()) as { sql: string };
+      const failing = state.failMigration;
+      if (
+        failing !== undefined &&
+        failing.times > 0 &&
+        sql.endsWith(`values ('${failing.file}');`)
+      ) {
+        failing.times -= 1;
+        return Response.json(
+          { success: false, errors: [{ code: 7500, message: 'near "BROKEN": syntax error' }] },
+          { status: failing.status },
+        );
+      }
       state.queries.push(sql);
       if (sql.startsWith("SELECT")) {
         return ok([
@@ -463,16 +477,13 @@ describe("install job", () => {
       "record D1 database cut-db",
       "open assets upload session",
       "upload assets bucket 1/1",
+      "look up workers.dev subdomain",
       "record Worker name",
       "upload Worker script",
       "record Worker script",
-      "D1 DB: create d1_migrations table",
-      "D1 DB: list applied migrations",
-      "D1 DB: apply 0001_init.sql",
-      "D1 DB: apply 0002_more.sql",
+      "D1 DB: apply migrations",
       "set secret ADMIN_PASSWORD",
       "set cron triggers",
-      "look up workers.dev subdomain",
       "enable workers.dev route",
       "health check 1",
       "health check 2",
@@ -483,8 +494,8 @@ describe("install job", () => {
     expect(r.self.calls.map((c) => [c.unit, c.subrequests])).toEqual([
       ["uploadAssetPart", 2], // one range for both files, one upload
       ["uploadWorker", 2], // one range for the module, one upload
-      ["applyD1Migration", 2], // the file, the query
-      ["applyD1Migration", 2],
+      // The table, the list, one range for both files, one query per file.
+      ["applyD1Migrations", 5],
     ]);
     for (const call of r.self.calls) expect(call.reported).toBe(call.subrequests);
     expect(r.step.configs.every((c) => c === API_STEP)).toBe(true);
@@ -603,6 +614,42 @@ describe("install job", () => {
     expect(r.fake.state.kv).toEqual([]);
   });
 
+  it("uploads non-string vars as json and fills in the Worker's URL and name", async () => {
+    const r = await install(
+      {
+        bindings: [
+          { type: "kv_namespace", name: "CUT_KV" },
+          { type: "json", name: "EMAIL_ADDRESSES", json: [] },
+          { type: "plain_text", name: "PUBLIC_URL", text: "{{workerUrl}}" },
+        ],
+        catalog: {
+          vars: [
+            { name: "HOME_PAGE", label: "Home page", required: false },
+            {
+              name: "EMAIL_ADDRESSES",
+              label: "Addresses",
+              default: '["{{workerName}}@example.com"]',
+              required: false,
+            },
+          ],
+        },
+      },
+      {},
+      { vars: { HOME_PAGE: "{{workerUrl}}/admin" } },
+    );
+    expect(r.error).toBeNull();
+    expect(r.fake.state.metadata?.bindings).toEqual([
+      { type: "kv_namespace", name: "CUT_KV", namespace_id: "kv-1" },
+      { type: "json", name: "EMAIL_ADDRESSES", json: ["cut@example.com"] },
+      { type: "plain_text", name: "PUBLIC_URL", text: "https://cut.appflare-dev.workers.dev" },
+      {
+        type: "plain_text",
+        name: "HOME_PAGE",
+        text: "https://cut.appflare-dev.workers.dev/admin",
+      },
+    ]);
+  });
+
   it("renames Workflows per install and refuses a name that is taken", async () => {
     const bindings = [
       { type: "kv_namespace", name: "CUT_KV" },
@@ -660,6 +707,80 @@ describe("install job", () => {
     expect(r.error).toBeNull();
     expect(r.fake.state.applied).toEqual(["0001_init.sql"]);
     expect(r.fake.state.queries.filter((q) => q.startsWith("CREATE TABLE t"))).toHaveLength(1);
+  });
+
+  describe("an app with many D1 migrations", () => {
+    /** `count` migration files, each creating its own table. */
+    const files = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        name: `${String(i + 1).padStart(4, "0")}_table${i + 1}.sql`,
+        content: `CREATE TABLE t${i + 1} (id TEXT);`,
+      }));
+    const names = (count: number) => files(count).map((f) => f.name);
+    const d1Steps = (r: Awaited<ReturnType<typeof install>>) =>
+      r.step.names.filter((n) => n.startsWith("D1 DB"));
+    const d1Calls = (r: Awaited<ReturnType<typeof install>>) =>
+      r.self.calls.filter((c) => c.unit === "applyD1Migrations").map((c) => c.subrequests);
+    /** How many queries ran each file (the file's SQL and its d1_migrations row). */
+    const runs = (r: Awaited<ReturnType<typeof install>>, file: string) =>
+      r.fake.state.queries.filter((q) => q.endsWith(`values ('${file}');`)).length;
+
+    it("applies 30 migrations from a release asset in one unit call", async () => {
+      const r = await install(
+        { bindings: [{ type: "d1", name: "DB" }], d1: { DB: files(30) } },
+        { artifactRedirect: true },
+      );
+      expect(r.error).toBeNull();
+      expect(d1Steps(r)).toEqual(["D1 DB: apply migrations"]);
+      // The table, the list, the redirect and one range for every file, one query per file.
+      expect(d1Calls(r)).toEqual([34]);
+      expect(r.fake.state.applied).toEqual(names(30));
+    });
+
+    it("continues in a further call from the first file that did not fit", async () => {
+      const r = await install(
+        { bindings: [{ type: "d1", name: "DB" }], d1: { DB: files(40) } },
+        { artifactRedirect: true },
+      );
+      expect(r.error).toBeNull();
+      expect(d1Steps(r)).toEqual([
+        "D1 DB: apply migrations",
+        "D1 DB: apply migrations from 0033_table33.sql",
+      ]);
+      expect(d1Calls(r)).toEqual([36, 12]);
+      expect(r.fake.state.applied).toEqual(names(40));
+    });
+
+    it("resumes a retried call after the last applied file, without running any twice", async () => {
+      const r = await install(
+        { bindings: [{ type: "d1", name: "DB" }], d1: { DB: files(30) } },
+        { failMigration: { file: "0013_table13.sql", status: 500, times: 1 } },
+      );
+      expect(r.error).toBeNull();
+      expect(r.step.retried).toEqual({ "D1 DB: apply migrations": 2 });
+      expect(r.fake.state.applied).toEqual(names(30));
+      for (const file of names(30)) expect(runs(r, file)).toBe(1);
+      // The second attempt listed 12 files as applied and started at the 13th.
+      expect(r.logs.map((l) => l.message)).toContain(
+        "12 migration(s) already applied to cut-db; applying 18 of 18 new.",
+      );
+    });
+
+    it("stops at the file whose statement fails, with Cloudflare's error", async () => {
+      const r = await install(
+        { bindings: [{ type: "d1", name: "DB" }], d1: { DB: files(30) } },
+        { failMigration: { file: "0024_table24.sql", status: 400, times: 1 } },
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.installRow?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        `D1 DB: apply migrations: 0024_table24.sql: Cloudflare API request failed: POST /accounts/${ACC}/d1/database/d1-1/query -> 400: [7500] near "BROKEN": syntax error`,
+      );
+      expect(r.step.retried).toEqual({});
+      expect(r.fake.state.applied).toEqual(names(23));
+      for (const file of names(30).slice(24)) expect(runs(r, file)).toBe(0);
+      expect(r.step.names.at(-1)).toBe("mark install failed");
+    });
   });
 
   it("runs the units in its own invocation when the Worker has no SELF binding", async () => {

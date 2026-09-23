@@ -164,15 +164,13 @@ describe("update job", () => {
       "record KV namespace cut-cache",
       "open assets upload session",
       "upload assets bucket 1/1",
+      "look up workers.dev subdomain",
       "upload Worker version",
       "record Worker version",
-      "look up workers.dev subdomain",
       "enable version previews",
       "canary check 1",
       "canary check 2",
-      "D1 DB: create d1_migrations table",
-      "D1 DB: list applied migrations",
-      "D1 DB: apply 0002_hits.sql",
+      "D1 DB: apply migrations",
       "promote version",
       "record promotion",
       "set cron triggers",
@@ -185,7 +183,7 @@ describe("update job", () => {
     expect(r.self.calls.map((c) => c.unit)).toEqual([
       "uploadAssetPart",
       "uploadWorker",
-      "applyD1Migration",
+      "applyD1Migrations",
     ]);
     for (const call of r.self.calls) expect(call.subrequests).toBeLessThan(40);
 
@@ -341,6 +339,38 @@ describe("update job", () => {
     ).toBe(true);
   });
 
+  it("falls back to the default when a stored setting is not JSON for a var the new version reads as JSON", async () => {
+    // The install stored HOME_PAGE as text ("admin"); this version reads it as JSON.
+    const r = await update({
+      ...NEW_APP,
+      bindings: [...(NEW_APP.bindings ?? []), { type: "json", name: "HOME_PAGE", json: [] }],
+      catalog: {
+        vars: [
+          {
+            name: "HOME_PAGE",
+            label: "Home page",
+            default: '["{{workerName}}"]',
+            required: false,
+          },
+        ],
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const bindings = r.fake.state.versions[0]?.metadata.bindings as Array<Record<string, unknown>>;
+    expect(bindings.filter((b) => b.name === "HOME_PAGE")).toEqual([
+      { type: "json", name: "HOME_PAGE", json: ["cut"] },
+    ]);
+    expect(
+      r.logs.some(
+        (l) =>
+          l.level === "warn" &&
+          l.message ===
+            "The stored value of HOME_PAGE is not valid JSON, but this version of the app reads HOME_PAGE as JSON; the Worker gets the catalog default instead.",
+      ),
+    ).toBe(true);
+  });
+
   it("deploys a version with new Durable Object migrations in one full upload, without a canary", async () => {
     const r = await update(
       {
@@ -373,13 +403,11 @@ describe("update job", () => {
       "record snapshot",
       "open assets upload session",
       "upload assets bucket 1/1",
-      "D1 DB: create d1_migrations table",
-      "D1 DB: list applied migrations",
-      "D1 DB: apply 0002_hits.sql",
+      "look up workers.dev subdomain",
+      "D1 DB: apply migrations",
       "skip canary",
       "deploy Worker script",
       "record Worker version",
-      "look up workers.dev subdomain",
       "record promotion",
       "health check 1",
       "finish",

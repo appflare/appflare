@@ -237,7 +237,8 @@
             "type": "string"
           },
           "default": {
-            "type": "string"
+            "type": "string",
+            "description": "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL (`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and `{{workerName}}` its Worker name, filled in on every install and update. `{{workerUrl}}` is always the workers.dev address, even when a custom domain is attached. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{workerUrl}}\"]`. Without `default`, the form starts with the wrangler config's value."
           },
           "required": {
             "default": false,

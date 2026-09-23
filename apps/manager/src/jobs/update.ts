@@ -15,7 +15,7 @@ import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
 import { healthLabel } from "./install/health";
-import { buildScriptMetadata, resolveVars } from "./install/metadata";
+import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
   type ArtifactRef,
   applyD1MigrationsPhase,
@@ -371,6 +371,13 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       manifest.assets.files,
     );
 
+    // Vars may name the Worker's URL (`{{workerUrl}}`), so the account's
+    // workers.dev subdomain is known before the upload.
+    const subdomain = await lookupSubdomainPhase(steps);
+    // A stored value this version cannot read falls back to its default; the
+    // upload step says so in its log.
+    const vars = installVars(manifest, started.userVars, { workerName, subdomain });
+
     /** The metadata of the upload (never logged: it holds new secret values). */
     function uploadMetadata(): ScriptMetadata {
       // Durable Object migrations go only to a full deploy, and only the
@@ -378,7 +385,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       const { migrations: _all, ...base } = buildScriptMetadata({
         manifest,
         resources: bound,
-        vars: resolveVars(manifest, started.userVars),
+        vars: vars.vars,
         assetsJwt,
         workflowNames: diff.workflowNames,
         rateLimitIds,
@@ -463,10 +470,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }
     }
 
-    let subdomain: string;
     if (fullDeploy === null) {
       // 5. The new version: every module in ONE multipart request.
       const uploaded = await run("upload Worker version", async ({ log }) => {
+        for (const warning of vars.warnings) log.warn(warning);
         const metadata: VersionMetadata = {
           ...uploadMetadata(),
           annotations: {
@@ -491,7 +498,6 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       });
 
       // 6. Canary on the version's preview URL.
-      subdomain = await lookupSubdomainPhase(steps);
       const skip = path.skipPreview ?? canarySkipReason(uploaded.hasPreview, 0);
       if (skip !== null) {
         await run("skip canary", async ({ log }) => {
@@ -537,6 +543,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         return {};
       });
       const deployed = await run("deploy Worker script", async ({ log }) => {
+        for (const warning of vars.warnings) log.warn(warning);
         const metadata = uploadMetadata();
         const result = await uploadWorker(log, metadata, "script");
         if (result.versionId === null) {
@@ -555,7 +562,6 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         await recordUpload(orm, deployed.versionId);
         return {};
       });
-      subdomain = await lookupSubdomainPhase(steps);
     }
 
     const record = servingRecord;

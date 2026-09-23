@@ -12,6 +12,12 @@ export {
   DEFAULT_BUILD_TIMEOUT_MS,
   runBuildCommand,
 } from "./build-command.ts";
+export {
+  ConfigRedirectError,
+  DEPLOY_CONFIG_PATH,
+  resolveWranglerConfig,
+  type WranglerConfigTarget,
+} from "./config-redirect.ts";
 export { parseJsonc } from "./jsonc.ts";
 export type { PackOptions, PackResult } from "./pack.ts";
 export { describeVersionOrigin, pack, packWarnings } from "./pack.ts";

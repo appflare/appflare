@@ -1,5 +1,5 @@
-import type { CatalogManifest } from "@appflare/schema";
-import { Banner, Button, Checkbox, Input, LayerCard, Text } from "@cloudflare/kumo";
+import { type CatalogManifest, hasPlaceholder, renderPlaceholders } from "@appflare/schema";
+import { Banner, Button, Checkbox, Input, InputArea, LayerCard, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
@@ -9,7 +9,13 @@ import {
   WORKER_NAME_MAX_LENGTH,
   WORKER_NAME_PATTERN,
 } from "../installs/install-input";
+import {
+  type InstallVarField,
+  missingRequiredVar,
+  varValueProblem,
+} from "../installs/install-vars";
 import { startInstall } from "../installs/installs.functions";
+import { workersDevUrl } from "../installs/post-install";
 import { EmailRoutingFields } from "./email-routing-fields";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
 
@@ -23,9 +29,18 @@ import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fie
  * shown only here. An app that receives email (`install.emailRouting`) also
  * asks for a zone and previews what the install sets up there. Members see
  * the form disabled.
+ *
+ * Settings start with the catalog default, else the wrangler config's value,
+ * with `{{workerUrl}}` and `{{workerName}}` shown filled in for the Worker
+ * name as typed. Only settings the admin changed are sent and stored; the
+ * others take the default of whichever version a job deploys, placeholders
+ * filled in then. A setting the app reads as JSON is a
+ * multi-line field that must hold valid JSON.
  */
 export function InstallForm({
   catalog,
+  varFields,
+  subdomain,
   canInstall,
   defaultWorkerName,
   fixedWorkerName,
@@ -33,6 +48,10 @@ export function InstallForm({
   requirementsConfirmed,
 }: {
   catalog: CatalogManifest;
+  /** One per catalog var (`installVarFields`). */
+  varFields: InstallVarField[];
+  /** The account's workers.dev subdomain, or null when unknown. */
+  subdomain: string | null;
   canInstall: boolean;
   /** The catalog's Worker name, or the next free `<name>-N` when it is taken. */
   defaultWorkerName: string;
@@ -51,9 +70,8 @@ export function InstallForm({
   const [secrets, setSecrets] = useState<Record<string, string>>(() =>
     initialSecretValues(catalog.secrets),
   );
-  const [vars, setVars] = useState<Record<string, string>>(() =>
-    Object.fromEntries(catalog.vars.map((v) => [v.name, v.default ?? ""])),
-  );
+  /** Settings the admin edited; the others follow their default. */
+  const [editedVars, setEditedVars] = useState<Record<string, string>>({});
   const [paidConfirmed, setPaidConfirmed] = useState(false);
   const receivesEmail = catalog.install.emailRouting !== undefined;
   const [emailZoneId, setEmailZoneId] = useState<string | null>(null);
@@ -61,13 +79,31 @@ export function InstallForm({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const placeholders = { workerName, workerUrl: workersDevUrl(workerName, subdomain) };
+  const shownVar = (field: InstallVarField): string =>
+    editedVars[field.name] ?? renderPlaceholders(field.shownDefault, placeholders);
+  /**
+   * Only settings the admin changed. The others are not stored, so each
+   * install and update job uses the default of the version it deploys.
+   */
+  const submittedVars = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const field of varFields) {
+      const edited = editedVars[field.name];
+      const shown = renderPlaceholders(field.shownDefault, placeholders);
+      if (edited !== undefined && edited !== shown) out[field.name] = edited;
+    }
+    return out;
+  };
   const nameValid = WORKER_NAME_PATTERN.test(workerName);
   const labelValid =
     instanceName.trim().length > 0 && instanceName.trim().length <= INSTANCE_NAME_MAX_LENGTH;
   const disabled = !canInstall || blockedReason !== null || pending;
   const missing =
     !secretsComplete(catalog.secrets, secrets) ||
-    catalog.vars.some((v) => v.required && (vars[v.name] ?? "").trim().length === 0);
+    varFields.some(
+      (f) => missingRequiredVar(f, shownVar(f)) || varValueProblem(f, shownVar(f)) !== null,
+    );
   const ready =
     nameValid &&
     labelValid &&
@@ -88,7 +124,7 @@ export function InstallForm({
           workerName,
           instanceName: instanceName.trim(),
           secrets,
-          vars,
+          vars: submittedVars(),
           paidConfirmed,
           requirementsConfirmed,
           ...(receivesEmail && emailZoneId !== null
@@ -132,7 +168,7 @@ export function InstallForm({
               description={
                 fixedWorkerName
                   ? `${catalog.name} only works as the Worker "${workerName}", so it installs once per account.`
-                  : `The app is served at https://${workerName || "<name>"}.<your subdomain>.workers.dev. Resources are named after it. Each install of an app needs its own Worker name.`
+                  : `The app is served at https://${workerName || "<name>"}.${subdomain ?? "<your subdomain>"}.workers.dev. Resources are named after it. Each install of an app needs its own Worker name.`
               }
             />
             <Input
@@ -164,26 +200,20 @@ export function InstallForm({
               </div>
             )}
 
-            {catalog.vars.length > 0 && (
+            {varFields.length > 0 && (
               <div className="grid gap-4">
                 <div className="grid gap-1.5">
                   <Text bold>Settings</Text>
                   <Text variant="secondary" size="sm">
-                    Plain-text variables on the app's Worker.
+                    Variables on the app's Worker. Settings marked JSON take a JSON value.
                   </Text>
                 </div>
-                {catalog.vars.map((v) => (
-                  <Input
-                    key={v.name}
-                    label={`${v.label} (${v.name})`}
-                    value={vars[v.name] ?? ""}
-                    required={v.required}
-                    autoComplete="off"
-                    onChange={(e) => {
-                      const value = e.currentTarget.value;
-                      setVars((s) => ({ ...s, [v.name]: value }));
-                    }}
-                    description={v.help}
+                {varFields.map((field) => (
+                  <VarField
+                    key={field.name}
+                    field={field}
+                    value={shownVar(field)}
+                    onChange={(value) => setEditedVars((s) => ({ ...s, [field.name]: value }))}
                   />
                 ))}
               </div>
@@ -227,5 +257,52 @@ export function InstallForm({
         </form>
       </LayerCard.Primary>
     </LayerCard>
+  );
+}
+
+/** One setting: a text field, or a JSON field checked as the admin types. */
+function VarField({
+  field,
+  value,
+  onChange,
+}: {
+  field: InstallVarField;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const notes = [
+    field.help,
+    hasPlaceholder(value)
+      ? "{{workerUrl}} and {{workerName}} are filled in with the app's URL and Worker name when it installs."
+      : undefined,
+  ].filter((note) => note !== undefined);
+  const description = notes.length > 0 ? notes.join(" ") : undefined;
+  if (field.kind === "json") {
+    return (
+      <InputArea
+        label={`${field.label} (${field.name}, JSON)`}
+        value={value}
+        required={field.required}
+        autoComplete="off"
+        spellCheck={false}
+        autoResize
+        minRows={1}
+        maxRows={8}
+        className="font-mono"
+        onChange={(e) => onChange(e.currentTarget.value)}
+        description={description}
+        error={varValueProblem(field, value) ?? undefined}
+      />
+    );
+  }
+  return (
+    <Input
+      label={`${field.label} (${field.name})`}
+      value={value}
+      required={field.required}
+      autoComplete="off"
+      onChange={(e) => onChange(e.currentTarget.value)}
+      description={description}
+    />
   );
 }

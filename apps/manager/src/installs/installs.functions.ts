@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { artifactManifestSchema, type TokenPermission } from "@appflare/schema";
+import { artifactManifestSchema, renderPlaceholders, type TokenPermission } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -141,6 +141,7 @@ export interface CustomDomainView {
 export interface InstallDetail extends InstallRow {
   currentVersionId: string | null;
   pinSha: string | null;
+  /** The settings the admin changed at install, with placeholders filled in. */
   vars: Record<string, string>;
   /** Resources in the account that belong to the install (secrets excluded). */
   resources: ResourceView[];
@@ -260,7 +261,13 @@ export const getInstall = createServerFn({ method: "GET" })
       ...healthOf(row),
       currentVersionId: row.current_version_id,
       pinSha: row.pin_sha,
-      vars: parseVars(row.config_json),
+      // As the Worker gets them: placeholders are kept as entered and filled in by the jobs.
+      vars: Object.fromEntries(
+        Object.entries(parseVars(row.config_json)).map(([name, value]) => [
+          name,
+          renderPlaceholders(value, { workerUrl, workerName: row.worker_name }),
+        ]),
+      ),
       // Email routes are listed under Email; their ids carry encoded state.
       resources: live.filter((r) => r.kind !== "secret" && r.kind !== EMAIL_ROUTE_KIND).map(view),
       retained: resourceRows.filter((r) => r.retained_at !== null).map(view),

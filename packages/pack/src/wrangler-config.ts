@@ -1,5 +1,6 @@
 import type {
   CatalogResources,
+  JsonValue,
   ModuleType,
   QueueConsumer,
   QueueRef,
@@ -241,14 +242,33 @@ export function collectBindings(
   if (config.version_metadata) {
     push("version_metadata", config.version_metadata.binding);
   }
-  // Plain (non-secret) vars become plain_text bindings. Values are
-  // public config, safe to record; the manager merges user input over them.
+  // Plain (non-secret) vars, typed the way wrangler uploads them (4.136.2's
+  // `toVarBinding`): a string is a `plain_text` binding, anything else a
+  // `json` binding holding the value itself, so `[]` reaches the Worker as an
+  // array, not the text "[]". Values are public config, safe to record; the
+  // manager merges user input over them.
   for (const [name, value] of Object.entries(config.vars ?? {})) {
-    const text = typeof value === "string" ? value : JSON.stringify(value);
-    push("plain_text", name, { text });
+    if (typeof value === "string") {
+      push("plain_text", name, { text: value });
+    } else {
+      bindings.push({ type: "json", name, json: toJsonValue(name, value) });
+    }
   }
 
   return bindings;
+}
+
+/**
+ * `value` as the JSON wrangler's upload would send: a round trip through
+ * `JSON.stringify`, as the upload metadata takes (a TOML date becomes its ISO
+ * string, an `undefined` inside an object disappears).
+ */
+function toJsonValue(name: string, value: unknown): JsonValue {
+  const text = JSON.stringify(value);
+  if (text === undefined) {
+    throw new Error(`the wrangler config var ${name} has no JSON value`);
+  }
+  return JSON.parse(text) as JsonValue;
 }
 
 /** The wrangler config declares a queue consumer the packer cannot record. */

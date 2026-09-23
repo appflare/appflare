@@ -291,6 +291,32 @@ describe("startInstallCore", () => {
     expect(ok.vars).toEqual({ REGION: "eu" });
   });
 
+  it("takes JSON for a JSON var and lets the wrangler config's value satisfy a required var", async () => {
+    const f = await buildArtifactFixture({
+      bindings: [
+        { type: "kv_namespace", name: "CUT_KV" },
+        { type: "json", name: "ADDRESSES", json: [] },
+        { type: "plain_text", name: "REGION", text: "eu" },
+      ],
+      catalog: {
+        vars: [
+          { name: "ADDRESSES", label: "Addresses", required: true },
+          { name: "REGION", label: "Region", required: true },
+        ],
+      },
+    });
+    expect(() =>
+      resolveInstallInput(f.manifest, input({ vars: { ADDRESSES: "inbox@example.com" } })),
+    ).toThrow(/^Addresses \(ADDRESSES\) is not valid JSON/);
+    // Placeholders are kept as entered; the jobs fill them in.
+    const ok = resolveInstallInput(
+      f.manifest,
+      input({ vars: { ADDRESSES: ' ["{{workerName}}@example.com"] ' } }),
+    );
+    expect(ok.vars).toEqual({ ADDRESSES: '["{{workerName}}@example.com"]' });
+    expect(resolveInstallInput(f.manifest, input({ vars: {} })).vars).toEqual({});
+  });
+
   it("refuses an app with account requirements until they are confirmed", async () => {
     const f = await buildArtifactFixture({ catalog: { requires: ["r2", "zone"] } });
     expect(() => resolveInstallInput(f.manifest, input())).toThrow(

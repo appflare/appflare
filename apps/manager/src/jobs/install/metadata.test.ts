@@ -3,11 +3,13 @@ import { buildArtifactFixture } from "../../test/artifact-fixture";
 import {
   buildScriptMetadata,
   durableObjectMigrations,
-  resolveVars,
+  installVars,
   uploadModule,
 } from "./metadata";
 
-describe("resolveVars", () => {
+describe("installVars", () => {
+  const worker = { workerName: "cut-2", subdomain: "acme" };
+
   it("uses the user's value, else the catalog default, else the recorded var; blanks are omitted", async () => {
     const f = await buildArtifactFixture({
       bindings: [
@@ -22,15 +24,101 @@ describe("resolveVars", () => {
         ],
       },
     });
-    expect(resolveVars(f.manifest, { HOME_PAGE: "admin", EMPTY: "" })).toEqual({
-      MODE: "prod",
-      HOME_PAGE: "admin",
-      GREETING: "hi",
+    expect(installVars(f.manifest, { HOME_PAGE: "admin", EMPTY: "" }, worker).vars).toEqual([
+      { type: "plain_text", name: "MODE", text: "prod" },
+      { type: "plain_text", name: "HOME_PAGE", text: "admin" },
+      { type: "plain_text", name: "GREETING", text: "hi" },
+    ]);
+    expect(installVars(f.manifest, {}, worker).vars).toEqual([
+      { type: "plain_text", name: "MODE", text: "prod" },
+      { type: "plain_text", name: "HOME_PAGE", text: "recorded" },
+      { type: "plain_text", name: "GREETING", text: "hi" },
+    ]);
+  });
+
+  it("keeps non-string vars as JSON and fills in {{workerUrl}} and {{workerName}} everywhere", async () => {
+    const f = await buildArtifactFixture({
+      bindings: [
+        { type: "json", name: "EMAIL_ADDRESSES", json: [] },
+        { type: "json", name: "LIMITS", json: { origin: "{{workerUrl}}", max: 3 } },
+        { type: "plain_text", name: "SELF", text: "{{workerName}}" },
+      ],
+      catalog: {
+        vars: [
+          { name: "PUBLIC_URL", label: "URL", default: "{{workerUrl}}", required: false },
+          {
+            name: "EMAIL_ADDRESSES",
+            label: "Addresses",
+            default: '["{{workerName}}@example.com"]',
+            required: false,
+          },
+        ],
+      },
     });
-    expect(resolveVars(f.manifest, {})).toEqual({
-      MODE: "prod",
-      HOME_PAGE: "recorded",
-      GREETING: "hi",
+    expect(installVars(f.manifest, {}, worker)).toEqual({
+      vars: [
+        { type: "json", name: "EMAIL_ADDRESSES", json: ["cut-2@example.com"] },
+        {
+          type: "json",
+          name: "LIMITS",
+          json: { origin: "https://cut-2.acme.workers.dev", max: 3 },
+        },
+        { type: "plain_text", name: "SELF", text: "cut-2" },
+        { type: "plain_text", name: "PUBLIC_URL", text: "https://cut-2.acme.workers.dev" },
+      ],
+      warnings: [],
+    });
+    // What the admin entered is JSON too, and takes placeholders.
+    expect(
+      installVars(
+        f.manifest,
+        { EMAIL_ADDRESSES: '["a@example.com", "{{workerName}}@example.org"]' },
+        worker,
+      ).vars[0],
+    ).toEqual({
+      type: "json",
+      name: "EMAIL_ADDRESSES",
+      json: ["a@example.com", "cut-2@example.org"],
+    });
+  });
+
+  it("falls back to the default when a stored value is not JSON for a var this version reads as JSON", async () => {
+    // The admin's value was entered while ADDRESSES was a text var; this version reads JSON.
+    const stored = { ADDRESSES: "a@example.com" };
+    const withDefault = await buildArtifactFixture({
+      bindings: [{ type: "json", name: "ADDRESSES", json: ["upstream@example.com"] }],
+      catalog: {
+        vars: [
+          {
+            name: "ADDRESSES",
+            label: "Addresses",
+            default: '["{{workerName}}@example.com"]',
+            required: false,
+          },
+        ],
+      },
+    });
+    expect(installVars(withDefault.manifest, stored, worker)).toEqual({
+      vars: [{ type: "json", name: "ADDRESSES", json: ["cut-2@example.com"] }],
+      warnings: [
+        "The stored value of ADDRESSES is not valid JSON, but this version of the app reads ADDRESSES as JSON; the Worker gets the catalog default instead.",
+      ],
+    });
+    const withoutDefault = await buildArtifactFixture({
+      bindings: [{ type: "json", name: "ADDRESSES", json: ["upstream@example.com"] }],
+      catalog: { vars: [{ name: "ADDRESSES", label: "Addresses", required: false }] },
+    });
+    const resolved = installVars(withoutDefault.manifest, stored, worker);
+    expect(resolved.vars).toEqual([
+      { type: "json", name: "ADDRESSES", json: ["upstream@example.com"] },
+    ]);
+    expect(resolved.warnings).toEqual([
+      expect.stringMatching(/the Worker gets the wrangler config's value instead\.$/),
+    ]);
+    // A value the admin edited into valid JSON is used as is, without a warning.
+    expect(installVars(withDefault.manifest, { ADDRESSES: '["b@example.com"]' }, worker)).toEqual({
+      vars: [{ type: "json", name: "ADDRESSES", json: ["b@example.com"] }],
+      warnings: [],
     });
   });
 });
@@ -45,6 +133,7 @@ describe("buildScriptMetadata", () => {
         { type: "queue", name: "Q", delivery_delay: 5 },
         { type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "JobWorkflow" },
         { type: "plain_text", name: "MODE", text: "prod" },
+        { type: "json", name: "ADDRESSES", json: ["recorded"] },
       ],
       assets: [{ route: "/index.html", content: "<h1>hi</h1>" }],
       tweak: (m) => {
@@ -61,7 +150,11 @@ describe("buildScriptMetadata", () => {
         { binding: "FILES", type: "r2_bucket", name: "cut-files", cfId: "cut-files" },
         { binding: "Q", type: "queue", name: "cut-q", cfId: "queue-id" },
       ],
-      vars: { MODE: "prod", HOME_PAGE: "admin" },
+      vars: [
+        { type: "plain_text", name: "MODE", text: "prod" },
+        { type: "plain_text", name: "HOME_PAGE", text: "admin" },
+        { type: "json", name: "ADDRESSES", json: [] },
+      ],
       assetsJwt: "completion-jwt",
       workflowNames: { JOBS: "cut-jobs" },
     });
@@ -77,6 +170,8 @@ describe("buildScriptMetadata", () => {
         { type: "workflow", name: "JOBS", workflow_name: "cut-jobs", class_name: "JobWorkflow" },
         { type: "plain_text", name: "MODE", text: "prod" },
         { type: "plain_text", name: "HOME_PAGE", text: "admin" },
+        // Vars come from `vars` only, never also as recorded.
+        { type: "json", name: "ADDRESSES", json: [] },
         { type: "assets", name: "ASSETS" },
       ],
       assets: { jwt: "completion-jwt", config: { not_found_handling: "single-page-application" } },
@@ -106,7 +201,7 @@ describe("buildScriptMetadata", () => {
     const metadata = buildScriptMetadata({
       manifest: f.manifest,
       resources: [],
-      vars: {},
+      vars: [],
       assetsJwt: null,
       rateLimitIds: { LIMITER: "734112" },
     });
@@ -116,7 +211,7 @@ describe("buildScriptMetadata", () => {
     ]);
     // Never the artifact's id, which other Workers in the account may share.
     expect(() =>
-      buildScriptMetadata({ manifest: f.manifest, resources: [], vars: {}, assetsJwt: null }),
+      buildScriptMetadata({ manifest: f.manifest, resources: [], vars: [], assetsJwt: null }),
     ).toThrow(/LIMITER has no namespace of its own/);
   });
 
@@ -125,7 +220,7 @@ describe("buildScriptMetadata", () => {
     const withAssets = buildScriptMetadata({
       manifest: f.manifest,
       resources: [{ binding: "CUT_KV", type: "kv_namespace", name: "cut-cut-kv", cfId: "kv" }],
-      vars: {},
+      vars: [],
       assetsJwt: "jwt",
     });
     expect(withAssets.assets).toEqual({ jwt: "jwt", config: {} });
@@ -133,7 +228,7 @@ describe("buildScriptMetadata", () => {
     const none = buildScriptMetadata({
       manifest: f.manifest,
       resources: [{ binding: "CUT_KV", type: "kv_namespace", name: "cut-cut-kv", cfId: "kv" }],
-      vars: {},
+      vars: [],
       assetsJwt: null,
     });
     expect(none.assets).toBeUndefined();
@@ -142,7 +237,7 @@ describe("buildScriptMetadata", () => {
   it("refuses a resource binding that was not created", async () => {
     const f = await buildArtifactFixture();
     expect(() =>
-      buildScriptMetadata({ manifest: f.manifest, resources: [], vars: {}, assetsJwt: null }),
+      buildScriptMetadata({ manifest: f.manifest, resources: [], vars: [], assetsJwt: null }),
     ).toThrow(/CUT_KV \(kv_namespace\) has no created resource/);
   });
 

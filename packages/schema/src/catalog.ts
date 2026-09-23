@@ -118,17 +118,111 @@ export const catalogSecretSchema = z.object({
 });
 export type CatalogSecret = z.infer<typeof catalogSecretSchema>;
 
-/** A plain (non-secret) var the installer prompts for; becomes a `plain_text` binding. */
+/**
+ * Placeholders the manager fills in with the install's own values: in
+ * `postInstall` markdown, in `vars[].default`, and in the values of the
+ * wrangler config's `vars` (strings, and strings inside JSON values).
+ *
+ * - `{{workerUrl}}`: the install's workers.dev URL,
+ *   `https://<worker name>.<account subdomain>.workers.dev`, without a
+ *   trailing slash. Always the workers.dev address, even when a custom
+ *   domain is attached to the install.
+ * - `{{workerName}}`: the install's Worker name.
+ *
+ * Vars are rendered on every install and update, so they follow the Worker
+ * name the admin chose. Whitespace inside the braces is allowed
+ * (`{{ workerUrl }}`); anything else in double braces is left as written.
+ */
+export const INSTALL_PLACEHOLDERS = ["workerUrl", "workerName"] as const;
+export type InstallPlaceholder = (typeof INSTALL_PLACEHOLDERS)[number];
+
+/** The values {@link renderPlaceholders} fills in. */
+export interface PlaceholderValues {
+  /** Null while the account's workers.dev subdomain is unknown; `{{workerUrl}}` is then kept. */
+  workerUrl: string | null;
+  workerName: string;
+}
+
+const PLACEHOLDER_PATTERN = /\{\{\s*(workerUrl|workerName)\s*\}\}/g;
+
+/** Whether `text` holds a placeholder the manager fills in. */
+export function hasPlaceholder(text: string): boolean {
+  return new RegExp(PLACEHOLDER_PATTERN.source).test(text);
+}
+
+/** `text` with every {@link INSTALL_PLACEHOLDERS} entry filled in. */
+export function renderPlaceholders(text: string, values: PlaceholderValues): string {
+  return text.replace(PLACEHOLDER_PATTERN, (match, key: string) => {
+    if (key === "workerName") return values.workerName;
+    return values.workerUrl ?? match;
+  });
+}
+
+/** A JSON value: what a wrangler config var holds when it is not a string. */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+/**
+ * `value` with placeholders filled in inside every string it holds (keys
+ * excepted). Every key is copied as an own property, `__proto__` included,
+ * so the value round-trips through `JSON.stringify` unchanged.
+ */
+export function renderJsonPlaceholders(value: JsonValue, values: PlaceholderValues): JsonValue {
+  if (typeof value === "string") return renderPlaceholders(value, values);
+  if (Array.isArray(value)) return value.map((item) => renderJsonPlaceholders(item, values));
+  if (value !== null && typeof value === "object") {
+    const out: { [key: string]: JsonValue } = {};
+    for (const [key, item] of Object.entries(value)) {
+      // Plain assignment of `__proto__` would set the prototype instead.
+      Object.defineProperty(out, key, {
+        value: renderJsonPlaceholders(item, values),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * A plain (non-secret) var the install form asks for. It reaches the Worker
+ * as a `plain_text` binding, or as a `json` binding when the app's wrangler
+ * config gives the var a value that is not a string (an array, object,
+ * number, or boolean): the form then takes JSON and `default` must be JSON
+ * text. `default` may hold `{{workerUrl}}` and `{{workerName}}`
+ * ({@link INSTALL_PLACEHOLDERS}).
+ */
 export const catalogVarSchema = z.object({
   name: z.string().min(1),
   label: z.string().min(1),
   help: z.string().optional(),
-  default: z.string().optional(),
+  default: z
+    .string()
+    .describe(
+      "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL " +
+        "(`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and " +
+        "`{{workerName}}` its Worker name, filled in on every install and update. `{{workerUrl}}` is " +
+        "always the workers.dev address, even when a custom domain is attached. When the app's " +
+        "wrangler config gives this var a value that is not a string (an array, object, number, or " +
+        "boolean), the var reaches the Worker as JSON and `default` must be JSON text, for " +
+        'example `["{{workerUrl}}"]`. Without `default`, the form starts with the wrangler config\'s value.',
+    )
+    .optional(),
   required: z.boolean().default(false),
 });
 export type CatalogVar = z.infer<typeof catalogVarSchema>;
 
-/** A post-install instruction rendered after a successful install (e.g. `{{workerUrl}}`). */
+/**
+ * A post-install instruction rendered after a successful install, with
+ * {@link INSTALL_PLACEHOLDERS} filled in.
+ */
 export const postInstallStepSchema = z.object({
   type: z.enum(["markdown"]),
   content: z.string().min(1),

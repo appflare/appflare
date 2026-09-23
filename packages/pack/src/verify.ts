@@ -5,6 +5,7 @@ import { assetHash } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
   artifactManifestSchema,
+  catalogVarProblems,
   isVectorizeBinding,
   queueConsumerProblems,
   signingKeys,
@@ -179,9 +180,12 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   }
 
   checkVectorizeBindings(manifest);
-  const consumerProblems = queueConsumerProblems(manifest.worker);
-  if (consumerProblems.length > 0) {
-    throw new Error(consumerProblems.join(" "));
+  const problems = [
+    ...queueConsumerProblems(manifest.worker),
+    ...catalogVarProblems(manifest.worker.bindings, manifest.catalog.vars),
+  ];
+  if (problems.length > 0) {
+    throw new Error(problems.join(" "));
   }
 
   if (options.maxModules !== undefined) {

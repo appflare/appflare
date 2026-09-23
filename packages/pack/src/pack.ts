@@ -23,6 +23,7 @@ import {
   artifactManifestSchema,
   type CatalogManifest,
   catalogManifestSchema,
+  catalogVarProblems,
   type D1MigrationFile,
   type DoMigration,
   tooManyModulesMessage,
@@ -31,6 +32,13 @@ import {
 import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
 import { DEFAULT_BUILD_TIMEOUT_MS, runBuildCommand } from "./build-command.ts";
+import {
+  checkoutRelative,
+  dryRunInvocation,
+  readConfigArgs,
+  resolveWranglerConfig,
+  type WranglerConfigTarget,
+} from "./config-redirect.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { scrubEnv } from "./scrub-env.ts";
 import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
@@ -178,19 +186,20 @@ function runInstall(
  * config's own `build.command`, if any, runs as part of this.
  */
 function runDryRun(
-  wranglerConfigPath: string,
+  target: WranglerConfigTarget,
   checkoutDir: string,
   outdir: string,
   childEnv: NodeJS.ProcessEnv,
   logger: (m: string) => void,
 ): void {
   const wranglerBin = resolveWranglerBin();
+  const { cwd, configArgs } = dryRunInvocation(target, checkoutDir);
   logger("running wrangler deploy --dry-run (scrubbed environment)");
   const res = spawnSync(
     process.execPath,
-    [wranglerBin, "deploy", "--dry-run", "--outdir", outdir, "--config", wranglerConfigPath],
+    [wranglerBin, "deploy", "--dry-run", "--outdir", outdir, ...configArgs],
     {
-      cwd: checkoutDir,
+      cwd,
       env: childEnv,
       encoding: "utf8",
       maxBuffer: 128 * 1024 * 1024,
@@ -432,10 +441,29 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     });
   }
 
-  // (c) Read the resolved wrangler config with wrangler's own reader.
-  const wranglerConfigPath = path.resolve(checkoutDir, catalog.install.wranglerConfig);
-  const config = unstable_readConfig({ config: wranglerConfigPath }) as ResolvedWranglerConfig;
-  const configDir = path.dirname(config.configPath ?? wranglerConfigPath);
+  // (c) Read the resolved wrangler config with wrangler's own reader,
+  // following a redirect the build left, as `wrangler deploy` would.
+  const target = resolveWranglerConfig(checkoutDir, catalog.install.wranglerConfig);
+  const wranglerConfig = {
+    declared: checkoutRelative(checkoutDir, target.declaredPath),
+    effective: checkoutRelative(checkoutDir, target.effectivePath),
+  };
+  if (target.deployConfigPath !== null) {
+    logger(
+      `the build redirects wrangler from ${wranglerConfig.declared} to ${wranglerConfig.effective} ` +
+        `(${checkoutRelative(checkoutDir, target.deployConfigPath)}); packing that config`,
+    );
+  }
+  const read = readConfigArgs(target);
+  const config = unstable_readConfig(read.args, read.options) as ResolvedWranglerConfig;
+  const readPath = config.configPath ? path.resolve(config.configPath) : target.effectivePath;
+  if (readPath !== target.effectivePath) {
+    throw new Error(
+      `wrangler read ${readPath} instead of ${target.effectivePath}; ` +
+        "a wrangler config or redirect in a parent directory of the declared config is in the way",
+    );
+  }
+  const configDir = path.dirname(target.effectivePath);
 
   if (!config.main) {
     throw new Error("wrangler config has no `main` entrypoint");
@@ -449,12 +477,16 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // Before bundling, so a missing Vectorize declaration fails fast.
   const bindings = collectBindings(config, catalog.resources);
   const queueConsumers = collectQueueConsumers(config);
+  const varProblems = catalogVarProblems(bindings, catalog.vars);
+  if (varProblems.length > 0) {
+    throw new Error(varProblems.join(" "));
+  }
 
   // (d) Bundle the worker via a scrubbed dry-run into a temp outdir.
   const outdir = mkdtempSync(path.join(tmpdir(), "appflare-pack-"));
   let modules: CollectedModule[];
   try {
-    runDryRun(wranglerConfigPath, checkoutDir, outdir, childEnv, logger);
+    runDryRun(target, checkoutDir, outdir, childEnv, logger);
     // (e) Collect emitted modules.
     modules = collectModules(outdir, config);
   } finally {
@@ -529,6 +561,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     keyId: options.keyId ?? UNSIGNED_KEY_ID,
     worker: {
       name: config.name,
+      wranglerConfig,
       mainModule,
       compatibilityDate: config.compatibility_date,
       compatibilityFlags: config.compatibility_flags ?? [],

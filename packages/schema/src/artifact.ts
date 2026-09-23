@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  type CatalogVar,
   catalogManifestSchema,
   gitShaSchema,
   ownerRepoSchema,
@@ -93,24 +94,58 @@ export const vectorizeBindingSchema = z.looseObject({
 export type VectorizeBinding = z.infer<typeof vectorizeBindingSchema>;
 
 /**
+ * A wrangler config var whose value is not a string (an array, object,
+ * number, boolean, or null). Wrangler uploads such vars as `json` bindings,
+ * so the Worker reads the value itself rather than its JSON text; the packer
+ * records them the same way and the manager uploads them as they are.
+ * String vars stay `plain_text` bindings with a `text` field.
+ */
+export const jsonVarBindingSchema = z.looseObject({
+  type: z.literal("json"),
+  name: z.string().min(1),
+  json: z.json(),
+});
+export type JsonVarBinding = z.infer<typeof jsonVarBindingSchema>;
+
+const STRICT_BINDING_TYPES: Readonly<Record<string, string>> = {
+  vectorize: "a vectorize binding must record the index's dimensions and metric",
+  json: "a json binding must record its value in `json`",
+};
+
+/**
  * Any other wrangler binding shape, with account-specific ids stripped by the
  * packer. Kept permissive on purpose: the packer records whatever wrangler
- * resolved. A `vectorize` binding never matches here, so one without its
- * index shape fails to parse instead of reaching the manager.
+ * resolved. A `vectorize` or `json` binding never matches here, so one
+ * without its required fields fails to parse instead of reaching the manager.
  */
 const otherBindingSchema = z.looseObject({
   type: z
     .string()
     .min(1)
-    .refine((type) => type !== "vectorize", {
-      error: "a vectorize binding must record the index's dimensions and metric",
+    .superRefine((type, ctx) => {
+      const message = Object.hasOwn(STRICT_BINDING_TYPES, type)
+        ? STRICT_BINDING_TYPES[type]
+        : undefined;
+      if (message !== undefined) ctx.addIssue({ code: "custom", message });
     }),
   name: z.string().min(1),
 });
 
 /** A binding recorded in the artifact manifest. */
-export const workerBindingSchema = z.union([vectorizeBindingSchema, otherBindingSchema]);
+export const workerBindingSchema = z.union([
+  vectorizeBindingSchema,
+  jsonVarBindingSchema,
+  otherBindingSchema,
+]);
 export type WorkerBinding = z.infer<typeof workerBindingSchema>;
+
+/**
+ * Whether a parsed binding is a `json` var, with its value typed. Sound for
+ * anything `workerBindingSchema` parsed.
+ */
+export function isJsonVarBinding(binding: WorkerBinding): binding is JsonVarBinding {
+  return binding.type === "json";
+}
 
 /**
  * Whether a parsed binding is a Vectorize binding, with its dimensions and
@@ -169,9 +204,28 @@ export const workerPlacementSchema = z.looseObject({}).nullable();
 /** Worker limits config, or null. */
 export const workerLimitsSchema = z.looseObject({}).nullable();
 
+/**
+ * Which wrangler config the packer built from, as paths relative to the
+ * checkout (with `/` separators). `declared` is the catalog manifest's
+ * `install.wranglerConfig`; `effective` is the config wrangler actually
+ * deploys, which differs when the build left a redirect in
+ * `.wrangler/deploy/config.json` beside the declared config (as the
+ * Cloudflare Vite plugin does, pointing at the config it generates).
+ */
+export const artifactWranglerConfigSchema = z.object({
+  declared: z.string().min(1),
+  effective: z.string().min(1),
+});
+export type ArtifactWranglerConfig = z.infer<typeof artifactWranglerConfigSchema>;
+
 /** The `worker` section of the artifact manifest. */
 export const artifactWorkerSchema = z.object({
   name: z.string().min(1),
+  /**
+   * The wrangler config the Worker was built from. Omitted by packers that
+   * predate it, so older artifacts keep the shape they always had.
+   */
+  wranglerConfig: artifactWranglerConfigSchema.optional(),
   mainModule: z.string().min(1),
   compatibilityDate: z.iso.date(),
   compatibilityFlags: z.array(z.string()),
@@ -225,6 +279,42 @@ export function queueConsumerProblems(
       problems.push(`${capitalize(describeQueueRef(consumer.queue))} has more than one consumer.`);
     }
     seen.add(key);
+  }
+  return problems;
+}
+
+/**
+ * Why `text` is not a JSON value, or null when it is. What a JSON var's
+ * catalog `default` and the install form's value must be.
+ */
+export function jsonTextProblem(text: string): string | null {
+  try {
+    JSON.parse(text);
+    return null;
+  } catch (error) {
+    return `is not valid JSON (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
+/**
+ * What is wrong with the catalog's vars for this Worker, as sentences; empty
+ * when nothing is. A var the wrangler config gives a non-string value is a
+ * `json` binding, so its catalog `default` must be JSON text.
+ */
+export function catalogVarProblems(
+  bindings: readonly WorkerBinding[],
+  vars: readonly CatalogVar[],
+): string[] {
+  const json = new Set(bindings.filter(isJsonVarBinding).map((b) => b.name));
+  const problems: string[] = [];
+  for (const v of vars) {
+    if (!json.has(v.name) || v.default === undefined) continue;
+    const problem = jsonTextProblem(v.default);
+    if (problem !== null) {
+      problems.push(
+        `The default of the var ${v.name} ${problem}; the wrangler config gives ${v.name} a value that is not a string, so the Worker receives it as JSON.`,
+      );
+    }
   }
   return problems;
 }

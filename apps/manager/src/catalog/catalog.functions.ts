@@ -7,6 +7,8 @@ import { hasRole } from "../auth/roles";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { installs } from "../db/schema";
+import { readSettings, SETTING, writeSettings } from "../db/settings";
+import { type InstallVarField, installVarFields } from "../installs/install-vars";
 import { suggestWorkerName } from "../installs/instance-names";
 import { planBindings } from "../jobs/install/bindings";
 import { requireRole, requireSession } from "../server/auth.server";
@@ -113,6 +115,13 @@ export interface CatalogDetail {
   suggestedWorkerName: string | null;
   /** The app only works under its catalog Worker name, so it installs once. */
   fixedWorkerName: boolean;
+  /** The install form's settings, one per catalog var. */
+  varFields: InstallVarField[];
+  /**
+   * The account's workers.dev subdomain, to show `{{workerUrl}}` filled in
+   * on the form; null when it is not known (the install fills it in).
+   */
+  subdomain: string | null;
 }
 
 /**
@@ -128,6 +137,25 @@ async function accountWorkerNames(role: string | null | undefined): Promise<stri
   }
 }
 
+/**
+ * The account's workers.dev subdomain: cached by the first install, else
+ * looked up for admins (who can install) and cached the same way. Best
+ * effort; null when unknown.
+ */
+async function accountSubdomain(role: string | null | undefined): Promise<string | null> {
+  const orm = createDb(env.DB);
+  const cached = (await readSettings(orm, [SETTING.accountSubdomain])).account_subdomain;
+  if (cached) return cached;
+  if (!hasRole(role, "admin")) return null;
+  try {
+    const found = (await (await getCfClient(env)).workers.getAccountSubdomain()).subdomain;
+    await writeSettings(orm, { [SETTING.accountSubdomain]: found });
+    return found;
+  } catch {
+    return null;
+  }
+}
+
 /** Any signed-in user. */
 export const getCatalogEntry = createServerFn({ method: "GET" })
   .validator(z.object({ slug: z.string().min(1).max(100) }))
@@ -140,6 +168,8 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       instances: [],
       suggestedWorkerName: null,
       fixedWorkerName: false,
+      varFields: [],
+      subdomain: null,
     };
     const read = await getCatalogIndex(env);
     if (!read.ok) return { app: null, error: read.error, ...empty };
@@ -151,9 +181,11 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
     if (!manifest.ok) return { ...empty, app, instances, error: manifest.error };
     const { install } = manifest.manifest.catalog;
     const fixed = hasFixedWorkerName(install);
-    const taken = fixed
-      ? []
-      : [...active.workerNames, ...(await accountWorkerNames(session.user.role))];
+    const [accountNames, subdomain] = await Promise.all([
+      fixed ? [] : accountWorkerNames(session.user.role),
+      accountSubdomain(session.user.role),
+    ]);
+    const taken = fixed ? [] : [...active.workerNames, ...accountNames];
     const plan = planBindings(install.workerName, manifest.manifest.worker.bindings);
     return {
       app,
@@ -166,5 +198,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
         ? install.workerName
         : suggestWorkerName(install.workerName, taken),
       fixedWorkerName: fixed,
+      varFields: installVarFields(manifest.manifest),
+      subdomain,
     };
   });

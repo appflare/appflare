@@ -105,12 +105,30 @@ Points that need care:
   that the packer runs at the root of the repository after installing dependencies
   and before bundling. It runs without a shell and without credentials, with the
   repository's `node_modules/.bin` on its PATH, so pipes, redirects, quotes,
-  variables, and `NAME=value` assignments are refused. `install.wranglerConfig` may
-  name a config the build writes, such as the one the Cloudflare Vite plugin
-  generates.
+  variables, and `NAME=value` assignments are refused.
+- **`install.wranglerConfig`.** Name the app's own wrangler config, the one you would
+  run `wrangler deploy` next to. When the build leaves `.wrangler/deploy/config.json`
+  beside it, as the Cloudflare Vite plugin does, the packer follows that redirect to
+  the config the build generated, exactly as `wrangler deploy` does, and records both
+  paths in the artifact. Do not point `install.wranglerConfig` at the generated config
+  itself: wrangler then reads it as a hand-written config and refuses fields that
+  build tools write, such as `legacy_env`.
 - **`secrets` and `vars`.** List every secret and setting the app reads from `env`
   that is not in its wrangler config. Use `"generate": true` for passwords and
-  signing keys the user does not need to choose.
+  signing keys the user does not need to choose. List a var from the wrangler config
+  too when admins should be able to change it; without a `default`, the form starts
+  with the wrangler config's value.
+- **Placeholders.** The manager replaces `{{workerUrl}}` (the install's workers.dev
+  URL, without a trailing slash) and `{{workerName}}` (its Worker name) in
+  `postInstall` text, in `vars[].default`, and in the values of the wrangler config's
+  own `vars`. Use them for apps that need their public URL in a variable, for example
+  `{ "name": "PUBLIC_URL", "label": "Public URL", "default": "{{workerUrl}}" }`.
+  Vars are filled in again on every update. `{{workerUrl}}` is always the
+  workers.dev address, even when a custom domain is attached to the install.
+- **JSON vars.** A wrangler config var whose value is not a string (an array, object,
+  number, or boolean) reaches the Worker as that JSON value, as with `wrangler
+  deploy`. When `vars` lists such a var, its `default` must be JSON text, such as
+  `"[\"inbox@example.com\"]"`, and the install form asks for JSON.
 - **`requires`.** List account features the app needs beyond Workers, such as `r2`
   or `workers-ai`.
 - **`tokenPermissions`.** Only for apps that call the Cloudflare API with a token of

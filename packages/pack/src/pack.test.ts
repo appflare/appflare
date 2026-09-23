@@ -93,11 +93,16 @@ describe("pack + verify (integration)", () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it("strips account ids and records vars as plain_text bindings", () => {
+  it("strips account ids and records string vars as plain_text bindings", () => {
     const bindings = result.manifest.worker.bindings;
     expect(bindings).toContainEqual({ type: "kv_namespace", name: "CACHE" });
     expect(bindings).toContainEqual({ type: "d1", name: "DB" });
     expect(bindings).toContainEqual({ type: "plain_text", name: "GREETING", text: "Hello" });
+    // No redirect: the declared config is the one built.
+    expect(result.manifest.worker.wranglerConfig).toEqual({
+      declared: "wrangler.jsonc",
+      effective: "wrangler.jsonc",
+    });
     // The fixture's KV id and D1 database_id must not appear anywhere.
     const dump = JSON.stringify(result.manifest);
     expect(dump).not.toContain("cafebabecafebabecafebabecafebabe");
@@ -552,6 +557,132 @@ describe("pack with install.buildCommand", () => {
           install: false,
         }),
       ).rejects.toThrow(/failed \(exit 1\); last lines of its output:\nCould not resolve entry/);
+      expect(existsSync(outDir)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+/**
+ * A checkout shaped like a React Router app on the Cloudflare Vite plugin:
+ * the declared `wrangler.jsonc` names an entry that only the build can
+ * resolve, and the build writes the deployable config under `dist/` plus a
+ * `.wrangler/deploy/config.json` redirect to it. The generated config holds
+ * `legacy_env`, which wrangler accepts only in a redirected config, and a
+ * var that is an array.
+ */
+function redirectedCheckout(parent: string): { dir: string; manifest: string } {
+  const dir = path.join(parent, "checkout");
+  cpSync(FIXTURE, dir, { recursive: true });
+  const config = parseJsonc(readFileSync(path.join(dir, "wrangler.jsonc"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  writeFileSync(
+    path.join(dir, "src", "server.ts"),
+    'import build from "virtual:react-router/server-build";\nexport default build;\n',
+  );
+  writeFileSync(
+    path.join(dir, "wrangler.jsonc"),
+    JSON.stringify({ ...config, main: "src/server.ts" }),
+  );
+  const generated = {
+    ...config,
+    main: "../../src/index.ts",
+    legacy_env: true,
+    topLevelName: "hello",
+    assets: { ...(config.assets as object), directory: "../../public" },
+    d1_databases: [
+      { binding: "DB", database_name: "hello-db", migrations_dir: "../../migrations" },
+    ],
+    vars: { GREETING: "Hello", PUBLIC_URL: "{{workerUrl}}", EMAIL_ADDRESSES: [] },
+  };
+  writeFileSync(path.join(dir, "generated.json"), JSON.stringify(generated));
+  writeFileSync(
+    path.join(dir, "build.mjs"),
+    `import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+mkdirSync("dist/hello", { recursive: true });
+copyFileSync("generated.json", "dist/hello/wrangler.json");
+mkdirSync(".wrangler/deploy", { recursive: true });
+writeFileSync(".wrangler/deploy/config.json", JSON.stringify({ configPath: "../../dist/hello/wrangler.json", auxiliaryWorkers: [] }));`,
+  );
+  const catalog = parseJsonc(readFileSync(path.join(dir, "appflare.jsonc"), "utf8")) as {
+    install: Record<string, unknown>;
+    vars: Array<Record<string, unknown>>;
+  };
+  catalog.install.buildCommand = "node build.mjs";
+  catalog.vars.push({
+    name: "EMAIL_ADDRESSES",
+    label: "Addresses",
+    default: '["{{workerName}}@example.com"]',
+  });
+  const manifest = path.join(parent, "appflare.jsonc");
+  writeFileSync(manifest, JSON.stringify(catalog));
+  return { dir, manifest };
+}
+
+describe("pack with a redirected wrangler config", () => {
+  it("builds from the config the build redirects to and records both paths", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-redirect-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = redirectedCheckout(parent);
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      expect(res.manifest.worker.wranglerConfig).toEqual({
+        declared: "wrangler.jsonc",
+        effective: "dist/hello/wrangler.json",
+      });
+      expect(logs.some((l) => l.includes("redirects wrangler from wrangler.jsonc"))).toBe(true);
+      // Bundled from the generated config's entry, not the declared one.
+      expect(res.moduleCount).toBe(1);
+      expect(res.manifest.worker.mainModule).toBe("index.js");
+      // Paths in the generated config resolve from its own directory.
+      expect(res.assetCount).toBe(3);
+      expect(res.d1MigrationCount).toBe(2);
+      const bindings = res.manifest.worker.bindings;
+      expect(bindings).toContainEqual({ type: "json", name: "EMAIL_ADDRESSES", json: [] });
+      expect(bindings).toContainEqual({
+        type: "plain_text",
+        name: "PUBLIC_URL",
+        text: "{{workerUrl}}",
+      });
+      await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true });
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("fails before bundling when a JSON var's catalog default is not JSON", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-json-var-"));
+    const outDir = path.join(parent, "out");
+    try {
+      const checkout = redirectedCheckout(parent);
+      const catalog = JSON.parse(readFileSync(checkout.manifest, "utf8")) as {
+        vars: Array<Record<string, unknown>>;
+      };
+      const addresses = catalog.vars.find((v) => v.name === "EMAIL_ADDRESSES");
+      if (addresses === undefined) throw new Error("fixture lost its var");
+      addresses.default = "inbox@example.com";
+      writeFileSync(checkout.manifest, JSON.stringify(catalog));
+      const logs: string[] = [];
+      await expect(
+        pack({
+          checkoutDir: checkout.dir,
+          manifestPath: checkout.manifest,
+          outDir,
+          install: false,
+          logger: (m) => logs.push(m),
+        }),
+      ).rejects.toThrow(/default of the var EMAIL_ADDRESSES is not valid JSON/);
+      expect(logs.some((l) => l.includes("dry-run"))).toBe(false);
       expect(existsSync(outDir)).toBe(false);
     } finally {
       rmSync(parent, { recursive: true, force: true });

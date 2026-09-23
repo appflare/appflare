@@ -55,7 +55,33 @@ describe("collectBindings", () => {
       // class_name/script_name are code references, kept.
       { type: "durable_object_namespace", name: "DO", class_name: "Counter", script_name: "other" },
       { type: "plain_text", name: "GREETING", text: "Hello" },
-      { type: "plain_text", name: "COUNT", text: "3" },
+      { type: "json", name: "COUNT", json: 3 },
+    ]);
+  });
+
+  it("records string vars as plain_text and every other value as json, as wrangler uploads them", () => {
+    const config = {
+      vars: {
+        PUBLIC_URL: "{{workerUrl}}",
+        EMAIL_ADDRESSES: [],
+        LIMITS: { daily: 10, tags: ["a"] },
+        ENABLED: false,
+        RATIO: 0.5,
+        NOTHING: null,
+        SINCE: new Date("2026-01-02T03:04:05Z"),
+      },
+    } as unknown as ResolvedWranglerConfig;
+
+    expect(collectBindings(config)).toEqual([
+      // Placeholders are recorded as written; the manager fills them in.
+      { type: "plain_text", name: "PUBLIC_URL", text: "{{workerUrl}}" },
+      { type: "json", name: "EMAIL_ADDRESSES", json: [] },
+      { type: "json", name: "LIMITS", json: { daily: 10, tags: ["a"] } },
+      { type: "json", name: "ENABLED", json: false },
+      { type: "json", name: "RATIO", json: 0.5 },
+      { type: "json", name: "NOTHING", json: null },
+      // A TOML date goes up as its ISO string, as in wrangler's upload metadata.
+      { type: "json", name: "SINCE", json: "2026-01-02T03:04:05.000Z" },
     ]);
   });
 
