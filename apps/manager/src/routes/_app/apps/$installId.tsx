@@ -8,6 +8,7 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { formatDateTime, jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { Markdown } from "../../../components/markdown";
 import { PageHeader } from "../../../components/page-header";
@@ -23,8 +24,8 @@ import {
 import { listSnapshots } from "../../../installs/versions.functions";
 
 /**
- * `/apps/$installId`: status, resources, secret names, jobs, the app's
- * post-install notes, update and rollback, and uninstall. After an uninstall
+ * `/apps/$installId`: status, resources, secret names, jobs, the Cloudflare
+ * token the app needs for itself (if any), the app's post-install notes, update and rollback, and uninstall. After an uninstall
  * it shows the `uninstalled` state, the resources that were kept, and the job
  * history.
  */
@@ -110,6 +111,9 @@ function InstallPage() {
       <UpdateBanner install={install} isAdmin={isAdmin} />
       <UninstallState install={install} />
       <Overview install={install} />
+      {!gone && (
+        <AppTokenPermissions appName={install.name} permissions={install.tokenPermissions} />
+      )}
       {!gone && install.postInstall.length > 0 && (
         <Section title="Next steps">
           <LayerCard>

@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { artifactManifestSchema } from "@appflare/schema";
+import { artifactManifestSchema, type TokenPermission } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -139,6 +139,8 @@ export interface InstallDetail extends InstallRow {
   }>;
   /** Markdown with `{{workerUrl}}`/`{{workerName}}` filled in; empty until installed. */
   postInstall: string[];
+  /** Permissions of the Cloudflare token the app needs for itself, from its signed manifest. */
+  tokenPermissions: TokenPermission[];
 }
 
 function parseVars(json: string | null): Record<string, string> {
@@ -182,6 +184,7 @@ export const getInstall = createServerFn({ method: "GET" })
     const workerUrl = workersDevUrl(row.worker_name, sub);
     let name = listed?.name ?? row.app_slug;
     let postInstall: string[] = [];
+    let tokenPermissions: TokenPermission[] = [];
     if (row.manifest_json !== null) {
       const manifest = artifactManifestSchema.safeParse(JSON.parse(row.manifest_json));
       if (manifest.success) {
@@ -189,6 +192,7 @@ export const getInstall = createServerFn({ method: "GET" })
         postInstall = manifest.data.catalog.postInstall.map((p) =>
           renderPostInstall(p.content, { workerUrl, workerName: row.worker_name }),
         );
+        tokenPermissions = manifest.data.catalog.tokenPermissions;
       }
     }
     const view = (r: (typeof resourceRows)[number]): ResourceView => ({
@@ -239,5 +243,6 @@ export const getInstall = createServerFn({ method: "GET" })
         finishedAt: j.finished_at?.toISOString() ?? null,
       })),
       postInstall,
+      tokenPermissions,
     };
   });

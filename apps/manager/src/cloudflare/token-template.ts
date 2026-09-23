@@ -1,6 +1,7 @@
 /**
- * The Cloudflare API token Appflare asks for in the setup wizard, as a dashboard
- * template link. Client-safe: no server imports.
+ * Dashboard template links for Cloudflare API tokens: the one Appflare asks for in
+ * the setup wizard, and the ones an app needs for itself (its catalog manifest's
+ * `tokenPermissions`). Client-safe: no server imports.
  *
  * URL format and permission keys: Cloudflare's "API token template URLs" page,
  * https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
@@ -8,6 +9,8 @@
  * key table omits `vectorize` and `workers_tail`; both are the keys the dashboard
  * itself uses for those groups (seen in public template links using them).
  */
+
+import type { TokenPermission } from "@appflare/schema";
 
 export type PermissionType = "read" | "edit";
 
@@ -66,6 +69,102 @@ export function accountTokenTemplateUrl(
  */
 export function userTokenTemplateUrl(
   groups: readonly PermissionGroup[] = TOKEN_PERMISSION_GROUPS,
+  name: string = TOKEN_NAME,
 ): string {
-  return `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodedGroups(groups)}&accountId=%2A&zoneId=all&name=${encodeURIComponent(TOKEN_NAME)}`;
+  return `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodedGroups(groups)}&accountId=%2A&zoneId=all&name=${encodeURIComponent(name)}`;
+}
+
+/** The dashboard's API tokens page, for permissions no template can prefill. */
+export const USER_API_TOKENS_URL = "https://dash.cloudflare.com/profile/api-tokens";
+
+/**
+ * Permission names an app's catalog manifest may use, `<Scope>.<Group>` in the
+ * dashboard's wording, mapped to template keys. Keys are from the permission
+ * reference on Cloudflare's "API token template URLs" page (linked above).
+ * Matching ignores case. Names not listed here are shown as text only.
+ */
+const APP_PERMISSION_KEYS: Readonly<Record<string, Omit<PermissionGroup, "type">>> = {
+  "zone.dns": { key: "dns", label: "Zone: DNS" },
+  "zone.zone": { key: "zone", label: "Zone: Zone" },
+  "zone.zone settings": { key: "zone_settings", label: "Zone: Zone Settings" },
+  "zone.analytics": { key: "analytics", label: "Zone: Analytics" },
+  "zone.page rules": { key: "page_rules", label: "Zone: Page Rules" },
+  "zone.ssl and certificates": { key: "ssl_and_certificates", label: "Zone: SSL and Certificates" },
+  "account.account settings": { key: "account_settings", label: "Account: Account Settings" },
+  "account.account analytics": { key: "account_analytics", label: "Account: Account Analytics" },
+  "account.workers scripts": { key: "workers_scripts", label: "Account: Workers Scripts" },
+  "account.workers kv storage": { key: "workers_kv_storage", label: "Account: Workers KV Storage" },
+  "account.workers r2 storage": { key: "workers_r2", label: "Account: Workers R2 Storage" },
+  "account.d1": { key: "d1", label: "Account: D1" },
+  "account.queues": { key: "queues", label: "Account: Queues" },
+};
+
+/** One entry of an app's `tokenPermissions`, with the template group it maps to. */
+export interface AppTokenPermission {
+  name: string;
+  description: string | null;
+  scope: NonNullable<TokenPermission["scope"]> | null;
+  /** Null when the name has no known template key; the user adds it by hand. */
+  group: PermissionGroup | null;
+}
+
+/**
+ * Maps a manifest permission to a template group. The name is `<Scope>.<Group>`
+ * (`Zone.DNS`), or just `<Group>` when `scope` is set, with an optional `:Read`
+ * or `:Edit` suffix. Without a suffix the level is Edit: the manifest lists what
+ * the app must be able to do, and the dashboard form shows the level before the
+ * token is created. A prefix that contradicts `scope` maps to nothing rather
+ * than to a guess.
+ */
+function templateGroup(permission: TokenPermission): PermissionGroup | null {
+  const match = /^(.*?)(?::(read|edit))?$/i.exec(permission.name.trim());
+  if (match === null) return null;
+  const base = (match[1] ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  const type: PermissionType = match[2]?.toLowerCase() === "read" ? "read" : "edit";
+  const dot = base.indexOf(".");
+  let qualified = base;
+  if (dot === -1) {
+    if (permission.scope === undefined) return null;
+    qualified = `${permission.scope}.${base}`;
+  } else if (permission.scope !== undefined && base.slice(0, dot) !== permission.scope) {
+    return null;
+  }
+  const known = APP_PERMISSION_KEYS[qualified];
+  return known === undefined ? null : { ...known, type };
+}
+
+/** The app's `tokenPermissions`, each with the template group it maps to, if any. */
+export function resolveAppTokenPermissions(
+  permissions: readonly TokenPermission[],
+): AppTokenPermission[] {
+  return permissions.map((p) => ({
+    name: p.name,
+    description: p.description ?? null,
+    scope: p.scope ?? null,
+    group: templateGroup(p),
+  }));
+}
+
+/**
+ * The token form for an app's own token, prefilled with every permission that
+ * maps to a template key and named after the app. Null when none maps. It is the
+ * user token form because a user token passes `/user/tokens/verify`, the check
+ * apps commonly run on their token (an account token fails it), and because the
+ * form can narrow the token to one zone.
+ */
+export function appTokenTemplateUrl(
+  appName: string,
+  permissions: readonly AppTokenPermission[],
+): string | null {
+  // One entry per key; Edit covers Read.
+  const groups = new Map<string, PermissionGroup>();
+  for (const { group } of permissions) {
+    if (group === null) continue;
+    const seen = groups.get(group.key);
+    if (seen === undefined || (seen.type === "read" && group.type === "edit")) {
+      groups.set(group.key, group);
+    }
+  }
+  if (groups.size === 0) return null;
+  return userTokenTemplateUrl([...groups.values()], appName);
 }

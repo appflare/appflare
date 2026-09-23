@@ -8,14 +8,15 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
+import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { formatDateTime, requirementLabel, resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
 import { PlanBadge, StatusBadge } from "../../../components/status-badge";
 
 /**
- * `/catalog/$slug`: app detail, prerequisites, the installs of this app, and
- * the install form (an app may be installed several times under different
+ * `/catalog/$slug`: app detail, prerequisites, the Cloudflare token the app
+ * needs for itself (if any), the installs of this app, and the install form (an app may be installed several times under different
  * Worker names, unless its Worker name is fixed).
  */
 export const Route = createFileRoute("/_app/catalog/$slug")({
@@ -75,6 +76,9 @@ function CatalogEntryPage() {
       <PageHeader title={app.name} description={app.summary} actions={back} />
       <AboutCard detail={detail} />
       <Prerequisites detail={detail} />
+      {catalog !== null && (
+        <AppTokenPermissions appName={app.name} permissions={catalog.tokenPermissions} />
+      )}
       {detail.error !== null && (
         <Banner
           variant="error"
