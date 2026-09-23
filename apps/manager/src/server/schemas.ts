@@ -35,3 +35,16 @@ export const cfTokenInput = z.object({
     .regex(/^[\x21-\x7e]+$/, "The token contains spaces or unexpected characters."),
 });
 export type CfTokenInput = z.infer<typeof cfTokenInput>;
+
+/** The label a user gives a passkey so they can tell several apart later. */
+export const passkeyNameInput = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Give the passkey a name.")
+    .max(100, "Use at most 100 characters."),
+});
+export type PasskeyNameInput = z.infer<typeof passkeyNameInput>;
+
+export const removePasskeyInput = z.object({ id: z.string().min(1).max(255) });
+export type RemovePasskeyInput = z.infer<typeof removePasskeyInput>;

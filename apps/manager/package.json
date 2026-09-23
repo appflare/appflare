@@ -19,6 +19,7 @@
   "dependencies": {
     "@appflare/cf-api": "workspace:*",
     "@appflare/schema": "workspace:*",
+    "@better-auth/passkey": "1.7.5",
     "@cloudflare/kumo": "2.14.0",
     "@phosphor-icons/react": "2.1.10",
     "@tanstack/react-router": "1.170.38",

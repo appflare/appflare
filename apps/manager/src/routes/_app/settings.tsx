@@ -4,21 +4,24 @@ import { getManagerUpdate } from "../../catalog/manager-releases.functions";
 import { AppflareUpdatesCard } from "../../components/appflare-updates-card";
 import { CloudflareTokenCard } from "../../components/cloudflare-token-card";
 import { PageHeader } from "../../components/page-header";
+import { PasskeysSection } from "../../components/passkeys-section";
 import { PlaceholderCard } from "../../components/placeholder-card";
 import { UsersSection } from "../../components/users-section";
+import { listPasskeys } from "../../server/passkeys.functions";
 import { getTokenStatus } from "../../server/token.functions";
 import { listUsers } from "../../server/users.functions";
 
-/** `/settings`: users, the Cloudflare token, and Appflare's own updates. */
+/** `/settings`: users, your passkeys, the Cloudflare token, and Appflare's own updates. */
 export const Route = createFileRoute("/_app/settings")({
   staticData: { title: "Settings" },
   loader: async ({ context }) => {
-    const [users, tokenStatus, managerUpdate] = await Promise.all([
+    const [users, passkeys, tokenStatus, managerUpdate] = await Promise.all([
       context.viewer.role === "admin" ? listUsers() : null,
+      listPasskeys(),
       getTokenStatus(),
       getManagerUpdate(),
     ]);
-    return { users, tokenStatus, managerUpdate };
+    return { users, passkeys, tokenStatus, managerUpdate };
   },
   component: SettingsPage,
 });
@@ -35,13 +38,16 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function SettingsPage() {
-  const { users, tokenStatus, managerUpdate } = Route.useLoaderData();
+  const { users, passkeys, tokenStatus, managerUpdate } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   return (
     <>
       <PageHeader title="Settings" description="Manager configuration and access." />
       <Section title="Users">
         <UsersSection users={users} viewerId={viewer.id} />
+      </Section>
+      <Section title="Passkeys">
+        <PasskeysSection passkeys={passkeys} />
       </Section>
       <Section title="Cloudflare token">
         <CloudflareTokenCard status={tokenStatus} canRotate={viewer.role === "admin"} />

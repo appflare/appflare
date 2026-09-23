@@ -1,13 +1,18 @@
-import { Banner, Button, Input } from "@cloudflare/kumo";
-import { CheckCircleIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Banner, Button, Input, Text } from "@cloudflare/kumo";
+import { CheckCircleIcon, FingerprintIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { z } from "zod";
 import { authClient } from "../auth/client";
+import {
+  PASSKEY_MESSAGES,
+  passkeySignInErrorMessage,
+  passkeysSupported,
+} from "../auth/passkey-errors";
 import { AuthLayout } from "../components/auth-layout";
 import { getSetupStatus } from "../server/setup.functions";
 
-/** `/login`: Better Auth email + password. */
+/** `/login`: Better Auth email + password, or a passkey the user added in Settings. */
 export const Route = createFileRoute("/login")({
   staticData: { title: "Sign in" },
   validateSearch: z.object({ created: z.boolean().optional() }),
@@ -23,12 +28,12 @@ function LoginPage() {
   const { created } = Route.useSearch();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<"password" | "passkey" | null>(null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    setPending(true);
+    setPending("password");
     setError(null);
     const { error: signInError } = await authClient.signIn.email({
       email: String(form.get("email") ?? ""),
@@ -36,7 +41,23 @@ function LoginPage() {
     });
     if (signInError) {
       setError(signInError.message ?? "Sign-in failed.");
-      setPending(false);
+      setPending(null);
+      return;
+    }
+    await router.navigate({ to: "/" });
+  }
+
+  async function onPasskey() {
+    setError(null);
+    if (!passkeysSupported()) {
+      setError(PASSKEY_MESSAGES.unsupported);
+      return;
+    }
+    setPending("passkey");
+    const { error: signInError } = await authClient.signIn.passkey();
+    if (signInError) {
+      setError(passkeySignInErrorMessage(signInError));
+      setPending(null);
       return;
     }
     await router.navigate({ to: "/" });
@@ -63,10 +84,31 @@ function LoginPage() {
           autoComplete="current-password"
           required
         />
-        <Button type="submit" variant="primary" loading={pending}>
+        <Button
+          type="submit"
+          variant="primary"
+          loading={pending === "password"}
+          disabled={pending === "passkey"}
+        >
           Sign in
         </Button>
       </form>
+      <div className="flex items-center gap-3" aria-hidden="true">
+        <div className="h-px flex-1 bg-kumo-hairline" />
+        <Text variant="secondary" size="sm">
+          or
+        </Text>
+        <div className="h-px flex-1 bg-kumo-hairline" />
+      </div>
+      <Button
+        variant="secondary"
+        icon={<FingerprintIcon />}
+        loading={pending === "passkey"}
+        disabled={pending === "password"}
+        onClick={onPasskey}
+      >
+        Sign in with a passkey
+      </Button>
     </AuthLayout>
   );
 }

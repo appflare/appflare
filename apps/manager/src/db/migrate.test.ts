@@ -17,6 +17,7 @@ const EXPECTED_TABLES = [
   "installs",
   "job_logs",
   "jobs",
+  "passkey",
   "rate_limit",
   "resources",
   "session",
