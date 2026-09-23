@@ -4,11 +4,14 @@ import {
   appHealthMode,
   appHealthPath,
   catalogManifestSchema,
+  DEFAULT_EXPECTED_BUILD_MINUTES,
+  DEFAULT_SANDBOX_INSTANCE_TYPE,
   EMAIL_ROUTING_MAX_RULES,
   hasFixedWorkerName,
   hasPlaceholder,
   renderJsonPlaceholders,
   renderPlaceholders,
+  sandboxBuildSettings,
   semverSchema,
 } from "./catalog";
 
@@ -301,6 +304,91 @@ describe("install.emailRouting", () => {
     const rules = Array.from({ length: EMAIL_ROUTING_MAX_RULES + 1 }, (_, i) => `box${i}`);
     expect(withRouting({ rules }).success).toBe(false);
     expect(withRouting({ rules: rules.slice(1) }).success).toBe(true);
+  });
+});
+
+describe("install.sandbox", () => {
+  const withSandbox = (sandbox: unknown, tier = "sandbox") =>
+    catalogManifestSchema.safeParse({
+      ...validManifest,
+      plan: "paid",
+      install: { ...validManifest.install, tier, sandbox },
+    });
+
+  it("is optional, so manifests without it keep their parsed shape", () => {
+    const parsed = catalogManifestSchema.parse({
+      ...validManifest,
+      install: { ...validManifest.install, tier: "sandbox" },
+    });
+    expect("sandbox" in parsed.install).toBe(false);
+    expect(sandboxBuildSettings(parsed.install)).toEqual({
+      expectedMinutes: DEFAULT_EXPECTED_BUILD_MINUTES,
+      instanceType: DEFAULT_SANDBOX_INSTANCE_TYPE,
+    });
+  });
+
+  it("takes expected minutes and a container size, each optional", () => {
+    for (const sandbox of [
+      {},
+      { expectedMinutes: 1 },
+      { expectedMinutes: 120 },
+      { instanceType: "standard-1" },
+      { expectedMinutes: 25, instanceType: "standard-2" },
+    ]) {
+      const result = withSandbox(sandbox);
+      expect(result.success, JSON.stringify(sandbox)).toBe(true);
+      expect(result.data?.install.sandbox).toEqual(sandbox);
+    }
+    const parsed = withSandbox({ expectedMinutes: 25 });
+    expect(parsed.data && sandboxBuildSettings(parsed.data.install)).toEqual({
+      expectedMinutes: 25,
+      instanceType: "standard-1",
+    });
+  });
+
+  it("refuses minutes that are not a whole number from 1 to 120, and unknown sizes", () => {
+    for (const sandbox of [
+      { expectedMinutes: 0 },
+      { expectedMinutes: -5 },
+      { expectedMinutes: 2.5 },
+      { expectedMinutes: 121 },
+      { expectedMinutes: "10" },
+      { instanceType: "basic" },
+      { instanceType: "standard-4" },
+    ]) {
+      expect(withSandbox(sandbox).success, JSON.stringify(sandbox)).toBe(false);
+    }
+  });
+
+  it("is refused on artifact and self-deploying entries", () => {
+    for (const tier of ["artifact", "self-deploying"]) {
+      const result = withSandbox({ expectedMinutes: 10 }, tier);
+      expect(result.success, tier).toBe(false);
+      expect(result.error?.issues).toEqual([
+        expect.objectContaining({
+          path: ["install", "sandbox"],
+          message: `install.sandbox is only for sandbox tier entries; this entry's tier is ${tier}`,
+        }),
+      ]);
+    }
+  });
+
+  it("states the tier rule in the JSON Schema, so editors refuse it on other tiers", () => {
+    const install = z.toJSONSchema(catalogManifestSchema).properties?.install;
+    expect(install).toMatchObject({
+      anyOf: [{ not: { required: ["sandbox"] } }, { properties: { tier: { const: "sandbox" } } }],
+      properties: {
+        sandbox: {
+          additionalProperties: false,
+          properties: {
+            expectedMinutes: { type: "integer", minimum: 1, maximum: 120 },
+            instanceType: { enum: ["standard-1", "standard-2"] },
+          },
+        },
+      },
+    });
+    const sandbox = typeof install === "object" ? install.properties?.sandbox : undefined;
+    expect(typeof sandbox === "object" && sandbox.description).toContain("cost");
   });
 });
 

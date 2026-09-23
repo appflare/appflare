@@ -6,6 +6,7 @@ import {
   gitShaSchema,
   ownerRepoSchema,
   packageManagerSchema,
+  sandboxInstanceTypeSchema,
 } from "./catalog";
 
 /**
@@ -68,16 +69,6 @@ export const SANDBOX_URL_ORIGIN = "https://sandbox";
 
 /** The most build output a result or progress answer quotes: about 200 KiB of text. */
 export const BUILD_LOG_TAIL_CHARS = 200 * 1024;
-
-/**
- * Container sizes a build may run on. `standard-1` (1/2 vCPU, 4 GiB memory,
- * 8 GB disk) is the default; a catalog entry whose build needs more may ask
- * for `standard-2` (1 vCPU, 6 GiB, 12 GB). Smaller types cannot hold a
- * typical Vite or OpenNext build.
- */
-export const sandboxInstanceTypeSchema = z.enum(["standard-1", "standard-2"]);
-export type SandboxInstanceType = z.infer<typeof sandboxInstanceTypeSchema>;
-export const DEFAULT_SANDBOX_INSTANCE_TYPE: SandboxInstanceType = "standard-1";
 
 /** An install id as it appears in object keys: ULID-like, no path characters. */
 export const buildInstallIdSchema = z

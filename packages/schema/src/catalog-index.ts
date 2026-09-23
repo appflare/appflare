@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { sha256Schema } from "./artifact";
-import { gitShaSchema, installTierSchema, planSchema, requirementSchema } from "./catalog";
-import { sandboxInstanceTypeSchema } from "./sandbox";
+import {
+  expectedBuildMinutesSchema,
+  gitShaSchema,
+  installTierSchema,
+  planSchema,
+  requirementSchema,
+  sandboxInstanceTypeSchema,
+} from "./catalog";
 
 /**
  * Schema for the generated `index.json` published to GitHub Pages.
@@ -15,9 +21,6 @@ export const indexArtifactsSchema = z.object({
   sig: z.url(),
 });
 export type IndexArtifacts = z.infer<typeof indexArtifactsSchema>;
-
-/** Minutes a sandbox build is expected to take when the entry does not say. */
-export const DEFAULT_EXPECTED_BUILD_MINUTES = 10;
 
 /**
  * How a `sandbox` tier entry is built in the user's account: catalog CI does
@@ -36,7 +39,7 @@ export const indexBuildSchema = z.object({
   /** The entry's `install.buildCommand`, repeated for display. */
   buildCommand: z.string().min(1).optional(),
   /** Wall-clock minutes a build usually takes, for the cost estimate. */
-  expectedMinutes: z.int().min(1).max(120).optional(),
+  expectedMinutes: expectedBuildMinutesSchema.optional(),
   /** Container size the build needs; `standard-1` when omitted. */
   instanceType: sandboxInstanceTypeSchema.optional(),
 });

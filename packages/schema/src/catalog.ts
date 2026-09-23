@@ -373,82 +373,173 @@ export const catalogEmailRoutingSchema = z
   });
 export type CatalogEmailRouting = z.infer<typeof catalogEmailRoutingSchema>;
 
+/**
+ * Container sizes a sandbox build may run on. `standard-1` (1/2 vCPU, 4 GiB
+ * memory, 8 GB disk) is the default; an entry whose build needs more may ask
+ * for `standard-2` (1 vCPU, 6 GiB, 12 GB). Smaller types cannot hold a
+ * typical Vite or OpenNext build.
+ */
+export const sandboxInstanceTypeSchema = z.enum(["standard-1", "standard-2"]);
+export type SandboxInstanceType = z.infer<typeof sandboxInstanceTypeSchema>;
+export const DEFAULT_SANDBOX_INSTANCE_TYPE: SandboxInstanceType = "standard-1";
+
+/** Minutes a sandbox build is expected to take when the entry does not say. */
+export const DEFAULT_EXPECTED_BUILD_MINUTES = 10;
+
+/** The longest build an entry may declare; the build step gives up after 55 minutes anyway. */
+export const MAX_EXPECTED_BUILD_MINUTES = 120;
+
+/** Whole minutes a sandbox build usually takes, from 1 to {@link MAX_EXPECTED_BUILD_MINUTES}. */
+export const expectedBuildMinutesSchema = z.int().min(1).max(MAX_EXPECTED_BUILD_MINUTES);
+
+/**
+ * How a `sandbox` tier entry is built in the user's account. Neither field
+ * changes what is built; both feed the cost the manager shows before an
+ * install or update: a build runs one container of `instanceType` for about
+ * `expectedMinutes`, and Cloudflare bills that container's memory, vCPU and
+ * disk by the second beyond the usage Workers Paid includes each month
+ * (a 10-minute `standard-1` build costs about one US cent). `instanceType`
+ * also sets the container the build actually runs on. Catalog CI copies both,
+ * defaults filled in, into the index entry's `build` block. Optional for the
+ * same reason as `fixedWorkerName`.
+ */
+export const catalogSandboxSchema = z
+  .object({
+    expectedMinutes: expectedBuildMinutesSchema
+      .describe(
+        "About how many minutes one build of this app takes, measured on a `standard-1` build " +
+          "(or `instanceType`, when set). The manager multiplies it by the container's rates to " +
+          "show what each install or update costs before the admin confirms it. Whole minutes, " +
+          `1 to ${MAX_EXPECTED_BUILD_MINUTES}; defaults to ${DEFAULT_EXPECTED_BUILD_MINUTES}.`,
+      )
+      .optional(),
+    instanceType: sandboxInstanceTypeSchema
+      .describe(
+        "The container the build runs on: `standard-1` (1/2 vCPU, 4 GiB memory, 8 GB disk) or " +
+          "`standard-2` (1 vCPU, 6 GiB, 12 GB) for builds that run out of memory or disk on the " +
+          "smaller one. The larger container costs more per minute, which the manager's cost " +
+          'estimate reflects. Defaults to `"standard-1"`.',
+      )
+      .optional(),
+  })
+  .describe(
+    "How this app is built in the user's account, for `sandbox` tier entries only. Both fields " +
+      "feed the build cost the manager shows before each install and update.",
+  );
+export type CatalogSandbox = z.infer<typeof catalogSandboxSchema>;
+
+/** A sandbox build's settings, defaults filled in. */
+export interface SandboxBuildSettings {
+  expectedMinutes: number;
+  instanceType: SandboxInstanceType;
+}
+
+/** `install.sandbox` with {@link DEFAULT_EXPECTED_BUILD_MINUTES} and {@link DEFAULT_SANDBOX_INSTANCE_TYPE} filled in. */
+export function sandboxBuildSettings(
+  install: Pick<CatalogInstall, "sandbox">,
+): SandboxBuildSettings {
+  return {
+    expectedMinutes: install.sandbox?.expectedMinutes ?? DEFAULT_EXPECTED_BUILD_MINUTES,
+    instanceType: install.sandbox?.instanceType ?? DEFAULT_SANDBOX_INSTANCE_TYPE,
+  };
+}
+
 /** How the packer builds and names the app. */
-export const catalogInstallSchema = z.object({
-  tier: installTierSchema,
-  packageManager: packageManagerSchema,
-  wranglerConfig: z.string().min(1),
-  /** The default Worker name; the installer may change it unless `fixedWorkerName` is set. */
-  workerName: z.string().min(1),
-  /**
-   * The app only works under `workerName` (for example, it hard-codes its own
-   * hostname), so it installs at most once per account. Omitted means false.
-   * Optional rather than defaulted so manifests and artifacts written before the
-   * field existed keep the same parsed shape.
-   */
-  fixedWorkerName: z.boolean().optional(),
-  /**
-   * The path the manager probes to tell whether the app serves, for example
-   * `/api/health`. When it answers JSON with a string `version`, an update's
-   * check of the new version requires that version. Omitted means `/`;
-   * optional for the same reason as `fixedWorkerName`.
-   */
-  healthPath: z
-    .string()
-    .regex(/^\/[^\s?#]*$/, "healthPath is a URL path starting with /, without query or fragment")
-    .optional(),
-  /**
-   * How the health check reads the Worker's answer. Omitted means `"default"`.
-   * `"status-only"` is for apps whose every route sits behind Cloudflare
-   * Access or the app's own sign-in, so no unauthenticated request can show
-   * whether the app is healthy.
-   */
-  healthMode: healthModeSchema.optional(),
-  /**
-   * One command the packer runs in the checkout after installing
-   * dependencies and before bundling, for apps whose wrangler config has no
-   * `build.command` (Vite, React Router, OpenNext). Optional for the same
-   * reason as `fixedWorkerName`.
-   */
-  buildCommand: z
-    .string()
-    .max(MAX_BUILD_COMMAND_LENGTH)
-    .regex(
-      BUILD_COMMAND_PATTERN,
-      "buildCommand may contain only letters, digits, spaces, and @ % + , . / : = _ -; it runs without a shell",
-    )
-    .superRefine((command, ctx) => {
-      const problem = buildCommandProblem(command);
-      if (problem !== null) ctx.addIssue({ code: "custom", message: `buildCommand ${problem}` });
-    })
-    .describe(
-      "One command the packer runs at the root of the checkout after installing dependencies " +
-        "(with install scripts disabled) and before bundling, for example " +
-        "`pnpm --filter @scope/web build`. Use it when the wrangler config has no `build.command`. " +
-        "It runs as a plain command without a shell, with no credentials in its environment, and " +
-        "the checkout's `node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, " +
-        "and environment assignments are not allowed. At most 256 characters.",
-    )
-    .optional(),
-  /**
-   * The version shown for this entry when the repository's tag does not
-   * describe this app (monorepos); it must change whenever `source` moves.
-   * Omitted means the version comes from `source.ref` when it is a semver tag,
-   * else from the pinned commit's date and SHA.
-   */
-  version: semverSchema
-    .describe(
-      "The version shown for this entry when the repository's tag does not describe this app " +
-        "(monorepos); it must change whenever `source` moves.",
-    )
-    .optional(),
-  /**
-   * Email the app receives through Email Routing; see
-   * {@link catalogEmailRoutingSchema}. Optional for the same reason as
-   * `fixedWorkerName`.
-   */
-  emailRouting: catalogEmailRoutingSchema.optional(),
-});
+export const catalogInstallSchema = z
+  .object({
+    tier: installTierSchema,
+    packageManager: packageManagerSchema,
+    wranglerConfig: z.string().min(1),
+    /** The default Worker name; the installer may change it unless `fixedWorkerName` is set. */
+    workerName: z.string().min(1),
+    /**
+     * The app only works under `workerName` (for example, it hard-codes its own
+     * hostname), so it installs at most once per account. Omitted means false.
+     * Optional rather than defaulted so manifests and artifacts written before the
+     * field existed keep the same parsed shape.
+     */
+    fixedWorkerName: z.boolean().optional(),
+    /**
+     * The path the manager probes to tell whether the app serves, for example
+     * `/api/health`. When it answers JSON with a string `version`, an update's
+     * check of the new version requires that version. Omitted means `/`;
+     * optional for the same reason as `fixedWorkerName`.
+     */
+    healthPath: z
+      .string()
+      .regex(/^\/[^\s?#]*$/, "healthPath is a URL path starting with /, without query or fragment")
+      .optional(),
+    /**
+     * How the health check reads the Worker's answer. Omitted means `"default"`.
+     * `"status-only"` is for apps whose every route sits behind Cloudflare
+     * Access or the app's own sign-in, so no unauthenticated request can show
+     * whether the app is healthy.
+     */
+    healthMode: healthModeSchema.optional(),
+    /**
+     * One command the packer runs in the checkout after installing
+     * dependencies and before bundling, for apps whose wrangler config has no
+     * `build.command` (Vite, React Router, OpenNext). Optional for the same
+     * reason as `fixedWorkerName`.
+     */
+    buildCommand: z
+      .string()
+      .max(MAX_BUILD_COMMAND_LENGTH)
+      .regex(
+        BUILD_COMMAND_PATTERN,
+        "buildCommand may contain only letters, digits, spaces, and @ % + , . / : = _ -; it runs without a shell",
+      )
+      .superRefine((command, ctx) => {
+        const problem = buildCommandProblem(command);
+        if (problem !== null) ctx.addIssue({ code: "custom", message: `buildCommand ${problem}` });
+      })
+      .describe(
+        "One command the packer runs at the root of the checkout after installing dependencies " +
+          "(with install scripts disabled) and before bundling, for example " +
+          "`pnpm --filter @scope/web build`. Use it when the wrangler config has no `build.command`. " +
+          "It runs as a plain command without a shell, with no credentials in its environment, and " +
+          "the checkout's `node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, " +
+          "and environment assignments are not allowed. At most 256 characters.",
+      )
+      .optional(),
+    /**
+     * The version shown for this entry when the repository's tag does not
+     * describe this app (monorepos); it must change whenever `source` moves.
+     * Omitted means the version comes from `source.ref` when it is a semver tag,
+     * else from the pinned commit's date and SHA.
+     */
+    version: semverSchema
+      .describe(
+        "The version shown for this entry when the repository's tag does not describe this app " +
+          "(monorepos); it must change whenever `source` moves.",
+      )
+      .optional(),
+    /**
+     * Email the app receives through Email Routing; see
+     * {@link catalogEmailRoutingSchema}. Optional for the same reason as
+     * `fixedWorkerName`.
+     */
+    emailRouting: catalogEmailRoutingSchema.optional(),
+    /**
+     * Build settings of a `sandbox` tier entry; see {@link catalogSandboxSchema}.
+     * Refused on other tiers, where nothing is built in the user's account.
+     */
+    sandbox: catalogSandboxSchema.optional(),
+  })
+  .superRefine((install, ctx) => {
+    if (install.sandbox !== undefined && install.tier !== "sandbox") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["sandbox"],
+        message: `install.sandbox is only for sandbox tier entries; this entry's tier is ${install.tier}`,
+      });
+    }
+  })
+  // The refinement does not reach the JSON Schema; `anyOf` states it there
+  // (no `sandbox`, or tier `sandbox`), so editors refuse it on other tiers too.
+  .meta({
+    anyOf: [{ not: { required: ["sandbox"] } }, { properties: { tier: { const: "sandbox" } } }],
+  });
 export type CatalogInstall = z.infer<typeof catalogInstallSchema>;
 
 /** Whether the app must run under its catalog `workerName` (and so installs once). */
