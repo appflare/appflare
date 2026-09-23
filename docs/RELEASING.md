@@ -9,7 +9,7 @@ Releases, tagged `manager@<version>`. Nothing is published to npm yet.
    `@appflare/manager`, describe the change. Commit the file under `.changeset/`.
 2. On every push to `main`, the `release` workflow (`.github/workflows/release.yml`)
    runs `changesets/action`. While changesets are pending it opens or updates the
-   **Version Packages** pull request (`pnpm changeset version`: bumps
+   **chore: version packages** pull request (`pnpm changeset version`: bumps
    `apps/manager/package.json` and writes `apps/manager/CHANGELOG.md`).
 3. Merging that pull request releases the new version. With no changesets pending,
    the workflow releases `apps/manager/package.json`'s version unless the release
@@ -44,9 +44,9 @@ node packages/pack/bin/appflare-pack.js verify /tmp/manager-release --hashes-onl
 ## Repository settings
 
 - Settings > Actions > General > Workflow permissions: allow GitHub Actions to
-  create pull requests (needed for the Version Packages pull request).
+  create pull requests (needed for the version pull request).
 - Pull requests opened with the workflow token do not trigger other workflows, so
-  CI does not run on the Version Packages pull request by itself. Close and reopen
+  CI does not run on the version pull request by itself. Close and reopen
   it (or push to its branch) to run CI before merging.
 
 ## Secrets
