@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { hasRole, type Role } from "../auth/roles";
 import { generateTemporaryPassword } from "../auth/temporary-password";
+import { syncAccessAfterAdminChange } from "./access.server";
 import { currentAuth, requireRole } from "./auth.server";
 import { addUserInput } from "./schemas";
 import { authErrorMessage } from "./users.server";
@@ -49,15 +50,21 @@ export const listUsers = createServerFn({ method: "GET" }).handler(async (): Pro
 export const addUser = createServerFn({ method: "POST" })
   .validator(addUserInput)
   .handler(async ({ data }) => {
-    await requireRole("admin");
+    const session = await requireRole("admin");
     const temporaryPassword = generateTemporaryPassword();
+    let created: UserRow;
     try {
       const { user } = await currentAuth().api.createUser({
         body: { email: data.email, name: data.name, role: data.role, password: temporaryPassword },
         headers: getRequest().headers,
       });
-      return { user: toRow(user), temporaryPassword };
+      created = toRow(user);
     } catch (error) {
       throw new Error(authErrorMessage(error, "Could not create the user."));
     }
+    // With Cloudflare Access protection on, a new admin must also be in its
+    // allow policy, or Access keeps them out before they reach the sign-in page.
+    const accessPolicy =
+      created.role === "admin" ? await syncAccessAfterAdminChange(session.user.email) : "off";
+    return { user: created, temporaryPassword, accessPolicy };
   });

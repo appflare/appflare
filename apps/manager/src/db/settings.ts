@@ -24,6 +24,21 @@ export const SETTING = {
    * self-update job's last step.
    */
   managerVersionHistory: "manager_version_history",
+  /**
+   * Cloudflare Access protection, all set together when it is turned on and
+   * all removed when it is turned off. `access_aud` and `access_team_domain`
+   * are what every request's `Cf-Access-Jwt-Assertion` is checked against.
+   */
+  accessAppId: "access_app_id",
+  accessPolicyId: "access_policy_id",
+  /** The second application that lets `/api/health` through without a sign-in. */
+  accessHealthAppId: "access_health_app_id",
+  accessAud: "access_aud",
+  accessTeamDomain: "access_team_domain",
+  /** The hostname the Access application protects. */
+  accessDomain: "access_domain",
+  /** ISO 8601 time Access protection was turned on. */
+  accessEnabledAt: "access_enabled_at",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];
@@ -58,6 +73,12 @@ export async function writeSettings(
       target: settings.key,
       set: { value: sql`excluded.value`, updated_at: sql`excluded.updated_at` },
     });
+}
+
+/** Deletes the given rows; missing ones are ignored. */
+export async function deleteSettings(db: Database, keys: readonly SettingKey[]): Promise<void> {
+  if (keys.length === 0) return;
+  await db.delete(settings).where(inArray(settings.key, [...keys]));
 }
 
 export async function isCfTokenConfigured(db: Database): Promise<boolean> {

@@ -1,27 +1,33 @@
 import { Text } from "@cloudflare/kumo";
 import { createFileRoute } from "@tanstack/react-router";
 import { getManagerUpdate } from "../../catalog/manager-releases.functions";
+import { AccessCard } from "../../components/access-card";
 import { AppflareUpdatesCard } from "../../components/appflare-updates-card";
 import { CloudflareTokenCard } from "../../components/cloudflare-token-card";
 import { PageHeader } from "../../components/page-header";
 import { PasskeysSection } from "../../components/passkeys-section";
 import { PlaceholderCard } from "../../components/placeholder-card";
 import { UsersSection } from "../../components/users-section";
+import { getAccessStatus } from "../../server/access.functions";
 import { listPasskeys } from "../../server/passkeys.functions";
 import { getTokenStatus } from "../../server/token.functions";
 import { listUsers } from "../../server/users.functions";
 
-/** `/settings`: users, your passkeys, the Cloudflare token, and Appflare's own updates. */
+/**
+ * `/settings`: users, your passkeys, the Cloudflare token, Cloudflare Access
+ * protection, and Appflare's own updates.
+ */
 export const Route = createFileRoute("/_app/settings")({
   staticData: { title: "Settings" },
   loader: async ({ context }) => {
-    const [users, passkeys, tokenStatus, managerUpdate] = await Promise.all([
+    const [users, passkeys, tokenStatus, accessStatus, managerUpdate] = await Promise.all([
       context.viewer.role === "admin" ? listUsers() : null,
       listPasskeys(),
       getTokenStatus(),
+      getAccessStatus(),
       getManagerUpdate(),
     ]);
-    return { users, passkeys, tokenStatus, managerUpdate };
+    return { users, passkeys, tokenStatus, accessStatus, managerUpdate };
   },
   component: SettingsPage,
 });
@@ -38,7 +44,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function SettingsPage() {
-  const { users, passkeys, tokenStatus, managerUpdate } = Route.useLoaderData();
+  const { users, passkeys, tokenStatus, accessStatus, managerUpdate } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   return (
     <>
@@ -53,10 +59,10 @@ function SettingsPage() {
         <CloudflareTokenCard status={tokenStatus} canRotate={viewer.role === "admin"} />
       </Section>
       <Section title="Cloudflare Access">
-        {/* TODO: Access toggle: self-hosted Access app + JWT verification. */}
-        <PlaceholderCard
-          title="Protect this manager with Cloudflare Access"
-          description="Put the manager behind a Cloudflare Access policy for your admins' emails."
+        <AccessCard
+          status={accessStatus}
+          isAdmin={viewer.role === "admin"}
+          viewerEmail={viewer.email}
         />
       </Section>
       <Section title="Appflare updates">

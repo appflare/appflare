@@ -111,7 +111,8 @@ The token template requests:
 | Queues | Edit | Queues for apps that use them. |
 | Vectorize | Edit | Vectorize indexes for apps that bind them. |
 | Account Settings | Read | Finding the account the token belongs to. |
-| Access: Apps and Policies | Edit | Not used by the current version. |
+| Access: Apps and Policies | Edit | Only for [Protect with Cloudflare Access](/security/#protect-with-cloudflare-access): creating, updating, and deleting the Access applications and policy that guard the manager. |
+| Access: Organizations, Identity Providers, and Groups | Read | Only for [Protect with Cloudflare Access](/security/#protect-with-cloudflare-access): reading the Zero Trust organization's team domain and login methods. |
 | Workers Tail | Read | Not used by the current version. |
 
 ### Where the token lives

@@ -8,14 +8,18 @@ import {
 } from "@phosphor-icons/react";
 import { type FormEvent, useRef, useState } from "react";
 import {
+  ACCESS_FEATURE,
   accountTokenTemplateUrl,
-  TOKEN_PERMISSION_GROUPS,
+  permissionName,
+  splitPermissionGroups,
   userTokenTemplateUrl,
 } from "../cloudflare/token-template";
 import type { TokenVerification, VerifyTokenResult } from "../cloudflare/verify-token";
 import { rotateToken, saveToken, verifyToken } from "../server/token.functions";
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+
+const { required, optional } = splitPermissionGroups();
 
 export interface SavedToken {
   accountId: string;
@@ -102,9 +106,16 @@ export function CloudflareTokenForm({
           <Text bold>1. Create a token</Text>
           <Text variant="secondary">
             The link opens the Cloudflare dashboard with the permissions Appflare needs already
-            selected: {TOKEN_PERMISSION_GROUPS.map((g) => g.label).join(", ")}. Choose this account,
-            create the token, and copy it.
+            selected: {required.map((g) => g.label).join(", ")}. Choose this account, create the
+            token, and copy it.
           </Text>
+          {optional.length > 0 && (
+            <Text variant="secondary">
+              It also selects {optional.map(permissionName).join(" and ")}, needed only for "
+              {ACCESS_FEATURE}" in Settings. You can remove them from the token if you will not use
+              that setting, and add them back later by rotating the token.
+            </Text>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <LinkButton

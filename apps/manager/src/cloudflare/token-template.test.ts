@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACCESS_FEATURE,
   accountTokenTemplateUrl,
   appTokenTemplateUrl,
+  permissionName,
   resolveAppTokenPermissions,
+  splitPermissionGroups,
   TOKEN_PERMISSION_GROUPS,
   userTokenTemplateUrl,
 } from "./token-template";
@@ -29,9 +32,28 @@ describe("token template URLs", () => {
     expect(groupsOf(userTokenTemplateUrl())).toHaveLength(TOKEN_PERMISSION_GROUPS.length);
   });
 
-  it("asks for edit on resource groups and read on account settings and tail", () => {
+  it("asks for edit on resource groups and read on account settings, tail, and Access organizations", () => {
     const reads = TOKEN_PERMISSION_GROUPS.filter((g) => g.type === "read").map((g) => g.key);
-    expect(reads.sort()).toEqual(["account_settings", "workers_tail"]);
+    expect(reads.sort()).toEqual(["access_acct", "account_settings", "workers_tail"]);
+  });
+
+  it("includes the Access groups, marked as used only by the Access setting", () => {
+    const { required, optional } = splitPermissionGroups();
+    expect(optional.map(({ key, type }) => ({ key, type }))).toEqual([
+      { key: "access", type: "edit" },
+      { key: "access_acct", type: "read" },
+    ]);
+    expect(optional.every((g) => g.onlyFor === ACCESS_FEATURE)).toBe(true);
+    expect(required.some((g) => g.key.startsWith("access"))).toBe(false);
+    expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key: "access", type: "edit" });
+    expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({
+      key: "access_acct",
+      type: "read",
+    });
+    expect(optional.map(permissionName)).toEqual([
+      "Access: Apps and Policies: Edit",
+      "Access: Organizations, Identity Providers, and Groups: Read",
+    ]);
   });
 });
 

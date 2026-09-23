@@ -7,7 +7,10 @@
  * https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
  * (`permissionGroupKeys` = URL-encoded JSON array of `{ key, type }`). That page's
  * key table omits `vectorize` and `workers_tail`; both are the keys the dashboard
- * itself uses for those groups (seen in public template links using them).
+ * itself uses for those groups (seen in public template links using them). The
+ * same page's "Access full management" template pairs `access` (the "Access:
+ * Apps and Policies" group) with `access_acct` ("Access: Organizations,
+ * Identity Providers, and Groups").
  */
 
 import type { TokenPermission } from "@appflare/schema";
@@ -20,7 +23,15 @@ export interface PermissionGroup {
   type: PermissionType;
   /** The group's name in the dashboard's permission picker. */
   label: string;
+  /**
+   * Set when only one optional feature uses the group: the feature's name.
+   * The token works without it; that feature then says what is missing.
+   */
+  onlyFor?: string;
 }
+
+/** The settings feature that puts the manager behind Cloudflare Access. */
+export const ACCESS_FEATURE = "Protect with Cloudflare Access";
 
 export const TOKEN_PERMISSION_GROUPS = [
   // Upload, version, deploy, and delete app Workers and the manager itself; their
@@ -36,8 +47,17 @@ export const TOKEN_PERMISSION_GROUPS = [
   { key: "queues", type: "edit", label: "Queues" },
   // Create and delete Vectorize indexes for apps that bind them.
   { key: "vectorize", type: "edit", label: "Vectorize" },
-  // The optional Cloudflare Access toggle for the manager.
-  { key: "access", type: "edit", label: "Access: Apps and Policies" },
+  // Create, update, and delete the self-hosted Access application (and its
+  // policy) that puts the manager behind Cloudflare Access.
+  { key: "access", type: "edit", label: "Access: Apps and Policies", onlyFor: ACCESS_FEATURE },
+  // Read the account's Zero Trust organization: its team domain issues and
+  // signs the Access tokens the manager verifies.
+  {
+    key: "access_acct",
+    type: "read",
+    label: "Access: Organizations, Identity Providers, and Groups",
+    onlyFor: ACCESS_FEATURE,
+  },
   // Find the account id and name the token belongs to (`GET /accounts`).
   { key: "account_settings", type: "read", label: "Account Settings" },
   // Stream a Worker's live logs while diagnosing an install or update.
@@ -46,6 +66,24 @@ export const TOKEN_PERMISSION_GROUPS = [
 
 /** The token name the dashboard form is prefilled with. */
 export const TOKEN_NAME = "Appflare";
+
+/** The groups every install needs, and the ones only an optional feature uses. */
+export function splitPermissionGroups(
+  groups: readonly PermissionGroup[] = TOKEN_PERMISSION_GROUPS,
+): {
+  required: PermissionGroup[];
+  optional: PermissionGroup[];
+} {
+  return {
+    required: groups.filter((g) => g.onlyFor === undefined),
+    optional: groups.filter((g) => g.onlyFor !== undefined),
+  };
+}
+
+/** `Label: Edit` / `Label: Read`, the wording of the dashboard's picker. */
+export function permissionName(group: PermissionGroup): string {
+  return `${group.label}: ${group.type === "edit" ? "Edit" : "Read"}`;
+}
 
 function encodedGroups(groups: readonly PermissionGroup[]): string {
   return encodeURIComponent(JSON.stringify(groups.map(({ key, type }) => ({ key, type }))));

@@ -73,7 +73,12 @@ export function UsersSection({ users, viewerId }: { users: UserRow[] | null; vie
 
 const ROLE_ITEMS: Record<Role, string> = { member: "Member (read only)", admin: "Admin" };
 
-type Created = { email: string; temporaryPassword: string };
+type Created = {
+  email: string;
+  temporaryPassword: string;
+  /** Whether the Cloudflare Access allow policy took the new admin in. */
+  accessPolicy: "off" | "updated" | "failed";
+};
 
 /**
  * Creates a user with a random temporary password, shown once in this dialog.
@@ -109,7 +114,11 @@ function AddUserDialog() {
           role,
         },
       });
-      setCreated({ email: result.user.email, temporaryPassword: result.temporaryPassword });
+      setCreated({
+        email: result.user.email,
+        temporaryPassword: result.temporaryPassword,
+        accessPolicy: result.accessPolicy,
+      });
       await router.invalidate();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the user.");
@@ -181,6 +190,22 @@ function AddUserDialog() {
               title="Copy it now"
               description="Appflare stores only a hash. Closing this dialog discards the password."
             />
+            {created.accessPolicy === "updated" && (
+              <Banner
+                variant="secondary"
+                icon={<InfoIcon weight="fill" />}
+                title="Added to the Cloudflare Access policy"
+                description={`${created.email} can now sign in through Cloudflare Access with that email.`}
+              />
+            )}
+            {created.accessPolicy === "failed" && (
+              <Banner
+                variant="error"
+                icon={<WarningCircleIcon weight="fill" />}
+                title="Not added to the Cloudflare Access policy"
+                description={`Cloudflare Access will keep ${created.email} out until the policy lists them. Use "Re-sync admins" under Cloudflare Access.`}
+              />
+            )}
             <div className="flex justify-end">
               <Dialog.Close
                 render={(props) => (

@@ -212,22 +212,84 @@ export interface WorkflowInfo {
   script_name?: string;
 }
 
+/** `GET /access/organizations`: the account's Zero Trust organization (fields read). */
+export interface AccessOrganization {
+  /** The team domain, `<team>.cloudflareaccess.com`; also the JWT issuer host. */
+  auth_domain: string;
+  name?: string;
+}
+
+/** `GET /access/identity_providers` (fields read). */
+export interface AccessIdentityProvider {
+  id: string;
+  /** `onetimepin`, `cloudflare`, `google`, `github`, `azureAD`, `saml`, `oidc`, … */
+  type: string;
+  name?: string;
+  config?: Record<string, unknown>;
+}
+
+/**
+ * One rule of an Access policy's `include`/`exclude`/`require` list. Only the
+ * rule kinds Appflare writes are typed; others pass through when read back.
+ */
+export type AccessRule =
+  | { email: { email: string } }
+  | { everyone: Record<string, never> }
+  | Record<string, unknown>;
+
+/** Body of `POST /access/apps` for a self-hosted application. */
+export interface CreateAccessAppArgs {
+  type: "self_hosted";
+  name: string;
+  /** Hostname, optionally with a path (`host/api/health`), that Access protects. */
+  domain: string;
+  /** How long a sign-in lasts, e.g. `24h`. */
+  session_duration?: string;
+  app_launcher_visible?: boolean;
+  [key: string]: unknown;
+}
+
 export interface AccessApp {
   id: string;
-  aud?: string;
+  /** The application audience tag: the `aud` claim of its JWTs. */
+  aud: string;
   name?: string;
   domain?: string;
+  type?: string;
+  session_duration?: string;
+}
+
+/** Body of `POST`/`PUT /access/apps/{id}/policies[/{policy_id}]`. */
+export interface AccessPolicyArgs {
+  name: string;
+  decision: "allow" | "deny" | "bypass" | "non_identity";
+  /** A request matches when it matches at least one rule. */
+  include: AccessRule[];
+  exclude?: AccessRule[];
+  require?: AccessRule[];
+  precedence?: number;
+  [key: string]: unknown;
 }
 
 export interface AccessPolicy {
   id: string;
   name?: string;
   decision?: string;
+  include?: AccessRule[];
+  precedence?: number;
 }
 
-/** `GET /accounts/{id}/access/certs` — Access JWT-verification material. */
+/** One RSA signing key of an Access team, as a JWK. */
+export interface AccessJwk {
+  kid: string;
+  kty: "RSA";
+  alg?: string;
+  use?: string;
+  n: string;
+  e: string;
+}
+
+/** `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`: the team's JWT signing keys. */
 export interface AccessCerts {
-  keys?: unknown[];
-  public_cert?: { kid: string; cert: string };
-  public_certs?: Array<{ kid: string; cert: string }>;
+  keys: AccessJwk[];
 }

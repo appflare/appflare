@@ -558,33 +558,102 @@ describe("workflows", () => {
 });
 
 describe("access", () => {
-  it("createApp -> POST /access/apps", async () => {
-    const { fake, client } = make({ result: { id: "app1" } });
-    await client.access.createApp({ name: "Appflare", domain: "x.example.com" });
+  it("getOrganization -> GET /access/organizations", async () => {
+    const { fake, client } = make({
+      result: { auth_domain: "team.cloudflareaccess.com", name: "team" },
+    });
+    const org = await client.access.getOrganization();
+    expect(org.auth_domain).toBe("team.cloudflareaccess.com");
+    expect(fake.last().method).toBe("GET");
+    expect(fake.last().url).toBe(`${A}/access/organizations`);
+  });
+
+  it("getOrganization surfaces a missing organization as a 404 CloudflareApiError", async () => {
+    const { client } = make({ status: 404, errors: [{ code: 12130, message: "not found" }] });
+    await expect(client.access.getOrganization()).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("listIdentityProviders -> GET /access/identity_providers", async () => {
+    const { fake, client } = make({ result: [{ id: "idp1", type: "onetimepin", name: "" }] });
+    const idps = await client.access.listIdentityProviders();
+    expect(idps.map((i) => i.type)).toEqual(["onetimepin"]);
+    expect(fake.last().url.split("?")[0]).toBe(`${A}/access/identity_providers`);
+  });
+
+  it("listApps -> GET /access/apps (paginated)", async () => {
+    const { fake, client } = make({ result: [{ id: "app1", aud: "aud1" }] });
+    expect(await client.access.listApps()).toEqual([{ id: "app1", aud: "aud1" }]);
+    expect(fake.last().url.split("?")[0]).toBe(`${A}/access/apps`);
+    expect(fake.last().query.get("page")).toBe("1");
+  });
+
+  it("getApp -> GET /access/apps/{id}", async () => {
+    const { fake, client } = make({ result: { id: "app1", aud: "aud1" } });
+    await client.access.getApp("app1");
+    expect(fake.last().method).toBe("GET");
+    expect(fake.last().url).toBe(`${A}/access/apps/app1`);
+  });
+
+  it("createApp -> POST /access/apps with a self-hosted body", async () => {
+    const { fake, client } = make({ result: { id: "app1", aud: "aud1" } });
+    const app = await client.access.createApp({
+      type: "self_hosted",
+      name: "Appflare",
+      domain: "appflare.example.workers.dev",
+      session_duration: "24h",
+      app_launcher_visible: false,
+    });
+    expect(app.aud).toBe("aud1");
     const req = fake.last();
+    expect(req.method).toBe("POST");
     expect(req.url).toBe(`${A}/access/apps`);
-    expect(await req.request.json()).toEqual({ name: "Appflare", domain: "x.example.com" });
+    expect(await req.request.json()).toEqual({
+      type: "self_hosted",
+      name: "Appflare",
+      domain: "appflare.example.workers.dev",
+      session_duration: "24h",
+      app_launcher_visible: false,
+    });
   });
 
   it("deleteApp -> DELETE /access/apps/{id}", async () => {
-    const { fake, client } = make();
+    const { fake, client } = make({ result: { id: "app1" } });
     await client.access.deleteApp("app1");
     expect(fake.last().method).toBe("DELETE");
     expect(fake.last().url).toBe(`${A}/access/apps/app1`);
   });
 
-  it("createPolicy -> POST /access/apps/{id}/policies", async () => {
+  it("createPolicy -> POST /access/apps/{id}/policies with email rules", async () => {
     const { fake, client } = make({ result: { id: "pol1" } });
-    await client.access.createPolicy("app1", { name: "admins", decision: "allow" });
+    await client.access.createPolicy("app1", {
+      name: "Appflare admins",
+      decision: "allow",
+      include: [{ email: { email: "a@example.com" } }, { email: { email: "b@example.com" } }],
+      precedence: 1,
+    });
     const req = fake.last();
+    expect(req.method).toBe("POST");
     expect(req.url).toBe(`${A}/access/apps/app1/policies`);
-    expect(await req.request.json()).toEqual({ name: "admins", decision: "allow" });
+    expect(await req.request.json()).toEqual({
+      name: "Appflare admins",
+      decision: "allow",
+      include: [{ email: { email: "a@example.com" } }, { email: { email: "b@example.com" } }],
+      precedence: 1,
+    });
   });
 
-  it("getCerts -> GET /access/certs", async () => {
-    const { fake, client } = make({ result: { keys: [] } });
-    await client.access.getCerts();
-    expect(fake.last().method).toBe("GET");
-    expect(fake.last().url).toBe(`${A}/access/certs`);
+  it("updatePolicy -> PUT /access/apps/{id}/policies/{policy_id}", async () => {
+    const { fake, client } = make({ result: { id: "pol1" } });
+    await client.access.updatePolicy("app1", "pol1", {
+      name: "Appflare admins",
+      decision: "allow",
+      include: [{ email: { email: "a@example.com" } }],
+    });
+    const req = fake.last();
+    expect(req.method).toBe("PUT");
+    expect(req.url).toBe(`${A}/access/apps/app1/policies/pol1`);
+    expect(await req.request.json()).toMatchObject({
+      include: [{ email: { email: "a@example.com" } }],
+    });
   });
 });

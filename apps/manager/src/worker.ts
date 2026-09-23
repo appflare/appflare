@@ -1,4 +1,5 @@
 import handler from "@tanstack/react-start/server-entry";
+import { accessGate } from "./access/gate";
 import { CatalogError, refreshCatalogIndex } from "./catalog/index.server";
 import { ManagerReleasesError, refreshManagerReleases } from "./catalog/manager-releases.server";
 import { ensureMigrated } from "./db/migrate";
@@ -63,7 +64,12 @@ async function migrated(env: Env, request?: Request): Promise<Response | null> {
 
 export default {
   async fetch(request, env) {
-    return (await migrated(env, request)) ?? handler.fetch(request);
+    return (
+      (await migrated(env, request)) ??
+      // Cloudflare Access protection, when on: checked before any routing.
+      (await accessGate.check(request, env.DB)) ??
+      handler.fetch(request)
+    );
   },
 
   /**

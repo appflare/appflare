@@ -1,19 +1,25 @@
 import { Badge } from "@cloudflare/kumo";
 
-type BadgeVariant = "success" | "error" | "warning" | "info" | "neutral";
+/**
+ * The variants a dot badge can color its dot with. Kumo's dot appearance has
+ * no `info` dot: any other variant logs an "Unknown variant" warning and falls
+ * back to no dot. In-progress states use the neutral dot, which Kumo describes
+ * as the informational one; the label tells them apart from `queued`.
+ */
+type DotVariant = "success" | "error" | "warning" | "neutral";
 
-const INSTALL: Record<string, { variant: BadgeVariant; label: string }> = {
-  installing: { variant: "info", label: "Installing" },
+const INSTALL: Record<string, { variant: DotVariant; label: string }> = {
+  installing: { variant: "neutral", label: "Installing" },
   installed: { variant: "success", label: "Installed" },
-  updating: { variant: "info", label: "Updating" },
+  updating: { variant: "neutral", label: "Updating" },
   failed: { variant: "error", label: "Failed" },
   uninstalling: { variant: "warning", label: "Uninstalling" },
   uninstalled: { variant: "neutral", label: "Uninstalled" },
 };
 
-const JOB: Record<string, { variant: BadgeVariant; label: string }> = {
+const JOB: Record<string, { variant: DotVariant; label: string }> = {
   queued: { variant: "neutral", label: "Queued" },
-  running: { variant: "info", label: "Running" },
+  running: { variant: "neutral", label: "Running" },
   succeeded: { variant: "success", label: "Succeeded" },
   failed: { variant: "error", label: "Failed" },
 };

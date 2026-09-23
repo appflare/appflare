@@ -21,6 +21,12 @@ export { CLOUDFLARE_API_BASE } from "./http";
 export type { WorkerModule, WorkerModuleType } from "./modules";
 export { buildUploadFormData, MODULE_CONTENT_TYPES } from "./modules";
 
+export {
+  AccessCertsError,
+  accessCertsUrl,
+  fetchAccessCerts,
+  isAccessTeamDomain,
+} from "./namespaces/access";
 export type {
   AssetBucketFile,
   AssetBucketResult,
