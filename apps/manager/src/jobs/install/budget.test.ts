@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { fetchCost, SUBREQUEST_BUDGET, SubrequestBudget } from "./budget";
+import {
+  fetchCost,
+  isSubrequestLimitError,
+  SUBREQUEST_BUDGET,
+  SubrequestBudget,
+  subrequestLimitMessage,
+} from "./budget";
 
 describe("SubrequestBudget", () => {
   it("asks for a boundary before a phase would take the count past 40", () => {
@@ -26,6 +32,24 @@ describe("SubrequestBudget", () => {
     budget.reset();
     expect(budget.needsBoundary(10)).toBe(false);
     expect(budget.boundary()).toBe(1);
+  });
+
+  it("recognizes the runtime's subrequest-limit error, also when wrapped", () => {
+    const limit = new Error("Too many subrequests by single Worker invocation.");
+    expect(isSubrequestLimitError(limit)).toBe(true);
+    expect(isSubrequestLimitError(new Error("GET x failed", { cause: limit }))).toBe(true);
+    expect(isSubrequestLimitError(new Error("GET x -> 503"))).toBe(false);
+    expect(isSubrequestLimitError(null)).toBe(false);
+  });
+
+  it("explains why a subrequest-limit failure is not retried", () => {
+    expect(
+      subrequestLimitMessage(
+        "GET a.js failed: Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits",
+      ),
+    ).toBe(
+      "GET a.js failed: Too many subrequests by single Worker invocation. Cloudflare allows 50 subrequests per Worker invocation on the free plan, and a retry would run in the same invocation and hit the same limit, so the job stopped instead of retrying.",
+    );
   });
 
   it("counts a redirected fetch as two subrequests", () => {

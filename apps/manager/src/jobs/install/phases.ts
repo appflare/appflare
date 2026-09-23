@@ -15,7 +15,14 @@ import { readSettings, SETTING, writeSettings } from "../../db/settings";
 import type { StepRunner } from "../run-job";
 import { JobError, type JobSteps } from "../steps";
 import { cronChanges } from "../update/plan";
-import { fetchArtifactFile, fetchWhole, sha256Hex, verifyArtifactManifest } from "./artifact";
+import {
+  artifactReader,
+  fetchArtifactFile,
+  fetchWhole,
+  sha256Hex,
+  verifyArtifactManifest,
+} from "./artifact";
+import { planAssetParts } from "./asset-parts";
 import type { ResourceBindingPlan, WorkflowPlan } from "./bindings";
 import { ARTIFACT_FETCH_COST } from "./budget";
 import {
@@ -218,11 +225,6 @@ export async function checkWorkflowNamePhase(steps: JobSteps, wf: WorkflowPlan):
   });
 }
 
-/** Files per assets step: 2 subrequests per Range fetch (GitHub redirects) + the upload. */
-const BULK_FILES_PER_STEP = 19;
-/** Single-file upload mode: 2 per fetch + 1 upload per file. */
-const SINGLE_FILES_PER_STEP = 13;
-
 /** The JWT's payload claims, or `{}` when it is not a decodable JWT. */
 function jwtClaims(jwt: string): Record<string, unknown> {
   try {
@@ -240,6 +242,11 @@ function jwtClaims(jwt: string): Record<string, unknown> {
  * steps. Returns the completion JWT, or null when the artifact has no assets.
  * Cloudflare deduplicates assets account-wide, so a session may ask for no
  * buckets; its own JWT is then the completion JWT.
+ *
+ * A step reads its files with as few Range requests as the zip layout
+ * allows, following the release-asset redirect once, and a bucket too big
+ * for one step is uploaded in parts (`planAssetParts`), so the number of
+ * files in a bucket never decides whether the upload fits the budget.
  */
 export async function uploadAssetsPhase(
   steps: JobSteps,
@@ -264,32 +271,36 @@ export async function uploadAssetsPhase(
     return { jwt: result.jwt, buckets: result.buckets };
   });
   const single = jwtClaims(session.jwt).wrangler_single_asset_uploads === true;
-  const perStep = single ? SINGLE_FILES_PER_STEP : BULK_FILES_PER_STEP;
   const byHash = new Map(files.map((f) => [f.hash, f]));
+  const buckets = session.buckets.map((bucket) =>
+    bucket.map((hash) => {
+      const file = byHash.get(hash);
+      if (file === undefined) {
+        steps.current = "upload assets";
+        throw new JobError(`Cloudflare asked for an asset (${hash}) the artifact does not have`);
+      }
+      return file;
+    }),
+  );
   let completion: string | null = null;
-  for (const [b, bucket] of session.buckets.entries()) {
-    const parts = Math.max(1, Math.ceil(bucket.length / perStep));
-    for (let p = 0; p < parts; p++) {
-      const hashes = bucket.slice(p * perStep, (p + 1) * perStep);
+  for (const [b, bucket] of buckets.entries()) {
+    const parts = planAssetParts(bucket, single);
+    for (const [p, part] of parts.entries()) {
       const name =
-        `upload assets bucket ${b + 1}/${session.buckets.length}` +
-        (parts > 1 ? ` part ${p + 1}/${parts}` : "");
-      const cost = hashes.length * (ARTIFACT_FETCH_COST + (single ? 1 : 0)) + (single ? 0 : 1);
-      const uploaded = await steps.run(name, cost, async ({ log, fetch, cf }) => {
+        `upload assets bucket ${b + 1}/${buckets.length}` +
+        (parts.length > 1 ? ` part ${p + 1}/${parts.length}` : "");
+      const uploaded = await steps.run(name, part.subrequests, async ({ log, fetch, cf }) => {
         const api = cf();
-        const payload: Array<{ hash: string; bytes: Uint8Array; contentType: string }> = [];
-        let bytes = 0;
-        for (const hash of hashes) {
-          const file = byHash.get(hash);
-          if (file === undefined) {
-            throw new JobError(
-              `Cloudflare asked for an asset (${hash}) the artifact does not have`,
-            );
-          }
-          const got = await fetchArtifactFile(wrapFetch(fetch), zipUrl, file);
-          bytes += got.bytes.byteLength;
-          payload.push({ hash, bytes: got.bytes, contentType: assetContentType(file.route) });
-        }
+        // One reader per step: it follows the release-asset redirect once and
+        // reads adjacent files with one Range request.
+        const reader = artifactReader(wrapFetch(fetch), zipUrl);
+        const contents = await reader.read(part.files);
+        const payload = part.files.map((file, i) => ({
+          hash: file.hash,
+          bytes: contents[i] ?? new Uint8Array(0),
+          contentType: assetContentType(file.route),
+        }));
+        const bytes = payload.reduce((n, f) => n + f.bytes.byteLength, 0);
         let jwt: string | null = null;
         if (single) {
           for (const f of payload) {
@@ -311,7 +322,9 @@ export async function uploadAssetsPhase(
           );
           jwt = res.jwt ?? null;
         }
-        log.info(`Uploaded ${payload.length} asset file(s), ${bytes} bytes.`);
+        log.info(
+          `Uploaded ${payload.length} asset file(s), ${bytes} bytes, read with ${reader.ranges} range request(s).`,
+        );
         return { jwt };
       });
       completion = uploaded.jwt ?? completion;

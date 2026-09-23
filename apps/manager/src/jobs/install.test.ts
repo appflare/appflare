@@ -12,8 +12,10 @@ import {
   type ArtifactFixture,
   type ArtifactFixtureOptions,
   buildArtifactFixture,
+  ZIP_URL,
 } from "../test/artifact-fixture";
 import { fakeStep } from "../test/fake-step";
+import { redirectingArtifactHost, STORAGE_URL } from "../test/redirecting-host";
 import { API_STEP, type InstallJobParams, runInstall } from "./install";
 import type { JobEnv } from "./run-job";
 
@@ -61,6 +63,18 @@ interface FakeState {
   r2Enabled: boolean;
   /** Vectorize indexes with the create body each was made from. */
   vectorize: Array<{ name: string; config: unknown }>;
+  /** The zip answers like a GitHub release asset: a 302 to a signed storage URL. */
+  artifactRedirect: boolean;
+  /** Files per upload bucket the session asks for (default: one bucket for all). */
+  bucketSize?: number;
+  /** The session asks for one upload request per file (`wrangler_single_asset_uploads`). */
+  singleUploads: boolean;
+  /** When set, requests for the zip throw this error from `fetch`. */
+  artifactThrows?: string;
+  /** Every request, by the step that was running (`step.names.at(-1)`). */
+  requestsByStep: Record<string, string[]>;
+  /** The running step's name; `install` wires it to the fake step. */
+  stepOf?: () => string | undefined;
 }
 
 function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
@@ -89,8 +103,21 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     r2: [],
     r2Enabled: true,
     vectorize: [],
+    artifactRedirect: false,
+    singleUploads: false,
+    requestsByStep: {},
     ...over,
   };
+  const host = redirectingArtifactHost(fixture);
+  const sessionJwt = state.singleUploads
+    ? `e30.${btoa(JSON.stringify({ wrangler_single_asset_uploads: true })).replace(/=+$/, "")}.sig`
+    : "session-jwt";
+  function storeUpload(hashes: Iterable<string>) {
+    for (const hash of hashes) state.uploaded.add(hash);
+    state.bucketUploads += 1;
+    const done = state.bucketHashes.every((h) => state.uploaded.has(h));
+    return ok({ jwt: done ? "completion-jwt" : null });
+  }
   const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
     Response.json({ success: true, errors: [], messages: [], result, ...extra });
 
@@ -112,7 +139,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     const key = `${request.method} ${path}`;
     state.calls.push(key);
     const auth = request.headers.get("authorization");
-    if (path !== "/workers/assets/upload" && auth !== `Bearer ${TOKEN}`) {
+    if (!path.startsWith("/workers/assets/upload") && auth !== `Bearer ${TOKEN}`) {
       return Response.json(
         { success: false, errors: [{ code: 10000, message: "auth" }] },
         { status: 403 },
@@ -168,15 +195,14 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       }
       case "POST /workers/scripts/cut/assets-upload-session": {
         const needed = state.bucketHashes.filter((h) => !state.uploaded.has(h));
-        return ok({ jwt: "session-jwt", buckets: needed.length === 0 ? [] : [needed] });
+        const size = state.bucketSize ?? Math.max(1, needed.length);
+        const buckets: string[][] = [];
+        for (let i = 0; i < needed.length; i += size) buckets.push(needed.slice(i, i + size));
+        return ok({ jwt: sessionJwt, buckets });
       }
       case "POST /workers/assets/upload": {
-        if (auth !== "Bearer session-jwt") return new Response("bad jwt", { status: 401 });
-        const form = await request.formData();
-        for (const hash of form.keys()) state.uploaded.add(hash);
-        state.bucketUploads += 1;
-        const done = state.bucketHashes.every((h) => state.uploaded.has(h));
-        return ok({ jwt: done ? "completion-jwt" : null });
+        if (auth !== `Bearer ${sessionJwt}`) return new Response("bad jwt", { status: 401 });
+        return storeUpload((await request.formData()).keys());
       }
       case "PUT /workers/scripts/cut": {
         if (state.uploadStatus !== undefined) {
@@ -214,6 +240,11 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         state.subdomainEnabled = await request.json();
         return ok({ enabled: true, previews_enabled: true });
     }
+    const singleUpload = /^POST \/workers\/assets\/upload\/([0-9a-f]+)$/.exec(key);
+    if (singleUpload?.[1] !== undefined) {
+      if (auth !== `Bearer ${sessionJwt}`) return new Response("bad jwt", { status: 401 });
+      return storeUpload([singleUpload[1]]);
+    }
     const d1Query = /^POST \/d1\/database\/([^/]+)\/query$/.exec(key);
     if (d1Query) {
       const { sql } = (await request.json()) as { sql: string };
@@ -238,6 +269,18 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
   }
 
   const fetch = async (input: string, init?: RequestInit): Promise<Response> => {
+    const current = state.stepOf?.() ?? "(no step)";
+    state.requestsByStep[current] ??= [];
+    state.requestsByStep[current].push(input);
+    if (input === ZIP_URL || input === STORAGE_URL) {
+      if (state.artifactThrows !== undefined) throw new Error(state.artifactThrows);
+      if (state.artifactRedirect) {
+        const response = host.serve(input, init);
+        // A followed redirect is two subrequests; record the second hop too.
+        if (response?.redirected) state.requestsByStep[current].push(STORAGE_URL);
+        if (response !== null) return response;
+      }
+    }
     const request = new Request(input, init);
     if (input.startsWith("https://api.cloudflare.com/")) return cloudflare(request);
     if (input.startsWith(`${WORKER_ORIGIN}/`)) {
@@ -293,6 +336,7 @@ async function install(
   const { jobId, installId } = started;
   const params = { ...started.params, ...paramsOver };
   const step = fakeStep(clock === undefined ? {} : { onSleep: clock.onSleep });
+  fake.state.stepOf = () => step.names.at(-1);
   let error: unknown = null;
   try {
     await runInstall({
@@ -606,20 +650,98 @@ describe("install job", () => {
     expect((r.fake.state.metadata?.assets as { jwt: string } | undefined)?.jwt).toBe("session-jwt");
   });
 
-  it("sleeps at a budget boundary before a phase would pass 40 subrequests", async () => {
-    const assets = Array.from({ length: 30 }, (_, i) => ({
-      route: `/f${i}.txt`,
-      content: `file ${i}`,
-    }));
-    const r = await install({ assets });
-    expect(r.error).toBeNull();
-    expect(r.step.names).toContain("upload assets bucket 1/1 part 1/2");
-    expect(r.step.names).toContain("upload assets bucket 1/1 part 2/2");
-    expect(r.step.sleeps.filter((s) => s.startsWith("budget"))).toEqual(["budget 1", "budget 2"]);
-    expect(r.fake.state.bucketUploads).toBe(2);
-    expect((r.fake.state.metadata?.assets as { jwt: string } | undefined)?.jwt).toBe(
-      "completion-jwt",
-    );
+  describe("asset upload from a release asset that redirects", () => {
+    const smallFiles = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        route: `/f${i}.js`,
+        content: `export const f${i} = ${i};`,
+      }));
+    const uploadSteps = (r: { step: { names: string[] } }) =>
+      r.step.names.filter((n) => n.startsWith("upload assets bucket"));
+    const artifactRequests = (r: { fake: { state: FakeState } }, name: string) =>
+      (r.fake.state.requestsByStep[name] ?? []).filter((u) => u === ZIP_URL || u === STORAGE_URL);
+
+    it("reads a bucket of 30 small files with one range request, following the redirect once", async () => {
+      const r = await install({ assets: smallFiles(30) }, { artifactRedirect: true });
+      expect(r.error).toBeNull();
+      expect(uploadSteps(r)).toEqual(["upload assets bucket 1/1"]);
+      // One redirect hop, one ranged read of the storage URL, one upload: 3, not 61.
+      expect(r.fake.state.requestsByStep["upload assets bucket 1/1"]).toEqual([
+        ZIP_URL,
+        STORAGE_URL,
+        "https://api.cloudflare.com/client/v4/accounts/acc0000000000000000000000000000a/workers/assets/upload?base64=true",
+      ]);
+      expect(r.fake.state.bucketUploads).toBe(1);
+      expect([...r.fake.state.uploaded].sort()).toEqual([...r.fake.state.bucketHashes].sort());
+      expect((r.fake.state.metadata?.assets as { jwt: string } | undefined)?.jwt).toBe(
+        "completion-jwt",
+      );
+      expect(
+        r.logs.some((l) =>
+          /Uploaded 30 asset file\(s\), \d+ bytes, read with 1 range request\(s\)\./.test(
+            l.message,
+          ),
+        ),
+      ).toBe(true);
+    });
+
+    it("follows the redirect once per step when Cloudflare spreads the files over buckets", async () => {
+      // The live failure: 27 files in three buckets of nine.
+      const r = await install(
+        { assets: smallFiles(27) },
+        { artifactRedirect: true, bucketSize: 9 },
+      );
+      expect(r.error).toBeNull();
+      expect(uploadSteps(r)).toEqual([
+        "upload assets bucket 1/3",
+        "upload assets bucket 2/3",
+        "upload assets bucket 3/3",
+      ]);
+      for (const name of uploadSteps(r)) {
+        expect(artifactRequests(r, name)).toEqual([ZIP_URL, STORAGE_URL]);
+      }
+      expect(r.fake.state.bucketUploads).toBe(3);
+    });
+
+    it("splits a bucket that does not fit one step, and no step passes 40 subrequests", async () => {
+      // One upload request per file: 60 files cannot share one step.
+      const r = await install(
+        { assets: smallFiles(60) },
+        { artifactRedirect: true, singleUploads: true },
+      );
+      expect(r.error).toBeNull();
+      expect(uploadSteps(r)).toEqual([
+        "upload assets bucket 1/1 part 1/2",
+        "upload assets bucket 1/1 part 2/2",
+      ]);
+      for (const name of uploadSteps(r)) {
+        expect(artifactRequests(r, name)).toEqual([ZIP_URL, STORAGE_URL]);
+      }
+      for (const [name, requests] of Object.entries(r.fake.state.requestsByStep)) {
+        // Every step's own requests plus its log write stay within 40.
+        expect(requests.length + 3, name).toBeLessThanOrEqual(40);
+      }
+      expect(r.fake.state.bucketUploads).toBe(60);
+      expect((r.fake.state.metadata?.assets as { jwt: string } | undefined)?.jwt).toBe(
+        "completion-jwt",
+      );
+    });
+
+    it("fails at once, without retrying, when the runtime refuses a subrequest", async () => {
+      const r = await install(
+        { assets: smallFiles(3) },
+        {
+          artifactThrows:
+            "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits",
+        },
+      );
+      expect(r.error).toBeInstanceOf(Error);
+      expect(r.step.retried["upload assets bucket 1/1"]).toBeUndefined();
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(
+        /^upload assets bucket 1\/1: GET assets\/f0\.js and 2 more file\(s\) failed: Too many subrequests by single Worker invocation\. Cloudflare allows 50 subrequests per Worker invocation on the free plan, and a retry would run in the same invocation and hit the same limit, so the job stopped instead of retrying\.$/,
+      );
+    });
   });
 
   it("fails without adopting an existing Worker of the same name", async () => {

@@ -1,4 +1,4 @@
-import { ARTIFACT_FETCH_SUBREQUESTS } from "@appflare/schema";
+import { ARTIFACT_FETCH_SUBREQUESTS, FREE_PLAN_SUBREQUESTS } from "@appflare/schema";
 
 /**
  * Subrequest budgeting for Workflow invocations.
@@ -29,6 +29,29 @@ export function fetchCost(response: Pick<Response, "redirected">): number {
  * the install, update, and self-update jobs check before any upload.
  */
 export const ARTIFACT_FETCH_COST = ARTIFACT_FETCH_SUBREQUESTS;
+
+/**
+ * Whether `error` is the runtime refusing a subrequest because the invocation
+ * used up its limit ("Too many subrequests by single Worker invocation").
+ * Looks through `cause` too, since callers wrap fetch errors.
+ */
+export function isSubrequestLimitError(error: unknown): boolean {
+  for (let e: unknown = error, depth = 0; e != null && depth < 5; depth++) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (/too many subrequests/i.test(message)) return true;
+    e = e instanceof Error ? e.cause : undefined;
+  }
+  return false;
+}
+
+/**
+ * The job's message for a subrequest-limit failure. Workflows retries a step
+ * inside the same invocation, so a retry would hit the same limit at once;
+ * the step fails for good with this explanation instead.
+ */
+export function subrequestLimitMessage(message: string): string {
+  return `${message.replace(/\s*To configure this limit.*$/s, "").trim()} Cloudflare allows ${FREE_PLAN_SUBREQUESTS} subrequests per Worker invocation on the free plan, and a retry would run in the same invocation and hit the same limit, so the job stopped instead of retrying.`;
+}
 
 export class SubrequestBudget {
   #used = 0;

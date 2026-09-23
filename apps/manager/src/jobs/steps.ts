@@ -8,7 +8,12 @@ import {
 import { apiBaseOption } from "../cloudflare/api-base";
 import { createDb, type Database } from "../db/client";
 import { ArtifactError, ArtifactFetchError } from "./install/artifact";
-import { fetchCost, SubrequestBudget } from "./install/budget";
+import {
+  fetchCost,
+  isSubrequestLimitError,
+  SubrequestBudget,
+  subrequestLimitMessage,
+} from "./install/budget";
 import { countD1 } from "./install/count-d1";
 import type { JobContext, StepConfig } from "./run-job";
 import { StepLog } from "./step-log";
@@ -43,6 +48,8 @@ const D1_PER_STEP = 3;
 export function toStepError(error: unknown): Error {
   if (error instanceof NonRetryableError) return error;
   const message = error instanceof Error ? error.message : String(error);
+  // Retries run in the same invocation, so they could only hit the limit again.
+  if (isSubrequestLimitError(error)) return new NonRetryableError(subrequestLimitMessage(message));
   if (error instanceof CloudflareApiError) {
     return error.status === 429 || error.status >= 500
       ? new Error(message)
