@@ -1,6 +1,11 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import type { ScriptMetadata, VersionMetadata } from "@appflare/cf-api";
-import { type ArtifactManifest, appHealthPath, artifactManifestSchema } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  appHealthPath,
+  artifactManifestSchema,
+  tooManyModulesMessage,
+} from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { readCachedCatalogApp } from "../catalog/index.server";
@@ -91,9 +96,6 @@ export const updateJobParams = z.object({
   secrets: z.record(z.string(), z.string()).default({}),
 });
 export type UpdateJobParams = z.infer<typeof updateJobParams>;
-
-/** A single invocation can never make more than this many subrequests (free plan). */
-const INVOCATION_CAP = 48;
 
 /** The canary retries 1042 and route propagation for a shorter time: the Worker's route is already live. */
 export const CANARY_MAX_ATTEMPTS = 6;
@@ -226,11 +228,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           );
         }
       }
-      if (moduleCost > INVOCATION_CAP) {
-        problems.push(
-          `The Worker has ${manifest.worker.modules.length} modules; a single upload cannot fetch that many within the free plan's subrequest limit.`,
-        );
-      }
+      // The upload fetches every module in one invocation; refuse before
+      // the snapshot rather than failing mid-upload.
+      const tooMany = tooManyModulesMessage(manifest.worker.modules.length, "This version");
+      if (tooMany !== null) problems.push(tooMany);
       if (problems.length > 0) throw new JobError(problems.join(" "));
       for (const res of diff.toCreate) {
         log.info(`New binding ${res.binding}: creating ${RESOURCE_LABEL[res.kind]} "${res.name}".`);

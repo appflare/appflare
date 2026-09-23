@@ -1,5 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { MAX_WORKER_MODULES } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -505,6 +506,26 @@ describe("update job", () => {
       .first();
     expect(install).toEqual({ status: "installed" });
     expect(fake.state.calls).toEqual([]);
+  });
+
+  it("refuses a version with more modules than one upload can fetch, before snapshotting", async () => {
+    const r = await update({
+      ...NEW_APP,
+      tweak: (m) => {
+        const first = m.worker.modules[0];
+        if (first === undefined) throw new Error("the fixture has no module");
+        for (let i = 1; i <= MAX_WORKER_MODULES; i++) {
+          m.worker.modules.push({ ...first, name: `chunk-${i}.js` });
+        }
+      },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      `plan update: This version has ${MAX_WORKER_MODULES + 1} Worker modules, but one upload can fetch at most ${MAX_WORKER_MODULES} within the free plan's 50 subrequests per invocation (2 per module from a release asset). It must be built as ${MAX_WORKER_MODULES} or fewer modules, for example as one bundled module.`,
+    );
+    expect(r.step.names).not.toContain("read current deployment");
+    expect(r.fake.state.calls).toEqual([]);
+    expect(r.snapshot).toBeNull();
   });
 
   it("refuses a gradual deployment in progress before snapshotting", async () => {

@@ -2,7 +2,12 @@ import { createHash, webcrypto } from "node:crypto";
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import path from "node:path";
 import { assetHash } from "@appflare/cf-api";
-import { type ArtifactManifest, artifactManifestSchema, signingKeys } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  artifactManifestSchema,
+  signingKeys,
+  tooManyModulesMessage,
+} from "@appflare/schema";
 import { UNSIGNED_KEY_ID } from "./signing.ts";
 
 /** Options for {@link verify}. */
@@ -20,6 +25,12 @@ export interface VerifyOptions {
    * and `publicKey`.
    */
   hashesOnly?: boolean;
+  /**
+   * Fail when the artifact has more Worker modules than this. Catalog CI passes
+   * `MAX_WORKER_MODULES` from `@appflare/schema` so it never publishes an
+   * artifact Appflare could not install or update.
+   */
+  maxModules?: number;
   logger?: (message: string) => void;
 }
 
@@ -84,7 +95,8 @@ function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
  * manifest signature (against `signingKeys` by keyId, or `--public-key`) unless
  * the artifact is unsigned or `hashesOnly` is set, then reads exactly `bytes[offset, offset+size)` from
  * the zip for every recorded worker module, asset, and D1 migration and checks
- * its size and sha256 — never by unzipping. Throws on any mismatch.
+ * its size and sha256 — never by unzipping. With `maxModules`, also fails an
+ * artifact with more Worker modules than that. Throws on any mismatch.
  */
 export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   const dir = path.resolve(options.dir);
@@ -94,6 +106,12 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   }
   if (options.hashesOnly && options.publicKey) {
     throw new Error("--hashes-only and --public-key are mutually exclusive");
+  }
+  if (
+    options.maxModules !== undefined &&
+    (!Number.isInteger(options.maxModules) || options.maxModules < 1)
+  ) {
+    throw new Error(`--max-modules must be a positive integer, got ${options.maxModules}`);
   }
 
   const manifestPath = path.join(dir, "manifest.json");
@@ -131,6 +149,17 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
       signed = true;
     } else {
       logger("artifact is unsigned (keyId=unsigned); checking hashes only");
+    }
+  }
+
+  if (options.maxModules !== undefined) {
+    const tooMany = tooManyModulesMessage(
+      manifest.worker.modules.length,
+      `${manifest.app}@${manifest.version}`,
+      options.maxModules,
+    );
+    if (tooMany !== null) {
+      throw new Error(tooMany);
     }
   }
 

@@ -11,6 +11,7 @@ import {
   MANAGER_CATALOG_MANIFEST,
   MANAGER_DIR,
   MANAGER_KEY_ID,
+  MANAGER_MAX_MODULES,
   MANAGER_WRANGLER_SOURCE,
   managerArtifactProblems,
   REPO_ROOT,
@@ -105,6 +106,8 @@ describe.skipIf(!existsSync(MANAGER_BUILT_WRANGLER))("the packed manager artifac
       assets: { files: Array<{ route: string }> };
     };
     expect(manifest.worker.modules[0]?.name).toBe("index.js");
+    // The server is built as one module (apps/manager/vite.config.ts).
+    expect(manifest.worker.modules).toHaveLength(1);
     const routes = manifest.assets.files.map((f) => f.route);
     expect(routes).toContain("/index.html");
     expect(routes.some((r) => r.includes(".assetsignore") || r.includes("wrangler"))).toBe(false);
@@ -120,6 +123,10 @@ describe.skipIf(!existsSync(MANAGER_BUILT_WRANGLER))("the packed manager artifac
     manifest.worker.compatibilityFlags = ["nodejs_compat"];
     manifest.worker.bindings.push({ type: "kv_namespace", name: "EXTRA", id: "abc" });
     manifest.assets.config.not_found_handling = "none";
+    const first = manifest.worker.modules[0];
+    for (let i = 1; i <= MANAGER_MAX_MODULES; i++) {
+      manifest.worker.modules.push({ ...first, name: `chunk-${i}.js` });
+    }
     const names = zipEntryNames(readFileSync(path.join(outDir, `appflare-${version}.zip`)));
     const problems = managerArtifactProblems(
       manifest,
@@ -135,6 +142,11 @@ describe.skipIf(!existsSync(MANAGER_BUILT_WRANGLER))("the packed manager artifac
         "binding EXTRA carries id",
         'assets not_found_handling is "none"',
         "manifest.json contains an account-specific id",
+        expect.stringMatching(
+          new RegExp(
+            `^the Worker has ${MANAGER_MAX_MODULES + 1} modules; a manager release may have at most ${MANAGER_MAX_MODULES}\\. `,
+          ),
+        ),
         "zip entry dist/server/.dev.vars is not listed in manifest.json",
         "zip entry dist/server/.dev.vars must not ship",
       ]),

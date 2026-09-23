@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type PackResult, parseJsonc } from "@appflare/pack";
+import { MAX_WORKER_MODULES, type PackResult, parseJsonc } from "@appflare/pack";
 
 // The root package depends on @appflare/pack only; its bundled schema types are
 // reached through PackResult. Runtime validation of both manifests is the
@@ -113,6 +113,17 @@ export interface ManagerArtifactExpectations {
   keyId: string;
 }
 
+/**
+ * The most Worker modules a manager release may have. The manager updates
+ * itself by Range-fetching every module from the release zip for one version
+ * upload, inside one Workflow invocation, and the free plan caps that
+ * invocation's subrequests; Appflare can upload at most MAX_WORKER_MODULES.
+ * apps/manager/vite.config.ts builds the server as one module, so this is
+ * well above what a correct build emits and far below a code-split build
+ * (84 chunks), which could never be installed by a self-update.
+ */
+export const MANAGER_MAX_MODULES = 8;
+
 const REQUIRED_FLAGS = ["nodejs_compat", "global_fetch_strictly_public"];
 const REQUIRED_RUN_WORKER_FIRST = ["/api/*", "/_serverFn/*"];
 /** Binding fields that would carry an account-specific id. */
@@ -120,7 +131,8 @@ const ID_FIELDS = ["id", "account_id", "database_id", "namespace_id", "preview_i
 
 /**
  * Checks a manager artifact manifest and its zip entry list. Returns every
- * problem found (empty = OK): identity and source, both compatibility flags,
+ * problem found (empty = OK): identity and source, at most MANAGER_MAX_MODULES
+ * Worker modules, both compatibility flags,
  * the DB/KV/JOBS/APPFLARE_VERSION bindings without ids, the cron, the SPA assets
  * config, no account-specific id anywhere in manifest.json, and a zip that holds
  * exactly the listed worker modules, assets, D1 migrations, and manifest.json
@@ -162,6 +174,10 @@ export function managerArtifactProblems(
   for (const module of worker.modules) {
     expect(/\.m?js$/.test(module.name), `unexpected worker module ${module.name}`);
   }
+  expect(
+    worker.modules.length <= MANAGER_MAX_MODULES,
+    `the Worker has ${worker.modules.length} modules; a manager release may have at most ${MANAGER_MAX_MODULES}. A self-update fetches every module for one upload within the free plan's subrequest limit (at most ${MAX_WORKER_MODULES} modules), so a code-split server build can never be installed. Check that apps/manager/vite.config.ts still builds the server as one module.`,
+  );
   for (const flag of REQUIRED_FLAGS) {
     expect(worker.compatibilityFlags.includes(flag), `compatibility flag ${flag} is missing`);
   }

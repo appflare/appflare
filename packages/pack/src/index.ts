@@ -4,9 +4,11 @@
  * signs it (in the same step or separately), and verifies one.
  */
 
+/** The most Worker modules Appflare can upload; `verify --max-modules` takes it. */
+export { MAX_WORKER_MODULES } from "@appflare/schema";
 export { parseJsonc } from "./jsonc.ts";
 export type { PackOptions, PackResult } from "./pack.ts";
-export { pack } from "./pack.ts";
+export { pack, packWarnings } from "./pack.ts";
 export type { SignOptions, SignResult } from "./sign.ts";
 export { sign } from "./sign.ts";
 export { UNSIGNED_KEY_ID } from "./signing.ts";

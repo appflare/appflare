@@ -39,6 +39,22 @@ export default defineConfig({
           "development|production",
         ],
       },
+      build: {
+        rolldownOptions: {
+          output: {
+            // The Worker is emitted as ONE module. Updating a Worker in place
+            // (a self-update, or any version upload) sends every module in one
+            // request, and each module is Range-fetched from the release zip in
+            // that same invocation, two subrequests apiece on a GitHub release
+            // asset (the redirect plus the real request). A code-split build
+            // (84 chunks) cannot fit the free plan's 50 subrequests per
+            // invocation. `codeSplitting: false` is Rolldown's replacement for
+            // Rollup's `inlineDynamicImports: true`. The client bundle keeps its
+            // code splitting: its chunks are static assets, uploaded in batches.
+            codeSplitting: false,
+          },
+        },
+      },
     },
   },
   // Plugin order is settled. Tailwind is required by Kumo's

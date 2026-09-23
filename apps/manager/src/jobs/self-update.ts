@@ -1,6 +1,10 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import type { FetchLike, WorkerBinding as UploadBinding, VersionMetadata } from "@appflare/cf-api";
-import { artifactManifestSchema, indexArtifactsSchema } from "@appflare/schema";
+import {
+  artifactManifestSchema,
+  indexArtifactsSchema,
+  tooManyModulesMessage,
+} from "@appflare/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../catalog/app-manifest.server";
@@ -35,6 +39,9 @@ import { activeVersionId, bookmarksJson, previewUrl } from "./update/plan";
  * 1. Fetch the release's `manifest.json` and `manifest.sig` and verify them:
  *    an Appflare signing key (selected by the manifest's `keyId`), the
  *    schema, `app: "appflare"`, and the requested version.
+ *    Then check the release's shape: every module is Range-fetched for one
+ *    upload in one invocation, so a release with more modules than fit the
+ *    free plan's subrequests is refused before anything is read or changed.
  * 2. Snapshot: the version serving all traffic, the running Appflare
  *    version, and a D1 Time Travel bookmark of the manager's database, as a
  *    `snapshots` row without an install. `appflare rollback` and the
@@ -72,9 +79,6 @@ export const selfUpdateJobParams = z.object({
   artifacts: indexArtifactsSchema,
 });
 export type SelfUpdateJobParams = z.infer<typeof selfUpdateJobParams>;
-
-/** A single invocation can never make more than this many subrequests (free plan). */
-const INVOCATION_CAP = 48;
 
 /**
  * Preview probes before the canary gives up. More than an app update's: the
@@ -163,6 +167,13 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       ),
     );
     const moduleCost = manifest.worker.modules.length * ARTIFACT_FETCH_COST + 2;
+    await run("check release shape", 0, async ({ log }) => {
+      const count = manifest.worker.modules.length;
+      const tooMany = tooManyModulesMessage(count, "The release");
+      if (tooMany !== null) throw new JobError(tooMany);
+      log.info(`The release has ${count} Worker module(s); they fit one upload.`);
+      return {};
+    });
 
     // 2. Snapshot, before anything changes.
     const deployed = await run("read current deployment", 1, async ({ log, cf }) => {
@@ -183,11 +194,6 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
         newVersion: params.version,
       });
       const problems = [...plan.problems];
-      if (moduleCost > INVOCATION_CAP) {
-        problems.push(
-          `The release has ${manifest.worker.modules.length} modules; a single upload cannot fetch that many within the free plan's subrequest limit.`,
-        );
-      }
       if (plan.databaseId === null && problems.length === 0) {
         problems.push("The running Worker reports no database id for its DB binding.");
       }

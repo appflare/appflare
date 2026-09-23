@@ -6,6 +6,7 @@ import {
   hasFixedWorkerName,
   indexArtifactsSchema,
   sha256Schema,
+  tooManyModulesMessage,
 } from "@appflare/schema";
 import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
@@ -67,9 +68,6 @@ export const installJobParams = z.object({
   paidConfirmed: z.boolean(),
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
-
-/** A single invocation can never make more than this many subrequests (free plan). */
-const INVOCATION_CAP = 48;
 
 /** A failure the install reports as is; never retried. */
 export class InstallError extends JobError {
@@ -133,12 +131,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         );
       }
       if (plan.problems.length > 0) throw new InstallError(plan.problems.join(" "));
-      const moduleCost = manifest.worker.modules.length * ARTIFACT_FETCH_COST + 2;
-      if (moduleCost > INVOCATION_CAP) {
-        throw new InstallError(
-          `the Worker has ${manifest.worker.modules.length} modules; a single upload cannot fetch that many within the free plan's subrequest limit`,
-        );
-      }
+      // The upload fetches every module in one invocation; refuse before
+      // anything is created rather than failing mid-upload.
+      const tooMany = tooManyModulesMessage(manifest.worker.modules.length, "This app version");
+      if (tooMany !== null) throw new InstallError(tooMany);
       // The Worker name is the unique key of an active install; an app whose
       // Worker name is fixed installs once.
       const fixed = hasFixedWorkerName(manifest.catalog.install);

@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { MAX_WORKER_MODULES } from "@appflare/schema";
 import { pack } from "./pack.ts";
 import { sign } from "./sign.ts";
 import { verify } from "./verify.ts";
@@ -8,7 +9,7 @@ const USAGE = `appflare-pack — build, sign, and verify Appflare artifacts
 Usage:
   appflare-pack <checkoutDir> --manifest <appflare.jsonc> --out <dir> [--key-id ID [--sign-key-env NAME]] [--no-install]
   appflare-pack sign <dir> --sign-key-env NAME [--key-id ID] [--force]
-  appflare-pack verify <dir> [--public-key <base64>] [--require-signed | --hashes-only]
+  appflare-pack verify <dir> [--public-key <base64>] [--require-signed | --hashes-only] [--max-modules <n>]
 
 Pack options:
   --manifest <path>       catalog manifest (appflare.jsonc)      (required)
@@ -28,6 +29,9 @@ Verify options:
   --public-key <base64>   raw Ed25519 public key to verify against
   --require-signed        fail if the artifact is unsigned or has no manifest.sig
   --hashes-only           skip signature checks; still check sizes, hashes, offsets
+  --max-modules <n>       fail if the Worker has more than <n> modules. Appflare
+                          uploads at most ${MAX_WORKER_MODULES} (the free plan's subrequest limit);
+                          pass ${MAX_WORKER_MODULES} to reject artifacts it could never install.
 `;
 
 const logToStderr = (message: string): void => {
@@ -88,7 +92,22 @@ async function runPack(argv: string[]): Promise<number> {
   process.stdout.write(
     `  modules=${result.moduleCount} assets=${result.assetCount} migrations=${result.d1MigrationCount}\n`,
   );
+  for (const warning of result.warnings) {
+    process.stdout.write(`  warning: ${warning}\n`);
+  }
   return 0;
+}
+
+/** `--max-modules`: a positive integer, or undefined when not given. */
+export function parseMaxModules(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const n = Number(value);
+  if (!/^\d+$/.test(value.trim()) || !Number.isSafeInteger(n) || n < 1) {
+    throw new Error(`--max-modules must be a positive integer, got "${value}"`);
+  }
+  return n;
 }
 
 async function runVerify(argv: string[]): Promise<number> {
@@ -99,6 +118,7 @@ async function runVerify(argv: string[]): Promise<number> {
       "public-key": { type: "string" },
       "require-signed": { type: "boolean" },
       "hashes-only": { type: "boolean" },
+      "max-modules": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -116,6 +136,7 @@ async function runVerify(argv: string[]): Promise<number> {
     publicKey: values["public-key"],
     requireSigned: values["require-signed"],
     hashesOnly: values["hashes-only"],
+    maxModules: parseMaxModules(values["max-modules"]),
     logger: logToStderr,
   });
   process.stdout.write(

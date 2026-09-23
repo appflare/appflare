@@ -1,5 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { MAX_WORKER_MODULES } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
@@ -549,6 +550,25 @@ describe("install job", () => {
       "health check 10: 404 error code: 1042 (route not live yet) after 10 attempts",
     );
     expect(r.step.sleeps.filter((s) => s.startsWith("health wait"))).toHaveLength(9);
+  });
+
+  it("refuses an artifact with more modules than one upload can fetch, before creating anything", async () => {
+    const r = await install({
+      tweak: (m) => {
+        const first = m.worker.modules[0];
+        if (first === undefined) throw new Error("the fixture has no module");
+        for (let i = 1; i <= MAX_WORKER_MODULES; i++) {
+          m.worker.modules.push({ ...first, name: `chunk-${i}.js` });
+        }
+      },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      `preflight checks: This app version has ${MAX_WORKER_MODULES + 1} Worker modules, but one upload can fetch at most ${MAX_WORKER_MODULES} within the free plan's 50 subrequests per invocation (2 per module from a release asset). It must be built as ${MAX_WORKER_MODULES} or fewer modules, for example as one bundled module.`,
+    );
+    expect(r.installRow?.status).toBe("failed");
+    expect(r.resources).toEqual([]);
+    expect(r.fake.state.calls).toEqual([]);
   });
 
   it("fails before touching Cloudflare when no API token is configured", async () => {

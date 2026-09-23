@@ -1,3 +1,5 @@
+import { ARTIFACT_FETCH_SUBREQUESTS } from "@appflare/schema";
+
 /**
  * Subrequest budgeting for Workflow invocations.
  *
@@ -21,8 +23,12 @@ export function fetchCost(response: Pick<Response, "redirected">): number {
   return response.redirected ? 2 : 1;
 }
 
-/** Worst-case cost of one artifact Range fetch (GitHub release assets redirect once). */
-export const ARTIFACT_FETCH_COST = 2;
+/**
+ * Worst-case cost of one artifact Range fetch (GitHub release assets redirect
+ * once). Shared with the packer's module limit (`MAX_WORKER_MODULES`), which
+ * the install, update, and self-update jobs check before any upload.
+ */
+export const ARTIFACT_FETCH_COST = ARTIFACT_FETCH_SUBREQUESTS;
 
 export class SubrequestBudget {
   #used = 0;

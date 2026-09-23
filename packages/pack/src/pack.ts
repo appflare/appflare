@@ -25,6 +25,7 @@ import {
   catalogManifestSchema,
   type D1MigrationFile,
   type DoMigration,
+  tooManyModulesMessage,
   type WorkerModule,
 } from "@appflare/schema";
 import ignore from "ignore";
@@ -73,6 +74,12 @@ export interface PackResult {
   assetCount: number;
   d1MigrationCount: number;
   zipSize: number;
+  /**
+   * Problems that do not stop the pack but that the artifact's users hit
+   * later, such as more Worker modules than Appflare can upload
+   * (`MAX_WORKER_MODULES`). Also sent to the logger.
+   */
+  warnings: string[];
 }
 
 interface CollectedFile {
@@ -553,6 +560,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   }
 
   const d1MigrationCount = Object.values(d1Manifest).reduce((n, f) => n + f.length, 0);
+  const warnings = packWarnings(manifest);
+  for (const warning of warnings) {
+    logger(`warning: ${warning}`);
+  }
   logger(
     `packed ${catalog.slug}@${version}: ${moduleManifest.length} modules, ` +
       `${assetManifest.length} assets, ${d1MigrationCount} migrations, ${zipBytes.length} bytes`,
@@ -569,5 +580,26 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     assetCount: assetManifest.length,
     d1MigrationCount,
     zipSize: zipBytes.length,
+    warnings,
   };
+}
+
+/**
+ * What is wrong with a packed artifact without making it invalid. Today: more
+ * Worker modules than Appflare can Range-fetch for one upload
+ * (`MAX_WORKER_MODULES`); such an artifact verifies but can never be
+ * installed or updated. Bundling the Worker into one module fixes it.
+ */
+export function packWarnings(
+  manifest: Pick<ArtifactManifest, "app" | "version" | "worker">,
+): string[] {
+  const warnings: string[] = [];
+  const tooMany = tooManyModulesMessage(
+    manifest.worker.modules.length,
+    `${manifest.app}@${manifest.version}`,
+  );
+  if (tooMany !== null) {
+    warnings.push(`${tooMany} Appflare cannot install or update it as packed.`);
+  }
+  return warnings;
 }

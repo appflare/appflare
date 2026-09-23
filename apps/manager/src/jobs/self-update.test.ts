@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
+import { MAX_WORKER_MODULES } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { refreshManagerReleases } from "../catalog/manager-releases.server";
 import { createDb } from "../db/client";
@@ -68,7 +69,11 @@ const healthy = (version: string) => ({
   body: JSON.stringify({ version, db: "ok", schemaVersion: 5 }),
 });
 
-function managerRelease(version = TO, keyId = "appflare-test"): Promise<ArtifactFixture> {
+function managerRelease(
+  version = TO,
+  keyId = "appflare-test",
+  tweak?: (manifest: ArtifactFixture["manifest"]) => void,
+): Promise<ArtifactFixture> {
   return buildArtifactFixture({
     version,
     keyId,
@@ -87,6 +92,7 @@ function managerRelease(version = TO, keyId = "appflare-test"): Promise<Artifact
       m.worker.observability = { enabled: true };
       m.assets.binding = "ASSETS";
       m.assets.config = { not_found_handling: "single-page-application" };
+      tweak?.(m);
     },
   });
 }
@@ -216,6 +222,7 @@ describe("self_update job", () => {
     expect(r.step.names).toEqual([
       "start",
       "verify release manifest",
+      "check release shape",
       "read current deployment",
       "read current bindings",
       "bookmark Appflare database",
@@ -311,6 +318,31 @@ describe("self_update job", () => {
     expect(r.history).toBeNull();
     expect(r.logs.at(-1)?.message).toBe(
       `Self-update failed at "canary check 1". Version ${NEW_VERSION} was uploaded but never promoted; Appflare ${FROM} keeps serving all traffic.`,
+    );
+  });
+
+  it("refuses a release with more modules than one upload can fetch, before touching Cloudflare", async () => {
+    const release = await managerRelease(TO, "appflare-test", (m) => {
+      // A code-split server build: 84 chunks. The entries are never fetched.
+      const first = m.worker.modules[0];
+      if (first === undefined) throw new Error("the fixture has no module");
+      for (let i = 1; i < 84; i++) m.worker.modules.push({ ...first, name: `chunk-${i}.js` });
+    });
+    const r = await selfUpdate({ release });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      `check release shape: The release has 84 Worker modules, but one upload can fetch at most ${MAX_WORKER_MODULES} within the free plan's 50 subrequests per invocation (2 per module from a release asset). It must be built as ${MAX_WORKER_MODULES} or fewer modules, for example as one bundled module.`,
+    );
+    expect(r.step.names).toEqual([
+      "start",
+      "verify release manifest",
+      "check release shape",
+      "mark self-update failed",
+    ]);
+    expect(r.fake.state.calls).toEqual([]);
+    expect(r.snapshot).toBeNull();
+    expect(r.logs.at(-1)?.message).toBe(
+      `Self-update failed at "check release shape". Nothing was deployed; Appflare ${FROM} keeps serving all traffic.`,
     );
   });
 
