@@ -425,4 +425,18 @@ describe("previewHeartbeat", () => {
       properties: { users: 2, installs_total: 1, days_since_setup: null },
     });
   });
+
+  it("reports the detected Workers plan over the one an admin set", async () => {
+    await writeSettings(createDb(env.DB), {
+      [SETTING.accountPlan]: "paid",
+      [SETTING.accountCapabilities]: JSON.stringify({
+        checkedAt: "2026-09-24T10:00:00.000Z",
+        r2: { state: "enabled" },
+        containers: { state: "needs-workers-paid" },
+        workersPlan: { state: "free" },
+      }),
+    });
+    const preview = await previewHeartbeat(managerEnv(), NOW);
+    expect(preview.properties).toMatchObject({ account_plan: "free" });
+  });
 });

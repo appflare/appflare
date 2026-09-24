@@ -6,6 +6,7 @@ import {
   type TelemetryValue,
   telemetryBatchBody,
 } from "@appflare/schema";
+import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { DEFAULT_CATALOG_INDEX_URL, readCachedCatalogIndex } from "../catalog/index.server";
 import { managerUpdateView, readManagerLatest } from "../catalog/manager-releases.server";
 import { createDb } from "../db/client";
@@ -80,6 +81,7 @@ const REPORT_KEYS = [
   SETTING.telemetryOpenedSentDay,
   SETTING.telemetrySetupSent,
   SETTING.accountPlan,
+  SETTING.accountCapabilities,
   SETTING.accessEnabledAt,
   SETTING.cfTokenVerifiedAt,
 ] as const;
@@ -126,6 +128,19 @@ function heartbeatStatements(db: D1Database): D1PreparedStatement[] {
   ];
 }
 
+/**
+ * The plan in force, as installs and updates read it: detected by the
+ * capability probes first, else what an admin set. Undefined (reported as
+ * "unset") when neither exists.
+ */
+function reportedAccountPlan(settings: ReportSettings): string | undefined {
+  const resolved = resolveAccountPlan(
+    settings.account_plan,
+    parseStoredCapabilities(settings.account_capabilities),
+  );
+  return resolved.source === "default" ? undefined : resolved.plan;
+}
+
 function num(value: unknown): number {
   return typeof value === "number" ? value : Number(value ?? 0) || 0;
 }
@@ -149,7 +164,7 @@ async function heartbeatInput(
     now,
     managerVersion: env.APPFLARE_VERSION,
     schemaVersion: num(schema?.[0]?.value),
-    accountPlan: settings.account_plan,
+    accountPlan: reportedAccountPlan(settings),
     officialCatalog: isOfficialCatalog(env),
     noticeAt: Number.isNaN(noticeAt) ? null : noticeAt,
     users: num(users?.[0]?.users),

@@ -126,14 +126,15 @@ export function VersionsSection({
                     </Table.Cell>
                     <Table.Cell className="align-top">
                       <span className={mono}>{shortVersion(s.fromVersionId)}</span>
-                      {" → "}
-                      <span className={mono}>{shortVersion(s.toVersionId)}</span>
+                      {/* isCurrent means the version before the change serves again (rolled back). */}
                       {s.isCurrent && (
                         <Text as="span" variant="secondary" size="sm">
                           {" "}
                           (serving now)
                         </Text>
                       )}
+                      {" → "}
+                      <span className={mono}>{shortVersion(s.toVersionId)}</span>
                     </Table.Cell>
                     <Table.Cell className="align-top">
                       <Link href={`/jobs/${s.jobId}`}>
