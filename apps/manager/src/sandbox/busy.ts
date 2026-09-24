@@ -37,7 +37,7 @@ export async function activeSandboxJob(
         exceptJobId === undefined ? undefined : ne(jobs.id, exceptJobId),
       ),
     );
-  const busy = rows.find((row) => usesSandbox(row.input));
+  const busy = rows.find((row) => isSandboxWorkerJob(row.kind) || usesSandbox(row.input));
   if (busy === undefined) return null;
   let slug: string | null = null;
   if (busy.installId !== null) {
@@ -49,6 +49,15 @@ export async function activeSandboxJob(
     slug = install?.slug ?? null;
   }
   return { id: busy.id, kind: busy.kind, slug };
+}
+
+/**
+ * Whether a job enables, updates or disables the sandbox Worker itself: it
+ * uploads (or deletes) the Worker, which restarts every container as surely
+ * as a secret change.
+ */
+export function isSandboxWorkerJob(kind: string): boolean {
+  return kind === "sandbox_enable" || kind === "sandbox_update" || kind === "sandbox_disable";
 }
 
 /** Whether a job's recorded input says it runs in the sandbox Worker. */

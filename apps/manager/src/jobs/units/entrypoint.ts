@@ -3,6 +3,7 @@ import type { EmailRoutingInspection } from "../../installs/email-routing.server
 import type { DeliveryReport } from "../../notifications/deliver.server";
 import type { HealthSweepReport } from "../../notifications/health-sweep.server";
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
+import type { SetSandboxBindingResult, WaitForSandboxContainersResult } from "../../sandbox/units";
 import type { CronTriggerScan } from "../install/cron-limit";
 import type { AttachDomainResult, WaitForExternalDomainResult } from "./domains";
 import type { UnitResult } from "./result";
@@ -58,6 +59,14 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   waitForExternalDomain(input: unknown): Promise<UnitResult<WaitForExternalDomainResult>> {
     return createJobUnits(this.env).waitForExternalDomain(input);
+  }
+
+  waitForSandboxContainers(input: unknown): Promise<UnitResult<WaitForSandboxContainersResult>> {
+    return createJobUnits(this.env).waitForSandboxContainers(input);
+  }
+
+  setSandboxBinding(input: unknown): Promise<UnitResult<SetSandboxBindingResult>> {
+    return createJobUnits(this.env).setSandboxBinding(input);
   }
 
   // Notification units (src/notifications/units.ts): delivery and the scheduled health check.

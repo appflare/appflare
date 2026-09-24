@@ -73,7 +73,11 @@ export const RESOURCE_MANAGERS = ["appflare", "app"] as const;
 
 /**
  * `reconfigure` redeploys an installed app's current version with changed
- * settings (vars), secrets, or Email Routing zone.
+ * settings (vars), secrets, or Email Routing zone. `sandbox_enable` and
+ * `sandbox_update` deploy the sandbox Worker release this manager pins (with
+ * its bucket and container applications) and connect the manager to it;
+ * `sandbox_disable` removes all of that again. None of the three has an
+ * install.
  */
 export const JOB_KINDS = [
   "install",
@@ -82,6 +86,9 @@ export const JOB_KINDS = [
   "rollback",
   "self_update",
   "reconfigure",
+  "sandbox_enable",
+  "sandbox_update",
+  "sandbox_disable",
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 

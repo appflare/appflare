@@ -12,6 +12,16 @@ import { z } from "zod";
 import { releaseFetch } from "../../catalog/release-fetch";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import { sandboxFetch } from "../../sandbox/binding";
+import {
+  runSetSandboxBinding,
+  runWaitForSandboxContainers,
+  type SetSandboxBindingInput,
+  type SetSandboxBindingResult,
+  setSandboxBindingInputSchema,
+  type WaitForSandboxContainersInput,
+  type WaitForSandboxContainersResult,
+  waitForSandboxContainersInputSchema,
+} from "../../sandbox/units";
 import { isNotFound, JobError } from "../errors";
 import { artifactReader } from "../install/artifact";
 import type { CronTriggerScan } from "../install/cron-limit";
@@ -218,6 +228,12 @@ export interface JobUnitsApi {
   waitForExternalDomain(
     input: WaitForExternalDomainInput,
   ): Promise<UnitResult<WaitForExternalDomainResult>>;
+  /** Polls the sandbox Worker's container applications until they are ready for builds. */
+  waitForSandboxContainers(
+    input: WaitForSandboxContainersInput,
+  ): Promise<UnitResult<WaitForSandboxContainersResult>>;
+  /** Adds or removes the manager's own `SANDBOX` binding (new version, preview check, deploy). */
+  setSandboxBinding(input: SetSandboxBindingInput): Promise<UnitResult<SetSandboxBindingResult>>;
 }
 
 /** The unit names, as RPC method names. */
@@ -476,6 +492,14 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
     waitForExternalDomain: (input) =>
       parsed(waitForExternalDomainInputSchema, input, "waitForExternalDomain", (request) =>
         runWaitForExternalDomain(env, deps, request),
+      ),
+    waitForSandboxContainers: (input) =>
+      parsed(waitForSandboxContainersInputSchema, input, "waitForSandboxContainers", (request) =>
+        runWaitForSandboxContainers(env, deps, request),
+      ),
+    setSandboxBinding: (input) =>
+      parsed(setSandboxBindingInputSchema, input, "setSandboxBinding", (request) =>
+        runSetSandboxBinding(env, deps, request),
       ),
   };
 }

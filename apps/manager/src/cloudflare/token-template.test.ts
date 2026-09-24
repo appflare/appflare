@@ -10,6 +10,7 @@ import {
   PLAN_DETECTION_FEATURE,
   permissionName,
   resolveAppTokenPermissions,
+  SANDBOX_BUILDS_FEATURE,
   splitPermissionGroups,
   TOKEN_PERMISSION_GROUPS,
   userTokenTemplateUrl,
@@ -127,7 +128,18 @@ describe("token template URLs", () => {
         ],
       },
       { feature: PLAN_DETECTION_FEATURE, names: ["Billing: Read"] },
+      { feature: SANDBOX_BUILDS_FEATURE, names: ["Containers: Edit"] },
     ]);
+  });
+
+  it("asks for Containers: Edit only as optional, for sandbox builds, under the dashboard's key", () => {
+    const { required, optional } = splitPermissionGroups();
+    expect(required.some((g) => g.key === "containers")).toBe(false);
+    expect(optional.filter((g) => g.onlyFor === SANDBOX_BUILDS_FEATURE)).toEqual([
+      { key: "containers", type: "edit", label: "Containers", onlyFor: SANDBOX_BUILDS_FEATURE },
+    ]);
+    expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key: "containers", type: "edit" });
+    expect(groupsOf(userTokenTemplateUrl())).toContainEqual({ key: "containers", type: "edit" });
   });
 
   it("asks for Billing: Read only as optional, for reading the Workers plan", () => {

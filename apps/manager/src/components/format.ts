@@ -73,6 +73,9 @@ export const JOB_KIND_LABELS: Record<string, string> = {
   rollback: "Rollback",
   self_update: "Appflare update",
   reconfigure: "Settings change",
+  sandbox_enable: "Enable sandbox builds",
+  sandbox_update: "Update sandbox builds",
+  sandbox_disable: "Disable sandbox builds",
 };
 
 export function jobKindLabel(job: {

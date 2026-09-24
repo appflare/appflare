@@ -2,6 +2,7 @@ import type { HttpApi } from "../http";
 import { buildUploadFormData, type WorkerModule } from "../modules";
 import type {
   AccountSubdomain,
+  DurableObjectNamespace,
   ScriptMetadata,
   ScriptUploadResult,
   SubdomainResult,
@@ -124,6 +125,18 @@ export function createWorkers(http: HttpApi) {
         "DELETE",
         http.acct(`/workers/scripts/${enc(name)}/secrets/${enc(secretName)}`),
       );
+    },
+
+    /**
+     * `GET /workers/durable_objects/namespaces` (paginated): every Durable
+     * Object namespace of the account, with the Worker (`script`) and `class`
+     * that implement it. Wrangler 4.136.2 reads it for the namespace of a
+     * container class the Worker does not bind.
+     */
+    listDurableObjectNamespaces(): Promise<DurableObjectNamespace[]> {
+      return http.list("GET", http.acct("/workers/durable_objects/namespaces"), {
+        perPage: 1000,
+      });
     },
 
     /** `GET /workers/subdomain` — the account's workers.dev subdomain. */

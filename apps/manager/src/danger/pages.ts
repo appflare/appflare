@@ -114,8 +114,11 @@ export interface RemovalSummary {
   outcome: "complete" | "failed";
   accountId: string;
   workerName: string;
-  /** The sandbox Worker was deleted: its container applications may remain. */
-  sandboxDeleted: boolean;
+  /**
+   * The sandbox Worker's container applications could not be seen (the
+   * token lacks Containers), so they may remain and must be deleted by hand.
+   */
+  containersLeft: boolean;
   /** Cloudflare Access protection was on when the removal started. */
   accessOn: boolean;
   /** Access applications the removal could not delete (complete removals only). */
@@ -150,8 +153,8 @@ ${accessStatus(summary)}
 </div>
 ${TAIL}`;
   }
-  const containers = summary.sandboxDeleted
-    ? `<p>If the sandbox Worker's container applications are still listed under Workers, Containers in the dashboard, delete them there.</p>`
+  const containers = summary.containersLeft
+    ? `<p>Appflare's token cannot use Containers, so the sandbox Worker's container applications were not deleted. If they are still listed under Workers, Containers in the dashboard, delete them there.</p>`
     : "";
   return `</ol>
 <div class="box">

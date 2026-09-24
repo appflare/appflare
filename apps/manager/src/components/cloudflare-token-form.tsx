@@ -16,6 +16,7 @@ import {
   optionalGroupsByFeature,
   PLAN_DETECTION_FEATURE,
   permissionName,
+  SANDBOX_BUILDS_FEATURE,
   splitPermissionGroups,
   userTokenTemplateUrl,
 } from "../cloudflare/token-template";
@@ -38,6 +39,8 @@ const FEATURE_PLACES: Readonly<Record<string, string>> = {
     "Installing an app that receives email (it also needs Zone: Read and DNS: Edit from the custom domains list)",
   [PLAN_DETECTION_FEATURE]:
     "Reading this account's Workers plan for Settings > Account and capabilities, instead of asking you. Appflare only reads the plan names from the account's subscriptions; it never reads invoices or payment details",
+  [SANDBOX_BUILDS_FEATURE]:
+    "Enabling, updating and disabling sandbox builds in Settings > Account and capabilities (Workers Paid): Appflare creates, rolls out and deletes the sandbox Worker's container applications",
 };
 
 export interface SavedToken {

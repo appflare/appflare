@@ -237,8 +237,15 @@ export function jobKind(row: Pick<JobRow, "kind" | "inputJson">): string {
   return row.kind;
 }
 
+/** Jobs about the sandbox Worker itself (enable, update, disable), not an app. */
+const SANDBOX_WORKER_JOB_KINDS: ReadonlySet<string> = new Set([
+  "sandbox_enable",
+  "sandbox_update",
+  "sandbox_disable",
+]);
+
 function jobTier(row: JobRow, input: Record<string, unknown>): string | null {
-  if (row.kind === "self_update") return null;
+  if (row.kind === "self_update" || SANDBOX_WORKER_JOB_KINDS.has(row.kind)) return null;
   if (input.selfDeploying === true) return "self_deploying";
   if (input.sandboxBuild === true) return "sandbox";
   return tierName(row.buildKind);
@@ -254,15 +261,19 @@ export function jobProperties(
   const kind = jobKind(row);
   let slug: string;
   if (row.kind === "self_update") slug = "appflare";
+  else if (SANDBOX_WORKER_JOB_KINDS.has(row.kind)) slug = "appflare-sandbox";
   else slug = officialSlug(row.appSlug ?? "", officialCatalog, catalogVersions) ?? "custom";
   let version: string | null;
   let from: string | null = null;
   switch (row.kind) {
     case "install":
+    case "sandbox_enable":
+    case "sandbox_disable":
       version = str(input.version);
       break;
     case "update":
     case "self_update":
+    case "sandbox_update":
       version = str(input.version);
       from = str(input.fromVersion);
       break;

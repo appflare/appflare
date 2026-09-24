@@ -65,5 +65,7 @@ export function fakeSelf(
     settleSandbox: (input) => call("settleSandbox", input),
     attachDomain: (input) => call("attachDomain", input),
     waitForExternalDomain: (input) => call("waitForExternalDomain", input),
+    waitForSandboxContainers: (input) => call("waitForSandboxContainers", input),
+    setSandboxBinding: (input) => call("setSandboxBinding", input),
   };
 }

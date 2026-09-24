@@ -15,6 +15,7 @@ import {
   selfManagedStatusSchema,
 } from "@appflare/schema";
 import { z } from "zod";
+import { UPDATE_SANDBOX_HINT } from "./connect-copy";
 
 /**
  * The manager's `SANDBOX` service binding to the sandbox Worker
@@ -87,7 +88,7 @@ export async function sandboxInfo(binding: SandboxBuildsBinding): Promise<Sandbo
   }
   if (parsed.data.protocol !== SANDBOX_PROTOCOL_VERSION) {
     throw new SandboxProtocolError(
-      `the sandbox Worker ${parsed.data.sandboxVersion} speaks protocol ${parsed.data.protocol}, this manager speaks ${SANDBOX_PROTOCOL_VERSION}; update ${parsed.data.protocol < SANDBOX_PROTOCOL_VERSION ? "the sandbox Worker with `npx @appflare/cli sandbox enable`" : "Appflare"}`,
+      `the sandbox Worker ${parsed.data.sandboxVersion} speaks protocol ${parsed.data.protocol}, this manager speaks ${SANDBOX_PROTOCOL_VERSION}; ${parsed.data.protocol < SANDBOX_PROTOCOL_VERSION ? `to update the sandbox Worker, ${UPDATE_SANDBOX_HINT}` : "update Appflare"}`,
     );
   }
   return parsed.data;

@@ -1,3 +1,4 @@
+import { UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import type { StepConfig } from "./run-job";
 import type { JobSteps } from "./steps";
 import { settleUnit } from "./units/result";
@@ -37,7 +38,7 @@ function shortId(versionId: string | null): string {
 /** What the wait found, as the job log says it. */
 export function settleMessage(result: SandboxSettleResult, seconds: number): string {
   if (result.mode === "unreported") {
-    return `The sandbox Worker ${result.sandboxVersion} does not say which of its versions answers, so Appflare did not wait for a secret change to reach it; update it with \`npx @appflare/cli sandbox enable\`.`;
+    return `The sandbox Worker ${result.sandboxVersion} does not say which of its versions answers, so Appflare did not wait for a secret change to reach it; to update it, ${UPDATE_SANDBOX_HINT}.`;
   }
   const how =
     result.mode === "deployed"

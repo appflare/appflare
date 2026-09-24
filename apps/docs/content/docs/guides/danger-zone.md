@@ -68,7 +68,10 @@ In this order, each step one call to the Cloudflare API:
    secrets it holds. That includes the token each self-deploying app's installer runs
    with: those apps keep running, but nothing can update or destroy them through their
    installer any more. Revoke their tokens in the Cloudflare dashboard if you no longer
-   need them.
+   need them. Then its two container applications, `appflare-sandbox-standard-1` and
+   `appflare-sandbox-standard-2`, which Cloudflare keeps when the Worker is deleted. This
+   needs Containers: Edit on Appflare's token; without it the review says so, and you
+   delete them yourself under **Workers**, **Containers**.
 4. The manager's KV namespace, then its D1 database, with every user, passkey, job
    log, snapshot record, notification channel and setting.
 5. The Cloudflare Access applications in front of the manager, if
@@ -84,8 +87,7 @@ While the removal runs, no job starts, not even an automatic update.
 
 The result page shows each step as it finishes and needs nothing from the manager, so
 it stays readable after the manager is gone. If the manager Worker is still listed in
-the dashboard a minute later, delete it there. If the sandbox Worker's container
-applications are still listed under **Workers**, **Containers**, delete them there too.
+the dashboard a minute later, delete it there.
 
 ### What stays
 

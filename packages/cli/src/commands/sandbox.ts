@@ -60,6 +60,15 @@ export interface SandboxDisableOptions {
   iUnderstandDataLoss: boolean;
 }
 
+/**
+ * Printed first by `sandbox enable`: the manager enables, updates and
+ * disables sandbox builds itself now, with the Containers permission on its
+ * own token, so this command is only needed for scripted setups.
+ */
+export const SETTINGS_ENABLE_NOTE =
+  "Sandbox builds can now be enabled from the manager itself: Settings > Account and " +
+  "capabilities > Sandbox builds (its token needs Containers: Edit). This command still works.";
+
 /** What one build costs, for the enable summary and the docs. */
 export const BUILD_COST_NOTE =
   "Each build runs a standard-1 container (1/2 vCPU, 4 GiB) for as long as it takes; a " +
@@ -269,6 +278,7 @@ export async function sandboxEnable(
 ): Promise<void> {
   const { ui, env } = ctx;
   checkNodeVersion(ctx.nodeVersion);
+  ui.info(SETTINGS_ENABLE_NOTE);
   if (options.version !== undefined && options.artifactDir !== undefined) {
     throw new Error("--version and --artifact-dir cannot be used together");
   }

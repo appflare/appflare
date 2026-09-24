@@ -9,9 +9,8 @@ that way. Their catalog entries use the **sandbox** tier: Appflare builds them f
 from the same pinned commit, inside a [Cloudflare Sandbox](https://developers.cloudflare.com/sandbox/)
 container in your own account.
 
-That work is done by an optional second Worker, `appflare-sandbox`. You add it once,
-from the command line, connect your manager to it in **Settings**, and remove it the
-same way.
+That work is done by an optional second Worker, `appflare-sandbox`. You enable it once
+from the manager, in **Settings > Account and capabilities**, and disable it there too.
 
 <Callout title="No sandbox tier apps in the catalog yet">
 
@@ -24,26 +23,38 @@ built this way.
 ## What you need
 
 - **Workers Paid** on the account (US$5 a month). The builds run in Cloudflare
-  Containers, which the free plan does not include.
+  Containers, which the free plan does not include. The **Sandbox builds** card offers
+  to enable them only once the manager has detected Workers Paid (see
+  [Workers Free or Workers Paid](/guides/install-apps/#workers-free-or-workers-paid)).
 - **R2** enabled on the account. The sandbox Worker keeps build outputs and logs in an R2
   bucket. If you have never used R2, open **R2** in the Cloudflare dashboard once to
   enable it.
-- Node.js 22 and a Cloudflare credential for wrangler, as for
-  [installing Appflare](/start/install/): either a login from `npx wrangler login`, which
-  includes Containers, or an API token in `CLOUDFLARE_API_TOKEN` that has the
-  **Containers** permission (Account > Containers > Edit) in addition to Workers Scripts
-  and Workers R2 Storage. `sandbox enable` and `sandbox disable` both need it.
+- **Containers: Edit** on the manager's API token (Account > Containers > Edit, listed
+  as optional for sandbox builds in the token template). The manager creates, updates
+  and deletes the sandbox Worker's container applications with it. Editing the token in
+  the Cloudflare dashboard keeps its value, so you do not need to paste it again. Keep
+  the permission after enabling: updates and disabling need it too.
 
 ## Enable it
 
-```sh
-npx @appflare/cli sandbox enable
-```
+In **Settings > Account and capabilities**, the **Sandbox builds** card shows **Enable
+sandbox builds** to admins. When R2 is off or the token lacks Containers: Edit, the card
+says so and the button stays disabled until the cause is fixed and the capabilities are
+checked again.
 
-The command downloads the newest sandbox Worker release from
-`github.com/appflare/appflare/releases` (`sandbox@<version>`), checks its signature
-the same way the installer checks the manager's, and deploys it with wrangler from a
-temporary directory. Nothing is left on your computer.
+Enabling runs as a job, so its log shows each step:
+
+1. It checks the account again: R2 enabled, and Containers usable with the token.
+2. It downloads the sandbox Worker release that belongs to this manager version from
+   `github.com/appflare/appflare/releases` (`sandbox@<version>`) and checks its
+   signature the same way a self-update checks the manager's. Every file it uploads is
+   checked against that signed manifest.
+3. It creates the R2 bucket, uploads the sandbox Worker with its two container classes,
+   and turns its `workers.dev` URL and preview URLs off.
+4. It creates the two container applications, running the release's image, and waits
+   until Cloudflare has prepared their instances, which takes a minute or two. Prepared
+   instances do not run: no container starts until a build asks for one.
+5. It connects the manager to the sandbox Worker (see below).
 
 It creates:
 
@@ -59,47 +70,53 @@ version is the sandbox Worker's own. Each tag is published once and never change
 The sandbox Worker has no public URL. It is built to be reached only by your manager,
 through a service binding.
 
-To update the sandbox Worker, run `sandbox enable` again. Pass `--version <x.y.z>` for a
-specific release. `--yes` never asks anything; with several accounts, set
-`CLOUDFLARE_ACCOUNT_ID`.
+Every step first looks at what is already there, so enabling is safe to run again. If
+the job stops, what it made stays in place: enable again to continue from there, or
+disable to remove it. A Worker named `appflare-sandbox` that is not an Appflare sandbox
+Worker is never changed.
 
-If the account is on the free plan, the command stops with **Sandbox builds need
-Workers Paid** and deploys nothing that runs. When Cloudflare only answers
-"Unauthorized" for Containers, the command says **Cloudflare refused access to
-Containers**: with a login that means the account is not on Workers Paid; with an API
-token it can also mean the token lacks the Containers permission, and the message says
-how to check both. The command checks access to Containers before it uploads anything
-and stops there when it is refused.
+Enabling and the other sandbox actions start only while no other job runs, because they
+restart every container of the sandbox Worker.
 
-A failed `sandbox enable` rolls back what it uploaded. It deletes the `appflare-sandbox`
-Worker when the run uploaded it and there was none before, with any container
-applications it got, and deletes the `appflare-builds` bucket when the run created it and
-it is empty. A sandbox Worker that was already there is kept; if the new version was
-uploaded before the failure, it may now run that version, so run `sandbox enable` again
-once the cause is fixed. The error lists what was removed.
+## Update it
+
+Each manager version comes with a sandbox Worker version. After Appflare updates itself
+to a version with a newer sandbox Worker, the card shows **Sandbox Worker `<version>` is
+available** and an **Update sandbox** button. Updating runs the same job as enabling: it
+uploads the new sandbox Worker and rolls both container applications out to the new
+image, then waits until the rollouts complete.
 
 ## Connect the manager
 
-The manager reaches the sandbox Worker through a service binding named `SANDBOX`. A
-manager that was installed before the sandbox Worker existed does not have it yet.
-
-Open **Settings > Account and capabilities** and find the **Sandbox builds** card. It shows one of three states:
-
-- **Off**, with the `sandbox enable` command, when the account has no sandbox Worker.
-- **Connect sandbox builds**, when the sandbox Worker exists but the manager is not
-  bound to it. Only admins see the button.
-- **Connected**, with the sandbox Worker's version and container image.
+The manager reaches the sandbox Worker through a service binding named `SANDBOX`.
+Enabling adds it at the end. A sandbox Worker that was deployed another way, such as
+with `npx @appflare/cli sandbox enable`, can be connected with **Connect only** on the
+card.
 
 Connecting does not re-upload the manager. It creates a new version of the manager's
 Worker from the one that is running, with only the `SANDBOX` binding added. It checks
 that version's preview URL at `/api/health` like a self-update does, and only then
-deploys it to all traffic. If the check fails, nothing changes. Connecting refuses
-while a self-update runs, and when a newer version of the manager was uploaded but not
-deployed.
+deploys it to all traffic. If the check fails, nothing changes, and connecting again
+starts over from the running version. Connecting refuses while a self-update runs, and
+when a newer version of the manager was uploaded but not deployed.
 
 Every self-update after that keeps the binding while the `appflare-sandbox` Worker
 exists, adds it when the Worker appeared since, and drops it with a warning in the job
 log once the Worker is gone.
+
+## Disable it
+
+**Disable sandbox builds** asks you to type `appflare-sandbox`. It is refused while any
+app built or deployed in the sandbox Worker is still installed; uninstall those apps
+first. The job then removes the `SANDBOX` binding from the manager (a checked new
+version, as above), deletes the sandbox Worker and its two container applications, and
+empties and deletes the `appflare-builds` bucket, leaving the account as it was before.
+
+## From the command line
+
+`npx @appflare/cli sandbox enable` and `sandbox disable` still work for scripted
+setups; see [the CLI guide](/guides/cli/). They need Node.js 22 and a wrangler login, or
+an API token with Containers: Edit.
 
 ## Install a sandbox tier app
 
@@ -190,8 +207,14 @@ container uses while it runs:
 | `standard-2` (entries that ask for it) | 1 vCPU, 6 GiB memory, 12 GB disk | about US$0.022 |
 
 With the included usage, about 35 ten-minute `standard-1` builds a month cost nothing
-extra. Most builds take less than ten minutes. The container is deleted when the
-build ends, so nothing runs between builds. Build outputs in R2 are small and usually
+extra. Most builds take less than ten minutes.
+
+Nothing runs between builds. After enabling, the dashboard counts each application's
+instances as healthy: Cloudflare has prepared them, but none is assigned or running, and
+Cloudflare bills only containers that are actively running. A build starts one container
+and the sandbox Worker stops it as soon as the build ends (seen live: it was gone within
+20 seconds). If stopping it fails, it stops on its own after 15 minutes without activity.
+Build outputs in R2 are small and usually
 stay within R2's free storage. See Cloudflare's
 [Containers pricing](https://developers.cloudflare.com/containers/pricing/) for the
 current rates.
@@ -280,14 +303,15 @@ Worker to read the token back. That is why such an app's token needs **Secrets S
 with Edit, not just Read. Every Alchemy app in the account shares the state store;
 uninstalling one app leaves it in place.
 
-## Disable it
+## Disable it from the command line
 
 ```sh
 npx @appflare/cli sandbox disable --yes [--purge]
 ```
 
-Deletes the `appflare-sandbox` Worker and its container applications. The command
-checks first that the Worker really is an Appflare sandbox Worker and refuses otherwise.
+Unlike **Disable sandbox builds** in Settings, the command does not check for apps that
+still need the sandbox Worker and does not disconnect the manager. It deletes the
+`appflare-sandbox` Worker and its container applications, and checks first that the Worker really is an Appflare sandbox Worker and refuses otherwise.
 
 | Flag | Meaning |
 | --- | --- |
@@ -305,18 +329,26 @@ again uses it.
 
 ## Troubleshooting
 
-**Appflare is not connected to a sandbox Worker.** Run `sandbox enable`, then use
-**Connect sandbox builds** in Settings.
+**Appflare is not connected to a sandbox Worker.** Choose **Enable sandbox builds** in
+Settings, or **Connect only** when the sandbox Worker is already there.
 
 **The sandbox Worker speaks another protocol.** The manager and the sandbox Worker are
-from releases that do not match. Update whichever is older: run `sandbox enable` again,
-or update Appflare in Settings.
+from releases that do not match. Update whichever is older: **Update sandbox** in
+Settings, or update Appflare itself.
 
 **Sandbox builds need Workers Paid.** The account is on the free plan. Upgrade it
-under **Workers & Pages > Plans** in the dashboard and run `sandbox enable` again.
+under **Workers & Pages > Plans** in the dashboard, select **Re-check** under the
+account capabilities, and enable sandbox builds.
 
-**R2 is not enabled on this account.** Open **R2** in the dashboard once, then run
-`sandbox enable` again.
+**R2 is not enabled on this account.** Open **R2** in the dashboard once, select
+**Re-check**, and enable sandbox builds again.
+
+**The token lacks Containers: Edit.** Edit Appflare's token in the dashboard, add
+Account > Containers > Edit, select **Re-check**, and enable sandbox builds again.
+
+**The container applications are not ready yet.** Their containers took longer to start
+than the job waits (Docker Hub can be slow to serve the image). Enable sandbox builds
+again: the job finds everything it made and only waits again.
 
 **A build fails in the install step.** The app's lockfile does not match its
 `package.json` at the pinned commit, or a dependency needs its install script. The

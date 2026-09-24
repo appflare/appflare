@@ -1,5 +1,10 @@
 import { CloudflareApiError, type CloudflareClient, R2_NOT_ENABLED_CODE } from "@appflare/cf-api";
-import { SANDBOX_BUCKET_BINDING, SANDBOX_BUCKET_NAME, SANDBOX_WORKER_NAME } from "@appflare/schema";
+import {
+  SANDBOX_BUCKET_BINDING,
+  SANDBOX_BUCKET_NAME,
+  SANDBOX_CONTAINERS,
+  SANDBOX_WORKER_NAME,
+} from "@appflare/schema";
 import { and, asc, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import { readAccessConfig } from "../access/config";
 import { createDb } from "../db/client";
@@ -18,8 +23,9 @@ import { DangerError } from "./errors";
  * the manager Worker with the D1 database and KV namespace it binds, the
  * external domains gateway as its setting records it, the sandbox Worker and
  * its build bucket, and the Cloudflare Access applications that protect the
- * manager. Four read calls: the account, the manager's bindings, the sandbox
- * Worker's bindings, and one page of the bucket list.
+ * manager. Six read calls at most: the account, the manager's bindings, the
+ * sandbox Worker's bindings, its two container applications by name, and one
+ * page of the bucket list.
  */
 
 export interface ManagerTargets {
@@ -46,6 +52,13 @@ export interface SandboxTargets {
   bucket: boolean;
   /** Self-deploying apps whose installer token the sandbox Worker holds. */
   appTokens: number;
+  /**
+   * The sandbox Worker's container applications (found by their names; they
+   * outlive the Worker), deleted with it. Empty when there are none or the
+   * Worker by that name is not Appflare's; null when the token cannot see
+   * Containers (no Containers group), so they must be deleted by hand.
+   */
+  containerApps: Array<{ id: string; name: string }> | null;
 }
 
 export interface RemovalTargets {
@@ -101,6 +114,29 @@ async function hasBuildBucket(api: CloudflareClient): Promise<boolean> {
   }
 }
 
+/**
+ * The sandbox Worker's container applications, by their exact names (two
+ * read calls); null when Cloudflare refuses Containers to the token (403
+ * without the Containers group, 401 on an account no longer on Workers Paid).
+ */
+async function sandboxContainerApps(
+  api: CloudflareClient,
+): Promise<Array<{ id: string; name: string }> | null> {
+  const found: Array<{ id: string; name: string }> = [];
+  for (const { name } of SANDBOX_CONTAINERS) {
+    try {
+      const apps = await api.containers.listApplications({ name });
+      found.push(...apps.filter((a) => a.name === name).map((a) => ({ id: a.id, name })));
+    } catch (error) {
+      if (error instanceof CloudflareApiError && (error.status === 401 || error.status === 403)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+  return found;
+}
+
 export async function findRemovalTargets(
   db: D1Database,
   api: CloudflareClient,
@@ -132,6 +168,8 @@ export async function findRemovalTargets(
       ).length
     : 0;
   const access = await readAccessConfig(db);
+  const worker: SandboxTargets["worker"] =
+    sandboxBindings === null ? "missing" : isSandbox ? "sandbox" : "other";
   return {
     accountId: api.accountId,
     accountName: account.name,
@@ -143,9 +181,11 @@ export async function findRemovalTargets(
     },
     gateway: await readGateway(orm),
     sandbox: {
-      worker: sandboxBindings === null ? "missing" : isSandbox ? "sandbox" : "other",
+      worker,
       bucket: await hasBuildBucket(api),
       appTokens,
+      // Another Worker's applications by those names are left alone with it.
+      containerApps: worker === "other" ? [] : await sandboxContainerApps(api),
     },
     accessAppIds:
       access === null

@@ -35,6 +35,13 @@ export interface ScriptMetadata {
   /** Binding types to preserve from the currently deployed version. */
   keep_bindings?: string[];
   keep_assets?: boolean;
+  /**
+   * The Worker's container-enabled Durable Object classes, each by its
+   * container application's name (wrangler 4.136.2's `getContainerMetadata`
+   * for containers with a `class_name` and a registry image). Cloudflare
+   * echoes them in a version's `resources.script_runtime.containers`.
+   */
+  containers?: Array<{ name?: string; class_name?: string }>;
   [key: string]: unknown;
 }
 
@@ -71,6 +78,8 @@ export interface WorkerScript {
    * `email`, ...), as `GET /workers/scripts` lists them.
    */
   handlers?: string[];
+  /** The last Durable Object migration tag applied to the Worker, when it has one. */
+  migration_tag?: string;
 }
 
 export interface ScriptUploadResult {
@@ -372,9 +381,92 @@ export interface AccountSubscription {
   [key: string]: unknown;
 }
 
-/** One entry of `GET /containers/applications`. */
+/**
+ * What a container application runs: `image` and `instance_type` are the
+ * fields Appflare sets (wrangler 4.136.2's `UserDeploymentConfiguration`).
+ */
+export interface ContainerApplicationConfiguration {
+  image?: string;
+  /** `lite`, `basic`, `standard-1` … `standard-4`. */
+  instance_type?: string;
+  [key: string]: unknown;
+}
+
+/** Instance counts by state, in an application's (or a rollout's) `health`. */
+export interface ContainerHealthInstances {
+  active?: number;
+  healthy?: number;
+  failed?: number;
+  starting?: number;
+  scheduling?: number;
+}
+
+/** One entry of `GET /containers/applications`, or one application. */
 export interface ContainerApplication {
   id: string;
   name: string;
+  /** Bumped by every change of the application. */
+  version?: number;
+  max_instances?: number;
+  configuration?: ContainerApplicationConfiguration;
+  /** The Durable Object namespace whose objects the instances back. */
+  durable_objects?: { namespace_id?: string };
+  /** Set while a rollout moves the instances to a new configuration. */
+  active_rollout_id?: string;
+  health?: { instances?: ContainerHealthInstances };
   [key: string]: unknown;
+}
+
+/** `POST /containers/applications` body (wrangler 4.136.2's `CreateApplicationRequest`). */
+export interface CreateContainerApplicationArgs {
+  name: string;
+  scheduling_policy: string;
+  /** Deprecated by Cloudflare in favour of `max_instances`; wrangler sends 0. */
+  instances: number;
+  max_instances: number;
+  configuration: ContainerApplicationConfiguration;
+  /** Wrangler's default is `{ tiers: [1, 2] }`. */
+  constraints?: { tiers?: number[]; [key: string]: unknown };
+  observability?: { logs?: { enabled: boolean } };
+  durable_objects: { namespace_id: string };
+  rollout_active_grace_period?: number;
+  [key: string]: unknown;
+}
+
+/** `PATCH /containers/applications/{id}` body: a subset of the create body, without name and namespace. */
+export type ModifyContainerApplicationArgs = Partial<
+  Omit<CreateContainerApplicationArgs, "name" | "durable_objects">
+>;
+
+/**
+ * `POST /containers/applications/{id}/rollouts` body, as wrangler sends it:
+ * `step_percentage` (5, 10, 20, 25, 50 or 100) or explicit `steps`.
+ */
+export interface CreateContainerRolloutArgs {
+  description: string;
+  strategy: "rolling";
+  kind?: "full_auto" | "full_manual";
+  target_configuration: ContainerApplicationConfiguration;
+  step_percentage?: number;
+  steps?: Array<{ step_size: { percentage: number }; description: string }>;
+}
+
+/** A rollout (wrangler 4.136.2's `ApplicationRollout`, the fields Appflare reads). */
+export interface ContainerRollout {
+  id: string;
+  /** `pending`, `progressing`, `completed`, `reverted` or `replaced`. */
+  status?: string;
+  target_configuration?: ContainerApplicationConfiguration;
+  health?: { instances?: ContainerHealthInstances };
+  [key: string]: unknown;
+}
+
+/** One entry of `GET /workers/durable_objects/namespaces`. */
+export interface DurableObjectNamespace {
+  id: string;
+  name?: string;
+  /** The Worker that implements the class. */
+  script?: string;
+  class?: string;
+  use_sqlite?: boolean;
 }

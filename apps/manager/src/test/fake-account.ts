@@ -81,6 +81,11 @@ export interface FakeAccount {
   uploadWithoutId: boolean;
   /** Secret names a version has (`GET .../versions/<id>` lists them as `secret_text` bindings). */
   versionSecrets: Record<string, string[]>;
+  /**
+   * The bindings of versions this fake did not upload (the one serving when
+   * a test starts), as `GET .../versions/<id>` lists them.
+   */
+  versionBindings: Record<string, unknown[]>;
 }
 
 /** The sandbox Worker's deployed version, unless a test sets another. */
@@ -123,6 +128,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     consumers: {},
     sandboxDeployed: SANDBOX_DEPLOYED_VERSION,
     versionSecrets: {},
+    versionBindings: {},
     domainHealth: {},
     domainProbes: [],
     uploadWithoutId: false,
@@ -347,9 +353,13 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       const id = version[1];
       const uploaded = state.versions.find((v) => v.id === id);
       const secrets = state.versionSecrets[id];
-      if (uploaded === undefined && secrets === undefined) return fail(404, "version not found");
+      const given = state.versionBindings[id];
+      if (uploaded === undefined && secrets === undefined && given === undefined) {
+        return fail(404, "version not found");
+      }
       const bindings = [
         ...(((uploaded?.metadata.bindings as unknown[] | undefined) ?? []) as unknown[]),
+        ...(given ?? []),
         ...(secrets ?? []).map((name) => ({ type: "secret_text", name })),
       ];
       return ok({ id, resources: { bindings } });

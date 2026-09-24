@@ -16,7 +16,7 @@ import {
   TOKEN,
 } from "../test/fake-account";
 import { fakeSandbox } from "../test/fake-sandbox";
-import { connectSandboxCore, readSandboxStatus } from "./connect.server";
+import { changeSandboxBinding, connectSandboxCore, readSandboxStatus } from "./connect.server";
 
 /**
  * "Connect sandbox builds" against the stateful fake account: a new version
@@ -47,6 +47,7 @@ async function connect(
       worker: "appflare",
       otherScripts: ["appflare-sandbox"],
       deployments: [{ id: "dep-0", versions: [{ version_id: SERVING, percentage: 100 }] }],
+      versionBindings: { [SERVING]: [{ type: "d1", name: "DB", id: "db-1" }] },
       previews: [{ status: 404, body: "error code: 1042" }, healthy()],
       ...world,
     });
@@ -109,14 +110,16 @@ describe("connectSandboxCore", () => {
   it("refuses when the account has no sandbox Worker, and changes nothing", async () => {
     const r = await connect({ otherScripts: [] });
     expect(String(r.error)).toMatch(
-      /There is no sandbox Worker .*npx @appflare\/cli sandbox enable/,
+      /There is no sandbox Worker .*Settings > Account and capabilities > Sandbox builds/,
     );
     expect(r.account.state.versionPatches).toEqual([]);
   });
 
   it("does nothing when the Worker already has SANDBOX", async () => {
     const r = await connect({
-      bindings: [{ type: "service", name: "SANDBOX", service: "appflare-sandbox" }],
+      versionBindings: {
+        [SERVING]: [{ type: "service", name: "SANDBOX", service: "appflare-sandbox" }],
+      },
     });
     expect(r.result).toEqual({ alreadyConnected: true, versionId: null });
     expect(r.account.state.versionPatches).toEqual([]);
@@ -124,7 +127,7 @@ describe("connectSandboxCore", () => {
 
   it("refuses a SANDBOX binding to another Worker", async () => {
     const r = await connect({
-      bindings: [{ type: "service", name: "SANDBOX", service: "billing" }],
+      versionBindings: { [SERVING]: [{ type: "service", name: "SANDBOX", service: "billing" }] },
     });
     expect(String(r.error)).toMatch(/already has a service binding named SANDBOX to "billing"/);
     expect(r.account.state.versionPatches).toEqual([]);
@@ -166,10 +169,83 @@ describe("connectSandboxCore", () => {
     expect(String(foreign.error)).toMatch(/attempt-from-elsewhere.* is not the one serving/);
   });
 
+  it("reads the serving version's bindings, not the newest upload's, so a retry after a failed check connects", async () => {
+    // After a connect whose preview check failed, Cloudflare's script-level
+    // bindings (the newest upload) show SANDBOX while the serving version has
+    // none. Deciding from those said "already connected" and deployed nothing.
+    const failed = await connect({ previews: [healthy("0.3.0")] });
+    expect(failed.error).not.toBeNull();
+    failed.account.state.bindings = [
+      { type: "service", name: "SANDBOX", service: "appflare-sandbox" },
+    ];
+    failed.account.state.previews = [healthy()];
+    const retry = await connect({}, failed.account);
+    expect(retry.error).toBeNull();
+    expect(retry.result?.alreadyConnected).toBe(false);
+    expect(retry.account.state.calls).toContain(
+      `GET /workers/scripts/appflare/versions/${SERVING}`,
+    );
+    expect(retry.account.state.calls).not.toContain("GET /workers/scripts/appflare/bindings");
+    expect(retry.account.state.deployments[0]?.versions).toEqual([
+      { version_id: retry.result?.versionId, percentage: 100 },
+    ]);
+  });
+
   it("never deploys a version whose preview does not answer as this Appflare", async () => {
     const r = await connect({ previews: [healthy("0.3.0")] });
     expect(String(r.error)).toMatch(/did not pass its check .*reports version 0.3.0/);
     expect(r.account.state.calls).not.toContain("POST /workers/scripts/appflare/deployments");
+  });
+});
+
+describe("changeSandboxBinding (disconnect)", () => {
+  function world(serving: unknown[]) {
+    return fakeAccount(null, {
+      worker: "appflare",
+      deployments: [{ id: "dep-0", versions: [{ version_id: SERVING, percentage: 100 }] }],
+      versionBindings: { [SERVING]: serving },
+      previews: [healthy()],
+    });
+  }
+  const disconnect = (account: ReturnType<typeof fakeAccount>) =>
+    changeSandboxBinding(
+      {
+        client: createClient({ accountId: ACC, token: TOKEN, fetch: account.fetch }),
+        workerName: "appflare",
+        subdomain: SUBDOMAIN,
+        currentVersion: VERSION,
+        fetch: account.fetch,
+        sleep: async () => {},
+      },
+      false,
+    );
+
+  it("removes SANDBOX with a null merge patch, checks the preview, then deploys", async () => {
+    const account = world([{ type: "service", name: "SANDBOX", service: "appflare-sandbox" }]);
+    const result = await disconnect(account);
+    expect(result).toEqual({ unchanged: false, versionId: NEW_VERSION });
+    expect(account.state.versionPatches).toEqual([
+      {
+        env: { SANDBOX: null },
+        annotations: {
+          "workers/message": "Appflare: disconnect sandbox builds",
+          "workers/tag": SERVING,
+        },
+      },
+    ]);
+    // The sandbox Worker need not exist any more.
+    expect(account.state.calls).not.toContain("GET /workers/scripts");
+    expect(account.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+  });
+
+  it("changes nothing when the serving version has no SANDBOX of Appflare's", async () => {
+    for (const serving of [[], [{ type: "service", name: "SANDBOX", service: "billing" }]]) {
+      const account = world(serving);
+      expect(await disconnect(account)).toEqual({ unchanged: true, versionId: null });
+      expect(account.state.versionPatches).toEqual([]);
+    }
   });
 });
 

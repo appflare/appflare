@@ -234,6 +234,18 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
               The sandbox Worker <Mono>appflare-sandbox</Mono>, with the secrets it holds.
             </li>
           )}
+          {(sandbox.containerApps ?? []).length > 0 && (
+            <li>
+              The sandbox Worker's container applications,{" "}
+              {(sandbox.containerApps ?? []).map((app, i) => (
+                <span key={app.id}>
+                  {i > 0 && " and "}
+                  <Mono>{app.name}</Mono>
+                </span>
+              ))}
+              .
+            </li>
+          )}
           {manager.kvId !== null && (
             <li>
               Appflare's KV namespace (catalog caches), <Mono>{manager.kvId}</Mono>.
@@ -300,12 +312,13 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
                 : `${stays.customDomains} custom domains of apps, which keep serving them.`}
             </li>
           )}
-          {sandbox.worker === "sandbox" && (
+          {sandbox.worker === "sandbox" && sandbox.containerApps === null && (
             <li>
               The sandbox Worker's container applications, <Mono>appflare-sandbox-standard-1</Mono>{" "}
               and <Mono>appflare-sandbox-standard-2</Mono>. Cloudflare keeps them when the Worker is
-              deleted, and Appflare does not delete them. Afterwards, delete them in the Cloudflare
-              dashboard under Workers, Containers.
+              deleted, and Appflare's token lacks Containers: Edit, so it cannot delete them.
+              Afterwards, delete them in the Cloudflare dashboard under Workers, Containers, or add
+              that permission to the token first.
             </li>
           )}
         </ul>

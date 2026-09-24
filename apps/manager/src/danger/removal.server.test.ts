@@ -98,25 +98,41 @@ describe("findRemovalTargets", () => {
         workflowName: MANAGER_WORKFLOW,
       },
       gateway: GATEWAY,
-      sandbox: { worker: "sandbox", bucket: true, appTokens: 1 },
+      sandbox: {
+        worker: "sandbox",
+        bucket: true,
+        appTokens: 1,
+        containerApps: [
+          { id: "app-1", name: "appflare-sandbox-standard-1" },
+          { id: "app-2", name: "appflare-sandbox-standard-2" },
+        ],
+      },
       accessAppIds: ["access-health", "access-app"],
     });
-    // Four reads, nothing else.
+    // Six reads, nothing else.
     expect(account.calls).toEqual([
       "GET /a",
       `GET /a/workers/scripts/${MANAGER_WORKER}/bindings`,
       "GET /a/workers/scripts/appflare-sandbox/bindings",
       "GET /a/r2/buckets",
+      "GET /a/containers/applications",
+      "GET /a/containers/applications",
     ]);
   });
 
   it("finds no sandbox and no bucket on an account that never enabled R2", async () => {
     const { api } = world({
       sandbox: false,
+      containers: "none",
       fail: { "GET /a/r2/buckets": { status: 403, code: 10042, message: "Please enable R2" } },
     });
     const targets = await findRemovalTargets(env.DB, api);
-    expect(targets.sandbox).toEqual({ worker: "missing", bucket: false, appTokens: 0 });
+    expect(targets.sandbox).toEqual({
+      worker: "missing",
+      bucket: false,
+      appTokens: 0,
+      containerApps: [],
+    });
   });
 });
 
@@ -126,7 +142,7 @@ describe("runRemoval", () => {
     const before = w.account.calls.length;
     const { outcome, steps } = await run(w);
     expect(outcome).toEqual({ kind: "complete", accessLeft: [], pageLost: false });
-    const after = w.account.calls.slice(before + 4);
+    const after = w.account.calls.slice(before + 6);
     expect(after).toEqual([
       "GET /a/r2/buckets/appflare-builds/objects",
       "DELETE /a/r2/buckets/appflare-builds/objects/builds/b0.zip",
@@ -140,6 +156,8 @@ describe("runRemoval", () => {
       `DELETE /zones/${GATEWAY_ZONE_ID}/dns_records/rec-1`,
       "DELETE /a/storage/kv/namespaces/kv-gateway",
       "DELETE /a/workers/scripts/appflare-sandbox",
+      "DELETE /a/containers/applications/app-1",
+      "DELETE /a/containers/applications/app-2",
       "DELETE /a/storage/kv/namespaces/kv-manager",
       "DELETE /a/d1/database/d1-manager",
       "DELETE /a/access/apps/access-health",
@@ -153,6 +171,16 @@ describe("runRemoval", () => {
     // The gateway's record goes with its last piece.
     const orm = createDb(env.DB);
     expect(await readSettings(orm, [SETTING.externalDomainsGateway])).toEqual({});
+  });
+
+  it("leaves the container applications when the token cannot use Containers", async () => {
+    const w = world({ containers: "denied" });
+    const targets = await findRemovalTargets(env.DB, w.api);
+    expect(targets.sandbox.containerApps).toBeNull();
+    const { outcome, steps } = await run(w, targets);
+    expect(outcome.kind).toBe("complete");
+    expect(w.account.deletes().some((c) => c.includes("/containers/"))).toBe(false);
+    expect(steps.some((s) => s.label.includes("container application"))).toBe(false);
   });
 
   it("empties a larger bucket a page at a time", async () => {
@@ -196,12 +224,20 @@ describe("runRemoval", () => {
         workflowName: MANAGER_WORKFLOW,
       },
       gateway: GATEWAY,
-      sandbox: { worker: "sandbox", bucket: true, appTokens: 0 },
+      sandbox: {
+        worker: "sandbox",
+        bucket: true,
+        appTokens: 0,
+        containerApps: [
+          { id: "app-1", name: "appflare-sandbox-standard-1" },
+          { id: "app-2", name: "appflare-sandbox-standard-2" },
+        ],
+      },
       accessAppIds: ["access-health", "access-app"],
     });
     expect(again.outcome.kind).toBe("complete");
     expect(again.steps.filter((s) => s.label.startsWith("Delete")).map((s) => s.status)).toEqual(
-      Array(10).fill("skipped"),
+      Array(12).fill("skipped"),
     );
   });
 
@@ -316,7 +352,10 @@ describe("runRemoval", () => {
     async (worker, deletes) => {
       const w = world({ objects: 1 });
       const targets = await findRemovalTargets(env.DB, w.api);
-      await run(w, { ...targets, sandbox: { worker, bucket: true, appTokens: 0 } });
+      await run(w, {
+        ...targets,
+        sandbox: { worker, bucket: true, appTokens: 0, containerApps: [] },
+      });
       expect(w.account.deletes().includes("DELETE /a/r2/buckets/appflare-builds")).toBe(deletes);
       expect(w.account.remainingObjects()).toBe(deletes ? 0 : 1);
     },

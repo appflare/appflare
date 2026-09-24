@@ -25,16 +25,21 @@ describe("danger-zone pages", () => {
     const base = {
       accountId: "acc",
       workerName: "appflare",
-      sandboxDeleted: false,
+      containersLeft: false,
       accessOn: true,
       accessLeft: [],
     };
     const failed = removalPageEnd({ ...base, outcome: "failed" });
     expect(failed).toContain("run <strong>Remove Appflare from this account</strong> again");
     expect(failed).toContain("Cloudflare Access protection is still on");
-    const complete = removalPageEnd({ ...base, outcome: "complete", sandboxDeleted: true });
+    const complete = removalPageEnd({ ...base, outcome: "complete", containersLeft: true });
     expect(complete).toContain("deletes itself");
-    expect(complete).toContain("container applications");
+    expect(complete).toContain(
+      "cannot use Containers, so the sandbox Worker's container applications were not deleted",
+    );
+    expect(removalPageEnd({ ...base, outcome: "complete" })).not.toContain(
+      "container applications",
+    );
     expect(complete).toContain("keep running, unmanaged");
     expect(complete).toContain("Revoke the Appflare API token");
     expect(complete).toContain("Access applications that protected the manager are deleted");
@@ -48,7 +53,7 @@ describe("danger-zone pages", () => {
       outcome: "complete",
       accountId: "acc",
       workerName: "appflare",
-      sandboxDeleted: false,
+      containersLeft: false,
       accessOn: true,
       accessLeft: ["app-1"],
     });
@@ -61,7 +66,7 @@ describe("danger-zone pages", () => {
       outcome: "failed",
       accountId: "acc",
       workerName: "appflare",
-      sandboxDeleted: false,
+      containersLeft: false,
       accessOn: false,
       accessLeft: [],
     });

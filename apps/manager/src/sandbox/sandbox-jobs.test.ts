@@ -1,0 +1,490 @@
+import { reset } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { createClient, type FetchLike } from "@appflare/cf-api";
+import { beforeEach, describe, expect, it } from "vitest";
+import { createDb } from "../db/client";
+import { createMigrator } from "../db/migrate";
+import { migrations } from "../db/migrations/index";
+import { SETTING, writeSettings } from "../db/settings";
+import type { JobEnv } from "../jobs/run-job";
+import type { ArtifactFixture } from "../test/artifact-fixture";
+import { ACC, type FakeAccount, SUBDOMAIN, TOKEN } from "../test/fake-account";
+import {
+  type FakeContainerApp,
+  fakeSandboxAccount,
+  MANAGER,
+  MANAGER_SERVING,
+  type SandboxAccountState,
+  sandboxRelease,
+} from "../test/fake-sandbox-account";
+import { fakeSelf } from "../test/fake-self";
+import { fakeStep } from "../test/fake-step";
+import { seedInstall } from "../test/seed-install";
+import { runSandboxDisable, type SandboxDisableJobParams } from "./disable-job";
+import { runSandboxEnable, type SandboxEnableJobParams } from "./enable-job";
+import { SandboxJobError, startSandboxJobCore } from "./jobs.server";
+
+/**
+ * Enabling, updating and disabling sandbox builds end to end: the start
+ * checks and claim, then the job against a stateful fake of the account (the
+ * sandbox Worker, R2, Containers, and the manager's own Worker), with the
+ * Workflow engine replaced by `fakeStep` and `SELF` by `fakeSelf`.
+ */
+
+const MANAGER_VERSION = "0.5.0";
+const VERSION = "0.1.2";
+const NO_WORKFLOWS = {
+  get: async () => {
+    throw new Error("instance not_found");
+  },
+};
+const healthy = { status: 200, body: JSON.stringify({ version: MANAGER_VERSION, db: "ok" }) };
+const SANDBOX_SERVICE = { type: "service", name: "SANDBOX", service: "appflare-sandbox" };
+
+beforeEach(async () => {
+  await reset();
+  await createMigrator(migrations).ensure(env.DB);
+  await writeSettings(createDb(env.DB), {
+    [SETTING.accountId]: ACC,
+    [SETTING.workerName]: MANAGER,
+    [SETTING.accountSubdomain]: SUBDOMAIN,
+  });
+});
+
+async function start(
+  world: ReturnType<typeof fakeSandboxAccount>,
+  request: Parameters<typeof startSandboxJobCore>[1],
+) {
+  let params: SandboxEnableJobParams | SandboxDisableJobParams | null = null;
+  const { jobId } = await startSandboxJobCore(
+    {
+      db: env.DB,
+      client: async () => createClient({ accountId: ACC, token: TOKEN, fetch: world.fetch }),
+      workflows: NO_WORKFLOWS,
+      createJob: async (id, p) => {
+        params = p;
+        return { id };
+      },
+      currentVersion: MANAGER_VERSION,
+      sandboxVersion: VERSION,
+      newId: () => "job1",
+    },
+    request,
+  );
+  if (params === null) throw new Error("no Workflow params");
+  return { jobId, params: params as SandboxEnableJobParams | SandboxDisableJobParams };
+}
+
+async function runJob(
+  world: ReturnType<typeof fakeSandboxAccount>,
+  params: SandboxEnableJobParams | SandboxDisableJobParams,
+  release: ArtifactFixture,
+  /** Whether the manager has its `SELF` binding (every one since job units). */
+  withSelf = true,
+) {
+  /** Subrequests of the job's own invocation (units count theirs separately). */
+  let own = 0;
+  const jobFetch: FetchLike = async (input, init) => {
+    own += 1;
+    return world.fetch(input, init);
+  };
+  const step = fakeStep();
+  const jobEnv: JobEnv = {
+    DB: env.DB,
+    KV: env.KV,
+    CF_API_TOKEN: TOKEN,
+    APPFLARE_VERSION: MANAGER_VERSION,
+  };
+  const self = fakeSelf(jobEnv, { fetch: world.fetch, sleep: async () => {} });
+  let error: unknown = null;
+  try {
+    const run = params.kind === "sandbox_disable" ? runSandboxDisable : runSandboxEnable;
+    await run({
+      params,
+      step,
+      env: withSelf ? { ...jobEnv, SELF: self } : jobEnv,
+      deps: { fetch: jobFetch, signingKeys: release.keys, sleep: async () => {} },
+    });
+  } catch (e) {
+    error = e;
+  }
+  const job = await env.DB.prepare("SELECT * FROM jobs WHERE id = 'job1'").first<{
+    kind: string;
+    status: string;
+    error: string | null;
+    input_json: string;
+  }>();
+  const logs = (
+    await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'job1' ORDER BY id").all<{
+      message: string;
+    }>()
+  ).results.map((r) => r.message);
+  return { error, job, logs, step, self, own };
+}
+
+async function enable(
+  over: Partial<SandboxAccountState> = {},
+  managerOver: Partial<FakeAccount> = {},
+  action: "enable" | "update" = "enable",
+) {
+  const release = await sandboxRelease(VERSION);
+  const world = fakeSandboxAccount(release, over, { previews: [healthy], ...managerOver });
+  const { params } = await start(world, { action });
+  return { world, release, ...(await runJob(world, params, release)) };
+}
+
+function app(name: string, image: string, over: Partial<FakeContainerApp> = {}): FakeContainerApp {
+  const large = name.endsWith("-2");
+  return {
+    id: `existing-${large ? 2 : 1}`,
+    name,
+    max_instances: large ? 1 : 2,
+    configuration: { image, instance_type: large ? "standard-2" : "standard-1" },
+    durable_objects: { namespace_id: large ? "ns-largesandbox" : "ns-sandbox" },
+    reads: 10,
+    created: {},
+    ...over,
+  };
+}
+
+/** An account where sandbox builds are on at `version`, as a finished enable leaves it. */
+function enabledAt(version: string): Partial<SandboxAccountState> {
+  return {
+    worker: {
+      version,
+      versionId: "5b000000-0000-4000-8000-000000000009",
+      migrationTag: "v1",
+      metadata: {
+        bindings: [
+          { type: "durable_object_namespace", name: "Sandbox", class_name: "Sandbox" },
+          { type: "durable_object_namespace", name: "LargeSandbox", class_name: "LargeSandbox" },
+          { type: "r2_bucket", name: "BUILDS", bucket_name: "appflare-builds" },
+          { type: "plain_text", name: "APPFLARE_VERSION", text: version },
+        ],
+      },
+    },
+    namespaces: { Sandbox: "ns-sandbox", LargeSandbox: "ns-largesandbox" },
+    buckets: new Set(["appflare-builds"]),
+    apps: [
+      app("appflare-sandbox-standard-1", `docker.io/mendylanda/appflare-sandbox:${version}`),
+      app("appflare-sandbox-standard-2", `docker.io/mendylanda/appflare-sandbox:${version}`),
+    ],
+  };
+}
+
+const connected = { versionBindings: { [MANAGER_SERVING]: [SANDBOX_SERVICE] } };
+
+describe("enable sandbox builds", () => {
+  it("deploys the verified release, its bucket and container applications, then connects Appflare", async () => {
+    const r = await enable();
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ kind: "sandbox_enable", status: "succeeded", error: null });
+    expect(JSON.parse(r.job?.input_json ?? "null")).toEqual({
+      version: VERSION,
+      fromVersion: null,
+    });
+
+    // The bucket, then the Worker with its classes, migrations and container metadata.
+    expect([...r.world.state.buckets]).toEqual(["appflare-builds"]);
+    expect(r.world.state.uploads).toHaveLength(1);
+    const metadata = r.world.state.uploads[0]?.metadata;
+    expect(metadata).toMatchObject({
+      main_module: "worker.js",
+      keep_bindings: ["secret_text", "secret_key"],
+      containers: [
+        { name: "appflare-sandbox-standard-1", class_name: "Sandbox" },
+        { name: "appflare-sandbox-standard-2", class_name: "LargeSandbox" },
+      ],
+      migrations: { new_tag: "v1", steps: [{ new_sqlite_classes: ["Sandbox", "LargeSandbox"] }] },
+      observability: { enabled: true },
+    });
+    expect(metadata?.bindings).toEqual([
+      { type: "durable_object_namespace", name: "Sandbox", class_name: "Sandbox" },
+      { type: "durable_object_namespace", name: "LargeSandbox", class_name: "LargeSandbox" },
+      { type: "r2_bucket", name: "BUILDS", bucket_name: "appflare-builds" },
+      { type: "plain_text", name: "APPFLARE_VERSION", text: VERSION },
+      { type: "version_metadata", name: "CF_VERSION_METADATA" },
+    ]);
+    expect(r.world.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: false }]);
+
+    // Both applications, bound to the namespaces the upload created.
+    expect(r.world.state.apps.map((a) => a.created)).toEqual([
+      {
+        name: "appflare-sandbox-standard-1",
+        scheduling_policy: "default",
+        observability: { logs: { enabled: true } },
+        configuration: {
+          image: `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
+          instance_type: "standard-1",
+        },
+        instances: 0,
+        max_instances: 2,
+        constraints: { tiers: [1, 2] },
+        durable_objects: { namespace_id: "ns-sandbox" },
+        rollout_active_grace_period: 0,
+      },
+      expect.objectContaining({
+        name: "appflare-sandbox-standard-2",
+        max_instances: 1,
+        configuration: {
+          image: `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
+          instance_type: "standard-2",
+        },
+        durable_objects: { namespace_id: "ns-largesandbox" },
+      }),
+    ]);
+
+    // Waited for them, then connected Appflare (after the wait, never before).
+    const units = r.self.calls.map((c) => c.unit);
+    expect(units).toEqual(["uploadWorker", "waitForSandboxContainers", "setSandboxBinding"]);
+    expect(r.world.manager.state.versionPatches).toEqual([
+      {
+        env: {
+          SANDBOX: { type: "service", service: "appflare-sandbox", entrypoint: "SandboxBuilds" },
+        },
+        annotations: {
+          "workers/message": "Appflare: connect sandbox builds",
+          "workers/tag": MANAGER_SERVING,
+        },
+      },
+    ]);
+    expect(r.logs.at(-1)).toMatch(/Sandbox builds are on: the sandbox Worker 0\.1\.2/);
+    // The job's own invocation stays well within the free plan's 50 subrequests.
+    expect(r.own).toBeLessThan(30);
+  });
+
+  it("changes nothing on an account where the same release is already on and connected", async () => {
+    const r = await enable(enabledAt(VERSION), connected);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.world.state.uploads).toEqual([]);
+    expect(r.world.state.apps.map((a) => a.id)).toEqual(["existing-1", "existing-2"]);
+    expect(r.world.state.rollouts).toEqual({});
+    expect(r.world.manager.state.versionPatches).toEqual([]);
+    expect(r.logs).toContain("The sandbox Worker already runs 0.1.2; it is not uploaded again.");
+  });
+
+  it("updates an older sandbox Worker: re-uploads it without migrations and rolls both applications", async () => {
+    const r = await enable(enabledAt("0.1.1"), connected, "update");
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ kind: "sandbox_update", status: "succeeded" });
+    const metadata = r.world.state.uploads[0]?.metadata ?? {};
+    // v1 is applied already: no migration is sent again.
+    expect(metadata.migrations).toBeUndefined();
+    expect(Object.values(r.world.state.rollouts).map((x) => [x.appId, x.body])).toEqual([
+      [
+        "existing-1",
+        {
+          description: "Progressive update",
+          strategy: "rolling",
+          kind: "full_auto",
+          target_configuration: {
+            image: `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
+            instance_type: "standard-1",
+          },
+          steps: [
+            {
+              step_size: { percentage: 10 },
+              description: "Step 1 of 2 - rollout at 10% of instances",
+            },
+            {
+              step_size: { percentage: 100 },
+              description: "Step 2 of 2 - rollout at 100% of instances",
+            },
+          ],
+        },
+      ],
+      [
+        "existing-2",
+        expect.objectContaining({
+          step_percentage: 100,
+          target_configuration: {
+            image: `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
+            instance_type: "standard-2",
+          },
+        }),
+      ],
+    ]);
+    // Waited until both rollouts completed; Appflare was already connected.
+    expect(Object.values(r.world.state.rollouts).map((x) => x.status)).toEqual([
+      "completed",
+      "completed",
+    ]);
+    expect(r.world.state.apps.map((a) => a.configuration.image)).toEqual([
+      `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
+      `docker.io/mendylanda/appflare-sandbox:${VERSION}`,
+    ]);
+    expect(r.world.manager.state.versionPatches).toEqual([]);
+  });
+
+  it("resumes a rollout an earlier run started instead of starting another", async () => {
+    const world = enabledAt("0.1.1");
+    const image = `docker.io/mendylanda/appflare-sandbox:${VERSION}`;
+    const apps = (world.apps ?? []).map((a) =>
+      a.id === "existing-1" ? { ...a, active_rollout_id: "rollout-0" } : a,
+    );
+    const r = await enable(
+      {
+        ...world,
+        apps,
+        rollouts: {
+          "rollout-0": {
+            appId: "existing-1",
+            body: { target_configuration: { image, instance_type: "standard-1" } },
+            reads: 0,
+            status: "progressing",
+          },
+        },
+      },
+      connected,
+      "update",
+    );
+    expect(r.error).toBeNull();
+    expect(Object.keys(r.world.state.rollouts)).toEqual(["rollout-0", "rollout-2"]);
+    expect(r.world.state.rollouts["rollout-2"]?.appId).toBe("existing-2");
+  });
+
+  it("sends the migration tag the Worker has when a retried upload follows a lost answer", async () => {
+    // The first upload applied v1 but its answer was lost; the retry must not
+    // send v1 as a new tag again (Cloudflare would refuse the tag).
+    const r = await enable({ lostUploadReplies: 1 });
+    expect(r.error).toBeNull();
+    expect(r.world.state.uploads.map((u) => u.metadata.migrations)).toEqual([
+      { new_tag: "v1", steps: [{ new_sqlite_classes: ["Sandbox", "LargeSandbox"] }] },
+      undefined,
+    ]);
+    expect(r.job?.status).toBe("succeeded");
+  });
+
+  it("refuses to run without the SELF binding, before anything is created", async () => {
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(release);
+    const { params } = await start(world, { action: "enable" });
+    const r = await runJob(world, params, release, false);
+    expect(String(r.error)).toMatch(/no SELF binding/);
+    expect(world.state.buckets.size).toBe(0);
+    expect(world.state.uploads).toEqual([]);
+  });
+
+  it("refuses to start when R2 is not enabled or the token lacks Containers, and says why", async () => {
+    const release = await sandboxRelease(VERSION);
+    for (const [over, reason] of [
+      [{ r2Enabled: false }, /R2 is not enabled on this account/],
+      [{ containersAllowed: false }, /token lacks Containers: Edit/],
+    ] as const) {
+      const world = fakeSandboxAccount(release, over);
+      await expect(start(world, { action: "enable" })).rejects.toThrow(reason);
+    }
+    const count = await env.DB.prepare("SELECT count(*) AS n FROM jobs").first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("stops before uploading when the account check fails inside the job", async () => {
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(release);
+    const { params } = await start(world, { action: "enable" });
+    world.state.r2Enabled = false;
+    const r = await runJob(world, params, release);
+    expect(String(r.error)).toMatch(/check account: R2 is not enabled/);
+    expect(r.job?.status).toBe("failed");
+    expect(world.state.uploads).toEqual([]);
+    expect(r.logs.at(-1)).toMatch(/enable sandbox builds again to continue/);
+  });
+
+  it("refuses a release signed with a key that does not sign Appflare releases", async () => {
+    const release = await sandboxRelease(VERSION, { keyId: "catalog-test" });
+    const world = fakeSandboxAccount(release);
+    const { params } = await start(world, { action: "enable" });
+    const r = await runJob(world, params, release);
+    expect(String(r.error)).toMatch(/does not sign Appflare releases/);
+    expect(world.state.uploads).toEqual([]);
+    expect(world.state.buckets.size).toBe(0);
+  });
+
+  it("leaves a Worker by that name alone when it is not an Appflare sandbox Worker", async () => {
+    const r = await enable({
+      worker: { version: "?", versionId: "x", migrationTag: null, metadata: { bindings: [] } },
+    });
+    expect(String(r.error)).toMatch(/is not an Appflare sandbox Worker/);
+    expect(r.world.state.uploads).toEqual([]);
+  });
+
+  it("starts only while no other job runs", async () => {
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, kind, status, workflow_instance_id) VALUES ('other', 'install', 'running', 'wf')",
+    ).run();
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(release);
+    await expect(
+      startSandboxJobCore(
+        {
+          db: env.DB,
+          client: async () => createClient({ accountId: ACC, token: TOKEN, fetch: world.fetch }),
+          workflows: { get: async () => ({ status: async () => ({ status: "running" }) }) },
+          createJob: async (id) => ({ id }),
+          currentVersion: MANAGER_VERSION,
+        },
+        { action: "enable" },
+      ),
+    ).rejects.toThrow(/Another job is queued or running/);
+  });
+});
+
+describe("disable sandbox builds", () => {
+  it("disconnects Appflare, then force-deletes the Worker, both applications and the emptied bucket", async () => {
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(
+      release,
+      { ...enabledAt(VERSION), objects: { "appflare-builds": ["builds/i1/1.0.0/a", "logs/b"] } },
+      { previews: [healthy], ...connected },
+    );
+    const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
+    const r = await runJob(world, params, release);
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ kind: "sandbox_disable", status: "succeeded" });
+    expect(world.manager.state.versionPatches).toEqual([
+      {
+        env: { SANDBOX: null },
+        annotations: {
+          "workers/message": "Appflare: disconnect sandbox builds",
+          "workers/tag": MANAGER_SERVING,
+        },
+      },
+    ]);
+    expect(world.state.deletes).toEqual([{ force: true }]);
+    expect(world.state.worker).toBeNull();
+    expect(world.state.apps).toEqual([]);
+    expect(world.state.buckets.size).toBe(0);
+    // The manager was disconnected (its new version deployed) before the Worker was deleted.
+    const managerDeploy = world.order.indexOf(`POST /workers/scripts/${MANAGER}/deployments`);
+    const workerDelete = world.order.indexOf("DELETE /workers/scripts/appflare-sandbox");
+    expect(managerDeploy).toBeGreaterThan(-1);
+    expect(workerDelete).toBeGreaterThan(managerDeploy);
+    expect(r.logs.at(-1)).toBe(
+      "Sandbox builds are off, and nothing of them is left in the account.",
+    );
+  });
+
+  it("finishes what an earlier run left, and needs nothing to be there", async () => {
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(release, { buckets: new Set(["appflare-builds"]) });
+    const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
+    const r = await runJob(world, params, release);
+    expect(r.error).toBeNull();
+    expect(world.state.deletes).toEqual([]);
+    expect(world.state.buckets.size).toBe(0);
+  });
+
+  it("needs the sandbox Worker's name typed, and refuses while an app needs the sandbox Worker", async () => {
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(release, enabledAt(VERSION));
+    await expect(start(world, { action: "disable", confirm: "appflare" })).rejects.toThrow(
+      SandboxJobError,
+    );
+    await seedInstall();
+    await env.DB.prepare("UPDATE installs SET build_kind = 'sandbox'").run();
+    await expect(start(world, { action: "disable", confirm: "appflare-sandbox" })).rejects.toThrow(
+      /in use by the app cut/,
+    );
+  });
+});

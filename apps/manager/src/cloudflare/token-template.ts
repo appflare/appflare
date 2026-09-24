@@ -67,6 +67,15 @@ export const EMAIL_ROUTING_FEATURE = "Email Routing";
  */
 export const PLAN_DETECTION_FEATURE = "Workers plan detection";
 
+/**
+ * Settings > Account and capabilities > Sandbox builds: Appflare deploys,
+ * updates and removes the sandbox Worker's container applications itself
+ * (Workers Paid only). Kept on the token after enabling, because every
+ * sandbox update rolls the applications to a new image and disabling
+ * deletes them.
+ */
+export const SANDBOX_BUILDS_FEATURE = "Sandbox builds";
+
 export const TOKEN_PERMISSION_GROUPS = [
   // Upload, version, deploy, and delete app Workers and the manager itself; their
   // secrets, cron triggers, workers.dev routes, and static assets.
@@ -132,6 +141,13 @@ export const TOKEN_PERMISSION_GROUPS = [
   // read which Workers plan it is on; nothing else of the billing data is read.
   // Key `billing` is in the template page's key table.
   { key: "billing", type: "read", label: "Billing", onlyFor: PLAN_DETECTION_FEATURE },
+  // Create, roll out and delete the sandbox Worker's two container
+  // applications ("Workers Containers Write" in the API's group list). The
+  // template key is not in the template page's table and does not follow the
+  // label rule above (that would give `workers_containers`): the dashboard's
+  // own key is `containers`, as published tables of the keys read from the
+  // dashboard's code and public template links for this group both use.
+  { key: "containers", type: "edit", label: "Containers", onlyFor: SANDBOX_BUILDS_FEATURE },
   // Find the account id and name the token belongs to (`GET /accounts`).
   { key: "account_settings", type: "read", label: "Account Settings" },
   // Stream a Worker's live logs while diagnosing an install or update.

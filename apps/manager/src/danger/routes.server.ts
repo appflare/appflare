@@ -217,7 +217,8 @@ export async function handleRemoveAppflare(
             outcome: outcome.kind,
             accountId: targets.accountId,
             workerName: targets.manager.workerName,
-            sandboxDeleted: targets.sandbox.worker === "sandbox",
+            containersLeft:
+              targets.sandbox.worker === "sandbox" && targets.sandbox.containerApps === null,
             accessOn: targets.accessAppIds.length > 0,
             accessLeft: outcome.kind === "complete" ? outcome.accessLeft : [],
           }),

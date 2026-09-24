@@ -4,6 +4,8 @@ import type { SigningKey } from "@appflare/schema";
 import { z } from "zod";
 import { JOB_KINDS, type JobKind } from "../db/schema";
 import { notifyJobEnd } from "../notifications/job-end";
+import { runSandboxDisable } from "../sandbox/disable-job";
+import { runSandboxEnable } from "../sandbox/enable-job";
 import { runInstall } from "./install";
 import { runReconfigure } from "./reconfigure";
 import { runRollback } from "./rollback";
@@ -69,6 +71,8 @@ export interface JobEnv {
   APPFLARE_VERSION?: string;
   /** Reads the manager's release assets while its repository is private. Never logged. */
   GITHUB_TOKEN?: string;
+  /** The releases API override (local dev, tests); the sandbox Worker release is read next to it. */
+  MANAGER_RELEASES_URL?: string;
   /**
    * The manager's own job units over its `SELF` service binding. Absent on a
    * manager deployed before the binding existed; jobs then run the units in
@@ -108,6 +112,9 @@ export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   self_update: runSelfUpdate,
   uninstall: runUninstall,
   reconfigure: runReconfigure,
+  sandbox_enable: runSandboxEnable,
+  sandbox_update: runSandboxEnable,
+  sandbox_disable: runSandboxDisable,
 };
 
 export async function runJob(

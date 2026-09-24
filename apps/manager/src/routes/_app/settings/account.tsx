@@ -43,7 +43,7 @@ function AccountSettingsPage() {
       <CloudflareTokenCard status={tokenStatus} canRotate={isAdmin} />
       <OnboardingChecklistCard data={checklist} isAdmin={isAdmin} />
       <AccountCapabilitiesCard view={capabilities} isAdmin={isAdmin} />
-      <SandboxCard status={sandboxStatus} isAdmin={isAdmin} />
+      <SandboxCard status={sandboxStatus} capabilities={capabilities} isAdmin={isAdmin} />
     </>
   );
 }

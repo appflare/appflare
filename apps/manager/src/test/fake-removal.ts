@@ -23,6 +23,11 @@ export interface FakeRemovalOptions {
   fail?: Record<string, { status: number; code: number; message?: string }>;
   sandbox?: boolean;
   bucket?: boolean;
+  /**
+   * The sandbox Worker's container applications: listed (default), absent,
+   * or refused to the token (403, no Containers group).
+   */
+  containers?: "present" | "none" | "denied";
   /** A 400 on the gateway record's delete this many times. */
   recordBusy?: number;
 }
@@ -79,6 +84,14 @@ export function fakeRemovalAccount(options: FakeRemovalOptions = {}) {
         { type: "secret_text", name: "APP_TOKEN_01ABC" },
         { type: "plain_text", name: "APPFLARE_VERSION", text: "0.1.0" },
       ]);
+    }
+    if (key === "GET /a/containers/applications") {
+      const containers = options.containers ?? "present";
+      if (containers === "denied") return error(403, 10000, "Authentication error");
+      const name = url.searchParams.get("name") ?? "";
+      const id = `app-${name.split("-").at(-1)}`;
+      const listed = containers === "present" && !gone.has(`/a/containers/applications/${id}`);
+      return ok(listed ? [{ id, name }] : []);
     }
     if (key === "GET /a/r2/buckets") {
       return ok({

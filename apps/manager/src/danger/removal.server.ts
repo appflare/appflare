@@ -30,7 +30,8 @@ import type { ManagerTargets, RemovalTargets } from "./removal-plan.server";
  * 2. the external domains gateway: its route, its Worker, the zone's fallback
  *    origin and the gateway's DNS record when Appflare set them, its routing
  *    table (the same pieces, in the same order, as turning it off);
- * 3. the sandbox Worker;
+ * 3. the sandbox Worker, then its two container applications (which
+ *    Cloudflare keeps when the Worker goes) when the token has Containers;
  * 4. the manager's KV namespace, then its D1 database;
  * 5. the Cloudflare Access applications in front of the manager, last, so a
  *    removal that stops at any earlier step leaves the manager protected.
@@ -49,7 +50,7 @@ import type { ManagerTargets, RemovalTargets } from "./removal-plan.server";
  *
  * This runs in one request, not a Workflow: the sandbox bucket's pages each
  * cost one subrequest (each page runs in its own invocation over `SELF`),
- * and the rest is at most about 20 calls.
+ * and the rest is at most about 24 calls.
  */
 
 export type RemovalStepStatus = "done" | "skipped" | "failed";
@@ -292,6 +293,12 @@ export async function runRemoval(deps: RemovalDeps): Promise<RemovalOutcome> {
           () => api.workers.deleteScript(SANDBOX_WORKER_NAME, { force: true }),
           "Deleted, with the secrets it held.",
         ),
+      );
+    }
+    // Its container applications outlive it; deleted when the token can see them.
+    for (const app of targets.sandbox.containerApps ?? []) {
+      await step(`Delete the container application ${app.name}`, () =>
+        deletedOrGone(() => api.containers.deleteApplication(app.id)),
       );
     }
 

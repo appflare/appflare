@@ -70,6 +70,31 @@ export function sandboxImage(version: string): string {
   return `${SANDBOX_IMAGE_REPOSITORY}:${version}`;
 }
 
+/**
+ * The container classes of the sandbox Worker, each backed by its own
+ * container application running the sandbox Worker's image: builds run on
+ * `standard-1` (1/2 vCPU, 4 GiB, 8 GB disk), and on `standard-2` when a
+ * catalog entry asks for it. At most two builds of the first size and one of
+ * the second run at once. The application names are how the manager and the
+ * CLI find the applications again, so they never change.
+ */
+export const SANDBOX_CONTAINERS = [
+  {
+    name: `${SANDBOX_WORKER_NAME}-standard-1`,
+    class_name: "Sandbox",
+    instance_type: "standard-1",
+    max_instances: 2,
+  },
+  {
+    name: `${SANDBOX_WORKER_NAME}-standard-2`,
+    class_name: "LargeSandbox",
+    instance_type: "standard-2",
+    max_instances: 1,
+  },
+] as const;
+
+export type SandboxContainer = (typeof SANDBOX_CONTAINERS)[number];
+
 /** Every object the sandbox Worker writes or serves lives under this prefix. */
 export const BUILDS_PREFIX = "builds/";
 

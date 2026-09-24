@@ -2,6 +2,7 @@ import {
   type ArtifactManifest,
   SANDBOX_BUCKET_BINDING,
   SANDBOX_BUCKET_NAME,
+  SANDBOX_CONTAINERS,
   SANDBOX_VERSION_METADATA_BINDING,
   SANDBOX_WORKER_NAME,
   sandboxImage,
@@ -11,25 +12,10 @@ import type { VersionBinding } from "./worker-info.ts";
 import { moduleRules, type WranglerRuleType } from "./wrangler-config.ts";
 
 /**
- * The container classes of the sandbox Worker: builds run on `standard-1`
- * (1/2 vCPU, 4 GiB, 8 GB disk), and on `standard-2` when a catalog entry asks
- * for it. At most two builds of the first size and one of the second run at
- * once. Each class is a Durable Object backed by the sandbox Worker image.
+ * The container classes of the sandbox Worker (shared with the manager, which
+ * finds the same container applications by name).
  */
-export const SANDBOX_CONTAINERS = [
-  {
-    name: `${SANDBOX_WORKER_NAME}-standard-1`,
-    class_name: "Sandbox",
-    instance_type: "standard-1",
-    max_instances: 2,
-  },
-  {
-    name: `${SANDBOX_WORKER_NAME}-standard-2`,
-    class_name: "LargeSandbox",
-    instance_type: "standard-2",
-    max_instances: 1,
-  },
-] as const;
+export { SANDBOX_CONTAINERS };
 
 /** The `wrangler.json` `appflare sandbox enable` deploys the sandbox Worker with. */
 export interface SandboxWranglerConfig {

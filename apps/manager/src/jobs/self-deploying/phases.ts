@@ -38,6 +38,7 @@ import {
   sandboxInfo,
 } from "../../sandbox/binding";
 import { activeSandboxJob, sandboxBusyMessage } from "../../sandbox/busy";
+import { UPDATE_SANDBOX_HINT } from "../../sandbox/connect-copy";
 import { verifyCatalogManifest } from "../../sandbox/verify";
 import { fetchWhole } from "../install/artifact";
 import { resourceId } from "../install/phases";
@@ -258,7 +259,7 @@ export async function checkSandboxForInstallerPhase(
     }
     if (!runsSelfDeploying(info)) {
       throw new JobError(
-        `the sandbox Worker ${info.sandboxVersion} cannot run app installers; update it with \`npx @appflare/cli sandbox enable\``,
+        `the sandbox Worker ${info.sandboxVersion} cannot run app installers; to update it, ${UPDATE_SANDBOX_HINT}`,
       );
     }
     log.info(`The sandbox Worker ${info.sandboxVersion} runs installers in ${info.image}.`);

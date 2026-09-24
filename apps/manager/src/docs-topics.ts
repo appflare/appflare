@@ -66,6 +66,10 @@ export function jobFailureTopic(job: {
       return "appflareUpdateJob";
     case "reconfigure":
       return "settingsChange";
+    case "sandbox_enable":
+    case "sandbox_update":
+    case "sandbox_disable":
+      return "sandboxBuilds";
     default:
       return null;
   }

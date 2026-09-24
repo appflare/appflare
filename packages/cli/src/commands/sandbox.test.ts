@@ -18,7 +18,7 @@ import {
   makeTestKey,
   type TestKey,
 } from "../test-fixtures.ts";
-import { sandboxDisable, sandboxEnable } from "./sandbox.ts";
+import { SETTINGS_ENABLE_NOTE, sandboxDisable, sandboxEnable } from "./sandbox.ts";
 
 const NOT_FOUND = { code: 1, stderr: "This Worker does not exist on your account. [code: 10007]" };
 const TOKEN = "oauth-secret-token";
@@ -238,6 +238,8 @@ describe("sandbox enable", () => {
       "GET https://api.cloudflare.com/client/v4/accounts/acc-1/r2/buckets/appflare-builds",
     ]);
     expect(t.ui.lines).toContain("  The credential can use Containers.");
+    // The manager can do the same from its Settings now; the command says so first.
+    expect(t.ui.lines[0]).toBe(`  ${SETTINGS_ENABLE_NOTE}`);
     // A login without billing access cannot read the subscriptions; Containers answering
     // shows Workers Paid anyway.
     expect(t.ui.lines).toContain("  The account is on Workers Paid.");
