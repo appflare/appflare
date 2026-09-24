@@ -54,8 +54,9 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
  * consumers (no data
  * either; each is removed before the Worker it points at and before the queue
  * it reads), then the Worker (with `?force=true`, which also removes its cron
- * triggers, workers.dev route, secrets, Durable Objects, and Workflows), then
- * each ticked data resource.
+ * triggers, workers.dev route, secrets, and Durable Objects), then each of its
+ * Workflows by name (deleting a Worker leaves the Workflows it ran, with
+ * their instances), then each ticked data resource.
  * The Worker is deleted only when this install recorded it: an install that
  * failed before its upload never owned a Worker of that name, and the account
  * may hold someone else's. An R2 bucket must be empty before it can be
@@ -125,6 +126,12 @@ interface Target {
   kind: DataResourceKind;
   name: string;
   cfId: string | null;
+}
+
+/** A recorded Workflow of the app's Worker, deleted by name after the Worker. */
+interface WorkflowTarget {
+  id: string;
+  name: string;
 }
 
 /** A recorded custom domain: `name` is the hostname, `cfId` the domain's id. */
@@ -228,6 +235,12 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         params.installId,
         live.map((r) => ({ id: r.id, kind: r.kind, name: r.name, cfId: r.cf_id })),
       );
+      // Workflows go after the Worker, by name: Cloudflare keeps a Workflow
+      // (and its instances) when the Worker that runs it is deleted. Those an
+      // app's own installer created are removed by that installer.
+      const workflows: WorkflowTarget[] = live
+        .filter((r) => r.kind === "workflow" && r.managed_by !== "app")
+        .map((r) => ({ id: r.id, name: r.name }));
       const kept = live.filter((r) => r.retained_at !== null).map((r) => r.name);
       // "live": recorded and not deleted yet; "deleted": an earlier run deleted
       // it; "none": this install never recorded a Worker.
@@ -271,6 +284,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         gatewayBindings,
         consumers,
         emailRoutes,
+        workflows,
         kept,
         worker,
         // An install made before builds were recorded is a signed release.
@@ -369,7 +383,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         try {
           await cf().workers.deleteScript(workerName, { force: true });
           log.info(
-            `Deleted Worker "${workerName}" with its routes, cron triggers, secrets, Durable Objects, and Workflows.`,
+            `Deleted Worker "${workerName}" with its routes, cron triggers, secrets, and Durable Objects.`,
           );
         } catch (error) {
           if (!isNotFound(error)) throw error;
@@ -390,11 +404,32 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           and(
             eq(resources.install_id, params.installId),
             isNull(resources.deleted_at),
-            inArray(resources.kind, [...WORKER_BOUND_KINDS]),
+            inArray(
+              resources.kind,
+              WORKER_BOUND_KINDS.filter((kind) => kind !== "workflow"),
+            ),
           ),
         );
       return {};
     });
+
+    // A run started before Workflows were listed deletes none (the Worker step marked them).
+    for (const workflow of started.workflows ?? []) {
+      await run(`delete Workflow ${workflow.name}`, async ({ log, cf, orm }) => {
+        try {
+          await cf().workflows.deleteWorkflow(workflow.name);
+          log.info(`Deleted Workflow "${workflow.name}" with its instances.`);
+        } catch (error) {
+          if (!isNotFound(error)) throw error;
+          log.info(`Workflow "${workflow.name}" was already gone.`);
+        }
+        await orm
+          .update(resources)
+          .set({ deleted_at: new Date(now()) })
+          .where(eq(resources.id, workflow.id));
+        return {};
+      });
+    }
 
     await deleteDataResourcesPhase(steps, started.targets, "uninstall");
 

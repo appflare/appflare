@@ -1,5 +1,6 @@
 import handler from "@tanstack/react-start/server-entry";
 import { accessGate } from "./access/gate";
+import { ensureAuthStorage } from "./auth/storage.server";
 import { runScheduledUpdates, scheduledUpdatesLog } from "./auto-update/cron.server";
 import { refreshCapabilitiesDaily } from "./capabilities/capabilities.server";
 import { CatalogError, refreshCatalogIndex } from "./catalog/index.server";
@@ -67,8 +68,24 @@ async function migrated(env: Env, request?: Request): Promise<Response | null> {
   }
 }
 
+/**
+ * Better Auth's per-isolate storages, created by the first request before
+ * anything else (see auth/storage.server.ts). A failure is logged and the
+ * next request tries again; this request carries on.
+ */
+async function authStorage(ctx: ExecutionContext): Promise<void> {
+  try {
+    await ensureAuthStorage({ waitUntil: (promise) => ctx.waitUntil(promise) });
+  } catch (error) {
+    console.error("could not prepare Better Auth's request storage", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
+    await authStorage(ctx);
     return (
       (await migrated(env, request)) ??
       // Cloudflare Access protection, when on: checked before any routing.

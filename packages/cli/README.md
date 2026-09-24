@@ -135,7 +135,8 @@ D1 database is not rolled back.
 npx @appflare/cli uninstall --yes [--name appflare] [--purge [--i-understand-data-loss]] [--url <url>]
 ```
 
-Deletes the manager Worker (and with it, its Workflow). Apps you installed with
+Deletes the manager Worker, then its Workflow and the job history it holds
+(Cloudflare keeps a Workflow when its Worker is deleted). Apps you installed with
 Appflare are never touched: they keep running, and their resources stay. It first
 checks that the Worker really is an Appflare manager (by its bindings, or by its
 `/api/health` answer) and refuses otherwise, so an app that happens to have the

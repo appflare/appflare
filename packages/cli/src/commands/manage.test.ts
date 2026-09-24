@@ -76,6 +76,7 @@ function setup(overrides: Record<string, FakeHandler> = {}, ui = fakeUi()) {
         ? kvDelete(call)
         : { stdout: JSON.stringify([{ id: "kv-id", title: "appflare-kv" }]) },
     "d1 delete": () => ({}),
+    "workflows delete": () => ({}),
     auth: () => ({ stdout: JSON.stringify({ type: "oauth", token: "oauth-secret" }) }),
     rollback: () => {
       health.version = "0.1.0";
@@ -257,8 +258,48 @@ describe("uninstall", () => {
     expect(report).toContain('KV namespace "appflare-kv" (kv-id)');
     expect(report).toContain("npx wrangler d1 delete appflare");
     expect(report).toContain("npx wrangler kv namespace delete --namespace-id kv-id");
-    expect(report).not.toContain("workflow");
+    expect(report).toContain('Deleted the Workflow "appflare-jobs".');
     expect(report).toContain("were not touched");
+  });
+
+  it("deletes the manager's Workflow after the Worker, since Cloudflare keeps it", async () => {
+    const t = setup();
+    await uninstall({ yes: true }, t.ctx);
+    const deletes = t.calls.filter((c) => c.args.includes("delete")).map((c) => c.args.join(" "));
+    expect(deletes[0]).toMatch(/^delete --name appflare --force/);
+    expect(deletes[1]).toMatch(/^workflows delete appflare-jobs( |$)/);
+  });
+
+  it("counts a Workflow that is already gone as done", async () => {
+    const t = setup({
+      "workflows delete": () => ({
+        code: 1,
+        stderr: "workflows.api.error.workflow.not_found [code: 10200]",
+      }),
+    });
+    await uninstall({ yes: true }, t.ctx);
+    expect(t.results.join("\n")).toContain('The Workflow "appflare-jobs" was already gone.');
+  });
+
+  it("reports a Workflow it could not delete, with the command to finish", async () => {
+    const t = setup({ "workflows delete": () => ({ code: 1, stderr: "[code: 10000] auth" }) });
+    await expect(uninstall({ yes: true }, t.ctx)).rejects.toThrow("could not be deleted");
+    const report = t.results.join("\n");
+    expect(report).toContain('FAILED to delete the Workflow "appflare-jobs"');
+    expect(report).toContain("npx wrangler workflows delete appflare-jobs");
+  });
+
+  it("leaves a Workflow that another Worker runs", async () => {
+    const t = setup({
+      "versions view": (call) => {
+        const v = version(call.args[2] as string, "0.2.0");
+        const jobs = v.resources.bindings.find((b) => b.name === "JOBS") as Record<string, unknown>;
+        jobs.script_name = "someone-else";
+        return { stdout: JSON.stringify(v) };
+      },
+    });
+    await uninstall({ yes: true }, t.ctx);
+    expect(t.calls.some((c) => c.args[0] === "workflows")).toBe(false);
   });
 });
 
@@ -295,6 +336,7 @@ describe("uninstall --purge", () => {
     await uninstall({ yes: true, purge: true }, t.ctx);
     expect(purgeCalls(t.calls)).toEqual([
       "delete --name appflare --force",
+      "workflows delete appflare-jobs",
       "d1 delete appflare -y",
       "kv namespace delete --namespace-id kv-id -y",
     ]);
@@ -320,7 +362,7 @@ describe("uninstall --purge", () => {
     );
     expect(purgeCalls(t.calls)).toEqual([]);
     await uninstall({ yes: true, purge: true, iUnderstandDataLoss: true }, t.ctx);
-    expect(purgeCalls(t.calls)).toHaveLength(3);
+    expect(purgeCalls(t.calls)).toHaveLength(4);
     await expect(uninstall({ yes: true, iUnderstandDataLoss: true }, t.ctx)).rejects.toThrow(
       "only applies to --purge",
     );
@@ -347,6 +389,7 @@ describe("uninstall --purge", () => {
     await uninstall({ yes: true, purge: true, iUnderstandDataLoss: true }, t.ctx);
     expect(purgeCalls(t.calls)).toEqual([
       "delete --name appflare --force",
+      "workflows delete appflare-jobs",
       "d1 delete appflare-db-2 -y",
       "kv namespace delete --namespace-id kv-id -y",
     ]);

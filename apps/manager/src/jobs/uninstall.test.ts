@@ -44,6 +44,8 @@ interface World {
   r2: Map<string, string[]>;
   queues: Set<string>;
   vectorize: Set<string>;
+  /** Workflow names; deleting a Worker leaves them, as Cloudflare does. */
+  workflows: Set<string>;
   /** Custom domains by id: hostname and the Worker it serves. */
   domains: Map<string, { hostname: string; service: string }>;
   calls: string[];
@@ -65,6 +67,7 @@ function fakeWorld(over: Partial<World> = {}) {
     r2: new Map([["cut-files", []]]),
     queues: new Set(["q-1"]),
     vectorize: new Set(["cut-vectors"]),
+    workflows: new Set(["cut-jobs"]),
     domains: new Map(),
     calls: [],
     failOnce: new Map(),
@@ -102,6 +105,8 @@ function fakeWorld(over: Partial<World> = {}) {
     if (m?.[1]) return world.domains.delete(m[1]) ? ok(null) : gone();
     m = /^DELETE \/workers\/scripts\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.scripts.delete(m[1]) ? ok(null) : gone();
+    m = /^DELETE \/workflows\/([^/]+)$/.exec(key);
+    if (m?.[1]) return world.workflows.delete(m[1]) ? ok({ status: "ok" }) : gone();
     m = /^DELETE \/storage\/kv\/namespaces\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.kv.delete(m[1]) ? ok(null) : gone();
     m = /^DELETE \/d1\/database\/([^/]+)$/.exec(key);
@@ -521,6 +526,8 @@ describe("uninstall job", () => {
     expect(r.step.names).toEqual([
       "start",
       "delete Worker cut",
+      // Deleting a Worker leaves its Workflows, so each goes by name right after it.
+      "delete Workflow cut-jobs",
       "delete KV namespace cut-cut-kv",
       "delete D1 database cut-db",
       "empty R2 bucket cut-files page 1",
@@ -545,11 +552,30 @@ describe("uninstall job", () => {
     // A nested key with a space: segments encoded, `/` kept.
     expect(fake.world.calls).toContain("DELETE /r2/buckets/cut-files/objects/photos/0%20a.jpg");
     expect(fake.world.scripts).toEqual(new Set(["appflare"]));
+    expect(fake.world.workflows.size).toBe(0);
     expect(fake.world.kv.size + fake.world.d1.size + fake.world.queues.size).toBe(0);
     expect(fake.world.r2.size).toBe(0);
     expect(fake.world.vectorize.size).toBe(0);
     expect(JSON.stringify(r.logs)).not.toContain(TOKEN);
     expect(r.logs.at(-1)?.message).toBe('Uninstalled "cut".');
+  });
+
+  it("counts a Workflow that is already gone as deleted, and leaves one an app's installer created", async () => {
+    await seedInstall();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, managed_by, created_at)
+       VALUES ('wf-app', 'i1', 'workflow', NULL, 'cut-app-flow', NULL, 'app', 1)`,
+    ).run();
+    const fake = fakeWorld({ workflows: new Set(["cut-app-flow"]) });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.state("wf")).toBe("deleted");
+    expect(r.state("wf-app")).toBe("live");
+    expect(fake.world.calls).toContain("DELETE /workflows/cut-jobs");
+    expect(fake.world.calls).not.toContain("DELETE /workflows/cut-app-flow");
+    expect(fake.world.workflows).toEqual(new Set(["cut-app-flow"]));
+    expect(r.logs.map((l) => l.message)).toContain('Workflow "cut-jobs" was already gone.');
   });
 
   it("keeps unticked resources, marked retained, without touching them", async () => {

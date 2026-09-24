@@ -300,6 +300,14 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
                 : `${stays.customDomains} custom domains of apps, which keep serving them.`}
             </li>
           )}
+          {sandbox.worker === "sandbox" && (
+            <li>
+              The sandbox Worker's container applications, <Mono>appflare-sandbox-standard-1</Mono>{" "}
+              and <Mono>appflare-sandbox-standard-2</Mono>. Cloudflare keeps them when the Worker is
+              deleted, and Appflare does not delete them. Afterwards, delete them in the Cloudflare
+              dashboard under Workers, Containers.
+            </li>
+          )}
         </ul>
       </div>
       <Text variant="secondary">

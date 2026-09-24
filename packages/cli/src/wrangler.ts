@@ -171,6 +171,8 @@ export const wranglerArgs = {
    * The CLI requires `--yes` before running it.
    */
   delete: (worker: string): string[] => ["delete", "--name", worker, "--force"],
+  /** Deletes the Workflow and its instances; asks nothing. Exits non-zero (API code 10200) when it does not exist. */
+  workflowsDelete: (workflow: string): string[] => ["workflows", "delete", workflow],
   d1List: (): string[] => ["d1", "list", "--json"],
   /** `-y` skips wrangler's confirmation; the CLI confirms first. Looks the database up by name. */
   d1Delete: (databaseName: string): string[] => ["d1", "delete", databaseName, "-y"],

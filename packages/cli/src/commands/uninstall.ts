@@ -50,6 +50,26 @@ export function deleteCommandFor(r: ManagerResource): string {
 }
 
 /**
+ * The Workflow the manager Worker runs as `JOBS`, when it runs it itself (a
+ * binding to another Worker's Workflow names that Worker in `script_name`).
+ * Cloudflare keeps a Workflow, with its instances, when the Worker that runs
+ * it is deleted, so uninstall deletes it by name after the Worker.
+ */
+export function ownWorkflowName(bindings: VersionBinding[], workerName: string): string | null {
+  const jobs = bindings.find((b) => b.type === "workflow" && b.name === "JOBS");
+  if (jobs === undefined) return null;
+  const script = jobs.script_name;
+  if (typeof script === "string" && script.length > 0 && script !== workerName) return null;
+  const name = jobs.workflow_name;
+  return typeof name === "string" && name.length > 0 ? name : null;
+}
+
+/** wrangler's output when the Workflow does not exist (API code 10200). */
+function workflowNotFound(output: string): boolean {
+  return /\b10200\b|workflow\.not_found/.test(output);
+}
+
+/**
  * The D1 databases and KV namespaces bound to a Worker version, by id, labelled
  * with their names where the account lists them.
  */
@@ -173,9 +193,10 @@ async function confirmPurge(
 }
 
 /**
- * `appflare uninstall --yes [--purge]`: deletes the manager Worker (its
- * Workflow goes with it). Installed apps and their resources are never
- * touched, and a Worker that is not an Appflare manager is refused.
+ * `appflare uninstall --yes [--purge]`: deletes the manager Worker, then its
+ * Workflow (Cloudflare keeps a Workflow when its Worker is deleted).
+ * Installed apps and their resources are never touched, and a Worker that is
+ * not an Appflare manager is refused.
  *
  * Without `--purge` the manager's own D1 database and KV namespace stay and
  * are listed with the commands that delete them. With `--purge` they are
@@ -248,6 +269,24 @@ export async function uninstall(options: UninstallOptions, ctx: CommandContext):
 
     const deleted = new Set<string>();
     let failed = false;
+    const workflow = deployments === null ? null : ownWorkflowName(bindings, name);
+    if (workflow !== null) {
+      ui.step(`Deleting the Workflow "${workflow}" and its job history`);
+      const result = await wrangler.run(wranglerArgs.workflowsDelete(workflow), {
+        stdin: { kind: "ignore" },
+        output: "capture",
+      });
+      if (result.code === 0) {
+        lines.push(`Deleted the Workflow "${workflow}".`);
+      } else if (workflowNotFound(`${result.stdout}\n${result.stderr}`)) {
+        lines.push(`The Workflow "${workflow}" was already gone.`);
+      } else {
+        failed = true;
+        lines.push(
+          `FAILED to delete the Workflow "${workflow}" (wrangler exit code ${result.code}). Delete it with \`npx wrangler workflows delete ${workflow}\`.`,
+        );
+      }
+    }
     if (options.purge) {
       if (targets.length === 0) {
         lines.push(

@@ -37,38 +37,40 @@ export class ChannelKeyError extends Error {
   override name = "ChannelKeyError";
 }
 
-const keys = new Map<string, Promise<CryptoKey>>();
+/**
+ * Derived keys, per isolate. Only finished keys are kept: a derivation still
+ * in flight belongs to the request that started it, and another request
+ * awaiting it could wait forever if that request ended first.
+ */
+const keys = new Map<string, CryptoKey>();
 
 /** The AES-GCM key for channel credentials, derived once per isolate. */
-export function channelKey(secret: string | undefined): Promise<CryptoKey> {
+export async function channelKey(secret: string | undefined): Promise<CryptoKey> {
   if (secret === undefined || secret.length === 0) {
-    return Promise.reject(new ChannelKeyError("BETTER_AUTH_SECRET is not set on this Worker."));
+    throw new ChannelKeyError("BETTER_AUTH_SECRET is not set on this Worker.");
   }
-  let key = keys.get(secret);
-  if (key === undefined) {
-    key = (async () => {
-      const material = await crypto.subtle.importKey(
-        "raw",
-        new TextEncoder().encode(secret),
-        "HKDF",
-        false,
-        ["deriveKey"],
-      );
-      return crypto.subtle.deriveKey(
-        {
-          name: "HKDF",
-          hash: "SHA-256",
-          salt: new TextEncoder().encode(HKDF_SALT),
-          info: new TextEncoder().encode(HKDF_INFO),
-        },
-        material,
-        { name: "AES-GCM", length: 256 },
-        false,
-        ["encrypt", "decrypt"],
-      );
-    })();
-    keys.set(secret, key);
-  }
+  const known = keys.get(secret);
+  if (known !== undefined) return known;
+  const material = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    "HKDF",
+    false,
+    ["deriveKey"],
+  );
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new TextEncoder().encode(HKDF_SALT),
+      info: new TextEncoder().encode(HKDF_INFO),
+    },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+  keys.set(secret, key);
   return key;
 }
 
