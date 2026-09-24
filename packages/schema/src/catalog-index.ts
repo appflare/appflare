@@ -117,6 +117,23 @@ export const indexAppSchema = z
     build: indexBuildSchema.optional(),
     /** The entry's images; optional so an index published before they existed still parses. */
     media: indexMediaSchema.optional(),
+    /**
+     * The Cloudflare services the app uses (`SERVICE_IDS`), as
+     * `appServices()` works them out: from the artifact's Worker and the
+     * catalog manifest for an `artifact` tier entry, from the catalog
+     * manifest alone for the others. Plain strings, not the enum, so a manager
+     * still reads rows naming services added after it was released (it skips
+     * those). Optional so an index published before the field existed still
+     * parses; a manager without it reads the app's manifests instead.
+     */
+    services: z.array(z.string().min(1)).optional(),
+    /**
+     * The app declares key-value backed Durable Objects, which need Workers
+     * Paid. Written only when true.
+     */
+    keyValueDurableObjects: z.boolean().optional(),
+    /** The catalog manifest's `categories`; optional for the same reason as `services`. */
+    categories: z.array(z.string().min(1)).optional(),
   })
   .superRefine((app, ctx) => {
     if ((app.artifacts === undefined) !== (app.digest === undefined)) {

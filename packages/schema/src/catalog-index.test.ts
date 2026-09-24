@@ -65,6 +65,21 @@ describe("indexJsonSchema", () => {
         .success,
     ).toBe(false);
   });
+
+  it("accepts rows with services and categories, and rows written before they existed", () => {
+    const row = validIndex.apps[0];
+    const facts = {
+      services: ["kv", "a-service-added-later"],
+      keyValueDurableObjects: true,
+      categories: ["utilities"],
+    };
+    expect(indexAppSchema.parse({ ...row, ...facts })).toMatchObject(facts);
+    const before = indexAppSchema.parse(row);
+    expect(before.services).toBeUndefined();
+    expect(before.categories).toBeUndefined();
+    expect(indexAppSchema.safeParse({ ...row, services: [""] }).success).toBe(false);
+    expect(indexAppSchema.safeParse({ ...row, categories: "utilities" }).success).toBe(false);
+  });
 });
 
 describe("indexAppSchema for sandbox tier entries", () => {

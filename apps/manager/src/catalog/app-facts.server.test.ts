@@ -9,7 +9,7 @@ import {
   MANIFEST_FAILURE_TTL_SECONDS,
   manifestFailureKey,
 } from "./app-facts.server";
-import { catalogManifestCacheKey } from "./app-manifest.server";
+import { catalogManifestCacheKey, manifestCacheKey } from "./app-manifest.server";
 
 function artifactApp(slug: string): IndexApp {
   const base = `https://releases.test/${slug}`;
@@ -141,5 +141,46 @@ describe("listAppFacts", () => {
     });
     expect(deferred).toEqual([]);
     expect(upstream.urls).toEqual([]);
+  });
+
+  it("answers rows that publish their services and categories with no KV read or fetch", async () => {
+    const { kv } = fakeKv();
+    const reads: string[] = [];
+    const recording = {
+      ...kv,
+      get: async (key: string) => {
+        reads.push(key);
+        return kv.get(key);
+      },
+    } as unknown as KVNamespace;
+    const published: IndexApp = {
+      ...artifactApp("a"),
+      services: ["kv", "cron"],
+      categories: ["utilities"],
+    };
+    const older = artifactApp("b");
+    const upstream = failingFetch();
+    const deferred: Promise<unknown>[] = [];
+    const facts = await listAppFacts(
+      { KV: recording },
+      [published, older],
+      (p) => deferred.push(p),
+      {
+        fetch: upstream.fetch,
+      },
+    );
+    expect(facts.get("a")).toEqual({
+      primitives: { ids: ["kv", "cron"], complete: true, keyValueDurableObjects: false },
+      categories: ["utilities"],
+    });
+    await Promise.all(deferred);
+    // Only the older row's manifest is looked up, cached or fetched.
+    const olderKeys = [
+      manifestCacheKey(older.digest ?? ""),
+      manifestFailureKey({ slug: "b", version: "1.0.0" }),
+    ];
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every((key) => olderKeys.includes(key))).toBe(true);
+    expect(upstream.slugs()).toEqual(["b"]);
   });
 });

@@ -1,6 +1,6 @@
 import type { FetchLike } from "@appflare/cf-api";
 import type { IndexApp } from "@appflare/schema";
-import { type AppFacts, appFacts } from "./app-facts";
+import { type AppFacts, appFacts, indexHasFacts } from "./app-facts";
 import {
   type AppManifestEnv,
   type AppManifestOptions,
@@ -9,7 +9,9 @@ import {
 } from "./app-manifest.server";
 
 /**
- * The facts of the catalog list's apps. The page answers from the manifests
+ * The facts of the catalog list's apps. The catalog index publishes them per
+ * app, so the list normally reads no manifest at all. For rows of an older
+ * index the page answers from the manifests
  * already cached in KV and never waits on GitHub: manifests not cached yet
  * are fetched after the response (`defer`, the Worker's `waitUntil`), a few
  * per view, so the next view shows them. A manifest that could not be read
@@ -69,9 +71,11 @@ async function warmManifest(
 }
 
 /**
- * The facts of every app, by slug, from cached manifests only (the rest from
- * their index rows). Up to {@link LIST_MANIFEST_FETCHES} uncached manifests
- * that have not failed within the hour are handed to `defer` to be fetched.
+ * The facts of every app, by slug. A row that publishes its services and
+ * categories answers alone, with no KV read. The others (rows from an index
+ * written before the catalog published them) use cached manifests only, and
+ * up to {@link LIST_MANIFEST_FETCHES} uncached manifests that have not failed
+ * within the hour are handed to `defer` to be fetched.
  */
 export async function listAppFacts(
   env: AppManifestEnv,
@@ -79,10 +83,15 @@ export async function listAppFacts(
   defer: (work: Promise<unknown>) => void,
   opts: AppManifestOptions = {},
 ): Promise<Map<string, AppFacts>> {
-  const cached = await Promise.all(apps.map((app) => readCachedCatalogManifest(env, app)));
   const facts = new Map<string, AppFacts>();
+  const needManifest: IndexApp[] = [];
+  for (const app of apps) {
+    if (indexHasFacts(app)) facts.set(app.slug, appFacts(app, null));
+    else needManifest.push(app);
+  }
+  const cached = await Promise.all(needManifest.map((app) => readCachedCatalogManifest(env, app)));
   const uncached: IndexApp[] = [];
-  apps.forEach((app, i) => {
+  needManifest.forEach((app, i) => {
     const read = cached[i] ?? null;
     facts.set(app.slug, appFacts(app, read));
     if (read === null) uncached.push(app);

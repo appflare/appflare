@@ -6,6 +6,7 @@ import {
 } from "../capabilities/capabilities";
 import {
   derivePrimitives,
+  indexPrimitives,
   PRIMITIVE_IDS,
   PRIMITIVE_LABELS,
   primitiveStatus,
@@ -28,94 +29,44 @@ function stored(overrides: Partial<StoredCapabilities> = {}): StoredCapabilities
 const unknownProbe = { state: "unknown", reason: "no-permission", detail: "403" } as const;
 const NOTHING_KNOWN: CapabilitiesView = capabilitiesView(null, null);
 
+// How services are worked out from manifests is tested in @appflare/schema.
 describe("derivePrimitives", () => {
-  it("reads bindings, queue consumers and crons of an artifact (FlareMo's shape)", () => {
-    const primitives = derivePrimitives({
-      bindings: [
-        { type: "d1" },
-        { type: "r2_bucket" },
-        { type: "queue" },
-        { type: "vectorize" },
-        { type: "ratelimit" },
-        { type: "ai" },
-        { type: "plain_text" },
-      ],
-      crons: ["17 3 * * *"],
-      queueConsumers: [{ queue: { binding: "Q" } }],
-      requires: ["r2", "workers-ai"],
-      complete: true,
-    });
-    expect(primitives).toEqual({
-      ids: ["d1", "r2", "vectorize", "queues", "cron", "workers-ai"],
-      complete: true,
+  it("adds whether the sources name everything", () => {
+    expect(derivePrimitives({ requires: ["r2"], crons: ["0 1 * * *"], complete: false })).toEqual({
+      ids: ["r2", "cron"],
+      complete: false,
       keyValueDurableObjects: false,
     });
-  });
-
-  it("names Email Routing and a domain for mail apps (send_email binding, install.emailRouting)", () => {
-    expect(derivePrimitives({ bindings: [{ type: "send_email" }], complete: true }).ids).toEqual([
-      "email-routing",
-    ]);
-    expect(derivePrimitives({ emailRouting: true, complete: true }).ids).toEqual([
-      "email-routing",
-      "zone",
-    ]);
-  });
-
-  it("reads what a token may touch: zone-scoped groups, DNS, Access, storage", () => {
-    // unifi-ddns: no bindings, a token that edits DNS.
-    expect(
-      derivePrimitives({
-        tokenPermissions: [{ name: "Zone.DNS", scope: "zone" }],
-        complete: true,
-      }).ids,
-    ).toEqual(["zone"]);
-    // OpenSEO's installer token.
-    expect(
-      derivePrimitives({
-        requires: ["r2", "containers"],
-        tokenPermissions: [
-          { name: "Workers Scripts", scope: "account" },
-          { name: "Workers KV Storage", scope: "account" },
-          { name: "D1", scope: "account" },
-          { name: "Workers R2 Storage", scope: "account" },
-          { name: "Secrets Store:Edit", scope: "account" },
-          { name: "Account Settings:Read", scope: "account" },
-          { name: "Access: Apps and Policies", scope: "account" },
-        ],
-        complete: false,
-      }).ids,
-    ).toEqual(["kv", "d1", "r2", "containers", "access"]);
-  });
-
-  it("flags key-value backed Durable Objects, and not SQLite-backed ones", () => {
-    const sqlite = derivePrimitives({
-      bindings: [{ type: "durable_object_namespace" }],
-      migrations: [{ tag: "v1", new_sqlite_classes: ["Room"] }],
-      complete: true,
-    });
-    expect(sqlite.keyValueDurableObjects).toBe(false);
-    const kv = derivePrimitives({
-      migrations: [{ tag: "v1", new_classes: ["Room"] }],
-      complete: true,
-    });
-    expect(kv).toEqual({ ids: ["durable-objects"], complete: true, keyValueDurableObjects: true });
-  });
-
-  it("lists each primitive once, in display order, and nothing for a bare Worker", () => {
-    const primitives = derivePrimitives({
-      bindings: [{ type: "queue" }, { type: "kv_namespace" }, { type: "queue" }],
-      queueConsumers: [{}],
-      complete: true,
-    });
-    expect(primitives.ids).toEqual(["kv", "queues"]);
-    expect(derivePrimitives({ bindings: [], complete: true }).ids).toEqual([]);
   });
 
   it("has a label for every primitive and maps every known requirement", () => {
     for (const id of PRIMITIVE_IDS) expect(PRIMITIVE_LABELS[id].length).toBeGreaterThan(0);
     expect(requirementPrimitive("email-routing")).toBe("email-routing");
     expect(requirementPrimitive("something-new")).toBeNull();
+  });
+});
+
+describe("indexPrimitives", () => {
+  it("reads the services an index row publishes, in display order, skipping unknown ids", () => {
+    expect(
+      indexPrimitives({ tier: "artifact", services: ["zone", "d1", "a-service-added-later"] }),
+    ).toEqual({ ids: ["d1", "zone"], complete: true, keyValueDurableObjects: false });
+    expect(
+      indexPrimitives({
+        tier: "artifact",
+        services: ["durable-objects"],
+        keyValueDurableObjects: true,
+      })?.keyValueDurableObjects,
+    ).toBe(true);
+  });
+
+  it("marks a row of an app that is not a prebuilt artifact as incomplete", () => {
+    expect(indexPrimitives({ tier: "self-deploying", services: ["r2"] })?.complete).toBe(false);
+    expect(indexPrimitives({ tier: "sandbox", services: [] })?.complete).toBe(false);
+  });
+
+  it("is null for a row written before the index published services", () => {
+    expect(indexPrimitives({ tier: "artifact" })).toBeNull();
   });
 });
 

@@ -1,4 +1,13 @@
-import type { InstallTier } from "@appflare/schema";
+import {
+  type AppServices,
+  deriveServices,
+  type IndexApp,
+  type InstallTier,
+  requirementService,
+  SERVICE_IDS,
+  type ServiceId,
+  type ServiceSources,
+} from "@appflare/schema";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 
 /**
@@ -8,26 +17,13 @@ import type { CapabilitiesView } from "../capabilities/capabilities";
  * Client-safe: the catalog list and the app page read the same words.
  */
 
-/** Every primitive the catalog shows, in display order: storage, compute, then account-level services. */
-export const PRIMITIVE_IDS = [
-  "kv",
-  "d1",
-  "r2",
-  "durable-objects",
-  "hyperdrive",
-  "vectorize",
-  "queues",
-  "workflows",
-  "cron",
-  "workers-ai",
-  "browser-rendering",
-  "images",
-  "containers",
-  "email-routing",
-  "zone",
-  "access",
-] as const;
-export type PrimitiveId = (typeof PRIMITIVE_IDS)[number];
+/**
+ * Every primitive the catalog shows, in display order. They are the services
+ * `@appflare/schema` works out from an app's manifests and the catalog index
+ * publishes per app, so the catalog and the manager share one list.
+ */
+export const PRIMITIVE_IDS = SERVICE_IDS;
+export type PrimitiveId = ServiceId;
 
 export const PRIMITIVE_LABELS: Record<PrimitiveId, string> = {
   kv: "KV",
@@ -49,126 +45,39 @@ export const PRIMITIVE_LABELS: Record<PrimitiveId, string> = {
 };
 
 /** What an app uses, as far as the manager can tell. */
-export interface AppPrimitives {
-  /** In {@link PRIMITIVE_IDS} order, each once. */
-  ids: PrimitiveId[];
+export interface AppPrimitives extends AppServices {
   /**
-   * False when the list may be missing some: the app's manifest has not been
-   * read yet (only the index's `requires` are known), or it is built in the
-   * account, so its bindings are known only after the build.
+   * False when the list may be missing some: neither the index nor the app's
+   * manifest has named them yet (only the index's `requires` are known), or
+   * the app does not run a prebuilt artifact, so its bindings are known only
+   * once it is built or its installer runs.
    */
   complete: boolean;
-  /**
-   * The app declares key-value backed Durable Objects (`new_classes`), which
-   * need Workers Paid; SQLite-backed ones run on every plan.
-   */
-  keyValueDurableObjects: boolean;
 }
 
-/** Binding types (wrangler's names, as the artifact records them) and the primitive each one is. */
-const BINDING_PRIMITIVES: Readonly<Record<string, PrimitiveId>> = {
-  kv_namespace: "kv",
-  d1: "d1",
-  r2_bucket: "r2",
-  durable_object_namespace: "durable-objects",
-  hyperdrive: "hyperdrive",
-  vectorize: "vectorize",
-  queue: "queues",
-  workflow: "workflows",
-  ai: "workers-ai",
-  browser: "browser-rendering",
-  images: "images",
-  // Sending from a Worker delivers only to addresses verified in Email Routing.
-  send_email: "email-routing",
-};
-
-/** Catalog `requires` values and the primitive each one is. */
-const REQUIREMENT_PRIMITIVES: Readonly<Record<string, PrimitiveId>> = {
-  r2: "r2",
-  zone: "zone",
-  "email-routing": "email-routing",
-  "workers-ai": "workers-ai",
-  "browser-rendering": "browser-rendering",
-  containers: "containers",
-};
-
 /** The primitive a catalog `requires` value is, or null for one this manager does not know. */
-export function requirementPrimitive(requirement: string): PrimitiveId | null {
-  return REQUIREMENT_PRIMITIVES[requirement] ?? null;
+export const requirementPrimitive = requirementService;
+
+/** `deriveServices` from `@appflare/schema`, with whether the sources name everything. */
+export function derivePrimitives(sources: ServiceSources & { complete: boolean }): AppPrimitives {
+  return { ...deriveServices(sources), complete: sources.complete };
 }
 
 /**
- * Words in a token permission group's name and the primitive the group
- * reaches. Names are free text in the catalog manifest ("Workers KV Storage",
- * "Zone.DNS", "Access: Apps and Policies"), so this matches words, not ids.
+ * What an app uses as its index row publishes it, or null for a row written
+ * before the catalog published `services`. Ids this manager does not know yet
+ * are skipped. Complete for an artifact tier app, whose row the catalog worked
+ * out from the artifact's Worker.
  */
-const PERMISSION_PRIMITIVES: ReadonlyArray<readonly [RegExp, PrimitiveId]> = [
-  [/\bkv\b/i, "kv"],
-  [/\bd1\b/i, "d1"],
-  [/\br2\b/i, "r2"],
-  [/\bdurable objects?\b/i, "durable-objects"],
-  [/\bhyperdrive\b/i, "hyperdrive"],
-  [/\bvectorize\b/i, "vectorize"],
-  [/\bqueues?\b/i, "queues"],
-  [/\bworkflows?\b/i, "workflows"],
-  [/\bworkers ai\b/i, "workers-ai"],
-  [/\bbrowser rendering\b/i, "browser-rendering"],
-  [/\bcontainers?\b/i, "containers"],
-  [/\bemail routing\b/i, "email-routing"],
-  [/\bdns\b/i, "zone"],
-  [/\baccess\b/i, "access"],
-];
-
-/** The parts of an artifact and catalog manifest the primitives come from; every field optional. */
-export interface PrimitiveSources {
-  bindings?: ReadonlyArray<{ type: string }>;
-  /** Durable Object migrations, wrangler's shape. */
-  migrations?: ReadonlyArray<Record<string, unknown>>;
-  crons?: readonly string[];
-  /** Queue consumers: the Worker receives messages from a queue. */
-  queueConsumers?: readonly unknown[];
-  requires?: readonly string[];
-  tokenPermissions?: ReadonlyArray<{ name: string; scope?: string | undefined }>;
-  /** The manifest sets `install.emailRouting`: the install routes a domain's mail to the app. */
-  emailRouting?: boolean;
-  /** False when the sources may not name everything the app uses. */
-  complete: boolean;
-}
-
-function declaresKeyValueClasses(migration: Record<string, unknown>): boolean {
-  const added = migration.new_classes;
-  return Array.isArray(added) && added.length > 0;
-}
-
-/** What an app uses, from whichever of its manifests' parts are known. */
-export function derivePrimitives(sources: PrimitiveSources): AppPrimitives {
-  const found = new Set<PrimitiveId>();
-  for (const binding of sources.bindings ?? []) {
-    const id = BINDING_PRIMITIVES[binding.type];
-    if (id !== undefined) found.add(id);
-  }
-  if ((sources.queueConsumers ?? []).length > 0) found.add("queues");
-  if ((sources.crons ?? []).length > 0) found.add("cron");
-  for (const requirement of sources.requires ?? []) {
-    const id = REQUIREMENT_PRIMITIVES[requirement];
-    if (id !== undefined) found.add(id);
-  }
-  if (sources.emailRouting === true) {
-    found.add("email-routing");
-    found.add("zone");
-  }
-  for (const permission of sources.tokenPermissions ?? []) {
-    if (permission.scope === "zone") found.add("zone");
-    for (const [pattern, id] of PERMISSION_PRIMITIVES) {
-      if (pattern.test(permission.name)) found.add(id);
-    }
-  }
-  const keyValueDurableObjects = (sources.migrations ?? []).some(declaresKeyValueClasses);
-  if (keyValueDurableObjects) found.add("durable-objects");
+export function indexPrimitives(
+  app: Pick<IndexApp, "tier" | "services" | "keyValueDurableObjects">,
+): AppPrimitives | null {
+  if (app.services === undefined) return null;
+  const listed = new Set(app.services);
   return {
-    ids: PRIMITIVE_IDS.filter((id) => found.has(id)),
-    complete: sources.complete,
-    keyValueDurableObjects,
+    ids: PRIMITIVE_IDS.filter((id) => listed.has(id)),
+    complete: app.tier === "artifact",
+    keyValueDurableObjects: app.keyValueDurableObjects === true,
   };
 }
 

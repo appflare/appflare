@@ -45,4 +45,38 @@ describe("appFacts", () => {
     expect(facts.primitives.complete).toBe(false);
     expect(facts.primitives.ids).toEqual(["email-routing", "zone"]);
   });
+
+  it("prefers what the index row publishes, with or without a manifest", () => {
+    const row: Parameters<typeof appFacts>[0] = {
+      tier: "artifact",
+      requires: ["r2"],
+      services: ["kv", "r2"],
+      categories: ["utilities"],
+    };
+    const expected = {
+      primitives: { ids: ["kv", "r2"], complete: true, keyValueDurableObjects: false },
+      categories: ["utilities"],
+    };
+    expect(appFacts(row, null)).toEqual(expected);
+    expect(appFacts(row, { catalog, manifest })).toEqual(expected);
+  });
+
+  it("takes each fact the row lacks from the manifest", () => {
+    const facts = appFacts(
+      { tier: "artifact", requires: ["r2"], categories: ["storage"] },
+      { catalog, manifest },
+    );
+    expect(facts.categories).toEqual(["storage"]);
+    expect(facts.primitives.ids).toEqual([
+      "d1",
+      "r2",
+      "cron",
+      "workers-ai",
+      "email-routing",
+      "zone",
+    ]);
+    expect(
+      appFacts({ tier: "artifact", requires: [], services: [] }, { catalog, manifest }).categories,
+    ).toEqual(["email", "bots"]);
+  });
 });
