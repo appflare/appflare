@@ -13,7 +13,7 @@ import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/cap
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { readCachedCatalogApp } from "../catalog/index.server";
 import { createDb } from "../db/client";
-import { installs, jobs, resources, snapshots } from "../db/schema";
+import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
 import {
@@ -51,7 +51,6 @@ import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
 import { settleUnit } from "./units/result";
 import {
-  activeVersionId,
   canarySkipReason,
   diffBindings,
   FULL_DEPLOY_REASON,
@@ -60,11 +59,11 @@ import {
   previewUrl,
   type RecordedResource,
   secretBindings,
-  snapshotRow,
   updatePath,
   updateRefusal,
   vectorizeShapesOf,
 } from "./update/plan";
+import { takeSnapshotPhase } from "./update/snapshot";
 
 /**
  * The `update` job: moves an installed app to the catalog's current version
@@ -364,60 +363,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     }
 
     // 2. Snapshot, before anything changes.
-    const deployed = await run("read current deployment", async ({ log, cf }) => {
-      const versionId = activeVersionId(await cf().versions.listDeployments(workerName));
-      if (versionId === null) {
-        throw new JobError(
-          "no single version serves all of the Worker's traffic (a gradual deployment is in progress); finish or undo it in the Cloudflare dashboard first",
-        );
-      }
-      if (started.recordedVersionId !== null && versionId !== started.recordedVersionId) {
-        log.warn(
-          `Cloudflare serves version ${versionId}, not ${started.recordedVersionId} as Appflare recorded; the snapshot keeps the one serving.`,
-        );
-      }
-      log.info(`Version ${versionId} serves all traffic.`);
-      return { versionId };
-    });
-    const bookmarks: Array<{ databaseId: string; bookmark: string }> = [];
-    for (const db of started.resources) {
-      if (db.kind !== "d1" || db.cfId === null) continue;
-      const databaseId = db.cfId;
-      const got = await run(`bookmark D1 ${db.name}`, async ({ log, cf }) => {
-        const { bookmark } = await cf().d1.bookmark(databaseId);
-        log.info(`Time Travel bookmark of ${db.name}: ${bookmark}.`);
-        return { bookmark };
-      });
-      bookmarks.push({ databaseId, bookmark: got.bookmark });
-    }
-    await run("record snapshot", async ({ log, orm }) => {
-      const [install] = await orm
-        .select()
-        .from(installs)
-        .where(eq(installs.id, params.installId))
-        .limit(1);
-      if (install === undefined) throw new JobError("the install no longer exists");
-      await orm
-        .insert(snapshots)
-        .values(
-          snapshotRow({
-            // One snapshot per update job, so a retried step never inserts twice.
-            id: params.jobId,
-            installId: params.installId,
-            jobId: params.jobId,
-            workerVersionId: deployed.versionId,
-            bookmarks,
-            takenAt: new Date(now()),
-            before: install,
-            doMigrationTag: started.appliedDoTag,
-            targetVersion: params.version,
-          }),
-        )
-        .onConflictDoNothing();
-      log.info(
-        `Snapshot taken: version ${deployed.versionId} and ${bookmarks.length} D1 bookmark(s).`,
-      );
-      return {};
+    await takeSnapshotPhase(steps, {
+      installId: params.installId,
+      jobId: params.jobId,
+      workerName,
+      recordedVersionId: started.recordedVersionId,
+      resources: started.resources,
+      appliedDoTag: started.appliedDoTag,
+      targetVersion: params.version,
     });
 
     // 3. Resources for new bindings; nothing is deleted.

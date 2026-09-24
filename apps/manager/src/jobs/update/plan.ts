@@ -385,6 +385,11 @@ export interface InstallState {
   build_kind?: BuildKind;
   sandbox_image?: string | null;
   built_at?: Date | null;
+  /**
+   * The settings the admin changed (never secrets), null when none; a
+   * rollback puts them back. Absent when the caller does not know them.
+   */
+  config_json?: string | null;
 }
 
 export interface SnapshotInput {
@@ -398,10 +403,11 @@ export interface SnapshotInput {
   before: InstallState;
   /** The Durable Object migration tag the Worker had before the update. */
   doMigrationTag: string | null;
+  /** The catalog version the job moves to (the same one for a settings change). */
   targetVersion: string;
 }
 
-/** The `snapshots` row an update inserts before it changes anything. */
+/** The `snapshots` row an update or a settings change inserts before it changes anything. */
 export function snapshotRow(input: SnapshotInput): typeof snapshots.$inferInsert {
   return {
     id: input.id,
@@ -420,6 +426,9 @@ export function snapshotRow(input: SnapshotInput): typeof snapshots.$inferInsert
     sandbox_image: input.before.sandbox_image ?? null,
     built_at: input.before.built_at ?? null,
     target_catalog_version: input.targetVersion,
+    // "{}" for an install with no changed settings, so a rollback can tell
+    // "none" from "not recorded" (null).
+    config_json: input.before.config_json === undefined ? null : (input.before.config_json ?? "{}"),
   };
 }
 

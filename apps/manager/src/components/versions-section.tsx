@@ -14,6 +14,7 @@ import {
   CheckCircleIcon,
   ClockCounterClockwiseIcon,
   DatabaseIcon,
+  InfoIcon,
   WarningCircleIcon,
   WarningIcon,
   XIcon,
@@ -28,8 +29,8 @@ import { StatusBadge } from "./status-badge";
 
 /**
  * The "Versions" section of `/apps/$installId`: one row per snapshot an
- * update took (when, which catalog and Worker versions it moved between, how
- * the update ended). Admins can roll the Worker back to a snapshot's version,
+ * update or a settings change took (when, which catalog and Worker versions
+ * it moved between, how the job ended). Admins can roll the Worker back to a snapshot's version,
  * and restore each D1 database to the bookmark the snapshot took; the two are
  * separate because a rollback never changes data.
  */
@@ -87,8 +88,8 @@ export function VersionsSection({
         </Text>
       ) : snapshots.length === 0 ? (
         <Text variant="secondary">
-          No updates yet. Each update takes a snapshot first: the Worker version that was serving
-          and a Time Travel bookmark of each D1 database.
+          No updates or settings changes yet. Each takes a snapshot first: the Worker version that
+          was serving, its settings, and a Time Travel bookmark of each D1 database.
         </Text>
       ) : (
         <>
@@ -99,7 +100,7 @@ export function VersionsSection({
                   <Table.Head>Snapshot taken</Table.Head>
                   <Table.Head>Catalog version</Table.Head>
                   <Table.Head>Worker version</Table.Head>
-                  <Table.Head>Update</Table.Head>
+                  <Table.Head>Job</Table.Head>
                   {canAct && <Table.Head />}
                 </Table.Row>
               </Table.Header>
@@ -111,8 +112,17 @@ export function VersionsSection({
                     </Table.Cell>
                     <Table.Cell className="align-top">
                       <span className={mono}>{s.fromCatalogVersion ?? "unknown"}</span>
-                      {" → "}
-                      <span className={mono}>{s.toCatalogVersion ?? "unknown"}</span>
+                      {s.jobKind === "reconfigure" ? (
+                        <Text as="span" variant="secondary" size="sm">
+                          {" "}
+                          (settings change)
+                        </Text>
+                      ) : (
+                        <>
+                          {" → "}
+                          <span className={mono}>{s.toCatalogVersion ?? "unknown"}</span>
+                        </>
+                      )}
                     </Table.Cell>
                     <Table.Cell className="align-top">
                       <span className={mono}>{shortVersion(s.fromVersionId)}</span>
@@ -232,8 +242,9 @@ function RollbackDialog({ install, snapshot }: { install: InstallDetail; snapsho
           description={
             <>
               Deploys Worker version <span className={mono}>{snapshot.fromVersionId}</span> again to
-              all traffic, the version that served before the update on{" "}
-              {formatDateTime(snapshot.takenAt)}.
+              all traffic, the version that served before the{" "}
+              {snapshot.jobKind === "reconfigure" ? "settings change" : "update"} on{" "}
+              {formatDateTime(snapshot.takenAt)}, with the settings and secrets it had then.
             </>
           }
         />
@@ -243,6 +254,14 @@ function RollbackDialog({ install, snapshot }: { install: InstallDetail; snapsho
           title="Databases are not changed"
           description="If the newer version changed its data, the older code may not read it. Restore a database from this snapshot separately if you need its data as it was."
         />
+        {install.emailRoutes.length > 0 && (
+          <Banner
+            variant="secondary"
+            icon={<InfoIcon weight="fill" />}
+            title="Email Routing is not changed"
+            description="A rollback does not move the app's email back to another zone. If email moved since this snapshot, move it back under Settings."
+          />
+        )}
         {error !== null && (
           <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
         )}

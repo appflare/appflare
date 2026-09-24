@@ -39,8 +39,20 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
       <Banner
         variant="secondary"
         icon={<InfoIcon weight="fill" />}
-        title={job?.kind === "rollback" ? "Rolling back" : "Updating"}
-        description="The current version keeps serving until the new one has passed its checks."
+        title={
+          job?.kind === "rollback"
+            ? "Rolling back"
+            : job?.kind === "reconfigure"
+              ? "Saving settings"
+              : "Updating"
+        }
+        description={
+          job?.kind === "reconfigure"
+            ? install.build.kind === "self-deploying"
+              ? "The app's own installer is applying the new settings."
+              : "The current version keeps serving until the one with the new settings has passed its checks."
+            : "The current version keeps serving until the new one has passed its checks."
+        }
         action={
           install.activeJobId !== null ? (
             <LinkButton

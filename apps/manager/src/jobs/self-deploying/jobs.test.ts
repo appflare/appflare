@@ -14,6 +14,8 @@ import { migrations } from "../../db/migrations/index";
 import { SETTING, writeSettings } from "../../db/settings";
 import { replaceAppCredentialsCore } from "../../installs/app-credentials.server";
 import type { StartInstallInput } from "../../installs/install-input";
+import { startReconfigureCore } from "../../installs/reconfigure.server";
+import type { StartReconfigureInput } from "../../installs/reconfigure-input";
 import { catalogOnlyManifest, startInstallCore } from "../../installs/start-install.server";
 import { startUninstallCore } from "../../installs/start-uninstall.server";
 import { startRollbackCore, startUpdateCore } from "../../installs/versions.server";
@@ -33,6 +35,7 @@ import {
 } from "../../test/fake-sandbox";
 import { type FakeStep, fakeStep } from "../../test/fake-step";
 import { type InstallJobParams, runInstall } from "../install";
+import { type ReconfigureJobParams, runReconfigure } from "../reconfigure";
 import type { JobEnv } from "../run-job";
 import { runUninstall, type UninstallJobParams } from "../uninstall";
 import { runUpdate, type UpdateJobParams } from "../update";
@@ -747,5 +750,98 @@ describe("uninstalling a self-deploying app", () => {
     );
     expect(stored.stored).toEqual(["app token", "ADMIN_PASSWORD"]);
     expect([...s.held].sort()).toEqual(["APP_SECRET_id1_ADMIN_PASSWORD", "APP_TOKEN_id1"]);
+  });
+});
+
+describe("changing a self-deploying app's settings", () => {
+  const NEW_SECRET = "new-admin-password-DO-NOT-LEAK";
+
+  async function startChange(input: Partial<StartReconfigureInput>) {
+    let params: ReconfigureJobParams | null = null;
+    await startReconfigureCore(
+      {
+        db: env.DB,
+        sandboxConnected: true,
+        createJob: async (id, p) => {
+          params = p;
+          return { id };
+        },
+        newId: () => "r1",
+      },
+      { installId: "id1", ...input },
+    );
+    if (params === null) throw new Error("no Workflow params");
+    return params as ReconfigureJobParams;
+  }
+
+  it("stores a new secret value on the sandbox Worker and runs the installer again at the installed pin", async () => {
+    const s = setup();
+    await install(s);
+    // The catalog moved on; the change still deploys what is installed.
+    s.catalog = selfDeployingCatalog({ pin: NEW_PIN });
+    const params = await startChange({
+      vars: { HOME_PAGE: "links" },
+      secrets: { set: { ADMIN_PASSWORD: NEW_SECRET }, unset: [] },
+      buildConfirmed: true,
+    });
+    const job = await jobRow("r1");
+    expect(job?.input_json).not.toContain(NEW_SECRET);
+    expect(JSON.parse(job?.input_json ?? "{}")).toMatchObject({
+      selfDeploying: true,
+      sandboxRun: "settings-r1",
+      secrets: { set: ["ADMIN_PASSWORD"], unset: [] },
+    });
+
+    const step = fakeStep();
+    await runReconfigure({
+      params,
+      step,
+      env: s.jobEnv,
+      deps: { fetch: s.w.fetch, now: () => NOW },
+    });
+    expect((await jobRow("r1"))?.status).toBe("succeeded");
+    expect(s.w.secretCalls.at(-1)).toBe("PUT APP_SECRET_id1_ADMIN_PASSWORD");
+    expect(s.sandbox.runs).toHaveLength(2);
+    expect(s.sandbox.runs.at(-1)).toMatchObject({
+      runId: "settings-r1",
+      sha: PIN,
+      stage: STAGE,
+      vars: { HOME_PAGE: "links" },
+      command: ["pnpm", "alchemy", "deploy", "--yes"],
+    });
+    expect(
+      step.names.indexOf("store app secret ADMIN_PASSWORD on the sandbox Worker"),
+    ).toBeLessThan(step.names.indexOf("deploy in sandbox"));
+    const row = await installRow("id1");
+    expect(row).toMatchObject({
+      status: "installed",
+      catalog_version: "1.0.0",
+      pin_sha: PIN,
+      config_json: '{"HOME_PAGE":"links"}',
+    });
+    const snapshots = await env.DB.prepare("SELECT COUNT(*) AS n FROM snapshots").first<{
+      n: number;
+    }>();
+    expect(snapshots?.n).toBe(0);
+    // This run's log is its own; the install's deploy log is kept too.
+    expect(s.sandbox.cleanups.at(-1)).toEqual({
+      installId: "id1",
+      keepVersions: ["settings-r1", "deploy-1.0.0"],
+    });
+    const logs = await logsOf("r1");
+    expect(JSON.stringify(logs)).not.toContain(NEW_SECRET);
+    expect(JSON.stringify(s.sandbox.runs)).not.toContain(NEW_SECRET);
+  });
+
+  it("asks for the installer's cost, and never removes a secret the installer sets", async () => {
+    const s = setup();
+    await install(s);
+    await expect(startChange({ vars: { HOME_PAGE: "links" } })).rejects.toThrow(
+      /own installer applies the settings in your sandbox Worker\. Confirm its cost/,
+    );
+    await expect(
+      startChange({ secrets: { set: {}, unset: ["ADMIN_PASSWORD"] }, buildConfirmed: true }),
+    ).rejects.toThrow(/can be replaced, not removed/);
+    expect((await installRow("id1"))?.status).toBe("installed");
   });
 });

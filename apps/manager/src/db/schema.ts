@@ -67,7 +67,18 @@ export type BuildKind = (typeof BUILD_KINDS)[number];
  */
 export const RESOURCE_MANAGERS = ["appflare", "app"] as const;
 
-export const JOB_KINDS = ["install", "update", "uninstall", "rollback", "self_update"] as const;
+/**
+ * `reconfigure` redeploys an installed app's current version with changed
+ * settings (vars), secrets, or Email Routing zone.
+ */
+export const JOB_KINDS = [
+  "install",
+  "update",
+  "uninstall",
+  "rollback",
+  "self_update",
+  "reconfigure",
+] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
 export const JOB_STATUSES = ["queued", "running", "succeeded", "failed"] as const;
@@ -198,9 +209,10 @@ export const job_logs = sqliteTable(
 );
 
 /**
- * Recovery data taken before an update (glossary: snapshot): the Worker
- * version that was serving, a D1 Time Travel bookmark per database, and the
- * install's catalog state at that moment, so a rollback can put all of it back.
+ * Recovery data taken before an update or a settings change (glossary:
+ * snapshot): the Worker version that was serving, a D1 Time Travel bookmark
+ * per database, and the install's catalog state and settings at that moment,
+ * so a rollback can put all of it back.
  * A snapshot of the manager itself (taken by its self-update) has no install:
  * `install_id` is null, `catalog_version` is the manager's version before the
  * update and `target_catalog_version` the one it moved to.
@@ -233,6 +245,12 @@ export const snapshots = sqliteTable(
     built_at: timestamp("built_at"),
     /** The catalog version the update moved to. */
     target_catalog_version: text("target_catalog_version"),
+    /**
+     * The install's `config_json` (the settings the admin changed) before the
+     * job, `{}` when there were none; null for snapshots taken before it was
+     * recorded.
+     */
+    config_json: text("config_json"),
   },
   (t) => [index("snapshots_install_id_idx").on(t.install_id)],
 );

@@ -186,7 +186,7 @@ function JobPage() {
             {job.workerVersionId !== null && (
               <Row
                 label={
-                  job.kind === "update" || job.kind === "self_update"
+                  job.kind === "update" || job.kind === "self_update" || job.kind === "reconfigure"
                     ? "New Worker version"
                     : "Worker version"
                 }

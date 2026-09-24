@@ -73,6 +73,8 @@ export interface FakeAccount {
   consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
   /** The sandbox Worker's version at 100% (`GET /workers/scripts/appflare-sandbox/deployments`). */
   sandboxDeployed: string;
+  /** Secret names a version has (`GET .../versions/<id>` lists them as `secret_text` bindings). */
+  versionSecrets: Record<string, string[]>;
 }
 
 /** The sandbox Worker's deployed version, unless a test sets another. */
@@ -114,6 +116,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     queues: [],
     consumers: {},
     sandboxDeployed: SANDBOX_DEPLOYED_VERSION,
+    versionSecrets: {},
     ...over,
   };
   const script = `/workers/scripts/${state.worker}`;
@@ -327,6 +330,18 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       };
       list[at] = updated;
       return ok(updated);
+    }
+    const version = new RegExp(`^GET ${script}/versions/([^/]+)$`).exec(key);
+    if (version?.[1] !== undefined) {
+      const id = version[1];
+      const uploaded = state.versions.find((v) => v.id === id);
+      const secrets = state.versionSecrets[id];
+      if (uploaded === undefined && secrets === undefined) return fail(404, "version not found");
+      const bindings = [
+        ...(((uploaded?.metadata.bindings as unknown[] | undefined) ?? []) as unknown[]),
+        ...(secrets ?? []).map((name) => ({ type: "secret_text", name })),
+      ];
+      return ok({ id, resources: { bindings } });
     }
     const schedules = /^GET \/workers\/scripts\/([^/]+)\/schedules$/.exec(key);
     if (schedules?.[1] !== undefined) {

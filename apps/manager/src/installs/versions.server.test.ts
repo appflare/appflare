@@ -432,7 +432,7 @@ describe("restoreDatabaseCore", () => {
         snapshotId: "upd1",
         databaseResourceId: `${INSTALL_ID}:d1:DB`,
       }),
-    ).rejects.toThrow(/update or rollback of this install is running/);
+    ).rejects.toThrow(/update, rollback or settings change of this install is running/);
     expect(fake.state.restores).toEqual([]);
   });
 
@@ -469,6 +469,7 @@ describe("listSnapshotsCore", () => {
         toCatalogVersion: "1.1.0",
         jobId: "upd1",
         jobStatus: "succeeded",
+        jobKind: "update",
         isCurrent: false,
         crossesDoMigration: false,
         databases: [

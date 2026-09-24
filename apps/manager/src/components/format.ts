@@ -71,6 +71,7 @@ export const JOB_KIND_LABELS: Record<string, string> = {
   uninstall: "Uninstall",
   rollback: "Rollback",
   self_update: "Appflare update",
+  reconfigure: "Settings change",
 };
 
 export function jobKindLabel(job: {

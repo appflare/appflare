@@ -8,7 +8,12 @@ import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
 import { QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
 import { healthCheckOfManifest, healthLabel } from "./install/health";
-import { checkLiveHealthPhase, lookupSubdomainPhase, syncCronsPhase } from "./install/phases";
+import {
+  checkLiveHealthPhase,
+  lookupSubdomainPhase,
+  resourceId,
+  syncCronsPhase,
+} from "./install/phases";
 import {
   consumerPlansOf,
   recordedQueues,
@@ -49,6 +54,76 @@ function cronsOf(manifestJson: string | null): string[] | null {
   return parseManifest(manifestJson)?.worker.crons ?? null;
 }
 
+/**
+ * The settings the snapshot's version runs with, when the snapshot recorded
+ * them: a rollback across a settings change must show the values that serve
+ * again. Snapshots taken before settings were recorded leave them as they are.
+ */
+function settingsOf(snapshot: { config_json: string | null }): { config_json?: string } {
+  return snapshot.config_json === null ? {} : { config_json: snapshot.config_json };
+}
+
+/** The names of a version's `secret_text` bindings, from `GET .../versions/{id}`. */
+export function versionSecretNames(version: { resources?: Record<string, unknown> }): string[] {
+  const bindings = version.resources?.bindings;
+  if (!Array.isArray(bindings)) return [];
+  const names = new Set<string>();
+  for (const b of bindings) {
+    if (typeof b !== "object" || b === null) continue;
+    const { type, name } = b as { type?: unknown; name?: unknown };
+    if (type === "secret_text" && typeof name === "string") names.add(name);
+  }
+  return [...names].sort();
+}
+
+/**
+ * Makes the install's secret records name the secrets the version serving
+ * now has: a version carries its own secrets, so rolling back brings back
+ * one removed since and drops one added since. Records of secrets the version
+ * has are live again (created when missing); the others are marked deleted.
+ */
+export async function reconcileSecretRecords(
+  orm: Database,
+  installId: string,
+  names: readonly string[],
+  at: Date,
+): Promise<{ restored: string[]; absent: string[] }> {
+  const rows = await orm
+    .select({ id: resources.id, name: resources.name, deletedAt: resources.deleted_at })
+    .from(resources)
+    .where(and(eq(resources.install_id, installId), eq(resources.kind, "secret")));
+  const has = new Set(names);
+  const restored: string[] = [];
+  const absent: string[] = [];
+  for (const row of rows) {
+    if (has.has(row.name) && row.deletedAt !== null) {
+      await orm.update(resources).set({ deleted_at: null }).where(eq(resources.id, row.id));
+      restored.push(row.name);
+    } else if (!has.has(row.name) && row.deletedAt === null) {
+      await orm.update(resources).set({ deleted_at: at }).where(eq(resources.id, row.id));
+      absent.push(row.name);
+    }
+  }
+  const recorded = new Set(rows.map((r) => r.name));
+  for (const name of names) {
+    if (recorded.has(name)) continue;
+    await orm
+      .insert(resources)
+      .values({
+        id: resourceId(installId, "secret", name),
+        install_id: installId,
+        kind: "secret",
+        binding: name,
+        name,
+        cf_id: null,
+        created_at: at,
+      })
+      .onConflictDoNothing();
+    restored.push(name);
+  }
+  return { restored: restored.sort(), absent: absent.sort() };
+}
+
 export async function runRollback(ctx: JobContext): Promise<void> {
   const parsed = rollbackJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid rollback job payload");
@@ -84,9 +159,14 @@ export async function runRollback(ctx: JobContext): Promise<void> {
               build_kind: snapshot.build_kind,
               sandbox_image: snapshot.sandbox_image,
               built_at: snapshot.built_at,
+              ...settingsOf(snapshot),
               updated_at: at,
             }
-          : { current_version_id: snapshot.worker_version_id, updated_at: at },
+          : {
+              current_version_id: snapshot.worker_version_id,
+              ...settingsOf(snapshot),
+              updated_at: at,
+            },
       )
       .where(eq(installs.id, params.installId));
     await orm
@@ -205,8 +285,38 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       return {};
     });
     deployed = true;
-    await run("record rollback", async ({ orm }) => {
-      await recordServing(orm, new Date(now()));
+    // The version brought its own secrets back; the records follow them so
+    // the install page lists what the Worker has. A failed read only warns.
+    const secretNames = await run("read the version's secrets", async ({ log, cf }) => {
+      try {
+        const names = versionSecretNames(
+          await cf().versions.getVersion(workerName, started.versionId),
+        );
+        log.info(
+          names.length === 0
+            ? `Version ${started.versionId} has no secrets.`
+            : `Version ${started.versionId} has the secrets ${names.join(", ")}.`,
+        );
+        return { names };
+      } catch (error) {
+        log.warn(
+          `Could not read the secrets of version ${started.versionId} (${errorMessage(error)}); the install's list of secrets may not match the Worker until its next settings change.`,
+        );
+        return { names: null };
+      }
+    });
+    await run("record rollback", async ({ log, orm }) => {
+      const at = new Date(now());
+      await recordServing(orm, at);
+      if (secretNames.names !== null) {
+        const changed = await reconcileSecretRecords(orm, params.installId, secretNames.names, at);
+        if (changed.restored.length > 0) {
+          log.info(`Secrets back with this version: ${changed.restored.join(", ")}.`);
+        }
+        if (changed.absent.length > 0) {
+          log.info(`Secrets this version does not have: ${changed.absent.join(", ")}.`);
+        }
+      }
       return {};
     });
 

@@ -12,7 +12,7 @@ import { StepLog } from "./step-log";
  * show a job call this first: an instance that errored, was terminated, or is
  * unknown fails its job; one that completed succeeds it. A failed install job
  * also fails its install, so the install can be retried or uninstalled; a
- * failed update or rollback returns its install from `updating` to
+ * failed update, rollback or settings change returns its install from `updating` to
  * `installed` (the version record changes only inside the job, when it
  * promotes, so it is already right).
  *
@@ -69,9 +69,15 @@ async function reconcileRestore(db: D1Database, row: ActiveJobRow, at: Date): Pr
   return true;
 }
 
-/** An update or rollback that ended, one way or another, leaves its install `installed`. */
+/** Job kinds that hold their install `updating` while they run. */
+const UPDATING_KINDS: ReadonlySet<string> = new Set(["update", "rollback", "reconfigure"]);
+
+/**
+ * An update, rollback or settings change that ended, one way or another,
+ * leaves its install `installed`.
+ */
 async function settleUpdating(orm: Database, row: ActiveJobRow, at: Date): Promise<void> {
-  if ((row.kind !== "update" && row.kind !== "rollback") || row.install_id === null) return;
+  if (!UPDATING_KINDS.has(row.kind) || row.install_id === null) return;
   await orm
     .update(installs)
     .set({ status: "installed", updated_at: at })

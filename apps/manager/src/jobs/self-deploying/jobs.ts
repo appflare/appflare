@@ -77,7 +77,7 @@ function parseVars(json: string | null): Record<string, string> {
 }
 
 /** The health check of the Worker that serves the app, or a recorded skip when it has no URL. */
-async function checkAppHealthPhase(
+export async function checkAppHealthPhase(
   ctx: JobContext,
   steps: JobSteps,
   catalog: CatalogManifest,

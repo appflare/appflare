@@ -48,6 +48,13 @@ describe("runJob", () => {
     );
   });
 
+  it("dispatches reconfigure to its handler, which rejects a payload without its fields", async () => {
+    expect(JOB_HANDLERS.reconfigure.name).toBe("runReconfigure");
+    await expect(runJob({ kind: "reconfigure", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(
+      /invalid reconfigure job payload/,
+    );
+  });
+
   it("dispatches self_update to its handler, which rejects a payload without its fields", async () => {
     expect(JOB_HANDLERS.self_update.name).toBe("runSelfUpdate");
     await expect(runJob({ kind: "self_update", jobId: "job1" }, fakeStep(), env)).rejects.toThrow(

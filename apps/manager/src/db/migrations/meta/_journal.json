@@ -78,6 +78,13 @@
       "when": 1790247210016,
       "tag": "0010_featured_dismissals",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790250030545,
+      "tag": "0011_snapshot_settings",
+      "breakpoints": true
     }
   ]
 }

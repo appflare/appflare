@@ -4,6 +4,7 @@ import type { SigningKey } from "@appflare/schema";
 import { z } from "zod";
 import { JOB_KINDS, type JobKind } from "../db/schema";
 import { runInstall } from "./install";
+import { runReconfigure } from "./reconfigure";
 import { runRollback } from "./rollback";
 import { runSelfUpdate } from "./self-update";
 import { runUninstall } from "./uninstall";
@@ -105,6 +106,7 @@ export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   rollback: runRollback,
   self_update: runSelfUpdate,
   uninstall: runUninstall,
+  reconfigure: runReconfigure,
 };
 
 export async function runJob(

@@ -9,6 +9,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { AppCredentialsCard } from "../../../components/app-credentials-card";
+import { AppSettingsSection } from "../../../components/app-settings-section";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
 import { formatDateTime, jobKindLabel, resourceKindLabel } from "../../../components/format";
@@ -25,11 +26,13 @@ import {
   type InstallDetail,
   type ResourceView,
 } from "../../../installs/installs.functions";
+import { getInstallSettings } from "../../../installs/reconfigure.functions";
 import { listSnapshots } from "../../../installs/versions.functions";
 
 /**
- * `/apps/$installId`: status and health, custom domains, email routes, resources, secret names, jobs,
+ * `/apps/$installId`: status and health, custom domains, email routes, resources, jobs,
  * the Cloudflare token the app needs for itself (if any), the app's post-install notes,
+ * its settings and secret names (admins change them and redeploy under Settings),
  * update and rollback, and, in a danger zone at the bottom (admins), uninstall
  * or finishing an uninstall. After an uninstall it shows the `uninstalled`
  * state, the resources that were kept, and the job history; the danger zone
@@ -37,11 +40,12 @@ import { listSnapshots } from "../../../installs/versions.functions";
  */
 export const Route = createFileRoute("/_app/apps/$installId")({
   loader: async ({ params }) => {
-    const [install, snapshots] = await Promise.all([
+    const [install, snapshots, settings] = await Promise.all([
       getInstall({ data: { installId: params.installId } }),
       listSnapshots({ data: { installId: params.installId } }),
+      getInstallSettings({ data: { installId: params.installId } }),
     ]);
-    return { install, snapshots };
+    return { install, snapshots, settings };
   },
   // The deepest route's title wins over the root's "<page> · Appflare".
   head: ({ loaderData }) => ({
@@ -75,7 +79,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 const mono = "font-mono text-[0.9em]";
 
 function InstallPage() {
-  const { install, snapshots } = Route.useLoaderData();
+  const { install, snapshots, settings } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   const isAdmin = viewer.role === "admin";
   if (install === null) {
@@ -138,6 +142,15 @@ function InstallPage() {
           </LayerCard>
         </Section>
       )}
+      {!gone && settings !== null && (
+        <AppSettingsSection
+          // A saved change reloads the page; the form starts from the new values.
+          key={install.updatedAt}
+          install={install}
+          settings={settings}
+          isAdmin={isAdmin}
+        />
+      )}
       {!gone && isAdmin && <CustomDomainsSection install={install} />}
       {!gone && install.emailRoutes.length > 0 && (
         <Section title="Email">
@@ -173,7 +186,7 @@ function InstallPage() {
           )}
         </Section>
       )}
-      {!gone && (
+      {!gone && settings === null && (
         <Section title="Secrets">
           {install.secretNames.length === 0 ? (
             <Text variant="secondary">No secrets are set.</Text>

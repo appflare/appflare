@@ -153,6 +153,14 @@ export function installerRunId(action: "deploy" | "destroy", version: string): s
 }
 
 /**
+ * The run id of a settings change's installer run: one per job, so it never
+ * writes over the log of the deploy that installed or updated the version.
+ */
+export function settingsRunId(jobId: string): string {
+  return `settings-${jobId.replace(/[^0-9A-Za-z_-]/g, "_")}`.slice(0, 128);
+}
+
+/**
  * The app's settings as the installer gets them: each catalog var's default
  * (placeholders filled in for the Worker that serves the app), replaced by
  * what the admin entered. Empty values are left out.
@@ -182,6 +190,8 @@ export function installerRequest(input: {
   version: string;
   vars: Record<string, string>;
   instanceType?: SelfManagedRunRequest["instanceType"];
+  /** The run's own id; defaults to the action and version (`installerRunId`). */
+  runId?: string;
 }): SelfManagedRunRequest {
   const { catalog } = input;
   const block = installerOf(catalog);
@@ -189,7 +199,7 @@ export function installerRequest(input: {
   const parsed = selfManagedRunRequestSchema.safeParse({
     protocol: SANDBOX_PROTOCOL_VERSION,
     installId: input.installId,
-    runId: installerRunId(input.action, input.version),
+    runId: input.runId ?? installerRunId(input.action, input.version),
     accountId: input.accountId,
     tool: block.tool,
     repo: catalog.repo,

@@ -360,20 +360,26 @@ export function InstallForm({
   );
 }
 
-/** One setting: a text field, or a JSON field checked as the admin types. */
-function VarField({
+/**
+ * One setting: a text field, or a JSON field checked as the admin types.
+ * Shared with the Settings section of the app page.
+ */
+export function VarField({
   field,
   value,
   onChange,
+  when = "when it installs",
 }: {
   field: InstallVarField;
   value: string;
   onChange: (value: string) => void;
+  /** When placeholders are filled in, for the field's note. */
+  when?: string;
 }) {
   const notes = [
     field.help,
     hasPlaceholder(value)
-      ? "{{workerUrl}} and {{workerName}} are filled in with the app's URL and Worker name when it installs."
+      ? `{{workerUrl}} and {{workerName}} are filled in with the app's URL and Worker name ${when}.`
       : undefined,
   ].filter((note) => note !== undefined);
   const description = notes.length > 0 ? notes.join(" ") : undefined;

@@ -249,6 +249,7 @@ describe("snapshot shape", () => {
           artifact_url: "https://artifacts.test/cut-1.0.0.zip",
           artifact_digest: "a".repeat(64),
           pin_sha: "b".repeat(40),
+          config_json: '{"HOME_PAGE":"admin"}',
         },
         doMigrationTag: "v1",
         targetVersion: "1.1.0",
@@ -270,6 +271,7 @@ describe("snapshot shape", () => {
       sandbox_image: null,
       built_at: null,
       target_catalog_version: "1.1.0",
+      config_json: '{"HOME_PAGE":"admin"}',
     });
   });
 

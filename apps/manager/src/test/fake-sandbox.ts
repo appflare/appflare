@@ -54,6 +54,8 @@ export interface FakeSandboxOptions {
    */
   versionIds?: string[];
   progress?: BuildProgress | null;
+  /** Builds already in the bucket (the fixture's bytes), as an earlier install left them. */
+  stored?: Array<{ installId: string; version: string; slug: string }>;
   selfManaged?: {
     /** Names of the secrets the sandbox Worker holds; everything when absent. */
     held?: Set<string>;
@@ -84,6 +86,12 @@ export function fakeSandbox(
   opts: FakeSandboxOptions = {},
 ): FakeSandbox {
   const objects = new Map<string, Uint8Array>();
+  for (const build of opts.stored ?? []) {
+    if (fixture === null) throw new Error("a stored build needs a fixture");
+    const keys = buildKeys(build.installId, build.version, build.slug);
+    objects.set(keys.manifest, fixture.manifestBytes);
+    objects.set(keys.artifact, fixture.zip);
+  }
   const requests: unknown[] = [];
   const cleanups: unknown[] = [];
   const progressCalls: unknown[] = [];

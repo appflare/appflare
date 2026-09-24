@@ -58,7 +58,7 @@ export interface StartJobDeps<P> {
 const BUSY =
   "Another job of this install is queued or running, or its state changed. Reload the page.";
 
-async function readInstall(db: D1Database, installId: string) {
+export async function readInstall(db: D1Database, installId: string) {
   const [install] = await createDb(db)
     .select()
     .from(installs)
@@ -68,12 +68,13 @@ async function readInstall(db: D1Database, installId: string) {
   return install;
 }
 
-function statusRefusal(status: string): string | null {
+/** Why no job may start on an install in `status`, or null when one may. */
+export function statusRefusal(status: string): string | null {
   switch (status) {
     case "installed":
       return null;
     case "updating":
-      return "An update or rollback of this install is running. Wait for it to finish.";
+      return "An update, rollback or settings change of this install is running. Wait for it to finish.";
     case "uninstalled":
       return "This install is uninstalled.";
     case "failed":
@@ -83,12 +84,16 @@ function statusRefusal(status: string): string | null {
   }
 }
 
-/** The claim batch: job row first, then `installed` -> `updating` only if it was inserted. */
-async function claim<P extends { jobId: string }>(
+/**
+ * The claim batch: job row first, then `installed` -> `updating` only if it
+ * was inserted; then the Workflow instance. Refused while any job of the
+ * install is queued or running, or a self-update is.
+ */
+export async function claim<P extends { jobId: string }>(
   deps: StartJobDeps<P>,
   input: {
     installId: string;
-    kind: "update" | "rollback";
+    kind: "update" | "rollback" | "reconfigure";
     inputJson: string;
     params: P;
     /** Runs once the job row is claimed, before the Workflow is created. */
@@ -653,6 +658,8 @@ export interface SnapshotView {
   /** The update job that took it, and how it ended. */
   jobId: string;
   jobStatus: string | null;
+  /** `update`, or `reconfigure` for a settings change (same catalog version). */
+  jobKind: string | null;
   /** Whether the Worker runs this snapshot's version now (no rollback to offer). */
   isCurrent: boolean;
   /**
@@ -694,7 +701,12 @@ export async function listSnapshotsCore(
   if (rows.length === 0) return [];
   const [jobRows, databases] = await Promise.all([
     orm
-      .select({ id: jobs.id, status: jobs.status, versionId: jobs.worker_version_id })
+      .select({
+        id: jobs.id,
+        kind: jobs.kind,
+        status: jobs.status,
+        versionId: jobs.worker_version_id,
+      })
       .from(jobs)
       .where(
         inArray(
@@ -724,6 +736,7 @@ export async function listSnapshotsCore(
       toCatalogVersion: row.target_catalog_version,
       jobId: row.job_id,
       jobStatus: job?.status ?? null,
+      jobKind: job?.kind ?? null,
       isCurrent: row.worker_version_id === install.currentVersionId,
       crossesDoMigration: row.do_migration_tag !== currentDoTag,
       databases: liveDatabases.flatMap((d) => {

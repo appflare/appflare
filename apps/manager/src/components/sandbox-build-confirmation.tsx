@@ -29,8 +29,8 @@ export function SandboxBuildConfirmation({
   checked: boolean;
   onChange(checked: boolean): void;
   disabled?: boolean;
-  /** What the build is for: "install" or "update". */
-  action: "install" | "update";
+  /** What the build (or installer run) is for. */
+  action: "install" | "update" | "settings change";
   /** A build of the app, or a run of its own installer (self-deploying tier). */
   kind?: "build" | "installer";
 }) {

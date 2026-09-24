@@ -106,6 +106,7 @@ describe("rollback job", () => {
     expect(r.step.names).toEqual([
       "start",
       "deploy snapshot version",
+      "read the version's secrets",
       "record rollback",
       "look up workers.dev subdomain",
       "health check 1",
@@ -135,6 +136,51 @@ describe("rollback job", () => {
     // D1 is never touched by a rollback.
     expect(r.fake.state.calls.some((c) => c.includes("/d1/"))).toBe(false);
     expect(r.fake.state.restores).toEqual([]);
+  });
+
+  it("makes the secret records match the secrets the rolled-back version has", async () => {
+    // Since the snapshot: API_KEY was removed (record deleted), NEW_TOKEN added.
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, created_at, deleted_at) VALUES
+         ('i1:secret:ADMIN_PASSWORD', ?1, 'secret', 'ADMIN_PASSWORD', 'ADMIN_PASSWORD', 1, NULL),
+         ('i1:secret:API_KEY', ?1, 'secret', 'API_KEY', 'API_KEY', 1, 5),
+         ('i1:secret:NEW_TOKEN', ?1, 'secret', 'NEW_TOKEN', 'NEW_TOKEN', 6, NULL)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const r = await rollback({
+      versionSecrets: { [OLD_VERSION]: ["ADMIN_PASSWORD", "API_KEY", "LEGACY"] },
+    });
+    expect(r.error).toBeNull();
+    const rows = (
+      await env.DB.prepare(
+        "SELECT name, deleted_at FROM resources WHERE install_id = ?1 AND kind = 'secret' ORDER BY name",
+      )
+        .bind(INSTALL_ID)
+        .all<{ name: string; deleted_at: number | null }>()
+    ).results;
+    expect(rows).toEqual([
+      { name: "ADMIN_PASSWORD", deleted_at: null },
+      { name: "API_KEY", deleted_at: null },
+      { name: "LEGACY", deleted_at: null },
+      { name: "NEW_TOKEN", deleted_at: expect.any(Number) },
+    ]);
+  });
+
+  it("leaves the secret records alone when the version's secrets cannot be read", async () => {
+    await env.DB.prepare(
+      "INSERT INTO resources (id, install_id, kind, binding, name, created_at) VALUES ('i1:secret:A', ?1, 'secret', 'A', 'A', 1)",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    // The fake knows no secrets of the version: it answers 404.
+    const r = await rollback();
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded" });
+    const row = await env.DB.prepare(
+      "SELECT deleted_at FROM resources WHERE id = 'i1:secret:A'",
+    ).first();
+    expect(row).toEqual({ deleted_at: null });
   });
 
   it("gives the snapshot's version the queue consumers it had", async () => {
