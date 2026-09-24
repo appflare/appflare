@@ -17,6 +17,7 @@ import {
   buildArtifactFixture,
 } from "../test/artifact-fixture";
 import { ACC, fakeAccount, SUBDOMAIN, TOKEN } from "../test/fake-account";
+import { type EmailWorld, fakeEmailRouting, ZONE_ID } from "../test/fake-email-routing";
 import {
   CATALOG_MANIFEST_URL,
   type FakeSandbox,
@@ -100,6 +101,8 @@ async function install(opts: {
   catalog?: CatalogManifest;
   /** What the install start sees; defaults to whether the job gets a binding. */
   sandboxConnected?: boolean;
+  /** One zone's Email Routing, answered in front of the account. */
+  email?: Partial<EmailWorld>;
 }) {
   const fixture = opts.fixture ?? (await sandboxApp());
   const catalog = opts.catalog ?? fixture.manifest.catalog;
@@ -115,7 +118,10 @@ async function install(opts: {
     fixture,
     published: opts.published ?? (await publishedCatalog(catalog)).bytes,
   };
-  const fetch = worldFetch(w, account);
+  const email = opts.email === undefined ? null : fakeEmailRouting(ACC, opts.email);
+  const accountFetch = worldFetch(w, account);
+  const fetch = async (input: string, init?: RequestInit): Promise<Response> =>
+    (await email?.handle(new Request(input, init))) ?? accountFetch(input, init);
   const sandbox: FakeSandbox | undefined =
     opts.sandbox === "none" ? undefined : fakeSandbox(fixture, opts.sandbox ?? {});
   let params: InstallJobParams | null = null;
@@ -174,7 +180,20 @@ async function install(opts: {
       .bind(ids.jobId)
       .all<{ level: string; message: string }>()
   ).results;
-  return { ...ids, params: jobParams, fixture, account, sandbox, step, error, job, row, logs };
+  return {
+    ...ids,
+    params: jobParams,
+    fixture,
+    account,
+    sandbox,
+    self,
+    email,
+    step,
+    error,
+    job,
+    row,
+    logs,
+  };
 }
 
 beforeEach(async () => {
@@ -234,6 +253,61 @@ describe("installing a sandbox tier app", () => {
       "Installing",
       "Packing",
     ]);
+  });
+
+  it("sets up Email Routing from the catalog manifest the build carries", async () => {
+    const catalog = { ...baseCatalog().install, tier: "sandbox" as const };
+    const fixture = await sandboxApp({
+      catalog: { install: { ...catalog, emailRouting: { rules: ["inbox"], catchAll: true } } },
+      bindings: [{ type: "send_email", name: "EMAIL" }],
+    });
+    const r = await install({
+      fixture,
+      email: {},
+      input: { emailRouting: { zoneId: ZONE_ID } },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    // The zone is checked after the build is verified (its manifest carries
+    // the entry's `install.emailRouting`) and before anything is created.
+    const names = r.step.names;
+    expect(names.indexOf("verify built manifest")).toBeLessThan(
+      names.indexOf("check Email Routing"),
+    );
+    expect(names.indexOf("check Email Routing")).toBeLessThan(
+      names.indexOf("upload Worker script"),
+    );
+    expect(r.self.calls.map((c) => c.unit)).toContain("inspectEmailRouting");
+    const world = r.email?.world;
+    expect(world?.routingEnabled).toBe(true);
+    expect(world?.rules).toHaveLength(1);
+    expect(world?.rules[0]).toMatchObject({
+      matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+      actions: [{ type: "worker", value: ["cut"] }],
+    });
+    expect(world?.catchAll).toMatchObject({
+      enabled: true,
+      actions: [{ type: "worker", value: ["cut"] }],
+    });
+    const routes = (
+      await env.DB.prepare(
+        "SELECT name FROM resources WHERE install_id = ?1 AND kind = 'email_route' ORDER BY rowid",
+      )
+        .bind(r.installId)
+        .all<{ name: string }>()
+    ).results.map((x) => x.name);
+    expect(routes).toEqual(["example.com", "inbox@example.com", "*@example.com"]);
+  });
+
+  it("refuses to start an app that receives email without a zone", async () => {
+    const fixture = await sandboxApp({
+      catalog: {
+        install: { ...baseCatalog().install, tier: "sandbox", emailRouting: { catchAll: true } },
+      },
+    });
+    await expect(install({ fixture, email: {} })).rejects.toThrow(
+      "Choose the zone whose email it should receive",
+    );
   });
 
   it("refuses to start without the cost confirmation", async () => {

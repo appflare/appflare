@@ -231,7 +231,8 @@ describe("zone options and preview", () => {
       bindings: [{ type: "send_email", name: "EMAIL" }],
     });
     const preview = await previewEmailRoutingCore(api, {
-      manifest: fixture.manifest,
+      catalog: fixture.manifest.catalog,
+      bindings: fixture.manifest.worker.bindings,
       zoneId: ZONE_ID,
       workerName: "inbox",
     });
@@ -249,7 +250,8 @@ describe("zone options and preview", () => {
       bindings: [{ type: "send_email", name: "EMAIL" }],
     });
     const preview = await previewEmailRoutingCore(api, {
-      manifest: fixture.manifest,
+      catalog: fixture.manifest.catalog,
+      bindings: fixture.manifest.worker.bindings,
       zoneId: ZONE_ID,
       workerName: "inbox",
     });
@@ -258,12 +260,41 @@ describe("zone options and preview", () => {
     expect(preview.problems).toEqual([]);
   });
 
+  it("previews a sandbox tier entry, which has no built artifact yet", async () => {
+    const { api, world } = setup({
+      addresses: [{ id: "a1", email: "me@example.net", verified: "2026-01-01T00:00:00Z" }],
+    });
+    const catalog = baseCatalog({
+      install: {
+        ...baseCatalog().install,
+        tier: "sandbox",
+        emailRouting: { rules: ["inbox"], catchAll: true },
+      },
+    });
+    const preview = await previewEmailRoutingCore(api, {
+      catalog,
+      bindings: null,
+      zoneId: ZONE_ID,
+      workerName: "inbox",
+    });
+    expect(preview.problems).toEqual([]);
+    expect(preview.missing).toEqual([]);
+    expect(preview.enablesRouting).toBe(true);
+    expect(preview.addresses).toEqual([{ address: "inbox@example.com", existingRuleId: null }]);
+    expect(preview.catchAll?.state).toBe("free");
+    // Whether it sends email is known only once it is built; nothing is asked of the account for it.
+    expect(preview.sendsEmail).toBeNull();
+    expect(preview.destinations).toBeNull();
+    expect(world.calls.some((c) => c.includes("/email/routing/addresses"))).toBe(false);
+  });
+
   it("refuses to preview an app that does not receive email", async () => {
     const { api } = setup();
     const fixture = await buildArtifactFixture();
     await expect(
       previewEmailRoutingCore(api, {
-        manifest: fixture.manifest,
+        catalog: fixture.manifest.catalog,
+        bindings: fixture.manifest.worker.bindings,
         zoneId: ZONE_ID,
         workerName: "cut",
       }),

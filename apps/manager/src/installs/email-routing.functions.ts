@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { getAppManifest } from "../catalog/app-manifest.server";
+import { getCatalogManifest } from "../catalog/app-manifest.server";
 import { getCatalogIndex } from "../catalog/index.server";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { requireRole } from "../server/auth.server";
@@ -51,10 +51,13 @@ export const previewEmailRouting = createServerFn({ method: "GET" })
       if (!read.ok) throw new EmailRoutingError(read.error);
       const app = read.index.apps.find((a) => a.slug === data.slug);
       if (app === undefined) throw new EmailRoutingError(`"${data.slug}" is not in the catalog.`);
-      const manifest = await getAppManifest(env, app);
-      if (!manifest.ok) throw new EmailRoutingError(manifest.error);
+      // Any tier: a sandbox tier entry has no artifact until the install
+      // builds it, so its bindings (and whether it sends email) are unknown.
+      const entry = await getCatalogManifest(env, app);
+      if (!entry.ok) throw new EmailRoutingError(entry.error);
       return previewEmailRoutingCore(await getCfClient(env), {
-        manifest: manifest.manifest,
+        catalog: entry.catalog,
+        bindings: entry.manifest?.worker.bindings ?? null,
         zoneId: data.zoneId,
         workerName: data.workerName,
       });

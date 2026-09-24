@@ -5,7 +5,7 @@ import {
   type EmailRoutingRule,
   type Zone,
 } from "@appflare/cf-api";
-import type { ArtifactManifest, CatalogEmailRouting } from "@appflare/schema";
+import type { CatalogEmailRouting, CatalogManifest } from "@appflare/schema";
 import { isPermissionError, listAccountZones, unlessForbidden } from "./custom-domains.server";
 import {
   DEFAULT_CATCH_ALL,
@@ -271,36 +271,49 @@ export async function getEmailZoneOptionsCore(api: CloudflareClient): Promise<Em
 export interface EmailRoutingPreview extends EmailRoutingInspection {
   /** Whether Email Routing would be turned on by the install. */
   enablesRouting: boolean;
-  /** The app has a `send_email` binding. */
-  sendsEmail: boolean;
+  /**
+   * The app has a `send_email` binding. Null when that is unknown until the
+   * app is built: a sandbox tier entry's wrangler config is read only by its
+   * build, in this account, after the install starts.
+   */
+  sendsEmail: boolean | null;
   /**
    * The account's verified destination addresses, the ones the app can send
-   * to for free; null when the app does not send email or the token cannot
-   * list them.
+   * to for free; null when the app does not send email (or that is not known
+   * yet) or the token cannot list them.
    */
   destinations: string[] | null;
 }
 
 /**
- * The preview for app `manifest` installed as `workerName` on `zoneId`: the
- * inspection, plus the verified destination addresses when the app sends email.
+ * The preview for the catalog entry `catalog` installed as `workerName` on
+ * `zoneId`: the inspection, plus the verified destination addresses when the
+ * app sends email. `bindings` are the Worker's bindings from the entry's
+ * built artifact; null for an entry that has none yet (a sandbox tier entry
+ * is built in this account during the install), which leaves `sendsEmail`
+ * unknown.
  */
 export async function previewEmailRoutingCore(
   api: CloudflareClient,
-  request: { manifest: ArtifactManifest; zoneId: string; workerName: string },
+  request: {
+    catalog: CatalogManifest;
+    bindings: ReadonlyArray<{ type: string }> | null;
+    zoneId: string;
+    workerName: string;
+  },
 ): Promise<EmailRoutingPreview> {
-  const config = request.manifest.catalog.install.emailRouting;
+  const config = request.catalog.install.emailRouting;
   if (config === undefined) {
-    throw new EmailRoutingError(`${request.manifest.catalog.name} does not receive email.`);
+    throw new EmailRoutingError(`${request.catalog.name} does not receive email.`);
   }
   const inspection = await inspectEmailRouting(api, {
     zoneId: request.zoneId,
     config,
     workerName: request.workerName,
   });
-  const sends = sendsEmail(request.manifest.worker.bindings);
+  const sends = request.bindings === null ? null : sendsEmail(request.bindings);
   let destinations: string[] | null = null;
-  if (sends) {
+  if (sends === true) {
     const listed = await unlessForbidden(() =>
       api.emailRouting.listDestinationAddresses({ verified: true }),
     );

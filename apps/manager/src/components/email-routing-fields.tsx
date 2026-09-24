@@ -274,7 +274,15 @@ function PreviewDetails({
           }
         />
       )}
-      {preview.sendsEmail && (
+      {preview.sendsEmail === null && (
+        <Banner
+          variant="secondary"
+          icon={<InfoIcon weight="fill" />}
+          title="Whether this app also sends email is unknown until it is built"
+          description="The app is built in this account when the install starts. If it sends email, it can send to the account's verified destination addresses for free; sending to other addresses needs Email Sending on Workers Paid."
+        />
+      )}
+      {preview.sendsEmail === true && (
         <Banner
           variant="secondary"
           icon={<InfoIcon weight="fill" />}
