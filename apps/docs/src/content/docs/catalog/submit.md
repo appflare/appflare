@@ -58,6 +58,7 @@ example:
   "repo": "MendyLanda/cut",
   "license": "MIT",
   "categories": ["utilities"],
+  "authors": [{ "name": "Mendy Landa", "github": "MendyLanda" }],
   "maintainers": ["MendyLanda"],
   "source": { "ref": "v0.1.0", "sha": "6056400d47530aa87e4ae5764b37ffca9d00e87f" },
   "install": {
@@ -140,7 +141,13 @@ Points that need care:
   or `workers-ai`.
 - **`tokenPermissions`.** Only for apps that call the Cloudflare API with a token of
   their own.
-- **`maintainers`.** At least one GitHub username. See [CODEOWNERS](#codeowners).
+- **`authors`.** Who wrote the app upstream, shown on the catalog card and the app
+  page: one or more `{ "name", "url"?, "github"?, "x"? }`, with handles written
+  without `@`. Optional; without it the catalog lists the owner of `repo`. Changing
+  only `authors` needs no new release: the catalog index reads it from the manifest.
+- **`maintainers`.** At least one GitHub username: the people who package the app
+  for the catalog, shown as **Packaged by** on the app page. See
+  [CODEOWNERS](#codeowners).
 - **`bump`.** Optional. `"bump": { "autoMerge": true }` lets version bumps merge
   themselves once their checks pass. See [Version bumps](/catalog/bumps/#auto-merge).
 
@@ -179,4 +186,5 @@ release `<slug>@<version>`, and adds it to `index.json`. Managers pick it up at 
 next catalog refresh, within 30 minutes.
 
 To change a published app's manifest, re-pin `source` in the same pull request.
-A metadata-only change to a released version fails to publish.
+A metadata-only change to a released version fails to publish, except a change to
+`authors` alone, which `index.json` reads from the manifest.

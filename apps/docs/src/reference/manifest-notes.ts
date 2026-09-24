@@ -35,7 +35,7 @@ export const manifestFieldNotes: FieldNotes = {
   license: "The upstream license, for example `MIT`.",
   categories: "Free-form labels such as `utilities` or `ai`.",
   maintainers:
-    "GitHub usernames. They own the app's folder in CODEOWNERS and review changes to it, including version bumps.",
+    "GitHub usernames of the people who package the app for the catalog, shown as \"Packaged by\" on the app's page. They own the app's folder in CODEOWNERS and review changes to it, including version bumps.",
   source: "The exact upstream commit the version is built from. The bump bot edits it.",
   install: "How the packer builds the app and what the manager calls it.",
   plan: 'The Workers plan the app needs. Use `"paid"` when it cannot run on the free plan.',

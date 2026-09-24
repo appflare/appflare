@@ -652,6 +652,66 @@ export const catalogBumpSchema = z
   .describe("How the catalog's bump bot treats this entry when its upstream moves.");
 export type CatalogBump = z.infer<typeof catalogBumpSchema>;
 
+/**
+ * A GitHub user or organization login, without the leading `@`: letters,
+ * digits, and single hyphens between them, at most 39 characters.
+ */
+export const githubLoginSchema = z
+  .string()
+  .regex(
+    /^(?=.{1,39}$)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/,
+    "must be a GitHub username or organization, without @",
+  );
+
+/** An X (Twitter) handle, without the leading `@`: at most 15 letters, digits, or `_`. */
+export const xHandleSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_]{1,15}$/, "must be an X handle without @: up to 15 letters, digits, or _");
+
+/**
+ * A person or organization that wrote the app upstream. Shown on the
+ * catalog card (the name) and the app page (the name with its links). Not
+ * the catalog entry's `maintainers`, who package the app for the catalog.
+ */
+export const catalogAuthorSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(100)
+      .describe("The author's name as shown in the catalog, for example `Ben Senescu`."),
+    url: z
+      .url({ protocol: /^https$/, error: "must be an https:// URL" })
+      .regex(/^https:\/\//, "must be an https:// URL")
+      .describe("The author's website, as an https:// URL.")
+      .optional(),
+    github: githubLoginSchema
+      .describe("The author's GitHub username or organization, without @.")
+      .optional(),
+    x: xHandleSchema.describe("The author's X (Twitter) handle, without @.").optional(),
+  })
+  .describe("A person or organization that wrote the app, with optional links.");
+export type CatalogAuthor = z.infer<typeof catalogAuthorSchema>;
+
+/**
+ * The author a manifest without `authors` is listed with: the owner of its
+ * upstream repository, linked to their GitHub profile.
+ */
+export function authorsFromRepo(repo: string): CatalogAuthor[] {
+  const owner = repo.split("/")[0] ?? "";
+  if (owner === "") return [];
+  return githubLoginSchema.safeParse(owner).success
+    ? [{ name: owner, github: owner }]
+    : [{ name: owner }];
+}
+
+/** The app's authors: `authors` when the manifest lists them, else {@link authorsFromRepo}. */
+export function catalogAuthors(
+  manifest: Pick<CatalogManifest, "authors" | "repo">,
+): CatalogAuthor[] {
+  return manifest.authors ?? authorsFromRepo(manifest.repo);
+}
+
 /** The full catalog manifest, `appflare.jsonc`. */
 export const catalogManifestSchema = z.object({
   $schema: z.url().optional(),
@@ -665,6 +725,22 @@ export const catalogManifestSchema = z.object({
   repo: ownerRepoSchema,
   license: z.string().min(1),
   categories: z.array(z.string().min(1)),
+  /**
+   * Who wrote the app upstream, as the catalog shows them. Optional rather
+   * than defaulted so manifests and artifacts written before the field existed
+   * keep the same parsed shape; the catalog index lists the owner of `repo`
+   * when it is omitted ({@link catalogAuthors}).
+   */
+  authors: z
+    .array(catalogAuthorSchema)
+    .min(1)
+    .describe(
+      "Who wrote the app upstream: one or more people or organizations, shown on the catalog " +
+        "card and the app's page. Not the people who package it for the catalog (those are " +
+        "`maintainers`). When omitted, the catalog lists the owner of `repo`.",
+    )
+    .optional(),
+  /** GitHub users who package the app for the catalog; shown as "Packaged by". */
   maintainers: z.array(z.string().min(1)),
   source: catalogSourceSchema,
   install: catalogInstallSchema,

@@ -39,6 +39,42 @@
         "minLength": 1
       }
     },
+    "authors": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "The author's name as shown in the catalog, for example `Ben Senescu`."
+          },
+          "url": {
+            "type": "string",
+            "pattern": "^https:\\/\\/",
+            "description": "The author's website, as an https:// URL."
+          },
+          "github": {
+            "type": "string",
+            "pattern": "^(?=.{1,39}$)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$",
+            "description": "The author's GitHub username or organization, without @."
+          },
+          "x": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_]{1,15}$",
+            "description": "The author's X (Twitter) handle, without @."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "description": "A person or organization that wrote the app, with optional links."
+      },
+      "description": "Who wrote the app upstream: one or more people or organizations, shown on the catalog card and the app's page. Not the people who package it for the catalog (those are `maintainers`). When omitted, the catalog lists the owner of `repo`."
+    },
     "maintainers": {
       "type": "array",
       "items": {

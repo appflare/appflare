@@ -1,4 +1,4 @@
-import { type IndexBuild, SELF_DEPLOYING_TOOLS } from "@appflare/schema";
+import { type CatalogAuthor, type IndexBuild, SELF_DEPLOYING_TOOLS } from "@appflare/schema";
 import {
   Badge,
   Banner,
@@ -18,6 +18,7 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { authorLinks, maintainerProfile } from "../../../catalog/authors";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
 import { requirementLabel, requirementSentence } from "../../../catalog/requirements";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
@@ -205,13 +206,65 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
               <Row label="License">{catalog.license}</Row>
             </>
           )}
-          <Row label="Maintainers">{app.maintainers.join(", ")}</Row>
+          {detail.authors.length > 0 && (
+            <Row label={detail.authors.length === 1 ? "Author" : "Authors"}>
+              <Authors authors={detail.authors} />
+            </Row>
+          )}
+          <Row label="Packaged by">
+            <Maintainers maintainers={app.maintainers} />
+          </Row>
           <Row label="Last checked">
             <InstallCheckBadge lastVerified={app.lastVerified} />
           </Row>
         </dl>
       </LayerCard.Primary>
     </LayerCard>
+  );
+}
+
+/** Each author on its own line: the name, then their website, GitHub, and X where given. */
+function Authors({ authors }: { authors: CatalogAuthor[] }) {
+  return (
+    <span className="grid gap-0.5">
+      {authors.map((author) => (
+        <span key={author.name} className="flex flex-wrap items-baseline gap-x-3">
+          <span>{author.name}</span>
+          {authorLinks(author).map((link) => (
+            <ExternalLink key={link.href} href={link.href}>
+              {link.label}
+            </ExternalLink>
+          ))}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** The catalog maintainers, each linked to GitHub where the handle allows. */
+function Maintainers({ maintainers }: { maintainers: string[] }) {
+  return (
+    <span className="flex flex-wrap gap-x-3">
+      {maintainers.map((handle) => {
+        const profile = maintainerProfile(handle);
+        return profile.href === null ? (
+          <span key={handle}>{profile.label}</span>
+        ) : (
+          <ExternalLink key={handle} href={profile.href}>
+            {profile.label}
+          </ExternalLink>
+        );
+      })}
+    </span>
+  );
+}
+
+function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <Link href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+      <Link.ExternalIcon />
+    </Link>
   );
 }
 

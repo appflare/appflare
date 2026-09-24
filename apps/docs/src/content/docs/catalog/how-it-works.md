@@ -44,7 +44,8 @@ When a change to an app reaches the `main` branch, CI:
    `https://appflare.github.io/catalog/index.json`.
 
 Releases are immutable. A change to `appflare.jsonc` alone, without a new pin, cannot
-be published; re-pin `source` to ship it.
+be published; re-pin `source` to ship it. The one exception is `authors`, which
+`index.json` reads from the current manifest, so a change to it alone needs no release.
 
 ## The manager installs from the artifact
 

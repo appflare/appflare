@@ -8,6 +8,7 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import { authorNames } from "../../../catalog/authors";
 import {
   type CatalogListItem,
   listCatalog,
@@ -89,6 +90,11 @@ function AppCard({ app }: { app: CatalogListItem }) {
       <LayerCard.Primary className="grid gap-4 px-5 py-4">
         <div className="grid gap-1.5">
           <Text>{app.summary}</Text>
+          {app.authors !== undefined && (
+            <Text variant="secondary" size="sm">
+              By {authorNames(app.authors)}
+            </Text>
+          )}
           <Text variant="secondary" size="sm">
             Version <span className="font-mono text-[0.9em]">{app.version}</span>
           </Text>

@@ -14,6 +14,7 @@ Each app shows:
 - **A plan badge.** **Free plan** means the app runs on the Workers free plan.
   **Workers Paid** means it needs the paid plan, usually because its Worker is
   larger than the free plan's 3 MB limit.
+- **The authors**: who wrote the app upstream.
 - **The version** the catalog offers.
 - **Install checked** with a date: the last time the catalog's nightly job
   reinstalled this exact version into a test account and got an answer from it. A
@@ -27,8 +28,9 @@ Each app shows:
 ## The app page
 
 Select **View and install** (or **Details** for an app you already have). The page
-shows the version, the source repository, homepage, license, maintainers, and the
-install check date under **Last checked**, and lists what the install will create: the Worker, plus each KV namespace, D1 database,
+shows the version, the source repository, homepage, license, the app's authors with
+links to their website, GitHub, and X profiles, the catalog maintainers who package it
+under **Packaged by**, and the install check date under **Last checked**, and lists what the install will create: the Worker, plus each KV namespace, D1 database,
 R2 bucket, queue, Vectorize index, and Durable Object class the app binds.
 
 If you already installed the app, **Installed in this account** lists each install

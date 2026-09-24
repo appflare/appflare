@@ -1,5 +1,10 @@
 import { env } from "cloudflare:workers";
-import { type CatalogManifest, hasFixedWorkerName, type IndexApp } from "@appflare/schema";
+import {
+  type CatalogAuthor,
+  type CatalogManifest,
+  hasFixedWorkerName,
+  type IndexApp,
+} from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { asc, ne } from "drizzle-orm";
 import { z } from "zod";
@@ -16,6 +21,7 @@ import { planBindings } from "../jobs/install/bindings";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { getCatalogManifest } from "./app-manifest.server";
+import { appAuthors } from "./authors";
 import { cronTriggerCount } from "./cron-triggers";
 import { CatalogError, getCatalogIndex, refreshCatalogIndex } from "./index.server";
 
@@ -111,6 +117,11 @@ export interface CatalogDetail {
   app: IndexApp | null;
   /** The signed catalog manifest (form definitions, links, license). */
   catalog: CatalogManifest | null;
+  /**
+   * Who wrote the app: the index's authors, else the catalog manifest's
+   * (the owner of its repository when it lists none); empty when neither loaded.
+   */
+  authors: CatalogAuthor[];
   /** Resources the install will create, by binding (`kv`, `d1`, ...). */
   creates: Array<{ kind: string; binding: string }>;
   durableObjects: string[];
@@ -185,6 +196,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
     const accountPlan = await readAccountPlan(createDb(env.DB));
     const empty = {
       catalog: null,
+      authors: [],
       creates: [],
       durableObjects: [],
       instances: [],
@@ -204,7 +216,9 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
     const active = await activeInstalls();
     const instances = active.bySlug.get(app.slug) ?? [];
     const manifest = await getCatalogManifest(env, app);
-    if (!manifest.ok) return { ...empty, app, instances, error: manifest.error };
+    if (!manifest.ok) {
+      return { ...empty, app, authors: appAuthors(app, null), instances, error: manifest.error };
+    }
     const { install } = manifest.catalog;
     const fixed = hasFixedWorkerName(install);
     const [accountNames, subdomain] = await Promise.all([
@@ -220,6 +234,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       ...empty,
       app,
       catalog: manifest.catalog,
+      authors: appAuthors(app, manifest.catalog),
       createsKnown: plan !== null,
       creates: plan?.resources.map((r) => ({ kind: r.kind, binding: r.binding })) ?? [],
       durableObjects: plan?.durableObjects.map((d) => d.className) ?? [],

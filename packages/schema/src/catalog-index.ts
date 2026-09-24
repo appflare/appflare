@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sha256Schema } from "./artifact";
 import {
+  catalogAuthorSchema,
   expectedBuildMinutesSchema,
   gitShaSchema,
   installTierSchema,
@@ -68,6 +69,13 @@ export const indexAppSchema = z
     plan: planSchema,
     requires: z.array(requirementSchema),
     lastVerified: z.iso.datetime().nullable(),
+    /**
+     * Who wrote the app: the catalog manifest's `authors`, or the owner of its
+     * `repo` when it lists none. Catalog CI always writes it; optional so an
+     * index published before the field existed still parses.
+     */
+    authors: z.array(catalogAuthorSchema).min(1).optional(),
+    /** Who packages the app for the catalog. */
     maintainers: z.array(z.string().min(1)),
     build: indexBuildSchema.optional(),
   })

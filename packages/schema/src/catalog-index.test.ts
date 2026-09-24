@@ -47,6 +47,18 @@ describe("indexJsonSchema", () => {
     const result = indexJsonSchema.safeParse(invalid);
     expect(result.success).toBe(false);
   });
+
+  it("accepts rows with authors, and rows written before they existed", () => {
+    const row = validIndex.apps[0];
+    const authors = [{ name: "Mendy Landa", github: "MendyLanda" }];
+    expect(indexAppSchema.parse({ ...row, authors }).authors).toEqual(authors);
+    expect(indexAppSchema.parse(row).authors).toBeUndefined();
+    expect(indexAppSchema.safeParse({ ...row, authors: [] }).success).toBe(false);
+    expect(
+      indexAppSchema.safeParse({ ...row, authors: [{ name: "A", url: "http://a.example" }] })
+        .success,
+    ).toBe(false);
+  });
 });
 
 describe("indexAppSchema for sandbox tier entries", () => {

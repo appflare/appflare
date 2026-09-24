@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   appHealthMode,
   appHealthPath,
+  authorsFromRepo,
+  catalogAuthors,
   catalogManifestSchema,
   DEFAULT_EXPECTED_BUILD_MINUTES,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
@@ -483,5 +485,65 @@ describe("install placeholders", () => {
     const rendered = renderJsonPlaceholders(parsed, values);
     expect(JSON.stringify(rendered)).toBe('{"__proto__":{"u":"inbox"},"a":1}');
     expect(Object.getPrototypeOf(rendered)).toBe(Object.prototype);
+  });
+});
+
+describe("authors", () => {
+  const authors = [
+    { name: "Ben Senescu", github: "bensenescu", x: "bensenescu" },
+    { name: "Every App", url: "https://everyapp.dev/", github: "every-app" },
+  ];
+
+  it("are optional and kept as listed", () => {
+    expect(catalogManifestSchema.parse(validManifest).authors).toBeUndefined();
+    expect(catalogManifestSchema.parse({ ...validManifest, authors }).authors).toEqual(authors);
+  });
+
+  it("need at least one entry, each with a name", () => {
+    expect(catalogManifestSchema.safeParse({ ...validManifest, authors: [] }).success).toBe(false);
+    expect(
+      catalogManifestSchema.safeParse({ ...validManifest, authors: [{ name: "" }] }).success,
+    ).toBe(false);
+    expect(
+      catalogManifestSchema.safeParse({ ...validManifest, authors: [{ github: "octocat" }] })
+        .success,
+    ).toBe(false);
+  });
+
+  it("refuse links that are not https, and handles written with @", () => {
+    for (const author of [
+      { name: "A", url: "http://example.com" },
+      { name: "A", url: "javascript:alert(1)" },
+      { name: "A", github: "@octocat" },
+      { name: "A", github: "octo--cat" },
+      { name: "A", github: "-octocat" },
+      { name: "A", github: "a".repeat(40) },
+      { name: "A", x: "@octocat" },
+      { name: "A", x: "a".repeat(16) },
+      { name: "A", x: "octo-cat" },
+    ]) {
+      expect(
+        catalogManifestSchema.safeParse({ ...validManifest, authors: [author] }).success,
+        JSON.stringify(author),
+      ).toBe(false);
+    }
+    expect(
+      catalogManifestSchema.safeParse({
+        ...validManifest,
+        authors: [{ name: "A", url: "https://a.example", github: "a-b-c", x: "a_b" }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("default to the owner of the repository", () => {
+    expect(catalogAuthors({ repo: "willswire/unifi-ddns" })).toEqual([
+      { name: "willswire", github: "willswire" },
+    ]);
+    expect(catalogAuthors({ repo: "willswire/unifi-ddns", authors })).toEqual(authors);
+  });
+
+  it("derive no GitHub link from an owner GitHub would not accept", () => {
+    expect(authorsFromRepo("not_a.login/repo")).toEqual([{ name: "not_a.login" }]);
+    expect(authorsFromRepo("/repo")).toEqual([]);
   });
 });
