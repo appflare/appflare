@@ -19,10 +19,10 @@ describe("wranglerArgs", () => {
       "/t/project/wrangler.json",
       "--strict",
     ]);
-    expect(wranglerArgs.secretPut("appflare", "SETUP_TOKEN")).toEqual([
+    expect(wranglerArgs.secretPut("appflare", "BETTER_AUTH_SECRET")).toEqual([
       "secret",
       "put",
-      "SETUP_TOKEN",
+      "BETTER_AUTH_SECRET",
       "--name",
       "appflare",
     ]);

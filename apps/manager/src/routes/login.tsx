@@ -2,7 +2,6 @@ import { Button, Input } from "@cloudflare/kumo";
 import { FingerprintIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
-import { z } from "zod";
 import { authClient } from "../auth/client";
 import {
   PASSKEY_MESSAGES,
@@ -10,13 +9,7 @@ import {
   passkeysSupported,
 } from "../auth/passkey-errors";
 import { passwordSignInErrorMessage } from "../auth/sign-in-errors";
-import {
-  AuthError,
-  AuthLayout,
-  AuthSuccess,
-  FULL_WIDTH_ACTION,
-  OrDivider,
-} from "../components/auth-layout";
+import { AuthError, AuthLayout, FULL_WIDTH_ACTION, OrDivider } from "../components/auth-layout";
 import { PasswordInput } from "../components/password-input";
 import { getSetupStatus } from "../server/setup.functions";
 import { loadAppflareVersion } from "../server/version.functions";
@@ -24,10 +17,9 @@ import { loadAppflareVersion } from "../server/version.functions";
 /** `/login`: Better Auth email + password, or a passkey the user added in Settings. */
 export const Route = createFileRoute("/login")({
   staticData: { title: "Sign in" },
-  validateSearch: z.object({ created: z.boolean().optional() }),
   beforeLoad: async () => {
     const [{ needsSetup }, version] = await Promise.all([getSetupStatus(), loadAppflareVersion()]);
-    // Until the first admin exists, everything leads to /setup.
+    // Until the owner exists, everything leads to /setup.
     if (needsSetup) throw redirect({ to: "/setup" });
     return { version };
   },
@@ -35,7 +27,6 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { created } = Route.useSearch();
   const { version } = Route.useRouteContext();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -74,22 +65,14 @@ function LoginPage() {
     await router.navigate({ to: "/" });
   }
 
-  const justCreated = created === true;
   return (
     <AuthLayout
       title="Sign in to Appflare"
       description="Use your email and password, or a passkey."
       version={version}
-      {...(justCreated ? { step: 2 as const } : {})}
     >
       <div className="grid gap-5">
-        {error !== null ? (
-          <AuthError message={error} />
-        ) : (
-          justCreated && (
-            <AuthSuccess title="Admin account created" description="Sign in with it to continue." />
-          )
-        )}
+        {error !== null && <AuthError message={error} />}
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Input label="Email" name="email" type="email" autoComplete="username" required />
           <PasswordInput label="Password" name="password" autoComplete="current-password" />

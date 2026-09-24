@@ -33,6 +33,8 @@ function deps(token: string): TokenFlowDeps {
     db: env.DB,
     token,
     host: new URL(getRequest().url).host,
+    runningVersionId: env.CF_VERSION_METADATA?.id ?? null,
+    setupTokenBound: typeof env.SETUP_TOKEN === "string" && env.SETUP_TOKEN.length > 0,
     onRequest: logCfRequest,
     ...apiBaseOption(env),
   };
@@ -91,8 +93,8 @@ async function recordSetupForUsageData(): Promise<void> {
 }
 
 /**
- * Admin only, setup: verify, store as `CF_API_TOKEN`, record settings, delete
- * `SETUP_TOKEN`, then read the account's capabilities.
+ * Admin only, for a manager whose admin was created before its token: verify,
+ * store as `CF_API_TOKEN`, record settings, then read the account's capabilities.
  */
 export const saveToken = createServerFn({ method: "POST" })
   .validator(cfTokenInput)

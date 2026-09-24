@@ -14,6 +14,7 @@ import { SCHEMA_VERSION_KEY } from "../db/migrate";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
 import { channelCounts } from "../notifications/channels.server";
 import { sandboxBinding } from "../sandbox/binding";
+import { hasAnyUser } from "../server/users.server";
 import {
   EVENT,
   type HeartbeatInput,
@@ -34,7 +35,8 @@ import { isDevBuild, lockOf, newInstallId, type TelemetryEnv } from "./state.ser
  * In order, and nothing is read before the earlier checks pass:
  * 1. a development build sends nothing;
  * 2. `APPFLARE_TELEMETRY=off` (or `DO_NOT_TRACK=1`) on the Worker sends nothing;
- * 3. before setup finished (no Cloudflare token yet) nothing is sent;
+ * 3. before setup finished (no Cloudflare token, or no owner yet: setup
+ *    stores the token first) nothing is sent;
  * 4. a stored `off` sends and writes nothing;
  * 5. otherwise (on, whether or not an admin ever chose): a manager without an
  *    install id (updated from a version without usage data) gets one first;
@@ -291,7 +293,7 @@ export async function reportTelemetry(
 async function report(env: ReportEnv, opts: ReportOptions): Promise<ReportOutcome> {
   const db = createDb(env.DB);
   const settings: ReportSettings = await readSettings(db, REPORT_KEYS);
-  if (settings.cf_token_configured !== "1") {
+  if (settings.cf_token_configured !== "1" || !(await hasAnyUser(db))) {
     return { status: "skipped", reason: "setup not finished" };
   }
   if (settings.telemetry === "off") return { status: "skipped", reason: "turned off" };
@@ -385,7 +387,9 @@ async function report(env: ReportEnv, opts: ReportOptions): Promise<ReportOutcom
     const verifiedAt = settings.cf_token_verified_at
       ? Date.parse(settings.cf_token_verified_at)
       : Number.NaN;
-    const at = Number.isNaN(verifiedAt) ? now : verifiedAt;
+    // Setup ends with whichever step came last: the token (managers set up
+    // admin first) or the owner (token first).
+    const at = Number.isNaN(verifiedAt) ? now : Math.max(verifiedAt, adminAt);
     events.push({
       event: EVENT.setupCompleted,
       timestamp: new Date(at).toISOString(),
@@ -394,7 +398,7 @@ async function report(env: ReportEnv, opts: ReportOptions): Promise<ReportOutcom
         ...base,
         setup_minutes:
           adminAt > 0 && !Number.isNaN(verifiedAt)
-            ? Math.max(0, Math.round((verifiedAt - adminAt) / 60_000))
+            ? Math.round(Math.abs(verifiedAt - adminAt) / 60_000)
             : null,
         cli_install_id_used: env.APPFLARE_INSTALL_ID === installId,
       },

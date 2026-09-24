@@ -47,6 +47,12 @@ const FREE_ACCOUNT: Record<string, FakeRoute> = {
   "GET /zones/zone1/email/routing": {
     result: { id: "r1", tag: "r1", name: "example.com", enabled: true, status: "ready" },
   },
+  [`GET ${A}/workers/subdomain`]: { result: { subdomain: "appflare-dev" } },
+  // No Zero Trust organization yet.
+  [`GET ${A}/access/organizations`]: {
+    status: 404,
+    errors: [{ code: 404, message: "not found" }],
+  },
 };
 
 /** The same account seen with a token that has no "Billing: Read" and no Containers permission. */
@@ -65,6 +71,10 @@ const PAID_ACCOUNT: Record<string, FakeRoute> = {
   },
   // No domain on the account: the Email Routing call is skipped.
   "GET /zones": { result: [], result_info: { page: 1, per_page: 1, total_pages: 0 } },
+  [`GET ${A}/workers/subdomain`]: { result: { subdomain: "paid-team" } },
+  [`GET ${A}/access/organizations`]: {
+    result: { auth_domain: "paid-team.cloudflareaccess.com", name: "paid-team" },
+  },
 };
 
 async function configured() {
@@ -87,9 +97,11 @@ describe("capabilities after a token save", () => {
       MORNING,
     );
     expect(api.keys().sort()).toEqual([
+      `GET ${A}/access/organizations`,
       `GET ${A}/containers/applications`,
       `GET ${A}/r2/buckets`,
       `GET ${A}/subscriptions`,
+      `GET ${A}/workers/subdomain`,
       "GET /zones",
       "GET /zones/zone1/email/routing",
     ]);
@@ -102,6 +114,8 @@ describe("capabilities after a token save", () => {
       workersPlan: { state: "free" },
       zone: { state: "available" },
       emailRouting: { state: "available" },
+      workersDev: { state: "registered", subdomain: "appflare-dev" },
+      zeroTrust: { state: "none" },
       plan: { plan: "free", source: "detected" },
     });
     const row = await readSettings(db, [SETTING.accountCapabilities]);
@@ -136,10 +150,14 @@ describe("a failed check", () => {
       [`GET ${A}/containers/applications`]: { status: 503 },
       [`GET ${A}/subscriptions`]: FORBIDDEN,
       "GET /zones": "network-error",
+      [`GET ${A}/workers/subdomain`]: "network-error",
+      [`GET ${A}/access/organizations`]: FORBIDDEN,
     });
     await refreshCapabilitiesDaily(cf, db, { now: NEXT_DAY, fetch: down.fetch });
     const view = await readCapabilitiesView(db);
     expect(view.checkedAt).toBe(NEXT_DAY.toISOString());
+    expect(view.workersDev).toEqual({ state: "registered", subdomain: "paid-team" });
+    expect(view.zeroTrust).toMatchObject({ state: "unknown", reason: "no-permission" });
     expect(view.r2).toEqual({ state: "enabled" });
     expect(view.containers).toEqual({ state: "available" });
     expect(view.zone).toEqual({ state: "none" });
@@ -192,12 +210,13 @@ describe("the daily check", () => {
     expect(await refreshCapabilitiesDaily(cf, db, { now: EVENING, fetch: api.fetch })).toBe(
       "fresh",
     );
-    // Three account probes and the zone list; no zone, so no Email Routing read.
-    expect(api.calls).toHaveLength(4);
+    // Three account probes, the zone list, workers.dev and Zero Trust; no zone,
+    // so no Email Routing read.
+    expect(api.calls).toHaveLength(6);
     expect(await refreshCapabilitiesDaily(cf, db, { now: NEXT_DAY, fetch: api.fetch })).toBe(
       "checked",
     );
-    expect(api.calls).toHaveLength(8);
+    expect(api.calls).toHaveLength(12);
     expect((await readCapabilitiesView(db)).plan).toEqual({ plan: "paid", source: "detected" });
   });
 

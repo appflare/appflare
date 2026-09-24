@@ -26,13 +26,14 @@ const probesFor = (acc: string, subdomain = "appflare-dev") => ({
 
 async function run(
   routes: Parameters<typeof fakeCloudflare>[0],
-  opts: { knownAccountId?: string | null; host?: string } = {},
+  opts: { knownAccountId?: string | null; host?: string; runningVersionId?: string } = {},
 ) {
   const api = fakeCloudflare(routes);
   const outcome = await verifyCloudflareToken({
     token: TOKEN,
     knownAccountId: opts.knownAccountId ?? null,
     host: opts.host ?? HOST,
+    ...(opts.runningVersionId === undefined ? {} : { runningVersionId: opts.runningVersionId }),
     fetch: api.fetch,
     onRequest: api.onRequest,
   });
@@ -122,17 +123,6 @@ describe("verifyCloudflareToken during setup", () => {
     expect(result).toMatchObject({ ok: true, accountId: ACC, accountName: "Appflare Dev" });
   });
 
-  it("refuses to guess among several accounts on a custom host", async () => {
-    const { result } = await run(
-      {
-        "GET /user/tokens/verify": active(),
-        "GET /accounts": ok([{ id: OTHER }, { id: ACC }]),
-      },
-      { host: "apps.example.com" },
-    );
-    expect(result).toEqual({ ok: false, error: MESSAGES.ambiguous(2) });
-  });
-
   it("rejects a token Cloudflare does not accept anywhere", async () => {
     const { result } = await run({
       "GET /user/tokens/verify": INVALID_TOKEN,
@@ -207,29 +197,22 @@ describe("verifyCloudflareToken during setup", () => {
     });
   });
 
-  it("requires an account token on a custom domain", async () => {
-    const { result } = await run(
-      {
-        "GET /user/tokens/verify": active(),
-        "GET /accounts": ok([{ id: ACC }]),
-        ...probesFor(ACC),
-      },
-      { host: "apps.example.com" },
-    );
-    expect(result).toEqual({ ok: false, error: MESSAGES.customDomainNeedsAccountToken });
-  });
-
-  it("accepts an account token on a custom domain", async () => {
-    const { result } = await run(
-      {
-        "GET /user/tokens/verify": INVALID_TOKEN,
-        "GET /accounts": ok([{ id: ACC, name: "Appflare Dev" }]),
-        [`GET ${A}/tokens/verify`]: active(),
-        ...probesFor(ACC),
-      },
-      { host: "apps.example.com" },
-    );
-    expect(result).toMatchObject({ ok: true, tokenType: "account", accountId: ACC });
+  it("fails closed off workers.dev without the running version, for any token, before any call", async () => {
+    // Even a single-account account token that would verify is refused: nothing
+    // ties its account to this manager.
+    for (const userVerify of [active(), INVALID_TOKEN]) {
+      const { result, api } = await run(
+        {
+          "GET /user/tokens/verify": userVerify,
+          "GET /accounts": ok([{ id: ACC, name: "Appflare Dev" }]),
+          [`GET ${A}/tokens/verify`]: active(),
+          ...probesFor(ACC),
+        },
+        { host: "apps.example.com" },
+      );
+      expect(result).toEqual({ ok: false, error: MESSAGES.cannotVerifyAccount });
+      expect(api.calls).toHaveLength(0);
+    }
   });
 
   it("follows /accounts pagination", async () => {
@@ -316,5 +299,102 @@ describe("verifyCloudflareToken during rotation", () => {
     );
     expect(result).toMatchObject({ ok: true, missing: ["Account Settings: Read"] });
     expect(result.ok && result.accountName).toBeUndefined();
+  });
+});
+
+describe("verifyCloudflareToken during setup, by the running version", () => {
+  const VERSION = "5b1c3a9e-0d2f-4c7a-9e1b-2f3a4b5c6d7e";
+  const NOT_FOUND: FakeRoute = {
+    status: 404,
+    errors: [{ code: 100146, message: "The requested Worker version could not be found" }],
+  };
+  const version = (acc: string, script: string, found: boolean) => ({
+    [`GET /accounts/${acc}/workers/scripts/${script}/versions/${VERSION}`]: found
+      ? ok({ id: VERSION })
+      : NOT_FOUND,
+  });
+
+  it("picks the account holding the running version for a user token that sees several", async () => {
+    const { result, workerName, api } = await run(
+      {
+        "GET /user/tokens/verify": active(),
+        "GET /accounts": ok([
+          { id: OTHER, name: "Personal" },
+          { id: ACC, name: "Appflare Dev" },
+        ]),
+        ...probesFor(ACC),
+        // Both accounts have an `appflare` Worker; only one runs this version.
+        [`GET /accounts/${OTHER}/workers/scripts`]: ok([{ id: "appflare" }]),
+        ...version(OTHER, "appflare", false),
+        ...version(ACC, "appflare", true),
+      },
+      { runningVersionId: VERSION },
+    );
+    expect(result).toMatchObject({ ok: true, tokenType: "user", accountId: ACC });
+    expect(workerName).toBe("appflare");
+    // No workers.dev subdomain comparison is needed.
+    expect(api.keys().some((k) => k.endsWith("/workers/subdomain"))).toBe(false);
+  });
+
+  it("accepts a user token on a custom domain and finds a renamed manager", async () => {
+    const { result, workerName } = await run(
+      {
+        "GET /user/tokens/verify": active(),
+        "GET /accounts": ok([{ id: ACC, name: "Appflare Dev" }]),
+        ...probesFor(ACC),
+        [`GET ${A}/workers/scripts`]: ok([{ id: "cut" }, { id: "team-apps" }]),
+        ...version(ACC, "cut", false),
+        ...version(ACC, "team-apps", true),
+      },
+      { host: "apps.example.com", runningVersionId: VERSION },
+    );
+    expect(result).toMatchObject({ ok: true, tokenType: "user", accountId: ACC });
+    expect(workerName).toBe("team-apps");
+  });
+
+  it("refuses an account token from another account with a plain message", async () => {
+    const { result, workerName } = await run(
+      {
+        "GET /user/tokens/verify": INVALID_TOKEN,
+        "GET /accounts": ok([{ id: OTHER, name: "Personal" }]),
+        [`GET /accounts/${OTHER}/workers/scripts`]: ok([{ id: "appflare" }]),
+        ...version(OTHER, "appflare", false),
+      },
+      { runningVersionId: VERSION },
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: MESSAGES.notThisAccount(`Personal (${OTHER})`, "appflare-dev"),
+    });
+    expect(workerName).toBeNull();
+  });
+
+  it("says so when none of several accounts runs this Appflare", async () => {
+    const { result } = await run(
+      {
+        "GET /user/tokens/verify": active(),
+        "GET /accounts": ok([{ id: OTHER }, { id: ACC }]),
+        [`GET /accounts/${OTHER}/workers/scripts`]: ok([]),
+        [`GET ${A}/workers/scripts`]: ok([{ id: "appflare" }]),
+        ...version(ACC, "appflare", false),
+      },
+      { host: "apps.example.com", runningVersionId: VERSION },
+    );
+    expect(result).toEqual({ ok: false, error: MESSAGES.noAccountRunsThis(2) });
+  });
+
+  it("asks for Workers Scripts when the account's Workers cannot be listed", async () => {
+    const { result } = await run(
+      {
+        "GET /user/tokens/verify": INVALID_TOKEN,
+        "GET /accounts": ok([{ id: ACC, name: "Appflare Dev" }]),
+        [`GET ${A}/workers/scripts`]: FORBIDDEN,
+      },
+      { runningVersionId: VERSION },
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: MESSAGES.workersUnreadable(`Appflare Dev (${ACC})`),
+    });
   });
 });

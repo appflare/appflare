@@ -66,6 +66,12 @@
     // always reach the Worker, even when opened directly in a browser tab.
     "run_worker_first": ["/api/*", "/_serverFn/*"]
   },
+  // The id of the version serving each request. Setup accepts an API token only
+  // when the token's account holds this version, which proves the token is for
+  // the account this manager runs in.
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
   "triggers": {
     "crons": ["*/30 * * * *"]
   },
@@ -77,6 +83,6 @@
   }
   // Secrets (never in this file; set with `pnpm wrangler secret put`):
   //   BETTER_AUTH_SECRET  random, set by the CLI at install
-  //   SETUP_TOKEN         random, set by the CLI at install; guards /setup
   //   CF_API_TOKEN        set by the manager itself from the setup wizard
+  // SETUP_TOKEN, set by older installers, is ignored and removed at setup.
 }

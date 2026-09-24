@@ -1,69 +1,178 @@
 import { env } from "cloudflare:workers";
+import { CloudflareApiError } from "@appflare/cf-api";
 import { createServerFn } from "@tanstack/react-start";
-import { setupTokenMatches } from "../auth/setup-token";
+import {
+  deleteCookie,
+  getCookie,
+  getRequest,
+  getRequestHeader,
+  setCookie,
+} from "@tanstack/react-start/server";
+import { refreshCapabilitiesForNewToken } from "../capabilities/capabilities.server";
+import { apiBaseOption } from "../cloudflare/api-base";
+import { logCfRequest } from "../cloudflare/client.server";
+import type { VerifyTokenResult } from "../cloudflare/verify-token";
 import { createDb } from "../db/client";
-import { releaseSettingsLock, tryAcquireSettingsLock } from "../db/settings-lock";
-import { currentAuth } from "./auth.server";
-import { firstAdminInput, setupTokenInput } from "./schemas";
-import { authErrorMessage, hasAnyUser, makeFirstUserOwner } from "./users.server";
+import { selfUnits } from "../jobs/units/client";
+import { recordSetupNotice } from "../telemetry/state.server";
+import { authSecretBound, currentAuth } from "./auth.server";
+import { cfTokenInput, ownerInput } from "./schemas";
+import {
+  connectCloudflareStep,
+  createOwnerStep,
+  SETUP_CLAIM_COOKIE,
+  SETUP_CLAIM_TTL_MS,
+  SetupError,
+  verifyFirstRunTokenStep,
+} from "./setup.server";
+import { type TokenFlowDeps, TokenStepError } from "./token.server";
+import { authErrorMessage, hasAnyUser } from "./users.server";
 
 /**
- * Setup server functions. These are the only server
- * functions that do not call `requireSession()`: they run before any user exists,
- * and each one refuses to do anything once the first user does. Possession of
- * `SETUP_TOKEN` is the credential.
+ * First-run setup server functions. These are the only
+ * server functions that do not call `requireSession()`: they run before any
+ * user exists, and each refuses once one does. Before the owner exists the
+ * credential is an API token for the account this Worker runs in, then the
+ * setup claim cookie that saving it issued (see `setup.server.ts`).
  */
-
-/** Deliberately vague: never reveals whether the token was missing, wrong, or used. */
-export const INVALID_SETUP_LINK = "This setup link is invalid or has expired.";
-const SETUP_ALREADY_DONE = "Setup is already complete. Sign in instead.";
-
-/** Serializes concurrent first-admin attempts; see `db/settings-lock.ts`. */
-const FIRST_ADMIN_LOCK_KEY = "setup_first_admin_lock";
 
 export const getSetupStatus = createServerFn({ method: "GET" }).handler(async () => {
   return { needsSetup: !(await hasAnyUser(createDb(env.DB))) };
 });
 
+function tokenDeps(token: string): TokenFlowDeps {
+  return {
+    db: env.DB,
+    token,
+    host: new URL(getRequest().url).host,
+    runningVersionId: env.CF_VERSION_METADATA?.id ?? null,
+    setupTokenBound: typeof env.SETUP_TOKEN === "string" && env.SETUP_TOKEN.length > 0,
+    onRequest: logCfRequest,
+    ...apiBaseOption(env),
+  };
+}
+
+/** The client address Cloudflare reports, for the rate limit; `local` in local dev. */
+function clientAddress(): string {
+  return getRequestHeader("cf-connecting-ip") ?? "local";
+}
+
+/** Re-throws refusals as plain errors with their user-facing message. */
+async function userFacing<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (
+      error instanceof SetupError ||
+      error instanceof TokenStepError ||
+      error instanceof CloudflareApiError
+    ) {
+      throw new Error(error.message);
+    }
+    throw error;
+  }
+}
+
 /** POST so the token travels in the body, never in a logged URL. */
-export const checkSetupToken = createServerFn({ method: "POST" })
-  .validator(setupTokenInput)
-  .handler(async ({ data }) => {
-    if (await hasAnyUser(createDb(env.DB))) return { valid: false };
-    return { valid: await setupTokenMatches(data.token, env.SETUP_TOKEN) };
+export const verifySetupToken = createServerFn({ method: "POST" })
+  .validator(cfTokenInput)
+  .handler(async ({ data }): Promise<VerifyTokenResult> => {
+    return userFacing(() =>
+      verifyFirstRunTokenStep({
+        token: tokenDeps(data.token),
+        client: clientAddress(),
+        now: new Date(),
+      }),
+    );
+  });
+
+export interface ConnectedCloudflare {
+  accountId: string;
+  workerName: string;
+  setupTokenRemoved: boolean;
+}
+
+/**
+ * Stores the token and gives this browser the setup claim, then reads the
+ * account's capabilities for the checklist (best effort; never fails the save).
+ */
+export const connectCloudflare = createServerFn({ method: "POST" })
+  .validator(cfTokenInput)
+  .handler(async ({ data }): Promise<ConnectedCloudflare> => {
+    const request = getRequest();
+    const connected = await userFacing(() =>
+      connectCloudflareStep({
+        token: tokenDeps(data.token),
+        client: clientAddress(),
+        now: new Date(),
+        claimCookie: getCookie(SETUP_CLAIM_COOKIE),
+        currentToken: env.CF_API_TOKEN,
+        authSecretBound: authSecretBound(),
+        selfBound: selfUnits(env) !== undefined,
+      }),
+    );
+    setCookie(SETUP_CLAIM_COOKIE, connected.claim.value, {
+      httpOnly: true,
+      secure: new URL(request.url).protocol === "https:",
+      sameSite: "strict",
+      path: "/",
+      maxAge: Math.floor(SETUP_CLAIM_TTL_MS / 1000),
+    });
+    await refreshCapabilitiesForNewToken(createDb(env.DB), {
+      accountId: connected.accountId,
+      token: data.token,
+      onRequest: logCfRequest,
+      ...apiBaseOption(env),
+    });
+    return {
+      accountId: connected.accountId,
+      workerName: connected.workerName,
+      setupTokenRemoved: connected.setupTokenRemoved,
+    };
   });
 
 /**
- * Creates the first user with role `admin` through the admin plugin's
- * `createUser` (public sign-up is disabled, see auth/server.ts), and makes
- * them the owner. Called without request headers, so Better Auth treats it as
- * a trusted server call.
+ * Records that setup finished for usage data: the checklist shows its
+ * notice, and the first scheduled report after this sends "setup completed".
+ * Best effort; it never fails setup.
  */
-export const createFirstAdmin = createServerFn({ method: "POST" })
-  .validator(firstAdminInput)
+async function recordSetupForUsageData(): Promise<void> {
+  try {
+    await recordSetupNotice(env);
+  } catch (error) {
+    console.warn("could not record the usage-data notice at setup", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Creates the owner through the admin plugin's `createUser` (public sign-up
+ * is disabled, see auth/server.ts). Called without request headers, so Better
+ * Auth treats it as a trusted server call. The browser signs in next.
+ */
+export const createOwner = createServerFn({ method: "POST" })
+  .validator(ownerInput)
   .handler(async ({ data }) => {
-    const db = createDb(env.DB);
-    if (await hasAnyUser(db)) throw new Error(SETUP_ALREADY_DONE);
-    if (!(await setupTokenMatches(data.token, env.SETUP_TOKEN))) {
-      throw new Error(INVALID_SETUP_LINK);
-    }
-    const owner = crypto.randomUUID();
-    if (!(await tryAcquireSettingsLock(env.DB, FIRST_ADMIN_LOCK_KEY, owner, 60_000))) {
-      throw new Error("Setup is already in progress. Try again in a minute.");
-    }
     try {
-      if (await hasAnyUser(db)) throw new Error(SETUP_ALREADY_DONE);
-      const { user } = await currentAuth().api.createUser({
-        body: { email: data.email, name: data.name, password: data.password, role: "admin" },
+      await createOwnerStep({
+        d1: env.DB,
+        claimCookie: getCookie(SETUP_CLAIM_COOKIE),
+        now: new Date(),
+        authReady: authSecretBound(),
+        input: data,
+        createUser: async (input) => {
+          const { user } = await currentAuth().api.createUser({
+            body: { ...input, role: "admin" },
+          });
+          return user;
+        },
       });
-      await makeFirstUserOwner(db, user.id);
     } catch (error) {
-      if (error instanceof Error && error.message === SETUP_ALREADY_DONE) throw error;
-      throw new Error(authErrorMessage(error, "Could not create the admin account."));
-    } finally {
-      await releaseSettingsLock(env.DB, FIRST_ADMIN_LOCK_KEY, owner);
+      if (error instanceof SetupError) throw new Error(error.message);
+      throw new Error(authErrorMessage(error, "Could not create the owner account."));
     }
-    // The Cloudflare token step follows after sign-in (token.functions.ts), which
-    // also deletes SETUP_TOKEN from the Worker.
+    deleteCookie(SETUP_CLAIM_COOKIE, { path: "/" });
+    await recordSetupForUsageData();
     return { ok: true as const };
   });

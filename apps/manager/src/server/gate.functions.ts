@@ -1,14 +1,16 @@
 import { env } from "cloudflare:workers";
 import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { getRequest } from "@tanstack/react-start/server";
+import { getCookie, getRequest } from "@tanstack/react-start/server";
+import { z } from "zod";
 import { hasRole } from "../auth/roles";
 import { createDb } from "../db/client";
 import { isCfTokenConfigured } from "../db/settings";
 import { markOpenedToday } from "../telemetry/state.server";
-import { authFor } from "./auth.server";
+import { authSecretBound, sessionFor } from "./auth.server";
 import { appGate, type GateState, setupGate } from "./gate";
 import type { Viewer } from "./session.functions";
+import { SETUP_CLAIM_COOKIE, setupClaimMatches } from "./setup.server";
 import { hasAnyUser } from "./users.server";
 
 async function loadGateState(): Promise<{ state: GateState; viewer: Viewer | null }> {
@@ -16,9 +18,14 @@ async function loadGateState(): Promise<{ state: GateState; viewer: Viewer | nul
   const db = createDb(env.DB);
   const [hasUser, session, tokenConfigured] = await Promise.all([
     hasAnyUser(db),
-    authFor(request).api.getSession({ headers: request.headers }),
+    sessionFor(request),
     isCfTokenConfigured(db),
   ]);
+  // The claim only matters before the owner exists.
+  const setupClaimed =
+    !hasUser && tokenConfigured
+      ? await setupClaimMatches(env.DB, getCookie(SETUP_CLAIM_COOKIE), new Date())
+      : false;
   const isAdmin = session !== null && hasRole(session.user.role, "admin");
   const viewer: Viewer | null =
     session === null
@@ -30,7 +37,17 @@ async function loadGateState(): Promise<{ state: GateState; viewer: Viewer | nul
           role: isAdmin ? "admin" : "member",
           isOwner: isAdmin && session.user.isOwner === true,
         };
-  return { state: { hasUser, signedIn: session !== null, isAdmin, tokenConfigured }, viewer };
+  return {
+    state: {
+      hasUser,
+      signedIn: session !== null,
+      isAdmin,
+      tokenConfigured,
+      setupClaimed,
+      authReady: authSecretBound(),
+    },
+    viewer,
+  };
 }
 
 /**
@@ -55,9 +72,11 @@ export const enterApp = createServerFn({ method: "GET" }).handler(async (): Prom
 });
 
 /** `/setup`'s gate: which step to show, or a redirect. */
-export const enterSetup = createServerFn({ method: "GET" }).handler(async () => {
-  const { state } = await loadGateState();
-  const gate = setupGate(state);
-  if ("redirect" in gate) throw redirect({ to: gate.redirect });
-  return gate;
-});
+export const enterSetup = createServerFn({ method: "GET" })
+  .validator(z.object({ checklist: z.boolean().optional() }))
+  .handler(async ({ data }) => {
+    const { state } = await loadGateState();
+    const gate = setupGate(state, { checklist: data.checklist === true });
+    if ("redirect" in gate) throw redirect({ to: gate.redirect });
+    return gate;
+  });

@@ -2,7 +2,11 @@ import { rmSync } from "node:fs";
 import type { ArtifactManifest } from "@appflare/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildFixtureArtifact } from "./test-fixtures.ts";
-import { buildWranglerConfig, workflowNameFor } from "./wrangler-config.ts";
+import {
+  buildWranglerConfig,
+  FIRST_TOKEN_SETUP_RELEASE,
+  workflowNameFor,
+} from "./wrangler-config.ts";
 
 let manifest: ArtifactManifest;
 let dir: string;
@@ -48,6 +52,20 @@ describe("buildWranglerConfig", () => {
     expect(buildWranglerConfig(manifest, { name: "team-apps" }).services).toEqual([
       { binding: "SELF", service: "team-apps", entrypoint: "JobUnits" },
     ]);
+  });
+
+  it("declares the version metadata binding the manager reads at setup", () => {
+    expect(buildWranglerConfig(manifest, { name: "appflare" }).version_metadata).toEqual({
+      binding: "CF_VERSION_METADATA",
+    });
+  });
+
+  it("refuses a release from before setup started with the API token", () => {
+    const older = structuredClone(manifest);
+    older.worker.bindings = older.worker.bindings.filter((b) => b.type !== "version_metadata");
+    expect(() => buildWranglerConfig(older, { name: "appflare" })).toThrow(
+      `the manager release 1.2.3 predates setup with a Cloudflare API token (it has no version_metadata binding); this installer needs manager ${FIRST_TOKEN_SETUP_RELEASE} or newer`,
+    );
   });
 
   it("replaces a SELF binding the artifact declares with one to this install", () => {

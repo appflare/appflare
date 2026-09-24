@@ -1,8 +1,9 @@
-// Creates apps/manager/.dev.vars (gitignored) with fresh random local-only values
-// for the secrets the manager needs in `pnpm dev`: BETTER_AUTH_SECRET and
-// SETUP_TOKEN. Never overwrites an existing value and never prints the values.
-// Local dev then serves /setup?token=<SETUP_TOKEN from the file>.
-// CF_API_TOKEN is deliberately not written here; paste a token into the setup wizard.
+// Creates apps/manager/.dev.vars (gitignored) with a fresh random local-only value
+// for the secret the manager needs in `pnpm dev`: BETTER_AUTH_SECRET. Never
+// overwrites an existing value and never prints it. Local dev then serves the
+// setup wizard at /setup. CF_API_TOKEN is deliberately not written here; paste a
+// token into the setup wizard (against scripts/fake-cloudflare-api.mjs, any
+// placeholder works).
 //
 // It also adds CATALOG_INDEX_URL and MANAGER_RELEASES_URL, pointing the catalog
 // and Appflare's own release check at the local `scripts/serve-artifacts.mjs`
@@ -38,10 +39,10 @@ if (existsSync(file)) {
   const urls = Object.entries(LOCAL_URLS)
     .map(([n, v]) => `${n}=${v}\n`)
     .join("");
-  writeFileSync(file, `BETTER_AUTH_SECRET=${random()}\nSETUP_TOKEN=${random()}\n${urls}`, {
+  writeFileSync(file, `BETTER_AUTH_SECRET=${random()}\n${urls}`, {
     mode: 0o600,
   });
   console.log(
-    "Wrote apps/manager/.dev.vars (BETTER_AUTH_SECRET, SETUP_TOKEN, CATALOG_INDEX_URL, MANAGER_RELEASES_URL).",
+    "Wrote apps/manager/.dev.vars (BETTER_AUTH_SECRET, CATALOG_INDEX_URL, MANAGER_RELEASES_URL).",
   );
 }

@@ -5,23 +5,18 @@ export function generateBetterAuthSecret(): string {
   return randomBytes(32).toString("base64url");
 }
 
-/** `SETUP_TOKEN`: 24 random bytes as 48 lowercase hex characters. */
-export function generateSetupToken(): string {
-  return randomBytes(24).toString("hex");
-}
-
 /**
- * The link that opens the manager's first-run wizard:
- * `https://<name>.<subdomain>.workers.dev/setup?token=<SETUP_TOKEN>`.
+ * The address to open to finish setup: the manager's own URL,
+ * `https://<name>.<subdomain>.workers.dev/`. It carries no secret: the setup
+ * page asks for a Cloudflare API token for the account the manager runs in.
  */
-export function formatSetupUrl(workerUrl: string, setupToken: string): string {
+export function formatManagerUrl(workerUrl: string): string {
   const url = new URL(workerUrl);
   if (url.protocol !== "https:") {
     throw new Error(`expected an https:// Worker URL, got ${workerUrl}`);
   }
-  url.pathname = "/setup";
+  url.pathname = "/";
   url.search = "";
   url.hash = "";
-  url.searchParams.set("token", setupToken);
   return url.toString();
 }

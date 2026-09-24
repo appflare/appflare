@@ -16,6 +16,12 @@ export const SETTING = {
   cfTokenConfigured: "cf_token_configured",
   /** ISO 8601 time of the last successful verify-and-store. */
   cfTokenVerifiedAt: "cf_token_verified_at",
+  /**
+   * JSON `{ hash, expiresAt }`: the setup claim issued to the browser that
+   * connected Cloudflare before any user existed (server/setup.server.ts).
+   * Only that browser may create the owner. Deleted once the owner exists.
+   */
+  setupClaim: "setup_claim",
   /** The account's workers.dev subdomain (`<name>.<subdomain>.workers.dev`), cached by the install job. */
   accountSubdomain: "account_subdomain",
   /**

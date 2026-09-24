@@ -29,14 +29,14 @@
   },
   "plan": "free",
   "requires": [],
-  // BETTER_AUTH_SECRET and SETUP_TOKEN are set by the CLI at install; CF_API_TOKEN
-  // is stored by the manager itself from the setup wizard.
+  // BETTER_AUTH_SECRET is set by the CLI at install; CF_API_TOKEN is stored by
+  // the manager itself from the setup wizard.
   "secrets": [],
   "vars": [],
   "postInstall": [
     {
       "type": "markdown",
-      "content": "Open {{workerUrl}}/setup with the setup link the installer printed to create the first admin and connect your Cloudflare API token."
+      "content": "Open {{workerUrl}} to finish setup: paste a Cloudflare API token for this account, then create the owner account."
     }
   ],
   "tokenPermissions": []

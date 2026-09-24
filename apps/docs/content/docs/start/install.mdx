@@ -71,10 +71,11 @@ and the same commands as `npx @appflare/cli`. For example,
    passes.
 4. Deploys the manager with `wrangler deploy` from a temporary directory. Wrangler
    creates the D1 database and KV namespace.
-5. Sets two secrets on the manager to random values: `BETTER_AUTH_SECRET`, which
-   signs sessions, and `SETUP_TOKEN`, which guards the setup wizard.
-6. Waits for the manager to answer, then prints the setup link:
-   `https://appflare.<your-subdomain>.workers.dev/setup?token=…`
+5. Sets one secret on the manager to a random value: `BETTER_AUTH_SECRET`, which
+   signs sessions.
+6. Waits for the manager to answer, then prints its address,
+   `https://appflare.<your-subdomain>.workers.dev/`. Open it to finish setup. The
+   address carries no secret.
 
 The temporary directory is removed at the end. Nothing is written to your current
 directory, and no git repository is created.
@@ -93,14 +94,10 @@ to `api.github.com`.
 
 ## The setup wizard
 
-Open the setup link. It works once.
+Open the manager's address. Until setup is finished, every page of the manager
+leads to the setup wizard. It has three steps.
 
-### 1. Create the admin account
-
-Enter a name, an email, and a password of at least 12 characters. This first user
-is an admin. You sign in with it next.
-
-### 2. Connect Cloudflare
+### 1. Connect Cloudflare
 
 The manager needs a Cloudflare API token to create and update apps in your account.
 Cloudflare does not let a Worker or wrangler create one, so this step happens in the
@@ -111,9 +108,45 @@ dashboard:
    create the token, and copy it. If you are not a Super Administrator, use
    **Create a user token instead**.
 2. Paste the token and select **Verify**. The manager checks that the token is
-   active, belongs to this account, and can manage Workers. It warns about
-   permissions it cannot confirm.
+   active, can manage Workers, and belongs to the account the manager runs in: it
+   looks for the version of itself that is serving the page in the token's account.
+   It warns about permissions it cannot confirm.
 3. Select **Save and continue**.
+
+The token is the only thing that guards setup. Anyone who can create a token for
+your account already controls it, so there is no separate setup password. A token
+for another account is refused with a message that names the account it belongs to.
+The page allows 10 tries (a Verify and a Save each) per network address in 10 minutes.
+
+### 2. Create the owner account
+
+Enter a name, an email, and a password of at least 12 characters. This first user is
+the owner: an admin who is also the only one who can change roles, delete users, or
+hand ownership over. You are signed in right away.
+
+Only the browser that saved the token can do this step, for 30 minutes. Anyone else
+who opens the manager in the meantime sees only step 1, and once the owner exists
+they see the sign-in page. If you close the browser before this step, open the
+manager again after 30 minutes and paste the token again.
+
+### 3. Check your account
+
+The manager reads what your Cloudflare account has that apps rely on, and lists each
+item as **Done**, **Needs you**, or **Optional**, with a link to the page of the
+Cloudflare dashboard where you change it and how many catalog apps need it:
+
+| Item | What it is for |
+| --- | --- |
+| `workers.dev` subdomain | Every app answers on its own `workers.dev` address unless you give it a domain. |
+| Workers plan | Workers Paid lifts the free plan's limits and runs containers; some apps need it. |
+| R2 | Object storage for apps that store files. Turning it on is free, but Cloudflare asks for a payment method first. |
+| Active zone | A domain on Cloudflare, for [custom domains](/guides/custom-domains/) and [apps that receive email](/guides/email-apps/). |
+| Email Routing | Routes a domain's mail to an app. Installing such an app turns it on. |
+| Zero Trust organization | Needed before [Cloudflare Access](/security/#protect-with-cloudflare-access) can put a sign-in in front of the manager or an app. |
+| Sandbox builds | Builds apps that have no prebuilt release inside your account. Needs Workers Paid. |
+
+Select **Re-check** after changing something in the dashboard. Select **Finish** to
+go to the manager. The same list stays in **Settings › Account and capabilities**.
 
 The token template requests:
 
@@ -147,9 +180,6 @@ The manager stores the token as an encrypted secret, `CF_API_TOKEN`, on its own
 Worker, through the Cloudflare API. Saving it redeploys the manager, which takes a
 few seconds. The token is never shown again, never written to the database, and
 never included in logs. See [Security model](/security/).
-
-After saving, the manager deletes its `SETUP_TOKEN` secret, so the setup link stops
-working.
 
 To replace the token later, open **Settings**, find **Cloudflare API token**, and
 select **Rotate token**. The new token must be for the same account. Revoke the old

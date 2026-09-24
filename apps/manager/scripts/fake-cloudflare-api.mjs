@@ -10,7 +10,10 @@
 //   CF_API_BASE_URL=http://127.0.0.1:8789/client/v4
 //   CF_API_TOKEN=<any non-empty placeholder, never a real token>
 // The account holds one Worker, `appflare`, so the /setup token step can find the
-// manager; it starts with one deployed version and the manager's usual bindings
+// manager. A local manager's running version id is made up by the local runtime,
+// so this fake answers `GET .../versions/<id>` for any id of a known Worker: setup
+// then accepts the token as this account's. It starts with one deployed version and
+// the manager's usual bindings
 // (GET /workers/scripts/appflare/bindings), so a self-update can snapshot and
 // upload against it. Uploads replace a script's reported bindings once their
 // version is deployed. Every request is printed as `METHOD path -> status`
@@ -56,11 +59,12 @@ function newScript(secrets = []) {
 
 /** The manager as the CLI deploys it: one version serving, D1, KV, its Workflow, assets. */
 function managerScript() {
-  const script = newScript(["SETUP_TOKEN"]);
+  const script = newScript();
   const version = crypto.randomUUID();
   script.versions.push(version);
   script.bindings.set(version, [
     { type: "assets", name: "ASSETS" },
+    { type: "version_metadata", name: "CF_VERSION_METADATA" },
     { type: "d1", name: "DB", database_id: "00000000-0000-4000-8000-00000000d1d1" },
     { type: "kv_namespace", name: "KV", namespace_id: "0000000000000000000000000000c0c0" },
     { type: "workflow", name: "JOBS", workflow_name: "appflare-jobs", class_name: "JobWorkflow" },
@@ -143,6 +147,8 @@ async function handle(req, url, body) {
 
   if (key === "GET /tokens/verify") return ok({ id: "fake", status: "active" });
   if (key === "GET /workers/subdomain") return ok({ subdomain: values.subdomain });
+  // No Zero Trust organization in the fake account.
+  if (key === "GET /access/organizations") return fail(404, 404, "organization not found");
   if (key === "GET /workers/scripts") {
     return ok([...state.scripts.keys()].map((name) => ({ id: name })));
   }
@@ -258,6 +264,12 @@ async function handle(req, url, body) {
         .join(", ")}, keep ${(metadata.keep_bindings ?? []).join(", ") || "nothing"}`,
     );
     return ok({ id: version, number: s.versions.length, metadata: { has_preview: true } });
+  }
+  const oneVersion = /^GET \/workers\/scripts\/([^/]+)\/versions\/([^/]+)$/.exec(key);
+  if (oneVersion) {
+    if (!scriptOf(oneVersion[1]))
+      return fail(404, 10007, "This Worker does not exist on your account.");
+    return ok({ id: oneVersion[2], number: 1, metadata: {} });
   }
   const deployments = /^(GET|POST) \/workers\/scripts\/([^/]+)\/deployments$/.exec(key);
   if (deployments) {

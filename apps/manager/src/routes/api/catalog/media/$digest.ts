@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { createFileRoute } from "@tanstack/react-router";
 import { catalogMediaRoute } from "../../../../catalog/media.server";
-import { authFor } from "../../../../server/auth.server";
+import { sessionFor } from "../../../../server/auth.server";
 
 /**
  * `GET /api/catalog/media/<sha256>`: a catalog image the cached index lists,
@@ -11,12 +11,7 @@ export const Route = createFileRoute("/api/catalog/media/$digest")({
   server: {
     handlers: {
       GET: ({ request, params }) =>
-        catalogMediaRoute(
-          env,
-          params.digest,
-          async () =>
-            (await authFor(request).api.getSession({ headers: request.headers })) !== null,
-        ),
+        catalogMediaRoute(env, params.digest, async () => (await sessionFor(request)) !== null),
     },
   },
 });

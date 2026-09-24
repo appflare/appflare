@@ -45,8 +45,8 @@ describe("passwordSignInErrorMessage", () => {
 
 describe("serverErrorMessage", () => {
   it("keeps a message the server wrote for people", () => {
-    expect(serverErrorMessage(new Error("This setup link is invalid or has expired."), "x")).toBe(
-      "This setup link is invalid or has expired.",
+    expect(serverErrorMessage(new Error("Setup is already complete. Sign in instead."), "x")).toBe(
+      "Setup is already complete. Sign in instead.",
     );
   });
 

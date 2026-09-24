@@ -1,12 +1,15 @@
 import {
   type AccountCapabilities,
+  type AccountSetupCapabilities,
   type CapabilityUnknown,
   type ContainersCapability,
   type DomainCapabilities,
   detectedWorkersPlan,
   type EmailRoutingCapability,
   type R2Capability,
+  type WorkersDevCapability,
   type WorkersPlanCapability,
+  type ZeroTrustCapability,
   type ZoneCapability,
 } from "@appflare/cf-api/capabilities";
 import { z } from "zod";
@@ -42,9 +45,25 @@ export const storedCapabilitiesSchema = z.object({
   emailRouting: z
     .union([z.object({ state: z.enum(["available", "no-zone"]) }), unknownSchema])
     .optional(),
+  // Absent in rows written before the onboarding checklist existed.
+  workersDev: z
+    .union([
+      z.object({ state: z.literal("registered"), subdomain: z.string().min(1) }),
+      z.object({ state: z.literal("not-registered") }),
+      unknownSchema,
+    ])
+    .optional(),
+  zeroTrust: z
+    .union([
+      z.object({ state: z.literal("exists"), teamDomain: z.string().min(1) }),
+      z.object({ state: z.literal("none") }),
+      unknownSchema,
+    ])
+    .optional(),
 });
 export type StoredCapabilities = AccountCapabilities &
-  Partial<DomainCapabilities> & { checkedAt: string };
+  Partial<DomainCapabilities> &
+  Partial<AccountSetupCapabilities> & { checkedAt: string };
 
 /** The stored row, or null when it is absent or unreadable (then nothing counts as detected). */
 export function parseStoredCapabilities(
@@ -94,6 +113,9 @@ export interface CapabilitiesView {
   /** Null until the domain probes have run once. */
   zone: ZoneCapability | null;
   emailRouting: EmailRoutingCapability | null;
+  /** Null until the onboarding probes have run once. */
+  workersDev: WorkersDevCapability | null;
+  zeroTrust: ZeroTrustCapability | null;
   /** The plan in force and where it comes from. */
   plan: ResolvedAccountPlan;
   /** The plan an admin set in Settings, used when none is detected. */
@@ -111,6 +133,8 @@ export function capabilitiesView(
     workersPlan: stored?.workersPlan ?? null,
     zone: stored?.zone ?? null,
     emailRouting: stored?.emailRouting ?? null,
+    workersDev: stored?.workersDev ?? null,
+    zeroTrust: stored?.zeroTrust ?? null,
     plan: resolveAccountPlan(manual, stored),
     manualPlan: manual === "free" || manual === "paid" ? manual : null,
   };
@@ -157,10 +181,14 @@ export const SOURCE_LABELS = {
 /** Why a probe could not tell, in one sentence. */
 export function unknownSentence(
   value: CapabilityUnknown,
-  what: "r2" | "containers" | "plan" | "zone" | "email-routing",
+  what: "r2" | "containers" | "plan" | "zone" | "email-routing" | "workers-dev" | "zero-trust",
 ): string {
   if (value.reason === "no-permission") {
     return {
+      "workers-dev":
+        "The token cannot read the account's workers.dev subdomain (Workers Scripts permission).",
+      "zero-trust":
+        'The token cannot read the Zero Trust organization. Add the optional "Access: Organizations, Identity Providers, and Groups" permission.',
       r2: "The token cannot list R2 buckets (Workers R2 Storage).",
       containers:
         "The token has no Containers permission, so Appflare cannot check. Workers Paid includes Containers.",

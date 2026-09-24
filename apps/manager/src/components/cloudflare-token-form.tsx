@@ -20,6 +20,7 @@ import {
   userTokenTemplateUrl,
 } from "../cloudflare/token-template";
 import type { TokenVerification, VerifyTokenResult } from "../cloudflare/verify-token";
+import { connectCloudflare, verifySetupToken } from "../server/setup.functions";
 import { rotateToken, saveToken, verifyToken } from "../server/token.functions";
 import { DocsLink } from "./docs-link";
 import { formatDate } from "./format";
@@ -42,13 +43,16 @@ const FEATURE_PLACES: Readonly<Record<string, string>> = {
 export interface SavedToken {
   accountId: string;
   workerName: string;
-  /** Setup only: false when `SETUP_TOKEN` could not be deleted from the Worker. */
+  /** Setup only: false when a leftover `SETUP_TOKEN` could not be deleted from the Worker. */
   setupTokenRemoved?: boolean;
 }
 
 /**
- * Paste, verify, then save a Cloudflare API token: `/setup` (mode `setup`, calls
- * `saveToken`) and the settings rotation dialog (mode `rotate`, `rotateToken`).
+ * Paste, verify, then save a Cloudflare API token: the first setup step before
+ * any user exists (mode `first-run`, calls `verifySetupToken` and
+ * `connectCloudflare`), `/setup` for an admin whose manager has no token yet
+ * (mode `setup`, `saveToken`) and the settings rotation dialog (mode `rotate`,
+ * `rotateToken`).
  *
  * The token lives only in this component's state. It is sent to the server in a
  * POST body, never rendered back, and cleared after a successful save. The input
@@ -59,7 +63,7 @@ export function CloudflareTokenForm({
   mode,
   onSaved,
 }: {
-  mode: "setup" | "rotate";
+  mode: "first-run" | "setup" | "rotate";
   onSaved: (saved: SavedToken) => void;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -82,7 +86,11 @@ export function CloudflareTokenForm({
     setError(null);
     setResult(null);
     try {
-      setResult(await verifyToken({ data: { token } }));
+      setResult(
+        mode === "first-run"
+          ? await verifySetupToken({ data: { token } })
+          : await verifyToken({ data: { token } }),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not verify the token.");
     } finally {
@@ -95,9 +103,11 @@ export function CloudflareTokenForm({
     setError(null);
     try {
       const saved: SavedToken =
-        mode === "setup"
-          ? await saveToken({ data: { token } })
-          : await rotateToken({ data: { token } });
+        mode === "first-run"
+          ? await connectCloudflare({ data: { token } })
+          : mode === "setup"
+            ? await saveToken({ data: { token } })
+            : await rotateToken({ data: { token } });
       formRef.current?.reset();
       setToken("");
       setResult(null);
@@ -200,7 +210,7 @@ export function CloudflareTokenForm({
             disabled={!canSave}
             onClick={onSave}
           >
-            {mode === "setup" ? "Save and continue" : "Save new token"}
+            {mode === "rotate" ? "Save new token" : "Save and continue"}
           </Button>
         </div>
       </form>

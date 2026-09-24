@@ -71,8 +71,8 @@ when it ends, with:
 
 ### Setup and use (manager)
 
-- Once, after setup: how many minutes passed between creating the first admin and
-  connecting Cloudflare, and whether the manager continues the installer's id.
+- Once, after setup: how many minutes passed between connecting Cloudflare and
+  creating the owner, and whether the manager continues the installer's id.
 - At most once a day: that the manager was opened that day, and whether the first
   person to open it was an admin or a member.
 

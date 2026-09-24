@@ -187,6 +187,8 @@ describe("capabilitiesView", () => {
       workersPlan: { state: "paid" },
       zone: null,
       emailRouting: null,
+      workersDev: null,
+      zeroTrust: null,
       plan: { plan: "paid", source: "detected" },
       manualPlan: "free",
     });

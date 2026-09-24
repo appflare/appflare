@@ -4,11 +4,14 @@ import {
   createCapabilityClient,
   detectedWorkersPlan,
   probeAccountCapabilities,
+  probeAccountSetup,
   probeContainers,
   probeDomainCapabilities,
   probeEmailRouting,
   probeR2,
+  probeWorkersDev,
   probeWorkersPlan,
+  probeZeroTrust,
 } from "./capabilities";
 import { createClient } from "./client";
 import { type CapturedRequest, type FakeResponseSpec, makeFakeFetch } from "./fake-fetch";
@@ -378,5 +381,88 @@ describe("detectedWorkersPlan", () => {
       detectedWorkersPlan({ workersPlan: unknown, containers: { state: "needs-workers-paid" } }),
     ).toBe("free");
     expect(detectedWorkersPlan({ workersPlan: unknown, containers: unknown })).toBeNull();
+  });
+});
+
+describe("probeWorkersDev", () => {
+  it("reads the account's workers.dev subdomain", async () => {
+    const { fake, client } = make(() => ({ result: { subdomain: "appflare-dev" } }));
+    expect(await probeWorkersDev(client)).toEqual({
+      state: "registered",
+      subdomain: "appflare-dev",
+    });
+    expect(fake.calls.map((c) => `${c.method} ${c.url}`)).toEqual([`GET ${A}/workers/subdomain`]);
+  });
+
+  it("says not registered on code 10007", async () => {
+    const { client } = make(() => ({
+      status: 404,
+      errors: [{ code: 10007, message: "workers.api.error.subdomain_not_found" }],
+    }));
+    expect(await probeWorkersDev(client)).toEqual({ state: "not-registered" });
+  });
+
+  it("says no permission on a refusal, and an error otherwise", async () => {
+    expect(await probeWorkersDev(make(() => AUTH_ERROR).client)).toEqual({
+      state: "unknown",
+      reason: "no-permission",
+      detail: "HTTP 403, Cloudflare code 10000",
+    });
+    expect(await probeWorkersDev(make(() => ({ status: 500 })).client)).toMatchObject({
+      state: "unknown",
+      reason: "error",
+    });
+  });
+});
+
+describe("probeZeroTrust", () => {
+  it("reads the organization's team domain", async () => {
+    const { fake, client } = make(() => ({
+      result: { auth_domain: "acme.cloudflareaccess.com", name: "acme" },
+    }));
+    expect(await probeZeroTrust(client)).toEqual({
+      state: "exists",
+      teamDomain: "acme.cloudflareaccess.com",
+    });
+    expect(fake.calls.map((c) => c.url)).toEqual([`${A}/access/organizations`]);
+  });
+
+  it("says none on a 404 and on an answer without a team domain", async () => {
+    const missing = make(() => ({ status: 404, errors: [{ code: 404, message: "not found" }] }));
+    expect(await probeZeroTrust(missing.client)).toEqual({ state: "none" });
+    expect(await probeZeroTrust(make(() => ({ result: {} })).client)).toEqual({ state: "none" });
+  });
+
+  it("says no permission on a 401 or 403", async () => {
+    for (const status of [401, 403]) {
+      const refused = make(() => ({
+        status,
+        errors: [{ code: 10000, message: "Authentication error" }],
+      }));
+      expect(await probeZeroTrust(refused.client)).toMatchObject({
+        state: "unknown",
+        reason: "no-permission",
+      });
+    }
+  });
+});
+
+describe("probeAccountSetup", () => {
+  it("runs both probes and never names the token or the account", async () => {
+    const { fake, client } = make((req) =>
+      req.path.endsWith("/workers/subdomain") ? { result: { subdomain: "acme" } } : AUTH_ERROR,
+    );
+    const result = await probeAccountSetup(client);
+    expect(result).toEqual({
+      workersDev: { state: "registered", subdomain: "acme" },
+      zeroTrust: {
+        state: "unknown",
+        reason: "no-permission",
+        detail: "HTTP 403, Cloudflare code 10000",
+      },
+    });
+    expect(fake.calls).toHaveLength(2);
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+    expect(JSON.stringify(result)).not.toContain(ACCOUNT);
   });
 });

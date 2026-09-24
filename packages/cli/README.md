@@ -43,11 +43,12 @@ npx create-appflare [--version <x.y.z>] [--name appflare] [--yes]
    deployed unless all of that passes.
 3. Unpacks the manager into a temporary directory and deploys it with
    `wrangler deploy`.
-4. Sets the manager's secrets `BETTER_AUTH_SECRET` and `SETUP_TOKEN` to random
-   values.
-5. Prints the link that opens the setup wizard:
-   `https://appflare.<your-subdomain>.workers.dev/setup?token=…`. The link works
-   once. Only the link is written to stdout; progress goes to stderr.
+4. Sets the manager's secret `BETTER_AUTH_SECRET` to a random value.
+5. Prints the manager's address, `https://appflare.<your-subdomain>.workers.dev/`.
+   Open it to finish setup: paste a Cloudflare API token for this account, then
+   create the owner account. The address carries no secret; the token is the proof
+   that you control the account. Only the address is written to stdout; progress
+   goes to stderr.
 
 The temporary directory is removed when the installer finishes, fails, or is
 interrupted. Nothing is written to your current directory, no git repository is

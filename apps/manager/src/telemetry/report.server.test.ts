@@ -146,6 +146,14 @@ describe("before anything is sent", () => {
     expect(ids).toEqual({});
   });
 
+  it("sends nothing while the token is stored but no owner exists yet", async () => {
+    const ph = posthog();
+    await env.DB.batch([env.DB.prepare("DELETE FROM passkey"), env.DB.prepare("DELETE FROM user")]);
+    const out = await reportTelemetry(managerEnv(), { fetch: ph.fetch, now: () => NOW });
+    expect(out).toEqual({ status: "skipped", reason: "setup not finished" });
+    expect(ph.sent).toEqual([]);
+  });
+
   it("sends and writes nothing once turned off, not even that it is off", async () => {
     const ph = posthog();
     await recordSetupNotice(managerEnv(), new Date(NOW - 60 * MIN));

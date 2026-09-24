@@ -5,15 +5,13 @@ import { ROLES } from "../auth/roles";
 
 export const MIN_PASSWORD_LENGTH = 12;
 
-export const setupTokenInput = z.object({ token: z.string().max(1024) });
-
-export const firstAdminInput = z.object({
-  token: z.string().max(1024),
+/** The owner account created at setup. */
+export const ownerInput = z.object({
   email: z.email().max(254),
   name: z.string().trim().min(1).max(100),
   password: z.string().min(MIN_PASSWORD_LENGTH).max(128),
 });
-export type FirstAdminInput = z.infer<typeof firstAdminInput>;
+export type OwnerInput = z.infer<typeof ownerInput>;
 
 export const addUserInput = z.object({
   email: z.email().max(254),

@@ -5,7 +5,7 @@ import { enterApp } from "../server/gate.functions";
 
 /**
  * Pathless layout for every signed-in page. `enterApp` returns the viewer or
- * redirects: to `/login` without a session, to `/setup` before the first admin
+ * redirects: to `/login` without a session, to `/setup` before the owner
  * exists or while the Cloudflare token is not configured. This is
  * UX; each server function still enforces its own guard. The loader reads
  * the pending updates the sidebar counts and the home page lists; it reruns

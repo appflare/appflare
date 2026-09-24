@@ -9,6 +9,12 @@ export interface HealthBody {
   latestVersion: string | null;
   /** Whether `latestVersion` is newer than `version`. */
   updateAvailable: boolean;
+  /**
+   * The version serving this request has `BETTER_AUTH_SECRET`. False on a
+   * manager deployed without secrets until setup has written one and a
+   * version with it serves; the setup page waits for it.
+   */
+  authReady: boolean;
 }
 
 /**
@@ -21,18 +27,26 @@ export async function healthResponse(env: {
   DB: D1Database;
   APPFLARE_VERSION: string;
   KV?: KVNamespace;
+  BETTER_AUTH_SECRET?: string;
 }): Promise<Response> {
   const headers = { "cache-control": "no-store" };
   const release = await latestRelease(env);
+  const authReady = typeof env.BETTER_AUTH_SECRET === "string" && env.BETTER_AUTH_SECRET.length > 0;
   try {
     const schemaVersion = await readSchemaVersion(env.DB);
-    const body: HealthBody = { version: env.APPFLARE_VERSION, db: "ok", schemaVersion, ...release };
+    const body: HealthBody = {
+      version: env.APPFLARE_VERSION,
+      db: "ok",
+      schemaVersion,
+      ...release,
+      authReady,
+    };
     return Response.json(body, { headers });
   } catch (error) {
     console.error("health: D1 ping failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    const body: HealthBody = { version: env.APPFLARE_VERSION, db: "error", ...release };
+    const body: HealthBody = { version: env.APPFLARE_VERSION, db: "error", ...release, authReady };
     return Response.json(body, { status: 503, headers });
   }
 }

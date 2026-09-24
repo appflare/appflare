@@ -14,12 +14,32 @@ import { createDb } from "../db/client";
 
 const authByRequest = new WeakMap<Request, Auth>();
 
+/**
+ * Whether this version of the Worker has `BETTER_AUTH_SECRET`. A manager
+ * deployed from the "Deploy to Cloudflare" button starts without it; setup's
+ * first step writes one, and until a version with it serves, Better Auth is
+ * never started: nobody can have a session, and `/api/auth/*` answers 503.
+ */
+export function authSecretBound(): boolean {
+  return typeof env.BETTER_AUTH_SECRET === "string" && env.BETTER_AUTH_SECRET.length > 0;
+}
+
+/** `authFor` without an auth secret: a bug in the caller, which must check first. */
+export class AuthNotReadyError extends Error {
+  override name = "AuthNotReadyError";
+  constructor() {
+    super("Appflare has no auth secret yet. Finish setup first.");
+  }
+}
+
 export function authFor(request: Request): Auth {
+  const secret = env.BETTER_AUTH_SECRET;
+  if (secret === undefined || secret.length === 0) throw new AuthNotReadyError();
   let auth = authByRequest.get(request);
   if (auth === undefined) {
     auth = createAuth({
       db: createDb(env.DB),
-      secret: env.BETTER_AUTH_SECRET,
+      secret,
       baseURL: new URL(request.url).origin,
     });
     authByRequest.set(request, auth);
@@ -32,10 +52,13 @@ export function currentAuth(): Auth {
   return authFor(getRequest());
 }
 
-const loadSession: guards.SessionLoader = async () => {
-  const request = getRequest();
+/** The session `request` carries, or null; always null while no auth secret is bound. */
+export async function sessionFor(request: Request) {
+  if (!authSecretBound()) return null;
   return authFor(request).api.getSession({ headers: request.headers });
-};
+}
+
+const loadSession: guards.SessionLoader = async () => sessionFor(getRequest());
 
 /**
  * Wraps a guard so a missing session becomes a router redirect to `/login`

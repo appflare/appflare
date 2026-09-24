@@ -73,7 +73,7 @@ function setup(overrides: Record<string, FakeHandler> = {}) {
 }
 
 describe("install", () => {
-  it("deploys the verified artifact, sets both secrets, and prints only the setup link", async () => {
+  it("deploys the verified artifact, sets the auth secret, and prints only the manager URL", async () => {
     const t = setup();
     await install({ artifactDir, yes: true, allowUnsigned: false }, t.ctx);
 
@@ -84,7 +84,6 @@ describe("install", () => {
       "kv namespace",
       "deploy --config",
       "secret put",
-      "secret put",
     ]);
     // Every command after the account choice targets it.
     for (const call of t.calls.slice(1)) {
@@ -94,14 +93,12 @@ describe("install", () => {
     expect(config).toMatchObject({ name: "appflare", main: "worker/index.js", workers_dev: true });
     expect(JSON.stringify(config)).not.toContain("account_id");
 
-    expect(Object.keys(t.secrets)).toEqual(["BETTER_AUTH_SECRET", "SETUP_TOKEN"]);
-    expect(t.secrets.SETUP_TOKEN).toMatch(/^[0-9a-f]{48}$/);
-    expect(t.results).toEqual([
-      `https://appflare.acme.workers.dev/setup?token=${t.secrets.SETUP_TOKEN}`,
-    ]);
-    // Secrets never reach the progress output.
+    // No setup secret any more: the setup page asks for a Cloudflare API token.
+    expect(Object.keys(t.secrets)).toEqual(["BETTER_AUTH_SECRET"]);
+    expect(t.results).toEqual(["https://appflare.acme.workers.dev/"]);
     const log = t.lines.join("\n");
-    expect(log).not.toContain(t.secrets.SETUP_TOKEN);
+    expect(log).toContain("finish setup");
+    // The secret never reaches the progress output.
     expect(log).not.toContain(t.secrets.BETTER_AUTH_SECRET);
     expect(t.fetched).toEqual(["https://appflare.acme.workers.dev/api/health"]);
     // The temp dir is gone.
@@ -136,10 +133,27 @@ describe("install", () => {
       return Response.json({ version: "0.1.0", db: "ok" });
     };
     await install({ yes: true, allowUnsigned: false }, t.ctx);
-    expect(t.results[0]).toMatch(
-      /^https:\/\/appflare\.acme\.workers\.dev\/setup\?token=[0-9a-f]{48}$/,
-    );
+    expect(t.results).toEqual(["https://appflare.acme.workers.dev/"]);
     expect(readdirSync(tmpRoot)).toEqual([]);
+  });
+
+  it("refuses a release from before token-first setup, before deploying", async () => {
+    const older = await buildFixtureArtifact({
+      sign: key,
+      mutate: (m) => {
+        m.worker.bindings = m.worker.bindings.filter((b) => b.type !== "version_metadata");
+      },
+    });
+    const t = setup();
+    try {
+      await expect(
+        install({ artifactDir: older.dir, yes: true, allowUnsigned: false }, t.ctx),
+      ).rejects.toThrow("predates setup with a Cloudflare API token");
+      expect(t.calls.some((c) => c.args[0] === "deploy" || c.args[0] === "secret")).toBe(false);
+      expect(readdirSync(tmpRoot)).toEqual([]);
+    } finally {
+      rmSync(older.dir, { recursive: true, force: true });
+    }
   });
 
   it("refuses to install over an existing Worker, before deploying", async () => {

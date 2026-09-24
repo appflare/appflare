@@ -22,6 +22,7 @@ describe("GET /api/health", () => {
       schemaVersion: migrations.length,
       latestVersion: null,
       updateAvailable: false,
+      authReady: false,
     });
   });
 
@@ -33,6 +34,7 @@ describe("GET /api/health", () => {
       schemaVersion: 0,
       latestVersion: null,
       updateAvailable: false,
+      authReady: false,
     });
   });
 
@@ -49,6 +51,7 @@ describe("GET /api/health", () => {
       db: "error",
       latestVersion: null,
       updateAvailable: false,
+      authReady: false,
     });
   });
 
@@ -80,5 +83,17 @@ describe("GET /api/health", () => {
       await healthResponse({ DB: env.DB, KV: env.KV, APPFLARE_VERSION: "0.2.0" })
     ).json<HealthBody>();
     expect(same).toMatchObject({ latestVersion: "0.2.0", updateAvailable: false });
+  });
+
+  it("says whether the serving version has its auth secret, never the secret", async () => {
+    const withSecret = await (
+      await healthResponse({ DB: env.DB, APPFLARE_VERSION: "1.0.0", BETTER_AUTH_SECRET: "s3cret" })
+    ).text();
+    expect(JSON.parse(withSecret)).toMatchObject({ authReady: true });
+    expect(withSecret).not.toContain("s3cret");
+    const without = await (
+      await healthResponse({ DB: env.DB, APPFLARE_VERSION: "1.0.0" })
+    ).json<HealthBody>();
+    expect(without.authReady).toBe(false);
   });
 });

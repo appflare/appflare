@@ -1,11 +1,11 @@
 /**
- * Constant-time check of the `/setup?token=` value against the `SETUP_TOKEN`
- * secret. Both sides are hashed to 32-byte SHA-256 digests first, so
- * `crypto.subtle.timingSafeEqual` always compares equal-length buffers and neither
- * the comparison time nor an early length mismatch reveals anything about the
- * secret. A missing or empty secret never matches.
+ * Constant-time comparison of two secrets. Both sides are hashed to 32-byte
+ * SHA-256 digests first, so `crypto.subtle.timingSafeEqual` always compares
+ * equal-length buffers and neither the comparison time nor an early length
+ * mismatch reveals anything about the expected value. A missing or empty value
+ * on either side never matches.
  */
-export async function setupTokenMatches(
+export async function constantTimeEquals(
   provided: string | null | undefined,
   expected: string | null | undefined,
 ): Promise<boolean> {

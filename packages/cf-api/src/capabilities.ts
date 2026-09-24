@@ -1,9 +1,11 @@
 import { CloudflareApiError } from "./errors";
 import { type ClientOptions, createHttpApi } from "./http";
+import { createAccess } from "./namespaces/access";
 import { createBilling } from "./namespaces/billing";
 import { createContainers } from "./namespaces/containers";
 import { createEmailRouting } from "./namespaces/email-routing";
 import { createR2 } from "./namespaces/r2";
+import { createWorkers } from "./namespaces/workers";
 import { createZones } from "./namespaces/zones";
 import type { AccountSubscription } from "./types";
 
@@ -45,6 +47,16 @@ import type { AccountSubscription } from "./types";
  *   (`ready` on a zone with routing on). The API schema files it under "Zone
  *   Settings Read" (or Write). A zone the token may not read answers 403 code
  *   10000, "Authentication error".
+ * - `GET /workers/subdomain` is 200 with `subdomain` on both accounts. An
+ *   account with no workers.dev subdomain registered answers code 10007, and
+ *   a token without a Workers permission code 10000: wrangler 4.136.2 reads
+ *   the same two codes (`getWorkersDevSubdomain`, before it offers to
+ *   register one). An account the token does not belong to is 403 code 10000.
+ * - `GET /access/organizations` is 200 with `auth_domain` on both accounts
+ *   (each has a Zero Trust organization). Without one Cloudflare answers 404
+ *   (the manager's Access setting reads it the same way); a token without
+ *   "Access: Organizations, Identity Providers, and Groups" is refused with a
+ *   401 or 403.
  */
 
 /** Why a probe could not tell. */
@@ -96,11 +108,39 @@ export type EmailRoutingCapability =
   | { state: "no-zone" }
   | CapabilityUnknown;
 
+/**
+ * The account's workers.dev subdomain (`<subdomain>.workers.dev`): every app
+ * answers on `<app>.<subdomain>.workers.dev` unless it is given a domain, so
+ * an account needs one registered.
+ */
+export type WorkersDevCapability =
+  | { state: "registered"; subdomain: string }
+  | { state: "not-registered" }
+  | CapabilityUnknown;
+
+/**
+ * Whether the account has a Zero Trust organization, which Cloudflare Access
+ * (a sign-in in front of Appflare or an app) needs first.
+ */
+export type ZeroTrustCapability =
+  | { state: "exists"; teamDomain: string }
+  | { state: "none" }
+  | CapabilityUnknown;
+
+/** The account-wide setup the onboarding checklist reads besides the capabilities. */
+export interface AccountSetupCapabilities {
+  workersDev: WorkersDevCapability;
+  zeroTrust: ZeroTrustCapability;
+}
+
 /** What the token can do with the account's domains. */
 export interface DomainCapabilities {
   zone: ZoneCapability;
   emailRouting: EmailRoutingCapability;
 }
+
+/** Cloudflare's code for "no workers.dev subdomain registered" on `GET /workers/subdomain`. */
+export const WORKERS_DEV_NOT_REGISTERED_CODE = 10007;
 
 /** Cloudflare's code for "Please enable R2 through the Cloudflare Dashboard." */
 export const R2_NOT_ENABLED_CODE = 10042;
@@ -125,6 +165,8 @@ export interface CapabilityClient {
   billing: Pick<ReturnType<typeof createBilling>, "listSubscriptionsPage">;
   zones: Pick<ReturnType<typeof createZones>, "listAccountZonesPage">;
   emailRouting: Pick<ReturnType<typeof createEmailRouting>, "getSettings">;
+  workers: Pick<ReturnType<typeof createWorkers>, "getAccountSubdomain">;
+  access: Pick<ReturnType<typeof createAccess>, "getOrganization">;
 }
 
 /** A client with only what the probes need, for callers that do not need the full one. */
@@ -136,6 +178,8 @@ export function createCapabilityClient(options: ClientOptions): CapabilityClient
     billing: createBilling(http),
     zones: createZones(http),
     emailRouting: createEmailRouting(http),
+    workers: createWorkers(http),
+    access: createAccess(http),
   };
 }
 
@@ -294,6 +338,54 @@ export async function probeDomainCapabilities(
   }
   if (first === undefined) return { zone: { state: "none" }, emailRouting: { state: "no-zone" } };
   return { zone: { state: "available" }, emailRouting: await probeEmailRouting(client, first) };
+}
+
+/**
+ * The account's workers.dev subdomain. Code 10007 is Cloudflare's "none
+ * registered"; any other refusal is the token's permissions.
+ */
+export async function probeWorkersDev(
+  client: Pick<CapabilityClient, "workers">,
+): Promise<WorkersDevCapability> {
+  try {
+    const { subdomain } = await client.workers.getAccountSubdomain();
+    return typeof subdomain === "string" && subdomain.length > 0
+      ? { state: "registered", subdomain }
+      : { state: "not-registered" };
+  } catch (error) {
+    if (error instanceof CloudflareApiError && hasCode(error, WORKERS_DEV_NOT_REGISTERED_CODE)) {
+      return { state: "not-registered" };
+    }
+    return unknown(isRefusal(error) ? "no-permission" : "error", error);
+  }
+}
+
+/**
+ * The account's Zero Trust organization. A 404 is "none yet"; a 401 or 403
+ * is the token's permissions.
+ */
+export async function probeZeroTrust(
+  client: Pick<CapabilityClient, "access">,
+): Promise<ZeroTrustCapability> {
+  try {
+    const org = await client.access.getOrganization();
+    const teamDomain = typeof org?.auth_domain === "string" ? org.auth_domain : "";
+    return teamDomain.length > 0 ? { state: "exists", teamDomain } : { state: "none" };
+  } catch (error) {
+    if (error instanceof CloudflareApiError && error.status === 404) return { state: "none" };
+    return unknown(isRefusal(error) ? "no-permission" : "error", error);
+  }
+}
+
+/** The workers.dev and Zero Trust probes, concurrently; one read call each. Never throws. */
+export async function probeAccountSetup(
+  client: Pick<CapabilityClient, "workers" | "access">,
+): Promise<AccountSetupCapabilities> {
+  const [workersDev, zeroTrust] = await Promise.all([
+    probeWorkersDev(client),
+    probeZeroTrust(client),
+  ]);
+  return { workersDev, zeroTrust };
 }
 
 /**

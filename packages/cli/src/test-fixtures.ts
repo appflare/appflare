@@ -105,6 +105,7 @@ export async function buildFixtureArtifact(options: FixtureOptions = {}): Promis
           class_name: "JobWorkflow",
         },
         { type: "plain_text", name: "APPFLARE_VERSION", text: version },
+        { type: "version_metadata", name: "CF_VERSION_METADATA" },
       ],
       migrations: [],
       crons: ["*/30 * * * *"],

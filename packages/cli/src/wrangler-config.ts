@@ -26,6 +26,7 @@ export interface GeneratedWranglerConfig {
   kv_namespaces?: { binding: string }[];
   workflows?: { binding: string; name: string; class_name: string; script_name?: string }[];
   services: { binding: string; service: string; entrypoint: string }[];
+  version_metadata: { binding: string };
   vars?: Record<string, unknown>;
   triggers: { crons: string[] };
   observability?: Record<string, unknown>;
@@ -70,6 +71,13 @@ export function moduleRules(
   }
   return [...rulesByType].map(([type, globs]) => ({ type, globs }));
 }
+
+/**
+ * The first manager release whose setup starts with the Cloudflare API token
+ * (it declares a `version_metadata` binding). Older releases need a
+ * `SETUP_TOKEN` secret, which this installer no longer sets.
+ */
+export const FIRST_TOKEN_SETUP_RELEASE = "0.5.0";
 
 /** The manager's service binding to itself, through which its jobs call their units. */
 export const SELF_BINDING = "SELF";
@@ -123,6 +131,7 @@ export function buildWranglerConfig(
   const kv: { binding: string }[] = [];
   const workflows: NonNullable<GeneratedWranglerConfig["workflows"]> = [];
   const vars: Record<string, unknown> = {};
+  let versionMetadata: string | null = null;
   for (const binding of worker.bindings) {
     switch (binding.type) {
       case "d1":
@@ -150,6 +159,11 @@ export function buildWranglerConfig(
       case "assets":
         // Declared through `assets.binding` below.
         break;
+      case "version_metadata":
+        // The running version's id: setup matches it against the pasted
+        // token's account.
+        versionMetadata = binding.name;
+        break;
       case "service":
         // The binding to the manager itself is always added below, by this
         // install's own name; any other service binding is refused.
@@ -166,6 +180,15 @@ export function buildWranglerConfig(
     }
   }
   Object.assign(vars, options.vars ?? {});
+  if (versionMetadata === null) {
+    // Without it the setup page cannot confirm a token's account, and this
+    // installer no longer sets the setup secret older releases relied on.
+    throw new Error(
+      `the manager release ${manifest.version} predates setup with a Cloudflare API token ` +
+        `(it has no version_metadata binding); this installer needs manager ` +
+        `${FIRST_TOKEN_SETUP_RELEASE} or newer. Leave out --version to install the latest.`,
+    );
+  }
   if (d1.length > 1) {
     throw new Error(
       "the manager artifact has more than one D1 binding; this installer supports one",
@@ -205,6 +228,7 @@ export function buildWranglerConfig(
     // this binding to the Worker itself, so each call runs in a fresh
     // invocation. The service is the name this install deploys under.
     services: [{ binding: SELF_BINDING, service: name, entrypoint: JOB_UNITS_ENTRYPOINT }],
+    version_metadata: { binding: versionMetadata },
     ...(Object.keys(vars).length > 0 ? { vars } : {}),
     triggers: { crons: [...worker.crons] },
     ...(worker.observability ? { observability: { ...worker.observability } } : {}),

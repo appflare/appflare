@@ -1,0 +1,207 @@
+import { describe, expect, it } from "vitest";
+import { type CapabilitiesView, capabilitiesView } from "../capabilities/capabilities";
+import {
+  ACCOUNT_SETTINGS_PATH,
+  buildChecklist,
+  type CatalogNeeds,
+  type ChecklistInput,
+  type ChecklistRow,
+  type ChecklistRowId,
+  catalogNeeds,
+  DASHBOARD_LINKS,
+  needsYouCount,
+} from "./checklist";
+
+const ACC = "acc0000000000000000000000000000a";
+const NO_PERMISSION = { state: "unknown", reason: "no-permission", detail: "HTTP 403" } as const;
+
+/** A free account with R2 on, a zone, Email Routing readable, no Zero Trust organization. */
+function view(over: Partial<CapabilitiesView> = {}): CapabilitiesView {
+  const base = capabilitiesView(undefined, {
+    checkedAt: "2026-09-24T10:00:00.000Z",
+    r2: { state: "enabled" },
+    containers: { state: "needs-workers-paid" },
+    workersPlan: { state: "free" },
+    zone: { state: "available" },
+    emailRouting: { state: "available" },
+    workersDev: { state: "registered", subdomain: "acme" },
+    zeroTrust: { state: "none" },
+  });
+  return { ...base, ...over };
+}
+
+/** The same account on Workers Paid. */
+const paidView = () =>
+  view({
+    workersPlan: { state: "paid" },
+    containers: { state: "available" },
+    plan: { plan: "paid", source: "detected" },
+  });
+
+const NEEDS: CatalogNeeds = {
+  total: 12,
+  workersPaid: 3,
+  r2: 4,
+  zone: 2,
+  emailRouting: 1,
+  access: 0,
+  sandbox: 2,
+};
+
+function rows(input: Partial<ChecklistInput> = {}): Record<ChecklistRowId, ChecklistRow> {
+  const list = buildChecklist({
+    view: view(),
+    sandbox: "off",
+    needs: NEEDS,
+    accountId: ACC,
+    ...input,
+  });
+  return Object.fromEntries(list.map((r) => [r.id, r])) as Record<ChecklistRowId, ChecklistRow>;
+}
+
+describe("buildChecklist", () => {
+  it("lists the seven rows in order", () => {
+    expect(
+      buildChecklist({ view: view(), sandbox: "off", needs: NEEDS, accountId: ACC }).map(
+        (r) => r.id,
+      ),
+    ).toEqual([
+      "workers-dev",
+      "workers-plan",
+      "r2",
+      "zone",
+      "email-routing",
+      "zero-trust",
+      "sandbox",
+    ]);
+  });
+
+  it("marks what the account has as Done", () => {
+    const r = rows({ view: paidView(), sandbox: "enabled" });
+    expect(r["workers-dev"]).toMatchObject({ status: "done", value: "acme.workers.dev" });
+    expect(r["workers-plan"]).toMatchObject({ status: "done" });
+    expect(r.r2.status).toBe("done");
+    expect(r.zone.status).toBe("done");
+    expect(r["email-routing"].status).toBe("done");
+    expect(r.sandbox).toMatchObject({ status: "done", value: "Enabled", link: null });
+  });
+
+  it("needs the admin for a missing workers.dev subdomain, linking to registration", () => {
+    const r = rows({ view: view({ workersDev: { state: "not-registered" } }) });
+    expect(r["workers-dev"]).toMatchObject({
+      status: "needs-you",
+      value: "None registered",
+      link: { href: DASHBOARD_LINKS.workersOnboarding(ACC), external: true },
+    });
+    // Without the account id the link falls back to Workers & Pages.
+    const unknownAccount = rows({
+      view: view({ workersDev: { state: "not-registered" } }),
+      accountId: null,
+    });
+    expect(unknownAccount["workers-dev"].link?.href).toBe(DASHBOARD_LINKS.workersAndPages);
+  });
+
+  it("needs the admin for R2 only while catalog apps use it", () => {
+    const off = view({ r2: { state: "not-enabled" } });
+    expect(rows({ view: off }).r2).toMatchObject({ status: "needs-you", value: "Not enabled" });
+    expect(rows({ view: off, needs: { ...NEEDS, r2: 0 } }).r2.status).toBe("optional");
+    // Unknown catalog: assume some app needs it.
+    expect(rows({ view: off, needs: null }).r2.status).toBe("needs-you");
+  });
+
+  it("keeps plan, domains, Email Routing, Zero Trust and sandbox builds optional", () => {
+    const r = rows({
+      view: view({
+        zone: { state: "none" },
+        emailRouting: { state: "no-zone" },
+        zeroTrust: { state: "none" },
+      }),
+    });
+    expect(r["workers-plan"]).toMatchObject({ status: "optional", value: "Workers Free" });
+    expect(r.zone).toMatchObject({ status: "optional", value: "No active zone" });
+    expect(r["email-routing"]).toMatchObject({
+      status: "optional",
+      value: "Needs an active zone first",
+    });
+    expect(r["zero-trust"]).toMatchObject({ status: "optional", value: "None yet" });
+    expect(needsYouCount(Object.values(r))).toBe(0);
+  });
+
+  it("shows sandbox builds as needing Workers Paid on a free plan, or off on a paid one", () => {
+    expect(rows().sandbox).toMatchObject({
+      status: "optional",
+      value: "Needs Workers Paid",
+      link: { href: DASHBOARD_LINKS.workersPlans },
+    });
+    const paid = rows({ view: paidView() });
+    expect(paid.sandbox).toMatchObject({
+      status: "optional",
+      value: "Off",
+      link: { href: ACCOUNT_SETTINGS_PATH, external: false },
+    });
+    // On the settings page itself there is nothing to link to.
+    expect(rows({ view: paidView(), onAccountSettings: true }).sandbox.link).toBeNull();
+  });
+
+  it("explains a probe that could not tell", () => {
+    const r = rows({ view: view({ zeroTrust: NO_PERMISSION, workersDev: NO_PERMISSION }) });
+    expect(r["zero-trust"]).toMatchObject({ status: "optional", value: "Unknown" });
+    expect(r["zero-trust"].note).toContain("Access: Organizations, Identity Providers, and Groups");
+    expect(r["workers-dev"]).toMatchObject({ status: "needs-you", value: "Unknown" });
+    expect(r["workers-dev"].note).toContain("workers.dev subdomain");
+  });
+
+  it("asks for a Re-check before the probes ever ran", () => {
+    const r = rows({ view: capabilitiesView(undefined, null) });
+    expect(r["workers-dev"]).toMatchObject({ status: "needs-you", value: "Not checked yet" });
+    expect(r.r2).toMatchObject({ status: "optional", value: "Not checked yet" });
+    expect(r["zero-trust"].note).toContain("Re-check");
+  });
+
+  it("counts the catalog apps that need each thing in the why line", () => {
+    const r = rows();
+    expect(r["workers-plan"].why).toContain("3 catalog apps need it.");
+    expect(r.r2.why).toContain("4 catalog apps store files in R2.");
+    expect(r["email-routing"].why).toContain("1 catalog app uses it.");
+    expect(r["zero-trust"].why).toContain("No catalog app uses Access yet.");
+    expect(r["workers-dev"].why).toContain("12 catalog apps use it by default.");
+    // No cached catalog: the reason alone.
+    expect(rows({ needs: null }).r2.why).not.toContain("catalog app");
+  });
+
+  it("links every row that is not done to the dashboard", () => {
+    for (const row of Object.values(rows())) {
+      if (row.status !== "done" && row.id !== "sandbox") {
+        expect(row.link?.href).toMatch(/^https:\/\/(one\.)?dash\.cloudflare\.com\//);
+        expect(row.link?.external).toBe(true);
+      }
+    }
+  });
+});
+
+describe("catalogNeeds", () => {
+  it("counts from the index's services, plans and tiers", () => {
+    expect(
+      catalogNeeds([
+        { services: ["kv", "r2"], requires: [], plan: "free", tier: "artifact" },
+        {
+          services: ["email-routing", "zone", "future-thing"],
+          requires: [],
+          plan: "free",
+          tier: "artifact",
+        },
+        { services: ["access", "containers"], requires: [], plan: "paid", tier: "sandbox" },
+        // An older row without services: its `requires` stand in.
+        { requires: ["r2", "zone"], plan: "paid", tier: "self-deploying" },
+      ]),
+    ).toEqual({
+      total: 4,
+      workersPaid: 2,
+      r2: 2,
+      zone: 2,
+      emailRouting: 1,
+      access: 1,
+      sandbox: 2,
+    });
+  });
+});

@@ -2,7 +2,7 @@ import { confirm, isCancel, select, text } from "@clack/prompts";
 
 /**
  * Everything the CLI says or asks. Progress, warnings, and prompts go to
- * stderr; only a command's result (the setup URL, the status report) goes to
+ * stderr; only a command's result (the manager URL, the status report) goes to
  * stdout, so `create-appflare > link.txt` captures just the link.
  */
 export interface Ui {

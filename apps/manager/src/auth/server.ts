@@ -33,7 +33,7 @@ export interface AuthDeps {
  * no process-level env, and the base URL comes from the request.
  *
  * - Email + password, plus passkeys a signed-in user adds for themselves. Public
- *   sign-up is disabled. The first admin is created by `/setup` and every further
+ *   sign-up is disabled. The owner is created by `/setup` and every further
  *   user by an admin, both through the admin plugin's `createUser`; a passkey
  *   can only be registered from an existing session, so it never creates a user.
  * - Everything lives in D1: users, accounts, sessions, verification values, and

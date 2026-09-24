@@ -24,8 +24,8 @@ export function workersDevSubdomain(enabled: boolean): {
 
 /**
  * The body of the subdomain call for Appflare's own Worker, which always
- * keeps its workers.dev URL: the setup link, the sign-in origin and the
- * installer's health check all use it.
+ * keeps its workers.dev URL: the address the installer prints, the sign-in
+ * origin and the installer's health check all use it.
  */
 export const MANAGER_SUBDOMAIN = { enabled: true, previews_enabled: true } as const;
 

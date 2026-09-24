@@ -1,5 +1,5 @@
 import { Banner, cn, LayerCard, Link, Meter, Text } from "@cloudflare/kumo";
-import { CheckCircleIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { WarningCircleIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
 
@@ -7,8 +7,9 @@ import { Logo } from "./logo";
 export const DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/";
 
 /**
- * Setup runs in three screens: create the admin account (`/setup`), sign in
- * with it (`/login?created=true`), connect Cloudflare (`/setup` again).
+ * Setup runs in three screens, all on `/setup`: connect Cloudflare (paste an
+ * API token for this account), create the owner account, then the onboarding
+ * checklist.
  */
 export const SETUP_STEP_COUNT = 3;
 export type SetupStep = 1 | 2 | 3;
@@ -102,13 +103,6 @@ export function AuthError({ message }: { message: string }) {
     <div role="alert">
       <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} description={message} />
     </div>
-  );
-}
-
-/** A confirmation on an auth screen, such as "Admin account created". */
-export function AuthSuccess({ title, description }: { title: string; description: string }) {
-  return (
-    <Banner icon={<CheckCircleIcon weight="fill" />} title={title} description={description} />
   );
 }
 

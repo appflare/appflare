@@ -42,7 +42,7 @@ export {
   SANDBOX_CONTAINERS,
   type SandboxWranglerConfig,
 } from "./sandbox-config.ts";
-export { formatSetupUrl, generateBetterAuthSecret, generateSetupToken } from "./secrets.ts";
+export { formatManagerUrl, generateBetterAuthSecret } from "./secrets.ts";
 export {
   createWrangler,
   resolveWranglerBin,

@@ -8,7 +8,7 @@ import { waitForHealth } from "../health.ts";
 import { autoProvisionedResourceName, DEFAULT_WORKER_NAME, validateWorkerName } from "../names.ts";
 import { checkNodeVersion } from "../node-version.ts";
 import { downloadManagerRelease, findManagerRelease } from "../release.ts";
-import { formatSetupUrl, generateBetterAuthSecret, generateSetupToken } from "../secrets.ts";
+import { formatManagerUrl, generateBetterAuthSecret } from "../secrets.ts";
 import { withWorkdir } from "../workdir.ts";
 import { listD1Databases, listDeployments, listKvNamespaces } from "../worker-info.ts";
 import { type Wrangler, WranglerError, wranglerArgs } from "../wrangler.ts";
@@ -68,8 +68,10 @@ async function preflight(wrangler: Wrangler, config: GeneratedWranglerConfig): P
 /**
  * `create-appflare`: log in, fetch and verify the signed
  * manager release, deploy it from a temp dir with D1 and KV auto-provisioned,
- * set its secrets, and print the setup link. The temp dir is removed on every
- * path; nothing is written to the current directory.
+ * set its auth secret, and print the manager's URL. The URL carries nothing
+ * secret: the first screen there asks for a Cloudflare API token for this
+ * account, which is proof enough to finish setup. The temp dir is removed on
+ * every path; nothing is written to the current directory.
  */
 export async function install(options: InstallOptions, ctx: CommandContext): Promise<void> {
   const { ui, env, telemetry } = ctx;
@@ -173,21 +175,15 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
       // come with the advice on how to start over.
       const deployed = parseDeployOutput(await readFile(outputFile, "utf8").catch(() => ""), name);
       if (telemetry) telemetry.step = "secrets";
-      ui.step("Setting the manager's secrets");
-      const setupToken = generateSetupToken();
-      const secrets: [string, string][] = [
-        ["BETTER_AUTH_SECRET", generateBetterAuthSecret()],
-        ["SETUP_TOKEN", setupToken],
-      ];
-      for (const [secretName, value] of secrets) {
-        const result = await wrangler.run(wranglerArgs.secretPut(name, secretName), {
-          stdin: { kind: "text", text: value },
-        });
-        if (result.code !== 0) {
-          throw new WranglerError(`secret put ${secretName}`, result);
-        }
-        ui.info(`${secretName} set`);
+      ui.step("Setting the manager's secret");
+      const secretName = "BETTER_AUTH_SECRET";
+      const result = await wrangler.run(wranglerArgs.secretPut(name, secretName), {
+        stdin: { kind: "text", text: generateBetterAuthSecret() },
+      });
+      if (result.code !== 0) {
+        throw new WranglerError(`secret put ${secretName}`, result);
       }
+      ui.info(`${secretName} set`);
 
       if (telemetry) telemetry.step = "health";
       ui.step(`Waiting for ${deployed.url} to answer`);
@@ -200,12 +196,14 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
       } else {
         ui.warn(
           `The manager has not answered yet (${health.reason}). A new workers.dev URL can take a ` +
-            "minute; open the link below again shortly.",
+            "minute; open the address below again shortly.",
         );
       }
 
-      ui.step("Done. Open this link to create the first admin (it works once):");
-      ui.result(formatSetupUrl(deployed.url, setupToken));
+      ui.step(
+        "Done. Open your manager to finish setup (you will paste a Cloudflare API token, then create the owner account):",
+      );
+      ui.result(formatManagerUrl(deployed.url));
     } catch (error) {
       ui.warn(
         `The manager Worker "${name}" was deployed, but setup did not finish. To start over, run ` +

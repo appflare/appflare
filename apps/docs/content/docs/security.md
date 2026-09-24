@@ -128,9 +128,17 @@ app, never the manager's.
 
 ## Sign-in and sessions
 
-- **Setup token.** Until the first admin exists, the manager serves only the setup
-  wizard, guarded by a one-time token that the installer generated. The manager
-  deletes the token from itself once the Cloudflare token is saved.
+- **Setup.** Until the owner exists, the manager serves only the setup wizard, and
+  its first step asks for a Cloudflare API token. The token is accepted only when
+  it belongs to the account the manager runs in: the manager looks up the version
+  of itself that is serving the request in the token's account. Anyone who can
+  create such a token already controls the account. Saving it gives that browser
+  a short-lived setup claim (an `HttpOnly` cookie, 30 minutes); only that browser
+  can create the owner, and every other visitor keeps seeing the token step, or
+  the sign-in page once the owner exists. Token checks are limited to 20 per
+  client address in 10 minutes (a Verify and a Save each count), and refusals
+  carry fixed messages. A manager that cannot identify its own version refuses
+  every token unless it is opened at its `workers.dev` address.
 - **Better Auth.** Users sign in with email and password, or with a passkey they
   added in Settings. Passkeys are bound to the manager's own hostname. There is no
   public sign-up; admins create users. Session cookies are `HttpOnly`, `Secure`, and

@@ -49,9 +49,11 @@ which holds the latest Appflare release, prebuilt. Nothing is built during the d
 
 The [setup wizard](/start/install/#the-setup-wizard) opens on the first visit. It asks
 for a Cloudflare API token before anything else: only someone who can create a token
-for this account can set Appflare up. Then create your admin account. The wizard also
-generates the secret that signs sessions, `BETTER_AUTH_SECRET`, and stores it with the
-token as encrypted secrets on Appflare's Worker.
+for this account can set Appflare up. The wizard also generates the secret that signs
+sessions, `BETTER_AUTH_SECRET`, and stores it with the token as encrypted secrets on
+Appflare's Worker, and adds the service binding through which Appflare runs its own
+jobs. It waits a few seconds for that new version, then you create the owner account
+and check your account.
 
 ## Clean up the deploy copy
 

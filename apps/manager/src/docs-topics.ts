@@ -8,7 +8,7 @@ import { DOCS_URL } from "./components/auth-layout";
  * content, so a moved page or a renamed heading fails the tests.
  */
 export const DOCS_TOPICS = {
-  tokenPermissions: "start/install#2-connect-cloudflare",
+  tokenPermissions: "start/install#1-connect-cloudflare",
   capabilities: "guides/install-apps#workers-free-or-workers-paid",
   requirements: "guides/catalog#requirements",
   customDomains: "guides/custom-domains",

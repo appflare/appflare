@@ -76,8 +76,8 @@ describe("docs topics", () => {
   });
 
   it("turns headings into the ids the docs site gives them", () => {
-    expect(headingIds("## 2. Connect Cloudflare\n## Turn off the workers.dev URL")).toEqual([
-      "2-connect-cloudflare",
+    expect(headingIds("## 1. Connect Cloudflare\n## Turn off the workers.dev URL")).toEqual([
+      "1-connect-cloudflare",
       "turn-off-the-workersdev-url",
     ]);
     expect(headingIds("```sh\n# not a heading\n```\n## `status`\n## Next\n## Next")).toEqual([

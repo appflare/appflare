@@ -8,6 +8,7 @@ export type { AssetManifestFile, AssetUploadManifest } from "./asset-hash";
 export { assetHash, buildAssetsManifest } from "./asset-hash";
 export type {
   AccountCapabilities,
+  AccountSetupCapabilities,
   CapabilityClient,
   CapabilityUnknown,
   CapabilityUnknownReason,
@@ -15,7 +16,9 @@ export type {
   DomainCapabilities,
   EmailRoutingCapability,
   R2Capability,
+  WorkersDevCapability,
   WorkersPlanCapability,
+  ZeroTrustCapability,
   ZoneCapability,
 } from "./capabilities";
 export {
@@ -24,12 +27,16 @@ export {
   detectedWorkersPlan,
   failureDetail,
   probeAccountCapabilities,
+  probeAccountSetup,
   probeContainers,
   probeDomainCapabilities,
   probeEmailRouting,
   probeR2,
+  probeWorkersDev,
   probeWorkersPlan,
+  probeZeroTrust,
   R2_NOT_ENABLED_CODE,
+  WORKERS_DEV_NOT_REGISTERED_CODE,
 } from "./capabilities";
 export type { CloudflareClient } from "./client";
 export { createClient } from "./client";

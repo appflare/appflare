@@ -61,6 +61,9 @@ exports[`buildWranglerConfig > matches the snapshot for the default name 1`] = `
   "vars": {
     "APPFLARE_VERSION": "1.2.3",
   },
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA",
+  },
   "workers_dev": true,
   "workflows": [
     {

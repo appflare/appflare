@@ -1,9 +1,18 @@
 // Secrets are not in wrangler.jsonc, so `wrangler types` cannot see them.
-// SETUP_TOKEN is deleted after setup and CF_API_TOKEN only exists after it,
-// so both are optional. Declared on both `Cloudflare.Env` (the type of
-// `import { env } from "cloudflare:workers"`) and the global `Env`.
+// CF_API_TOKEN only exists after setup, so it is optional; so is
+// BETTER_AUTH_SECRET (below). Declared on both
+// `Cloudflare.Env` (the type of `import { env } from "cloudflare:workers"`)
+// and the global `Env`.
 interface ManagerSecrets {
-  BETTER_AUTH_SECRET: string;
+  /**
+   * Set by the installer; a manager deployed from the "Deploy to Cloudflare"
+   * button has none until setup's first step writes one.
+   */
+  BETTER_AUTH_SECRET?: string;
+  /**
+   * Set by installers from before setup started with the API token. It
+   * guards nothing now; the first token save deletes it.
+   */
   SETUP_TOKEN?: string;
   CF_API_TOKEN?: string;
   /**

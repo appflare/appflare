@@ -9,7 +9,11 @@ import {
   type TokenVerifyResult,
   type WorkerScript,
 } from "@appflare/cf-api";
-import { workersDevSubdomainFromHost } from "./worker-name";
+import {
+  DEFAULT_WORKER_NAME,
+  workerNameCandidates,
+  workersDevSubdomainFromHost,
+} from "./worker-name";
 
 /**
  * Verifies a pasted Cloudflare API token and discovers the account it belongs to.
@@ -56,6 +60,15 @@ export interface VerifyTokenOptions {
   knownAccountId: string | null;
   /** The request host, used to pick the account when a user token sees several. */
   host: string;
+  /**
+   * The id of the Worker version serving this request (the manager's
+   * `version_metadata` binding). During setup the token's account must hold
+   * a Worker with this version: version ids are unique across Cloudflare, so
+   * a hit proves this exact manager runs there, on any hostname and for user
+   * tokens that see several accounts. Without it (a manager deployed before
+   * the binding existed) the workers.dev subdomain of the host is compared.
+   */
+  runningVersionId?: string | null;
   fetch?: FetchLike;
   onRequest?: (log: RequestLog) => void;
   baseUrl?: string;
@@ -65,6 +78,8 @@ export interface VerifyTokenOutcome {
   result: VerifyTokenResult;
   /** The account's scripts from the probe, reused to find the manager's Worker. */
   scripts: WorkerScript[] | null;
+  /** The manager's own Worker, when setup found it by its running version. */
+  workerName: string | null;
 }
 
 export const MESSAGES = {
@@ -76,16 +91,24 @@ export const MESSAGES = {
     "This token cannot see any Cloudflare account. Add the Account Settings: Read permission.",
   otherAccount:
     "This token is not valid for the Cloudflare account Appflare runs in. Create it in that account.",
-  ambiguous: (n: number) =>
-    `This token can access ${n} accounts and Appflare could not tell which one it runs in. Create an account API token in that account instead.`,
   wrongAccount: (account: string, subdomain: string) =>
     `This token belongs to account ${account}, but this manager runs in the account with workers.dev subdomain "${subdomain}". Create the token in that account.`,
   subdomainUnreadable: (account: string) =>
     `Appflare could not read the workers.dev subdomain of account ${account} to confirm it runs there. The token needs the Workers Scripts permission.`,
   noAccountWithSubdomain: (n: number, subdomain: string) =>
     `None of the ${n} accounts this token can access has the workers.dev subdomain "${subdomain}" this manager runs on. Create the token in that account.`,
-  customDomainNeedsAccountToken:
-    "This manager is not on a workers.dev address, so Appflare cannot confirm which account a user token is for. Create an account API token in the account Appflare runs in.",
+  notThisAccount: (account: string, subdomain: string | null) =>
+    `This token is for account ${account}, but this Appflare does not run in that account${
+      subdomain === null
+        ? ""
+        : ` (it runs in the account with workers.dev subdomain "${subdomain}")`
+    }. Create the token in the account Appflare is installed in.`,
+  noAccountRunsThis: (n: number) =>
+    `None of the ${n} accounts this token can access runs this Appflare. Create the token in the account Appflare is installed in.`,
+  workersUnreadable: (account: string) =>
+    `Appflare could not list the Workers of account ${account} to confirm it runs there. The token needs the Workers Scripts: Edit permission.`,
+  cannotVerifyAccount:
+    "This manager cannot verify which Cloudflare account it runs in, so it cannot accept a token here. Update it or reinstall it, or open it at its workers.dev address.",
   inactive: (status: string) => `This token is ${status}. Use an active token.`,
   unreachable: "Could not reach the Cloudflare API. Try again.",
 } as const;
@@ -124,13 +147,13 @@ export async function verifyCloudflareToken(opts: VerifyTokenOptions): Promise<V
     return await verify(opts);
   } catch (error) {
     if (error instanceof VerifyFailed) {
-      return { result: { ok: false, error: error.message }, scripts: null };
+      return { result: { ok: false, error: error.message }, scripts: null, workerName: null };
     }
     if (error instanceof CloudflareApiError) {
-      return { result: { ok: false, error: MESSAGES.rejected }, scripts: null };
+      return { result: { ok: false, error: MESSAGES.rejected }, scripts: null, workerName: null };
     }
     // fetch() itself failed (network). Its message never contains request headers.
-    return { result: { ok: false, error: MESSAGES.unreachable }, scripts: null };
+    return { result: { ok: false, error: MESSAGES.unreachable }, scripts: null, workerName: null };
   }
 }
 
@@ -149,6 +172,7 @@ async function verify(opts: VerifyTokenOptions): Promise<VerifyTokenOutcome> {
   let info: TokenVerifyResult;
   let accountId: string;
   let accounts: AccountSummary[] | null;
+  let workerName: string | null = null;
 
   if (opts.knownAccountId !== null) {
     // Rotation: the account is fixed; an account token for it verifies there.
@@ -170,7 +194,15 @@ async function verify(opts: VerifyTokenOptions): Promise<VerifyTokenOutcome> {
       throw new VerifyFailed(MESSAGES.otherAccount);
     }
   } else {
-    // Setup: user verify first; its failure means an account token or a bad token.
+    // Setup. Without the running version's id and off workers.dev there is
+    // nothing to confirm the account against: refuse every token, before any
+    // call, rather than trust whichever account the token names.
+    const versionId = opts.runningVersionId ?? null;
+    const hasVersion = versionId !== null && versionId.length > 0;
+    if (!hasVersion && workersDevSubdomainFromHost(opts.host) === null) {
+      throw new VerifyFailed(MESSAGES.cannotVerifyAccount);
+    }
+    // User verify first; its failure means an account token or a bad token.
     // `/user/tokens/verify` is not account-scoped, so the client's account id is unused.
     const [asUser, listed] = await Promise.all([
       attempt(() => clientFor("").tokens.verifyUserToken()),
@@ -180,7 +212,14 @@ async function verify(opts: VerifyTokenOptions): Promise<VerifyTokenOutcome> {
     if (accounts === null) {
       throw new VerifyFailed(asUser === null ? MESSAGES.rejectedOrNoAccount : MESSAGES.noAccount);
     }
-    const account = await pickAccount(accounts, opts.host, clientFor);
+    let account: AccountSummary;
+    if (hasVersion && versionId !== null) {
+      const found = await accountRunningVersion(accounts, opts.host, versionId, clientFor);
+      account = found.account;
+      workerName = found.workerName;
+    } else {
+      account = await pickAccount(accounts, opts.host, clientFor);
+    }
     accountId = account.id;
     if (asUser !== null) {
       tokenType = "user";
@@ -190,14 +229,6 @@ async function verify(opts: VerifyTokenOptions): Promise<VerifyTokenOutcome> {
       if (asAccount === null) throw new VerifyFailed(MESSAGES.rejected);
       tokenType = "account";
       info = asAccount;
-    }
-    // On a custom domain the account cannot be matched to the host (pickAccount),
-    // so only an account token, which is bound to exactly one account, is accepted.
-    // TODO: also compare the running version (a `version_metadata` binding,
-    // CF_VERSION_METADATA) against the chosen account's `appflare` versions, so an
-    // account token from the wrong account is caught on custom domains too.
-    if (workersDevSubdomainFromHost(opts.host) === null && tokenType === "user") {
-      throw new VerifyFailed(MESSAGES.customDomainNeedsAccountToken);
     }
   }
 
@@ -226,7 +257,64 @@ async function verify(opts: VerifyTokenOptions): Promise<VerifyTokenOutcome> {
       missing,
     },
     scripts,
+    workerName,
   };
+}
+
+/**
+ * Most Worker version lookups one setup verification makes, across every
+ * account, so a user token that sees many accounts or scripts stays well
+ * inside a Worker invocation's subrequest limit.
+ */
+const MAX_VERSION_LOOKUPS = 25;
+
+/**
+ * The manager's Worker names worth asking first: the host's workers.dev
+ * label candidates and the default name, then the other scripts (a renamed
+ * manager on a custom domain).
+ */
+function managerNameCandidates(host: string, scripts: readonly WorkerScript[]): string[] {
+  const names = scripts.map((s) => s.id);
+  const present = new Set(names);
+  const first = [...workerNameCandidates(host), DEFAULT_WORKER_NAME].filter((n) => present.has(n));
+  return [...new Set([...first, ...names])];
+}
+
+/**
+ * The account holding the Worker version this request runs on, and that
+ * Worker's name: for each account the token sees, list its scripts and ask
+ * for the version on the likely candidates. A version id is unique across
+ * Cloudflare, so a hit is exact. Refuses when no account holds it.
+ */
+async function accountRunningVersion(
+  accounts: AccountSummary[],
+  host: string,
+  versionId: string,
+  clientFor: (accountId: string) => CloudflareClient,
+): Promise<{ account: AccountSummary; workerName: string }> {
+  const [only] = accounts;
+  if (only === undefined) throw new VerifyFailed(MESSAGES.noAccount);
+  let lookups = 0;
+  let readable = 0;
+  for (const account of accounts.slice(0, MAX_ACCOUNTS_PROBED)) {
+    const client = clientFor(account.id);
+    const scripts = await attempt(() => client.workers.listScripts());
+    if (scripts === null) continue;
+    readable++;
+    for (const name of managerNameCandidates(host, scripts)) {
+      if (lookups >= MAX_VERSION_LOOKUPS) break;
+      lookups++;
+      const version = await attempt(() => client.versions.getVersion(name, versionId));
+      if (version !== null) return { account, workerName: name };
+    }
+  }
+  const label = only.name ? `${only.name} (${only.id})` : only.id;
+  if (accounts.length > 1) throw new VerifyFailed(MESSAGES.noAccountRunsThis(accounts.length));
+  throw new VerifyFailed(
+    readable === 0
+      ? MESSAGES.workersUnreadable(label)
+      : MESSAGES.notThisAccount(label, workersDevSubdomainFromHost(host)),
+  );
 }
 
 /** Runs a Cloudflare call; an API error (not a network error) becomes null. */
@@ -240,11 +328,12 @@ async function attempt<T>(run: () => Promise<T>): Promise<T | null> {
 }
 
 /**
- * The account the manager runs in. On a `*.workers.dev` host that is always
- * confirmed, for one account or many, by matching the account's workers.dev
- * subdomain against the host: a token from another account that also has an
- * `appflare` Worker must never be saved onto that Worker. On a custom domain
- * only a single account is accepted (and `verify` then requires an account token).
+ * The account the manager runs in, for a manager without the running
+ * version's id: confirmed, for one account or many, by matching the
+ * account's workers.dev subdomain against the `*.workers.dev` host. A token
+ * from another account that also has an `appflare` Worker must never be
+ * saved onto that Worker. Called only on a workers.dev host; anywhere else
+ * setup refuses before this.
  */
 async function pickAccount(
   accounts: AccountSummary[],
@@ -254,10 +343,7 @@ async function pickAccount(
   const [only] = accounts;
   if (only === undefined) throw new VerifyFailed(MESSAGES.noAccount);
   const subdomain = workersDevSubdomainFromHost(host);
-  if (subdomain === null) {
-    if (accounts.length === 1) return only;
-    throw new VerifyFailed(MESSAGES.ambiguous(accounts.length));
-  }
+  if (subdomain === null) throw new VerifyFailed(MESSAGES.cannotVerifyAccount);
   const readable: AccountSummary[] = [];
   for (const account of accounts.slice(0, MAX_ACCOUNTS_PROBED)) {
     const found = await attempt(() => clientFor(account.id).workers.getAccountSubdomain());
