@@ -28,7 +28,12 @@ import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
-import { describeInstance, estimateIndexBuild, formatUsd } from "../../../sandbox/cost";
+import {
+  describeInstance,
+  estimatedMinutes,
+  estimateIndexBuild,
+  formatUsd,
+} from "../../../sandbox/cost";
 
 /**
  * `/catalog/$slug`: app detail, prerequisites, the Cloudflare token the app
@@ -279,8 +284,8 @@ function BuildRow({ build }: { build: IndexBuild }) {
           sandbox Worker, on Workers Paid
         </span>
         <Text as="span" variant="secondary" size="sm">
-          {describeInstance(estimate)} for about {estimate.minutes} minutes: about{" "}
-          {formatUsd(estimate.usd)} a build beyond the included usage
+          {describeInstance(estimate)} for {estimatedMinutes(estimate.minutes)}: about{" "}
+          {formatUsd(estimate.usd)} a build of that length beyond the included usage
         </Text>
       </span>
     </Row>
@@ -299,8 +304,8 @@ function InstallerRow({ build, tool }: { build: IndexBuild; tool: string | null 
           Worker, on Workers Paid
         </span>
         <Text as="span" variant="secondary" size="sm">
-          {describeInstance(estimate)} for about {estimate.minutes} minutes: about{" "}
-          {formatUsd(estimate.usd)} a run beyond the included usage. No rollback.
+          {describeInstance(estimate)} for {estimatedMinutes(estimate.minutes)}: about{" "}
+          {formatUsd(estimate.usd)} a run of that length beyond the included usage. No rollback.
         </Text>
       </span>
     </Row>

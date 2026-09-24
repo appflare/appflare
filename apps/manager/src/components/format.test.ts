@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatDate, formatExactDateTime } from "./format";
+import { formatBytes, formatDate, formatExactDateTime, jobKindLabel } from "./format";
 
 describe("formatBytes", () => {
   it("uses decimal units with at most one decimal", () => {
@@ -23,5 +23,14 @@ describe("formatDate and formatExactDateTime", () => {
     const exact = formatExactDateTime(iso);
     expect(exact).toContain("September 23, 2026");
     expect(exact).toMatch(/12:34:56\sPM UTC/);
+  });
+});
+
+describe("jobKindLabel", () => {
+  it("names a job by its kind, and the restore and kept-data deletion by their flags", () => {
+    expect(jobKindLabel({ kind: "uninstall" })).toBe("Uninstall");
+    expect(jobKindLabel({ kind: "uninstall", deleteRetained: true })).toBe("Delete retained data");
+    expect(jobKindLabel({ kind: "rollback", restore: true })).toBe("Database restore");
+    expect(jobKindLabel({ kind: "self_update" })).toBe("Appflare update");
   });
 });

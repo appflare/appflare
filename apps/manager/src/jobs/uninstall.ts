@@ -11,6 +11,7 @@ import {
   detachMessage,
   isPermissionError,
 } from "../installs/custom-domains.server";
+import { namesHeldElsewhere } from "../installs/removed-apps.server";
 import {
   CUSTOM_DOMAIN_KIND,
   DATA_RESOURCE_KINDS,
@@ -26,7 +27,7 @@ import { deleteResource, RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
 import { runSelfDeployingUninstall } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
-import { createJobSteps, errorMessage, isNotFound, JobError } from "./steps";
+import { createJobSteps, errorMessage, isNotFound, JobError, type JobSteps } from "./steps";
 import { settleUnit } from "./units/result";
 import { R2_PAGE_MAX_OBJECTS } from "./units/units";
 
@@ -69,6 +70,12 @@ export const uninstallJobParams = z.object({
    * everything (see ./self-deploying/jobs.ts); `deleteResources` does not apply.
    */
   selfDeploying: z.boolean().optional(),
+  /**
+   * Deletes data an earlier uninstall kept (the install stays `uninstalled`):
+   * only the data resource steps run, for the retained resources in
+   * `deleteResources`.
+   */
+  deleteRetained: z.boolean().optional(),
 });
 export type UninstallJobParams = z.infer<typeof uninstallJobParams>;
 
@@ -121,6 +128,10 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
   const params = parsed.data;
   if (params.selfDeploying === true) {
     await runSelfDeployingUninstall(ctx, params);
+    return;
+  }
+  if (params.deleteRetained === true) {
+    await runDeleteRetained(ctx, params);
     return;
   }
   const { step, env } = ctx;
@@ -289,70 +300,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    /** R2 pages this run deleted, and the objects on them. */
-    let r2Pages = 0;
-    let r2Deleted = 0;
-    const r2PageLimit = steps.units.remote ? R2_MAX_PAGES_PER_RUN : R2_MAX_LOCAL_PAGES_PER_RUN;
-    const r2PerPage = steps.units.remote ? R2_OBJECTS_PER_STEP : R2_OBJECTS_PER_LOCAL_STEP;
-    for (const target of started.targets) {
-      const label = RESOURCE_LABEL[target.kind];
-      if (target.kind === "r2") {
-        const bucket = target.cfId ?? target.name;
-        // Deleted objects drop out of the listing, so every page lists from the
-        // start again. A first key seen twice means a delete did not take.
-        let previousFirst: string | null = null;
-        for (let page = 1; ; page++) {
-          if (r2Pages >= r2PageLimit) {
-            steps.current = `empty ${label} ${target.name}`;
-            throw new JobError(
-              `one run deletes at most ${r2PageLimit * r2PerPage} R2 objects (${r2PageLimit} page(s) of ${r2PerPage}); this run deleted ${r2Deleted}, and ${target.name} ${page === 1 ? "is not emptied yet" : "still holds more"}. Retry the uninstall to continue`,
-            );
-          }
-          r2Pages += 1;
-          const emptied = await run(`empty ${label} ${target.name} page ${page}`, async ({ log }) =>
-            settleUnit(
-              await steps.units.api.emptyR2Page({
-                accountId: steps.accountId(),
-                bucket,
-                name: target.name,
-                perPage: r2PerPage,
-                previousFirst,
-              }),
-              log,
-            ),
-          );
-          r2Deleted += emptied.deleted;
-          if (!emptied.more) break;
-          previousFirst = emptied.first;
-        }
-      }
-
-      await run(`delete ${label} ${target.name}`, async ({ log, cf, orm }) => {
-        try {
-          if (await deleteResource(cf(), target)) log.info(`Deleted ${label} "${target.name}".`);
-          else {
-            log.warn(
-              `No Cloudflare id is recorded for ${label} "${target.name}", so it cannot be addressed; marked deleted without a call. Check the Cloudflare dashboard for it.`,
-            );
-          }
-        } catch (error) {
-          if (target.kind === "r2" && error instanceof CloudflareApiError && error.status === 409) {
-            // The REST API offers no way to list or abort incomplete multipart
-            // uploads, which keep a bucket from being deleted.
-            throw new JobError(
-              `Cloudflare refused to delete the bucket (${error.message}). A bucket with incomplete multipart uploads cannot be deleted, and the Cloudflare API cannot list or abort them here; abort them with the S3 API or a lifecycle rule, or retry the uninstall and keep this bucket`,
-            );
-          }
-          if (!isNotFound(error)) throw error;
-          log.info(`${label} "${target.name}" was already gone.`);
-        }
-        await orm
-          .update(resources)
-          .set({ deleted_at: new Date(now()) })
-          .where(eq(resources.id, target.id));
-        return {};
-      });
-    }
+    await deleteDataResourcesPhase(steps, started.targets, "uninstall");
 
     // The install's builds in the sandbox Worker's bucket (every version).
     if (started.sandboxBuilt === true) {
@@ -403,6 +351,221 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       const log = new StepLog(now);
       log.error(
         `Uninstall failed at "${steps.current}". What was deleted stays deleted; retry the uninstall to delete the rest.`,
+      );
+      await log.flush(env.DB, params.jobId);
+      return {};
+    });
+    throw new NonRetryableError(reason);
+  }
+}
+
+/**
+ * Deletes data resources, one API call per step: an R2 bucket is emptied
+ * first, a page per step, each page one job unit (`emptyR2Page`), and a run
+ * stops after a bounded number of pages (the next run continues). Each
+ * deleted resource gets `deleted_at`. Shared by the uninstall and by the
+ * deletion of data an uninstall kept; `mode` only changes what the messages
+ * tell the admin to do next.
+ */
+export async function deleteDataResourcesPhase(
+  steps: JobSteps,
+  targets: Target[],
+  mode: "uninstall" | "retained",
+): Promise<void> {
+  const { run, now } = steps;
+  const again = mode === "uninstall" ? "Retry the uninstall" : "Run Delete retained data again";
+  /** R2 pages this run deleted, and the objects on them. */
+  let r2Pages = 0;
+  let r2Deleted = 0;
+  const r2PageLimit = steps.units.remote ? R2_MAX_PAGES_PER_RUN : R2_MAX_LOCAL_PAGES_PER_RUN;
+  const r2PerPage = steps.units.remote ? R2_OBJECTS_PER_STEP : R2_OBJECTS_PER_LOCAL_STEP;
+  for (const target of targets) {
+    const label = RESOURCE_LABEL[target.kind];
+    if (target.kind === "r2") {
+      const bucket = target.cfId ?? target.name;
+      // Deleted objects drop out of the listing, so every page lists from the
+      // start again. A first key seen twice means a delete did not take.
+      let previousFirst: string | null = null;
+      for (let page = 1; ; page++) {
+        if (r2Pages >= r2PageLimit) {
+          steps.current = `empty ${label} ${target.name}`;
+          throw new JobError(
+            `one run deletes at most ${r2PageLimit * r2PerPage} R2 objects (${r2PageLimit} page(s) of ${r2PerPage}); this run deleted ${r2Deleted}, and ${target.name} ${page === 1 ? "is not emptied yet" : "still holds more"}. ${again} to continue`,
+          );
+        }
+        r2Pages += 1;
+        const emptied = await run(`empty ${label} ${target.name} page ${page}`, async ({ log }) =>
+          settleUnit(
+            await steps.units.api.emptyR2Page({
+              accountId: steps.accountId(),
+              bucket,
+              name: target.name,
+              perPage: r2PerPage,
+              previousFirst,
+            }),
+            log,
+          ),
+        );
+        r2Deleted += emptied.deleted;
+        if (!emptied.more) break;
+        previousFirst = emptied.first;
+      }
+    }
+
+    await run(`delete ${label} ${target.name}`, async ({ log, cf, orm }) => {
+      try {
+        if (await deleteResource(cf(), target)) log.info(`Deleted ${label} "${target.name}".`);
+        else {
+          log.warn(
+            `No Cloudflare id is recorded for ${label} "${target.name}", so it cannot be addressed; marked deleted without a call. Check the Cloudflare dashboard for it.`,
+          );
+        }
+      } catch (error) {
+        if (target.kind === "r2" && error instanceof CloudflareApiError && error.status === 409) {
+          // The REST API offers no way to list or abort incomplete multipart
+          // uploads, which keep a bucket from being deleted.
+          throw new JobError(
+            `Cloudflare refused to delete the bucket (${error.message}). A bucket with incomplete multipart uploads cannot be deleted, and the Cloudflare API cannot list or abort them here; abort them with the S3 API or a lifecycle rule, ${mode === "uninstall" ? "or retry the uninstall and keep this bucket" : "then run Delete retained data again"}`,
+          );
+        }
+        if (!isNotFound(error)) throw error;
+        log.info(`${label} "${target.name}" was already gone.`);
+      }
+      await orm
+        .update(resources)
+        .set({ deleted_at: new Date(now()) })
+        .where(eq(resources.id, target.id));
+      return {};
+    });
+  }
+}
+
+/**
+ * Deletes the data resources an uninstall kept (Settings, Removed apps). The
+ * install is `uninstalled` and stays so; its Worker and everything bound to
+ * it are gone already, so only the data resource steps of the uninstall run,
+ * for the retained resources the start recorded. A resource that is already
+ * gone counts as deleted, so running it again converges. On failure the job
+ * records `<step>: <message>`; what was deleted stays deleted, and the rest
+ * stays listed as kept.
+ */
+async function runDeleteRetained(ctx: JobContext, params: UninstallJobParams): Promise<void> {
+  const { step, env } = ctx;
+  const steps = createJobSteps(ctx, params.jobId);
+  const { run, now } = steps;
+  try {
+    const started = await run("start", async ({ log, orm }) => {
+      await orm
+        .update(jobs)
+        .set({ status: "running", started_at: new Date(now()) })
+        .where(eq(jobs.id, params.jobId));
+      const [install] = await orm
+        .select({ workerName: installs.worker_name, status: installs.status })
+        .from(installs)
+        .where(eq(installs.id, params.installId))
+        .limit(1);
+      if (install === undefined) throw new JobError("the install no longer exists");
+      if (install.status !== "uninstalled") {
+        throw new JobError(
+          "the install is not uninstalled; only data an uninstall kept is deleted here",
+        );
+      }
+      const kept = await orm
+        .select()
+        .from(resources)
+        .where(
+          and(
+            eq(resources.install_id, params.installId),
+            isNull(resources.deleted_at),
+            isNotNull(resources.retained_at),
+          ),
+        )
+        .orderBy(sql`rowid`);
+      const wanted = new Set(params.deleteResources);
+      const candidates: Target[] = [];
+      for (const r of kept) {
+        if (!wanted.has(r.id) || r.managed_by === "app") continue;
+        const kind = DATA_RESOURCE_KINDS.find((k) => k === r.kind);
+        if (kind !== undefined) candidates.push({ id: r.id, kind, name: r.name, cfId: r.cf_id });
+      }
+      // A bucket or index is addressed by name. When another install records
+      // one of that name (a later install under the same Worker name, after
+      // the kept one was deleted by hand), it is that install's: never call
+      // the API for it, and record it as gone from this app only.
+      const held = await namesHeldElsewhere(env.DB, params.installId, candidates);
+      const targets = candidates.filter((t) => !held.has(t.id));
+      for (const t of candidates) {
+        const owner = held.get(t.id);
+        if (owner === undefined) continue;
+        log.warn(
+          `${RESOURCE_LABEL[t.kind]} "${t.name}" is recorded by the install "${owner}" now, so it belongs to that install; left alone, and no longer listed as kept by this app.`,
+        );
+        await orm
+          .update(resources)
+          .set({ deleted_at: new Date(now()) })
+          .where(eq(resources.id, t.id));
+      }
+      const settings = await readSettings(orm, [SETTING.accountId]);
+      if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
+      if (!env.CF_API_TOKEN) {
+        throw new JobError("the Cloudflare API token is not configured; finish setup first");
+      }
+      log.info(
+        targets.length > 0
+          ? `Deleting the data "${install.workerName}" kept: ${targets.map((t) => `${RESOURCE_LABEL[t.kind]} ${t.name}`).join(", ")}.`
+          : `Nothing "${install.workerName}" kept is left to delete.`,
+      );
+      return {
+        workerName: install.workerName,
+        accountId: settings.account_id,
+        targets,
+        heldElsewhere: held.size,
+      };
+    });
+    steps.setAccountId(started.accountId);
+
+    await deleteDataResourcesPhase(steps, started.targets, "retained");
+
+    await run("finish", async ({ log, orm }) => {
+      const at = new Date(now());
+      await orm.batch([
+        orm.update(installs).set({ updated_at: at }).where(eq(installs.id, params.installId)),
+        orm
+          .update(jobs)
+          .set({ status: "succeeded", finished_at: at, error: null })
+          .where(eq(jobs.id, params.jobId)),
+      ]);
+      const left = await orm
+        .select({ name: resources.name })
+        .from(resources)
+        .where(
+          and(
+            eq(resources.install_id, params.installId),
+            isNull(resources.deleted_at),
+            isNotNull(resources.retained_at),
+          ),
+        );
+      log.info(
+        left.length > 0
+          ? `Deleted what was asked. Still kept in the account: ${left.map((r) => r.name).join(", ")}.`
+          : started.heldElsewhere > 0
+            ? `Deleted everything "${started.workerName}" kept that no other install uses now.`
+            : `Deleted everything "${started.workerName}" kept. Nothing of it is left in the account.`,
+      );
+      return {};
+    });
+  } catch (error) {
+    const reason = `${steps.current}: ${errorMessage(error)}`;
+    await step.do("mark delete retained data failed", async () => {
+      const orm = createDb(env.DB);
+      const at = new Date(now());
+      await orm
+        .update(jobs)
+        .set({ status: "failed", error: reason, finished_at: at })
+        .where(eq(jobs.id, params.jobId));
+      const log = new StepLog(now);
+      log.error(
+        `Deleting the kept data failed at "${steps.current}". What was deleted stays deleted; run Delete retained data again to delete the rest.`,
       );
       await log.flush(env.DB, params.jobId);
       return {};

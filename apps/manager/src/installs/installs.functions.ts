@@ -7,7 +7,7 @@ import {
   type TokenPermission,
 } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getCatalogManifest } from "../catalog/app-manifest.server";
 import { getCatalogIndex } from "../catalog/index.server";
@@ -23,6 +23,7 @@ import { requireRole, requireSession } from "../server/auth.server";
 import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
 import { startInstallInput } from "./install-input";
 import { renderPostInstall, workersDevUrl } from "./post-install";
+import { isDeleteRetainedJob } from "./removed-apps.server";
 import { CUSTOM_DOMAIN_KIND, EMAIL_ROUTE_KIND } from "./resource-kinds";
 import { catalogOnlyManifest, StartInstallError, startInstallCore } from "./start-install.server";
 
@@ -98,12 +99,19 @@ async function subdomain(): Promise<string | null> {
   return s.account_subdomain || null;
 }
 
-/** Any signed-in user: every install, uninstalled ones included, newest first. */
+/**
+ * Any signed-in user: every install that is not uninstalled, newest first.
+ * Uninstalled ones that kept data are listed under Settings, Removed apps.
+ */
 export const listInstalls = createServerFn({ method: "GET" }).handler(
   async (): Promise<InstallRow[]> => {
     await requireSession();
     const [rows, read, sub] = await Promise.all([
-      createDb(env.DB).select().from(installs).orderBy(desc(installs.installed_at)),
+      createDb(env.DB)
+        .select()
+        .from(installs)
+        .where(ne(installs.status, "uninstalled"))
+        .orderBy(desc(installs.installed_at)),
       getCatalogIndex(env),
       subdomain(),
     ]);
@@ -177,6 +185,8 @@ export interface InstallDetail extends InstallRow {
   emailRoutes: EmailRouteView[];
   /** Which uninstall action the page offers now. */
   uninstall: "start" | "retry" | null;
+  /** Uninstalled and forgotten: no longer listed under Removed apps, even if it kept data. */
+  forgotten: boolean;
   /** The job currently queued or running for this install, if any. */
   activeJobId: string | null;
   jobs: Array<{
@@ -184,6 +194,8 @@ export interface InstallDetail extends InstallRow {
     kind: string;
     /** A database restore (recorded as a `rollback` job). */
     restore: boolean;
+    /** A deletion of the data an uninstall kept (recorded as an `uninstall` job). */
+    deleteRetained: boolean;
     status: string;
     error: string | null;
     startedAt: string | null;
@@ -324,11 +336,13 @@ export const getInstall = createServerFn({ method: "GET" })
           .map((r) => ({ id: r.id, name: r.name, cfId: r.cf_id })),
       ),
       uninstall,
+      forgotten: row.forgotten_at !== null,
       activeJobId: activeJob?.id ?? null,
       jobs: jobRows.map((j) => ({
         id: j.id,
         kind: j.kind,
         restore: isRestoreJob(j),
+        deleteRetained: isDeleteRetainedJob(j),
         status: j.status,
         error: j.error,
         startedAt: j.started_at?.toISOString() ?? null,

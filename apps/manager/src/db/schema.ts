@@ -122,6 +122,12 @@ export const installs = sqliteTable("installs", {
   updated_at: timestamp("updated_at").notNull(),
   /** Set when the uninstall job finishes (status `uninstalled`). */
   uninstalled_at: timestamp("uninstalled_at"),
+  /**
+   * Set when an admin forgets an uninstalled install: it leaves the list of
+   * removed apps. Its row, its jobs, and any resources it kept in the account
+   * stay as they are.
+   */
+  forgotten_at: timestamp("forgotten_at"),
 });
 
 /** A Cloudflare object created for an install (glossary: resource). */

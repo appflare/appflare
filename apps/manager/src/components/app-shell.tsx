@@ -3,6 +3,7 @@ import { GearIcon, SignOutIcon, SquaresFourIcon, StorefrontIcon } from "@phospho
 import { useLocation, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { authClient } from "../auth/client";
+import { type PendingUpdates, pendingUpdatesTitle } from "../installs/pending-updates";
 import type { Viewer } from "../server/session.functions";
 import { Logo } from "./logo";
 
@@ -12,8 +13,34 @@ const NAV = [
   { href: "/settings", label: "Settings", icon: GearIcon, exact: false },
 ] as const;
 
-/** Signed-in chrome: Kumo sidebar with navigation, the viewer, and sign-out. */
-export function AppShell({ viewer, children }: { viewer: Viewer; children: ReactNode }) {
+/**
+ * The pending updates a nav item counts: app updates on Installed (where each
+ * app's update starts), the Appflare update on Settings (where the
+ * self-update starts).
+ */
+function updateBadge(href: string, pending: PendingUpdates): { count: number; label: string } {
+  if (href === "/") {
+    return { count: pending.apps.length, label: pendingUpdatesTitle(pending.apps.length) };
+  }
+  if (href === "/settings" && pending.manager !== null) {
+    return { count: 1, label: `Appflare ${pending.manager.latest} is available` };
+  }
+  return { count: 0, label: "" };
+}
+
+/**
+ * Signed-in chrome: Kumo sidebar with navigation, the viewer, and sign-out.
+ * Installed and Settings carry a count of their pending updates.
+ */
+export function AppShell({
+  viewer,
+  pending,
+  children,
+}: {
+  viewer: Viewer;
+  pending: PendingUpdates;
+  children: ReactNode;
+}) {
   const { pathname } = useLocation();
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
@@ -39,16 +66,25 @@ export function AppShell({ viewer, children }: { viewer: Viewer; children: React
         <Sidebar.Content>
           <Sidebar.Group>
             <Sidebar.Menu>
-              {NAV.map((item) => (
-                <Sidebar.MenuButton
-                  key={item.href}
-                  href={item.href}
-                  icon={item.icon}
-                  active={item.exact ? pathname === item.href : pathname.startsWith(item.href)}
-                >
-                  {item.label}
-                </Sidebar.MenuButton>
-              ))}
+              {NAV.map((item) => {
+                const badge = updateBadge(item.href, pending);
+                return (
+                  <Sidebar.MenuButton
+                    key={item.href}
+                    href={item.href}
+                    icon={item.icon}
+                    active={item.exact ? pathname === item.href : pathname.startsWith(item.href)}
+                  >
+                    {item.label}
+                    {badge.count > 0 && (
+                      <Sidebar.MenuBadge title={badge.label}>
+                        <span aria-hidden>{badge.count}</span>
+                        <span className="sr-only">{badge.label}</span>
+                      </Sidebar.MenuBadge>
+                    )}
+                  </Sidebar.MenuButton>
+                );
+              })}
             </Sidebar.Menu>
           </Sidebar.Group>
         </Sidebar.Content>

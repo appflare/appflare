@@ -15,6 +15,7 @@ import { formatDateTime, jobKindLabel, resourceKindLabel } from "../../../compon
 import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
 import { PageHeader } from "../../../components/page-header";
+import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
 import { StatusBadge } from "../../../components/status-badge";
 import { UninstallDialog } from "../../../components/uninstall-dialog";
 import { UpdateBanner } from "../../../components/update-banner";
@@ -29,9 +30,10 @@ import { listSnapshots } from "../../../installs/versions.functions";
 /**
  * `/apps/$installId`: status and health, custom domains, email routes, resources, secret names, jobs,
  * the Cloudflare token the app needs for itself (if any), the app's post-install notes,
- * update and rollback, and uninstall. After an uninstall
- * it shows the `uninstalled` state, the resources that were kept, and the job
- * history.
+ * update and rollback, and, in a danger zone at the bottom (admins), uninstall
+ * or finishing an uninstall. After an uninstall it shows the `uninstalled`
+ * state, the resources that were kept, and the job history; the danger zone
+ * then offers deleting what was kept, or forgetting the app.
  */
 export const Route = createFileRoute("/_app/apps/$installId")({
   loader: async ({ params }) => {
@@ -95,21 +97,16 @@ function InstallPage() {
         title={install.instanceName}
         description={`${install.name}, Worker "${install.workerName}"`}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {isAdmin && install.uninstall !== null && (
-              <UninstallDialog install={install} mode={install.uninstall} />
-            )}
-            {install.workerUrl !== null && (
-              <LinkButton
-                href={install.workerUrl}
-                external
-                variant="primary"
-                icon={<ArrowSquareOutIcon />}
-              >
-                Open app
-              </LinkButton>
-            )}
-          </div>
+          install.workerUrl !== null ? (
+            <LinkButton
+              href={install.workerUrl}
+              external
+              variant="primary"
+              icon={<ArrowSquareOutIcon />}
+            >
+              Open app
+            </LinkButton>
+          ) : undefined
         }
       />
       <UpdateBanner install={install} isAdmin={isAdmin} />
@@ -160,8 +157,9 @@ function InstallPage() {
       {install.retained.length > 0 && (
         <Section title="Kept in the account">
           <Text variant="secondary">
-            These were kept when the app was uninstalled. Appflare no longer uses them; delete them
-            in the Cloudflare dashboard when you no longer need the data.
+            These were kept when the app was uninstalled. Appflare no longer uses them. When you no
+            longer need the data, an admin can delete them with Delete retained data below, or you
+            can delete them in the Cloudflare dashboard.
           </Text>
           <ResourceTable rows={install.retained} />
         </Section>
@@ -211,7 +209,7 @@ function InstallPage() {
               {install.jobs.map((job) => (
                 <Table.Row key={job.id}>
                   <Table.Cell>
-                    <Link href={`/jobs/${job.id}`}>{jobKindLabel(job.kind, job.restore)}</Link>
+                    <Link href={`/jobs/${job.id}`}>{jobKindLabel(job)}</Link>
                   </Table.Cell>
                   <Table.Cell>
                     <StatusBadge status={job.status} of="job" />
@@ -224,7 +222,84 @@ function InstallPage() {
           </Table>
         </LayerCard>
       </Section>
+      {isAdmin && <DangerZone install={install} />}
     </>
+  );
+}
+
+/** One action of the danger zone: what it does, and its buttons. */
+function DangerAction({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="grid max-w-prose gap-1">
+        <Text bold>{title}</Text>
+        <Text variant="secondary">{description}</Text>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * The irreversible actions of the page (admins), at the bottom: uninstall
+ * (for a self-deploying app the same dialog runs its installer's destroy
+ * command), or finishing an uninstall that stopped part way; once
+ * uninstalled, deleting what the uninstall kept, or forgetting the app.
+ * Nothing when no action applies.
+ */
+function DangerZone({ install }: { install: InstallDetail }) {
+  const kept = install.status === "uninstalled" && install.retained.length > 0;
+  if (install.uninstall === null && !kept) return null;
+  const selfDeploying = install.build.kind === "self-deploying";
+  const busy = install.activeJobId !== null;
+  return (
+    <Section title="Danger zone">
+      <LayerCard>
+        <LayerCard.Primary className="grid gap-4 px-5 py-4">
+          {install.uninstall === "start" && (
+            <DangerAction
+              title="Uninstall"
+              description={
+                selfDeploying
+                  ? "Runs the app's own installer to delete everything it created. Nothing can be kept."
+                  : "Deletes the Worker and everything bound to it. You choose which data resources to keep."
+              }
+            >
+              <UninstallDialog install={install} mode="start" />
+            </DangerAction>
+          )}
+          {install.uninstall === "retry" && (
+            <DangerAction
+              title="Finish uninstalling"
+              description="Deletes what the last attempt left. You can keep a resource Cloudflare refuses to delete."
+            >
+              <UninstallDialog install={install} mode="retry" />
+            </DangerAction>
+          )}
+          {kept && (
+            <DangerAction
+              title="Kept data"
+              description={
+                install.forgotten
+                  ? "Delete retained data deletes the resources this app kept, with everything in them. The app was forgotten, so Removed apps no longer lists it."
+                  : "Delete retained data deletes the resources this app kept, with everything in them. Forget only stops listing the app under Removed apps; the resources stay in the account."
+              }
+            >
+              <DeleteRetainedDialog app={install} disabled={busy} />
+              {!install.forgotten && <ForgetDialog app={install} disabled={busy} />}
+            </DangerAction>
+          )}
+        </LayerCard.Primary>
+      </LayerCard>
+    </Section>
   );
 }
 
@@ -311,7 +386,7 @@ function UninstallState({ install }: { install: InstallDetail }) {
       variant="error"
       icon={<WarningCircleIcon weight="fill" />}
       title="The uninstall did not finish"
-      description="Resources already deleted stay deleted. An admin can retry the uninstall to delete what is left, and keep anything Cloudflare refuses to delete."
+      description="Resources already deleted stay deleted. An admin can finish the uninstall from the danger zone at the bottom of this page, and keep anything Cloudflare refuses to delete."
     />
   );
 }

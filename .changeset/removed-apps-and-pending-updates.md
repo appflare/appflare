@@ -1,0 +1,5 @@
+---
+"@appflare/manager": minor
+---
+
+Uninstalled apps leave the list of installed apps, and pending updates show on the home page and in the sidebar. An app page's Uninstall (and finishing an uninstall that stopped part way) moves from the page header to a danger zone at the bottom of the page. An uninstalled app that kept data resources is listed under Settings, Removed apps, with what it kept and two actions: "Delete retained data" runs a job that deletes every kept resource with the same steps an uninstall uses (buckets are emptied in pages, and a run that stops can be run again), and "Forget" only stops listing the app there, leaving its resources in the account. The same actions are in the app page's danger zone. An uninstalled app that kept nothing is not listed anywhere. No install record or job is deleted. The home page lists every pending update, apps and Appflare itself, with a link to where each update starts, and the sidebar counts them on Installed and Settings. The build time a catalog entry gives for a sandbox build or an installer run is now always shown as an estimate.

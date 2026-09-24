@@ -143,7 +143,7 @@ function JobPage() {
     );
   }
 
-  const kind = jobKindLabel(job.kind, job.restore);
+  const kind = jobKindLabel(job);
   const title =
     job.install !== null ? `${kind} ${job.install.instanceName ?? job.install.workerName}` : kind;
   return (

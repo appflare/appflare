@@ -11,7 +11,10 @@ import {
  * second beyond what Workers Paid includes each month. Rates and sizes as
  * published on developers.cloudflare.com/containers/pricing/ and
  * /containers/platform-details/limits/ (September 2026); the estimate is
- * shown as approximate and links to that page. Client-safe (no bindings).
+ * shown as approximate and links to that page. The minutes are the catalog
+ * entry's `expectedMinutes`, an estimate by whoever packaged the app, and are
+ * always worded as one: a build is billed for as long as it actually runs.
+ * Client-safe (no bindings).
  */
 
 export interface InstanceSize {
@@ -44,9 +47,9 @@ export const CONTAINERS_PRICING_URL = "https://developers.cloudflare.com/contain
 export interface BuildEstimate {
   instanceType: SandboxInstanceType;
   size: InstanceSize;
-  /** Expected wall-clock minutes of one build. */
+  /** Estimated wall-clock minutes of one build (the catalog's `expectedMinutes`). */
   minutes: number;
-  /** US dollars one build costs beyond the included usage. */
+  /** US dollars one build of the estimated length costs beyond the included usage. */
   usd: number;
   /** About how many such builds the included usage covers each month (rounded down to 5). */
   includedBuilds: number;
@@ -101,22 +104,30 @@ export function describeInstance(estimate: BuildEstimate): string {
   return `${estimate.instanceType} (${formatVcpu(size.vcpu)}, ${size.memoryGiB} GiB memory, ${size.diskGB} GB disk)`;
 }
 
+/** "an estimated 10 minutes", "an estimated 1 minute": how the catalog's minutes are shown. */
+export function estimatedMinutes(minutes: number): string {
+  return `an estimated ${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
 /** The sentence the install form and the update confirmation show. */
 export function buildCostSentence(estimate: BuildEstimate): string {
   return (
-    `Each build runs a ${describeInstance(estimate)} container for about ${estimate.minutes} ` +
-    `minutes, which costs about ${formatUsd(estimate.usd)} beyond the container usage Workers Paid ` +
-    `includes each month (enough for about ${estimate.includedBuilds} such builds). A build whose ` +
-    "container stops or times out runs once more, which costs as much again."
+    `Each build runs a ${describeInstance(estimate)} container for ` +
+    `${estimatedMinutes(estimate.minutes)} (the catalog's estimate; a build is billed for as long ` +
+    `as it actually runs). A build of that length costs about ${formatUsd(estimate.usd)} beyond ` +
+    "the container usage Workers Paid includes each month (enough for about " +
+    `${estimate.includedBuilds} such builds). A build whose container stops or times out runs ` +
+    "once more, which costs as much again."
   );
 }
 
 /** The same for a self-deploying app, whose container runs the app's own installer. */
 export function installerCostSentence(estimate: BuildEstimate): string {
   return (
-    `Each run of the installer uses a ${describeInstance(estimate)} container for about ` +
-    `${estimate.minutes} minutes, which costs about ${formatUsd(estimate.usd)} beyond the container ` +
-    `usage Workers Paid includes each month (enough for about ${estimate.includedBuilds} such runs). ` +
-    "Updating and uninstalling run it again."
+    `Each run of the installer uses a ${describeInstance(estimate)} container for ` +
+    `${estimatedMinutes(estimate.minutes)} (the catalog's estimate; a run is billed for as long ` +
+    `as it actually takes). A run of that length costs about ${formatUsd(estimate.usd)} beyond ` +
+    "the container usage Workers Paid includes each month (enough for about " +
+    `${estimate.includedBuilds} such runs). Updating and uninstalling run it again.`
   );
 }

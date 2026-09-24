@@ -5,6 +5,7 @@ import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
+import { startDeleteRetainedCore } from "../installs/removed-apps.server";
 import {
   StartUninstallError,
   type StartUninstallRequest,
@@ -229,6 +230,38 @@ async function uninstall(
   units: "self" | "local" = "self",
 ) {
   const { jobId, params } = await start(request);
+  return execute(jobId, params, fake, units);
+}
+
+/** Starts deleting what install `i1` kept (Settings, Removed apps), then runs the job. */
+async function deleteRetained(
+  fake: ReturnType<typeof fakeWorld>,
+  units: "self" | "local" = "self",
+) {
+  let params: UninstallJobParams | null = null;
+  const { jobId } = await startDeleteRetainedCore(
+    {
+      db: env.DB,
+      createJob: async (id, p) => {
+        params = p;
+        return { id };
+      },
+      now: () => new Date(NOW),
+      newId: () => `d-${Math.random().toString(36).slice(2, 8)}`,
+    },
+    "i1",
+  );
+  if (params === null) throw new Error("no Workflow params");
+  return execute(jobId, params as UninstallJobParams, fake, units);
+}
+
+/** Runs a started uninstall job and reads back the job, the install, and its resources. */
+async function execute(
+  jobId: string,
+  params: UninstallJobParams,
+  fake: ReturnType<typeof fakeWorld>,
+  units: "self" | "local",
+) {
   const step = fakeStep();
   const self = fakeSelf(jobEnv(), { fetch: fake.fetch, now: () => NOW });
   let error: unknown = null;
@@ -847,5 +880,236 @@ describe("startUninstallCore", () => {
     expect(install).toEqual({ status: "uninstalling" });
     const { params } = await start({ installId: "i1", retry: true });
     expect(params.deleteResources).toEqual(ALL_DATA);
+  });
+});
+
+describe("deleting the data an uninstall kept", () => {
+  /** Uninstalls `i1` keeping every data resource, then forgets the calls it made. */
+  async function uninstallKeepingAll(fake: ReturnType<typeof fakeWorld>) {
+    await seedInstall();
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.install?.status).toBe("uninstalled");
+    for (const id of ALL_DATA) expect(r.state(id)).toBe("retained");
+    fake.world.calls.length = 0;
+  }
+
+  it("runs only the data resource steps, over SELF, and leaves the install uninstalled", async () => {
+    const objects = Array.from({ length: 45 }, (_, i) => `photos/${i}.jpg`);
+    const fake = fakeWorld({ r2: new Map([["cut-files", objects]]) });
+    await uninstallKeepingAll(fake);
+
+    const r = await deleteRetained(fake);
+
+    expect(r.error).toBeNull();
+    expect(r.params).toMatchObject({ kind: "uninstall", deleteRetained: true });
+    expect(r.params.deleteResources).toEqual(ALL_DATA);
+    expect(JSON.parse(String(r.job?.input_json))).toEqual({
+      installId: "i1",
+      deleteResources: ALL_DATA,
+      deleteRetained: true,
+    });
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.install).toEqual({ status: "uninstalled", uninstalled_at: NOW });
+    for (const id of ALL_DATA) expect(r.state(id)).toBe("deleted");
+    expect(r.step.names).toEqual([
+      "start",
+      "delete KV namespace cut-cut-kv",
+      "delete D1 database cut-db",
+      "empty R2 bucket cut-files page 1",
+      "empty R2 bucket cut-files page 2",
+      "delete R2 bucket cut-files",
+      "delete queue cut-events",
+      "delete Vectorize index cut-vectors",
+      "finish",
+    ]);
+    expect(r.self.calls.map((c) => c.unit)).toEqual(["emptyR2Page", "emptyR2Page"]);
+    // The Worker and what went with it are not touched again.
+    expect(fake.world.calls.some((c) => c.includes("/workers/"))).toBe(false);
+    expect(fake.world.kv.size + fake.world.d1.size + fake.world.queues.size).toBe(0);
+    expect(fake.world.r2.size + fake.world.vectorize.size).toBe(0);
+    expect(JSON.stringify(r.logs)).not.toContain(TOKEN);
+    expect(r.logs.at(-1)?.message).toBe(
+      'Deleted everything "cut" kept. Nothing of it is left in the account.',
+    );
+    // The history stays: the install row and every job.
+    const jobs = await env.DB.prepare(
+      "SELECT kind, status FROM jobs WHERE install_id = 'i1' ORDER BY rowid",
+    ).all();
+    expect(jobs.results).toEqual([
+      { kind: "install", status: "succeeded" },
+      { kind: "uninstall", status: "succeeded" },
+      { kind: "uninstall", status: "succeeded" },
+    ]);
+  });
+
+  it("fails with what to do next, and a second run deletes only what is left", async () => {
+    const fake = fakeWorld({
+      r2: new Map([["cut-files", ["a.txt"]]]),
+      failOnce: new Map([["DELETE /r2/buckets/cut-files", 409]]),
+    });
+    await uninstallKeepingAll(fake);
+
+    const first = await deleteRetained(fake);
+    expect(first.job?.status).toBe("failed");
+    expect(first.job?.error).toMatch(
+      /^delete R2 bucket cut-files: Cloudflare refused to delete the bucket .*then run Delete retained data again$/,
+    );
+    expect(first.install?.status).toBe("uninstalled");
+    expect(first.state("kv")).toBe("deleted");
+    expect(first.state("d1")).toBe("deleted");
+    expect(first.state("r2")).toBe("retained");
+    expect(first.logs.at(-1)?.message).toMatch(/run Delete retained data again/);
+
+    const second = await deleteRetained(fake);
+    expect(second.error).toBeNull();
+    expect(second.params.deleteResources).toEqual(["r2", "queue", "vec"]);
+    expect(second.step.names).toEqual([
+      "start",
+      "empty R2 bucket cut-files page 1",
+      "delete R2 bucket cut-files",
+      "delete queue cut-events",
+      "delete Vectorize index cut-vectors",
+      "finish",
+    ]);
+    for (const id of ALL_DATA) expect(second.state(id)).toBe("deleted");
+  });
+
+  /** A later install `i2` under the same Worker name, recording a bucket and an index of the same names. */
+  async function reinstallUnderSameName(fake: ReturnType<typeof fakeWorld>) {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version, artifact_url, status, installed_at, updated_at)
+         VALUES ('i2', 'cut', 'cut', 'cut', '1.1.0', 'u', 'installed', 2, 2)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES ('i2-r2', 'i2', 'r2', 'FILES', 'cut-files', 'cut-files', 2),
+                ('i2-vec', 'i2', 'vectorize', 'VECTORS', 'cut-vectors', 'cut-vectors', 2)`,
+      ),
+    ]);
+    fake.world.r2.set("cut-files", ["new.txt"]);
+    fake.world.vectorize.add("cut-vectors");
+  }
+
+  it("never touches a bucket or index whose name a later install now records", async () => {
+    const fake = fakeWorld({ r2: new Map([["cut-files", ["old.txt"]]]) });
+    await uninstallKeepingAll(fake);
+    // The admin deletes the kept bucket and index in the dashboard, then
+    // installs again under the same Worker name, which creates new ones.
+    fake.world.r2.delete("cut-files");
+    fake.world.vectorize.delete("cut-vectors");
+    await reinstallUnderSameName(fake);
+
+    const r = await deleteRetained(fake);
+
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names).toEqual([
+      "start",
+      "delete KV namespace cut-cut-kv",
+      "delete D1 database cut-db",
+      "delete queue cut-events",
+      "finish",
+    ]);
+    expect(fake.world.calls.some((c) => c.includes("/r2/") || c.includes("/vectorize/"))).toBe(
+      false,
+    );
+    expect(fake.world.r2.get("cut-files")).toEqual(["new.txt"]);
+    expect(fake.world.vectorize.has("cut-vectors")).toBe(true);
+    // Only this app's rows are recorded as gone; the new install's stay live.
+    for (const id of ALL_DATA) expect(r.state(id)).toBe("deleted");
+    const theirs = await env.DB.prepare(
+      "SELECT id, deleted_at, retained_at FROM resources WHERE install_id = 'i2' ORDER BY rowid",
+    ).all();
+    expect(theirs.results).toEqual([
+      { id: "i2-r2", deleted_at: null, retained_at: null },
+      { id: "i2-vec", deleted_at: null, retained_at: null },
+    ]);
+    const warnings = r.logs.filter((l) => l.level === "warn").map((l) => l.message);
+    expect(warnings).toEqual([
+      'R2 bucket "cut-files" is recorded by the install "cut" now, so it belongs to that install; left alone, and no longer listed as kept by this app.',
+      'Vectorize index "cut-vectors" is recorded by the install "cut" now, so it belongs to that install; left alone, and no longer listed as kept by this app.',
+    ]);
+    expect(r.logs.at(-1)?.message).toBe(
+      'Deleted everything "cut" kept that no other install uses now.',
+    );
+  });
+
+  it("refuses to start when all that is left has a name a later install records", async () => {
+    const fake = fakeWorld();
+    await seedInstall();
+    // Keep only the bucket and the index.
+    await uninstall({ installId: "i1", deleteResources: ["kv", "d1", "queue"] }, fake);
+    await reinstallUnderSameName(fake);
+    fake.world.calls.length = 0;
+
+    await expect(
+      startDeleteRetainedCore({ db: env.DB, createJob: async (id) => ({ id }) }, "i1"),
+    ).rejects.toThrow(
+      'Everything this app kept has a name another install uses now: cut-files (now used by "cut"), cut-vectors (now used by "cut"). Appflare never deletes another install\'s data. Forget this app to stop listing it.',
+    );
+    const jobs = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM jobs WHERE install_id = 'i1' AND input_json LIKE '%deleteRetained%'",
+    ).first<{ n: number }>();
+    expect(jobs?.n).toBe(0);
+    expect(fake.world.calls).toEqual([]);
+  });
+
+  it("stops at a run's page cap and says how to continue", async () => {
+    const fake = fakeWorld({ endless: true });
+    await uninstallKeepingAll(fake);
+    const r = await deleteRetained(fake, "local");
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/still holds more\. Run Delete retained data again to continue$/);
+    expect(r.install?.status).toBe("uninstalled");
+  });
+
+  it("is refused unless the install is uninstalled, kept something, and is idle", async () => {
+    const startFor = (installId: string) =>
+      startDeleteRetainedCore({ db: env.DB, createJob: async (id) => ({ id }) }, installId);
+    await expect(startFor("nope")).rejects.toThrow("There is no such install.");
+    await seedInstall();
+    await expect(startFor("i1")).rejects.toThrow(/Only an uninstalled app's kept data/);
+
+    await env.DB.prepare("UPDATE installs SET status = 'uninstalled' WHERE id = 'i1'").run();
+    await expect(startFor("i1")).rejects.toThrow("Nothing this app kept is left in the account.");
+
+    await env.DB.prepare("UPDATE resources SET retained_at = 1 WHERE id = 'kv'").run();
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status) VALUES ('busy', 'i1', 'uninstall', 'running')",
+    ).run();
+    await expect(startFor("i1")).rejects.toThrow(
+      /Another job of this install is queued or running/,
+    );
+
+    await env.DB.prepare("UPDATE jobs SET status = 'failed' WHERE id = 'busy'").run();
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, kind, status) VALUES ('self', 'self_update', 'running')",
+    ).run();
+    await expect(startFor("i1")).rejects.toThrow(/Appflare is updating itself \(job self\)/);
+
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM jobs").first<{ n: number }>();
+    expect(n?.n).toBe(3);
+  });
+
+  it("records the failure when the Workflow cannot be created; the install stays uninstalled", async () => {
+    await seedInstall("uninstalled");
+    await env.DB.prepare("UPDATE resources SET retained_at = 1 WHERE id = 'd1'").run();
+    await expect(
+      startDeleteRetainedCore(
+        {
+          db: env.DB,
+          createJob: async () => {
+            throw new Error("binding unavailable");
+          },
+          newId: () => "dx",
+        },
+        "i1",
+      ),
+    ).rejects.toThrow("start: could not create the job: binding unavailable");
+    const job = await env.DB.prepare("SELECT status FROM jobs WHERE id = 'dx'").first();
+    expect(job).toEqual({ status: "failed" });
+    const install = await env.DB.prepare("SELECT status FROM installs WHERE id = 'i1'").first();
+    expect(install).toEqual({ status: "uninstalled" });
   });
 });

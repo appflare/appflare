@@ -4,6 +4,7 @@ import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { createDb } from "../db/client";
 import { installs, job_logs, jobs } from "../db/schema";
+import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { sandboxBinding } from "../sandbox/binding";
 import {
   type BuildProgressView,
@@ -34,6 +35,8 @@ export interface JobView {
   kind: string;
   /** A database restore (recorded as a `rollback` job). */
   restore: boolean;
+  /** A deletion of the data an uninstall kept (recorded as an `uninstall` job). */
+  deleteRetained: boolean;
   status: "queued" | "running" | "succeeded" | "failed";
   error: string | null;
   /** The Workers version an update uploaded or a rollback deployed. */
@@ -132,6 +135,7 @@ export const getJob = createServerFn({ method: "GET" })
       kind: job.kind,
       build,
       restore: isRestoreJob(job),
+      deleteRetained: isDeleteRetainedJob(job),
       status: job.status,
       error: job.error,
       workerVersionId: job.worker_version_id,

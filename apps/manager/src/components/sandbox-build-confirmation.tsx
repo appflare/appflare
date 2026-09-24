@@ -60,7 +60,7 @@ export function SandboxBuildConfirmation({
           }
         />
         <Checkbox
-          label={`Run its installer in my sandbox Worker (about ${formatUsd(estimate.usd)} a run beyond the included usage)`}
+          label={`Run its installer in my sandbox Worker (an estimated ${formatUsd(estimate.usd)} a run beyond the included usage)`}
           checked={checked}
           disabled={disabled}
           onCheckedChange={(value: boolean) => onChange(value)}
@@ -91,7 +91,7 @@ export function SandboxBuildConfirmation({
         }
       />
       <Checkbox
-        label={`Build it in my sandbox Worker (about ${formatUsd(estimate.usd)} a build beyond the included usage)`}
+        label={`Build it in my sandbox Worker (an estimated ${formatUsd(estimate.usd)} a build beyond the included usage)`}
         checked={checked}
         disabled={disabled}
         onCheckedChange={(value: boolean) => onChange(value)}

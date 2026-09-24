@@ -163,7 +163,7 @@ export function UninstallDialog({
             description={
               selfDeploying
                 ? "The installer's destroy command deletes the app's databases, buckets and namespaces with everything in them. It runs in a container on Workers Paid, like an install."
-                : "Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare lists it on this page afterwards."
+                : "Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare then lists it on this page and under Settings, Removed apps, until you delete it or forget the app."
             }
           />
           {selfDeploying && install.resources.length > 0 && (
