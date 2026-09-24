@@ -4,6 +4,7 @@ import {
   type TelemetryValue,
 } from "@appflare/schema";
 import { isUpdateAvailable } from "../catalog/versions";
+import type { ChannelKind } from "../notifications/schema";
 import { classifyJobError } from "./classify";
 
 /**
@@ -87,6 +88,8 @@ export interface HeartbeatInput {
   installsWithEmailRouting: number;
   installsWithCrons: number;
   removedWithRetained: number;
+  /** Notification channels by kind (counts only). */
+  notificationChannels: Record<ChannelKind, number>;
 }
 
 function counts<K extends string>(keys: readonly K[]): Record<K, number> {
@@ -160,11 +163,11 @@ export function heartbeatProperties(input: HeartbeatInput): Record<string, Telem
     access_enabled: input.accessEnabled,
     sandbox_connected: input.sandboxConnected,
     manager_behind_latest: input.managerBehindLatest,
-    // TODO: fill these four from the update-control and notification settings once the manager has them.
+    // TODO: fill these three from the update-control settings once the manager has them.
     manager_self_update_auto: null,
     auto_update_default: null,
     installs_auto_update: null,
-    notification_channels: null,
+    notification_channels: { ...input.notificationChannels },
     installs_total: input.installs.length,
     installs_by_status: byStatus,
     installs_by_tier: byTier,

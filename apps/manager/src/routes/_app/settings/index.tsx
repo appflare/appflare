@@ -7,6 +7,7 @@ import { getManagerUpdate } from "../../../catalog/manager-releases.functions";
 import { AccessCard } from "../../../components/access-card";
 import { AppflareUpdatesCard } from "../../../components/appflare-updates-card";
 import { CloudflareTokenCard } from "../../../components/cloudflare-token-card";
+import { NotificationsLinkCard } from "../../../components/notifications-link-card";
 import { PageHeader } from "../../../components/page-header";
 import { PasskeysSection } from "../../../components/passkeys-section";
 import { PlaceholderCard } from "../../../components/placeholder-card";
@@ -125,6 +126,9 @@ function SettingsPage() {
       </Section>
       <Section id="appflare-updates" title="Appflare updates">
         <AppflareUpdatesCard state={managerUpdate} isAdmin={viewer.role === "admin"} />
+      </Section>
+      <Section id="notifications" title="Notifications">
+        <NotificationsLinkCard />
       </Section>
       <Section id="usage-data" title="Usage data">
         <UsageDataCard status={telemetry} isAdmin={viewer.role === "admin"} />

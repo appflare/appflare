@@ -85,6 +85,13 @@
       "when": 1790250030545,
       "tag": "0011_snapshot_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1790251004247,
+      "tag": "0012_notification_channels",
+      "breakpoints": true
     }
   ]
 }

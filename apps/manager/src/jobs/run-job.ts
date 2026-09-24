@@ -3,6 +3,7 @@ import type { FetchLike } from "@appflare/cf-api";
 import type { SigningKey } from "@appflare/schema";
 import { z } from "zod";
 import { JOB_KINDS, type JobKind } from "../db/schema";
+import { notifyJobEnd } from "../notifications/job-end";
 import { runInstall } from "./install";
 import { runReconfigure } from "./reconfigure";
 import { runRollback } from "./rollback";
@@ -118,5 +119,12 @@ export async function runJob(
 ): Promise<void> {
   const parsed = jobParams.safeParse(payload);
   if (!parsed.success) throw new NonRetryableError("invalid job payload");
-  await handlers[parsed.data.kind]({ params: parsed.data, step, env, deps });
+  const ctx: JobContext = { params: parsed.data, step, env, deps };
+  try {
+    await handlers[parsed.data.kind](ctx);
+  } finally {
+    // Tells notification channels the job ended; never throws, and skips
+    // self-updates, after whose promotion nothing else may run.
+    await notifyJobEnd(ctx);
+  }
 }

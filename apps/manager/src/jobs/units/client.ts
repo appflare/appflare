@@ -31,6 +31,8 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *     sandbox Worker up to 30 times in its own invocation; without `SELF` it
  *     runs here, once, at 1 read plus up to 10 `info()` calls (11); plus the
  *     `info()` call of each "check sandbox Worker" step, and the run itself;
+ *   - 1 for the "notify channels" call at the end of an install, update or
+ *     uninstall, when a notification channel exists (none without `SELF`);
  *   - the manifest and signature (4 with the release redirects) and KV reads;
  *   - D1: each step's log write (one batch per step, however many lines a
  *     unit brought back) and job updates; each step that stores or deletes

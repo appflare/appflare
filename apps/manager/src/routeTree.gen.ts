@@ -19,6 +19,7 @@ import { Route as AppCatalogIndexRouteImport } from './routes/_app/catalog/index
 import { Route as AppCatalogSlugRouteImport } from './routes/_app/catalog/$slug'
 import { Route as AppJobsJobIdRouteImport } from './routes/_app/jobs/$jobId'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
+import { Route as AppSettingsNotificationsRouteImport } from './routes/_app/settings/notifications'
 import { Route as AppSettingsRemovedAppsRouteImport } from './routes/_app/settings/removed-apps'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCatalogMediaDigestRouteImport } from './routes/api/catalog/media/$digest'
@@ -72,6 +73,12 @@ const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
   path: '/settings/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSettingsNotificationsRoute =
+  AppSettingsNotificationsRouteImport.update({
+    id: '/settings/notifications',
+    path: '/settings/notifications',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppSettingsRemovedAppsRoute = AppSettingsRemovedAppsRouteImport.update({
   id: '/settings/removed-apps',
   path: '/settings/removed-apps',
@@ -96,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/apps/$installId': typeof AppAppsInstallIdRoute
   '/catalog/$slug': typeof AppCatalogSlugRoute
   '/jobs/$jobId': typeof AppJobsJobIdRoute
+  '/settings/notifications': typeof AppSettingsNotificationsRoute
   '/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/catalog/': typeof AppCatalogIndexRoute
@@ -110,6 +118,7 @@ export interface FileRoutesByTo {
   '/apps/$installId': typeof AppAppsInstallIdRoute
   '/catalog/$slug': typeof AppCatalogSlugRoute
   '/jobs/$jobId': typeof AppJobsJobIdRoute
+  '/settings/notifications': typeof AppSettingsNotificationsRoute
   '/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/catalog': typeof AppCatalogIndexRoute
@@ -126,6 +135,7 @@ export interface FileRoutesById {
   '/_app/apps/$installId': typeof AppAppsInstallIdRoute
   '/_app/catalog/$slug': typeof AppCatalogSlugRoute
   '/_app/jobs/$jobId': typeof AppJobsJobIdRoute
+  '/_app/settings/notifications': typeof AppSettingsNotificationsRoute
   '/_app/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/_app/catalog/': typeof AppCatalogIndexRoute
@@ -142,6 +152,7 @@ export interface FileRouteTypes {
     | '/apps/$installId'
     | '/catalog/$slug'
     | '/jobs/$jobId'
+    | '/settings/notifications'
     | '/settings/removed-apps'
     | '/api/auth/$'
     | '/catalog/'
@@ -156,6 +167,7 @@ export interface FileRouteTypes {
     | '/apps/$installId'
     | '/catalog/$slug'
     | '/jobs/$jobId'
+    | '/settings/notifications'
     | '/settings/removed-apps'
     | '/api/auth/$'
     | '/catalog'
@@ -171,6 +183,7 @@ export interface FileRouteTypes {
     | '/_app/apps/$installId'
     | '/_app/catalog/$slug'
     | '/_app/jobs/$jobId'
+    | '/_app/settings/notifications'
     | '/_app/settings/removed-apps'
     | '/api/auth/$'
     | '/_app/catalog/'
@@ -259,6 +272,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings/notifications': {
+      id: '/_app/settings/notifications'
+      path: '/settings/notifications'
+      fullPath: '/settings/notifications'
+      preLoaderRoute: typeof AppSettingsNotificationsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings/removed-apps': {
       id: '/_app/settings/removed-apps'
       path: '/settings/removed-apps'
@@ -288,6 +308,7 @@ interface AppRouteChildren {
   AppAppsInstallIdRoute: typeof AppAppsInstallIdRoute
   AppCatalogSlugRoute: typeof AppCatalogSlugRoute
   AppJobsJobIdRoute: typeof AppJobsJobIdRoute
+  AppSettingsNotificationsRoute: typeof AppSettingsNotificationsRoute
   AppSettingsRemovedAppsRoute: typeof AppSettingsRemovedAppsRoute
   AppCatalogIndexRoute: typeof AppCatalogIndexRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
@@ -298,6 +319,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAppsInstallIdRoute: AppAppsInstallIdRoute,
   AppCatalogSlugRoute: AppCatalogSlugRoute,
   AppJobsJobIdRoute: AppJobsJobIdRoute,
+  AppSettingsNotificationsRoute: AppSettingsNotificationsRoute,
   AppSettingsRemovedAppsRoute: AppSettingsRemovedAppsRoute,
   AppCatalogIndexRoute: AppCatalogIndexRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,

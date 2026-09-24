@@ -11,6 +11,7 @@ import { managerUpdateView, readManagerLatest } from "../catalog/manager-release
 import { createDb } from "../db/client";
 import { SCHEMA_VERSION_KEY } from "../db/migrate";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
+import { channelCounts } from "../notifications/channels.server";
 import { sandboxBinding } from "../sandbox/binding";
 import {
   EVENT,
@@ -170,6 +171,7 @@ async function heartbeatInput(
     installsWithEmailRouting: feature("email_route"),
     installsWithCrons: feature("cron"),
     removedWithRetained: num(removed?.[0]?.installs),
+    notificationChannels: await channelCounts(env.DB),
   };
 }
 

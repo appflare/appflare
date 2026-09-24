@@ -73,6 +73,7 @@ function heartbeat(overrides: Partial<HeartbeatInput> = {}): HeartbeatInput {
     installsWithEmailRouting: 0,
     installsWithCrons: 2,
     removedWithRetained: 1,
+    notificationChannels: { telegram: 1, slack: 0, discord: 2, webhook: 0 },
     ...overrides,
   };
 }
@@ -94,7 +95,7 @@ describe("heartbeatProperties", () => {
       manager_self_update_auto: null,
       auto_update_default: null,
       installs_auto_update: null,
-      notification_channels: null,
+      notification_channels: { telegram: 1, slack: 0, discord: 2, webhook: 0 },
       installs_total: 4,
       installs_by_status: { installed: 2, failed: 1, installing: 0, updating: 1, uninstalling: 0 },
       installs_by_tier: { artifact: 2, sandbox: 1, self_deploying: 1 },

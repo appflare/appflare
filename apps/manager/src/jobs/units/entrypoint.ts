@@ -1,5 +1,8 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
+import type { DeliveryReport } from "../../notifications/deliver.server";
+import type { HealthSweepReport } from "../../notifications/health-sweep.server";
+import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
 import type { CronTriggerScan } from "../install/cron-limit";
 import type { UnitResult } from "./result";
 import type { SandboxSettleResult } from "./sandbox-settle";
@@ -46,5 +49,14 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   settleSandbox(input: unknown): Promise<UnitResult<SandboxSettleResult>> {
     return createJobUnits(this.env).settleSandbox(input);
+  }
+
+  // Notification units (src/notifications/units.ts): delivery and the scheduled health check.
+  deliverNotifications(input: unknown): Promise<NotificationUnitResult<DeliveryReport>> {
+    return createNotificationUnits(this.env).deliverNotifications(input);
+  }
+
+  checkInstallsHealth(input: unknown): Promise<NotificationUnitResult<HealthSweepReport>> {
+    return createNotificationUnits(this.env).checkInstallsHealth(input);
   }
 }
