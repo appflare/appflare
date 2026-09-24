@@ -3,6 +3,8 @@ import { type CatalogManifest, hasFixedWorkerName, type IndexApp } from "@appfla
 import { createServerFn } from "@tanstack/react-start";
 import { asc, ne } from "drizzle-orm";
 import { z } from "zod";
+import type { AccountPlan } from "../account/plan";
+import { readAccountPlan } from "../account/plan.server";
 import { hasRole } from "../auth/roles";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
@@ -14,6 +16,7 @@ import { planBindings } from "../jobs/install/bindings";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { getCatalogManifest } from "./app-manifest.server";
+import { cronTriggerCount } from "./cron-triggers";
 import { CatalogError, getCatalogIndex, refreshCatalogIndex } from "./index.server";
 
 /** Catalog browsing. */
@@ -133,6 +136,13 @@ export interface CatalogDetail {
   createsKnown: boolean;
   /** This manager has its `SANDBOX` binding (sandbox tier apps need it). */
   sandboxConnected: boolean;
+  /**
+   * Distinct cron triggers the artifact declares; 0 when none, or for a
+   * sandbox tier app, whose wrangler config is read only when it is built.
+   */
+  cronTriggers: number;
+  /** The account's Workers plan as Settings records it (free when never set). */
+  accountPlan: AccountPlan;
 }
 
 /**
@@ -172,6 +182,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
   .validator(z.object({ slug: z.string().min(1).max(100) }))
   .handler(async ({ data }): Promise<CatalogDetail> => {
     const session = await requireSession();
+    const accountPlan = await readAccountPlan(createDb(env.DB));
     const empty = {
       catalog: null,
       creates: [],
@@ -183,6 +194,8 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       subdomain: null,
       createsKnown: true,
       sandboxConnected: sandboxBinding(env) !== undefined,
+      cronTriggers: 0,
+      accountPlan,
     };
     const read = await getCatalogIndex(env);
     if (!read.ok) return { app: null, error: read.error, ...empty };
@@ -210,6 +223,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       createsKnown: plan !== null,
       creates: plan?.resources.map((r) => ({ kind: r.kind, binding: r.binding })) ?? [],
       durableObjects: plan?.durableObjects.map((d) => d.className) ?? [],
+      cronTriggers: cronTriggerCount(manifest.manifest?.worker.crons ?? []),
       error: null,
       instances,
       suggestedWorkerName: fixed

@@ -39,6 +39,22 @@ A few apps only work under one Worker name, for example because they hard-code t
 own hostname. For those the Worker name field is read-only and the app installs once
 per account.
 
+## Workers Free or Workers Paid
+
+Cloudflare's API does not tell Appflare which Workers plan your account is on, so
+you state it once in **Settings**, under **Workers plan**. It starts as Workers Free.
+
+- On **Workers Paid**, the install form does not ask you to confirm Workers Paid for
+  apps that need it, and installs and updates skip the count of the account's cron
+  triggers.
+- On **Workers Free**, the install form asks **This account is on Workers Paid** for
+  each app that needs Workers Paid, and offers it as an option for an app with cron
+  triggers. Ticking it also offers **Remember this for the account**, which records
+  Workers Paid in Settings.
+
+The catalog page and the install form show how many cron triggers an app uses. The
+update dialog shows it too when a new version adds cron triggers.
+
 ## What the install job does
 
 Each step is a durable Workflow step, retried on its own if a Cloudflare API call
@@ -47,7 +63,10 @@ fails for a moment. The log shows every API call as `METHOD path -> status`.
 1. Fetches the app's signed manifest from the catalog release and verifies its
    signature.
 2. Checks the plan, the requirements, and the Worker name. For apps that bind R2, it
-   checks that R2 is enabled.
+   checks that R2 is enabled. For apps with cron triggers, it counts the cron
+   triggers your other Workers use and stops if the app's own would take the account
+   past the 5 Workers Free allows. The count is skipped when the account is on
+   Workers Paid (see below).
 3. Creates each KV namespace, D1 database, R2 bucket, queue, and Vectorize index the
    app binds, named `<worker-name>-<binding>` (lower case, `_` becomes `-`). It
    records each one as it goes. If a resource with that name already exists in the

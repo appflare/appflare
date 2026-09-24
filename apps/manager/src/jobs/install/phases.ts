@@ -20,6 +20,7 @@ import { cronChanges } from "../update/plan";
 import { fetchWhole, sha256Hex, verifyArtifactManifest } from "./artifact";
 import { planAssetParts } from "./asset-parts";
 import type { ResourceBindingPlan, WorkflowPlan } from "./bindings";
+import { CronLimitError, putSchedulesChecked } from "./cron-limit";
 import {
   classifyHealthProbe,
   decideLiveHealth,
@@ -543,7 +544,10 @@ export async function checkLiveHealthPhase(
  * Step "set cron triggers" when the wanted schedule differs from the recorded
  * one. Cron triggers belong to the script, not to a version, so this runs
  * after the version that expects them serves traffic. Replaced triggers are
- * marked deleted; they hold no data.
+ * marked deleted; they hold no data. Cloudflare's refusal at the account's
+ * cron trigger limit is a warning here, not a failure: the version already
+ * serves, the Worker keeps the triggers it had (as recorded), and the job
+ * goes on to its health check.
  */
 export async function syncCronsPhase(
   steps: JobSteps,
@@ -556,10 +560,22 @@ export async function syncCronsPhase(
   if (!changed) return;
   const want = new Set(wanted);
   await steps.run("set cron triggers", async ({ log, cf, orm }) => {
-    await cf().workers.putSchedules(
-      workerName,
-      [...want].map((cron) => ({ cron })),
-    );
+    try {
+      await putSchedulesChecked(
+        cf(),
+        workerName,
+        [...want],
+        `The version serves traffic; the Worker keeps the cron triggers it had (${recorded.length > 0 ? recorded.join(", ") : "none"})${added.length > 0 ? ` and does not get ${added.join(", ")}` : ""}.`,
+        "then the next update or rollback sets them",
+      );
+    } catch (error) {
+      // The version already serves: a refused schedule changes nothing, so
+      // the job goes on to the health check and records the triggers as
+      // they were.
+      if (!(error instanceof CronLimitError)) throw error;
+      log.warn(error.message);
+      return {};
+    }
     const at = new Date(steps.now());
     for (const cron of added) {
       await orm

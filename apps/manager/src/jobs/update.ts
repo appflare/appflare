@@ -9,6 +9,8 @@ import {
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
+import { parseAccountPlan } from "../account/plan";
+import { cronTriggerCount } from "../catalog/cron-triggers";
 import { readCachedCatalogApp } from "../catalog/index.server";
 import { createDb } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
@@ -19,6 +21,7 @@ import {
   cleanupSandboxBuildsPhase,
   resolveArtifactPhase,
 } from "./install/artifact-source";
+import { checkCronLimitPhase } from "./install/cron-limit";
 import { healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
@@ -129,6 +132,12 @@ export const updateJobParams = z.object({
    * on the sandbox Worker before the installer runs. Only here, never in D1.
    */
   appToken: z.string().min(1).max(1024).optional(),
+  /**
+   * The admin confirmed the account is on Workers Paid when the new version
+   * sets more cron triggers than the Worker has; the cron trigger count is
+   * then skipped.
+   */
+  paidConfirmed: z.boolean().optional(),
 });
 export type UpdateJobParams = z.infer<typeof updateJobParams>;
 
@@ -199,7 +208,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
             isNull(resources.retained_at),
           ),
         );
-      const settings = await readSettings(orm, [SETTING.accountId]);
+      const settings = await readSettings(orm, [SETTING.accountId, SETTING.accountPlan]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!env.CF_API_TOKEN) {
         throw new JobError("the Cloudflare API token is not configured; finish setup first");
@@ -216,6 +225,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }));
       return {
         accountId: settings.account_id,
+        accountPaid: parseAccountPlan(settings.account_plan) === "paid",
         slug: install.app_slug,
         workerName: install.worker_name,
         fromVersion: install.catalog_version,
@@ -327,6 +337,22 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+
+    // The account's cron trigger limit, when this version sets more cron
+    // triggers than the Worker has, before anything changes. Skipped on
+    // Workers Paid: a paid app was confirmed on it when it was installed, the
+    // admin confirmed it for this update, or Settings records it.
+    const recordedCrons = started.resources.filter((r) => r.kind === "cron").length;
+    const wantedCrons = cronTriggerCount(manifest.worker.crons);
+    if (wantedCrons > recordedCrons) {
+      await checkCronLimitPhase(steps, {
+        workerName,
+        wanted: wantedCrons,
+        paid:
+          manifest.catalog.plan === "paid" || params.paidConfirmed === true || started.accountPaid,
+        subject: "this version",
+      });
+    }
 
     // 2. Snapshot, before anything changes.
     const deployed = await run("read current deployment", async ({ log, cf }) => {
@@ -619,14 +645,6 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    await syncCronsPhase(
-      steps,
-      params.installId,
-      workerName,
-      started.resources.filter((r) => r.kind === "cron").map((r) => r.name),
-      manifest.worker.crons,
-    );
-
     // Queue consumers belong to the script too: set them once the version serves.
     await syncQueueConsumersPhase(steps, {
       installId: params.installId,
@@ -637,6 +655,16 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       queues: bound,
       recorded: started.resources,
     });
+
+    // Cron triggers last of the script's settings: a refusal at the account's
+    // limit is only a warning, and nothing after it depends on them.
+    await syncCronsPhase(
+      steps,
+      params.installId,
+      workerName,
+      started.resources.filter((r) => r.kind === "cron").map((r) => r.name),
+      manifest.worker.crons,
+    );
 
     // 9. Live health check, recorded rather than fatal: the version already serves.
     const url = `https://${workerName}.${subdomain}.workers.dev${healthPath}`;

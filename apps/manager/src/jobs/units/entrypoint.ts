@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
+import type { CronTriggerScan } from "../install/cron-limit";
 import type { UnitResult } from "./result";
 import {
   type AssetPartResult,
@@ -36,5 +37,9 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   inspectEmailRouting(input: unknown): Promise<UnitResult<EmailRoutingInspection>> {
     return createJobUnits(this.env).inspectEmailRouting(input);
+  }
+
+  countCronTriggers(input: unknown): Promise<UnitResult<CronTriggerScan>> {
+    return createJobUnits(this.env).countCronTriggers(input);
   }
 }

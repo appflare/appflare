@@ -4,10 +4,11 @@ import {
   type IndexBuild,
   renderPlaceholders,
 } from "@appflare/schema";
-import { Banner, Button, Checkbox, Input, InputArea, LayerCard, Text } from "@cloudflare/kumo";
+import { Banner, Button, Input, InputArea, LayerCard, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
+import type { AccountPlan } from "../account/plan";
 import {
   INSTANCE_NAME_MAX_LENGTH,
   WORKER_NAME_HINT,
@@ -21,9 +22,14 @@ import {
 } from "../installs/install-vars";
 import { startInstall } from "../installs/installs.functions";
 import { workersDevUrl } from "../installs/post-install";
+import { CronTriggersField } from "./cron-triggers-field";
 import { EmailRoutingFields } from "./email-routing-fields";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
+import {
+  WorkersPaidConfirmation,
+  type WorkersPaidConfirmationState,
+} from "./workers-paid-confirmation";
 
 /**
  * The install form of `/catalog/$slug`, generated from
@@ -33,8 +39,14 @@ import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fie
  * callout; it arrives here as `requirementsConfirmed`. `generate: true`
  * secrets are prefilled with a random value the admin can copy now; it is
  * shown only here. An app that receives email (`install.emailRouting`) also
- * asks for a zone and previews what the install sets up there. Members see
- * the form disabled.
+ * asks for a zone and previews what the install sets up there. An app with
+ * cron triggers says how many it uses against the free plan's 5 per account;
+ * if it does not need Workers Paid itself, the Workers Paid confirmation is
+ * offered as optional and skips the job's count of the account's triggers.
+ * When Settings records the account as on Workers Paid, no Workers Paid
+ * confirmation is shown and it counts as given; otherwise ticking one also
+ * offers "Remember this for the account", which records the plan.
+ * Members see the form disabled.
  *
  * Settings start with the catalog default, else the wrangler config's value,
  * with `{{workerUrl}}` and `{{workerName}}` shown filled in for the Worker
@@ -54,6 +66,8 @@ export function InstallForm({
   requirementsConfirmed,
   sandboxBuild = null,
   installer = null,
+  cronTriggers = 0,
+  accountPlan = "free",
 }: {
   catalog: CatalogManifest;
   /** One per catalog var (`installVarFields`). */
@@ -77,6 +91,10 @@ export function InstallForm({
    * the Workers, so the form has no Worker name.
    */
   installer?: IndexBuild | null;
+  /** Distinct cron triggers the artifact declares (0 when none or not known before a build). */
+  cronTriggers?: number;
+  /** The account's Workers plan as Settings records it. */
+  accountPlan?: AccountPlan;
 }) {
   const router = useRouter();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
@@ -88,7 +106,17 @@ export function InstallForm({
   );
   /** Settings the admin edited; the others follow their default. */
   const [editedVars, setEditedVars] = useState<Record<string, string>>({});
-  const [paidConfirmed, setPaidConfirmed] = useState(false);
+  const accountPaid = accountPlan === "paid";
+  const [paidTicked, setPaidTicked] = useState(false);
+  const [rememberPaid, setRememberPaid] = useState(false);
+  /** Given when Settings says Workers Paid, else what the admin ticked here. */
+  const paidConfirmed = accountPaid || paidTicked;
+  const paidConfirmation: WorkersPaidConfirmationState = {
+    checked: paidTicked,
+    onChange: setPaidTicked,
+    remember: rememberPaid,
+    onRememberChange: setRememberPaid,
+  };
   const [buildConfirmed, setBuildConfirmed] = useState(false);
   const [appToken, setAppToken] = useState("");
   const confirmsCost = sandboxBuild ?? installer;
@@ -148,6 +176,7 @@ export function InstallForm({
           secrets,
           vars: submittedVars(),
           paidConfirmed,
+          ...(!accountPaid && paidTicked && rememberPaid ? { rememberPaidPlan: true } : {}),
           requirementsConfirmed,
           ...(confirmsCost === null ? {} : { buildConfirmed }),
           ...(installer === null ? {} : { appToken: appToken.trim() }),
@@ -297,12 +326,13 @@ export function InstallForm({
               />
             )}
 
-            {catalog.plan === "paid" && (
-              <Checkbox
-                label="This account is on Workers Paid"
-                checked={paidConfirmed}
-                onCheckedChange={(checked: boolean) => setPaidConfirmed(checked)}
-              />
+            <CronTriggersField
+              count={cronTriggers}
+              confirmation={catalog.plan === "paid" || accountPaid ? null : paidConfirmation}
+            />
+
+            {catalog.plan === "paid" && !accountPaid && (
+              <WorkersPaidConfirmation state={paidConfirmation} />
             )}
           </fieldset>
 

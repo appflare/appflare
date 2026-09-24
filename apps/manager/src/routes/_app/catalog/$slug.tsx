@@ -22,6 +22,7 @@ import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.fu
 import { requirementLabel, requirementSentence } from "../../../catalog/requirements";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { InstallCheckBadge, PlanBadge, TierBadge } from "../../../components/catalog-badges";
+import { CronTriggersField } from "../../../components/cron-triggers-field";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
@@ -32,7 +33,8 @@ import { describeInstance, estimateIndexBuild, formatUsd } from "../../../sandbo
  * `/catalog/$slug`: app detail, prerequisites, the Cloudflare token the app
  * needs for itself (if any), the installs of this app, and the install form (an
  * app may be installed several times under different Worker names, unless its
- * Worker name is fixed). When the app lists account requirements, the admin
+ * Worker name is fixed). An app with cron triggers says how many it uses
+ * against the free plan's 5 per account. When the app lists account requirements, the admin
  * confirms them in the prerequisites callout before the Install button enables.
  */
 export const Route = createFileRoute("/_app/catalog/$slug")({
@@ -146,6 +148,8 @@ function CatalogEntryPage() {
           requirementsConfirmed={requirementsConfirmed}
           sandboxBuild={sandboxBuild}
           installer={installer}
+          cronTriggers={detail.cronTriggers}
+          accountPlan={detail.accountPlan}
         />
       )}
     </>
@@ -322,7 +326,13 @@ function Prerequisites({
           title="Before you install"
           description={
             <div className="grid gap-2">
-              {paid && <span>This app needs the Workers Paid plan on this account.</span>}
+              {paid && (
+                <span>
+                  This app needs the Workers Paid plan on this account.
+                  {detail.accountPlan === "paid" &&
+                    " Settings records this account as on Workers Paid."}
+                </span>
+              )}
               {app.requires.length > 0 && (
                 <>
                   <span>{paid ? "It also needs:" : "This app needs:"}</span>
@@ -365,6 +375,7 @@ function Prerequisites({
           </Badge>
         ))}
       </div>
+      <CronTriggersField count={detail.cronTriggers} />
     </div>
   );
 }

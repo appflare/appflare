@@ -1,5 +1,6 @@
 import { Text } from "@cloudflare/kumo";
 import { createFileRoute } from "@tanstack/react-router";
+import { getAccountPlan } from "../../account/plan.functions";
 import { getManagerUpdate } from "../../catalog/manager-releases.functions";
 import { AccessCard } from "../../components/access-card";
 import { AppflareUpdatesCard } from "../../components/appflare-updates-card";
@@ -9,6 +10,7 @@ import { PasskeysSection } from "../../components/passkeys-section";
 import { PlaceholderCard } from "../../components/placeholder-card";
 import { SandboxCard } from "../../components/sandbox-card";
 import { UsersSection } from "../../components/users-section";
+import { WorkersPlanCard } from "../../components/workers-plan-card";
 import { getAccessStatus } from "../../server/access.functions";
 import { listPasskeys } from "../../server/passkeys.functions";
 import { getSandboxStatus } from "../../server/sandbox.functions";
@@ -16,22 +18,32 @@ import { getTokenStatus } from "../../server/token.functions";
 import { listUsers } from "../../server/users.functions";
 
 /**
- * `/settings`: users, your passkeys, the Cloudflare token, Cloudflare Access
- * protection, sandbox builds, and Appflare's own updates.
+ * `/settings`: users, your passkeys, the Cloudflare token, the account's
+ * Workers plan, Cloudflare Access protection, sandbox builds, and Appflare's
+ * own updates.
  */
 export const Route = createFileRoute("/_app/settings")({
   staticData: { title: "Settings" },
   loader: async ({ context }) => {
-    const [users, passkeys, tokenStatus, accessStatus, sandboxStatus, managerUpdate] =
+    const [users, passkeys, tokenStatus, accountPlan, accessStatus, sandboxStatus, managerUpdate] =
       await Promise.all([
         context.viewer.role === "admin" ? listUsers() : null,
         listPasskeys(),
         getTokenStatus(),
+        getAccountPlan(),
         getAccessStatus(),
         getSandboxStatus(),
         getManagerUpdate(),
       ]);
-    return { users, passkeys, tokenStatus, accessStatus, sandboxStatus, managerUpdate };
+    return {
+      users,
+      passkeys,
+      tokenStatus,
+      accountPlan,
+      accessStatus,
+      sandboxStatus,
+      managerUpdate,
+    };
   },
   component: SettingsPage,
 });
@@ -48,7 +60,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function SettingsPage() {
-  const { users, passkeys, tokenStatus, accessStatus, sandboxStatus, managerUpdate } =
+  const { users, passkeys, tokenStatus, accountPlan, accessStatus, sandboxStatus, managerUpdate } =
     Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   return (
@@ -62,6 +74,9 @@ function SettingsPage() {
       </Section>
       <Section title="Cloudflare token">
         <CloudflareTokenCard status={tokenStatus} canRotate={viewer.role === "admin"} />
+      </Section>
+      <Section title="Workers plan">
+        <WorkersPlanCard plan={accountPlan} isAdmin={viewer.role === "admin"} />
       </Section>
       <Section title="Cloudflare Access">
         <AccessCard

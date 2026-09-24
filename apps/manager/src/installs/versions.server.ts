@@ -9,7 +9,9 @@ import {
 } from "@appflare/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
-import { createDb } from "../db/client";
+import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
+import { cronTriggerCount } from "../catalog/cron-triggers";
+import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import type { RollbackJobParams } from "../jobs/rollback";
@@ -84,7 +86,14 @@ function statusRefusal(status: string): string | null {
 /** The claim batch: job row first, then `installed` -> `updating` only if it was inserted. */
 async function claim<P extends { jobId: string }>(
   deps: StartJobDeps<P>,
-  input: { installId: string; kind: "update" | "rollback"; inputJson: string; params: P },
+  input: {
+    installId: string;
+    kind: "update" | "rollback";
+    inputJson: string;
+    params: P;
+    /** Runs once the job row is claimed, before the Workflow is created. */
+    afterClaim?: (db: Database) => Promise<void>;
+  },
 ): Promise<{ jobId: string }> {
   await refuseDuringSelfUpdate(deps.db, deps.workflows, (m) => new VersionActionError(m));
   const now = (deps.now ?? (() => new Date()))();
@@ -114,6 +123,7 @@ async function claim<P extends { jobId: string }>(
   }
 
   const db = createDb(deps.db);
+  await input.afterClaim?.(db);
   let instanceId: string;
   try {
     instanceId = (await deps.createJob(jobId, input.params)).id;
@@ -163,6 +173,13 @@ export interface StartUpdateRequest {
    * on the sandbox Worker before its installer runs.
    */
   appToken?: string;
+  /**
+   * Whether the account is on Workers Paid, answered when the new version
+   * adds cron triggers; undefined until asked.
+   */
+  paidConfirmed?: boolean;
+  /** With `paidConfirmed`: also record Workers Paid as the account's plan in Settings. */
+  rememberPaidPlan?: boolean;
 }
 
 /** What the admin must provide or confirm before the update can start. */
@@ -179,15 +196,23 @@ export interface UpdateNeeds {
   build: IndexBuild | null;
   /** The new version is deployed by the app's own installer (no preview, no rollback). */
   selfDeploying?: boolean;
+  /**
+   * The cron triggers the new version sets, when that is more than the
+   * Worker has, the app does not need Workers Paid, and Settings does not
+   * record the account as on Workers Paid (else null): the dialog notes the
+   * free plan's limit and offers to confirm Workers Paid.
+   */
+  cronTriggers: number | null;
 }
 
 export type StartUpdateResult = { jobId: string } | UpdateNeeds;
 
 /**
  * Starts an update to the catalog's current version; refused unless it is
- * newer. When the new version introduces secrets, or cannot be checked on a
- * preview before it serves traffic, the first call returns what the admin
- * must provide or confirm instead; the second call carries the values
+ * newer. When the new version introduces secrets, cannot be checked on a
+ * preview before it serves traffic, or adds cron triggers to an app that
+ * does not need Workers Paid (the free plan allows 5 per account), the first
+ * call returns what the admin must provide or confirm instead; the second call carries the values
  * (which go only into the Workflow params) and the confirmation.
  */
 export async function startUpdateCore(
@@ -214,6 +239,8 @@ export async function startUpdateCore(
   const sandbox = app.tier === "sandbox" ? (app.build ?? null) : null;
   let catalog: CatalogManifest;
   let skipPreview: string | null = null;
+  /** Cron triggers of the new version; unknown for a sandbox build (and it needs Workers Paid anyway). */
+  let newCrons: number | null = null;
   if (sandbox !== null) {
     if (deps.sandboxConnected !== true) {
       throw new VersionActionError(
@@ -232,35 +259,44 @@ export async function startUpdateCore(
   } else {
     const manifest = await deps.loadManifest(app);
     catalog = manifest.catalog;
+    newCrons = cronTriggerCount(manifest.worker.crons);
     skipPreview = updatePath(
       manifest,
       install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
     ).skipPreview;
   }
-  const recordedSecrets = await createDb(deps.db)
-    .select({ name: resources.name })
+  const recorded = await createDb(deps.db)
+    .select({ kind: resources.kind, name: resources.name })
     .from(resources)
     .where(
       and(
         eq(resources.install_id, install.id),
-        eq(resources.kind, "secret"),
+        inArray(resources.kind, ["secret", "cron"]),
         isNull(resources.deleted_at),
       ),
     );
   const needed = missingSecrets(
     catalog.secrets,
-    recordedSecrets.map((r) => r.name),
+    recorded.filter((r) => r.kind === "secret").map((r) => r.name),
   );
+  const recordedCrons = recorded.filter((r) => r.kind === "cron").length;
+  const accountPaid = (await readAccountPlan(createDb(deps.db))) === "paid";
+  const cronTriggers =
+    newCrons !== null && newCrons > recordedCrons && catalog.plan !== "paid" && !accountPaid
+      ? newCrons
+      : null;
   if (
     (needed.length > 0 && request.secrets === undefined) ||
     (skipPreview !== null && request.confirmNoPreview !== true) ||
-    (sandbox !== null && request.buildConfirmed !== true)
+    (sandbox !== null && request.buildConfirmed !== true) ||
+    (cronTriggers !== null && request.paidConfirmed === undefined)
   ) {
     return {
       version: app.version,
       needsSecrets: needed,
       skipsPreview: skipPreview,
       build: sandbox,
+      cronTriggers,
     };
   }
   const given = request.secrets ?? {};
@@ -276,6 +312,8 @@ export async function startUpdateCore(
     }
     secrets[secret.name] = value;
   }
+  const rememberPaid =
+    cronTriggers !== null && request.paidConfirmed === true && request.rememberPaidPlan === true;
   const jobId = (deps.newId ?? (() => ulid()))();
   return claim(deps, {
     installId: install.id,
@@ -296,7 +334,12 @@ export async function startUpdateCore(
       ...(sandbox === null
         ? {}
         : { buildConfirmed: true, confirmNoPreview: request.confirmNoPreview === true }),
+      ...(cronTriggers === null ? {} : { paidConfirmed: request.paidConfirmed === true }),
     },
+    // "Remember this for the account" beside a ticked Workers Paid
+    // confirmation, recorded only once the job row exists: a refused start
+    // changes nothing.
+    ...(rememberPaid ? { afterClaim: (db) => writeAccountPlan(db, "paid") } : {}),
   });
 }
 
@@ -348,6 +391,8 @@ async function startSelfDeployingUpdate(
       skipsPreview: null,
       build: installer,
       selfDeploying: true,
+      // The app's own installer sets its cron triggers; Appflare never does.
+      cronTriggers: null,
     };
   }
   const given = request.secrets ?? {};

@@ -45,6 +45,11 @@ export const startInstallInput = z.object({
   vars: z.record(z.string().max(200), z.string().max(MAX_VALUE_LENGTH)),
   paidConfirmed: z.boolean(),
   /**
+   * With `paidConfirmed`: also record Workers Paid as the account's plan in
+   * Settings, so later installs and updates stop asking.
+   */
+  rememberPaidPlan: z.boolean().optional(),
+  /**
    * The admin confirmed the account meets the app's `requires` (R2 enabled, a
    * zone, and so on). Refused when the app lists requirements and this is not
    * true. Defaults to false for a client that predates the field.

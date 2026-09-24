@@ -12,6 +12,7 @@ import { type FormEvent, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { startUpdate } from "../installs/versions.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
+import { CronTriggersField } from "./cron-triggers-field";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
 
@@ -19,9 +20,12 @@ import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fie
  * The update state of `/apps/$installId`: an update or rollback running
  * (with a link to its log), or "Update available to <version>" with an Update
  * button for admins. The button starts the update job and opens its log; when
- * the new version introduces secrets, or cannot be checked on a preview
- * before it serves traffic, a dialog asks for the secrets and the
- * confirmation first.
+ * the new version introduces secrets, cannot be checked on a preview before
+ * it serves traffic, or adds cron triggers, a dialog asks for the secrets and
+ * the confirmations first (for cron triggers, unless Settings records the
+ * account as on Workers Paid, an optional "This account is on Workers Paid",
+ * which skips the job's count of the account's triggers and can be
+ * remembered for the account).
  */
 export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
   const router = useRouter();
@@ -114,6 +118,8 @@ function UpdateDialog({
   const [buildConfirmed, setBuildConfirmed] = useState(needs.build === null);
   /** A sandbox build may turn out to have no preview; the admin may accept that up front. */
   const [allowNoPreview, setAllowNoPreview] = useState(false);
+  const [paidConfirmed, setPaidConfirmed] = useState(false);
+  const [rememberPaid, setRememberPaid] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ready = confirmed && buildConfirmed && secretsComplete(needs.needsSecrets, secrets);
@@ -130,6 +136,12 @@ function UpdateDialog({
           secrets,
           confirmNoPreview: needs.skipsPreview !== null || allowNoPreview,
           ...(needs.build === null ? {} : { buildConfirmed: true }),
+          ...(needs.cronTriggers === null
+            ? {}
+            : {
+                paidConfirmed,
+                ...(paidConfirmed && rememberPaid ? { rememberPaidPlan: true } : {}),
+              }),
         },
       });
       if ("jobId" in result) {
@@ -204,6 +216,18 @@ function UpdateDialog({
                 label="Update without checking the new version first"
               />
             </div>
+          )}
+          {needs.cronTriggers !== null && (
+            <CronTriggersField
+              count={needs.cronTriggers}
+              confirmation={{
+                checked: paidConfirmed,
+                onChange: setPaidConfirmed,
+                remember: rememberPaid,
+                onRememberChange: setRememberPaid,
+                disabled: pending,
+              }}
+            />
           )}
           {needs.needsSecrets.length > 0 && (
             <div className="grid gap-4">

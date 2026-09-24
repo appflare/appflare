@@ -7,6 +7,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, ne, or } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { requirementLabel } from "../catalog/requirements";
 import { createDb } from "../db/client";
 import { installs, jobs } from "../db/schema";
@@ -167,7 +168,10 @@ export async function startInstallCore(
 ): Promise<StartInstallResult> {
   await refuseDuringSelfUpdate(deps.db, deps.workflows, (m) => new StartInstallError(m));
   const { app, manifest } = await deps.loadApp(input.slug);
-  const resolved = resolveInstallInput(manifest, input);
+  // An account recorded as on Workers Paid needs no confirmation per install.
+  const accountPlan = await readAccountPlan(createDb(deps.db));
+  const paidConfirmed = input.paidConfirmed || accountPlan === "paid";
+  const resolved = resolveInstallInput(manifest, { ...input, paidConfirmed });
   // Where the artifact comes from: the signed release, or a build of the pin
   // in the account's sandbox Worker, which the admin confirms paying for.
   // A self-deploying app has no artifact at all: its own installer runs in
@@ -253,7 +257,7 @@ export async function startInstallCore(
     instanceName,
     secrets: Object.keys(resolved.secrets),
     vars: resolved.vars,
-    paidConfirmed: input.paidConfirmed,
+    paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
     ...(build === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
@@ -343,6 +347,12 @@ export async function startInstallCore(
         : `Another install already uses the Worker name "${workerName}".`,
     );
   }
+  // "Remember this for the account" beside a ticked Workers Paid confirmation,
+  // recorded only once the install and its job exist: a refused start changes
+  // nothing.
+  if (input.rememberPaidPlan === true && input.paidConfirmed && accountPlan !== "paid") {
+    await writeAccountPlan(db, "paid");
+  }
 
   const params: InstallJobParams = {
     kind: "install",
@@ -360,7 +370,7 @@ export async function startInstallCore(
           : {}),
     secrets: resolved.secrets,
     vars: resolved.vars,
-    paidConfirmed: input.paidConfirmed,
+    paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
   };

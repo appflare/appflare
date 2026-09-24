@@ -57,6 +57,15 @@ export interface FakeAccount {
   bindings: unknown[];
   /** Other Workers in the account (`GET /workers/scripts` also lists `worker` once deployed). */
   otherScripts: string[];
+  /** Handlers `GET /workers/scripts` lists per Worker; a Worker not named lists none. */
+  handlers: Record<string, string[]>;
+  /** Cron triggers of the other Workers, by name. */
+  otherCrons: Record<string, string[]>;
+  /**
+   * `PUT .../schedules` answers like a Workers Free account at its cron
+   * trigger limit when the other Workers' triggers plus the new ones pass 5.
+   */
+  freeCronLimit: boolean;
   /** Bodies of `PATCH /workers/workers/<worker>/versions/latest`, in order. */
   versionPatches: unknown[];
   queues: Array<{ queue_id: string; queue_name: string }>;
@@ -93,6 +102,9 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     worker: "cut",
     bindings: [],
     otherScripts: [],
+    handlers: {},
+    otherCrons: {},
+    freeCronLimit: false,
     versionPatches: [],
     queues: [],
     consumers: {},
@@ -126,7 +138,10 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       case "GET /workers/scripts":
         return ok(
           [...(state.deployments.length > 0 ? [state.worker] : []), ...state.otherScripts].map(
-            (id) => ({ id }),
+            (id) => ({
+              id,
+              ...(state.handlers[id] === undefined ? {} : { handlers: state.handlers[id] }),
+            }),
           ),
           { result_info: { page: 1, total_pages: 1 } },
         );
@@ -213,6 +228,25 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
         return ok({ enabled: true, previews_enabled: true });
       case `PUT ${script}/schedules`: {
         const body = (await request.json()) as Array<{ cron: string }>;
+        const others = Object.values(state.otherCrons).flat().length;
+        if (state.freeCronLimit && others + body.length > 5) {
+          // Cloudflare's answer, as a free account got it (account id replaced).
+          return Response.json(
+            {
+              result: null,
+              success: false,
+              errors: [
+                {
+                  code: 10072,
+                  message:
+                    "This account has reached the Workers Free limit of 5 cron triggers per account. Upgrade to Workers Paid to increase this limit to 1,000: https://dash.cloudflare.com/<account>/workers/plans",
+                },
+              ],
+              messages: [],
+            },
+            { status: 400 },
+          );
+        }
         state.schedules = body.map((s) => s.cron);
         return ok({ schedules: body });
       }
@@ -278,6 +312,17 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       };
       list[at] = updated;
       return ok(updated);
+    }
+    const schedules = /^GET \/workers\/scripts\/([^/]+)\/schedules$/.exec(key);
+    if (schedules?.[1] !== undefined) {
+      const name = schedules[1];
+      if (name === state.worker) {
+        return ok({ schedules: (state.schedules ?? []).map((cron) => ({ cron })) });
+      }
+      if (state.otherScripts.includes(name)) {
+        return ok({ schedules: (state.otherCrons[name] ?? []).map((cron) => ({ cron })) });
+      }
+      return fail(404, "This Worker does not exist on your account.");
     }
     let m = /^GET \/workflows\/([^/]+)$/.exec(key);
     if (m?.[1] !== undefined) {

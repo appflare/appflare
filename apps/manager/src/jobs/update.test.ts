@@ -64,7 +64,7 @@ async function update(
   options: ArtifactFixtureOptions = NEW_APP,
   world: Partial<FakeAccount> = {},
   seed: Parameters<typeof seedInstall>[0] = {},
-  request: { secrets?: Record<string, string> } = {},
+  request: { secrets?: Record<string, string>; paidConfirmed?: boolean } = {},
   /** `local`: a manager without the `SELF` binding runs the units in the job's invocation. */
   units: "self" | "local" = "self",
   /** Runs after the install is seeded, before the job starts. */
@@ -814,6 +814,37 @@ describe("update job", () => {
       );
     });
 
+    it("syncs the consumers before the cron triggers, whose refusal does not stop the job", async () => {
+      const r = await update(
+        withConsumers([
+          { queue: { binding: "JOBS" }, max_batch_size: 5 },
+          { queue: { binding: "EXPORT" }, max_retries: 2 },
+        ]),
+        {
+          ...account(),
+          otherScripts: ["appflare"],
+          otherCrons: {
+            appflare: ["0 1 * * *", "0 2 * * *", "0 3 * * *", "0 4 * * *", "0 5 * * *"],
+          },
+          freeCronLimit: true,
+        },
+        { resources: QUEUE_RESOURCES, manifestJson: installedManifest },
+      );
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      const calls = r.fake.state.calls;
+      expect(calls.indexOf("PUT /workers/scripts/cut/schedules")).toBeGreaterThan(
+        calls.indexOf("PUT /queues/q-jobs/consumers/c-jobs"),
+      );
+      expect(r.fake.state.consumers["q-jobs"]?.[0]?.settings).toEqual({ batch_size: 5 });
+      expect(
+        r.logs.some(
+          (l) => l.level === "warn" && l.message.startsWith("Cloudflare refused 1 cron trigger"),
+        ),
+      ).toBe(true);
+      expect(r.step.names.at(-1)).toBe("finish");
+    });
+
     it("attaches a consumer again that an earlier update removed, reviving its record", async () => {
       const r = await update(
         withConsumers([
@@ -864,6 +895,111 @@ describe("update job", () => {
       );
       expect(r.error).toBeNull();
       expect(r.fake.state.calls.filter((c) => c.includes("/consumers"))).toEqual([]);
+    });
+  });
+
+  describe("a version that adds cron triggers on a free account", () => {
+    const moreCrons: ArtifactFixtureOptions = {
+      ...NEW_APP,
+      crons: ["*/5 * * * *", "0 1 * * *", "0 2 * * *"],
+    };
+    /** The manager and another app: 3 cron triggers on Workers with a scheduled handler. */
+    const busy = (): Partial<FakeAccount> => ({
+      otherScripts: ["appflare", "second-brain"],
+      handlers: { appflare: ["fetch", "scheduled"], "second-brain": ["fetch", "scheduled"] },
+      otherCrons: { appflare: ["*/30 * * * *"], "second-brain": ["0 1 * * *", "0 13 * * *"] },
+      freeCronLimit: true,
+    });
+
+    it("refuses before snapshotting when its triggers would pass 5, naming the count", async () => {
+      const r = await update(moreCrons, busy(), {}, { paidConfirmed: false });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        "check cron trigger limit: this version needs 3 cron triggers and the account's other Workers already use 3 (second-brain: 2, appflare: 1); Workers Free allows 5 per account, so this would make 6. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account). If it is already on Workers Paid, record that in Settings under Workers plan. Then try again.",
+      );
+      expect(r.step.names).toEqual([
+        "start",
+        "verify artifact manifest",
+        "plan update",
+        "check cron trigger limit",
+        "mark update failed",
+      ]);
+      expect(r.snapshot).toBeNull();
+      // The Worker's own triggers are replaced by the new ones, so they are not counted.
+      expect(r.fake.state.calls).not.toContain("GET /workers/scripts/cut/schedules");
+      expect(r.fake.state.deployments).toHaveLength(1);
+      expect(r.install?.status).toBe("installed");
+    });
+
+    it("updates when the admin confirmed Workers Paid, without counting", async () => {
+      const r = await update(
+        moreCrons,
+        { ...busy(), freeCronLimit: false },
+        {},
+        {
+          paidConfirmed: true,
+        },
+      );
+      expect(r.error).toBeNull();
+      expect(r.step.names).not.toContain("check cron trigger limit");
+      expect(r.fake.state.schedules).toEqual(["*/5 * * * *", "0 1 * * *", "0 2 * * *"]);
+    });
+
+    it("skips the count when Settings records the account as on Workers Paid", async () => {
+      const r = await update(
+        moreCrons,
+        { ...busy(), freeCronLimit: false },
+        {},
+        {},
+        "self",
+        async () => {
+          await env.DB.prepare(
+            "INSERT INTO settings (key, value, updated_at) VALUES ('account_plan', 'paid', 0)",
+          ).run();
+        },
+      );
+      expect(r.error).toBeNull();
+      expect(r.step.names).not.toContain("check cron trigger limit");
+      expect(r.fake.state.schedules).toEqual(["*/5 * * * *", "0 1 * * *", "0 2 * * *"]);
+    });
+
+    it("warns when Cloudflare refuses the triggers after promotion, and still checks health and finishes", async () => {
+      // The count fits (the Worker's own trigger is replaced), but triggers
+      // added elsewhere since make Cloudflare refuse the schedule.
+      const r = await update(
+        { ...NEW_APP, crons: ["0 3 * * *"] },
+        {
+          ...busy(),
+          otherCrons: {
+            appflare: ["*/30 * * * *"],
+            "second-brain": ["0 1 * * *", "0 13 * * *", "0 4 * * *", "0 5 * * *"],
+          },
+        },
+      );
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.install?.status).toBe("installed");
+      const names = r.step.names;
+      expect(names.slice(names.indexOf("set cron triggers") + 1)).toEqual([
+        "health check 1",
+        "finish",
+      ]);
+      expect(r.step.retried).toEqual({});
+      expect(
+        r.fake.state.calls.filter((c) => c === "PUT /workers/scripts/cut/schedules"),
+      ).toHaveLength(1);
+      expect(r.logs).toContainEqual(
+        expect.objectContaining({
+          level: "warn",
+          message:
+            "Cloudflare refused 1 cron trigger: this account has reached the Workers Free limit of 5 cron triggers per account. The version serves traffic; the Worker keeps the cron triggers it had (*/5 * * * *) and does not get 0 3 * * *. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account), then the next update or rollback sets them.",
+        }),
+      );
+      // The recorded triggers stay as they were.
+      expect(r.resources).toContainEqual(
+        expect.objectContaining({ kind: "cron", name: "*/5 * * * *", deleted_at: null }),
+      );
+      expect(r.resources).not.toContainEqual(expect.objectContaining({ name: "0 3 * * *" }));
     });
   });
 

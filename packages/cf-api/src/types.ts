@@ -57,6 +57,11 @@ export interface WorkerScript {
   modified_on?: string;
   etag?: string;
   usage_model?: string;
+  /**
+   * Event handlers the Worker's code exports (`fetch`, `scheduled`, `queue`,
+   * `email`, ...), as `GET /workers/scripts` lists them.
+   */
+  handlers?: string[];
 }
 
 export interface ScriptUploadResult {

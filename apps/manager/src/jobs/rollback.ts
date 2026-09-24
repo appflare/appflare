@@ -210,16 +210,6 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    if (started.snapshotCrons !== null) {
-      await syncCronsPhase(
-        steps,
-        params.installId,
-        workerName,
-        started.recordedCrons,
-        started.snapshotCrons,
-      );
-    }
-
     // Null for a job started before consumers were tracked, or a snapshot
     // without a manifest: nothing is known to sync.
     if (started.snapshotConsumers != null) {
@@ -231,6 +221,18 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         queues: recordedQueues(params.installId, started.queueRows),
         recorded: started.queueRows,
       });
+    }
+
+    // Cron triggers after the queue consumers: a refusal at the account's
+    // limit is only a warning, and nothing after it depends on them.
+    if (started.snapshotCrons !== null) {
+      await syncCronsPhase(
+        steps,
+        params.installId,
+        workerName,
+        started.recordedCrons,
+        started.snapshotCrons,
+      );
     }
 
     const subdomain = await lookupSubdomainPhase(steps);

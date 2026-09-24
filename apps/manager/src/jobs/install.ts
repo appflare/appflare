@@ -12,6 +12,8 @@ import {
 } from "@appflare/schema";
 import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
+import { parseAccountPlan } from "../account/plan";
+import { cronTriggerCount } from "../catalog/cron-triggers";
 import { requirementLabel, requirementSentence } from "../catalog/requirements";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
@@ -23,6 +25,7 @@ import {
   sandboxBuildParams,
 } from "./install/artifact-source";
 import { planBindings } from "./install/bindings";
+import { checkCronLimitPhase, putSchedulesChecked } from "./install/cron-limit";
 import {
   checkEmailRoutingPhase,
   emailRoutingJobInput,
@@ -211,7 +214,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             : `${params.slug} is already installed as "${other.worker}" and only works under one Worker name`,
         );
       }
-      const settings = await readSettings(orm, [SETTING.accountId]);
+      const settings = await readSettings(orm, [SETTING.accountId, SETTING.accountPlan]);
       if (!settings.account_id) throw new InstallError("the Cloudflare account is not known yet");
       if (!env.CF_API_TOKEN) {
         throw new InstallError("the Cloudflare API token is not configured; finish setup first");
@@ -219,7 +222,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       log.info(
         `Preflight passed: plan ${manifest.catalog.plan}, ${toCreate.length} resource(s) to create.`,
       );
-      return { accountId: settings.account_id };
+      return {
+        accountId: settings.account_id,
+        accountPaid: parseAccountPlan(settings.account_plan) === "paid",
+      };
     });
     steps.setAccountId(preflight.accountId);
 
@@ -264,6 +270,18 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         return {};
       });
     }
+
+    // The account's cron trigger limit (5 on Workers Free) is checked before
+    // anything is created, like R2. Skipped on Workers Paid: the admin
+    // confirmed it for this install (a paid app always asks), or Settings
+    // records it for the account.
+    const crons = [...new Set(manifest.worker.crons)];
+    await checkCronLimitPhase(steps, {
+      workerName: params.workerName,
+      wanted: cronTriggerCount(crons),
+      paid: params.paidConfirmed || preflight.accountPaid,
+      subject: "this app",
+    });
 
     // Email Routing is checked before anything is created, like R2.
     const emailRouting = manifest.catalog.install.emailRouting;
@@ -441,12 +459,13 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     }
 
     // 8. Cron triggers, queue consumers, then the workers.dev route.
-    const crons = manifest.worker.crons;
     if (crons.length > 0) {
       await run("set cron triggers", async ({ log, cf, orm }) => {
-        await cf().workers.putSchedules(
+        await putSchedulesChecked(
+          cf(),
           params.workerName,
-          crons.map((cron) => ({ cron })),
+          crons,
+          `The Worker "${params.workerName}" is uploaded without them; uninstall this install to remove it.`,
         );
         for (const cron of crons) {
           await recordResource(orm, {

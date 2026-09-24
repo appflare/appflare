@@ -39,6 +39,11 @@ export const SETTING = {
   accessDomain: "access_domain",
   /** ISO 8601 time Access protection was turned on. */
   accessEnabledAt: "access_enabled_at",
+  /**
+   * The account's Workers plan as an admin stated it, `free` or `paid`;
+   * absent means free. Cloudflare's API offers no plan signal to read.
+   */
+  accountPlan: "account_plan",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

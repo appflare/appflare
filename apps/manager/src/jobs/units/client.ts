@@ -14,7 +14,8 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *   - 1 per unit call: each asset part, the Worker upload, each call that
  *     applies D1 migrations (one per database for up to about 30 small
  *     files; the call itself makes 2 + 2 + 1 per file), each R2 page, the
- *     Email Routing check;
+ *     Email Routing check, the cron trigger count (for an app with cron
+ *     triggers, unless the account is known to be on Workers Paid);
  *   - 1 per Cloudflare API step: token check, script list, each resource's
  *     check and create (2 or more), each Workflow name check, the R2 check,
  *     the assets session, each secret, the cron triggers, each queue
@@ -32,9 +33,9 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  * Worked example, FlareMo: a D1 database with 30 migrations, an R2 bucket,
  * 2 queues with a consumer each, 2 Vectorize indexes, a rate limit, 3 asset
  * parts, 2 secrets and a cron. Manifest 4 + token 1 + script list 1 + R2
- * check 1 + resources 6 x 2 + assets session 1 + parts 3 + upload 1 +
- * migrations 1 + secrets 2 + cron 1 + consumers 2 + subdomain 2 = 32, plus
- * health 1 to 12: 33 to 44 fetches, 6 to 17 under 50. With one call per
+ * check 1 + cron count 1 + resources 6 x 2 + assets session 1 + parts 3 +
+ * upload 1 + migrations 1 + secrets 2 + cron 1 + consumers 2 + subdomain 2 =
+ * 33, plus health 1 to 12: 34 to 45 fetches, 5 to 16 under 50. With one call per
  * migration file it was 30 calls plus the table and list steps, 64 to 75,
  * which is how it failed at the 24th file. What still grows with an app is
  * its resources (2 each) and its secrets (1 each); an app with many more of

@@ -21,6 +21,10 @@ export const startUpdateInput = installIdInput.extend({
    * stored on the sandbox Worker before the installer runs. Never logged.
    */
   appToken: z.string().max(1024).optional(),
+  /** The admin said the account is on Workers Paid (asked when the new version adds cron triggers). */
+  paidConfirmed: z.boolean().optional(),
+  /** With `paidConfirmed`: also record Workers Paid as the account's plan in Settings. */
+  rememberPaidPlan: z.boolean().optional(),
 });
 export type StartUpdateInput = z.infer<typeof startUpdateInput>;
 

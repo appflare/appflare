@@ -61,5 +61,6 @@ export function fakeSelf(
     applyD1Migrations: (input) => call("applyD1Migrations", input),
     emptyR2Page: (input) => call("emptyR2Page", input),
     inspectEmailRouting: (input) => call("inspectEmailRouting", input),
+    countCronTriggers: (input) => call("countCronTriggers", input),
   };
 }

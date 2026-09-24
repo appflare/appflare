@@ -14,6 +14,7 @@ import type { EmailRoutingInspection } from "../../installs/email-routing.server
 import { sandboxFetch } from "../../sandbox/binding";
 import { isNotFound, JobError } from "../errors";
 import { artifactReader } from "../install/artifact";
+import type { CronTriggerScan } from "../install/cron-limit";
 import {
   buildMigrationQuery,
   CREATE_MIGRATIONS_TABLE_SQL,
@@ -24,6 +25,11 @@ import {
 import { uploadModule } from "../install/metadata";
 import { assetContentType } from "../install/mime";
 import { activeVersionId } from "../update/plan";
+import {
+  type CronTriggerCountInput,
+  cronTriggerCountInputSchema,
+  runCronTriggerCount,
+} from "./cron-triggers";
 import {
   type EmailRoutingInspectInput,
   emailRoutingInspectInputSchema,
@@ -186,6 +192,8 @@ export interface JobUnitsApi {
   emptyR2Page(input: R2PageInput): Promise<UnitResult<R2PageResult>>;
   /** Reads a zone's Email Routing state before an email app is installed there. */
   inspectEmailRouting(input: EmailRoutingInspectInput): Promise<UnitResult<EmailRoutingInspection>>;
+  /** Counts the cron triggers of the account's other Workers (reads only). */
+  countCronTriggers(input: CronTriggerCountInput): Promise<UnitResult<CronTriggerScan>>;
 }
 
 /** The unit names, as RPC method names. */
@@ -427,6 +435,10 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
     inspectEmailRouting: (input) =>
       parsed(emailRoutingInspectInputSchema, input, "inspectEmailRouting", (request) =>
         runEmailRoutingInspection(env, deps, request),
+      ),
+    countCronTriggers: (input) =>
+      parsed(cronTriggerCountInputSchema, input, "countCronTriggers", (request) =>
+        runCronTriggerCount(env, deps, request),
       ),
   };
 }

@@ -1,6 +1,8 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
+import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
+import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import type { InstallJobParams } from "../jobs/install";
@@ -341,6 +343,57 @@ describe("startInstallCore", () => {
   it("does not ask for the confirmation when the app has no account requirements", async () => {
     const f = await buildArtifactFixture();
     expect(() => resolveInstallInput(f.manifest, input())).not.toThrow();
+  });
+
+  describe("the account's Workers plan", () => {
+    const paidApp = { catalog: { plan: "paid" as const } };
+
+    it("takes Workers Paid as confirmed when Settings records it", async () => {
+      await writeAccountPlan(createDb(env.DB), "paid");
+      const h = harness(await buildArtifactFixture(paidApp));
+      await startInstallCore(h.deps, input({ paidConfirmed: false }));
+      expect(h.created[0]?.params.paidConfirmed).toBe(true);
+    });
+
+    it("still asks per install while Settings says free", async () => {
+      const h = harness(await buildArtifactFixture(paidApp));
+      await expect(startInstallCore(h.deps, input({ paidConfirmed: false }))).rejects.toThrow(
+        /needs Workers Paid\. Confirm that this account is on Workers Paid\./,
+      );
+      expect(await readAccountPlan(createDb(env.DB))).toBe("free");
+    });
+
+    it("records Workers Paid for the account when asked to remember a ticked confirmation", async () => {
+      const h = harness(await buildArtifactFixture(paidApp));
+      await startInstallCore(h.deps, input({ paidConfirmed: true, rememberPaidPlan: true }));
+      expect(await readAccountPlan(createDb(env.DB))).toBe("paid");
+    });
+
+    it("leaves the plan unchanged when the start is refused", async () => {
+      const h = harness(await buildArtifactFixture(paidApp));
+      await startInstallCore(h.deps, input({ paidConfirmed: true }));
+      // The Worker name is taken now, so this start is refused after its form checks.
+      await expect(
+        startInstallCore(h.deps, input({ paidConfirmed: true, rememberPaidPlan: true })),
+      ).rejects.toThrow(/Another install already uses the Worker name "cut"/);
+      expect(await readAccountPlan(createDb(env.DB))).toBe("free");
+
+      const existing = harness(await buildArtifactFixture(paidApp));
+      await expect(
+        startInstallCore(
+          { ...existing.deps, listAccountWorkers: async () => ["cut-2"] },
+          input({ workerName: "cut-2", paidConfirmed: true, rememberPaidPlan: true }),
+        ),
+      ).rejects.toThrow(/A Worker named "cut-2" already exists/);
+      expect(await readAccountPlan(createDb(env.DB))).toBe("free");
+    });
+
+    it("does not record the plan without a ticked confirmation", async () => {
+      const h = harness(await buildArtifactFixture());
+      await startInstallCore(h.deps, input({ paidConfirmed: false, rememberPaidPlan: true }));
+      expect(await readAccountPlan(createDb(env.DB))).toBe("free");
+      expect(h.created[0]?.params.paidConfirmed).toBe(false);
+    });
   });
 
   it("marks the job and install failed when the Workflow instance cannot be created", async () => {

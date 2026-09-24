@@ -2,6 +2,8 @@ import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createClient, type RequestLog } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
+import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
+import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { buildArtifactFixture } from "../test/artifact-fixture";
@@ -151,7 +153,12 @@ describe("startUpdateCore: what an update needs first", () => {
 
   async function start(
     fixture: Awaited<ReturnType<typeof buildArtifactFixture>>,
-    request: { secrets?: Record<string, string>; confirmNoPreview?: boolean } = {},
+    request: {
+      secrets?: Record<string, string>;
+      confirmNoPreview?: boolean;
+      paidConfirmed?: boolean;
+      rememberPaidPlan?: boolean;
+    } = {},
   ) {
     const created: unknown[] = [];
     const result = await startUpdateCore(
@@ -181,6 +188,7 @@ describe("startUpdateCore: what an update needs first", () => {
       needsSecrets: [{ name: "API_KEY", label: "API key", generate: false }],
       skipsPreview: null,
       build: null,
+      cronTriggers: null,
     });
     expect(first.created).toEqual([]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM jobs").first()).toEqual({ n: 0 });
@@ -219,6 +227,80 @@ describe("startUpdateCore: what an update needs first", () => {
       /changes Durable Object classes/,
     );
     expect((await start(fixture, { confirmNoPreview: true })).result).toEqual({ jobId: "job1" });
+  });
+
+  it("notes the cron triggers a new version adds and asks whether the account is on Workers Paid", async () => {
+    await seedInstall({
+      resources: [ADMIN_SECRET, { kind: "cron", binding: null, name: "0 1 * * *" }],
+    });
+    const fixture = await buildArtifactFixture({
+      version: "1.1.0",
+      crons: ["0 1 * * *", "*/15 * * * *", "*/15 * * * *"],
+    });
+    const first = await start(fixture);
+    expect(first.result).toEqual({
+      version: "1.1.0",
+      needsSecrets: [],
+      skipsPreview: null,
+      build: null,
+      cronTriggers: 2,
+    });
+    expect(first.created).toEqual([]);
+    // Either answer starts the job; the job counts the account's triggers unless it is yes.
+    const free = await start(fixture, { paidConfirmed: false });
+    expect(free.result).toEqual({ jobId: "job1" });
+    expect(free.created).toEqual([expect.objectContaining({ paidConfirmed: false })]);
+  });
+
+  it("does not ask about cron triggers when Settings records Workers Paid", async () => {
+    await seedInstall({ resources: [ADMIN_SECRET] });
+    await writeAccountPlan(createDb(env.DB), "paid");
+    const fixture = await buildArtifactFixture({ version: "1.1.0", crons: ["0 1 * * *"] });
+    expect((await start(fixture)).result).toEqual({ jobId: "job1" });
+  });
+
+  it("records Workers Paid for the account when asked to remember the confirmation", async () => {
+    await seedInstall({ resources: [ADMIN_SECRET] });
+    const fixture = await buildArtifactFixture({ version: "1.1.0", crons: ["0 1 * * *"] });
+    const started = await start(fixture, { paidConfirmed: true, rememberPaidPlan: true });
+    expect(started.created).toEqual([expect.objectContaining({ paidConfirmed: true })]);
+    expect(await readAccountPlan(createDb(env.DB))).toBe("paid");
+  });
+
+  it("leaves the plan unchanged when the update cannot be claimed", async () => {
+    await seedInstall({ resources: [ADMIN_SECRET] });
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status) VALUES ('busy', ?1, 'uninstall', 'running')",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const fixture = await buildArtifactFixture({ version: "1.1.0", crons: ["0 1 * * *"] });
+    await expect(start(fixture, { paidConfirmed: true, rememberPaidPlan: true })).rejects.toThrow(
+      /Another job of this install is queued or running/,
+    );
+    expect(await readAccountPlan(createDb(env.DB))).toBe("free");
+  });
+
+  it("does not ask about cron triggers when the count does not grow", async () => {
+    await seedInstall({
+      resources: [ADMIN_SECRET, { kind: "cron", binding: null, name: "0 1 * * *" }],
+    });
+    const same = await buildArtifactFixture({ version: "1.1.0", crons: ["0 2 * * *"] });
+    const kept = await start(same);
+    expect(kept.result).toEqual({ jobId: "job1" });
+    expect(kept.created).toEqual([
+      expect.not.objectContaining({ paidConfirmed: expect.anything() }),
+    ]);
+  });
+
+  it("does not ask about cron triggers for an app that needs Workers Paid", async () => {
+    await seedInstall({ resources: [ADMIN_SECRET] });
+    const paid = await buildArtifactFixture({
+      version: "1.1.0",
+      catalog: { plan: "paid" },
+      crons: ["0 1 * * *", "0 2 * * *"],
+    });
+    expect((await start(paid)).result).toEqual({ jobId: "job1" });
   });
 });
 

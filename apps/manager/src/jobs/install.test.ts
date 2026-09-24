@@ -47,6 +47,12 @@ interface FakeState {
   modules: string[];
   secrets: Record<string, string>;
   schedules: string[];
+  /** Cron triggers of the account's other Workers (each must be in `scripts` too). */
+  otherCrons: Record<string, string[]>;
+  /** Handlers `GET /workers/scripts` lists per Worker; a Worker not named lists none. */
+  handlers: Record<string, string[]>;
+  /** `PUT .../schedules` answers like a Workers Free account at its cron trigger limit. */
+  freeCronLimit: boolean;
   subdomainEnabled: unknown;
   calls: string[];
   health: Array<{ status: number; body: string }>;
@@ -97,6 +103,9 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     modules: [],
     secrets: {},
     schedules: [],
+    otherCrons: {},
+    handlers: {},
+    freeCronLimit: false,
     subdomainEnabled: null,
     calls: [],
     health: [
@@ -184,7 +193,12 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       case "GET /tokens/verify":
         return ok({ id: "t", status: "active" });
       case "GET /workers/scripts":
-        return ok(state.scripts.map((id) => ({ id })));
+        return ok(
+          state.scripts.map((id) => ({
+            id,
+            ...(state.handlers[id] === undefined ? {} : { handlers: state.handlers[id] }),
+          })),
+        );
       case "GET /storage/kv/namespaces":
         return ok(state.kv, { result_info: { page: 1, total_pages: 1 } });
       case "POST /storage/kv/namespaces": {
@@ -232,6 +246,27 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       }
       case "PUT /workers/scripts/cut/schedules": {
         const body = (await request.json()) as Array<{ cron: string }>;
+        const others = Object.values(state.otherCrons).flat().length;
+        if (state.freeCronLimit && others + body.length > 5) {
+          // Cloudflare's answer, as a free account got it (account id replaced).
+          return Response.json(
+            {
+              result: null,
+              success: false,
+              errors: [
+                {
+                  code: 10072,
+                  message:
+                    "This account has reached the Workers Free limit of 5 cron triggers per account. Upgrade to Workers Paid to increase this limit to 1,000: https://dash.cloudflare.com/<account>/workers/plans",
+                  documentation_url:
+                    "https://developers.cloudflare.com/workers/platform/limits/#account-plan-limits",
+                },
+              ],
+              messages: [],
+            },
+            { status: 400 },
+          );
+        }
         state.schedules = body.map((s) => s.cron);
         return ok({ schedules: body });
       }
@@ -247,6 +282,10 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       case "POST /workers/scripts/cut/subdomain":
         state.subdomainEnabled = await request.json();
         return ok({ enabled: true, previews_enabled: true });
+    }
+    const schedules = /^GET \/workers\/scripts\/([^/]+)\/schedules$/.exec(key);
+    if (schedules?.[1] !== undefined && state.scripts.includes(schedules[1])) {
+      return ok({ schedules: (state.otherCrons[schedules[1]] ?? []).map((cron) => ({ cron })) });
     }
     if (key === "GET /queues") return ok(state.queues);
     if (key === "POST /queues") {
@@ -469,6 +508,7 @@ describe("install job", () => {
       "preflight checks",
       "verify API token",
       "check Worker name",
+      "check cron trigger limit",
       "check KV namespace cut-cut-kv",
       "create KV namespace cut-cut-kv",
       "record KV namespace cut-cut-kv",
@@ -492,6 +532,7 @@ describe("install job", () => {
     expect(r.step.sleeps).toEqual(["health wait 1"]);
     // The subrequest-heavy work ran as units over SELF, each in its own invocation.
     expect(r.self.calls.map((c) => [c.unit, c.subrequests])).toEqual([
+      ["countCronTriggers", 2], // the Worker list, the manager's schedule
       ["uploadAssetPart", 2], // one range for both files, one upload
       ["uploadWorker", 2], // one range for the module, one upload
       // The table, the list, one range for both files, one query per file.
@@ -992,6 +1033,121 @@ describe("install job", () => {
         "preflight checks: this app needs R2; confirm the account meets these requirements to install it",
       );
       expect(r.fake.state.calls).toEqual([]);
+    });
+  });
+
+  describe("an app with cron triggers on a free account", () => {
+    const cronApp: ArtifactFixtureOptions = { crons: ["0 1 * * *", "*/15 * * * *"] };
+    /** The manager and two apps: 4 cron triggers on Workers with a scheduled handler. */
+    const busy = (): Partial<FakeState> & Pick<FakeState, "handlers"> => ({
+      scripts: ["appflare", "second-brain", "flaremo", "appflare-docs"],
+      handlers: {
+        appflare: ["fetch", "scheduled"],
+        "second-brain": ["fetch", "scheduled"],
+        flaremo: ["fetch", "scheduled", "queue"],
+        "appflare-docs": ["fetch"],
+      },
+      otherCrons: {
+        appflare: ["*/30 * * * *"],
+        "second-brain": ["0 1 * * *", "0 13 * * *"],
+        flaremo: ["17 3 * * *"],
+      },
+      freeCronLimit: true,
+    });
+
+    it("refuses before creating anything when its triggers would pass 5, naming the count", async () => {
+      const r = await install(cronApp, busy());
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        "check cron trigger limit: this app needs 2 cron triggers and the account's other Workers already use 4 (second-brain: 2, appflare: 1, flaremo: 1); Workers Free allows 5 per account, so this would make 6. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account). If it is already on Workers Paid, record that in Settings under Workers plan. Then try again.",
+      );
+      expect(r.installRow?.status).toBe("failed");
+      expect(r.resources).toEqual([]);
+      expect(r.step.names.slice(-2)).toEqual(["check cron trigger limit", "mark install failed"]);
+      expect(r.step.retried).toEqual({});
+      // Counted in a unit of its own; a Worker without a scheduled handler is not read.
+      expect(r.self.calls.map((c) => [c.unit, c.subrequests])).toEqual([["countCronTriggers", 4]]);
+      expect(r.fake.state.calls).not.toContain("GET /workers/scripts/appflare-docs/schedules");
+      expect(r.fake.state.calls.some((c) => c.startsWith("POST ") || c.startsWith("PUT "))).toBe(
+        false,
+      );
+    });
+
+    it("installs when the triggers fit, and logs the count", async () => {
+      const r = await install(cronApp, {
+        ...busy(),
+        otherCrons: { appflare: ["*/30 * * * *"], flaremo: ["17 3 * * *"] },
+      });
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.schedules).toEqual(["0 1 * * *", "*/15 * * * *"]);
+      expect(r.logs.map((l) => l.message)).toContain(
+        "The account's other Workers use 2 cron triggers; with 2 more that is 4 of the 5 Workers Free allows.",
+      );
+    });
+
+    it("skips the count when the admin confirmed Workers Paid", async () => {
+      const r = await install(
+        cronApp,
+        { ...busy(), freeCronLimit: false },
+        { paidConfirmed: true },
+      );
+      expect(r.error).toBeNull();
+      expect(r.step.names).not.toContain("check cron trigger limit");
+      expect(r.self.calls.map((c) => c.unit)).not.toContain("countCronTriggers");
+      expect(r.fake.state.schedules).toEqual(["0 1 * * *", "*/15 * * * *"]);
+    });
+
+    it("skips the count when Settings records the account as on Workers Paid", async () => {
+      await env.DB.prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('account_plan', 'paid', 0)",
+      ).run();
+      const r = await install(cronApp, { ...busy(), freeCronLimit: false });
+      expect(r.error).toBeNull();
+      expect(r.step.names).not.toContain("check cron trigger limit");
+      expect(r.fake.state.schedules).toEqual(["0 1 * * *", "*/15 * * * *"]);
+    });
+
+    it("maps Cloudflare's refusal at the cron trigger step into what to do, without retrying", async () => {
+      // A Worker without a scheduled handler still holds triggers, so the
+      // count misses them and Cloudflare refuses the schedule.
+      const account = busy();
+      const r = await install(cronApp, {
+        ...account,
+        handlers: { ...account.handlers, flaremo: ["fetch"], "second-brain": ["fetch"] },
+      });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        'set cron triggers: Cloudflare refused 2 cron triggers: this account has reached the Workers Free limit of 5 cron triggers per account. The Worker "cut" is uploaded without them; uninstall this install to remove it. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account), then try again.',
+      );
+      expect(r.step.retried).toEqual({});
+      expect(
+        r.fake.state.calls.filter((c) => c === "PUT /workers/scripts/cut/schedules"),
+      ).toHaveLength(1);
+      // The Worker exists and stays recorded; no cron trigger is.
+      expect(r.resources).toContainEqual({
+        kind: "worker",
+        binding: null,
+        name: "cut",
+        cf_id: "cut",
+      });
+      expect(r.resources.some((row) => (row as { kind: string }).kind === "cron")).toBe(false);
+      expect(r.fake.state.schedules).toEqual([]);
+    });
+
+    it("goes on without the count when the account has too many scheduled Workers to read", async () => {
+      const many = Array.from({ length: 21 }, (_, i) => `worker-${i}`);
+      const r = await install(cronApp, {
+        scripts: many,
+        handlers: Object.fromEntries(many.map((w) => [w, ["scheduled"]])),
+      });
+      expect(r.error).toBeNull();
+      expect(r.logs.map((l) => l.message)).toContain(
+        "Did not count the account's cron triggers: the account has 21 Workers with scheduled handlers, more than the 20 this check reads. Cloudflare checks the limit when the cron triggers are set.",
+      );
+      expect(r.fake.state.calls.filter((c) => c.endsWith("/schedules"))).toEqual([
+        "PUT /workers/scripts/cut/schedules",
+      ]);
     });
   });
 
