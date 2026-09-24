@@ -51,7 +51,17 @@ import {
 } from "../notifications/channels.functions";
 import { ChannelKindLogo } from "./channel-logos";
 import { ConfirmDialog } from "./confirm-dialog";
+import { DocsLink } from "./docs-link";
 import { Timestamp } from "./timestamp";
+
+/** What a webhook's signing secret is for, with the docs on checking it. */
+function SigningSecretDescription() {
+  return (
+    <>
+      {NOTIFICATION_COPY.signingSecret} <DocsLink topic="webhookSignature" variant="inline" />
+    </>
+  );
+}
 
 /**
  * Settings, Notification channels (admins only): the channels, each with
@@ -350,13 +360,18 @@ function ChannelDialog({ mode }: { mode: Mode }) {
               : `Edit ${editing.label}`}
         </LayerDialog.Title>
         <LayerDialog.Description>
-          {secret !== null
-            ? NOTIFICATION_COPY.signingSecret
-            : editing === null
-              ? "Choose where Appflare sends messages, then the events it sends there."
-              : reenter
-                ? `The stored credentials cannot be read any more. Enter its details again to use it.${kind === "webhook" ? " The webhook gets a new signing secret, shown once after saving." : ""}`
-                : "Change its name and events. Enter credentials only to replace the stored ones, which are never shown."}
+          {secret !== null ? (
+            <SigningSecretDescription />
+          ) : editing === null ? (
+            <>
+              Choose where Appflare sends messages, then the events it sends there.{" "}
+              <DocsLink topic="notificationChannels" variant="inline" />
+            </>
+          ) : reenter ? (
+            `The stored credentials cannot be read any more. Enter its details again to use it.${kind === "webhook" ? " The webhook gets a new signing secret, shown once after saving." : ""}`
+          ) : (
+            "Change its name and events. Enter credentials only to replace the stored ones, which are never shown."
+          )}
         </LayerDialog.Description>
         <LayerDialog.Body>
           {secret !== null ? (
@@ -540,9 +555,11 @@ function SigningSecretDialog({ channel }: { channel: ChannelView }) {
           {secret === null ? "Replace signing secret" : "New signing secret"}
         </LayerDialog.Title>
         <LayerDialog.Description>
-          {secret === null
-            ? `Makes a new secret for ${channel.label}. The current one stops working at once, so update your receiver right after.`
-            : NOTIFICATION_COPY.signingSecret}
+          {secret === null ? (
+            `Makes a new secret for ${channel.label}. The current one stops working at once, so update your receiver right after.`
+          ) : (
+            <SigningSecretDescription />
+          )}
         </LayerDialog.Description>
         <LayerDialog.Body>
           <div className="grid gap-4">

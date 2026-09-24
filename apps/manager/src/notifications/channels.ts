@@ -201,7 +201,7 @@ export const NOTIFICATION_COPY = {
   privacy:
     "Messages name the app, its version and Worker, and link to this manager. They never include secrets or tokens. Credentials you enter here are stored encrypted.",
   signingSecret:
-    "Every request carries an X-Appflare-Signature header: sha256= followed by the hex HMAC-SHA256 of the raw request body, keyed with this secret. Your receiver should compute the HMAC over the raw bytes before parsing them and compare it in constant time, reject a body whose sentAt is more than a few minutes old, and ignore an id it has already seen, because a delivery can be retried. Copy the secret now; it is not shown again.",
+    "Every request carries an X-Appflare-Signature header: sha256= followed by the hex HMAC-SHA256 of the raw request body, keyed with this secret. Copy the secret now; it is not shown again.",
   webhookAddress:
     "An https:// URL. Appflare does not follow redirects from it. The address itself is not checked against private ranges: a Worker cannot reach private networks, and only admins can add channels.",
 } as const;

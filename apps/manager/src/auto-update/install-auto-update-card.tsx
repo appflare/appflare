@@ -2,6 +2,7 @@ import { Banner, LayerCard, Radio, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import { DocsLink } from "../components/docs-link";
 import type { InstallDetail } from "../installs/installs.functions";
 import {
   AUTO_UPDATE_CHOICES,
@@ -56,6 +57,7 @@ export function InstallAutoUpdateCard({
       <LayerCard.Primary className="grid gap-3 px-5 py-4">
         <Radio.Group
           legend={AUTO_UPDATE_COPY.installLegend}
+          description={<DocsLink topic="automaticUpdates" variant="inline" />}
           value={choice}
           onValueChange={(next: string) => void onChange(next)}
           disabled={!isAdmin || pending}

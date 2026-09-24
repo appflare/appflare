@@ -230,7 +230,7 @@ export type SetInstallAutoUpdateInput = z.infer<typeof setInstallAutoUpdateInput
 export const AUTO_UPDATE_COPY = {
   appsLabel: "Automatically update apps",
   appsHelp:
-    "Every 30 minutes Appflare checks the catalog. When an app has a new version that needs nothing from you, Appflare updates it the usual way: a snapshot first, a check of the new version before it serves traffic, and the current version kept for a rollback. An update that needs a new secret, a confirmation, or a build waits for you on the app's page. Each app can follow this setting or override it.",
+    "Every 30 minutes Appflare checks the catalog. When an app has a new version that needs nothing from you, Appflare updates it the usual way, snapshot and rollback included. An update that needs a new secret, a confirmation, or a build waits for you on the app's page. Each app can follow this setting or override it.",
   managerLabel: "Automatically update Appflare",
   managerHelp:
     "Appflare updates itself to a new release when no other job is running, after checking the new version on its preview. If the check fails, the current version keeps serving.",

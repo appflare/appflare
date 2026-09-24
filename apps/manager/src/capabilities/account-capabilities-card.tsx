@@ -10,6 +10,7 @@ import {
 } from "../account/plan";
 import { setAccountPlan } from "../account/plan.functions";
 import { DescriptionItem, DescriptionList } from "../components/description-list";
+import { DocsLink } from "../components/docs-link";
 import { Timestamp } from "../components/timestamp";
 import {
   type CapabilitiesView,
@@ -299,7 +300,10 @@ export function AccountCapabilitiesCard({
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Account capabilities</span>
+        <span className="flex items-center gap-1">
+          Account capabilities
+          <DocsLink topic="capabilities" />
+        </span>
         {isAdmin && (
           <Button
             variant="secondary"

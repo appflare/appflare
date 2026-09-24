@@ -42,6 +42,7 @@ import {
 } from "../installs/external-domains.functions";
 import type { CustomDomainView, InstallDetail } from "../installs/installs.functions";
 import { ConfirmDialog } from "./confirm-dialog";
+import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
 import { HealthBadge } from "./install-health";
 import { Section } from "./section";
@@ -387,7 +388,8 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
         <LayerDialog.Title>Add an external domain</LayerDialog.Title>
         <LayerDialog.Description>
           Serve {install.label} on a hostname whose DNS is managed elsewhere. Appflare registers it
-          with Cloudflare for SaaS and shows the records its owner adds.
+          with Cloudflare for SaaS and shows the records its owner adds.{" "}
+          <DocsLink topic="externalDomains" variant="inline" />
         </LayerDialog.Description>
         <LayerDialog.Body>
           <div className="grid gap-4">

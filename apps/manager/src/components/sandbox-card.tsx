@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, LayerCard, Link, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, LayerCard, Text } from "@cloudflare/kumo";
 import {
   CheckCircleIcon,
   PlugsConnectedIcon,
@@ -10,18 +10,7 @@ import { useState } from "react";
 import { ENABLE_SANDBOX_COMMAND } from "../sandbox/connect-copy";
 import { connectSandbox, type SandboxStatus } from "../server/sandbox.functions";
 import { DescriptionItem, DescriptionList } from "./description-list";
-
-/** The public guide to sandbox builds. */
-export const SANDBOX_DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/guides/builds/";
-
-function DocsLink() {
-  return (
-    <Link href={SANDBOX_DOCS_URL} target="_blank" rel="noopener noreferrer">
-      How sandbox builds work
-      <Link.ExternalIcon />
-    </Link>
-  );
-}
+import { DocsLink } from "./docs-link";
 
 /**
  * Settings, Sandbox builds: whether this manager can install apps that have
@@ -34,7 +23,10 @@ export function SandboxCard({ status, isAdmin }: { status: SandboxStatus; isAdmi
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Sandbox builds</span>
+        <span className="flex items-center gap-1">
+          Sandbox builds
+          <DocsLink topic="sandboxBuilds" />
+        </span>
         {status.connected && status.problem === null ? (
           <Badge variant="success">Connected</Badge>
         ) : status.connected ? (
@@ -54,9 +46,6 @@ export function SandboxCard({ status, isAdmin }: { status: SandboxStatus; isAdmi
         ) : (
           <NotConnected status={status} isAdmin={isAdmin} />
         )}
-        <div>
-          <DocsLink />
-        </div>
       </LayerCard.Primary>
     </LayerCard>
   );

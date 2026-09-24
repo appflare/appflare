@@ -9,11 +9,13 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { startedByLabel } from "../../../auto-update/auto-update";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
+import { DocsLink } from "../../../components/docs-link";
 import { formatTime, jobKindLabel } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
+import { jobFailureTopic } from "../../../docs-topics";
 import { installLabel } from "../../../installs/display-name";
 import { type BuildProgressView, getJob, type JobLogRow } from "../../../jobs/jobs.functions";
 import { isActive, useLiveJob, useVersionSwitch } from "../../../jobs/live-job";
@@ -46,6 +48,7 @@ function JobPage() {
   }
 
   const kind = jobKindLabel(job);
+  const failureTopic = jobFailureTopic(job);
   const title = job.install !== null ? `${kind} ${installLabel(job.install)}` : kind;
   return (
     <>
@@ -120,6 +123,9 @@ function JobPage() {
           icon={<WarningCircleIcon weight="fill" />}
           title="The job failed"
           description={job.error}
+          action={
+            failureTopic === null ? undefined : <DocsLink topic={failureTopic} variant="inline" />
+          }
         />
       )}
       {job.build !== null && <BuildProgress build={job.build} />}

@@ -1,6 +1,7 @@
 import { Badge, Banner, Empty, LayerCard, Link, LinkButton, Text } from "@cloudflare/kumo";
 import { ArrowRightIcon, TrashSimpleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
+import { DocsLink } from "../../../components/docs-link";
 import { resourceKindLabel } from "../../../components/format";
 import { SETTINGS_CRUMB, SETTINGS_PAGES } from "../../../components/navigation";
 import { PageHeader } from "../../../components/page-header";
@@ -31,6 +32,7 @@ function RemovedAppsPage() {
     <>
       <PageHeader
         title={SETTINGS_PAGES.removedApps.label}
+        titleAction={<DocsLink topic="removedApps" />}
         description={SETTINGS_PAGES.removedApps.description}
         parents={[SETTINGS_CRUMB]}
       />

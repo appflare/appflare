@@ -28,6 +28,7 @@ import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { AppIcon } from "../../../components/catalog-media";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
+import { DocsLink } from "../../../components/docs-link";
 import { ExternalDomainsSection } from "../../../components/external-domains-section";
 import { jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { InstallHealth } from "../../../components/install-health";
@@ -276,7 +277,7 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
       {isAdmin ? (
         <CustomDomainsSection install={install} />
       ) : (
-        <Section title="Custom domains">
+        <Section title="Custom domains" titleAction={<DocsLink topic="customDomains" />}>
           {install.domains.length === 0 ? (
             <Text variant="secondary">The app is served on its workers.dev URL only.</Text>
           ) : (

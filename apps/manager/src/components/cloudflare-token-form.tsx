@@ -21,6 +21,7 @@ import {
 } from "../cloudflare/token-template";
 import type { TokenVerification, VerifyTokenResult } from "../cloudflare/verify-token";
 import { rotateToken, saveToken, verifyToken } from "../server/token.functions";
+import { DocsLink } from "./docs-link";
 import { formatDate } from "./format";
 
 const { required } = splitPermissionGroups();
@@ -120,7 +121,10 @@ export function CloudflareTokenForm({
     <div className="grid gap-6">
       <div className="grid gap-3">
         <div className="grid gap-1.5">
-          <Text bold>1. Create a token</Text>
+          <div className="flex items-center gap-1">
+            <Text bold>1. Create a token</Text>
+            <DocsLink topic="tokenPermissions" />
+          </div>
           <Text variant="secondary">
             The link opens the Cloudflare dashboard with the permissions Appflare needs already
             selected: {required.map((g) => g.label).join(", ")}. Choose this account, create the

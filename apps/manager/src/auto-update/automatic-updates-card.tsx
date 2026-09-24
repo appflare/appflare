@@ -2,6 +2,7 @@ import { Banner, LayerCard, Switch, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import { DocsLink } from "../components/docs-link";
 import { AUTO_UPDATE_COPY, type AutoUpdateSettings } from "./auto-update";
 import { setAutoUpdateDefaults } from "./auto-update.functions";
 
@@ -54,7 +55,7 @@ export function AutomaticUpdatesCard({
               onCheckedChange={(next: boolean) => void save({ apps: next })}
             />
             <Text variant="secondary" size="sm">
-              {AUTO_UPDATE_COPY.appsHelp}
+              {AUTO_UPDATE_COPY.appsHelp} <DocsLink topic="automaticUpdates" variant="inline" />
             </Text>
           </div>
         ) : (
@@ -66,7 +67,8 @@ export function AutomaticUpdatesCard({
               onCheckedChange={(next: boolean) => void save({ manager: next })}
             />
             <Text variant="secondary" size="sm">
-              {AUTO_UPDATE_COPY.managerHelp}
+              {AUTO_UPDATE_COPY.managerHelp}{" "}
+              <DocsLink topic="appflareAutomaticUpdates" variant="inline" />
             </Text>
             {settings.devBuild && (
               <Text variant="secondary" size="sm">

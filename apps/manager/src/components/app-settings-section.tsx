@@ -27,6 +27,7 @@ import type { InstallDetail } from "../installs/installs.functions";
 import { startReconfigure } from "../installs/reconfigure.functions";
 import type { InstallSettings, SettingField } from "../installs/reconfigure.server";
 import type { SecretSlot } from "../jobs/reconfigure/plan";
+import { DocsLink } from "./docs-link";
 import { EmailRoutingFields } from "./email-routing-fields";
 import { VarField } from "./install-form";
 import { useJobStarted } from "./job-started";
@@ -165,7 +166,11 @@ export function AppSettingsSection({
             <Text variant="secondary">
               {selfDeploying
                 ? "Save and redeploy runs the app's own installer again at the installed commit, with these settings and secrets. It changes the app in place: there is no snapshot and no rollback."
-                : "Save and redeploy uploads the installed version again with these settings and secrets, checks it on a preview where Cloudflare allows it, and only then switches traffic to it. A snapshot is taken first, so undoing the change from the Jobs tab, under Versions, puts the previous settings and secrets back."}
+                : "Save and redeploy uploads the installed version again with these settings and secrets, checks it on a preview where Cloudflare allows it, and only then switches traffic to it. A snapshot is taken first, so undoing the change from the Jobs tab, under Versions, puts the previous settings and secrets back."}{" "}
+              <DocsLink
+                topic={selfDeploying ? "settingsChangeBuilt" : "settingsChange"}
+                variant="inline"
+              />
             </Text>
             {!isAdmin && (
               <Banner

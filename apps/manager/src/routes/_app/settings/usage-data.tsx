@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { DocsLink } from "../../../components/docs-link";
 import { SETTINGS_CRUMB, SETTINGS_PAGES } from "../../../components/navigation";
 import { PageHeader } from "../../../components/page-header";
 import { UsageDataCard } from "../../../components/usage-data-card";
@@ -18,6 +19,7 @@ function UsageDataPage() {
     <>
       <PageHeader
         title={SETTINGS_PAGES.usageData.label}
+        titleAction={<DocsLink topic="usageData" />}
         description={SETTINGS_PAGES.usageData.description}
         parents={[SETTINGS_CRUMB]}
       />

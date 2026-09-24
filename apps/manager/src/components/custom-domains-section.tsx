@@ -36,6 +36,7 @@ import type {
 } from "../installs/custom-domains.server";
 import type { CustomDomainView, InstallDetail } from "../installs/installs.functions";
 import { ConfirmDialog } from "./confirm-dialog";
+import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
 import { HealthBadge } from "./install-health";
 import { Section } from "./section";
@@ -53,6 +54,7 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
   return (
     <Section
       title="Custom domains"
+      titleAction={<DocsLink topic="customDomains" />}
       actions={canAdd ? <AddDomainDialog install={install} /> : undefined}
     >
       {install.domains.length === 0 ? (

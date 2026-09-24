@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { TokenStatus } from "../server/token.functions";
 import { CloudflareTokenForm, type SavedToken } from "./cloudflare-token-form";
 import { DescriptionItem, DescriptionList } from "./description-list";
+import { DocsLink } from "./docs-link";
 import { Timestamp } from "./timestamp";
 
 /** Settings, "Cloudflare token": what the manager is connected to, and rotation. */
@@ -18,7 +19,10 @@ export function CloudflareTokenCard({
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Cloudflare API token</span>
+        <span className="flex items-center gap-1">
+          Cloudflare API token
+          <DocsLink topic="tokenPermissions" />
+        </span>
         {status.hasSecret ? (
           <Badge variant="success">Active</Badge>
         ) : (

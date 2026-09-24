@@ -33,6 +33,7 @@ import { checkGatewayZone, setUpGateway, turnOffGateway } from "../gateway/gatew
 import type { GatewayView } from "../gateway/gateway.server";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
+import { DocsLink } from "./docs-link";
 import { Timestamp } from "./timestamp";
 
 const mono = "font-mono text-[0.9em]";
@@ -58,7 +59,10 @@ export function GatewayCard({
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Gateway for external domains</span>
+        <span className="flex items-center gap-1">
+          Gateway for external domains
+          <DocsLink topic="gateway" />
+        </span>
         {gateway === null ? (
           <Badge variant="neutral">Not set up</Badge>
         ) : gateway.ready && gateway.check.kind === "ready" ? (
@@ -70,10 +74,8 @@ export function GatewayCard({
       <LayerCard.Primary className="grid gap-4 px-5 py-4">
         <Text variant="secondary">
           An external domain is a hostname in DNS you do not manage in this Cloudflare account, such
-          as a customer's or a domain at another registrar. Its owner points a CNAME at the gateway;
-          Cloudflare for SaaS issues its certificate, and the gateway Worker hands each request to
-          the app. The gateway runs on one domain of this account, which keeps serving its own sites
-          as before.
+          as a customer's or a domain at another registrar. The gateway runs on one domain of this
+          account, which keeps serving its own sites as before.
         </Text>
         {gateway === null ? (
           <ChooseZone zones={view.zones} isAdmin={isAdmin} />

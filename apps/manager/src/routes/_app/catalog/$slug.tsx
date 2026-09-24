@@ -49,6 +49,7 @@ import {
 } from "../../../components/catalog-media";
 import { CronTriggersField } from "../../../components/cron-triggers-field";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
+import { DocsLink } from "../../../components/docs-link";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
@@ -575,6 +576,7 @@ function Prerequisites({
           variant="alert"
           icon={<WarningIcon weight="fill" />}
           title="Before you install"
+          action={<DocsLink topic="requirements" variant="inline" />}
           description={
             <div className="grid gap-2">
               <span>Check that this account offers what the app needs:</span>

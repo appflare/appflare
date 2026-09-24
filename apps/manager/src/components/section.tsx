@@ -8,23 +8,36 @@ import type { ReactNode } from "react";
 export function Section({
   id,
   title,
+  titleAction,
   description,
   actions,
   children,
 }: {
   id?: string;
   title: string;
+  /** A small control right after the heading, such as a link to the docs. */
+  titleAction?: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
 }) {
+  const heading = (
+    <Text variant="heading" as="h2">
+      {title}
+    </Text>
+  );
   return (
     <section id={id} className="grid scroll-mt-6 gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="grid gap-1">
-          <Text variant="heading" as="h2">
-            {title}
-          </Text>
+          {titleAction === undefined ? (
+            heading
+          ) : (
+            <div className="flex items-center gap-1">
+              {heading}
+              {titleAction}
+            </div>
+          )}
           {description !== undefined && <Text variant="secondary">{description}</Text>}
         </div>
         {actions}
