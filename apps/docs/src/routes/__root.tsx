@@ -27,7 +27,16 @@ function RootComponent() {
         <HeadContent />
       </head>
       <body className="flex min-h-screen flex-col">
-        <RootProvider search={{ SearchDialog: StaticSearchDialog }} components={{ Link: DocsLink }}>
+        {/*
+          The site opens in light mode whatever the browser prefers. A reader's
+          choice (light, dark, or follow the system) is kept in localStorage and
+          applied by an inline script before the first paint, so a reload does not flash.
+        */}
+        <RootProvider
+          search={{ SearchDialog: StaticSearchDialog }}
+          theme={{ defaultTheme: "light", enableSystem: true }}
+          components={{ Link: DocsLink }}
+        >
           <Outlet />
         </RootProvider>
         <Scripts />

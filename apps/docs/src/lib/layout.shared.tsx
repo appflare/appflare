@@ -3,7 +3,7 @@ import logoLight from "../../../../docs/assets/logo_full.svg?url";
 import logoDark from "../../../../docs/assets/logo_full_white.svg?url";
 import { repositoryUrl, siteName } from "./shared.ts";
 
-/** Options every layout shares: the logo in the navigation bar and the GitHub link. */
+/** Options every layout shares: the logo in the navigation bar, the GitHub link, and the theme switch. */
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
@@ -15,5 +15,7 @@ export function baseOptions(): BaseLayoutProps {
       ),
     },
     githubUrl: repositoryUrl,
+    // Light, dark, and system rather than a two-way flip, so a reader can go back to following the system.
+    themeSwitch: { mode: "light-dark-system" },
   };
 }
