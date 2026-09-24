@@ -9,8 +9,11 @@ import {
   EMAIL_ROUTING_MAX_RULES,
   hasFixedWorkerName,
   hasPlaceholder,
+  installTierSchema,
   renderJsonPlaceholders,
   renderPlaceholders,
+  runsInSandbox,
+  SANDBOX_RUN_TIERS,
   sandboxBuildSettings,
   semverSchema,
 } from "./catalog";
@@ -360,30 +363,55 @@ describe("install.sandbox", () => {
     }
   });
 
-  it("is refused on artifact and self-deploying entries", () => {
-    for (const tier of ["artifact", "self-deploying"]) {
-      const result = withSandbox({ expectedMinutes: 10 }, tier);
-      expect(result.success, tier).toBe(false);
-      // A self-deploying entry without `install.selfDeploying` is refused for that too.
-      expect(result.error?.issues).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: ["install", "sandbox"],
-            message: `install.sandbox is only for sandbox tier entries; this entry's tier is ${tier}`,
-          }),
-        ]),
-      );
-    }
+  it("is taken on self-deploying entries, whose installer runs in the sandbox Worker", () => {
+    const parsed = catalogManifestSchema.safeParse({
+      ...validManifest,
+      plan: "paid",
+      install: {
+        ...validManifest.install,
+        tier: "self-deploying",
+        sandbox: { expectedMinutes: 15, instanceType: "standard-2" },
+        selfDeploying: {
+          tool: "alchemy",
+          deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
+          destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
+          stateStore: "cloudflare",
+          workers: ["app-{{stage}}"],
+        },
+      },
+    });
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+    expect(parsed.data && sandboxBuildSettings(parsed.data.install)).toEqual({
+      expectedMinutes: 15,
+      instanceType: "standard-2",
+    });
   });
 
-  it("states the tier rule in the JSON Schema, so editors refuse it on other tiers", () => {
+  it("is refused on artifact entries, which never run in the user's account", () => {
+    const result = withSandbox({ expectedMinutes: 10 }, "artifact");
+    expect(result.success).toBe(false);
+    expect(result.error?.issues).toEqual([
+      expect.objectContaining({
+        path: ["install", "sandbox"],
+        message:
+          "install.sandbox is only for the sandbox and self-deploying tiers, which run in the sandbox Worker; this entry's tier is artifact",
+      }),
+    ]);
+  });
+
+  it("names the tiers that run in the sandbox Worker", () => {
+    expect(SANDBOX_RUN_TIERS).toEqual(["sandbox", "self-deploying"]);
+    expect(installTierSchema.options.filter(runsInSandbox)).toEqual(["sandbox", "self-deploying"]);
+  });
+
+  it("states the tier rule in the JSON Schema, so editors refuse it on artifact entries", () => {
     const install = z.toJSONSchema(catalogManifestSchema).properties?.install;
     expect(install).toMatchObject({
       allOf: [
         {
           anyOf: [
             { not: { required: ["sandbox"] } },
-            { properties: { tier: { const: "sandbox" } } },
+            { properties: { tier: { enum: ["sandbox", "self-deploying"] } } },
           ],
         },
         // The self-deploying tier's rule (see self-deploying.test.ts).

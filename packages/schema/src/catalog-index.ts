@@ -23,11 +23,14 @@ export const indexArtifactsSchema = z.object({
 export type IndexArtifacts = z.infer<typeof indexArtifactsSchema>;
 
 /**
- * How a `sandbox` tier entry is built in the user's account: catalog CI does
- * not publish a prebuilt artifact for it, so the manager asks its sandbox
- * Worker to build the pinned commit. The entry's catalog manifest is
- * published next to the index, addressed by its sha256, because the build
+ * How a `sandbox` or `self-deploying` tier entry runs in the user's account:
+ * catalog CI does not publish a prebuilt artifact for either, so the manager
+ * asks its sandbox Worker to build the pinned commit (`sandbox`) or to run the
+ * app's own installer there (`self-deploying`). The entry's catalog manifest
+ * is published next to the index, addressed by its sha256, because the
  * request carries it verbatim and the install form is generated from it.
+ * `expectedMinutes` and `instanceType` are the entry's `install.sandbox`,
+ * copied for the cost estimate the manager shows before each run.
  */
 export const indexBuildSchema = z.object({
   /** The exact commit the build checks out; equals the catalog manifest's `source.sha`. */
@@ -38,9 +41,9 @@ export const indexBuildSchema = z.object({
   manifestDigest: sha256Schema,
   /** The entry's `install.buildCommand`, repeated for display. */
   buildCommand: z.string().min(1).optional(),
-  /** Wall-clock minutes a build usually takes, for the cost estimate. */
+  /** Wall-clock minutes a run (build or installer) usually takes, for the cost estimate. */
   expectedMinutes: expectedBuildMinutesSchema.optional(),
-  /** Container size the build needs; `standard-1` when omitted. */
+  /** Container size the run needs; `standard-1` when omitted. */
   instanceType: sandboxInstanceTypeSchema.optional(),
 });
 export type IndexBuild = z.infer<typeof indexBuildSchema>;

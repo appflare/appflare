@@ -399,43 +399,59 @@ export const MAX_EXPECTED_BUILD_MINUTES = 120;
 /** Whole minutes a sandbox build usually takes, from 1 to {@link MAX_EXPECTED_BUILD_MINUTES}. */
 export const expectedBuildMinutesSchema = z.int().min(1).max(MAX_EXPECTED_BUILD_MINUTES);
 
+/** The tiers whose installs and updates run in the account's sandbox Worker. */
+export const SANDBOX_RUN_TIERS = [
+  "sandbox",
+  "self-deploying",
+] as const satisfies readonly InstallTier[];
+
+/** Whether installs and updates of a `tier` entry run in the account's sandbox Worker. */
+export function runsInSandbox(tier: InstallTier): tier is (typeof SANDBOX_RUN_TIERS)[number] {
+  return (SANDBOX_RUN_TIERS as readonly InstallTier[]).includes(tier);
+}
+
 /**
- * How a `sandbox` tier entry is built in the user's account. Neither field
- * changes what is built; both feed the cost the manager shows before an
- * install or update: a build runs one container of `instanceType` for about
- * `expectedMinutes`, and Cloudflare bills that container's memory, vCPU and
- * disk by the second beyond the usage Workers Paid includes each month
- * (a 10-minute `standard-1` build costs about one US cent). `instanceType`
- * also sets the container the build actually runs on. Catalog CI copies both,
- * defaults filled in, into the index entry's `build` block. Optional for the
- * same reason as `fixedWorkerName`.
+ * How one run of an entry in the account's sandbox Worker is sized: the
+ * build of a `sandbox` tier entry, or the run of a `self-deploying` entry's
+ * own installer. This block is the source of the cost estimate the manager
+ * shows before every such install or update: a run occupies one container
+ * of `instanceType` for about `expectedMinutes`, and Cloudflare bills that
+ * container's memory, vCPU and disk by the second beyond the usage Workers
+ * Paid includes each month (a 10-minute `standard-1` run costs about one US
+ * cent). `instanceType` also sets the container the run actually uses;
+ * `expectedMinutes` changes nothing about the run itself. Catalog CI copies
+ * both into the index entry's `build` block, where the manager reads them.
+ * Refused on `artifact` entries, which never run in the user's account.
+ * Optional for the same reason as `fixedWorkerName`.
  */
 export const catalogSandboxSchema = z
   .object({
     expectedMinutes: expectedBuildMinutesSchema
       .describe(
-        "About how many minutes one build of this app takes, measured on a `standard-1` build " +
-          "(or `instanceType`, when set). The manager multiplies it by the container's rates to " +
-          "show what each install or update costs before the admin confirms it. Whole minutes, " +
+        "About how many minutes one run of this app in the sandbox Worker takes (its build, or " +
+          "for a self-deploying entry its installer's deploy), measured on a `standard-1` " +
+          "container (or `instanceType`, when set). The manager multiplies it by the container's " +
+          "rates to show what each install or update costs before the admin confirms it. Whole minutes, " +
           `1 to ${MAX_EXPECTED_BUILD_MINUTES}; defaults to ${DEFAULT_EXPECTED_BUILD_MINUTES}.`,
       )
       .optional(),
     instanceType: sandboxInstanceTypeSchema
       .describe(
-        "The container the build runs on: `standard-1` (1/2 vCPU, 4 GiB memory, 8 GB disk) or " +
-          "`standard-2` (1 vCPU, 6 GiB, 12 GB) for builds that run out of memory or disk on the " +
+        "The container the run uses: `standard-1` (1/2 vCPU, 4 GiB memory, 8 GB disk) or " +
+          "`standard-2` (1 vCPU, 6 GiB, 12 GB) for builds or installers that run out of memory or disk on the " +
           "smaller one. The larger container costs more per minute, which the manager's cost " +
           'estimate reflects. Defaults to `"standard-1"`.',
       )
       .optional(),
   })
   .describe(
-    "How this app is built in the user's account, for `sandbox` tier entries only. Both fields " +
-      "feed the build cost the manager shows before each install and update.",
+    "How a run of this app in the user's sandbox Worker is sized: the build of a `sandbox` tier " +
+      "entry or the installer of a `self-deploying` one (not allowed on `artifact` entries). Both " +
+      "fields feed the cost the manager shows before each install and update.",
   );
 export type CatalogSandbox = z.infer<typeof catalogSandboxSchema>;
 
-/** A sandbox build's settings, defaults filled in. */
+/** The size of a run in the sandbox Worker, defaults filled in. */
 export interface SandboxBuildSettings {
   expectedMinutes: number;
   instanceType: SandboxInstanceType;
@@ -528,8 +544,9 @@ export const catalogInstallSchema = z
      */
     emailRouting: catalogEmailRoutingSchema.optional(),
     /**
-     * Build settings of a `sandbox` tier entry; see {@link catalogSandboxSchema}.
-     * Refused on other tiers, where nothing is built in the user's account.
+     * The size of a run in the sandbox Worker (a `sandbox` entry's build or a
+     * `self-deploying` entry's installer); see {@link catalogSandboxSchema}.
+     * Refused on `artifact` entries, which never run in the user's account.
      */
     sandbox: catalogSandboxSchema.optional(),
     // --- Self-deploying tier -------------------------------------------------
@@ -541,11 +558,11 @@ export const catalogInstallSchema = z
     selfDeploying: catalogSelfDeployingSchema.optional(),
   })
   .superRefine((install, ctx) => {
-    if (install.sandbox !== undefined && install.tier !== "sandbox") {
+    if (install.sandbox !== undefined && !runsInSandbox(install.tier)) {
       ctx.addIssue({
         code: "custom",
         path: ["sandbox"],
-        message: `install.sandbox is only for sandbox tier entries; this entry's tier is ${install.tier}`,
+        message: `install.sandbox is only for the sandbox and self-deploying tiers, which run in the sandbox Worker; this entry's tier is ${install.tier}`,
       });
     }
     const problem = selfDeployingTierProblem(install);
@@ -554,12 +571,16 @@ export const catalogInstallSchema = z
     }
   })
   // The refinements do not reach the JSON Schema; `allOf` states them there
-  // (no `sandbox`, or tier `sandbox`; `selfDeploying` exactly when the tier is
-  // `self-deploying`), so editors refuse the same manifests.
+  // (no `sandbox`, or a tier that runs in the sandbox Worker; `selfDeploying`
+  // exactly when the tier is `self-deploying`), so editors refuse the same
+  // manifests.
   .meta({
     allOf: [
       {
-        anyOf: [{ not: { required: ["sandbox"] } }, { properties: { tier: { const: "sandbox" } } }],
+        anyOf: [
+          { not: { required: ["sandbox"] } },
+          { properties: { tier: { enum: [...SANDBOX_RUN_TIERS] } } },
+        ],
       },
       {
         anyOf: [

@@ -168,7 +168,7 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 120,
-              "description": "About how many minutes one build of this app takes, measured on a `standard-1` build (or `instanceType`, when set). The manager multiplies it by the container's rates to show what each install or update costs before the admin confirms it. Whole minutes, 1 to 120; defaults to 10."
+              "description": "About how many minutes one run of this app in the sandbox Worker takes (its build, or for a self-deploying entry its installer's deploy), measured on a `standard-1` container (or `instanceType`, when set). The manager multiplies it by the container's rates to show what each install or update costs before the admin confirms it. Whole minutes, 1 to 120; defaults to 10."
             },
             "instanceType": {
               "type": "string",
@@ -176,11 +176,11 @@
                 "standard-1",
                 "standard-2"
               ],
-              "description": "The container the build runs on: `standard-1` (1/2 vCPU, 4 GiB memory, 8 GB disk) or `standard-2` (1 vCPU, 6 GiB, 12 GB) for builds that run out of memory or disk on the smaller one. The larger container costs more per minute, which the manager's cost estimate reflects. Defaults to `\"standard-1\"`."
+              "description": "The container the run uses: `standard-1` (1/2 vCPU, 4 GiB memory, 8 GB disk) or `standard-2` (1 vCPU, 6 GiB, 12 GB) for builds or installers that run out of memory or disk on the smaller one. The larger container costs more per minute, which the manager's cost estimate reflects. Defaults to `\"standard-1\"`."
             }
           },
           "additionalProperties": false,
-          "description": "How this app is built in the user's account, for `sandbox` tier entries only. Both fields feed the build cost the manager shows before each install and update."
+          "description": "How a run of this app in the user's sandbox Worker is sized: the build of a `sandbox` tier entry or the installer of a `self-deploying` one (not allowed on `artifact` entries). Both fields feed the cost the manager shows before each install and update."
         },
         "selfDeploying": {
           "type": "object",
@@ -266,7 +266,10 @@
             {
               "properties": {
                 "tier": {
-                  "const": "sandbox"
+                  "enum": [
+                    "sandbox",
+                    "self-deploying"
+                  ]
                 }
               }
             }
