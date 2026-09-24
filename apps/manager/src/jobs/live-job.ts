@@ -1,18 +1,26 @@
 import { useEffect, useState } from "react";
 import { compareVersions } from "../catalog/versions";
 import { getJob, type JobView } from "./jobs.functions";
-import { acceptPoll, followJob, type LiveJobState } from "./live-job-state";
+import {
+  acceptPoll,
+  clientReplaced,
+  followJob,
+  type LiveJobState,
+  type SwitchJob,
+  switchAnswer,
+  switchTargetOf,
+} from "./live-job-state";
 
 /**
  * Following a job from the browser: its row and log while it runs, and for
- * a self-update, the switch to the new version. Used by the job's page and by
+ * a self-update or a rollback of Appflare, the switch to the other version. Used by the job's page and by
  * the sidebar's Appflare card.
  */
 
 /** How often a queued or running job is re-read. */
 export const POLL_MS = 2000;
 
-export function isActive(job: JobView | null | undefined): boolean {
+export function isActive(job: Pick<JobView, "status"> | null | undefined): boolean {
   return job != null && (job.status === "queued" || job.status === "running");
 }
 
@@ -60,36 +68,34 @@ export function useLiveJob(
   return job;
 }
 
-/** A finished self-update stops being watched for the switch after this long. */
+/** A finished self-update or rollback stops being watched for the switch after this long. */
 const SWITCH_WATCH_MS = 5 * 60 * 1000;
 
 /**
- * A self-update replaces the code serving this page. Polls `/api/health` (a
- * plain URL every version serves, unlike server functions, whose ids change
- * between builds) while the job runs, and after it succeeded until a version
- * at least as new as the target answers (at most a few minutes). Reports
- * whether an older version still answers. When the target version starts
- * answering after an older one did, or while this page runs an older
- * version's client (`clientVersion`, when known), `onArrived` runs (when
- * given) and the page reloads once to load the new version's client.
- * `stalled`: the job succeeded, the watch ended, and the new version never
- * answered here.
+ * A self-update, or a rollback of Appflare, replaces the code serving this
+ * page. Polls `/api/health` (a plain URL every version serves, unlike server
+ * functions, whose ids change between builds) while the job runs, and after
+ * it succeeded until the target answers (at most a few minutes): for a
+ * self-update a version at least as new as the target, for a rollback
+ * exactly the target. Reports whether the replaced version still answers.
+ * When the target starts answering after the replaced one did, or while this
+ * page runs another version's client (`clientVersion`, when known),
+ * `onArrived` runs (when given) and the page reloads once to load the
+ * target's client. `stalled`: the job succeeded, the watch ended, and the
+ * target never answered here.
  */
 export function useVersionSwitch(
-  job: JobView | null | undefined,
+  job: SwitchJob | null | undefined,
   options: { clientVersion?: string; onArrived?: (version: string) => void } = {},
 ): { switching: boolean; stalled: boolean } {
   const { clientVersion, onArrived } = options;
-  const target = job?.kind === "self_update" ? job.targetVersion : null;
+  const target = switchTargetOf(job);
+  const kind = job?.kind ?? "";
   const [seen, setSeen] = useState<string | null>(null);
-  const [sawOlder, setSawOlder] = useState(false);
-  /** The answering version is the target or newer (or cannot be compared). */
-  const arrived = seen !== null && target !== null && (compareVersions(seen, target) ?? 0) >= 0;
-  /** This page's own client is older than the target, so it must reload once the target answers. */
-  const olderClient =
-    clientVersion !== undefined &&
-    target !== null &&
-    (compareVersions(clientVersion, target) ?? 0) < 0;
+  const [sawReplaced, setSawReplaced] = useState(false);
+  const arrived =
+    seen !== null && target !== null && switchAnswer(kind, target, seen, compareVersions).arrived;
+  const otherClient = clientReplaced(kind, clientVersion, target, compareVersions);
   const finishedAt = job?.finishedAt ?? null;
   const [expired, setExpired] = useState(false);
   useEffect(() => {
@@ -110,6 +116,7 @@ export function useVersionSwitch(
     (isActive(job) || (job.status === "succeeded" && recentlyFinished && !arrived));
   useEffect(() => {
     if (!watching || target === null) return;
+    const to = target;
     let cancelled = false;
     async function check() {
       try {
@@ -118,7 +125,7 @@ export function useVersionSwitch(
         if (cancelled || typeof body.version !== "string") return;
         const version = body.version;
         setSeen(version);
-        if ((compareVersions(version, target ?? version) ?? 0) < 0) setSawOlder(true);
+        if (switchAnswer(kind, to, version, compareVersions).replaced) setSawReplaced(true);
       } catch {
         // Unreachable during the switch; the next tick retries.
       }
@@ -129,14 +136,14 @@ export function useVersionSwitch(
       cancelled = true;
       clearInterval(timer);
     };
-  }, [watching, target]);
+  }, [watching, target, kind]);
   const status = job?.status;
   useEffect(() => {
-    if (arrived && (sawOlder || olderClient) && status !== "failed" && seen !== null) {
+    if (arrived && (sawReplaced || otherClient) && status !== "failed" && seen !== null) {
       onArrived?.(seen);
       window.location.reload();
     }
-  }, [arrived, sawOlder, olderClient, status, seen, onArrived]);
+  }, [arrived, sawReplaced, otherClient, status, seen, onArrived]);
   return {
     switching: watching && seen !== null && !arrived,
     stalled: target !== null && status === "succeeded" && expired && !arrived,

@@ -5,7 +5,7 @@ import { installs, jobs, resources } from "../db/schema";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { installerRunId } from "../jobs/self-deploying/phases";
 import {
-  activeSelfUpdateJob,
+  activeSelfJob,
   NO_ACTIVE_SELF_UPDATE_SQL,
   refuseDuringSelfUpdate,
   selfUpdateBusyMessage,
@@ -163,7 +163,7 @@ export async function startUninstallCore(
       .bind(jobId, request.installId, at, JSON.stringify(deleteResources)),
   ]);
   if (claimed?.meta.changes !== 1) {
-    const selfUpdate = await activeSelfUpdateJob(deps.db);
+    const selfUpdate = await activeSelfJob(deps.db);
     if (selfUpdate !== null) throw new StartUninstallError(selfUpdateBusyMessage(selfUpdate));
     throw new StartUninstallError(
       "Another job of this install is queued or running, or its state changed. Reload the page.",

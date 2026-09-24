@@ -4,7 +4,7 @@ import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import {
-  activeSelfUpdateJob,
+  activeSelfJob,
   NO_ACTIVE_SELF_UPDATE_SQL,
   refuseDuringSelfUpdate,
   selfUpdateBusyMessage,
@@ -300,7 +300,7 @@ export async function startDeleteRetainedCore(
     .bind(jobId, installId, JSON.stringify({ installId, deleteResources, deleteRetained: true }))
     .run();
   if (claimed.meta.changes !== 1) {
-    const selfUpdate = await activeSelfUpdateJob(deps.db);
+    const selfUpdate = await activeSelfJob(deps.db);
     if (selfUpdate !== null) throw new RemovedAppsError(selfUpdateBusyMessage(selfUpdate));
     throw new RemovedAppsError(
       "Another job of this install is queued or running, or its state changed. Reload the page.",

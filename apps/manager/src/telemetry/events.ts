@@ -245,7 +245,8 @@ const SANDBOX_WORKER_JOB_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 function jobTier(row: JobRow, input: Record<string, unknown>): string | null {
-  if (row.kind === "self_update" || SANDBOX_WORKER_JOB_KINDS.has(row.kind)) return null;
+  if (row.kind === "self_update" || row.kind === "self_rollback") return null;
+  if (SANDBOX_WORKER_JOB_KINDS.has(row.kind)) return null;
   if (input.selfDeploying === true) return "self_deploying";
   if (input.sandboxBuild === true) return "sandbox";
   return tierName(row.buildKind);
@@ -260,7 +261,7 @@ export function jobProperties(
   const input = parseInput(row.inputJson);
   const kind = jobKind(row);
   let slug: string;
-  if (row.kind === "self_update") slug = "appflare";
+  if (row.kind === "self_update" || row.kind === "self_rollback") slug = "appflare";
   else if (SANDBOX_WORKER_JOB_KINDS.has(row.kind)) slug = "appflare-sandbox";
   else slug = officialSlug(row.appSlug ?? "", officialCatalog, catalogVersions) ?? "custom";
   let version: string | null;
@@ -276,6 +277,10 @@ export function jobProperties(
     case "sandbox_update":
       version = str(input.version);
       from = str(input.fromVersion);
+      break;
+    case "self_rollback":
+      // Only the kind: which versions an admin moved Appflare between stays in the manager.
+      version = null;
       break;
     case "rollback":
       version =

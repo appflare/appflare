@@ -264,7 +264,7 @@ describe("jobEvents", () => {
     }
   });
 
-  it("names self-updates, rollbacks, restores and custom apps", async () => {
+  it("names self-updates, rollbacks, restores, custom apps and Appflare rollbacks", async () => {
     const rows = [
       job({
         id: "s",
@@ -285,6 +285,13 @@ describe("jobEvents", () => {
         inputJson: JSON.stringify({ restore: true, databaseName: "notes" }),
       }),
       job({ id: "c", kind: "install", appSlug: "private-app" }),
+      job({
+        id: "b",
+        kind: "self_rollback",
+        appSlug: null,
+        buildKind: null,
+        inputJson: JSON.stringify({ versionId: "v-old", version: "0.4.0", fromVersion: "0.5.0" }),
+      }),
     ];
     const finished = (await jobEvents(rows, window, {}, "id", true, versions)).filter(
       (e) => e.event === "job finished",
@@ -302,7 +309,10 @@ describe("jobEvents", () => {
       ["rollback", "cut", "1.0.0", "1.1.0", "artifact"],
       ["restore", "cut", "1.1.0", null, "artifact"],
       ["install", "custom", null, null, "artifact"],
+      // A rollback of Appflare is reported by its kind only.
+      ["self_rollback", "appflare", null, null, null],
     ]);
+    expect(JSON.stringify(finished)).not.toContain("v-old");
     expect(JSON.stringify(finished)).not.toContain("notes");
     expect(JSON.stringify(finished)).not.toContain("private-app");
   });

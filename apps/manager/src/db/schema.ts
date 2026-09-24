@@ -77,7 +77,9 @@ export const RESOURCE_MANAGERS = ["appflare", "app"] as const;
  * `sandbox_update` deploy the sandbox Worker release this manager pins (with
  * its bucket and container applications) and connect the manager to it;
  * `sandbox_disable` removes all of that again. None of the three has an
- * install.
+ * install. `self_rollback` redeploys an earlier version of the manager's own
+ * Worker; it runs inside the request that asks for it, so it has no Workflow
+ * instance (like a database restore).
  */
 export const JOB_KINDS = [
   "install",
@@ -89,6 +91,7 @@ export const JOB_KINDS = [
   "sandbox_enable",
   "sandbox_update",
   "sandbox_disable",
+  "self_rollback",
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 

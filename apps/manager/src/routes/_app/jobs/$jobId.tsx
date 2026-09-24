@@ -114,7 +114,11 @@ function JobPage() {
           variant="secondary"
           icon={<ArrowsClockwiseIcon />}
           title="Appflare is switching versions…"
-          description={`The current version keeps serving until ${job.targetVersion ?? "the new version"} has passed its checks and takes over. This page reloads once it answers.`}
+          description={
+            job.kind === "self_rollback"
+              ? `Cloudflare is moving traffic to ${job.targetVersion ?? "the earlier version"}. This page reloads once it answers.`
+              : `The current version keeps serving until ${job.targetVersion ?? "the new version"} has passed its checks and takes over. This page reloads once it answers.`
+          }
         />
       )}
       {job.status === "failed" && job.error !== null && (

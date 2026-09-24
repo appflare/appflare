@@ -53,10 +53,11 @@ No. Installs and updates use the catalog's current version. After an update you 
 ## What happens to my apps if the manager breaks?
 
 Nothing. Installed apps are ordinary Workers in your account and do not depend on
-the manager at runtime. To repair the manager, roll it back from the Worker's
-**Deployments** page in the Cloudflare dashboard, or with
+the manager at runtime. To repair the manager, roll it back under **Settings >
+Appflare updates > Versions**. If its pages do not load, roll it back from the
+Worker's **Deployments** page in the Cloudflare dashboard, or with
 `npx wrangler rollback --name appflare`. See
-[Go back](/guides/update-appflare/#go-back).
+[Roll back](/guides/update-appflare/#roll-back).
 
 ## How do I remove Appflare entirely?
 

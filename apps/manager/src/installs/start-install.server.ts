@@ -22,7 +22,7 @@ import {
   selfDeployingInputOf,
 } from "../jobs/self-deploying/phases";
 import {
-  activeSelfUpdateJob,
+  activeSelfJob,
   NO_ACTIVE_SELF_UPDATE_SQL,
   refuseDuringSelfUpdate,
   selfUpdateBusyMessage,
@@ -380,7 +380,7 @@ export async function startInstallCore(
   ]);
   if (claimed?.meta.changes !== 1) {
     // A self-update that started after the check above wins the claim.
-    const selfUpdate = await activeSelfUpdateJob(deps.db);
+    const selfUpdate = await activeSelfJob(deps.db);
     if (selfUpdate !== null) throw new StartInstallError(selfUpdateBusyMessage(selfUpdate));
     const [clash] = await db
       .select({ status: installs.status, worker: installs.worker_name })

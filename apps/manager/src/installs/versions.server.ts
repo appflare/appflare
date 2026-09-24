@@ -17,7 +17,7 @@ import type { WorkflowLookup } from "../jobs/reconcile.server";
 import type { RollbackJobParams } from "../jobs/rollback";
 import { installerRunId } from "../jobs/self-deploying/phases";
 import {
-  activeSelfUpdateJob,
+  activeSelfJob,
   NO_ACTIVE_SELF_UPDATE_SQL,
   refuseDuringSelfUpdate,
   selfUpdateBusyMessage,
@@ -126,7 +126,7 @@ export async function claim<P extends { jobId: string }>(
       .bind(jobId, input.installId, now.getTime()),
   ]);
   if (claimed?.meta.changes !== 1) {
-    const selfUpdate = await activeSelfUpdateJob(deps.db);
+    const selfUpdate = await activeSelfJob(deps.db);
     throw new VersionActionError(selfUpdate === null ? BUSY : selfUpdateBusyMessage(selfUpdate));
   }
 
@@ -603,7 +603,7 @@ export async function restoreDatabaseCore(
     .bind(jobId, install.id, JSON.stringify(input), startedAt.getTime())
     .run();
   if (claimed.meta.changes !== 1) {
-    const selfUpdate = await activeSelfUpdateJob(deps.db);
+    const selfUpdate = await activeSelfJob(deps.db);
     throw new VersionActionError(selfUpdate === null ? BUSY : selfUpdateBusyMessage(selfUpdate));
   }
 

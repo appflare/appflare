@@ -1,10 +1,16 @@
 import { isManagerUpdateAvailable, readManagerLatest } from "../catalog/manager-releases.server";
-import { readSchemaVersion } from "../db/migrate";
+import { KNOWN_SCHEMA_VERSION, readSchemaVersion } from "../db/migrate";
 
 export interface HealthBody {
   version: string;
   db: "ok" | "error";
   schemaVersion?: number;
+  /**
+   * The migrations this build knows, so the newest database schema its code
+   * was written for. A rollback asks the target version's preview for it and
+   * refuses when the database is ahead (see jobs/self-update/rollback.ts).
+   */
+  knownSchemaVersion: number;
   /** The newest Appflare release the release feed reported; null when none is known. */
   latestVersion: string | null;
   /** Whether `latestVersion` is newer than `version`. */
@@ -18,8 +24,8 @@ export interface HealthBody {
 }
 
 /**
- * `GET /api/health`: unauthenticated; the build's version plus a D1 ping that
- * reads `schema_version`, and the newest release from the cron's KV cache (one
+ * `GET /api/health`: unauthenticated; the build's version and the schema it
+ * knows, plus a D1 ping that reads `schema_version`, and the newest release from the cron's KV cache (one
  * KV read, no outbound call). Canary checks compare `version` against the
  * version they just uploaded; `create-appflare` waits for `db` to be ok.
  */
@@ -38,6 +44,7 @@ export async function healthResponse(env: {
       version: env.APPFLARE_VERSION,
       db: "ok",
       schemaVersion,
+      knownSchemaVersion: KNOWN_SCHEMA_VERSION,
       ...release,
       authReady,
     };
@@ -46,7 +53,13 @@ export async function healthResponse(env: {
     console.error("health: D1 ping failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    const body: HealthBody = { version: env.APPFLARE_VERSION, db: "error", ...release, authReady };
+    const body: HealthBody = {
+      version: env.APPFLARE_VERSION,
+      db: "error",
+      knownSchemaVersion: KNOWN_SCHEMA_VERSION,
+      ...release,
+      authReady,
+    };
     return Response.json(body, { status: 503, headers });
   }
 }

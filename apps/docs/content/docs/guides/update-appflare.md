@@ -43,10 +43,39 @@ release again after its self-update failed.
 To hear when a new release is out, add a [notification channel](/guides/notifications/)
 with **Appflare update available**.
 
-## Go back
+## Roll back
 
-The Settings page only offers newer versions. To return to an earlier one, use
-either of these. Both work even if the manager's UI does not load.
+Open **Settings > Appflare updates** and find **Versions**. It lists the newest
+versions of the manager's Worker, up to ten, with the Appflare version each one runs,
+and marks the one serving. Admins, the owner included, can select **Roll back** on an
+older version, type its version number to confirm, and roll back to it.
+
+**The database is not rolled back.** It stays as the newer version left it.
+
+Before it switches, the manager:
+
+1. Checks that no other job is queued or running. No job starts until the rollback
+   ends.
+2. Requests the older version at its preview URL. It must report the Appflare version
+   the Worker version was deployed with, and a working database.
+3. Compares the database schema that version's code was written for with the
+   database's own. If a newer version has migrated the database since, the rollback
+   is refused: pick a version of the same release as the one serving, or update
+   instead. Versions from before this check existed do not report their schema, and
+   are refused too.
+4. Deploys the older version to all traffic. Cloudflare refuses a version whose
+   secrets changed since it was deployed, for example after the API token was
+   replaced or the auth secret rotated, because rolling back would bring back the old
+   values. Pick a newer version of the same release.
+
+The rollback is listed under **Jobs** as an Appflare rollback, with its log. It turns
+**Automatically update Appflare** off, so the cron does not update straight back to
+the release you left; turn it on again when you are ready. The page reloads once the
+older version answers. To move forward again, update from the **Appflare** card.
+
+### If the manager does not load
+
+These work without the manager and skip its checks. The database stays as it is.
 
 - In the Cloudflare dashboard, open the `appflare` Worker, go to **Deployments**, and
   roll back there.
@@ -58,5 +87,3 @@ either of these. Both work even if the manager's UI does not load.
 
   Without a version id it returns to the previous deployment; wrangler asks for an
   optional message and a confirmation.
-
-A rollback changes the Worker only. The manager's database stays as it is.

@@ -16,9 +16,10 @@ import { StepLog } from "./step-log";
  * `installed` (the version record changes only inside the job, when it
  * promotes, so it is already right).
  *
- * A database restore runs inside a server function, not a Workflow; its job
- * row has no instance. One still `running` after {@link RESTORE_STALE_MS}
- * lost its request midway and is failed.
+ * A database restore and a rollback of Appflare itself run inside a server
+ * function, not a Workflow; their job rows have no instance. One still
+ * `running` after {@link RESTORE_STALE_MS} lost its request midway and is
+ * failed.
  */
 
 /** The part of a Workflow binding this reads (`env.JOBS`). */
@@ -51,12 +52,24 @@ export function isRestoreJob(row: Pick<ActiveJobRow, "kind" | "input_json">): bo
   }
 }
 
-/** Settles a restore row whose request died; true when it changed. */
-async function reconcileRestore(db: D1Database, row: ActiveJobRow, at: Date): Promise<boolean> {
+/** Why a request job still running after {@link RESTORE_STALE_MS} is failed. */
+const REQUEST_ENDED: Record<"restore" | "self_rollback", string> = {
+  restore:
+    "the restore request ended without recording its result; check the database's Time Travel history in the Cloudflare dashboard",
+  self_rollback:
+    "the rollback request ended without recording its result; the Versions list under Settings, Appflare updates shows which version serves",
+};
+
+/** Settles a restore or Appflare rollback row whose request died; true when it changed. */
+async function reconcileRequestJob(
+  db: D1Database,
+  row: ActiveJobRow,
+  at: Date,
+  kind: "restore" | "self_rollback",
+): Promise<boolean> {
   const started = row.started_at?.getTime() ?? null;
   if (started !== null && at.getTime() - started < RESTORE_STALE_MS) return false;
-  const error =
-    "the restore request ended without recording its result; check the database's Time Travel history in the Cloudflare dashboard";
+  const error = REQUEST_ENDED[kind];
   const updated = await createDb(db)
     .update(jobs)
     .set({ status: "failed", error, finished_at: at })
@@ -94,8 +107,13 @@ export async function reconcileJobs(
   let changed = false;
   for (const row of rows) {
     if (row.status !== "queued" && row.status !== "running") continue;
-    if (isRestoreJob(row)) {
-      if (await reconcileRestore(db, row, now())) changed = true;
+    const requestJob = isRestoreJob(row)
+      ? "restore"
+      : row.kind === "self_rollback"
+        ? "self_rollback"
+        : null;
+    if (requestJob !== null) {
+      if (await reconcileRequestJob(db, row, now(), requestJob)) changed = true;
       continue;
     }
     let status: string;

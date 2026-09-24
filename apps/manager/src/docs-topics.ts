@@ -29,6 +29,7 @@ export const DOCS_TOPICS = {
   rollbackJob: "guides/updates#roll-back",
   databaseRestore: "guides/updates#restore-a-database-to-a-bookmark",
   appflareUpdateJob: "guides/update-appflare#update-from-settings",
+  appflareRollback: "guides/update-appflare#roll-back",
   deployCopyCleanup: "start/deploy-button#clean-up-the-deploy-copy",
 } as const satisfies Record<string, string>;
 
@@ -64,6 +65,8 @@ export function jobFailureTopic(job: {
       return "rollbackJob";
     case "self_update":
       return "appflareUpdateJob";
+    case "self_rollback":
+      return "appflareRollback";
     case "reconfigure":
       return "settingsChange";
     case "sandbox_enable":

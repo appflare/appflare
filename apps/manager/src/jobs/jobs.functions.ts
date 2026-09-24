@@ -51,7 +51,7 @@ export interface JobView {
   error: string | null;
   /** The Workers version an update uploaded or a rollback deployed. */
   workerVersionId: string | null;
-  /** A self-update's target Appflare version; null for other kinds. */
+  /** The Appflare version a self-update or a rollback of Appflare moves to; null for other kinds. */
   targetVersion: string | null;
   /** Who started it: an admin, or the cron (automatic updates). */
   startedBy: JobStarter;
@@ -74,9 +74,9 @@ export interface JobView {
   build: BuildProgressView | null;
 }
 
-/** The `version` a self-update's input names. */
+/** The `version` a self-update's (or an Appflare rollback's) input names. */
 function targetVersionOf(kind: string, inputJson: string | null): string | null {
-  if (kind !== "self_update" || inputJson === null) return null;
+  if ((kind !== "self_update" && kind !== "self_rollback") || inputJson === null) return null;
   try {
     const version = (JSON.parse(inputJson) as { version?: unknown }).version;
     return typeof version === "string" ? version : null;

@@ -57,12 +57,13 @@ Once a day, the manager sends one report with:
 ### Jobs (manager)
 
 For each install, update, settings change, rollback, database restore, uninstall,
-deletion of a removed app's kept data, and manager self-update, one event when it starts and one
-when it ends, with:
+deletion of a removed app's kept data, manager self-update, and manager rollback, one
+event when it starts and one when it ends, with:
 
 - the kind of job, the app's catalog slug (`custom` for an app from a custom
   catalog), the version it moves from and to (none for a custom catalog's app), the
   build type, and what started it (an admin, or the schedule for automatic updates);
+  a manager rollback carries its kind only, never the versions it moves between;
 - when it ends: whether it succeeded, how long it took, and for a failure, its
   error category (such as `cloudflare_permission`, `plan_limit` or `d1_migration`),
   the phase it failed in (such as `resources`, `upload` or `health`), and, for a

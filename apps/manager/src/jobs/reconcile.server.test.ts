@@ -205,4 +205,25 @@ describe("reconcileJobs", () => {
     expect((await job("r1"))?.error).toMatch(/^the restore request ended without recording/);
     expect((await job("r2"))?.status).toBe("running");
   });
+
+  it("fails a rollback of Appflare whose request never recorded its end, once it is stale", async () => {
+    const startedAt = NOW.getTime() - RESTORE_STALE_MS - 1;
+    await env.DB.prepare(
+      `INSERT INTO jobs (id, install_id, kind, status, input_json, started_at)
+       VALUES ('b1', NULL, 'self_rollback', 'running', '{"versionId":"v"}', ?1)`,
+    )
+      .bind(startedAt)
+      .run();
+    const wf = fakeWorkflows({});
+    const rows = (
+      await env.DB.prepare(
+        "SELECT id, kind, status, install_id, workflow_instance_id, input_json, started_at FROM jobs",
+      ).all<ActiveJobRow & { started_at: number }>()
+    ).results.map((r) => ({ ...r, started_at: new Date(r.started_at) }));
+    expect(await reconcileJobs(env.DB, wf.binding, rows, () => NOW)).toBe(true);
+    // Like a restore, it has no Workflow instance to ask about.
+    expect(wf.asked).toEqual([]);
+    expect((await job("b1"))?.status).toBe("failed");
+    expect((await job("b1"))?.error).toMatch(/^the rollback request ended without recording/);
+  });
 });

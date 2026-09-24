@@ -168,7 +168,7 @@ function SelfUpdateDialog({ from, version }: { from: string; version: string }) 
       <Text variant="secondary">
         Nothing else runs during the update: installs, updates, and uninstalls wait until it
         finishes. If the new version fails its check, the current one keeps serving. To go back
-        later, roll back on the Worker's Deployments page in the Cloudflare dashboard.
+        later, roll back under Versions on this page.
       </Text>
     </ConfirmDialog>
   );

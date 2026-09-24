@@ -117,7 +117,7 @@ Everything after the install happens in the manager itself:
 | See the running version and update Appflare | **Settings > Appflare updates** |
 | Enable, update, or disable sandbox builds (Workers Paid) | **Settings > Account and capabilities > Sandbox builds** |
 | Remove Appflare, its database and its KV namespace | **Settings > General > Remove Appflare** (owner only) |
-| Return to an earlier manager version | The manager Worker's **Deployments** page in the Cloudflare dashboard, or `npx wrangler rollback --name appflare` |
+| Return to an earlier manager version | **Settings > Appflare updates > Versions** (admins); if the manager does not load, the Worker's **Deployments** page in the Cloudflare dashboard |
 
 Earlier versions of this package had `status`, `rollback`, `uninstall`, and
 `sandbox` commands. Running one of them now prints where its job is done instead.

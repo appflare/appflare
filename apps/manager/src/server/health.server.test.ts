@@ -2,7 +2,7 @@ import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { MANAGER_LATEST_KEY } from "../catalog/manager-releases.server";
-import { createMigrator } from "../db/migrate";
+import { createMigrator, KNOWN_SCHEMA_VERSION } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { type HealthBody, healthResponse } from "./health.server";
 
@@ -20,6 +20,7 @@ describe("GET /api/health", () => {
       version: env.APPFLARE_VERSION,
       db: "ok",
       schemaVersion: migrations.length,
+      knownSchemaVersion: migrations.length,
       latestVersion: null,
       updateAvailable: false,
       authReady: false,
@@ -32,6 +33,7 @@ describe("GET /api/health", () => {
       version: env.APPFLARE_VERSION,
       db: "ok",
       schemaVersion: 0,
+      knownSchemaVersion: KNOWN_SCHEMA_VERSION,
       latestVersion: null,
       updateAvailable: false,
       authReady: false,
@@ -49,6 +51,7 @@ describe("GET /api/health", () => {
     expect(await res.json<HealthBody>()).toEqual({
       version: "1.2.3",
       db: "error",
+      knownSchemaVersion: KNOWN_SCHEMA_VERSION,
       latestVersion: null,
       updateAvailable: false,
       authReady: false,

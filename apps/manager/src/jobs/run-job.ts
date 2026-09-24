@@ -115,6 +115,10 @@ export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   sandbox_enable: runSandboxEnable,
   sandbox_update: runSandboxEnable,
   sandbox_disable: runSandboxDisable,
+  // Runs inside the admin's request (./self-update/rollback.server.ts), never as a Workflow.
+  self_rollback: async () => {
+    throw new NonRetryableError("a rollback of Appflare is never run as a Workflow job");
+  },
 };
 
 export async function runJob(
