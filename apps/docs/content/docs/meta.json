@@ -26,6 +26,7 @@
     "catalog/manifest-reference",
     "---More---",
     "security",
+    "telemetry",
     "faq"
   ]
 }

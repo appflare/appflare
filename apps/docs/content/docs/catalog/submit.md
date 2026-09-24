@@ -39,9 +39,12 @@ installed Worker, whatever name it is installed under; set `install.fixedWorkerN
 only when something else in the app needs one fixed name. Other binding types cannot
 be installed yet.
 
-The catalog's install check is stricter for now. It rejects apps with queue,
-Hyperdrive, service, mTLS certificate, or email bindings, so such an app cannot pass
-its pull request checks yet, even where the manager could install it.
+The catalog's [install check](#2-open-a-pull-request) does not support Hyperdrive
+or mTLS certificate bindings yet. It fails with a message naming the binding, so such
+an app cannot pass its pull request checks. Queues, email sending, and a service
+binding to the app's own Worker are deployed as the manager would deploy them; the
+check points a self binding at the Worker it deploys. A service binding to any other
+Worker already fails the pack.
 
 ## 1. Write the manifest
 

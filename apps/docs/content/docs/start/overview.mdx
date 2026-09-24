@@ -30,9 +30,11 @@ so it can update the app, roll it back, and uninstall it.
   repository you then maintain.
 - **Not affiliated with Cloudflare.** Appflare is an independent open-source
   project. It is not endorsed or sponsored by Cloudflare, Inc.
-- **No telemetry.** The manager talks to the Cloudflare API, the catalog index and
-  release files on GitHub, and your own apps' URLs for health checks. Nothing else.
-  The installer also turns off wrangler's usage metrics for the commands it runs.
+- **Not collecting personal data.** Appflare sends anonymous usage data (counts,
+  versions and error categories, never your account, emails, domains or secrets) to
+  decide what to build and fix. It is on by default and easy to turn off; see
+  [Usage data](/telemetry/).
+  The installer keeps wrangler's own usage metrics off for the commands it runs.
 
 ## What gets installed
 

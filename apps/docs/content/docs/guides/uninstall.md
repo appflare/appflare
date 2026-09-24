@@ -1,10 +1,11 @@
 ---
 title: Uninstall an app
-description: What an uninstall deletes, what you can keep, and how to finish one that stopped.
+description: What an uninstall deletes, what you can keep, how to delete kept data later, and how to finish an uninstall that stopped.
 ---
 
-On the app's page, admins select **Uninstall**. The dialog lists everything the
-uninstall deletes and asks you to type the Worker name to confirm.
+Uninstall is in the **Danger zone** at the bottom of the app's page, which only
+admins see. Select **Uninstall**; the dialog lists everything the uninstall deletes
+and asks you to type the Worker name to confirm.
 
 ## What is always deleted
 
@@ -38,10 +39,30 @@ size.
   Worker is gone. Each R2 bucket is emptied just before it is deleted, since
   Cloudflare only deletes an empty bucket.
 - **Unticked** resources stay in your account. After the uninstall, the app's page
-  lists them under **Kept in the account**. Appflare no longer uses them; delete them
-  in the Cloudflare dashboard when you no longer need the data.
+  lists them under **Kept in the account**, and the app is listed under
+  [Removed apps](#removed-apps) until you delete what it kept or forget it. Appflare
+  no longer uses them.
 
 Deleting data is permanent.
+
+## Removed apps
+
+**Settings**, **Removed apps** lists every uninstalled app that still keeps
+resources in your account, with what each one kept. An uninstalled app that kept
+nothing is not listed. Admins have two actions for each app:
+
+- **Delete retained data** deletes everything the app kept, with everything in it,
+  after you type the Worker name to confirm. It runs as a job and opens its log. The
+  one exception is an R2 bucket or Vectorize index whose name a newer install of the
+  same Worker name now records: that resource belongs to the newer install, so it is
+  left alone and no longer listed for the removed app. KV namespaces, D1 databases
+  and queues have their own Cloudflare ids, so this cannot happen to them.
+- **Forget** hides the app from Removed apps and deletes nothing. The resources stay
+  in your account.
+
+The same actions are in the **Danger zone** at the bottom of the removed app's own
+page. After **Forget**, that page still lists what the app kept and still offers
+**Delete retained data**.
 
 ## What is never touched
 
@@ -52,7 +73,8 @@ with the same name is left alone.
 ## If an uninstall stops
 
 An uninstall runs as a job, one step per resource. If a step fails, the install
-stays in the uninstalling state and the page offers **Retry uninstall**. Resources
+stays in the uninstalling state and the **Danger zone** offers **Finish uninstalling**
+with a **Retry uninstall** button. Resources
 already deleted stay deleted; the retry continues with the rest.
 
 A very large R2 bucket can take more than one run to empty. The job says so, and
@@ -67,5 +89,6 @@ had created, and frees its Worker name for a new install.
 
 After an uninstall, the Worker name is free and you can install the app again. Kept
 resources still use their old names (`<worker-name>-<binding>`), and an install never
-adopts an existing resource. To reinstall under the same Worker name, delete the kept
-resources first, or choose another Worker name.
+adopts an existing resource. To reinstall under the same Worker name, first delete
+the kept resources with [Delete retained data](#removed-apps), or choose another
+Worker name.

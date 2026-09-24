@@ -204,8 +204,13 @@ The manager picks up the change within about 15 seconds. Delete the leftover
 application for `/api/health` in the dashboard as well. Once your Access sign-in
 works, you can turn the protection on again from Settings.
 
-## No telemetry
+## Usage data
 
-The manager's outbound requests go to the Cloudflare API, the catalog index and
-releases on GitHub, and your own apps for health checks. The installer turns off
-wrangler's usage metrics and error reports for the commands it runs.
+Besides the Cloudflare API, the catalog index and releases on GitHub, and your own
+apps for health checks, the manager sends anonymous usage data (a daily report and
+the outcome of each job) to PostHog's EU region, from its Worker and never from your
+browser. It holds counts, versions and error categories, never your account, emails,
+domains, secrets or tokens. It is on by
+default and one switch in Settings turns it off; see [Usage data](/telemetry/) for
+exactly what is sent and every way to turn it off. The installer keeps wrangler's
+own usage metrics and error reports off for the commands it runs.
