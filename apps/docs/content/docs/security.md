@@ -1,6 +1,6 @@
 ---
 title: Security model
-description: Signed artifacts, pinned builds, what the manager does with your API token, sessions, roles, and the optional Cloudflare Access protection.
+description: Signed artifacts, pinned builds, what the manager does with your API token, sessions, roles, notification credentials, and the optional Cloudflare Access protection.
 ---
 
 The manager holds an API token that can change Workers and data across your
@@ -204,10 +204,27 @@ The manager picks up the change within about 15 seconds. Delete the leftover
 application for `/api/health` in the dashboard as well. Once your Access sign-in
 works, you can turn the protection on again from Settings.
 
+## Notification credentials
+
+[Notification channels](/guides/notifications/) need credentials of their own: a
+Telegram bot token, a Slack or Discord webhook URL, or a generic webhook's URL and
+signing secret. The manager encrypts them with AES-GCM before they reach its D1
+database, under a key derived from its `BETTER_AUTH_SECRET` Worker secret, so the
+database alone does not reveal them. Each ciphertext is bound to its channel, so it
+cannot be moved to another one. Once saved, a credential is never shown again, not
+even to admins: the channel list shows only a chat id, a webhook id or a host name, and a webhook's
+signing secret is shown once, when it is made. Credentials never appear in messages,
+logs, or error text; an error a service returns is stored with every credential of
+the channel removed. Messages are sent only to the address the admin entered, with
+no redirects followed, so a signed body never reaches a host nobody named. If
+`BETTER_AUTH_SECRET` is ever replaced, the stored credentials can no longer be
+decrypted: the channels show **Credentials unreadable** and send nothing until an
+admin enters the credentials again.
+
 ## Usage data
 
-Besides the Cloudflare API, the catalog index and releases on GitHub, and your own
-apps for health checks, the manager sends anonymous usage data (a daily report and
+Besides the Cloudflare API, the catalog site and releases on GitHub, your own apps
+for health checks, and the notification channels you add, the manager sends anonymous usage data (a daily report and
 the outcome of each job) to PostHog's EU region, from its Worker and never from your
 browser. It holds counts, versions and error categories, never your account, emails,
 domains, secrets or tokens. It is on by

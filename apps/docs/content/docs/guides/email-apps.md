@@ -104,9 +104,15 @@ So Email Routing stays on after an uninstall when:
 
 If the install found Email Routing already on, the uninstall never turns it off.
 
-Updating or rolling back an app does not change Email Routing yet. If a new version
-asks for other addresses, the job log says so; uninstall and install the app again, or
-change the rules in the dashboard.
+## Moving to another zone
+
+To receive email for another zone, change it in the app's **Settings** section; see
+[Move email to another zone](/guides/settings/#move-email-to-another-zone). The new
+zone is set up first, then the old one is cleaned up as described above.
+
+Updating or rolling back an app does not change Email Routing, so a rollback does not
+move email back to a zone it left. If a new version asks for other addresses, the job log
+says so; uninstall and install the app again, or change the rules in the dashboard.
 
 ## Limits
 

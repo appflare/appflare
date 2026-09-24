@@ -97,4 +97,5 @@ mention the app's URL and Worker name, filled in for this install.
 
 **Installed apps** lists every install. An app's page shows its status, version,
 health, resources, secret names, jobs, and the actions for
-[updates and rollbacks](/guides/updates/) and [uninstalling](/guides/uninstall/).
+[updates and rollbacks](/guides/updates/), [changing settings and
+secrets](/guides/settings/), and [uninstalling](/guides/uninstall/).

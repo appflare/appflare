@@ -58,9 +58,21 @@ If an app stays **Not verified yet**, open its URL in a browser. If the page loa
 select **Check now**. If it does not, look at the app's logs in the Cloudflare
 dashboard.
 
+## Scheduled checks
+
+Apps are checked on their own only while a
+[notification channel](/guides/notifications/#health-check-failing) wants **Health
+check failing**. The scheduled run then checks installed apps every 30 minutes, the
+same way **Check now** does, and records the result. A server error is checked once
+more a few seconds later, and only two in a row start a failing episode and a
+message.
+
 ## Custom domains
 
-The recorded check always uses the app's `workers.dev` URL. An app with
+The recorded check uses the app's `workers.dev` URL. While
+[workers.dev is off](/guides/custom-domains/#turn-off-the-workersdev-url) for the app,
+it uses the custom domain that answered when the switch was turned off (or, once that
+domain is removed, the first remaining one). An app with
 [custom domains](/guides/custom-domains/) has a **Check now** button next to each
 one, which sends the same single request to that hostname and shows the answer
 there without recording it. A new custom domain can take a few minutes before its

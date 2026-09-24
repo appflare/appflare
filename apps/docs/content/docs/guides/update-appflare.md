@@ -40,6 +40,9 @@ Appflare**. It is off by default. The cron then starts the same self-update when
 newer release is known and no other job is queued or running. It does not try a
 release again after its self-update failed.
 
+To hear when a new release is out, add a [notification channel](/guides/notifications/)
+with **Appflare update available**.
+
 ## Go back
 
 The Settings page only offers newer versions. To return to an earlier one, use

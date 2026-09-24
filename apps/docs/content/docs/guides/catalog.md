@@ -11,6 +11,7 @@ which the manager fetches every 30 minutes and caches. Admins can select
 
 Each app shows:
 
+- **Its icon**, when the catalog has one.
 - **A plan badge.** **Free plan** means the app runs on the Workers free plan.
   **Workers Paid** means it needs the paid plan, usually because its Worker is
   larger than the free plan's 3 MB limit.
@@ -24,6 +25,8 @@ Each app shows:
   **Verified** on each app's page (see [Health checks](/guides/health/)).
 - **Requirements**, as icons, when the app needs more than Workers.
 - How many times the app is installed in this account.
+- **GitHub stars and installs** across Appflare managers, when the catalog publishes
+  them (see [below](#catalog-images-popularity-and-the-sponsored-slot)).
 
 ## The app page
 
@@ -67,6 +70,56 @@ permissions filled in, and narrow it to the accounts and zones the app needs.
 Permissions the dashboard cannot prefill are marked **Add by hand**. When the
 install form asks for the token, it is stored as a secret on the app's Worker;
 otherwise the app's post-install steps say where it goes.
+
+## Catalog images, popularity and the sponsored slot
+
+### Images
+
+A catalog entry can have an icon, shown on its card, and a cover image (1200 by 630
+pixels) and up to 8 screenshots, shown on its page. The manager serves every image
+itself, at `/api/catalog/media/<sha256>`. It fetches an image only when the catalog
+index it has cached lists it, on the catalog's own site, and serves it only when its
+bytes match the sha256 the index gives. Your browser never contacts the catalog site
+or a sponsor to show an image.
+
+### Popularity
+
+Next to its index, the catalog publishes numbers it rebuilds about every hour: the
+stars of each app's upstream repository on GitHub, and how many Appflare managers run
+the app or installed it in the last 30 days, counted from anonymous
+[usage data](/telemetry/). Counts below 10 are not published; cards show them as
+**Fewer than 10**. A manager with usage data turned off is not counted, and still
+sees the numbers.
+
+When recent numbers exist, the catalog page offers **Sort by**: **Most popular** (the
+default) lists first the apps running on the most managers, then those installed most
+in 30 days, then the most starred, with apps that have no numbers last. **Name** sorts
+alphabetically. Numbers older than 72 hours are not shown, and the page keeps the
+catalog's own order. Popularity only orders and labels the list; nothing else
+depends on it.
+
+### The sponsored slot
+
+The catalog index has a slot for sponsored content, in every release from the first
+one, empty while there is no sponsor. When it holds something, the catalog page shows
+one item above the list, labelled **Sponsored**, with **Sponsored by** and the
+sponsor's name. The label is part of the manager, not of the catalog, so no catalog
+can take it off. The information button next to it says what the item is:
+
+- **An app in the catalog.** It was checked like every other app. Being sponsored
+  changes nothing else: not its place in the list, its sorting, or its numbers.
+- **Anything else**, such as a sponsor's own product. Appflare has not checked what
+  it links to.
+
+Select **Hide** (the close button) to hide an item for yourself. Other users still
+see it until they hide it too. If the index has another active item, that one takes
+its place.
+
+The sponsored slot never tracks you. Its image is served by the manager like every
+other catalog image. Its links open in a new tab with `noreferrer`, so the sponsor
+does not learn your manager's address, and nothing is added to them. Nothing about
+the item, whether you saw it, clicked it or hid it, leaves the manager, and it is
+not part of usage data.
 
 ## Next
 

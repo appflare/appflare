@@ -44,6 +44,11 @@ The current version keeps serving until the new one has passed its checks. If th
 job fails before step 7, the app is unchanged, except for new resources and any D1
 migrations already applied.
 
+An update keeps the app's settings, its secrets, its custom domains and the
+[**Serve on workers.dev**](/guides/custom-domains/#turn-off-the-workersdev-url) choice.
+To change settings or secrets without updating, see
+[Change an app's settings](/guides/settings/).
+
 ### Apps with Durable Objects
 
 Cloudflare gives no preview URL to a Worker that defines Durable Objects, so updates
@@ -72,21 +77,26 @@ Anything else waits for you on the app's page, as described above, and the cron 
 not try that version again; it tries the next one the catalog publishes. An automatic
 update runs the same job, with the same snapshot and checks. The cron starts at most
 three app updates per run. It does not try a version again after its update failed,
-or after you rolled the app back from it. The app's job list shows **Automatic** for
-jobs the cron started.
+or after you rolled the app back from it. The app's job list and the job's page show
+**Automatic** under **Started by** for jobs the cron started, and **Admin** for the
+others. To hear about updates that wait for you, or about automatic updates that
+finished or failed, add a [notification channel](/guides/notifications/).
 
 ## Roll back
 
-Each update adds a row under **Versions** on the app's page: when the snapshot was
-taken, the catalog version, and the Worker version. Select **Roll back** on a row to
-deploy that Worker version again to all traffic. A rollback runs as a job and ends
-with a health check. If automatic updates were on for the app, the rollback turns
+Each update and each [settings change](/guides/settings/) adds a row under
+**Versions** on the app's page: when the snapshot was taken, the catalog version, and
+the Worker version. Select **Roll back** on a row to deploy that Worker version again
+to all traffic, with the settings and secrets it had then. A rollback runs as a job
+and ends with a health check. If automatic updates were on for the app, the rollback turns
 them off, so the cron does not install the version you left again; turn them back on
 on the app's page once a fixed version is out.
 
-A rollback changes the Worker only. **Databases are not changed.** If the newer
-version changed its data, the older code may not read it. Restore a database
-separately if you need its data as it was.
+A rollback changes the Worker and its settings and secrets only. **Databases are not
+changed.** If the newer version changed its data, the older code may not read it.
+Restore a database separately if you need its data as it was. A rollback does not move
+an app's email back to another zone either; see
+[What a rollback puts back](/guides/settings/#what-a-rollback-puts-back).
 
 Rollback is not offered across a change to the app's Durable Object classes:
 Cloudflare refuses to roll a Worker back across such a change.

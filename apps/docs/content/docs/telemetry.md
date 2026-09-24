@@ -25,7 +25,9 @@ Once a day, the manager sends one report with:
   how many users have one.
 - **Features:** whether Cloudflare Access protection is on, whether the sandbox
   Worker is connected, whether Appflare and apps update automatically, and how many
-  apps use the account setting for automatic updates or override it with on or off.
+  apps use the account setting for automatic updates or override it with on or off,
+  and how many notification channels there are of each kind (Telegram, Slack,
+  Discord, webhook).
 - **Apps:** how many are installed, counted by status (installed, failed,
   installing, updating, uninstalling), by build type (prebuilt, sandbox,
   self-deploying), and by version age (current, or, when the catalog has a newer
@@ -36,8 +38,8 @@ Once a day, the manager sends one report with:
 
 ### Jobs (manager)
 
-For each install, update, rollback, database restore, uninstall, deletion of a
-removed app's kept data, and manager self-update, one event when it starts and one
+For each install, update, settings change, rollback, database restore, uninstall,
+deletion of a removed app's kept data, and manager self-update, one event when it starts and one
 when it ends, with:
 
 - the kind of job, the app's catalog slug (`custom` for an app from a custom
