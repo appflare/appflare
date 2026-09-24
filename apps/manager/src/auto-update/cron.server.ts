@@ -3,6 +3,7 @@ import { asc, eq, ne } from "drizzle-orm";
 import { getAppManifest, getCatalogManifest } from "../catalog/app-manifest.server";
 import { readCachedCatalogIndex } from "../catalog/index.server";
 import { isManagerUpdateAvailable, readManagerLatest } from "../catalog/manager-releases.server";
+import { removalInProgress } from "../danger/removal-flag";
 import { createDb } from "../db/client";
 import { installs, type JobStarter } from "../db/schema";
 import {
@@ -89,7 +90,7 @@ export interface ScheduledUpdatesOutcome {
   /** Installs whose automatic update is on, except those already current. */
   apps: AppUpdateOutcome[];
   /** Why nothing was tried at all, if so. */
-  idle: "off" | "no-token" | null;
+  idle: "off" | "no-token" | "removing" | null;
 }
 
 /** What an update needs from an admin, as one clause for the log. */
@@ -260,6 +261,10 @@ export async function runScheduledUpdates(
   deps: ScheduledUpdatesDeps = {},
 ): Promise<ScheduledUpdatesOutcome> {
   const orm = createDb(env.DB);
+  // Nothing starts while Appflare is being removed from the account.
+  if ((await removalInProgress(env.DB)) !== null) {
+    return { selfUpdate: null, apps: [], idle: "removing" };
+  }
   const defaults = await readAutoUpdateDefaults(orm);
   const rows = await readCandidateRows(env.DB);
   const anyApp = defaults.apps || rows.some((r) => r.choice === "on");
@@ -378,6 +383,9 @@ export function scheduledUpdatesLog(outcome: ScheduledUpdatesOutcome): string[] 
   const lines: string[] = [];
   if (outcome.idle === "no-token") {
     lines.push("automatic updates: skipped, the Cloudflare token is not configured");
+  }
+  if (outcome.idle === "removing") {
+    lines.push("automatic updates: skipped, Appflare is being removed from this account");
   }
   const self = outcome.selfUpdate;
   if (self?.status === "started") {

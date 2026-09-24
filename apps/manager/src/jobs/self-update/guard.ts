@@ -1,4 +1,9 @@
 import { and, eq, inArray } from "drizzle-orm";
+import {
+  NO_REMOVAL_IN_PROGRESS_SQL,
+  REMOVAL_IN_PROGRESS_MESSAGE,
+  removalInProgress,
+} from "../../danger/removal-flag";
 import { createDb } from "../../db/client";
 import { jobs } from "../../db/schema";
 import { reconcileJobs, type WorkflowLookup } from "../reconcile.server";
@@ -10,11 +15,16 @@ import { reconcileJobs, type WorkflowLookup } from "../reconcile.server";
  * job is queued or running, and no other job starts while one is. Before
  * refusing, a self-update whose Workflow instance died is settled, so a dead
  * instance never blocks everything silently.
+ *
+ * The same checks also refuse every start while Appflare is being removed
+ * from the account (danger/removal-flag.ts).
  */
 
-/** SQL condition (for a claim's `WHERE`) that holds while no self-update is queued or running. */
-export const NO_ACTIVE_SELF_UPDATE_SQL =
-  "NOT EXISTS (SELECT 1 FROM jobs WHERE kind = 'self_update' AND status IN ('queued', 'running'))";
+/**
+ * SQL condition (for a claim's `WHERE`) that holds while no self-update is
+ * queued or running and Appflare is not being removed.
+ */
+export const NO_ACTIVE_SELF_UPDATE_SQL = `NOT EXISTS (SELECT 1 FROM jobs WHERE kind = 'self_update' AND status IN ('queued', 'running')) AND ${NO_REMOVAL_IN_PROGRESS_SQL}`;
 
 /** Why another job cannot start; names the self-update and where to follow it. */
 export function selfUpdateBusyMessage(jobId: string): string {
@@ -42,12 +52,16 @@ export async function activeSelfUpdateJob(
   return rows[0]?.id ?? null;
 }
 
-/** Throws `toError(<busy message>)` while a self-update is queued or running. */
+/**
+ * Throws `toError(<busy message>)` while a self-update is queued or running,
+ * or while Appflare is being removed.
+ */
 export async function refuseDuringSelfUpdate(
   db: D1Database,
   workflows: WorkflowLookup | undefined,
   toError: (message: string) => Error,
 ): Promise<void> {
+  if ((await removalInProgress(db)) !== null) throw toError(REMOVAL_IN_PROGRESS_MESSAGE);
   const active = await activeSelfUpdateJob(db, workflows);
   if (active !== null) throw toError(selfUpdateBusyMessage(active));
 }

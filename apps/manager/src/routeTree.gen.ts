@@ -28,6 +28,8 @@ import { Route as AppSettingsRemovedAppsRouteImport } from './routes/_app/settin
 import { Route as AppSettingsUsageDataRouteImport } from './routes/_app/settings/usage-data'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiDangerRemoveAppflareRouteImport } from './routes/api/danger/remove-appflare'
+import { Route as ApiDangerRotateAuthSecretRouteImport } from './routes/api/danger/rotate-auth-secret'
 import { Route as ApiCatalogAvatarHandleRouteImport } from './routes/api/catalog/avatar/$handle'
 import { Route as ApiCatalogMediaDigestRouteImport } from './routes/api/catalog/media/$digest'
 
@@ -127,6 +129,17 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDangerRemoveAppflareRoute = ApiDangerRemoveAppflareRouteImport.update({
+  id: '/api/danger/remove-appflare',
+  path: '/api/danger/remove-appflare',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDangerRotateAuthSecretRoute =
+  ApiDangerRotateAuthSecretRouteImport.update({
+    id: '/api/danger/rotate-auth-secret',
+    path: '/api/danger/rotate-auth-secret',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiCatalogAvatarHandleRoute = ApiCatalogAvatarHandleRouteImport.update({
   id: '/api/catalog/avatar/$handle',
   path: '/api/catalog/avatar/$handle',
@@ -154,6 +167,8 @@ export interface FileRoutesByFullPath {
   '/settings/usage-data': typeof AppSettingsUsageDataRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/danger/remove-appflare': typeof ApiDangerRemoveAppflareRoute
+  '/api/danger/rotate-auth-secret': typeof ApiDangerRotateAuthSecretRoute
   '/catalog/': typeof AppCatalogIndexRoute
   '/jobs/': typeof AppJobsIndexRoute
   '/settings/': typeof AppSettingsIndexRoute
@@ -176,6 +191,8 @@ export interface FileRoutesByTo {
   '/settings/usage-data': typeof AppSettingsUsageDataRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/danger/remove-appflare': typeof ApiDangerRemoveAppflareRoute
+  '/api/danger/rotate-auth-secret': typeof ApiDangerRotateAuthSecretRoute
   '/catalog': typeof AppCatalogIndexRoute
   '/jobs': typeof AppJobsIndexRoute
   '/settings': typeof AppSettingsIndexRoute
@@ -200,6 +217,8 @@ export interface FileRoutesById {
   '/_app/settings/usage-data': typeof AppSettingsUsageDataRoute
   '/_app/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/danger/remove-appflare': typeof ApiDangerRemoveAppflareRoute
+  '/api/danger/rotate-auth-secret': typeof ApiDangerRotateAuthSecretRoute
   '/_app/catalog/': typeof AppCatalogIndexRoute
   '/_app/jobs/': typeof AppJobsIndexRoute
   '/_app/settings/': typeof AppSettingsIndexRoute
@@ -224,6 +243,8 @@ export interface FileRouteTypes {
     | '/settings/usage-data'
     | '/settings/users'
     | '/api/auth/$'
+    | '/api/danger/remove-appflare'
+    | '/api/danger/rotate-auth-secret'
     | '/catalog/'
     | '/jobs/'
     | '/settings/'
@@ -246,6 +267,8 @@ export interface FileRouteTypes {
     | '/settings/usage-data'
     | '/settings/users'
     | '/api/auth/$'
+    | '/api/danger/remove-appflare'
+    | '/api/danger/rotate-auth-secret'
     | '/catalog'
     | '/jobs'
     | '/settings'
@@ -269,6 +292,8 @@ export interface FileRouteTypes {
     | '/_app/settings/usage-data'
     | '/_app/settings/users'
     | '/api/auth/$'
+    | '/api/danger/remove-appflare'
+    | '/api/danger/rotate-auth-secret'
     | '/_app/catalog/'
     | '/_app/jobs/'
     | '/_app/settings/'
@@ -282,6 +307,8 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiDangerRemoveAppflareRoute: typeof ApiDangerRemoveAppflareRoute
+  ApiDangerRotateAuthSecretRoute: typeof ApiDangerRotateAuthSecretRoute
   ApiCatalogAvatarHandleRoute: typeof ApiCatalogAvatarHandleRoute
   ApiCatalogMediaDigestRoute: typeof ApiCatalogMediaDigestRoute
 }
@@ -421,6 +448,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/danger/remove-appflare': {
+      id: '/api/danger/remove-appflare'
+      path: '/api/danger/remove-appflare'
+      fullPath: '/api/danger/remove-appflare'
+      preLoaderRoute: typeof ApiDangerRemoveAppflareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/danger/rotate-auth-secret': {
+      id: '/api/danger/rotate-auth-secret'
+      path: '/api/danger/rotate-auth-secret'
+      fullPath: '/api/danger/rotate-auth-secret'
+      preLoaderRoute: typeof ApiDangerRotateAuthSecretRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/catalog/avatar/$handle': {
       id: '/api/catalog/avatar/$handle'
       path: '/api/catalog/avatar/$handle'
@@ -480,6 +521,8 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiDangerRemoveAppflareRoute: ApiDangerRemoveAppflareRoute,
+  ApiDangerRotateAuthSecretRoute: ApiDangerRotateAuthSecretRoute,
   ApiCatalogAvatarHandleRoute: ApiCatalogAvatarHandleRoute,
   ApiCatalogMediaDigestRoute: ApiCatalogMediaDigestRoute,
 }

@@ -258,8 +258,9 @@ messages go: the Telegram chat id, the host name, or the Discord webhook's numbe
 Credentials never appear in messages, logs, or error text.
 
 The encryption key is derived from the manager's `BETTER_AUTH_SECRET`, a Worker
-secret set at install. If that secret is ever replaced, the stored credentials can no
-longer be read. Each channel then shows **Credentials unreadable** and sends nothing.
+secret set at install. If that secret is ever replaced, for example by
+[rotating the auth secret](/guides/danger-zone/#rotate-the-auth-secret), the stored
+credentials can no longer be read. Each channel then shows **Credentials unreadable** and sends nothing.
 To fix a channel, select **Edit** and enter its details again. A webhook channel
 repaired this way gets a new signing secret, shown once after saving: give it to your
 receiver. Removing the channel and adding it again works too.

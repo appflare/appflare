@@ -1,5 +1,6 @@
 import { type ClientOptions, createHttpApi } from "./http";
 import { createAccess } from "./namespaces/access";
+import { createAccounts } from "./namespaces/accounts";
 import { createAssets } from "./namespaces/assets";
 import { createBilling } from "./namespaces/billing";
 import { createContainers } from "./namespaces/containers";
@@ -19,6 +20,7 @@ import { createZones } from "./namespaces/zones";
 
 export interface CloudflareClient {
   readonly accountId: string;
+  readonly accounts: ReturnType<typeof createAccounts>;
   readonly tokens: ReturnType<typeof createTokens>;
   readonly workers: ReturnType<typeof createWorkers>;
   readonly versions: ReturnType<typeof createVersions>;
@@ -48,6 +50,7 @@ export function createClient(options: ClientOptions): CloudflareClient {
   const http = createHttpApi(options);
   return {
     accountId: http.accountId,
+    accounts: createAccounts(http),
     tokens: createTokens(http),
     workers: createWorkers(http),
     versions: createVersions(http),

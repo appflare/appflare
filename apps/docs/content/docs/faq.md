@@ -79,3 +79,8 @@ Cloudflare dashboard. (`@appflare/cli` is not on npm yet; until it is, run
    [from a checkout](/start/install/#from-a-checkout).
 4. In the Cloudflare dashboard, revoke the `Appflare` API token, and any tokens you
    created for apps.
+
+The owner can do step 3 from the browser instead: **Remove Appflare from this
+account** in Settings also removes the external domains gateway and the sandbox
+Worker with its build bucket. See
+[Rotate the auth secret or remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account).

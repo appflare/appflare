@@ -43,7 +43,8 @@ export function ConfirmDialog({
   confirmText?: string;
   actionLabel: string;
   destructive?: boolean;
-  onConfirm: () => Promise<void>;
+  /** Receives the typed confirmation (trimmed; empty without `confirmText`). */
+  onConfirm: (typed: string) => Promise<void>;
   /** Runs each time the dialog opens, to reset or load what the body shows. */
   onOpen?: () => void;
   /** Keeps the action disabled, for example until the body's own choices are complete. */
@@ -93,7 +94,7 @@ export function ConfirmDialog({
     setPending(true);
     setError(null);
     try {
-      await onConfirm();
+      await onConfirm(typed.trim());
       setOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Try again.");

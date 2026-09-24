@@ -4,6 +4,11 @@ import {
   isManagerUpdateAvailable,
   type ManagerRelease,
 } from "../../catalog/manager-releases.server";
+import {
+  NO_REMOVAL_IN_PROGRESS_SQL,
+  REMOVAL_IN_PROGRESS_MESSAGE,
+  removalInProgress,
+} from "../../danger/removal-flag";
 import { createDb } from "../../db/client";
 import { type JobStarter, jobs } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
@@ -45,6 +50,9 @@ export async function startSelfUpdateCore(
   request: { version: string },
 ): Promise<{ jobId: string }> {
   const { latest, currentVersion } = deps;
+  if ((await removalInProgress(deps.db)) !== null) {
+    throw new SelfUpdateError(REMOVAL_IN_PROGRESS_MESSAGE);
+  }
   if (latest === null) {
     throw new SelfUpdateError("No Appflare release is known yet. Check for updates first.");
   }
@@ -86,7 +94,8 @@ export async function startSelfUpdateCore(
     .prepare(
       `INSERT INTO jobs (id, install_id, kind, status, input_json, started_by)
        SELECT ?1, NULL, 'self_update', 'queued', ?2, ?3
-       WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE status IN ('queued', 'running'))`,
+       WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE status IN ('queued', 'running'))
+         AND ${NO_REMOVAL_IN_PROGRESS_SQL}`,
     )
     .bind(
       jobId,

@@ -30,6 +30,15 @@ describe("tokens", () => {
   });
 });
 
+describe("accounts", () => {
+  it("get -> GET /accounts/{id}", async () => {
+    const { fake, client } = make({ result: { id: ACCOUNT, name: "Example Account" } });
+    expect(await client.accounts.get()).toEqual({ id: ACCOUNT, name: "Example Account" });
+    expect(fake.last().method).toBe("GET");
+    expect(fake.last().url).toBe(A);
+  });
+});
+
 describe("workers", () => {
   it("listScripts -> GET /workers/scripts (paginated)", async () => {
     const { fake, client } = make({ result: [{ id: "s1" }] });

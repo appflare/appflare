@@ -88,6 +88,13 @@ export const SETTING = {
    * Written as each piece is created; absent when there is no gateway.
    */
   externalDomainsGateway: "external_domains_gateway",
+  /** ISO 8601 time the owner last rotated `BETTER_AUTH_SECRET` (danger/). */
+  authSecretRotatedAt: "auth_secret_rotated_at",
+  /**
+   * ISO 8601 time "Remove Appflare from this account" started; present only
+   * while it runs (danger/removal-flag.ts). No job starts while it is set.
+   */
+  removalInProgress: "removal_in_progress",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

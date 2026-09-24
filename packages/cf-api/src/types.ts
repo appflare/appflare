@@ -44,6 +44,15 @@ export interface VersionMetadata extends ScriptMetadata {
   annotations?: Record<string, string>;
 }
 
+/** `GET /accounts/{id}`: the fields Appflare reads. */
+export interface AccountDetails {
+  id: string;
+  name: string;
+  /** `standard` or `enterprise`. */
+  type?: string;
+  created_on?: string;
+}
+
 export interface TokenVerifyResult {
   id: string;
   status: string;

@@ -4,22 +4,27 @@ import { getAutoUpdateSettings } from "../../../auto-update/auto-update.function
 import { AutomaticUpdatesCard } from "../../../auto-update/automatic-updates-card";
 import { SETTINGS_PAGES, settingsPageForAnchor } from "../../../components/navigation";
 import { PageHeader } from "../../../components/page-header";
-import { PlaceholderCard } from "../../../components/placeholder-card";
 import { Section } from "../../../components/section";
+import { getDangerZoneState } from "../../../danger/danger.functions";
+import { DangerZone } from "../../../danger/danger-zone";
 
 /**
  * `/settings` (General): whether apps update on their own by default, and
- * the manager's danger zone. The other settings pages are listed under
+ * the manager's danger zone (owner only: rotate the auth secret, remove
+ * Appflare from the account). The other settings pages are listed under
  * Settings in the sidebar.
  */
 export const Route = createFileRoute("/_app/settings/")({
   staticData: { title: "Settings" },
-  loader: () => getAutoUpdateSettings(),
+  loader: async () => {
+    const [autoUpdate, danger] = await Promise.all([getAutoUpdateSettings(), getDangerZoneState()]);
+    return { autoUpdate, danger };
+  },
   component: GeneralSettingsPage,
 });
 
 function GeneralSettingsPage() {
-  const autoUpdate = Route.useLoaderData();
+  const { autoUpdate, danger } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   const router = useRouter();
   // Links from before Settings had pages point at sections of this one
@@ -38,10 +43,7 @@ function GeneralSettingsPage() {
           which="apps"
         />
       </Section>
-      <Section title="Danger zone">
-        {/* TODO: danger-zone actions (for example removing the manager's stored token). */}
-        <PlaceholderCard title="Danger zone" description="Irreversible actions on this manager." />
-      </Section>
+      <DangerZone isOwner={viewer.isOwner} state={danger} />
     </>
   );
 }
