@@ -102,6 +102,25 @@ describe("runNotifications", () => {
     expect(JSON.parse(w.chat.posted[2]?.body ?? "").text).toContain("Cut 1.2.0 is available");
   });
 
+  it("names an install by its display name when it has one", async () => {
+    await env.DB.prepare("UPDATE installs SET display_name = 'Team links' WHERE id = 'i1'").run();
+    await addChannel(
+      {
+        label: "Updates",
+        events: ["update_available"],
+        settings: { kind: "slack", webhookUrl: SLACK_URL },
+      },
+      NOW - 1000,
+    );
+    await cacheCatalog("1.1.0");
+    const w = world(() => 200);
+    await runNotifications(cronEnv(), { fetch: w.fetch, now: () => NOW });
+    expect(sentTexts(w.chat.posted)).toEqual(["*Update available: Team links*"]);
+    expect(JSON.parse(w.chat.posted[0]?.body ?? "").text).toContain(
+      "Cut 1.1.0 is available. Team links (Worker cut) runs 1.0.0.",
+    );
+  });
+
   it("probes health only when wanted, and tells once per failing episode", async () => {
     await addChannel(
       {

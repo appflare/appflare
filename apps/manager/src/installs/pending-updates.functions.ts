@@ -24,7 +24,7 @@ export const getPendingUpdates = createServerFn({ method: "GET" }).handler(
           id: installs.id,
           status: installs.status,
           appSlug: installs.app_slug,
-          instanceName: installs.instance_name,
+          displayName: installs.display_name,
           workerName: installs.worker_name,
           catalogVersion: installs.catalog_version,
         })

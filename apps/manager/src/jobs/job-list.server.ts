@@ -1,6 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { installs, type JobStarter, jobs } from "../db/schema";
+import { installLabel } from "../installs/display-name";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { JOB_LIST_LIMIT } from "./job-list";
 import { isRestoreJob } from "./reconcile.server";
@@ -20,7 +21,7 @@ export interface JobListRow {
   /** ISO 8601 */
   finishedAt: string | null;
   /** Null for a job of Appflare itself (its self-update). */
-  install: { id: string; instanceName: string } | null;
+  install: { id: string; label: string } | null;
 }
 
 /**
@@ -42,7 +43,7 @@ export async function listRecentJobs(
       startedAt: jobs.started_at,
       finishedAt: jobs.finished_at,
       installId: installs.id,
-      instanceName: installs.instance_name,
+      displayName: installs.display_name,
       workerName: installs.worker_name,
     })
     .from(jobs)
@@ -61,6 +62,12 @@ export async function listRecentJobs(
     install:
       row.installId === null
         ? null
-        : { id: row.installId, instanceName: row.instanceName ?? row.workerName ?? row.installId },
+        : {
+            id: row.installId,
+            label: installLabel({
+              displayName: row.displayName,
+              workerName: row.workerName ?? row.installId,
+            }),
+          },
   }));
 }

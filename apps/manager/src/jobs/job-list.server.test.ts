@@ -52,10 +52,20 @@ describe("listRecentJobs", () => {
     expect(rows[1]).toMatchObject({
       kind: "update",
       startedBy: "schedule",
-      install: { id: INSTALL_ID, instanceName: "cut" },
+      install: { id: INSTALL_ID, label: "cut" },
     });
     expect(rows[2]?.install).toBeNull();
     expect(rows[3]?.startedAt).toBe(new Date(1_000).toISOString());
+  });
+
+  it("names the install by its display name when it has one", async () => {
+    await seedInstall();
+    await env.DB.prepare("UPDATE installs SET display_name = 'Team links' WHERE id = ?1")
+      .bind(INSTALL_ID)
+      .run();
+    await addJob("j1");
+    const [row] = await listRecentJobs(createDb(env.DB));
+    expect(row?.install).toEqual({ id: INSTALL_ID, label: "Team links" });
   });
 
   it("marks a database restore and a deletion of kept data, and stops at the limit", async () => {

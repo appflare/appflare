@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { VALIDATION_METHODS } from "../gateway/gateway";
+import { displayNameInput } from "./display-name";
 
 /**
  * Client-safe install input rules shared by the `/catalog/$slug` form and the
@@ -19,19 +20,6 @@ export const WORKER_NAME_HINT =
 export const workerNameSchema = z
   .string()
   .regex(WORKER_NAME_PATTERN, `The Worker name must be ${WORKER_NAME_HINT}`);
-
-/**
- * Several installs of one app may coexist; the Worker name tells them apart
- * (two installs that are not uninstalled never share one), and
- * `installs.instance_name` is the label people see.
- */
-export const INSTANCE_NAME_MAX_LENGTH = 64;
-
-export const instanceNameSchema = z
-  .string()
-  .trim()
-  .min(1, "The name cannot be empty.")
-  .max(INSTANCE_NAME_MAX_LENGTH, `Use at most ${INSTANCE_NAME_MAX_LENGTH} characters.`);
 
 /** Values are bounded so a pasted blob cannot bloat the Workflow payload. */
 const MAX_VALUE_LENGTH = 4096;
@@ -59,8 +47,13 @@ export type InstallDomainInput = z.infer<typeof installDomainInput>;
 export const startInstallInput = z.object({
   slug: z.string().min(1).max(100),
   workerName: workerNameSchema,
-  /** The label shown for this install; defaults to the Worker name. */
-  instanceName: instanceNameSchema.optional(),
+  /**
+   * The install's display name. Several installs of one app may coexist; the
+   * Worker name tells them apart (two installs that are not uninstalled never
+   * share one), and this optional name is what people see instead. Empty or
+   * missing: none, so the Worker name is shown.
+   */
+  displayName: displayNameInput.optional(),
   /** Secret values by name. Never logged, never stored outside the Workflow payload. */
   secrets: z.record(z.string().max(200), z.string().max(MAX_VALUE_LENGTH)),
   vars: z.record(z.string().max(200), z.string().max(MAX_VALUE_LENGTH)),

@@ -1,5 +1,6 @@
 import { readCachedCatalogIndex } from "../catalog/index.server";
 import { managerUpdateView, readManagerLatest } from "../catalog/manager-releases.server";
+import { installLabel } from "../installs/display-name";
 import { pendingUpdates } from "../installs/pending-updates";
 import type { AppRef, NotificationFacts } from "./messages";
 import {
@@ -31,12 +32,12 @@ export interface InstallRow {
   id: string;
   app_slug: string;
   worker_name: string;
-  instance_name: string | null;
+  display_name: string | null;
   catalog_version: string;
   manifest_json: string | null;
 }
 
-/** The app's display name from the stored manifest (artifact: `catalog.name`; self-deploying: `name`). */
+/** The app's name from the stored manifest (artifact: `catalog.name`; self-deploying: `name`). */
 export function appNameOf(row: Pick<InstallRow, "app_slug" | "manifest_json">): string {
   if (row.manifest_json !== null) {
     try {
@@ -54,7 +55,7 @@ export function appRefOf(row: InstallRow, name?: string): AppRef {
   return {
     installId: row.id,
     app: name ?? appNameOf(row),
-    instance: row.instance_name ?? row.worker_name,
+    instance: installLabel({ displayName: row.display_name, workerName: row.worker_name }),
     workerName: row.worker_name,
   };
 }
@@ -87,7 +88,7 @@ export async function jobEventOf(db: D1Database, jobId: string): Promise<JobEven
   const row = await db
     .prepare(
       `SELECT j.kind, j.status, j.input_json, j.finished_at,
-              i.id, i.app_slug, i.worker_name, i.instance_name, i.catalog_version, i.manifest_json
+              i.id, i.app_slug, i.worker_name, i.display_name, i.catalog_version, i.manifest_json
        FROM jobs j JOIN installs i ON i.id = j.install_id
        WHERE j.id = ?1`,
     )
@@ -207,7 +208,7 @@ export async function sweepFinishedJobs(
 }
 
 const INSTALL_COLUMNS =
-  "id, app_slug, worker_name, instance_name, catalog_version, manifest_json, health_status, status";
+  "id, app_slug, worker_name, display_name, catalog_version, manifest_json, health_status, status";
 
 /**
  * Update available (apps and Appflare) and health failing, from the caches
@@ -244,7 +245,7 @@ export async function detectConditions(
           id: r.id,
           status: r.status,
           appSlug: r.app_slug,
-          instanceName: r.instance_name,
+          displayName: r.display_name,
           workerName: r.worker_name,
           catalogVersion: r.catalog_version,
         })),

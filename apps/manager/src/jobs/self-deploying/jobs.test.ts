@@ -292,6 +292,7 @@ describe("starting a self-deploying install", () => {
     expect(row).toMatchObject({
       worker_name: MAIN,
       instance_name: "Cut",
+      display_name: "Cut",
       build_kind: "self-deploying",
       artifact_url: MANIFEST_URL,
     });

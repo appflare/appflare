@@ -16,6 +16,7 @@ import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { installs } from "../db/schema";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
+import { installLabel } from "../installs/display-name";
 import { type InstallVarField, installVarFields } from "../installs/install-vars";
 import { suggestWorkerName } from "../installs/instance-names";
 import { planBindings } from "../jobs/install/bindings";
@@ -42,6 +43,7 @@ export interface InstalledRef {
   installId: string;
   status: string;
   workerName: string;
+  /** What the UI calls the install (`installLabel`). */
   instanceName: string;
 }
 
@@ -89,7 +91,7 @@ async function activeInstalls(): Promise<ActiveInstalls> {
       slug: installs.app_slug,
       status: installs.status,
       worker: installs.worker_name,
-      label: installs.instance_name,
+      displayName: installs.display_name,
     })
     .from(installs)
     .where(ne(installs.status, "uninstalled"))
@@ -101,7 +103,7 @@ async function activeInstalls(): Promise<ActiveInstalls> {
       installId: r.id,
       status: r.status,
       workerName: r.worker,
-      instanceName: r.label ?? r.worker,
+      instanceName: installLabel({ displayName: r.displayName, workerName: r.worker }),
     });
     bySlug.set(r.slug, list);
   }

@@ -8,8 +8,8 @@ import { Banner, Button, Input, InputArea, InputGroup, LayerCard, Text } from "@
 import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useState } from "react";
 import type { AccountPlan } from "../account/plan";
+import { DISPLAY_NAME_MAX_LENGTH, displayNameProblem } from "../installs/display-name";
 import {
-  INSTANCE_NAME_MAX_LENGTH,
   type InstallDomainInput,
   WORKER_NAME_HINT,
   WORKER_NAME_MAX_LENGTH,
@@ -36,7 +36,8 @@ import {
 
 /**
  * The install form of `/catalog/$slug`, generated from
- * the signed catalog manifest: the Worker name, the install's label, one field
+ * the signed catalog manifest: the Worker name, the install's optional display
+ * name, one field
  * per secret and var, and the Workers Paid confirmation. The confirmation of
  * the app's account requirements is a checkbox in the page's prerequisites
  * callout; it arrives here as `requirementsConfirmed`. `generate: true`
@@ -106,9 +107,8 @@ export function InstallForm({
 }) {
   const jobStarted = useJobStarted();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
-  /** Null while the label follows the Worker name. */
-  const [label, setLabel] = useState<string | null>(null);
-  const instanceName = label ?? workerName;
+  /** Empty: no display name, so the install is shown by its Worker name. */
+  const [displayName, setDisplayName] = useState("");
   const [secrets, setSecrets] = useState<Record<string, string>>(() =>
     initialSecretValues(catalog.secrets),
   );
@@ -160,9 +160,7 @@ export function InstallForm({
     return out;
   };
   const nameValid = installer !== null || WORKER_NAME_PATTERN.test(workerName);
-  const shownName = installer !== null ? (label ?? catalog.name) : instanceName;
-  const labelValid =
-    shownName.trim().length > 0 && shownName.trim().length <= INSTANCE_NAME_MAX_LENGTH;
+  const displayNameError = displayNameProblem(displayName);
   const disabled = !canInstall || blockedReason !== null || pending;
   const missing =
     !secretsComplete(catalog.secrets, secrets) ||
@@ -171,7 +169,7 @@ export function InstallForm({
     );
   const ready =
     nameValid &&
-    labelValid &&
+    displayNameError === null &&
     !missing &&
     (catalog.plan !== "paid" || paidConfirmed) &&
     (confirmsCost === null || buildConfirmed) &&
@@ -190,7 +188,7 @@ export function InstallForm({
         data: {
           slug: catalog.slug,
           workerName,
-          instanceName: shownName.trim(),
+          ...(displayName.trim() === "" ? {} : { displayName }),
           secrets,
           vars: submittedVars(),
           paidConfirmed,
@@ -267,16 +265,19 @@ export function InstallForm({
             )}
             <Input
               label="Name"
-              value={shownName}
-              onChange={(e) => setLabel(e.currentTarget.value)}
+              labelTooltip={tooltipContent(
+                "Optional. Shown instead of the Worker name in Appflare only; it can be changed at any time from the app's page.",
+              )}
+              value={displayName}
+              onChange={(e) => setDisplayName(e.currentTarget.value)}
+              placeholder={installer !== null ? catalog.name : workerName}
               autoComplete="off"
-              required
-              maxLength={INSTANCE_NAME_MAX_LENGTH}
-              error={labelValid ? undefined : `Use 1 to ${INSTANCE_NAME_MAX_LENGTH} characters.`}
+              maxLength={DISPLAY_NAME_MAX_LENGTH}
+              error={displayNameError ?? undefined}
               description={
                 installer !== null
-                  ? "How this install is listed in Appflare."
-                  : "How this install is listed in Appflare. Defaults to the Worker name."
+                  ? `How this install is listed in Appflare. Leave empty to use ${catalog.name}.`
+                  : "How this install is listed in Appflare. Leave empty to use the Worker name."
               }
             />
 

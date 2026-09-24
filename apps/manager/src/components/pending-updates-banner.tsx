@@ -76,7 +76,7 @@ export function PendingUpdatesBanner({
         variant="primary"
         icon={<ArrowCircleUpIcon />}
         loading={update.pendingId === only.installId}
-        onClick={() => update.start({ id: only.installId, instanceName: only.instanceName })}
+        onClick={() => update.start({ id: only.installId, label: only.label })}
       >
         Update
       </Button>
@@ -105,7 +105,7 @@ export function PendingUpdatesBanner({
             <ul className="grid gap-1">
               {apps.map((app) => (
                 <li key={app.installId}>
-                  <Link href={`/apps/${app.installId}`}>{app.instanceName}</Link>{" "}
+                  <Link href={`/apps/${app.installId}`}>{app.label}</Link>{" "}
                   <span className={mono}>{app.version}</span> to{" "}
                   <span className={mono}>{app.latestVersion}</span>
                 </li>
@@ -156,7 +156,7 @@ function OutcomeList({
       <ul className="grid gap-1">
         {items.map((item) => (
           <li key={item.installId}>
-            <Link href={`/apps/${item.installId}`}>{item.instanceName}</Link>{" "}
+            <Link href={`/apps/${item.installId}`}>{item.label}</Link>{" "}
             <span className={mono}>{item.version}</span>: {item.reason}
           </li>
         ))}

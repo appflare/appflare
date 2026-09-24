@@ -185,7 +185,7 @@ function RollbackUnavailable() {
  */
 function RollbackDialog({ install, snapshot }: { install: InstallDetail; snapshot: SnapshotView }) {
   const jobStarted = useJobStarted();
-  const copy = rollbackDialogCopy(snapshot, install.instanceName);
+  const copy = rollbackDialogCopy(snapshot, install.label);
   return (
     <ConfirmDialog
       trigger={(p) => (

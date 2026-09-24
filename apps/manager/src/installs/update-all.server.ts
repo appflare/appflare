@@ -8,6 +8,7 @@ import {
   startUnattendedUpdate,
   updateCandidates,
 } from "../auto-update/cron.server";
+import { installLabel } from "./display-name";
 import type { UpdateAllInput, UpdateAllOutcome } from "./update-all";
 import { statusRefusal, VersionActionError } from "./versions.server";
 
@@ -38,7 +39,7 @@ export async function startAllUpdatesCore(
     if (row === undefined) continue;
     const item = {
       installId: row.id,
-      instanceName: row.instanceName ?? row.workerName,
+      label: installLabel(row),
       version: decision.action === "skip" ? row.version : decision.version,
     };
     if (decision.action === "skip") {

@@ -314,8 +314,8 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>Add a custom domain</LayerDialog.Title>
         <LayerDialog.Description>
-          Serve {install.instanceName} on a hostname in one of your domains on Cloudflare.
-          Cloudflare creates its DNS record and certificate; the workers.dev URL keeps working.
+          Serve {install.label} on a hostname in one of your domains on Cloudflare. Cloudflare
+          creates its DNS record and certificate; the workers.dev URL keeps working.
         </LayerDialog.Description>
         <LayerDialog.Body>
           <div className="grid gap-4">

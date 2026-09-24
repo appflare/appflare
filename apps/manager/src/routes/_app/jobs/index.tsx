@@ -58,7 +58,7 @@ function JobsPage() {
                       {job.install === null ? (
                         "Appflare"
                       ) : (
-                        <Link href={`/apps/${job.install.id}`}>{job.install.instanceName}</Link>
+                        <Link href={`/apps/${job.install.id}`}>{job.install.label}</Link>
                       )}
                     </Table.Cell>
                     <Table.Cell>

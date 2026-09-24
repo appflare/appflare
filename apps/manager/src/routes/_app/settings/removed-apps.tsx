@@ -53,7 +53,7 @@ function RemovedAppCard({ row, isAdmin }: { row: RemovedAppRow; isAdmin: boolean
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
         <span className="flex flex-wrap items-baseline gap-x-2">
-          <Link href={`/apps/${row.id}`}>{row.instanceName}</Link>
+          <Link href={`/apps/${row.id}`}>{row.label}</Link>
           <Text as="span" variant="secondary" size="sm">
             {row.name}, Worker <span className={mono}>{row.workerName}</span>, uninstalled{" "}
             <Timestamp iso={row.uninstalledAt} />

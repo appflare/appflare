@@ -98,7 +98,7 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
 }
 
 /** What starting an update needs to know about the install. */
-export type UpdateTarget = Pick<InstallDetail, "id" | "instanceName">;
+export type UpdateTarget = Pick<InstallDetail, "id" | "label">;
 
 /**
  * Starting an app's update from a button: the update job starts and its log
@@ -216,7 +216,7 @@ function UpdateDialog({
     >
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>
-          Update {install.instanceName} to {needs.version}
+          Update {install.label} to {needs.version}
         </LayerDialog.Title>
         <LayerDialog.Description>
           {needs.selfDeploying === true

@@ -103,7 +103,7 @@ export function UninstallDialog({
           </Button>
         )
       }
-      title={`${mode === "retry" ? "Finish uninstalling" : "Uninstall"} ${install.instanceName}`}
+      title={`${mode === "retry" ? "Finish uninstalling" : "Uninstall"} ${install.label}`}
       description={
         selfDeploying
           ? "Runs the app's own installer in your sandbox Worker to delete everything it created, then removes the app's token and secrets from the sandbox Worker. Nothing can be kept."

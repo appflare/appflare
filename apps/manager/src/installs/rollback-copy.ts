@@ -41,7 +41,8 @@ export function rollbackDialogCopy(
     fromCatalogVersion: string | null;
     fromVersionId: string;
   },
-  instanceName: string,
+  /** What the UI calls the install (`installLabel`). */
+  label: string,
 ): RollbackDialogCopy {
   const when = formatDateTime(snapshot.takenAt);
   const settingsChange = snapshot.jobKind === "reconfigure";
@@ -50,7 +51,7 @@ export function rollbackDialogCopy(
       button: "Undo",
       title: `Undo the settings change of ${when}`,
       action: "Undo the settings change",
-      lead: `Puts back the settings and secrets ${instanceName} had before the settings change of ${when}, by deploying the Worker version that served then. The code stays the same.`,
+      lead: `Puts back the settings and secrets ${label} had before the settings change of ${when}, by deploying the Worker version that served then. The code stays the same.`,
       warnData: false,
     };
   }
@@ -58,7 +59,7 @@ export function rollbackDialogCopy(
   if (snapshot.sameCode) {
     return {
       button: "Roll back",
-      title: `Roll back ${instanceName} to before the ${change} of ${when}`,
+      title: `Roll back ${label} to before the ${change} of ${when}`,
       action: "Roll back",
       lead: `Deploys the Worker version that served before the ${change} of ${when} again to all traffic, with the settings and secrets it had then. It runs the code installed now, so the data needs nothing.`,
       warnData: false,
@@ -67,7 +68,7 @@ export function rollbackDialogCopy(
   const target = snapshot.fromCatalogVersion ?? snapshot.fromVersionId.slice(0, 8);
   return {
     button: "Roll back",
-    title: `Roll back ${instanceName} to ${target}`,
+    title: `Roll back ${label} to ${target}`,
     action: "Roll back",
     lead: `Deploys the Worker version that served before the ${change} of ${when} again to all traffic, with the settings and secrets it had then.`,
     warnData: true,

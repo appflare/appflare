@@ -386,8 +386,8 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>Add an external domain</LayerDialog.Title>
         <LayerDialog.Description>
-          Serve {install.instanceName} on a hostname whose DNS is managed elsewhere. Appflare
-          registers it with Cloudflare for SaaS and shows the records its owner adds.
+          Serve {install.label} on a hostname whose DNS is managed elsewhere. Appflare registers it
+          with Cloudflare for SaaS and shows the records its owner adds.
         </LayerDialog.Description>
         <LayerDialog.Body>
           <div className="grid gap-4">

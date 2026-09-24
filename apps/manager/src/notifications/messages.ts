@@ -14,7 +14,7 @@ const appRef = z.object({
   installId: z.string(),
   /** The catalog app's name ("Cut"). */
   app: z.string(),
-  /** The install's label, the Worker name when unset. */
+  /** What the UI calls the install (`installLabel`): its display name, else its Worker name. */
   instance: z.string(),
   workerName: z.string(),
 });

@@ -161,7 +161,7 @@ function choiceOf(value: string): AutoUpdateChoice {
 const candidateColumns = {
   id: installs.id,
   slug: installs.app_slug,
-  instanceName: installs.instance_name,
+  displayName: installs.display_name,
   workerName: installs.worker_name,
   status: installs.status,
   buildKind: installs.build_kind,

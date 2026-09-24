@@ -59,6 +59,8 @@ describe("startInstallCore", () => {
     expect(install).toMatchObject({
       app_slug: "cut",
       worker_name: "cut",
+      // No display name: the Worker name is shown.
+      display_name: null,
       instance_name: "cut",
       status: "installing",
       catalog_version: "1.0.0",
@@ -105,22 +107,41 @@ describe("startInstallCore", () => {
     expect(count?.n).toBe(0);
   });
 
-  it("installs a second instance of an app under another Worker name, with its own label", async () => {
+  it("installs a second instance of an app under another Worker name, with its own display name", async () => {
     const f = await buildArtifactFixture();
     await env.DB.prepare(
       `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version, artifact_url, status, installed_at, updated_at)
        VALUES ('old', 'cut', 'cut', 'cut', '1', 'u', 'installed', 1, 1)`,
     ).run();
+    const h = harness(f);
     await expect(
-      startInstallCore(harness(f).deps, input({ workerName: "cut-2", instanceName: "Team links" })),
+      startInstallCore(h.deps, input({ workerName: "cut-2", displayName: "Team links" })),
     ).resolves.toEqual({ installId: "id1", jobId: "id2" });
     const rows = await env.DB.prepare(
-      "SELECT id, worker_name, instance_name, status FROM installs ORDER BY id",
+      "SELECT id, worker_name, display_name, instance_name, status FROM installs ORDER BY id",
     ).all();
     expect(rows.results).toEqual([
-      { id: "id1", worker_name: "cut-2", instance_name: "Team links", status: "installing" },
-      { id: "old", worker_name: "cut", instance_name: "cut", status: "installed" },
+      {
+        id: "id1",
+        worker_name: "cut-2",
+        display_name: "Team links",
+        instance_name: "Team links",
+        status: "installing",
+      },
+      {
+        id: "old",
+        worker_name: "cut",
+        display_name: null,
+        instance_name: "cut",
+        status: "installed",
+      },
     ]);
+    // The name stays out of the job's record and the Workflow's params.
+    const job = await env.DB.prepare("SELECT input_json FROM jobs WHERE id = 'id2'").first<{
+      input_json: string;
+    }>();
+    expect(job?.input_json).not.toContain("Team links");
+    expect(JSON.stringify(h.created[0]?.params)).not.toContain("Team links");
   });
 
   it("refuses the same Worker name while any install that is not uninstalled holds it", async () => {

@@ -142,8 +142,8 @@ function InstalledTable({
                 <div className="flex min-w-0 items-center gap-3">
                   <AppIcon src={row.icon} size={28} />
                   <div className="grid min-w-0">
-                    <Link href={`/apps/${row.id}`}>{row.instanceName}</Link>
-                    {row.name !== row.instanceName && (
+                    <Link href={`/apps/${row.id}`}>{row.label}</Link>
+                    {row.name !== row.label && (
                       <Text as="span" variant="secondary" size="sm" truncate>
                         {row.name}
                       </Text>
@@ -180,7 +180,7 @@ function InstalledTable({
                         icon={<ArrowCircleUpIcon />}
                         title={`Update to ${row.latestVersion ?? "the newest version"}`}
                         loading={update.pendingId === row.id}
-                        onClick={() => update.start({ id: row.id, instanceName: row.instanceName })}
+                        onClick={() => update.start({ id: row.id, label: row.label })}
                       >
                         Update
                       </Button>

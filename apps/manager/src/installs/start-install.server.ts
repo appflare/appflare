@@ -27,6 +27,7 @@ import {
   refuseDuringSelfUpdate,
   selfUpdateBusyMessage,
 } from "../jobs/self-update/guard";
+import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { installVarFields, missingRequiredVar, varValueProblem } from "./install-vars";
 import { ADDRESS_KINDS } from "./resource-kinds";
@@ -275,8 +276,11 @@ export async function startInstallCore(
       `${manifest.catalog.name} only works as the Worker "${fixedName}"; its Worker name cannot be changed.`,
     );
   }
-  const instanceName =
-    input.instanceName ?? (installer !== null ? manifest.catalog.name : workerName);
+  // A self-deploying app's Worker name is generated from the install id, so
+  // without a name of its own the install is shown by the app's name.
+  const displayName =
+    input.displayName ??
+    (installer !== null ? manifest.catalog.name.slice(0, DISPLAY_NAME_MAX_LENGTH) : null);
   if (deps.listAccountWorkers !== undefined) {
     let existing: string[] = [];
     try {
@@ -308,7 +312,6 @@ export async function startInstallCore(
     slug: app.slug,
     version: app.version,
     workerName,
-    instanceName,
     secrets: Object.keys(resolved.secrets),
     vars: resolved.vars,
     paidConfirmed,
@@ -337,10 +340,10 @@ export async function startInstallCore(
       .bind(workerName, app.slug, now.getTime(), fixed ? 1 : 0),
     deps.db
       .prepare(
-        `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version,
-           artifact_url, artifact_digest, pin_sha, status, config_json, installed_at, updated_at,
-           build_kind)
-         SELECT ?1, ?2, ?3, ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9, ?12
+        `INSERT INTO installs (id, app_slug, worker_name, instance_name, display_name,
+           catalog_version, artifact_url, artifact_digest, pin_sha, status, config_json,
+           installed_at, updated_at, build_kind)
+         SELECT ?1, ?2, ?3, coalesce(?10, ?3), ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9, ?12
          WHERE NOT EXISTS (
            SELECT 1 FROM installs
            WHERE status != 'uninstalled' AND (worker_name = ?3 OR (?11 = 1 AND app_slug = ?2))
@@ -360,7 +363,7 @@ export async function startInstallCore(
         manifest.source.sha,
         JSON.stringify(resolved.vars),
         now.getTime(),
-        instanceName,
+        displayName,
         fixed ? 1 : 0,
         // Known from the start, so an uninstall of a failed install runs the
         // app's destroy command instead of deleting anything itself.

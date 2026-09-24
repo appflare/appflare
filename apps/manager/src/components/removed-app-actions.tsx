@@ -9,7 +9,7 @@ import { useJobStarted } from "./job-started";
 /** An uninstalled install and what it kept in the account. */
 export interface RemovedApp {
   id: string;
-  instanceName: string;
+  label: string;
   workerName: string;
   retained: Array<{ id: string; kind: string; name: string }>;
 }
@@ -49,7 +49,7 @@ export function DeleteRetainedDialog({
           Delete retained data
         </Button>
       )}
-      title={`Delete what ${app.instanceName} kept`}
+      title={`Delete what ${app.label} kept`}
       description="Deletes every resource below from your Cloudflare account. The app stays uninstalled, and its jobs stay in the history."
       confirmText={app.workerName}
       actionLabel="Delete retained data"
@@ -86,8 +86,8 @@ export function ForgetDialog({ app, disabled = false }: { app: RemovedApp; disab
           Forget
         </Button>
       )}
-      title={`Forget ${app.instanceName}`}
-      description={`Removes ${app.instanceName} from Removed apps. Nothing is deleted: the resources below stay in your Cloudflare account with everything in them. Only the app's own page still lists them, where Delete retained data stays available; you can also delete them in the Cloudflare dashboard.`}
+      title={`Forget ${app.label}`}
+      description={`Removes ${app.label} from Removed apps. Nothing is deleted: the resources below stay in your Cloudflare account with everything in them. Only the app's own page still lists them, where Delete retained data stays available; you can also delete them in the Cloudflare dashboard.`}
       actionLabel="Forget and keep the resources"
       destructive={false}
       onConfirm={async () => {

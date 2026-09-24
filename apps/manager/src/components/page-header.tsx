@@ -17,6 +17,7 @@ export function PageHeader({
   actions,
   parents,
   icon,
+  titleAction,
 }: {
   title: string;
   description?: ReactNode;
@@ -25,6 +26,8 @@ export function PageHeader({
   parents?: Crumb[];
   /** Shown before the title, such as the app's icon. */
   icon?: ReactNode;
+  /** A small action right after the title, such as a rename button. */
+  titleAction?: ReactNode;
 }) {
   return (
     <header className="grid gap-3">
@@ -43,9 +46,18 @@ export function PageHeader({
         <div className="flex min-w-0 items-center gap-3">
           {icon}
           <div className="grid min-w-0 gap-1">
-            <Text variant="heading" size="lg" as="h1">
-              {title}
-            </Text>
+            {titleAction === undefined ? (
+              <Text variant="heading" size="lg" as="h1">
+                {title}
+              </Text>
+            ) : (
+              <div className="flex min-w-0 items-center gap-1">
+                <Text variant="heading" size="lg" as="h1">
+                  {title}
+                </Text>
+                {titleAction}
+              </div>
+            )}
             {description !== undefined && <Text variant="secondary">{description}</Text>}
           </div>
         </div>

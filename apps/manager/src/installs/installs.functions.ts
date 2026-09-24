@@ -30,6 +30,8 @@ import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { recordedCatalog } from "../jobs/self-deploying/phases";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
+import { displayNameInput, installLabel } from "./display-name";
+import { RenameInstallError, renameInstallCore } from "./display-name.server";
 import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
 import { startInstallInput } from "./install-input";
 import { renderPostInstall, workersDevUrl } from "./post-install";
@@ -79,6 +81,22 @@ export const startInstall = createServerFn({ method: "POST" })
     }
   });
 
+/**
+ * Admin only: sets the install's display name, or clears it with an empty
+ * name so the Worker name shows again. Nothing is deployed.
+ */
+export const renameInstall = createServerFn({ method: "POST" })
+  .validator(z.object({ installId: z.string().min(1).max(64), displayName: displayNameInput }))
+  .handler(async ({ data }) => {
+    await requireRole("admin");
+    try {
+      return await renameInstallCore(env.DB, data.installId, data.displayName);
+    } catch (error) {
+      if (error instanceof RenameInstallError) throw new Error(error.message);
+      throw error;
+    }
+  });
+
 export interface InstallRow {
   id: string;
   slug: string;
@@ -86,8 +104,10 @@ export interface InstallRow {
   name: string;
   /** The app's icon from the catalog, as a manager path; null when it has none. */
   icon: string | null;
-  /** The install's own label (`instance_name`), the Worker name when unset. */
-  instanceName: string;
+  /** The name an admin gave the install; null when it has none. */
+  displayName: string | null;
+  /** What the UI calls the install (`installLabel`): its display name, else its Worker name. */
+  label: string;
   workerName: string;
   status: string;
   version: string;
@@ -103,6 +123,12 @@ export interface InstallRow {
   healthStatus: HealthStatus | null;
   /** ISO 8601; when that check ran. */
   healthCheckedAt: string | null;
+}
+
+/** The name fields of an install row, for the list and the detail page. */
+function namesOf(row: typeof installs.$inferSelect) {
+  const names = { displayName: row.display_name, workerName: row.worker_name };
+  return { ...names, label: installLabel(names) };
 }
 
 /** The health fields of an install row, for the list and the detail page. */
@@ -162,8 +188,7 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
         slug: row.app_slug,
         name: listed?.name ?? row.app_slug,
         icon: mediaSrc(listed?.media?.icon, catalogIndexUrl(env)),
-        instanceName: row.instance_name ?? row.worker_name,
-        workerName: row.worker_name,
+        ...namesOf(row),
         status: row.status,
         version: row.catalog_version,
         latestVersion: listed?.version ?? null,
@@ -357,8 +382,7 @@ export const getInstall = createServerFn({ method: "GET" })
       slug: row.app_slug,
       name,
       icon: mediaSrc(listed?.media?.icon, catalogIndexUrl(env)),
-      instanceName: row.instance_name ?? row.worker_name,
-      workerName: row.worker_name,
+      ...namesOf(row),
       status: row.status,
       version: row.catalog_version,
       latestVersion: listed?.version ?? null,

@@ -61,8 +61,8 @@ export interface JobView {
     id: string;
     slug: string;
     workerName: string;
-    /** The install's label (`instance_name`); the Worker name when unset. */
-    instanceName: string | null;
+    /** The name an admin gave the install; null when it has none. */
+    displayName: string | null;
     status: string;
   } | null;
   logs: JobLogRow[];
@@ -122,7 +122,7 @@ export const getJob = createServerFn({ method: "GET" })
               id: installs.id,
               slug: installs.app_slug,
               workerName: installs.worker_name,
-              instanceName: installs.instance_name,
+              displayName: installs.display_name,
               status: installs.status,
             })
             .from(installs)

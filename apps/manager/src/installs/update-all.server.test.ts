@@ -46,7 +46,7 @@ async function addInstall(
   opts: { name?: string; installedAt?: number; buildKind?: string } = {},
 ) {
   await env.DB.prepare(
-    `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version,
+    `INSERT INTO installs (id, app_slug, worker_name, display_name, catalog_version,
        artifact_url, status, build_kind, installed_at, updated_at)
      VALUES (?1, 'cut', ?1, ?2, '1.0.0', 'https://artifacts.test/cut/old.zip', 'installed', ?3, ?4, ?4)`,
   )
@@ -98,8 +98,8 @@ describe("startAllUpdatesCore", () => {
     const r = await run(fixture, [INSTALL_ID, "i2"]);
     expect(r.outcome).toEqual({
       started: [
-        { installId: INSTALL_ID, instanceName: "cut", version: "1.1.0", jobId: "job1" },
-        { installId: "i2", instanceName: "Links", version: "1.1.0", jobId: "job2" },
+        { installId: INSTALL_ID, label: "cut", version: "1.1.0", jobId: "job1" },
+        { installId: "i2", label: "Links", version: "1.1.0", jobId: "job2" },
       ],
       needsInput: [],
       notStarted: [],
@@ -126,7 +126,7 @@ describe("startAllUpdatesCore", () => {
     expect(r.outcome.needsInput).toEqual([
       {
         installId: INSTALL_ID,
-        instanceName: "cut",
+        label: "cut",
         version: "1.1.0",
         reason: "It needs a value for API_KEY.",
       },

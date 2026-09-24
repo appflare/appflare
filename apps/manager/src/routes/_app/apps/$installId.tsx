@@ -34,6 +34,7 @@ import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
 import { PageHeader } from "../../../components/page-header";
 import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
+import { RenameInstallDialog } from "../../../components/rename-install-dialog";
 import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
@@ -63,7 +64,8 @@ const TAB_LABELS: Record<Tab, string> = {
 };
 
 /**
- * `/apps/$installId`: the app's name and icon, its update or uninstall state,
+ * `/apps/$installId`: the install's display name (else the app's name) and icon,
+ * with "Rename" beside it for admins, its update or uninstall state,
  * then tabs. Overview: details and health, next steps, the Cloudflare token
  * the app needs for itself (if any), and, at the bottom for admins, the
  * danger zone (uninstall, finishing an uninstall, or once uninstalled
@@ -86,12 +88,24 @@ export const Route = createFileRoute("/_app/apps/$installId")({
   },
   // The deepest route's title wins over the root's "<page> · Appflare".
   head: ({ loaderData }) => ({
-    meta: [{ title: `${loaderData?.install?.name ?? "App"} · Appflare` }],
+    meta: [
+      {
+        title: `${loaderData?.install == null ? "App" : pageTitle(loaderData.install)} · Appflare`,
+      },
+    ],
   }),
   component: InstallPage,
 });
 
 const HOME_CRUMB = { label: "Home", href: "/" };
+
+/**
+ * The page's title: the install's display name when it has one (the app and
+ * Worker names go beneath), else the app's name.
+ */
+function pageTitle(install: Pick<InstallDetail, "displayName" | "name">): string {
+  return install.displayName ?? install.name;
+}
 
 const mono = "font-mono text-[0.9em]";
 
@@ -120,16 +134,18 @@ function InstallPage() {
   }
   const tabs = tabsFor(install);
   const tab: Tab = search.tab !== undefined && tabs.includes(search.tab) ? search.tab : "overview";
-  const label = install.instanceName === install.name ? null : install.instanceName;
   return (
     <>
       <PageHeader
-        title={install.name}
+        title={pageTitle(install)}
         description={
-          label === null ? `Worker ${install.workerName}` : `${label}, Worker ${install.workerName}`
+          install.displayName === null
+            ? `Worker ${install.workerName}`
+            : `${install.name}, Worker ${install.workerName}`
         }
         parents={[HOME_CRUMB]}
         icon={<AppIcon src={install.icon} size={40} />}
+        titleAction={isAdmin ? <RenameInstallDialog install={install} /> : undefined}
         actions={
           install.workerUrl !== null ? (
             <LinkButton
@@ -575,7 +591,13 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
           <DescriptionItem label="App">
             <Link href={`/catalog/${install.slug}`}>{install.name}</Link>
           </DescriptionItem>
-          <DescriptionItem label="Name">{install.instanceName}</DescriptionItem>
+          <DescriptionItem label="Name">
+            {install.displayName ?? (
+              <Text as="span" variant="secondary">
+                None; the Worker name is shown
+              </Text>
+            )}
+          </DescriptionItem>
           <DescriptionItem label="Version">
             <span className={mono}>{install.version}</span>
             {install.updateAvailable && install.latestVersion !== null && (

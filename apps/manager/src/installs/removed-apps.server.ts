@@ -10,6 +10,7 @@ import {
   selfUpdateBusyMessage,
 } from "../jobs/self-update/guard";
 import type { UninstallJobParams } from "../jobs/uninstall";
+import { installLabel } from "./display-name";
 import { DATA_RESOURCE_KINDS } from "./resource-kinds";
 
 /**
@@ -44,8 +45,8 @@ export interface RetainedResourceView {
 export interface RemovedAppView {
   id: string;
   slug: string;
-  /** The install's label (`instance_name`), the Worker name when unset. */
-  instanceName: string;
+  /** What the UI calls the install (`installLabel`). */
+  label: string;
   workerName: string;
   /** ISO 8601 */
   uninstalledAt: string | null;
@@ -164,7 +165,7 @@ export async function listRemovedAppsCore(d1: D1Database): Promise<RemovedAppVie
     return {
       id: row.id,
       slug: row.app_slug,
-      instanceName: row.instance_name ?? row.worker_name,
+      label: installLabel({ displayName: row.display_name, workerName: row.worker_name }),
       workerName: row.worker_name,
       uninstalledAt: row.uninstalled_at?.toISOString() ?? null,
       retained: kept

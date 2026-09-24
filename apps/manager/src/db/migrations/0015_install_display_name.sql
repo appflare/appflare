@@ -1,0 +1,2 @@
+ALTER TABLE `installs` ADD `display_name` text;--> statement-breakpoint
+UPDATE `installs` SET `display_name` = trim(`instance_name`) WHERE `instance_name` IS NOT NULL AND trim(`instance_name`) <> '' AND trim(`instance_name`) <> `worker_name`;

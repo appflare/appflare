@@ -113,8 +113,17 @@ export const installs = sqliteTable("installs", {
   app_slug: text("app_slug").notNull(),
   /** The unique key of an active install: two installs that are not uninstalled never share it. */
   worker_name: text("worker_name").notNull(),
-  /** User-visible label; defaults to the Worker name. */
+  /**
+   * The label older managers show: the display name, else the Worker name.
+   * Superseded by `display_name` and kept in step with it, so a manager
+   * rolled back to such a version still shows the name an admin chose.
+   */
   instance_name: text("instance_name"),
+  /**
+   * The name an admin gave the install ("Team link shortener"); null shows
+   * the Worker name. UI only: never part of usage data.
+   */
+  display_name: text("display_name"),
   catalog_version: text("catalog_version").notNull(),
   artifact_url: text("artifact_url").notNull(),
   artifact_digest: text("artifact_digest"),

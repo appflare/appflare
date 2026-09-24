@@ -68,9 +68,9 @@ async function seed() {
        VALUES ('p1', 'laptop', 'pk', 'u1', 'cred', 0, 'singleDevice', 0)`,
     ),
     env.DB.prepare(
-      `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version, artifact_url,
+      `INSERT INTO installs (id, app_slug, worker_name, instance_name, display_name, catalog_version, artifact_url,
          status, config_json, installed_at, updated_at)
-       VALUES ('i1', 'cut', 'my-links', 'Links for Ada', '1.1.0', 'https://artifacts.test/cut.zip',
+       VALUES ('i1', 'cut', 'my-links', 'Links for Ada', 'Ada link shortener', '1.1.0', 'https://artifacts.test/cut.zip',
          'installed', '{"HOME":"secret-home"}', 1, ?1)`,
     ).bind(NOW - 10 * MIN),
     env.DB.prepare(
@@ -308,6 +308,7 @@ describe("the report", () => {
       "max@example.com",
       "my-links",
       "Links for Ada",
+      "Ada link shortener",
       "appflare-ada",
       "links.ada.example",
       "cf-zone-1",

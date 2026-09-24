@@ -18,7 +18,7 @@ const AT = 1_790_000_000_000;
 
 async function install(id: string, status: string, uninstalledAt: number | null = null) {
   await env.DB.prepare(
-    `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version, artifact_url,
+    `INSERT INTO installs (id, app_slug, worker_name, display_name, catalog_version, artifact_url,
        status, installed_at, updated_at, uninstalled_at)
      VALUES (?1, 'cut', ?1, ?2, '1.0.0', 'u', ?3, 1, 1, ?4)`,
   )
@@ -90,7 +90,7 @@ describe("listRemovedAppsCore", () => {
     expect(rows[1]).toEqual({
       id: "a",
       slug: "cut",
-      instanceName: "Links",
+      label: "Links",
       workerName: "a",
       uninstalledAt: new Date(AT).toISOString(),
       retained: [
@@ -100,7 +100,7 @@ describe("listRemovedAppsCore", () => {
       activeJobId: null,
       lastFailure: null,
     });
-    expect(rows[0]?.instanceName).toBe("b");
+    expect(rows[0]?.label).toBe("b");
   });
 
   it("shows a deletion in progress, and the last one that failed", async () => {

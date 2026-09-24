@@ -26,20 +26,23 @@ describe("requirementsConfirmed", () => {
   });
 });
 
-describe("instanceName", () => {
+describe("displayName", () => {
   const base = { slug: "cut", workerName: "cut", secrets: {}, vars: {}, paidConfirmed: false };
+  const parse = (displayName: string) => startInstallInput.safeParse({ ...base, displayName });
 
-  it("is optional, trimmed, and 1 to 64 characters", () => {
-    expect(startInstallInput.parse(base).instanceName).toBeUndefined();
-    expect(startInstallInput.parse({ ...base, instanceName: "  Team links " }).instanceName).toBe(
-      "Team links",
-    );
-    expect(startInstallInput.safeParse({ ...base, instanceName: "   " }).success).toBe(false);
-    expect(startInstallInput.safeParse({ ...base, instanceName: "x".repeat(64) }).success).toBe(
-      true,
-    );
-    expect(startInstallInput.safeParse({ ...base, instanceName: "x".repeat(65) }).success).toBe(
-      false,
-    );
+  it("is optional; empty or only spaces means none", () => {
+    expect(startInstallInput.parse(base).displayName).toBeUndefined();
+    expect(parse("").data?.displayName).toBeNull();
+    expect(parse("   ").data?.displayName).toBeNull();
+  });
+
+  it("is trimmed, 1 to 60 characters, without control characters", () => {
+    expect(parse("  Team links ").data?.displayName).toBe("Team links");
+    expect(parse("x".repeat(60)).success).toBe(true);
+    expect(parse(` ${"x".repeat(60)} `).success).toBe(true);
+    expect(parse("x".repeat(61)).success).toBe(false);
+    expect(parse("Team\nlinks").success).toBe(false);
+    expect(parse("Team\tlinks").success).toBe(false);
+    expect(parse("Team\u0000links").success).toBe(false);
   });
 });

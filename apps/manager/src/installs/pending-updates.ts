@@ -1,4 +1,5 @@
 import { isUpdateAvailable } from "../catalog/versions";
+import { installLabel } from "./display-name";
 
 /**
  * Pending updates, for the home page and the sidebar: installs the catalog
@@ -11,8 +12,8 @@ import { isUpdateAvailable } from "../catalog/versions";
 
 export interface PendingAppUpdate {
   installId: string;
-  /** The install's label (`instance_name`), the Worker name when unset. */
-  instanceName: string;
+  /** What the UI calls the install (`installLabel`). */
+  label: string;
   version: string;
   latestVersion: string;
 }
@@ -39,7 +40,7 @@ export interface PendingInstallRow {
   id: string;
   status: string;
   appSlug: string;
-  instanceName: string | null;
+  displayName: string | null;
   workerName: string;
   catalogVersion: string;
 }
@@ -57,7 +58,7 @@ export function pendingUpdates(
     if (latest === undefined || !isUpdateAvailable(row.catalogVersion, latest)) continue;
     apps.push({
       installId: row.id,
-      instanceName: row.instanceName ?? row.workerName,
+      label: installLabel(row),
       version: row.catalogVersion,
       latestVersion: latest,
     });

@@ -13,8 +13,8 @@ export type UpdateAllInput = z.infer<typeof updateAllInput>;
 
 export interface UpdateAllItem {
   installId: string;
-  /** The install's label (`instance_name`), the Worker name when unset. */
-  instanceName: string;
+  /** What the UI calls the install (`installLabel`). */
+  label: string;
   /** The version the update moves to. */
   version: string;
 }

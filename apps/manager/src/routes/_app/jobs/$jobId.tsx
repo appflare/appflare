@@ -14,6 +14,7 @@ import { PageHeader } from "../../../components/page-header";
 import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
+import { installLabel } from "../../../installs/display-name";
 import { type BuildProgressView, getJob, type JobLogRow } from "../../../jobs/jobs.functions";
 import { isActive, useLiveJob, useVersionSwitch } from "../../../jobs/live-job";
 
@@ -45,8 +46,7 @@ function JobPage() {
   }
 
   const kind = jobKindLabel(job);
-  const title =
-    job.install !== null ? `${kind} ${job.install.instanceName ?? job.install.workerName}` : kind;
+  const title = job.install !== null ? `${kind} ${installLabel(job.install)}` : kind;
   return (
     <>
       <PageHeader
