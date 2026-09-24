@@ -5,6 +5,8 @@ import {
   detectedWorkersPlan,
   probeAccountCapabilities,
   probeContainers,
+  probeDomainCapabilities,
+  probeEmailRouting,
   probeR2,
   probeWorkersPlan,
 } from "./capabilities";
@@ -220,6 +222,135 @@ describe("probeAccountCapabilities", () => {
       reason: "no-permission",
       detail: "HTTP 403, Cloudflare code 10000",
     });
+  });
+});
+
+const Z = "https://api.cloudflare.com/client/v4/zones";
+const ZONE_ID = "zone-123";
+
+/** `GET /zones?account.id=…&status=active&per_page=1` with one zone, as recorded live (ids replaced). */
+const ONE_ZONE: FakeResponseSpec = {
+  result: [{ id: ZONE_ID, name: "example.com", status: "active", type: "full" }],
+  result_info: { page: 1, per_page: 1, total_pages: 1, count: 1, total_count: 1 },
+};
+const NO_ZONES: FakeResponseSpec = {
+  result: [],
+  result_info: { page: 1, per_page: 1, total_pages: 0, count: 0, total_count: 0 },
+};
+/** `GET /zones/{id}/email/routing` on a zone with routing on, as recorded live. */
+const ROUTING_SETTINGS: FakeResponseSpec = {
+  result: {
+    id: "routing-1",
+    tag: "routing-1",
+    name: "example.com",
+    enabled: true,
+    created: "2026-09-23T17:06:34.478318Z",
+    modified: "2026-09-23T21:31:42.468265Z",
+    skip_wizard: false,
+    support_subaddress: false,
+    synced: true,
+    admin_locked: false,
+    status: "ready",
+  },
+};
+
+describe("probeDomainCapabilities", () => {
+  it("lists one zone of the account, then reads its Email Routing: two calls", async () => {
+    const { fake, client } = make((req) =>
+      req.path === "/client/v4/zones" ? ONE_ZONE : ROUTING_SETTINGS,
+    );
+    expect(await probeDomainCapabilities(client)).toEqual({
+      zone: { state: "available" },
+      emailRouting: { state: "available" },
+    });
+    expect(fake.calls.map((c) => c.url)).toEqual([
+      `${Z}?account.id=${ACCOUNT}&status=active&per_page=1`,
+      `${Z}/${ZONE_ID}/email/routing`,
+    ]);
+    expect(fake.calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  it("counts routing that is still off as available: an install turns it on", async () => {
+    const { client } = make((req) =>
+      req.path === "/client/v4/zones"
+        ? ONE_ZONE
+        : {
+            result: {
+              ...(ROUTING_SETTINGS.result as object),
+              enabled: false,
+              status: "unconfigured",
+            },
+          },
+    );
+    expect((await probeDomainCapabilities(client)).emailRouting).toEqual({ state: "available" });
+  });
+
+  it("says none with one call when the account lists no zone", async () => {
+    const { fake, client } = make(() => NO_ZONES);
+    expect(await probeDomainCapabilities(client)).toEqual({
+      zone: { state: "none" },
+      emailRouting: { state: "no-zone" },
+    });
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("cannot tell Email Routing when the token may not read the zone's settings", async () => {
+    const { client } = make((req) => (req.path === "/client/v4/zones" ? ONE_ZONE : AUTH_ERROR));
+    expect(await probeDomainCapabilities(client)).toEqual({
+      zone: { state: "available" },
+      emailRouting: {
+        state: "unknown",
+        reason: "no-permission",
+        detail: "HTTP 403, Cloudflare code 10000",
+      },
+    });
+  });
+
+  it("cannot tell either when the zone list is refused or fails, and skips the second call", async () => {
+    const refused = make(() => AUTH_ERROR);
+    expect(await probeDomainCapabilities(refused.client)).toEqual({
+      zone: {
+        state: "unknown",
+        reason: "no-permission",
+        detail: "HTTP 403, Cloudflare code 10000",
+      },
+      emailRouting: {
+        state: "unknown",
+        reason: "no-permission",
+        detail: "no zone could be listed: HTTP 403, Cloudflare code 10000",
+      },
+    });
+    expect(refused.fake.calls).toHaveLength(1);
+
+    const down = make(() => ({ status: 502, text: "bad gateway" }));
+    const result = await probeDomainCapabilities(down.client);
+    expect(result.zone).toMatchObject({ state: "unknown", reason: "error" });
+    expect(result.emailRouting).toMatchObject({ state: "unknown", reason: "error" });
+  });
+
+  it("does not read an answer without the list as no zones", async () => {
+    const { client } = make(() => ({ result: null }));
+    expect((await probeDomainCapabilities(client)).zone).toEqual({
+      state: "unknown",
+      reason: "error",
+      detail: "no usable answer (UnreadableZones)",
+    });
+  });
+
+  it("works with the full client and never shows the token or the account", async () => {
+    const fake = makeFakeFetch(() => AUTH_ERROR);
+    const client = createClient({ accountId: ACCOUNT, token: TOKEN, fetch: fake.fetch });
+    const result = await probeDomainCapabilities(client);
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+    expect(JSON.stringify(result)).not.toContain(ACCOUNT);
+  });
+});
+
+describe("probeEmailRouting", () => {
+  it("reads the given zone's settings once", async () => {
+    const { fake, client } = make(() => ROUTING_SETTINGS);
+    expect(await probeEmailRouting(client, "z 1")).toEqual({ state: "available" });
+    expect(fake.calls.map((c) => c.url)).toEqual([`${Z}/z%201/email/routing`]);
   });
 });
 

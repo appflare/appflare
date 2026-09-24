@@ -40,6 +40,13 @@ const FREE_ACCOUNT: Record<string, FakeRoute> = {
     ],
     result_info: { page: 1, per_page: 50, total_pages: 1 },
   },
+  "GET /zones": {
+    result: [{ id: "zone1", name: "example.com", status: "active", type: "full" }],
+    result_info: { page: 1, per_page: 1, total_pages: 1 },
+  },
+  "GET /zones/zone1/email/routing": {
+    result: { id: "r1", tag: "r1", name: "example.com", enabled: true, status: "ready" },
+  },
 };
 
 /** The same account seen with a token that has no "Billing: Read" and no Containers permission. */
@@ -56,6 +63,8 @@ const PAID_ACCOUNT: Record<string, FakeRoute> = {
     result: [{ rate_plan: { id: "workers_paid", scope: "account" }, state: "Paid" }],
     result_info: { page: 1, per_page: 50, total_pages: 1 },
   },
+  // No domain on the account: the Email Routing call is skipped.
+  "GET /zones": { result: [], result_info: { page: 1, per_page: 1, total_pages: 0 } },
 };
 
 async function configured() {
@@ -81,6 +90,8 @@ describe("capabilities after a token save", () => {
       `GET ${A}/containers/applications`,
       `GET ${A}/r2/buckets`,
       `GET ${A}/subscriptions`,
+      "GET /zones",
+      "GET /zones/zone1/email/routing",
     ]);
     expect(api.calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
     const view = await readCapabilitiesView(db);
@@ -89,6 +100,8 @@ describe("capabilities after a token save", () => {
       r2: { state: "enabled" },
       containers: { state: "needs-workers-paid" },
       workersPlan: { state: "free" },
+      zone: { state: "available" },
+      emailRouting: { state: "available" },
       plan: { plan: "free", source: "detected" },
     });
     const row = await readSettings(db, [SETTING.accountCapabilities]);
@@ -122,12 +135,15 @@ describe("a failed check", () => {
       [`GET ${A}/r2/buckets`]: "network-error",
       [`GET ${A}/containers/applications`]: { status: 503 },
       [`GET ${A}/subscriptions`]: FORBIDDEN,
+      "GET /zones": "network-error",
     });
     await refreshCapabilitiesDaily(cf, db, { now: NEXT_DAY, fetch: down.fetch });
     const view = await readCapabilitiesView(db);
     expect(view.checkedAt).toBe(NEXT_DAY.toISOString());
     expect(view.r2).toEqual({ state: "enabled" });
     expect(view.containers).toEqual({ state: "available" });
+    expect(view.zone).toEqual({ state: "none" });
+    expect(view.emailRouting).toEqual({ state: "no-zone" });
     // A refusal is an answer: the token lost Billing: Read.
     expect(view.workersPlan).toEqual({
       state: "unknown",
@@ -176,11 +192,12 @@ describe("the daily check", () => {
     expect(await refreshCapabilitiesDaily(cf, db, { now: EVENING, fetch: api.fetch })).toBe(
       "fresh",
     );
-    expect(api.calls).toHaveLength(3);
+    // Three account probes and the zone list; no zone, so no Email Routing read.
+    expect(api.calls).toHaveLength(4);
     expect(await refreshCapabilitiesDaily(cf, db, { now: NEXT_DAY, fetch: api.fetch })).toBe(
       "checked",
     );
-    expect(api.calls).toHaveLength(6);
+    expect(api.calls).toHaveLength(8);
     expect((await readCapabilitiesView(db)).plan).toEqual({ plan: "paid", source: "detected" });
   });
 

@@ -86,6 +86,35 @@ export function createZones(http: HttpApi) {
       });
     },
 
+    /**
+     * `GET /zones?account.id=<this client's account>[&status=]&page=&per_page=`:
+     * ONE page of the account's zones, optionally only those in one status. A
+     * one-zone page is the cheapest way to learn whether the token can see
+     * such a zone at all.
+     */
+    async listAccountZonesPage(
+      opts: { status?: ZoneStatus; page?: number; perPage?: number } = {},
+    ): Promise<{ items: Zone[]; totalCount: number | null }> {
+      const envelope = await http.send("GET", "/zones", {
+        query: {
+          "account.id": http.accountId,
+          status: opts.status,
+          page: opts.page,
+          per_page: opts.perPage,
+        },
+      });
+      // An answer without the list must not read as "no zones".
+      if (!Array.isArray(envelope.result)) {
+        throw Object.assign(new Error("the zone list answer holds no list"), {
+          name: "UnreadableZones",
+        });
+      }
+      return {
+        items: envelope.result as Zone[],
+        totalCount: envelope.result_info?.total_count ?? null,
+      };
+    },
+
     /** `GET /zones/{zone_id}`. */
     getZone(zoneId: string): Promise<Zone> {
       return http.result("GET", `/zones/${enc(zoneId)}`);

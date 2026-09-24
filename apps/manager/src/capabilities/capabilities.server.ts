@@ -3,6 +3,7 @@ import {
   createCapabilityClient,
   type FetchLike,
   probeAccountCapabilities,
+  probeDomainCapabilities,
   type RequestLog,
 } from "@appflare/cf-api";
 import {
@@ -23,9 +24,11 @@ import {
  * Runs the account capability probes and keeps their answer in
  * `settings.account_capabilities`: at token save (with the new token), when an
  * admin chooses "Re-check", and once a UTC day from the cron. Each run is one
- * read call per probe (the plan probe reads further subscription pages, up to
- * 4, only on accounts with more than 50 subscriptions and no Workers entry on
- * the first). A probe that cannot tell for lack of permission is stored as
+ * read call per probe, five in all: R2, Containers, the Workers plan, one zone
+ * of the account, and Email Routing on that zone (skipped when there is no
+ * zone). The plan probe reads further subscription pages, up to 4, only on
+ * accounts with more than 50 subscriptions and no Workers entry on the
+ * first. A probe that cannot tell for lack of permission is stored as
  * such, so the manual plan applies; one that failed outright (network, 5xx)
  * keeps the last answer it gave.
  */
@@ -51,7 +54,10 @@ export async function refreshCapabilities(
   client: CapabilityClient,
   now: Date = new Date(),
 ): Promise<StoredCapabilities> {
-  const probed = await probeAccountCapabilities(client);
+  const [probed, domains] = await Promise.all([
+    probeAccountCapabilities(client),
+    probeDomainCapabilities(client),
+  ]);
   const row = await readSettings(db, [SETTING.accountCapabilities]);
   const previous = parseStoredCapabilities(row.account_capabilities);
   const stored: StoredCapabilities = {
@@ -59,6 +65,8 @@ export async function refreshCapabilities(
     r2: keepOnFailure(probed.r2, previous?.r2),
     containers: keepOnFailure(probed.containers, previous?.containers),
     workersPlan: keepOnFailure(probed.workersPlan, previous?.workersPlan),
+    zone: keepOnFailure(domains.zone, previous?.zone),
+    emailRouting: keepOnFailure(domains.emailRouting, previous?.emailRouting),
   };
   await writeSettings(db, { [SETTING.accountCapabilities]: JSON.stringify(stored) }, now);
   return stored;

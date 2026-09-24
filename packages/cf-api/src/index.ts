@@ -12,8 +12,11 @@ export type {
   CapabilityUnknown,
   CapabilityUnknownReason,
   ContainersCapability,
+  DomainCapabilities,
+  EmailRoutingCapability,
   R2Capability,
   WorkersPlanCapability,
+  ZoneCapability,
 } from "./capabilities";
 export {
   CONTAINERS_PROBE_NAME,
@@ -22,6 +25,8 @@ export {
   failureDetail,
   probeAccountCapabilities,
   probeContainers,
+  probeDomainCapabilities,
+  probeEmailRouting,
   probeR2,
   probeWorkersPlan,
   R2_NOT_ENABLED_CODE,

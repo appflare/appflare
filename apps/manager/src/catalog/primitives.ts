@@ -104,11 +104,55 @@ const INCLUDED: Partial<Record<PrimitiveId, string>> = {
 };
 
 const NOT_CHECKED: Partial<Record<PrimitiveId, string>> = {
-  zone: "Needs a domain on this account. Appflare does not check for one.",
-  "email-routing":
-    "Needs Email Routing on a domain of this account. Appflare does not check for it.",
   access: "Needs Cloudflare Access (Zero Trust) on this account. Appflare does not check for it.",
 };
+
+/** A domain on the account, as the zone probe found it. */
+function zoneStatus(view: CapabilitiesView | null): PrimitiveStatus {
+  const id = "zone";
+  const state = view?.zone?.state;
+  if (state === "available") {
+    return { id, availability: "available", reason: "Detected: this account has an active zone." };
+  }
+  if (state === "none") {
+    return {
+      id,
+      availability: "unavailable",
+      reason: "No active zone in this account (or the token lacks Zone: Read).",
+    };
+  }
+  return {
+    id,
+    availability: "unknown",
+    reason: "Needs a domain on this account; Appflare could not check.",
+  };
+}
+
+/** Email Routing on a domain of the account, as its probe found it. */
+function emailRoutingStatus(view: CapabilitiesView | null): PrimitiveStatus {
+  const id = "email-routing";
+  const state = view?.emailRouting?.state;
+  if (state === "available") {
+    return {
+      id,
+      availability: "available",
+      reason: "Detected: Email Routing can be used on this account's domain.",
+    };
+  }
+  if (state === "no-zone") {
+    return {
+      id,
+      availability: "unavailable",
+      reason:
+        "Needs Email Routing on an active zone: no active zone in this account (or the token lacks Zone: Read).",
+    };
+  }
+  return {
+    id,
+    availability: "unknown",
+    reason: "Needs Email Routing on a domain of this account; Appflare could not check.",
+  };
+}
 
 /**
  * Whether the account is on Workers Paid, as far as the plan in force says:
@@ -141,9 +185,9 @@ function paidPlanStatus(id: PrimitiveId, view: CapabilitiesView | null): Primiti
 
 /**
  * Whether this account offers `id`. Primitives every plan includes are
- * available; R2 and Containers follow the capability probes; key-value
- * Durable Objects and Containers without a probe result follow the plan;
- * domains, Email Routing and Access are not probed, so they stay unknown.
+ * available; R2, Containers, domains and Email Routing follow the capability
+ * probes; key-value Durable Objects and Containers without a probe result
+ * follow the plan; Access is not probed, so it stays unknown.
  */
 export function primitiveStatus(
   id: PrimitiveId,
@@ -154,6 +198,8 @@ export function primitiveStatus(
   if (included !== undefined) return { id, availability: "available", reason: included };
   const notChecked = NOT_CHECKED[id];
   if (notChecked !== undefined) return { id, availability: "unknown", reason: notChecked };
+  if (id === "zone") return zoneStatus(view);
+  if (id === "email-routing") return emailRoutingStatus(view);
   if (id === "durable-objects") {
     if (!app.keyValueDurableObjects) {
       return {

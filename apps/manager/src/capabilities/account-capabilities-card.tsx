@@ -181,9 +181,75 @@ function ContainersRow({ view }: { view: CapabilitiesView }) {
   );
 }
 
+function ZoneRow({ view }: { view: CapabilitiesView }) {
+  const { zone } = view;
+  if (zone === null) {
+    return (
+      <Row label="Domains">
+        <Value text="Not checked yet" source={null} />
+      </Row>
+    );
+  }
+  if (zone.state === "unknown") {
+    return (
+      <Row label="Domains">
+        <Value text="Unknown" source={null} />
+        <Note>{unknownSentence(zone, "zone")}</Note>
+      </Row>
+    );
+  }
+  return (
+    <Row label="Domains">
+      <Value
+        text={
+          zone.state === "available"
+            ? "Active zone found"
+            : "No active zone in this account (or the token lacks Zone: Read)"
+        }
+        source="Detected"
+      />
+      {zone.state === "none" && (
+        <Note>Apps that answer on a domain or receive email need an active zone.</Note>
+      )}
+    </Row>
+  );
+}
+
+function EmailRoutingRow({ view }: { view: CapabilitiesView }) {
+  const { emailRouting, zone } = view;
+  if (emailRouting === null) {
+    return (
+      <Row label="Email Routing">
+        <Value text="Not checked yet" source={null} />
+      </Row>
+    );
+  }
+  if (emailRouting.state === "unknown") {
+    return (
+      <Row label="Email Routing">
+        <Value text="Unknown" source={null} />
+        <Note>
+          {zone?.state === "unknown"
+            ? "Appflare checks Email Routing on a domain of the account, and could not list the domains."
+            : unknownSentence(emailRouting, "email-routing")}
+        </Note>
+      </Row>
+    );
+  }
+  return (
+    <Row label="Email Routing">
+      <Value
+        text={emailRouting.state === "available" ? "Available" : "Needs a domain"}
+        source="Detected"
+      />
+    </Row>
+  );
+}
+
 /**
  * Settings, Account capabilities: what the Cloudflare token can tell about
- * the account (R2 enabled, Containers available, Workers plan), each marked
+ * the account (R2 enabled, Containers available, Workers plan, a domain,
+ * Email Routing on it), each marked
  * "Detected" or "Set by you", and the Workers plan an admin sets for when it
  * cannot be detected. Admins can re-check at once; the token save and the
  * daily cron check too.
@@ -262,6 +328,8 @@ export function AccountCapabilitiesCard({
           <PlanRow view={view} />
           <R2Row view={view} />
           <ContainersRow view={view} />
+          <ZoneRow view={view} />
+          <EmailRoutingRow view={view} />
         </DescriptionList>
         <ManualPlanChoice
           view={view}

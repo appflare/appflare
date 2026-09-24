@@ -37,6 +37,23 @@ describe("the stored capabilities row", () => {
       parseStoredCapabilities(JSON.stringify({ checkedAt: "x", r2: { state: "on" } })),
     ).toBeNull();
   });
+
+  it("keeps the domain probes, and still reads rows written before they existed", () => {
+    const withDomains = stored({ zone: { state: "none" }, emailRouting: { state: "no-zone" } });
+    expect(parseStoredCapabilities(JSON.stringify(withDomains))).toEqual(withDomains);
+    // A row from before: the plan it detected must survive the upgrade.
+    const before = stored({ workersPlan: { state: "free" } });
+    const parsed = parseStoredCapabilities(JSON.stringify(before));
+    expect(parsed).toEqual(before);
+    expect(capabilitiesView(null, parsed)).toMatchObject({
+      zone: null,
+      emailRouting: null,
+      plan: { plan: "free", source: "detected" },
+    });
+    expect(
+      parseStoredCapabilities(JSON.stringify({ ...before, zone: { state: "maybe" } })),
+    ).toBeNull();
+  });
 });
 
 describe("the Workers plan in force", () => {
@@ -110,8 +127,42 @@ describe("requirement badges", () => {
     expect(requirementBadge("containers", capabilitiesView("free", stored()))).toBeNull();
   });
 
-  it("say nothing for requirements the probes do not cover", () => {
+  it("say what the probes found about domains and Email Routing", () => {
+    const found = capabilitiesView(
+      null,
+      stored({ zone: { state: "available" }, emailRouting: { state: "available" } }),
+    );
+    expect(requirementBadge("zone", found)).toEqual({
+      met: true,
+      label: "Detected: active zone found",
+    });
+    expect(requirementBadge("email-routing", found)).toEqual({
+      met: true,
+      label: "Detected: available",
+    });
+    const none = capabilitiesView(
+      null,
+      stored({ zone: { state: "none" }, emailRouting: { state: "no-zone" } }),
+    );
+    expect(requirementBadge("zone", none)).toEqual({
+      met: false,
+      label: "Detected: no active zone",
+    });
+    expect(requirementBadge("email-routing", none)).toEqual({
+      met: false,
+      label: "Detected: no active zone",
+    });
+    const refused = capabilitiesView(
+      null,
+      stored({ zone: { state: "available" }, emailRouting: NO_PERMISSION }),
+    );
+    expect(requirementBadge("email-routing", refused)).toBeNull();
+  });
+
+  it("say nothing for requirements the probes do not cover or have not checked", () => {
     expect(requirementBadge("zone", capabilitiesView("paid", stored()))).toBeNull();
+    expect(requirementBadge("email-routing", capabilitiesView("paid", stored()))).toBeNull();
+    expect(requirementBadge("access", capabilitiesView("paid", stored()))).toBeNull();
   });
 
   it("show the plan for apps that need Workers Paid, warning only when Cloudflare says free", () => {
@@ -134,6 +185,8 @@ describe("capabilitiesView", () => {
       r2: { state: "enabled" },
       containers: NO_PERMISSION,
       workersPlan: { state: "paid" },
+      zone: null,
+      emailRouting: null,
       plan: { plan: "paid", source: "detected" },
       manualPlan: "free",
     });

@@ -2,18 +2,21 @@ import { CloudflareApiError } from "./errors";
 import { type ClientOptions, createHttpApi } from "./http";
 import { createBilling } from "./namespaces/billing";
 import { createContainers } from "./namespaces/containers";
+import { createEmailRouting } from "./namespaces/email-routing";
 import { createR2 } from "./namespaces/r2";
+import { createZones } from "./namespaces/zones";
 import type { AccountSubscription } from "./types";
 
 /**
  * What an account can do, read with a token: whether R2 is enabled, whether
- * Containers can be used, and which Workers plan the account is on. Each
- * probe is one read call and never changes anything. Shared by the manager
- * (with its stored token) and the CLI (with wrangler's credential), so both
- * read the answers the same way.
+ * Containers can be used, which Workers plan the account is on, whether the
+ * token can see a zone (a domain on Cloudflare), and whether it can read that
+ * zone's Email Routing. Each probe is one read call and never changes
+ * anything. Shared by the manager (with its stored token) and the CLI (with
+ * wrangler's credential), so both read the answers the same way.
  *
  * Also a separate entry (`@appflare/cf-api/capabilities`) that pulls in only
- * the HTTP layer and these three namespaces.
+ * the HTTP layer and the namespaces the probes use.
  *
  * Answers recorded live (2026-09-24) against a Workers Free and a Workers Paid
  * account:
@@ -30,6 +33,18 @@ import type { AccountSubscription } from "./types";
  * - `GET /subscriptions` lists `workers_paid` (product `prod_workers`) on
  *   Workers Paid and no Workers entry on Workers Free. A token without
  *   "Billing: Read" gets 403 code 10000. `per_page` above 50 is refused.
+ * - `GET /zones?account.id=…&status=active&per_page=1` is 200 with one zone
+ *   when the token can read an active one; the same call narrowed to a name
+ *   the account does not have
+ *   is 200 with an empty list (`total_count` 0). An account id the token does
+ *   not belong to is 400 code 70503, "account with given Tag doesn't exist".
+ *   Cloudflare's API schema files the list under "Zone Read" and it lists
+ *   only zones the token may read, so an empty list also covers a token
+ *   without that permission.
+ * - `GET /zones/{zone_id}/email/routing` is 200 with `enabled` and `status`
+ *   (`ready` on a zone with routing on). The API schema files it under "Zone
+ *   Settings Read" (or Write). A zone the token may not read answers 403 code
+ *   10000, "Authentication error".
  */
 
 /** Why a probe could not tell. */
@@ -63,6 +78,30 @@ export interface AccountCapabilities {
   workersPlan: WorkersPlanCapability;
 }
 
+/**
+ * Whether the token can see an active zone of the account (custom domains
+ * and Email Routing need one; a pending zone does not serve traffic yet).
+ * `none` is an empty list: no active zone in the account, or the token lacks
+ * Zone: Read (Cloudflare answers both the same way).
+ */
+export type ZoneCapability = { state: "available" } | { state: "none" } | CapabilityUnknown;
+
+/**
+ * Whether the token can read Email Routing on an active zone of the account (the
+ * first one the zone list names); `no-zone` when the list is empty. Routing
+ * need not be on yet: an install turns it on itself.
+ */
+export type EmailRoutingCapability =
+  | { state: "available" }
+  | { state: "no-zone" }
+  | CapabilityUnknown;
+
+/** What the token can do with the account's domains. */
+export interface DomainCapabilities {
+  zone: ZoneCapability;
+  emailRouting: EmailRoutingCapability;
+}
+
 /** Cloudflare's code for "Please enable R2 through the Cloudflare Dashboard." */
 export const R2_NOT_ENABLED_CODE = 10042;
 
@@ -79,17 +118,25 @@ export const SUBSCRIPTION_PAGES_MAX = 4;
 /** Subscription states in which the plan is in force. */
 const ACTIVE_STATES = new Set(["paid", "trial", "provisioned", "awaitingpayment"]);
 
-/** The three namespaces the probes use; `createClient`'s client has them too. */
+/** The namespaces the probes use; `createClient`'s client has them too. */
 export interface CapabilityClient {
   r2: Pick<ReturnType<typeof createR2>, "listBucketsPage">;
   containers: Pick<ReturnType<typeof createContainers>, "listApplications">;
   billing: Pick<ReturnType<typeof createBilling>, "listSubscriptionsPage">;
+  zones: Pick<ReturnType<typeof createZones>, "listAccountZonesPage">;
+  emailRouting: Pick<ReturnType<typeof createEmailRouting>, "getSettings">;
 }
 
 /** A client with only what the probes need, for callers that do not need the full one. */
 export function createCapabilityClient(options: ClientOptions): CapabilityClient {
   const http = createHttpApi(options);
-  return { r2: createR2(http), containers: createContainers(http), billing: createBilling(http) };
+  return {
+    r2: createR2(http),
+    containers: createContainers(http),
+    billing: createBilling(http),
+    zones: createZones(http),
+    emailRouting: createEmailRouting(http),
+  };
 }
 
 /**
@@ -196,7 +243,11 @@ export async function probeWorkersPlan(client: CapabilityClient): Promise<Worker
   }
 }
 
-/** All three probes, concurrently. Never throws. */
+/**
+ * The account-level probes (R2, Containers, Workers plan), concurrently.
+ * Never throws. The domain probes are separate
+ * ({@link probeDomainCapabilities}): sandbox builds need none of them.
+ */
 export async function probeAccountCapabilities(
   client: CapabilityClient,
 ): Promise<AccountCapabilities> {
@@ -206,6 +257,43 @@ export async function probeAccountCapabilities(
     probeWorkersPlan(client),
   ]);
   return { r2, containers, workersPlan };
+}
+
+/**
+ * Email Routing on one zone: its settings, read only. A refusal is the
+ * token's permissions (Zone Settings: Read); whether routing is on does not
+ * matter, since an install turns it on.
+ */
+export async function probeEmailRouting(
+  client: Pick<CapabilityClient, "emailRouting">,
+  zoneId: string,
+): Promise<EmailRoutingCapability> {
+  try {
+    await client.emailRouting.getSettings(zoneId);
+    return { state: "available" };
+  } catch (error) {
+    return unknown(isRefusal(error) ? "no-permission" : "error", error);
+  }
+}
+
+/**
+ * The domain probes: one active zone from the account's zone list, then Email
+ * Routing on that zone. Two read calls at most, one when the list is empty
+ * or cannot be read. Never throws.
+ */
+export async function probeDomainCapabilities(
+  client: Pick<CapabilityClient, "zones" | "emailRouting">,
+): Promise<DomainCapabilities> {
+  let first: string | undefined;
+  try {
+    const { items } = await client.zones.listAccountZonesPage({ status: "active", perPage: 1 });
+    first = items[0]?.id;
+  } catch (error) {
+    const zone = unknown(isRefusal(error) ? "no-permission" : "error", error);
+    return { zone, emailRouting: unknown(zone.reason, `no zone could be listed: ${zone.detail}`) };
+  }
+  if (first === undefined) return { zone: { state: "none" }, emailRouting: { state: "no-zone" } };
+  return { zone: { state: "available" }, emailRouting: await probeEmailRouting(client, first) };
 }
 
 /**

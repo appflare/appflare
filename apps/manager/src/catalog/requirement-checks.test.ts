@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { capabilitiesView } from "../capabilities/capabilities";
 import { requirementChecks } from "./requirement-checks";
+import { requirementLabel } from "./requirements";
 
 const probed = capabilitiesView(null, {
   checkedAt: "2026-09-24T12:00:00.000Z",
@@ -19,6 +20,46 @@ describe("requirementChecks", () => {
     expect(checks.pending.map((c) => [c.key, c.availability])).toEqual([
       ["zone", "unknown"],
       ["email-routing", "unknown"],
+    ]);
+  });
+
+  it("meets zone and Email Routing requirements when the probes found them", () => {
+    const withDomain = capabilitiesView(null, {
+      checkedAt: "2026-09-24T12:00:00.000Z",
+      r2: { state: "enabled" },
+      containers: { state: "needs-workers-paid" },
+      workersPlan: { state: "free" },
+      zone: { state: "available" },
+      emailRouting: { state: "available" },
+    });
+    const checks = requirementChecks(
+      { plan: "free", requires: ["zone", "email-routing"] },
+      withDomain,
+    );
+    expect(checks.pending).toEqual([]);
+    expect(checks.met.map((c) => [c.key, c.label])).toEqual([
+      ["zone", requirementLabel("zone")],
+      ["email-routing", requirementLabel("email-routing")],
+    ]);
+  });
+
+  it("keeps zone and Email Routing pending, as not available, when there is no domain", () => {
+    const noDomain = capabilitiesView(null, {
+      checkedAt: "2026-09-24T12:00:00.000Z",
+      r2: { state: "enabled" },
+      containers: { state: "needs-workers-paid" },
+      workersPlan: { state: "free" },
+      zone: { state: "none" },
+      emailRouting: { state: "no-zone" },
+    });
+    const checks = requirementChecks(
+      { plan: "free", requires: ["zone", "email-routing"] },
+      noDomain,
+    );
+    expect(checks.met).toEqual([]);
+    expect(checks.pending.map((c) => [c.key, c.availability])).toEqual([
+      ["zone", "unavailable"],
+      ["email-routing", "unavailable"],
     ]);
   });
 

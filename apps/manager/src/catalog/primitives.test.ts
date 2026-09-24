@@ -124,14 +124,46 @@ describe("primitiveStatus", () => {
     ).toBe("unavailable");
   });
 
-  it("leaves domains, Email Routing and Access unknown: nothing probes them", () => {
-    const everything = capabilitiesView(null, stored());
-    for (const id of ["zone", "email-routing", "access"] as const) {
-      expect(primitiveStatus(id, everything, plain)).toMatchObject({
-        availability: "unknown",
-        reason: expect.stringMatching(/does not check/),
-      });
+  it("follows the zone and Email Routing probes", () => {
+    const found = capabilitiesView(
+      null,
+      stored({ zone: { state: "available" }, emailRouting: { state: "available" } }),
+    );
+    expect(primitiveStatus("zone", found, plain)).toMatchObject({
+      availability: "available",
+      reason: expect.stringMatching(/^Detected/),
+    });
+    expect(primitiveStatus("email-routing", found, plain).availability).toBe("available");
+
+    const none = capabilitiesView(
+      null,
+      stored({ zone: { state: "none" }, emailRouting: { state: "no-zone" } }),
+    );
+    expect(primitiveStatus("zone", none, plain).availability).toBe("unavailable");
+    expect(primitiveStatus("email-routing", none, plain)).toMatchObject({
+      availability: "unavailable",
+      reason: expect.stringMatching(/no active zone in this account/),
+    });
+
+    // A zone the token sees, whose Email Routing it may not read.
+    const refused = capabilitiesView(
+      null,
+      stored({ zone: { state: "available" }, emailRouting: unknownProbe }),
+    );
+    expect(primitiveStatus("email-routing", refused, plain).availability).toBe("unknown");
+
+    // Rows stored before the domain probes existed, and no row at all.
+    for (const view of [capabilitiesView(null, stored()), NOTHING_KNOWN]) {
+      expect(primitiveStatus("zone", view, plain).availability).toBe("unknown");
+      expect(primitiveStatus("email-routing", view, plain).availability).toBe("unknown");
     }
+  });
+
+  it("leaves Access unknown: nothing probes it", () => {
+    expect(primitiveStatus("access", capabilitiesView(null, stored()), plain)).toMatchObject({
+      availability: "unknown",
+      reason: expect.stringMatching(/does not check/),
+    });
   });
 
   it("treats an admin's Free as unknown and a detected Free as not available", () => {

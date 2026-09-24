@@ -2,9 +2,12 @@ import {
   type AccountCapabilities,
   type CapabilityUnknown,
   type ContainersCapability,
+  type DomainCapabilities,
   detectedWorkersPlan,
+  type EmailRoutingCapability,
   type R2Capability,
   type WorkersPlanCapability,
+  type ZoneCapability,
 } from "@appflare/cf-api/capabilities";
 import { z } from "zod";
 import { type AccountPlan, parseAccountPlan } from "../account/plan";
@@ -12,9 +15,10 @@ import { type AccountPlan, parseAccountPlan } from "../account/plan";
 /**
  * Account capabilities as the manager keeps them: what the probes in
  * `@appflare/cf-api/capabilities` last found (R2 enabled, Containers
- * available, Workers plan), when, and the Workers plan every confirmation
- * reads: the detected one first, then the one an admin set. Client-safe: the
- * Settings card and the catalog page use the same words.
+ * available, Workers plan, a zone the token can see, Email Routing on it),
+ * when, and the Workers plan every confirmation reads: the detected one
+ * first, then the one an admin set. Client-safe: the Settings card and the
+ * catalog page use the same words.
  */
 
 const unknownSchema = z.object({
@@ -33,8 +37,14 @@ export const storedCapabilitiesSchema = z.object({
     unknownSchema,
   ]),
   workersPlan: z.union([z.object({ state: z.enum(["paid", "free"]) }), unknownSchema]),
+  // Absent in rows written before the domain probes existed: not checked yet.
+  zone: z.union([z.object({ state: z.enum(["available", "none"]) }), unknownSchema]).optional(),
+  emailRouting: z
+    .union([z.object({ state: z.enum(["available", "no-zone"]) }), unknownSchema])
+    .optional(),
 });
-export type StoredCapabilities = AccountCapabilities & { checkedAt: string };
+export type StoredCapabilities = AccountCapabilities &
+  Partial<DomainCapabilities> & { checkedAt: string };
 
 /** The stored row, or null when it is absent or unreadable (then nothing counts as detected). */
 export function parseStoredCapabilities(
@@ -81,6 +91,9 @@ export interface CapabilitiesView {
   r2: R2Capability | null;
   containers: ContainersCapability | null;
   workersPlan: WorkersPlanCapability | null;
+  /** Null until the domain probes have run once. */
+  zone: ZoneCapability | null;
+  emailRouting: EmailRoutingCapability | null;
   /** The plan in force and where it comes from. */
   plan: ResolvedAccountPlan;
   /** The plan an admin set in Settings, used when none is detected. */
@@ -96,6 +109,8 @@ export function capabilitiesView(
     r2: stored?.r2 ?? null,
     containers: stored?.containers ?? null,
     workersPlan: stored?.workersPlan ?? null,
+    zone: stored?.zone ?? null,
+    emailRouting: stored?.emailRouting ?? null,
     plan: resolveAccountPlan(manual, stored),
     manualPlan: manual === "free" || manual === "paid" ? manual : null,
   };
@@ -142,7 +157,7 @@ export const SOURCE_LABELS = {
 /** Why a probe could not tell, in one sentence. */
 export function unknownSentence(
   value: CapabilityUnknown,
-  what: "r2" | "containers" | "plan",
+  what: "r2" | "containers" | "plan" | "zone" | "email-routing",
 ): string {
   if (value.reason === "no-permission") {
     return {
@@ -150,6 +165,9 @@ export function unknownSentence(
       containers:
         "The token has no Containers permission, so Appflare cannot check. Workers Paid includes Containers.",
       plan: 'The token cannot read the account\'s subscriptions. Add the optional "Billing: Read" permission to detect the plan.',
+      zone: 'The token cannot list the account\'s domains. Add the optional "Zone: Read" permission.',
+      "email-routing":
+        'The token cannot read Email Routing on the account\'s domain. Add the optional "Zone Settings" permission.',
     }[what];
   }
   if (value.reason === "unrecognised") {
@@ -196,6 +214,18 @@ export function requirementBadge(
       return { met: false, label: "Detected: needs Workers Paid" };
     }
     return planBadgeOf(view.plan);
+  }
+  if (requirement === "zone") {
+    if (view.zone?.state === "available")
+      return { met: true, label: "Detected: active zone found" };
+    if (view.zone?.state === "none") return { met: false, label: "Detected: no active zone" };
+    return null;
+  }
+  if (requirement === "email-routing") {
+    const state = view.emailRouting?.state;
+    if (state === "available") return { met: true, label: "Detected: available" };
+    if (state === "no-zone") return { met: false, label: "Detected: no active zone" };
+    return null;
   }
   return null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { probeAccountCapabilities } from "./capabilities";
+import { probeAccountCapabilities, probeDomainCapabilities } from "./capabilities";
 import { createClient } from "./client";
 import { type DevContext, hasDevContext, loadDevContext } from "./dev";
 
@@ -53,6 +53,23 @@ describe.skipIf(dev === null)("cf-api integration (dev account, read-only)", () 
     expect(calls.every((c) => c.startsWith("GET "))).toBe(true);
     expect(calls.length).toBeGreaterThanOrEqual(3);
     expect(JSON.stringify(capabilities)).not.toContain(context.token);
+  });
+
+  it("reads the account's domain capabilities with at most two read calls", async () => {
+    const calls: string[] = [];
+    const client = createClient({
+      ...context,
+      onRequest: ({ method, path, status }) => calls.push(`${method} ${path} -> ${status}`),
+    });
+
+    const domains = await probeDomainCapabilities(client);
+    expect(["available", "none", "unknown"]).toContain(domains.zone.state);
+    expect(["available", "no-zone", "unknown"]).toContain(domains.emailRouting.state);
+    if (domains.zone.state === "none") expect(domains.emailRouting.state).toBe("no-zone");
+    expect(calls.every((c) => c.startsWith("GET "))).toBe(true);
+    expect(calls.length).toBeLessThanOrEqual(2);
+    expect(JSON.stringify(domains)).not.toContain(context.token);
+    expect(JSON.stringify(domains)).not.toContain(context.accountId);
   });
 });
 
