@@ -12,6 +12,7 @@ import {
   accountTokenTemplateUrl,
   CUSTOM_DOMAINS_FEATURE,
   EMAIL_ROUTING_FEATURE,
+  EXTERNAL_DOMAINS_FEATURE,
   optionalGroupsByFeature,
   PLAN_DETECTION_FEATURE,
   permissionName,
@@ -29,6 +30,8 @@ const optional = optionalGroupsByFeature();
 const FEATURE_PLACES: Readonly<Record<string, string>> = {
   [ACCESS_FEATURE]: `"${ACCESS_FEATURE}" in Settings > Users and access`,
   [CUSTOM_DOMAINS_FEATURE]: "Custom domains on an installed app's Domains and email tab",
+  [EXTERNAL_DOMAINS_FEATURE]:
+    "External domains (Settings > Domains, then an installed app's Domains and email tab)",
   [EMAIL_ROUTING_FEATURE]:
     "Installing an app that receives email (it also needs Zone: Read and DNS: Edit from the custom domains list)",
   [PLAN_DETECTION_FEATURE]:

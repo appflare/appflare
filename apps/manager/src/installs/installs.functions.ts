@@ -34,7 +34,12 @@ import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } fro
 import { startInstallInput } from "./install-input";
 import { renderPostInstall, workersDevUrl } from "./post-install";
 import { isDeleteRetainedJob } from "./removed-apps.server";
-import { CUSTOM_DOMAIN_KIND, EMAIL_ROUTE_KIND } from "./resource-kinds";
+import {
+  ADDRESS_KINDS,
+  CUSTOM_DOMAIN_KIND,
+  CUSTOM_HOSTNAME_KIND,
+  EMAIL_ROUTE_KIND,
+} from "./resource-kinds";
 import { catalogOnlyManifest, StartInstallError, startInstallCore } from "./start-install.server";
 import { domainHostnames, primaryDomain } from "./workers-dev";
 
@@ -137,7 +142,7 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
           name: resources.name,
         })
         .from(resources)
-        .where(and(eq(resources.kind, CUSTOM_DOMAIN_KIND), isNull(resources.deleted_at))),
+        .where(and(inArray(resources.kind, [...ADDRESS_KINDS]), isNull(resources.deleted_at))),
     ]);
     const catalog = new Map(read.ok ? read.index.apps.map((a) => [a.slug, a]) : []);
     /** Where the app is reached: workers.dev, or its primary custom domain while that is off. */
@@ -216,6 +221,8 @@ export interface InstallDetail extends InstallRow {
   secretNames: string[];
   /** Custom domains that serve the Worker, in the order they were added. */
   domains: CustomDomainView[];
+  /** External domains (`custom_hostname` resources), served through the gateway. */
+  externalDomains: CustomDomainView[];
   /** What the install set up in Email Routing, in the order it was set up. */
   emailRoutes: EmailRouteView[];
   /** Which uninstall action the page offers now. */
@@ -391,6 +398,9 @@ export const getInstall = createServerFn({ method: "GET" })
       secretNames: live.filter((r) => r.kind === "secret").map((r) => r.name),
       domains: live
         .filter((r) => r.kind === CUSTOM_DOMAIN_KIND)
+        .map((r) => ({ id: r.id, hostname: r.name, url: `https://${r.name}` })),
+      externalDomains: live
+        .filter((r) => r.kind === CUSTOM_HOSTNAME_KIND)
         .map((r) => ({ id: r.id, hostname: r.name, url: `https://${r.name}` })),
       emailRoutes: emailRouteViews(
         live

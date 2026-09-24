@@ -5,6 +5,7 @@ import {
   appTokenTemplateUrl,
   CUSTOM_DOMAINS_FEATURE,
   EMAIL_ROUTING_FEATURE,
+  EXTERNAL_DOMAINS_FEATURE,
   optionalGroupsByFeature,
   PLAN_DETECTION_FEATURE,
   permissionName,
@@ -116,6 +117,7 @@ describe("token template URLs", () => {
         feature: CUSTOM_DOMAINS_FEATURE,
         names: ["Zone: Read", "DNS: Edit", "Workers Routes: Edit"],
       },
+      { feature: EXTERNAL_DOMAINS_FEATURE, names: ["SSL and Certificates: Edit"] },
       {
         feature: EMAIL_ROUTING_FEATURE,
         names: [

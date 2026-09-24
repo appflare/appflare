@@ -42,6 +42,20 @@ export const WORKER_BOUND_KINDS = [
 export const CUSTOM_DOMAIN_KIND = "domain" as const;
 
 /**
+ * An external domain: a hostname in someone else's DNS that serves the
+ * Worker through a Cloudflare for SaaS custom hostname on the gateway zone
+ * (gateway/). `name` is the hostname, `cf_id` is `<zone id>/<custom
+ * hostname id>` (see `externalDomainRef`), `binding` the gateway's service
+ * binding to the Worker. It holds no data, so an uninstall always removes
+ * it, before the Worker: the custom hostname, its routing entry, and, with
+ * the install's last one, the gateway's binding.
+ */
+export const CUSTOM_HOSTNAME_KIND = "custom_hostname" as const;
+
+/** The kinds that give an install an address besides workers.dev, oldest first by id. */
+export const ADDRESS_KINDS = [CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND] as const;
+
+/**
  * A queue consumer: the link that delivers a queue's messages to the Worker.
  * It holds no data, so an uninstall always removes it, with its own call,
  * before the Worker and before any queue it reads.

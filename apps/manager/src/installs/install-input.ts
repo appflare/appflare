@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { VALIDATION_METHODS } from "../gateway/gateway";
 
 /**
  * Client-safe install input rules shared by the `/catalog/$slug` form and the
@@ -34,6 +35,26 @@ export const instanceNameSchema = z
 
 /** Values are bounded so a pasted blob cannot bloat the Workflow payload. */
 const MAX_VALUE_LENGTH = 4096;
+
+/**
+ * The address an install gets besides workers.dev, added by the install job
+ * once the Worker serves: a custom domain (a hostname in one of the
+ * account's zones) or an external domain (a hostname in someone else's DNS,
+ * through the gateway).
+ */
+export const installDomainInput = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("custom"),
+    zoneId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Choose a domain."),
+    hostname: z.string().min(1).max(300),
+  }),
+  z.object({
+    kind: z.literal("external"),
+    hostname: z.string().min(1).max(300),
+    validation: z.enum(VALIDATION_METHODS),
+  }),
+]);
+export type InstallDomainInput = z.infer<typeof installDomainInput>;
 
 export const startInstallInput = z.object({
   slug: z.string().min(1).max(100),
@@ -75,6 +96,8 @@ export const startInstallInput = z.object({
   emailRouting: z
     .object({ zoneId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Choose a zone.") })
     .optional(),
+  /** A custom or external domain the install job adds once the Worker serves. */
+  domain: installDomainInput.optional(),
 });
 export type StartInstallInput = z.infer<typeof startInstallInput>;
 

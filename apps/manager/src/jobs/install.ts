@@ -18,7 +18,7 @@ import { requirementLabel, requirementSentence } from "../catalog/requirements";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { workerNameSchema } from "../installs/install-input";
+import { installDomainInput, workerNameSchema } from "../installs/install-input";
 import { workersDevSubdomain } from "../installs/workers-dev";
 import {
   type ArtifactOrigin,
@@ -27,6 +27,7 @@ import {
 } from "./install/artifact-source";
 import { planBindings } from "./install/bindings";
 import { checkCronLimitPhase, putSchedulesChecked } from "./install/cron-limit";
+import { installDomainPhase } from "./install/domain";
 import {
   checkEmailRoutingPhase,
   emailRoutingJobInput,
@@ -99,6 +100,8 @@ export const installJobParams = z.object({
   requirementsConfirmed: z.boolean().optional(),
   /** The zone the admin chose, for an app whose manifest sets `install.emailRouting`. */
   emailRouting: emailRoutingJobInput.optional(),
+  /** A custom or external domain, added once the Worker serves (never fails the install). */
+  domain: installDomainInput.optional(),
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
 
@@ -541,6 +544,21 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       `https://${host}${appHealthPath(manifest.catalog.install)}`,
       appHealthMode(manifest.catalog.install),
     );
+
+    // The address the admin asked for besides workers.dev, now that the
+    // Worker serves; reported in the log, never a reason to fail.
+    if (params.domain !== undefined) {
+      await installDomainPhase(steps, {
+        db,
+        installId: params.installId,
+        workerName: params.workerName,
+        domain: params.domain,
+        health: {
+          path: appHealthPath(manifest.catalog.install),
+          mode: appHealthMode(manifest.catalog.install),
+        },
+      });
+    }
 
     // 10. Record the install.
     await run("finish", async ({ log, orm }) => {

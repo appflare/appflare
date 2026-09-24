@@ -77,7 +77,9 @@ describe("setWorkersDevCore", () => {
     const w = world();
     await expect(
       setWorkersDevCore(w.deps, { installId: INSTALL_ID, enabled: false }),
-    ).rejects.toThrow("This app has no custom domain, so workers.dev is its only address.");
+    ).rejects.toThrow(
+      "This app has no custom or external domain, so workers.dev is its only address.",
+    );
     expect(w.subdomainCalls).toEqual([]);
     expect(await stored()).toBe(1);
   });
@@ -93,7 +95,7 @@ describe("setWorkersDevCore", () => {
     await expect(
       setWorkersDevCore(w.deps, { installId: INSTALL_ID, enabled: false }),
     ).rejects.toThrow(
-      "None of this app's custom domains answered as the app (links.example.com, pending.example.com)",
+      "None of this app's domains answered as the app (links.example.com, pending.example.com)",
     );
     expect(w.subdomainCalls).toEqual([]);
     expect(await stored()).toBe(1);
@@ -137,7 +139,7 @@ describe("setWorkersDevCore", () => {
     const w = world({ "d.example.com": { status: 200, body: "ok" } });
     await expect(
       setWorkersDevCore(w.deps, { installId: INSTALL_ID, enabled: false }),
-    ).rejects.toThrow("None of this app's custom domains answered");
+    ).rejects.toThrow("None of this app's domains answered");
     expect(w.probes).toHaveLength(MAX_DOMAIN_PROBES);
   });
 

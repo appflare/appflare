@@ -10,7 +10,7 @@ import {
   probeHealth,
   settleHealthProbe,
 } from "../jobs/install/health";
-import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
+import { ADDRESS_KINDS } from "./resource-kinds";
 import { domainHostnames, type SetWorkersDevInput, workersDevSubdomain } from "./workers-dev";
 
 /**
@@ -90,14 +90,14 @@ export async function setWorkersDevCore(
       .where(
         and(
           eq(resources.install_id, input.installId),
-          eq(resources.kind, CUSTOM_DOMAIN_KIND),
+          inArray(resources.kind, [...ADDRESS_KINDS]),
           isNull(resources.deleted_at),
         ),
       );
     const hostnames = domainHostnames(rows);
     if (hostnames.length === 0) {
       throw new WorkersDevError(
-        "This app has no custom domain, so workers.dev is its only address. Add a custom domain first.",
+        "This app has no custom or external domain, so workers.dev is its only address. Add one first.",
       );
     }
     const check = healthCheckOfManifest(install.manifestJson);
@@ -112,7 +112,7 @@ export async function setWorkersDevCore(
     }
     if (servedBy === null) {
       throw new WorkersDevError(
-        `None of this app's custom domains answered as the app (${tried.join(", ")}), so turning off workers.dev would leave it without an address. Check the domains, then try again.`,
+        `None of this app's domains answered as the app (${tried.join(", ")}), so turning off workers.dev would leave it without an address. Check the domains, then try again.`,
       );
     }
   }
@@ -132,5 +132,5 @@ export async function setWorkersDevCore(
  */
 export function lastAddressRefusal(workersDev: boolean, otherDomains: number): string | null {
   if (workersDev || otherDomains > 0) return null;
-  return "This is the app's only address: its workers.dev URL is off. Turn on Serve on workers.dev first, or add another custom domain.";
+  return "This is the app's only address: its workers.dev URL is off. Turn on Serve on workers.dev first, or add another domain.";
 }

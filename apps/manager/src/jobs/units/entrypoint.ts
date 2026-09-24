@@ -4,6 +4,7 @@ import type { DeliveryReport } from "../../notifications/deliver.server";
 import type { HealthSweepReport } from "../../notifications/health-sweep.server";
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
 import type { CronTriggerScan } from "../install/cron-limit";
+import type { AttachDomainResult, WaitForExternalDomainResult } from "./domains";
 import type { UnitResult } from "./result";
 import type { SandboxSettleResult } from "./sandbox-settle";
 import {
@@ -49,6 +50,14 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   settleSandbox(input: unknown): Promise<UnitResult<SandboxSettleResult>> {
     return createJobUnits(this.env).settleSandbox(input);
+  }
+
+  attachDomain(input: unknown): Promise<UnitResult<AttachDomainResult>> {
+    return createJobUnits(this.env).attachDomain(input);
+  }
+
+  waitForExternalDomain(input: unknown): Promise<UnitResult<WaitForExternalDomainResult>> {
+    return createJobUnits(this.env).waitForExternalDomain(input);
   }
 
   // Notification units (src/notifications/units.ts): delivery and the scheduled health check.

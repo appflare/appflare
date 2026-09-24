@@ -58,6 +58,17 @@ export interface WorkerRoute {
   script?: string;
 }
 
+/** A new DNS record (`POST /zones/{zone_id}/dns_records`). */
+export interface CreateDnsRecordArgs {
+  type: string;
+  name: string;
+  content: string;
+  proxied?: boolean;
+  /** Seconds; 1 means automatic. */
+  ttl?: number;
+  comment?: string;
+}
+
 /** `GET /zones` pages at most 50 zones per page. */
 const ZONES_PER_PAGE = 50;
 
@@ -90,9 +101,40 @@ export function createZones(http: HttpApi) {
       });
     },
 
+    /** `POST /zones/{zone_id}/dns_records`. Needs DNS: Edit. */
+    createDnsRecord(zoneId: string, args: CreateDnsRecordArgs): Promise<DnsRecord> {
+      return http.result("POST", `/zones/${enc(zoneId)}/dns_records`, {
+        json: { ttl: 1, ...args },
+      });
+    },
+
+    /** `DELETE /zones/{zone_id}/dns_records/{id}`. Needs DNS: Edit. */
+    deleteDnsRecord(zoneId: string, recordId: string): Promise<unknown> {
+      return http.result("DELETE", `/zones/${enc(zoneId)}/dns_records/${enc(recordId)}`);
+    },
+
     /** `GET /zones/{zone_id}/workers/routes`. Needs Workers Routes: Read. */
     listWorkerRoutes(zoneId: string): Promise<WorkerRoute[]> {
       return http.result("GET", `/zones/${enc(zoneId)}/workers/routes`);
+    },
+
+    /**
+     * `POST /zones/{zone_id}/workers/routes` with `{ pattern, script }`; a
+     * route without a script excludes the pattern from broader routes. The
+     * catch-all pattern (any host, any path) is accepted only on a zone with
+     * Cloudflare for SaaS on (400 code 100327 otherwise). Needs Workers
+     * Routes: Edit.
+     */
+    createWorkerRoute(
+      zoneId: string,
+      args: { pattern: string; script?: string },
+    ): Promise<WorkerRoute> {
+      return http.result("POST", `/zones/${enc(zoneId)}/workers/routes`, { json: args });
+    },
+
+    /** `DELETE /zones/{zone_id}/workers/routes/{route_id}`. Needs Workers Routes: Edit. */
+    deleteWorkerRoute(zoneId: string, routeId: string): Promise<unknown> {
+      return http.result("DELETE", `/zones/${enc(zoneId)}/workers/routes/${enc(routeId)}`);
     },
   };
 }

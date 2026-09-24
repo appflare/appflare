@@ -47,6 +47,7 @@ export const RESOURCE_KINDS = [
   "subdomain",
   "ratelimit",
   "domain",
+  "custom_hostname",
   "email_route",
 ] as const;
 

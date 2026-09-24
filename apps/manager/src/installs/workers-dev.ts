@@ -66,14 +66,15 @@ export function appBaseUrl(input: {
 }
 
 /**
- * The custom domain hostnames among recorded resources, oldest first. Their
- * ids end with a ULID, so sorting by id is sorting by when they were added.
+ * The hostnames of the custom domains and external domains among recorded
+ * resources, oldest first. Their ids end with a ULID, so sorting by id is
+ * sorting by when they were added.
  */
 export function domainHostnames(
   rows: readonly { id: string; kind: string; name: string }[],
 ): string[] {
   return rows
-    .filter((r) => r.kind === "domain")
+    .filter((r) => r.kind === "domain" || r.kind === "custom_hostname")
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((r) => r.name);
 }
@@ -88,7 +89,7 @@ export const WORKERS_DEV_COPY = {
   label: "Serve on workers.dev",
   onHelp: (url: string) => `The app also answers at ${url}.`,
   offHelp:
-    "The app answers only on its custom domains. Update checks still use the Worker's preview URLs.",
+    "The app answers only on its custom and external domains. Update checks still use the Worker's preview URLs.",
   noDomain:
-    "Add a custom domain and make sure it serves the app before you turn this off; the workers.dev URL is the app's only address until then.",
+    "Add a custom or external domain and make sure it serves the app before you turn this off; the workers.dev URL is the app's only address until then.",
 } as const;

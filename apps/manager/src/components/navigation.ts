@@ -31,6 +31,12 @@ export const SETTINGS_PAGES = {
     label: "Usage data",
     description: "The anonymous daily report Appflare can send.",
   },
+  domains: {
+    href: "/settings/domains",
+    label: "Domains",
+    description:
+      "Serve apps on hostnames in other people's DNS, through Cloudflare for SaaS on one of your domains.",
+  },
   notifications: {
     href: "/settings/notifications",
     label: "Notifications",

@@ -5,12 +5,14 @@ import {
   type IndexApp,
   indexAppArtifact,
 } from "@appflare/schema";
-import { and, eq, ne, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { requirementLabel } from "../catalog/requirements";
 import { createDb } from "../db/client";
-import { installs, jobs } from "../db/schema";
+import { installs, jobs, resources } from "../db/schema";
+import { checkExternalHostname } from "../gateway/gateway";
+import { isGatewayReady, readGateway } from "../gateway/gateway.server";
 import type { InstallJobParams } from "../jobs/install";
 import { sandboxBuildOf } from "../jobs/install/artifact-source";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
@@ -25,8 +27,9 @@ import {
   refuseDuringSelfUpdate,
   selfUpdateBusyMessage,
 } from "../jobs/self-update/guard";
-import type { StartInstallInput } from "./install-input";
+import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { installVarFields, missingRequiredVar, varValueProblem } from "./install-vars";
+import { ADDRESS_KINDS } from "./resource-kinds";
 
 /**
  * Starting an install: validate the form against the signed catalog manifest,
@@ -96,6 +99,8 @@ export interface ResolvedInstallInput {
   vars: Record<string, string>;
   /** The zone for an app that receives email; undefined for any other app. */
   emailRouting?: { zoneId: string };
+  /** The custom or external domain the install job adds; undefined for workers.dev only. */
+  domain?: InstallDomainInput;
 }
 
 /**
@@ -155,10 +160,28 @@ export function resolveInstallInput(
   if (catalog.install.emailRouting === undefined && input.emailRouting !== undefined) {
     throw new StartInstallError(`${catalog.name} does not receive email; it takes no zone.`);
   }
+  let domain: InstallDomainInput | undefined;
+  if (input.domain?.kind === "custom") {
+    // Lower case and Punycode, as Cloudflare and the duplicate checks see it.
+    const typed = input.domain.hostname.trim().toLowerCase().replace(/\.$/, "");
+    let hostname: string;
+    try {
+      hostname = new URL(`https://${typed}/`).hostname;
+    } catch {
+      throw new StartInstallError(`"${input.domain.hostname.trim()}" is not a valid hostname.`);
+    }
+    domain = { ...input.domain, hostname };
+  } else if (input.domain?.kind === "external") {
+    // The gateway and the account's zones are checked again by the job.
+    const checked = checkExternalHostname(input.domain.hostname, { gateway: "", account: [] });
+    if (!checked.ok) throw new StartInstallError(checked.error);
+    domain = { ...input.domain, hostname: checked.hostname };
+  }
   return {
     secrets,
     vars,
     ...(input.emailRouting === undefined ? {} : { emailRouting: input.emailRouting }),
+    ...(domain === undefined ? {} : { domain }),
   };
 }
 
@@ -203,6 +226,37 @@ export async function startInstallCore(
   }
   if (installer === null && input.appToken !== undefined) {
     throw new StartInstallError(`${manifest.catalog.name} takes no app token.`);
+  }
+  if (installer !== null && resolved.domain !== undefined) {
+    throw new StartInstallError(
+      `${manifest.catalog.name}'s own installer decides where its Workers answer; add a domain once it is installed.`,
+    );
+  }
+  if (resolved.domain !== undefined) {
+    const [held] = await createDb(deps.db)
+      .select({ id: resources.id })
+      .from(resources)
+      .where(
+        and(
+          inArray(resources.kind, [...ADDRESS_KINDS]),
+          eq(resources.name, resolved.domain.hostname),
+          isNull(resources.deleted_at),
+        ),
+      )
+      .limit(1);
+    if (held !== undefined) {
+      throw new StartInstallError(
+        `${resolved.domain.hostname} is already a domain of another app. Remove it there first, or install without it.`,
+      );
+    }
+  }
+  if (
+    resolved.domain?.kind === "external" &&
+    !isGatewayReady(await readGateway(createDb(deps.db)))
+  ) {
+    throw new StartInstallError(
+      "External domains need the gateway. Set it up in Settings, Domains, or install without a domain.",
+    );
   }
   const now = (deps.now ?? (() => new Date()))();
   const newId = deps.newId ?? (() => ulid());
@@ -260,6 +314,7 @@ export async function startInstallCore(
     paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
+    ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
     ...(build === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
     // Names only: the app token lives in the Workflow params alone.
     ...(installer === null
@@ -373,6 +428,7 @@ export async function startInstallCore(
     paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
+    ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
   };
   let instanceId: string;
   try {

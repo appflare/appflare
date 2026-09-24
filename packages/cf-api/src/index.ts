@@ -52,6 +52,20 @@ export type {
   AssetBucketResult,
 } from "./namespaces/assets";
 export type { SubscriptionsPage } from "./namespaces/billing";
+export type {
+  CreateCustomHostnameArgs,
+  CustomHostname,
+  CustomHostnameQuota,
+  CustomHostnameSslMethod,
+  FallbackOrigin,
+  SslValidationRecord,
+} from "./namespaces/custom-hostnames";
+export {
+  CUSTOM_HOSTNAME_DUPLICATE,
+  CUSTOM_HOSTNAMES_NOT_ENABLED,
+  FALLBACK_ORIGIN_NOT_GRANTED,
+  FALLBACK_ORIGIN_NOT_SET,
+} from "./namespaces/custom-hostnames";
 export type { RestoreArgs } from "./namespaces/d1";
 export type {
   CreateEmailRoutingRuleArgs,
@@ -92,6 +106,7 @@ export type {
 } from "./namespaces/workers";
 
 export type {
+  CreateDnsRecordArgs,
   DnsRecord,
   ListZonesArgs,
   WorkerRoute,

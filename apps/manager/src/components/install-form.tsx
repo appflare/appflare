@@ -6,10 +6,11 @@ import {
 } from "@appflare/schema";
 import { Banner, Button, Input, InputArea, InputGroup, LayerCard, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useCallback, useState } from "react";
 import type { AccountPlan } from "../account/plan";
 import {
   INSTANCE_NAME_MAX_LENGTH,
+  type InstallDomainInput,
   WORKER_NAME_HINT,
   WORKER_NAME_MAX_LENGTH,
   WORKER_NAME_PATTERN,
@@ -23,6 +24,7 @@ import { startInstall } from "../installs/installs.functions";
 import { workersDevUrl } from "../installs/post-install";
 import { CronTriggersField } from "./cron-triggers-field";
 import { EmailRoutingFields } from "./email-routing-fields";
+import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
@@ -43,6 +45,8 @@ import {
  * cron triggers says how many it uses against the free plan's 5 per account;
  * if it does not need Workers Paid itself, the Workers Paid confirmation is
  * offered as optional and skips the job's count of the account's triggers.
+ * An address besides workers.dev (a custom or external domain) can be
+ * chosen; the install job adds it once the Worker serves.
  * When Settings records the account as on Workers Paid, no Workers Paid
  * confirmation is shown and it counts as given; otherwise ticking one also
  * offers "Remember this for the account", which records the plan.
@@ -127,6 +131,14 @@ export function InstallForm({
   const receivesEmail = catalog.install.emailRouting !== undefined;
   const [emailZoneId, setEmailZoneId] = useState<string | null>(null);
   const [emailReady, setEmailReady] = useState(false);
+  const [domain, setDomain] = useState<{ value: InstallDomainInput | null; complete: boolean }>({
+    value: null,
+    complete: true,
+  });
+  const onDomainChange = useCallback(
+    (value: InstallDomainInput | null, complete: boolean) => setDomain({ value, complete }),
+    [],
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -164,7 +176,8 @@ export function InstallForm({
     (confirmsCost === null || buildConfirmed) &&
     (installer === null || appToken.trim().length > 0) &&
     (catalog.requires.length === 0 || requirementsConfirmed) &&
-    (!receivesEmail || (emailZoneId !== null && emailReady));
+    (!receivesEmail || (emailZoneId !== null && emailReady)) &&
+    (installer !== null || domain.complete);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -187,6 +200,7 @@ export function InstallForm({
           ...(receivesEmail && emailZoneId !== null
             ? { emailRouting: { zoneId: emailZoneId } }
             : {}),
+          ...(installer === null && domain.value !== null ? { domain: domain.value } : {}),
         },
       });
       await jobStarted(jobId, "Install started");
@@ -327,6 +341,12 @@ export function InstallForm({
                 onZoneChange={setEmailZoneId}
                 onReadyChange={setEmailReady}
               />
+            )}
+
+            {/* The zone and gateway reads are admin-only calls; the installer of a
+                self-deploying app decides where its Workers answer. */}
+            {installer === null && canInstall && blockedReason === null && (
+              <InstallDomainFields disabled={disabled} onChange={onDomainChange} />
             )}
 
             {confirmsCost !== null && (

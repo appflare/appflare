@@ -6,7 +6,7 @@ import {
   type FetchLike,
   type Zone,
 } from "@appflare/cf-api";
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { ulid } from "ulidx";
 import {
   CUSTOM_DOMAINS_FEATURE,
@@ -17,7 +17,7 @@ import { createDb } from "../db/client";
 import { type HealthStatus, installs, resources } from "../db/schema";
 import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
 import { checkHostnameInZone } from "./custom-domain-input";
-import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
+import { ADDRESS_KINDS, CUSTOM_DOMAIN_KIND } from "./resource-kinds";
 import { lastAddressRefusal } from "./workers-dev.server";
 
 /**
@@ -228,63 +228,14 @@ export async function addCustomDomainCore(
     throw new CustomDomainError(`${hostname} is already a custom domain of this app.`);
   }
 
-  // The filter is applied again here: only an exact hostname match counts.
-  const existing = (await deps.api.workerDomains.listDomains({ hostname })).find(
-    (d) => d.hostname.toLowerCase() === hostname,
-  );
-  let domainId: string;
-  if (existing !== undefined && existing.service !== install.workerName) {
-    throw new CustomDomainError(otherWorkerMessage(hostname, existing.service));
-  }
-  if (existing !== undefined) {
-    // Attached to this Worker already (a request that failed after attaching,
-    // or by hand): record it rather than attach it again.
-    domainId = existing.id;
-  } else {
-    if (request.overrideExistingDnsRecord !== true) {
-      const records = await unlessForbidden(() =>
-        deps.api.zones.listDnsRecords(zone.id, { name: hostname }),
-      );
-      const conflicting = (records ?? []).filter((r) => ADDRESS_RECORD_TYPES.has(r.type));
-      if (conflicting.length > 0) {
-        return {
-          ok: false,
-          reason: "dns-conflict",
-          hostname,
-          records: conflicting.map((r) => ({ type: r.type, content: r.content ?? null })),
-        };
-      }
-    }
-    try {
-      const attached = await deps.api.workerDomains.attachDomain({
-        zoneId: zone.id,
-        hostname,
-        service: install.workerName,
-        ...(request.overrideExistingDnsRecord === true ? { overrideExistingDnsRecord: true } : {}),
-      });
-      domainId = attached.id;
-    } catch (error) {
-      if (hasCode(error, DOMAIN_DNS_RECORD_CONFLICT)) {
-        if (request.overrideExistingDnsRecord !== true) {
-          return { ok: false, reason: "dns-conflict", hostname, records: [] };
-        }
-        // Asked to replace them and still refused: some records cannot be
-        // replaced this way.
-        throw new CustomDomainError(
-          `Cloudflare would not replace the DNS records at ${hostname}, even when asked to. Delete them in the Cloudflare dashboard (the domain's DNS records) and add the domain again.`,
-        );
-      }
-      if (hasCode(error, DOMAIN_ORIGIN_CONFLICT)) {
-        throw new CustomDomainError(otherWorkerMessage(hostname, null));
-      }
-      if (isPermissionError(error)) {
-        throw new CustomDomainError(
-          `Cloudflare refused to attach ${hostname}: the token needs ${PERMISSION.routes} on ${zone.name} (and ${PERMISSION.dns} to replace records). Add them to the token and try again.`,
-        );
-      }
-      throw error;
-    }
-  }
+  const attached = await attachCheckedDomain(deps.api, {
+    zone,
+    hostname,
+    workerName: install.workerName,
+    overrideExistingDnsRecord: request.overrideExistingDnsRecord === true,
+  });
+  if (!attached.ok) return attached;
+  const domainId = attached.domainId;
 
   const resourceId = `${install.id}:${CUSTOM_DOMAIN_KIND}:${(deps.newId ?? (() => ulid()))()}`;
   // Recorded only while the install is not being uninstalled: an uninstall that
@@ -314,12 +265,83 @@ export async function addCustomDomainCore(
   return { ok: true, resourceId, hostname };
 }
 
+export type AttachCustomDomainResult =
+  | { ok: true; hostname: string; domainId: string }
+  | Extract<AddCustomDomainResult, { ok: false }>;
+
+/**
+ * Attaches `hostname` in `zone` to the Worker `workerName`, or finds it
+ * attached there already. Refuses a hostname that serves another Worker, and
+ * without `overrideExistingDnsRecord` one with DNS address records of its
+ * own (answered as `dns-conflict` with the records). Shared by adding a
+ * domain on the app page and by the install job's domain step.
+ */
+export async function attachCheckedDomain(
+  api: CloudflareClient,
+  request: { zone: Zone; hostname: string; workerName: string; overrideExistingDnsRecord: boolean },
+): Promise<AttachCustomDomainResult> {
+  const { zone, hostname, workerName } = request;
+  // The filter is applied again here: only an exact hostname match counts.
+  const existing = (await api.workerDomains.listDomains({ hostname })).find(
+    (d) => d.hostname.toLowerCase() === hostname,
+  );
+  if (existing !== undefined && existing.service !== workerName) {
+    throw new CustomDomainError(otherWorkerMessage(hostname, existing.service));
+  }
+  // Attached to this Worker already (a request that failed after attaching,
+  // a retried job step, or by hand): record it rather than attach it again.
+  if (existing !== undefined) return { ok: true, hostname, domainId: existing.id };
+  if (!request.overrideExistingDnsRecord) {
+    const records = await unlessForbidden(() =>
+      api.zones.listDnsRecords(zone.id, { name: hostname }),
+    );
+    const conflicting = (records ?? []).filter((r) => ADDRESS_RECORD_TYPES.has(r.type));
+    if (conflicting.length > 0) {
+      return {
+        ok: false,
+        reason: "dns-conflict",
+        hostname,
+        records: conflicting.map((r) => ({ type: r.type, content: r.content ?? null })),
+      };
+    }
+  }
+  try {
+    const attached = await api.workerDomains.attachDomain({
+      zoneId: zone.id,
+      hostname,
+      service: workerName,
+      ...(request.overrideExistingDnsRecord ? { overrideExistingDnsRecord: true } : {}),
+    });
+    return { ok: true, hostname, domainId: attached.id };
+  } catch (error) {
+    if (hasCode(error, DOMAIN_DNS_RECORD_CONFLICT)) {
+      if (!request.overrideExistingDnsRecord) {
+        return { ok: false, reason: "dns-conflict", hostname, records: [] };
+      }
+      // Asked to replace them and still refused: some records cannot be
+      // replaced this way.
+      throw new CustomDomainError(
+        `Cloudflare would not replace the DNS records at ${hostname}, even when asked to. Delete them in the Cloudflare dashboard (the domain's DNS records) and add the domain again.`,
+      );
+    }
+    if (hasCode(error, DOMAIN_ORIGIN_CONFLICT)) {
+      throw new CustomDomainError(otherWorkerMessage(hostname, null));
+    }
+    if (isPermissionError(error)) {
+      throw new CustomDomainError(
+        `Cloudflare refused to attach ${hostname}: the token needs ${PERMISSION.routes} on ${zone.name} (and ${PERMISSION.dns} to replace records). Add them to the token and try again.`,
+      );
+    }
+    throw error;
+  }
+}
+
 function otherWorkerMessage(hostname: string, worker: string | null): string {
   const which = worker === null ? "another Worker" : `the Worker "${worker}"`;
   return `${hostname} already serves ${which}. Remove it there first; Appflare does not move a domain away from another Worker.`;
 }
 
-async function readZone(api: CloudflareClient, zoneId: string): Promise<Zone> {
+export async function readZone(api: CloudflareClient, zoneId: string): Promise<Zone> {
   let zone: Zone;
   try {
     zone = await api.zones.getZone(zoneId);
@@ -402,7 +424,7 @@ export async function removeCustomDomainCore(
     throw new CustomDomainError("The uninstall removes this app's custom domains.");
   }
   const domain = await readDomain(deps.db, request);
-  // With workers.dev off, the last custom domain is the app's only address.
+  // With workers.dev off, the last custom or external domain is the app's only address.
   if (!install.workersDev) {
     const others = await createDb(deps.db)
       .select({ id: resources.id })
@@ -410,7 +432,7 @@ export async function removeCustomDomainCore(
       .where(
         and(
           eq(resources.install_id, request.installId),
-          eq(resources.kind, CUSTOM_DOMAIN_KIND),
+          inArray(resources.kind, [...ADDRESS_KINDS]),
           isNull(resources.deleted_at),
           ne(resources.id, domain.id),
         ),

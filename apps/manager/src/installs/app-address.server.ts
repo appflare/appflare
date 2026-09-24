@@ -1,12 +1,12 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { resources } from "../db/schema";
-import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
+import { ADDRESS_KINDS } from "./resource-kinds";
 import { domainHostnames, primaryDomain, workersDevBase } from "./workers-dev";
 
 /**
  * Where an install is reached now: its workers.dev URL while that is on,
- * else its primary custom domain (see `primaryDomain`). Null when neither is
+ * else its primary custom or external domain (see `primaryDomain`). Null when neither is
  * known (workers.dev with no known subdomain).
  */
 export async function readAppBaseUrl(
@@ -26,7 +26,7 @@ export async function readAppBaseUrl(
       .where(
         and(
           eq(resources.install_id, install.id),
-          eq(resources.kind, CUSTOM_DOMAIN_KIND),
+          inArray(resources.kind, [...ADDRESS_KINDS]),
           isNull(resources.deleted_at),
         ),
       );

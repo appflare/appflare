@@ -44,6 +44,15 @@ export const ACCESS_FEATURE = "Protect with Cloudflare Access";
 export const CUSTOM_DOMAINS_FEATURE = "Custom domains";
 
 /**
+ * Serving an app on a hostname in someone else's DNS ("external domain"),
+ * through Cloudflare for SaaS custom hostnames on one zone of the account
+ * (the gateway zone, chosen in Settings > Domains). It also needs Zone: Read,
+ * DNS: Edit and Workers Routes: Edit on that zone, listed under custom
+ * domains: a group names one feature.
+ */
+export const EXTERNAL_DOMAINS_FEATURE = "External domains";
+
+/**
  * The install page feature that delivers a zone's email to an app's Worker.
  * It also needs Zone: Read and DNS: Edit, listed under custom domains: a
  * group names one feature, and those two are already in the token.
@@ -90,6 +99,15 @@ export const TOKEN_PERMISSION_GROUPS = [
   { key: "dns", type: "edit", label: "DNS", onlyFor: CUSTOM_DOMAINS_FEATURE },
   // What Cloudflare requires on a zone to attach a Worker to one of its hostnames.
   { key: "workers_routes", type: "edit", label: "Workers Routes", onlyFor: CUSTOM_DOMAINS_FEATURE },
+  // Create and remove custom hostnames and set the fallback origin on the
+  // gateway zone (Cloudflare for SaaS). Key `ssl_and_certificates` is in the
+  // template page's key table.
+  {
+    key: "ssl_and_certificates",
+    type: "edit",
+    label: "SSL and Certificates",
+    onlyFor: EXTERNAL_DOMAINS_FEATURE,
+  },
   // Read whether Email Routing is on for the zone an email app uses, and turn
   // it on (Cloudflare then adds its MX, SPF and DKIM records) or off again.
   // Cloudflare's API files these calls under Zone Settings.

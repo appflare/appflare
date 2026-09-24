@@ -5,12 +5,15 @@ import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { SETTING, writeSettings } from "../db/settings";
+import { readGateway, setUpGatewayCore } from "../gateway/gateway.server";
+import { addExternalDomainCore } from "../installs/external-domains.server";
 import { startDeleteRetainedCore } from "../installs/removed-apps.server";
 import {
   StartUninstallError,
   type StartUninstallRequest,
   startUninstallCore,
 } from "../installs/start-uninstall.server";
+import { fakeSaas, GATEWAY_ZONE } from "../test/fake-saas";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import type { JobEnv } from "./run-job";
@@ -1111,5 +1114,78 @@ describe("deleting the data an uninstall kept", () => {
     expect(job).toEqual({ status: "failed" });
     const install = await env.DB.prepare("SELECT status FROM installs WHERE id = 'i1'").first();
     expect(install).toEqual({ status: "uninstalled" });
+  });
+});
+
+describe("uninstall job: external domains", () => {
+  /** The uninstall fake, with the gateway's calls answered by the SaaS fake. */
+  function withSaas(saas: ReturnType<typeof fakeSaas>) {
+    const fake = fakeWorld();
+    const fetch = async (input: string, init?: RequestInit) => {
+      const path = new URL(input).pathname;
+      const gatewayCall =
+        path.includes("/zones/") || path.includes("/values/") || path.includes("/appflare-gateway");
+      return gatewayCall ? saas.fetch(input, init) : fake.fetch(input, init);
+    };
+    return { world: fake.world, fetch };
+  }
+
+  async function gatewayWith(hostnames: string[]) {
+    const saas = fakeSaas();
+    await setUpGatewayCore(
+      { db: env.DB, api: saas.api, sleep: async () => {} },
+      {
+        zoneId: GATEWAY_ZONE.id,
+      },
+    );
+    for (const hostname of hostnames) {
+      await addExternalDomainCore(
+        { db: env.DB, api: saas.api },
+        { installId: "i1", hostname, validation: "http" },
+      );
+    }
+    return saas;
+  }
+
+  it("removes each custom hostname and routing entry, then the gateway's binding, before the Worker", async () => {
+    await seedInstall();
+    const saas = await gatewayWith(["a.customer.test", "b.customer.test"]);
+    const kvId = (await readGateway(createDb(env.DB)))?.kvId ?? "";
+    expect(Object.keys(saas.world.values[kvId] ?? {})).toHaveLength(2);
+
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, withSaas(saas));
+
+    expect(r.error).toBeNull();
+    expect(r.step.names.slice(0, 5)).toEqual([
+      "start",
+      "remove external domain a.customer.test",
+      "remove external domain b.customer.test",
+      "remove gateway binding APP_I1",
+      "delete Worker cut",
+    ]);
+    expect(saas.world.hostnames).toEqual([]);
+    expect(saas.world.values[kvId]).toEqual({});
+    expect(saas.world.patches.at(-1)).toEqual({ name: "appflare-gateway", env: { APP_I1: null } });
+    expect(r.logs[0]?.message).toContain(
+      "Removing external domains: a.customer.test, b.customer.test.",
+    );
+    const left = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM resources WHERE install_id = 'i1' AND kind = 'custom_hostname' AND deleted_at IS NULL",
+    ).first<{ n: number }>();
+    expect(left?.n).toBe(0);
+  });
+
+  it("still removes the binding on a retry after the domains were removed", async () => {
+    await seedInstall();
+    const saas = await gatewayWith(["a.customer.test"]);
+    // A run that removed the domain and then failed.
+    saas.world.hostnames = [];
+    await env.DB.prepare(
+      "UPDATE resources SET deleted_at = 1 WHERE install_id = 'i1' AND kind = 'custom_hostname'",
+    ).run();
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, withSaas(saas));
+    expect(r.error).toBeNull();
+    expect(r.step.names).toContain("remove gateway binding APP_I1");
+    expect(saas.world.scripts["appflare-gateway"]?.some((b) => b.name === "APP_I1")).toBe(false);
   });
 });

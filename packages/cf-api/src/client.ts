@@ -3,6 +3,7 @@ import { createAccess } from "./namespaces/access";
 import { createAssets } from "./namespaces/assets";
 import { createBilling } from "./namespaces/billing";
 import { createContainers } from "./namespaces/containers";
+import { createCustomHostnames } from "./namespaces/custom-hostnames";
 import { createD1 } from "./namespaces/d1";
 import { createEmailRouting } from "./namespaces/email-routing";
 import { createKv } from "./namespaces/kv";
@@ -34,6 +35,7 @@ export interface CloudflareClient {
   readonly emailRouting: ReturnType<typeof createEmailRouting>;
   readonly containers: ReturnType<typeof createContainers>;
   readonly billing: ReturnType<typeof createBilling>;
+  readonly customHostnames: ReturnType<typeof createCustomHostnames>;
 }
 
 /**
@@ -62,5 +64,6 @@ export function createClient(options: ClientOptions): CloudflareClient {
     emailRouting: createEmailRouting(http),
     containers: createContainers(http),
     billing: createBilling(http),
+    customHostnames: createCustomHostnames(http),
   };
 }

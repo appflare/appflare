@@ -31,6 +31,16 @@ import {
   runCronTriggerCount,
 } from "./cron-triggers";
 import {
+  type AttachDomainInput,
+  type AttachDomainResult,
+  attachDomainInputSchema,
+  runAttachDomain,
+  runWaitForExternalDomain,
+  type WaitForExternalDomainInput,
+  type WaitForExternalDomainResult,
+  waitForExternalDomainInputSchema,
+} from "./domains";
+import {
   type EmailRoutingInspectInput,
   emailRoutingInspectInputSchema,
   runEmailRoutingInspection,
@@ -202,6 +212,12 @@ export interface JobUnitsApi {
   countCronTriggers(input: CronTriggerCountInput): Promise<UnitResult<CronTriggerScan>>;
   /** Waits for the sandbox Worker to answer from one version before a run starts in it. */
   settleSandbox(input: SettleSandboxInput): Promise<UnitResult<SandboxSettleResult>>;
+  /** Attaches the custom domain or external domain an install asked for. */
+  attachDomain(input: AttachDomainInput): Promise<UnitResult<AttachDomainResult>>;
+  /** Waits for an external domain and its certificate to go active, then probes the app through it. */
+  waitForExternalDomain(
+    input: WaitForExternalDomainInput,
+  ): Promise<UnitResult<WaitForExternalDomainResult>>;
 }
 
 /** The unit names, as RPC method names. */
@@ -452,6 +468,14 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
     settleSandbox: (input) =>
       parsed(settleSandboxInputSchema, input, "settleSandbox", (request) =>
         runSandboxSettle(env, deps, request),
+      ),
+    attachDomain: (input) =>
+      parsed(attachDomainInputSchema, input, "attachDomain", (request) =>
+        runAttachDomain(env, deps, request),
+      ),
+    waitForExternalDomain: (input) =>
+      parsed(waitForExternalDomainInputSchema, input, "waitForExternalDomain", (request) =>
+        runWaitForExternalDomain(env, deps, request),
       ),
   };
 }

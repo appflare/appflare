@@ -23,6 +23,7 @@ function workerBoundSummary(install: InstallDetail): string[] {
   const out: string[] = [];
   const byKind = (kind: string) => install.resources.filter((r) => r.kind === kind);
   for (const d of install.domains) out.push(`the custom domain ${d.hostname}`);
+  for (const d of install.externalDomains) out.push(`the external domain ${d.hostname}`);
   for (const r of byKind("subdomain")) out.push(`the route ${r.name}`);
   for (const r of byKind(QUEUE_CONSUMER_KIND)) out.push(`the consumer of the queue ${r.name}`);
   const crons = byKind("cron").length;
@@ -154,15 +155,16 @@ export function UninstallDialog({
           </ul>
         </div>
       )}
-      {install.domains.length > 0 && (
+      {install.domains.length + install.externalDomains.length > 0 && (
         <div className="grid gap-1.5">
-          <Text bold>Custom domains</Text>
+          <Text bold>Domains</Text>
           <Text variant="secondary">
-            Removed first, before the Worker. A custom domain holds no data, so there is nothing to
-            keep.
+            Removed first, before the Worker. A domain holds no data, so there is nothing to keep.
+            External domains stop answering at once; their owners can delete the DNS records they
+            added.
           </Text>
           <ul className="grid gap-1">
-            {install.domains.map((d) => (
+            {[...install.domains, ...install.externalDomains].map((d) => (
               <li key={d.id} className="font-mono text-[0.9em]">
                 {d.hostname}
               </li>

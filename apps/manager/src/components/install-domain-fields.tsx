@@ -1,0 +1,259 @@
+import { Banner, InputGroup, Link, Loader, Radio, Select, Text } from "@cloudflare/kumo";
+import { InfoIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
+import { useEffect, useState } from "react";
+import {
+  checkExternalHostname,
+  EXTERNAL_DOMAIN_COST,
+  type ValidationMethod,
+} from "../gateway/gateway";
+import { checkHostnameInZone } from "../installs/custom-domain-input";
+import { getDomainOptions } from "../installs/custom-domains.functions";
+import type { DomainOptions } from "../installs/custom-domains.server";
+import type { ExternalDomainOptions } from "../installs/external-domain-input";
+import { getExternalDomainOptions } from "../installs/external-domains.functions";
+import type { InstallDomainInput } from "../installs/install-input";
+import { ValidationChoice } from "./external-domains-section";
+
+type Choice = "none" | "custom" | "external";
+
+const mono = "font-mono text-[0.9em]";
+
+/**
+ * The install form's address choice: workers.dev only (the default), a
+ * custom domain (a hostname in one of the account's zones), or an external
+ * domain (a hostname elsewhere, through the gateway). The install job adds
+ * the domain once the Worker serves; a domain that cannot be added then does
+ * not fail the install. `onChange` reports the domain to send (null for none)
+ * and whether the choice is complete.
+ */
+export function InstallDomainFields({
+  disabled,
+  onChange,
+}: {
+  disabled: boolean;
+  /** A state setter (stable). */
+  onChange(domain: InstallDomainInput | null, complete: boolean): void;
+}) {
+  const [choice, setChoice] = useState<Choice>("none");
+  const [custom, setCustom] = useState<DomainOptions | null>(null);
+  const [external, setExternal] = useState<ExternalDomainOptions | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [zoneId, setZoneId] = useState<string | null>(null);
+  const [hostname, setHostname] = useState("");
+  const [touched, setTouched] = useState(false);
+  const [method, setMethod] = useState<ValidationMethod>("http");
+
+  // Read the zones and the gateway the first time a domain is chosen.
+  useEffect(() => {
+    if (choice === "none") return;
+    let live = true;
+    const load =
+      choice === "custom"
+        ? custom === null
+          ? getDomainOptions().then((o) => {
+              if (!live) return;
+              setCustom(o);
+              const [only] = o.zones;
+              if (o.zones.length === 1 && only !== undefined) setZoneId(only.id);
+            })
+          : null
+        : external === null
+          ? getExternalDomainOptions().then((o) => live && setExternal(o))
+          : null;
+    load?.catch((err: unknown) => {
+      if (live) setLoadError(err instanceof Error ? err.message : "Could not read the domains.");
+    });
+    return () => {
+      live = false;
+    };
+  }, [choice, custom, external]);
+
+  const zone = custom?.zones.find((z) => z.id === zoneId) ?? null;
+  const customCheck = zone === null ? null : checkHostnameInZone(hostname, zone.name);
+  const gateway = external?.gateway ?? null;
+  const externalCheck =
+    gateway === null
+      ? null
+      : checkExternalHostname(hostname, {
+          gateway: gateway.zoneName,
+          account: external?.accountZones ?? [],
+        });
+  const check = choice === "custom" ? customCheck : choice === "external" ? externalCheck : null;
+  const hostnameError = touched && check !== null && !check.ok ? check.error : undefined;
+
+  const chosen: InstallDomainInput | null =
+    choice === "custom" && customCheck?.ok === true && zone !== null
+      ? { kind: "custom", zoneId: zone.id, hostname: customCheck.hostname }
+      : choice === "external" && externalCheck?.ok === true
+        ? { kind: "external", hostname: externalCheck.hostname, validation: method }
+        : null;
+  // Reported by value, so an unchanged choice does not update the form again.
+  const reported = JSON.stringify(chosen);
+  const complete = choice === "none" || chosen !== null;
+  useEffect(() => {
+    onChange(JSON.parse(reported) as InstallDomainInput | null, complete);
+  }, [reported, complete, onChange]);
+
+  const loading =
+    (choice === "custom" && custom === null) || (choice === "external" && external === null);
+
+  return (
+    <div className="grid gap-4">
+      <Radio.Group
+        legend="Address"
+        description="Where the app answers besides its workers.dev URL. The install adds the domain once the app runs; more can be added later on its page."
+        value={choice}
+        onValueChange={(v) => {
+          setChoice(v === "custom" || v === "external" ? v : "none");
+          setTouched(false);
+          setLoadError(null);
+        }}
+        disabled={disabled}
+      >
+        <Radio.Item value="none" label="workers.dev only" />
+        <Radio.Item value="custom" label="Custom domain, in one of this account's domains" />
+        <Radio.Item value="external" label="External domain, whose DNS is managed elsewhere" />
+      </Radio.Group>
+
+      {loading && loadError === null && (
+        <div className="flex items-center gap-2">
+          <Loader size="sm" />
+          <Text variant="secondary">Reading the account's domains…</Text>
+        </div>
+      )}
+      {loadError !== null && (
+        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={loadError} />
+      )}
+
+      {choice === "custom" && custom !== null && custom.zones.length === 0 && (
+        <Banner
+          variant="alert"
+          icon={<WarningIcon weight="fill" />}
+          title="No domain of this account can serve an app"
+          description={
+            custom.missing.length > 0
+              ? `The token may lack ${custom.missing.join(", ")}, or the account has no active domain.`
+              : "None of the account's domains is active yet."
+          }
+        />
+      )}
+      {choice === "custom" && custom !== null && custom.zones.length > 0 && (
+        <>
+          <Select
+            label="Domain"
+            placeholder="Choose a domain"
+            value={zoneId}
+            onValueChange={(v) => setZoneId(typeof v === "string" ? v : null)}
+            items={Object.fromEntries(custom.zones.map((z) => [z.id, z.name]))}
+            disabled={disabled}
+          />
+          <HostnameField
+            value={hostname}
+            onChange={setHostname}
+            onBlur={() => setTouched(true)}
+            error={hostnameError}
+            disabled={disabled || zone === null}
+            placeholder={zone === null ? "app.example.com" : `app.${zone.name}`}
+            description={
+              zone === null
+                ? "Choose a domain first."
+                : `${zone.name} itself or a name under it. A hostname that already has DNS records is not replaced during the install; add it on the app's page then.`
+            }
+          />
+        </>
+      )}
+
+      {choice === "external" && external !== null && gateway === null && (
+        <Banner
+          variant="alert"
+          icon={<WarningIcon weight="fill" />}
+          title="The gateway for external domains is not set up"
+          description={
+            <span>
+              Set it up once in <Link href="/settings/domains">Settings, Domains</Link>, or install
+              with workers.dev only and add the domain later.
+            </span>
+          }
+        />
+      )}
+      {choice === "external" && gateway !== null && (
+        <>
+          <HostnameField
+            value={hostname}
+            onChange={setHostname}
+            onBlur={() => setTouched(true)}
+            error={hostnameError}
+            disabled={disabled}
+            placeholder="app.example.org"
+            description={
+              externalCheck?.ok === true && externalCheck.apex
+                ? `${externalCheck.hostname} is a whole domain (an apex). Its DNS host must support a CNAME at the apex (CNAME flattening or ALIAS).`
+                : "One exact hostname whose DNS is managed outside this account."
+            }
+          />
+          <ValidationChoice value={method} onChange={setMethod} disabled={disabled} />
+          <Banner
+            variant="secondary"
+            icon={<InfoIcon weight="fill" />}
+            title="What the domain's owner adds"
+            description={
+              method === "http" ? (
+                <span>
+                  A CNAME from the hostname to <span className={mono}>{gateway.hostname}</span>. If
+                  it is there before the install, the domain is usually live by the time the install
+                  finishes.
+                </span>
+              ) : (
+                <span>
+                  TXT records the install shows once it has registered the name, then a CNAME to{" "}
+                  <span className={mono}>{gateway.hostname}</span>.
+                </span>
+              )
+            }
+          />
+          <Text variant="secondary" size="sm">
+            {EXTERNAL_DOMAIN_COST}
+          </Text>
+        </>
+      )}
+    </div>
+  );
+}
+
+function HostnameField({
+  value,
+  onChange,
+  onBlur,
+  error,
+  disabled,
+  placeholder,
+  description,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+  error: string | undefined;
+  disabled: boolean;
+  placeholder: string;
+  description: string;
+}) {
+  return (
+    <InputGroup
+      label="Hostname"
+      error={error === undefined ? undefined : { message: error, match: true }}
+      description={description}
+      disabled={disabled}
+    >
+      <InputGroup.Addon>https://</InputGroup.Addon>
+      <InputGroup.Input
+        aria-label="Hostname"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.currentTarget.value)}
+        onBlur={onBlur}
+        autoComplete="off"
+        spellCheck={false}
+      />
+    </InputGroup>
+  );
+}

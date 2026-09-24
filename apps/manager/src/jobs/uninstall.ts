@@ -6,14 +6,23 @@ import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import {
+  isGatewayReady,
+  readGateway,
+  SSL_PERMISSION,
+  saasRefusal,
+  unbindGatewayService,
+} from "../gateway/gateway.server";
+import {
   type DetachOutcome,
   detachCustomDomain,
   detachMessage,
   isPermissionError,
 } from "../installs/custom-domains.server";
+import { detachExternalDomain, externalDetachMessage } from "../installs/external-domains.server";
 import { namesHeldElsewhere } from "../installs/removed-apps.server";
 import {
   CUSTOM_DOMAIN_KIND,
+  CUSTOM_HOSTNAME_KIND,
   DATA_RESOURCE_KINDS,
   type DataResourceKind,
   EMAIL_ROUTE_KIND,
@@ -37,9 +46,12 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
  * retried or repeated uninstall converges. Order: what the install set up in
  * Email Routing first (its routing rules, the catch-all, then Email Routing
  * itself if Appflare turned it on and nothing else uses it; mail must not go
- * to a deleted Worker), then the install's custom domains (always; they hold
- * no data, and Cloudflare does not document that deleting a Worker removes
- * them, so they get calls of their own), then its queue consumers (no data
+ * to a deleted Worker), then its external domains (each custom hostname and
+ * its routing entry, then the gateway's binding to the Worker, so the
+ * gateway never binds a deleted Worker), then the install's custom domains
+ * (always; they hold no data, and Cloudflare does not document that deleting
+ * a Worker removes them, so they get calls of their own), then its queue
+ * consumers (no data
  * either; each is removed before the Worker it points at and before the queue
  * it reads), then the Worker (with `?force=true`, which also removes its cron
  * triggers, workers.dev route, secrets, Durable Objects, and Workflows), then
@@ -122,6 +134,16 @@ interface DomainTarget {
   cfId: string | null;
 }
 
+/** A recorded external domain: `cfId` is `<zone id>/<custom hostname id>`. */
+interface ExternalDomainTarget {
+  id: string;
+  hostname: string;
+  cfId: string | null;
+  binding: string | null;
+  /** When the install claimed the name (epoch ms). */
+  claimedAt: number;
+}
+
 export async function runUninstall(ctx: JobContext): Promise<void> {
   const parsed = uninstallJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid uninstall job payload");
@@ -169,6 +191,33 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       const domains: DomainTarget[] = live
         .filter((r) => r.kind === CUSTOM_DOMAIN_KIND)
         .map((r) => ({ id: r.id, hostname: r.name, cfId: r.cf_id }));
+      // Nor are external domains. The gateway's bindings to the Worker are
+      // read from every external domain the install ever had, so a run that
+      // removed the domains but not the binding removes it when retried.
+      const externalDomains: ExternalDomainTarget[] = live
+        .filter((r) => r.kind === CUSTOM_HOSTNAME_KIND)
+        .map((r) => ({
+          id: r.id,
+          hostname: r.name,
+          cfId: r.cf_id,
+          binding: r.binding,
+          claimedAt: r.created_at.getTime(),
+        }));
+      const gatewayBindings = [
+        ...new Set(
+          (
+            await orm
+              .select({ binding: resources.binding })
+              .from(resources)
+              .where(
+                and(
+                  eq(resources.install_id, params.installId),
+                  eq(resources.kind, CUSTOM_HOSTNAME_KIND),
+                ),
+              )
+          ).flatMap((r) => (r.binding === null ? [] : [r.binding])),
+        ),
+      ];
       // Email routes are never kept either: mail to a deleted Worker bounces.
       const emailRoutes: EmailRouteRecord[] = live
         .filter((r) => r.kind === EMAIL_ROUTE_KIND)
@@ -205,6 +254,9 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           (domains.length > 0
             ? `Removing custom domains: ${domains.map((d) => d.hostname).join(", ")}. `
             : "") +
+          (externalDomains.length > 0
+            ? `Removing external domains: ${externalDomains.map((d) => d.hostname).join(", ")}. `
+            : "") +
           (targets.length > 0
             ? `Deleting: ${targets.map((t) => `${RESOURCE_LABEL[t.kind]} ${t.name}`).join(", ")}. `
             : "No data resources to delete. ") +
@@ -215,6 +267,8 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         accountId: settings.account_id,
         targets,
         domains,
+        externalDomains,
+        gatewayBindings,
         consumers,
         emailRoutes,
         kept,
@@ -238,6 +292,48 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
 
     // A job started before email routes existed carries no list.
     await removeEmailRoutesPhase(steps, started.emailRoutes ?? [], workerName);
+
+    // A run started before external domains existed carries none.
+    for (const domain of started.externalDomains ?? []) {
+      await run(`remove external domain ${domain.hostname}`, async ({ log, cf, orm }) => {
+        try {
+          const outcome = await detachExternalDomain(cf(), await readGateway(orm), {
+            hostname: domain.hostname,
+            cfId: domain.cfId,
+            // A run started before these were recorded removes the routing entry as before.
+            binding: domain.binding ?? null,
+            claimedAt: domain.claimedAt ?? 0,
+          });
+          log.info(externalDetachMessage(domain.hostname, outcome));
+        } catch (error) {
+          if (saasRefusal(error) !== "missing-permission") throw error;
+          throw new JobError(
+            `Cloudflare refused to remove the external domain ${domain.hostname} (${errorMessage(error)}). The token needs ${SSL_PERMISSION} on the gateway domain; add it to the token and retry the uninstall`,
+          );
+        }
+        await orm
+          .update(resources)
+          .set({ deleted_at: new Date(now()) })
+          .where(eq(resources.id, domain.id));
+        return {};
+      });
+    }
+    for (const binding of started.gatewayBindings ?? []) {
+      await run(`remove gateway binding ${binding}`, async ({ log, cf, orm }) => {
+        const gateway = await readGateway(orm);
+        if (!isGatewayReady(gateway)) {
+          log.info("The external domains gateway is gone, and its bindings with it.");
+          return {};
+        }
+        const outcome = await unbindGatewayService(cf(), gateway, binding);
+        log.info(
+          outcome === "unchanged"
+            ? `The gateway no longer reaches "${workerName}".`
+            : `Removed the gateway's binding ${binding} to "${workerName}".`,
+        );
+        return {};
+      });
+    }
 
     for (const domain of started.domains) {
       await run(`remove custom domain ${domain.hostname}`, async ({ log, cf, orm }) => {

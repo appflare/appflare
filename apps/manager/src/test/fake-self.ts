@@ -63,5 +63,7 @@ export function fakeSelf(
     inspectEmailRouting: (input) => call("inspectEmailRouting", input),
     countCronTriggers: (input) => call("countCronTriggers", input),
     settleSandbox: (input) => call("settleSandbox", input),
+    attachDomain: (input) => call("attachDomain", input),
+    waitForExternalDomain: (input) => call("waitForExternalDomain", input),
   };
 }

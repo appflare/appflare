@@ -77,6 +77,13 @@ export const SETTING = {
    */
   autoUpdateApps: "auto_update_apps",
   autoUpdateManager: "auto_update_manager",
+  /**
+   * JSON: the external domains gateway (gateway/gateway.server.ts): its zone
+   * and what Appflare created there (DNS record, fallback origin, KV
+   * namespace, Worker, route), so turning it off removes exactly that.
+   * Written as each piece is created; absent when there is no gateway.
+   */
+  externalDomainsGateway: "external_domains_gateway",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

@@ -5,6 +5,7 @@ import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
+import { SETTING, writeSettings } from "../db/settings";
 import type { InstallJobParams } from "../jobs/install";
 import { type ArtifactFixture, buildArtifactFixture } from "../test/artifact-fixture";
 import type { StartInstallInput } from "./install-input";
@@ -393,6 +394,90 @@ describe("startInstallCore", () => {
       await startInstallCore(h.deps, input({ paidConfirmed: false, rememberPaidPlan: true }));
       expect(await readAccountPlan(createDb(env.DB))).toBe("free");
       expect(h.created[0]?.params.paidConfirmed).toBe(false);
+    });
+  });
+
+  describe("an address besides workers.dev", () => {
+    it("passes a custom domain to the job, lower-cased", async () => {
+      const f = await buildArtifactFixture();
+      const h = harness(f);
+      await startInstallCore(
+        h.deps,
+        input({ domain: { kind: "custom", zoneId: "z1", hostname: " Cut.Example.com. " } }),
+      );
+      expect(h.created[0]?.params.domain).toEqual({
+        kind: "custom",
+        zoneId: "z1",
+        hostname: "cut.example.com",
+      });
+      const job = await env.DB.prepare("SELECT input_json FROM jobs WHERE id = 'id2'").first<{
+        input_json: string;
+      }>();
+      expect(JSON.parse(job?.input_json ?? "{}").domain).toEqual({
+        kind: "custom",
+        zoneId: "z1",
+        hostname: "cut.example.com",
+      });
+    });
+
+    it("refuses an external domain until the gateway is set up, then passes it on", async () => {
+      const f = await buildArtifactFixture();
+      const h = harness(f);
+      const external = input({
+        domain: { kind: "external", hostname: "Go.Customer.test", validation: "txt" },
+      });
+      await expect(startInstallCore(h.deps, external)).rejects.toThrow(
+        "External domains need the gateway",
+      );
+      expect(h.created).toEqual([]);
+      await writeSettings(createDb(env.DB), {
+        [SETTING.externalDomainsGateway]: JSON.stringify({
+          zoneId: "z-gw",
+          zoneName: "gateway.example",
+          kvId: "kv-1",
+          readyAt: NOW.toISOString(),
+        }),
+      });
+      await startInstallCore(h.deps, external);
+      expect(h.created[0]?.params.domain).toEqual({
+        kind: "external",
+        hostname: "go.customer.test",
+        validation: "txt",
+      });
+    });
+
+    it("refuses a hostname another app already has, in any spelling", async () => {
+      const f = await buildArtifactFixture();
+      const h = harness(f);
+      await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version,
+             artifact_url, status, installed_at, updated_at)
+           VALUES ('other', 'blog', 'blog', 'blog', '1.0.0', 'u', 'installed', 1, 1)`,
+        ),
+        env.DB.prepare(
+          `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+           VALUES ('d1', 'other', 'domain', NULL, 'xn--bcher-kva.example.com', 'cfd', 1)`,
+        ),
+      ]);
+      await expect(
+        startInstallCore(
+          h.deps,
+          input({ domain: { kind: "custom", zoneId: "z1", hostname: "Bücher.example.com" } }),
+        ),
+      ).rejects.toThrow("already a domain of another app");
+      expect(h.created).toEqual([]);
+    });
+
+    it("refuses a hostname that is not one", async () => {
+      const f = await buildArtifactFixture();
+      const h = harness(f);
+      await expect(
+        startInstallCore(
+          h.deps,
+          input({ domain: { kind: "external", hostname: "*.customer.test", validation: "http" } }),
+        ),
+      ).rejects.toThrow("wildcards");
     });
   });
 

@@ -28,6 +28,7 @@ import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { AppIcon } from "../../../components/catalog-media";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
+import { ExternalDomainsSection } from "../../../components/external-domains-section";
 import { jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
@@ -68,7 +69,7 @@ const TAB_LABELS: Record<Tab, string> = {
  * danger zone (uninstall, finishing an uninstall, or once uninstalled
  * deleting what was kept or forgetting the app). Settings: the app's
  * settings and secrets (admins change them and redeploy) and automatic
- * updates. Domains and email: the workers.dev switch, custom domains, email
+ * updates. Domains and email: the workers.dev switch, custom domains, external domains, email
  * routes. Resources: what the install created, and what an uninstall kept.
  * Jobs: versions to roll back to, and every job with who started it. The
  * tab is in the URL (`?tab=`), so links and reloads keep it.
@@ -276,6 +277,7 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
           )}
         </Section>
       )}
+      <ExternalDomainsSection install={install} isAdmin={isAdmin} />
       <Section title="Email">
         {install.emailRoutes.length === 0 ? (
           <Text variant="secondary">This app does not receive email through Email Routing.</Text>
