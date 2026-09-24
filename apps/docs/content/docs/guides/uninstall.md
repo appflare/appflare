@@ -15,7 +15,10 @@ the app, and Email Routing itself if Appflare turned it on and nothing else uses
 
 The app's [custom domains](/guides/custom-domains/), which the uninstall removes
 first, each with its own request, so that no domain or DNS record is left pointing
-at a deleted Worker. A custom domain holds no data, so there is nothing to keep.
+at a deleted Worker. Its [external domains](/guides/external-domains/) go before
+them, with the gateway's binding to the app's Worker; they stop answering at once,
+and their owners can delete the DNS records they added. A domain holds no data, so
+there is nothing to keep.
 
 Next, the app's queue consumers: each queue the Worker reads from is detached from
 it, before the Worker and before any queue is deleted. A kept queue stays in your

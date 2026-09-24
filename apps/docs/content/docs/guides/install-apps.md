@@ -27,6 +27,15 @@ real workers.dev address (also when you attach a custom domain later). Only sett
 you change are stored; the others follow the app's default on each update. Settings marked JSON take a JSON value, such as `["inbox@example.com"]`,
 and the form checks it before you can install.
 
+**Address.** Where the app answers besides its `workers.dev` URL: **workers.dev
+only** (the default), a [custom domain](/guides/custom-domains/) in one of this
+account's domains, or an [external domain](/guides/external-domains/) whose DNS is
+managed elsewhere. The install adds the domain once the app runs. A domain that
+cannot be added then does not fail the install; the log says why, and you can add it
+later on the app's **Domains and email** tab. A
+[self-deploying app](/guides/builds/#self-deploying-apps) has no **Address**: its
+own installer decides where its Workers answer.
+
 Select **Install**. The manager starts an install job and opens its live log.
 
 ## Several installs of one app
