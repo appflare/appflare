@@ -205,9 +205,10 @@ describe("installing a sandbox tier app", () => {
     });
 
     const at = r.step.names.indexOf("build in sandbox");
-    expect(r.step.names.slice(at - 2, at + 2)).toEqual([
+    expect(r.step.names.slice(at - 3, at + 2)).toEqual([
       "check sandbox Worker",
       "load catalog manifest",
+      "wait for the sandbox Worker to settle",
       "build in sandbox",
       "verify built manifest",
     ]);

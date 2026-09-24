@@ -44,6 +44,9 @@ export class SandboxBuilds extends WorkerEntrypoint<Env> {
       sandboxVersion: this.env.APPFLARE_VERSION,
       image: sandboxImage(this.env.APPFLARE_VERSION),
       features: [SANDBOX_FEATURE_SELF_DEPLOYING],
+      // Which version answered: the manager waits for a secret change (a new
+      // version) to reach this Worker before it starts a run.
+      ...(this.env.CF_VERSION_METADATA?.id ? { versionId: this.env.CF_VERSION_METADATA.id } : {}),
     };
   }
 

@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import type { CronTriggerScan } from "../install/cron-limit";
 import type { UnitResult } from "./result";
+import type { SandboxSettleResult } from "./sandbox-settle";
 import {
   type AssetPartResult,
   createJobUnits,
@@ -41,5 +42,9 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   countCronTriggers(input: unknown): Promise<UnitResult<CronTriggerScan>> {
     return createJobUnits(this.env).countCronTriggers(input);
+  }
+
+  settleSandbox(input: unknown): Promise<UnitResult<SandboxSettleResult>> {
+    return createJobUnits(this.env).settleSandbox(input);
   }
 }

@@ -94,7 +94,9 @@ describe.skipIf(!schemaBuilt)("the packed sandbox Worker artifact", () => {
     const manifestText = readFileSync(path.join(outDir, "manifest.json"), "utf8");
     const manifest = JSON.parse(manifestText);
     manifest.worker.bindings = manifest.worker.bindings
-      .filter((b: { name: string }) => b.name !== "LargeSandbox")
+      .filter(
+        (b: { name: string }) => b.name !== "LargeSandbox" && b.name !== "CF_VERSION_METADATA",
+      )
       .map((b: { type: string }) =>
         b.type === "r2_bucket" ? { ...b, bucket_name: "appflare-builds" } : b,
       );
@@ -111,6 +113,7 @@ describe.skipIf(!schemaBuilt)("the packed sandbox Worker artifact", () => {
       expect.arrayContaining([
         'keyId is "unsigned", expected "appflare-2026-09"',
         "durable object binding LargeSandbox is missing",
+        "version_metadata binding CF_VERSION_METADATA is missing",
         "binding BUILDS carries bucket_name",
         "no migration creates Sandbox as a SQLite class",
         "zip entry wrangler.jsonc is not listed in manifest.json",

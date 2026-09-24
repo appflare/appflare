@@ -29,6 +29,7 @@ import {
   sandboxId,
   shellQuote,
 } from "./protocol";
+import { restartNote, restartOnRuntimeUpdate } from "./restart";
 import type { BuildSandbox, ExecOutcome } from "./sandbox";
 import { ContainerSteps, messageOf, type RunOptions, StepError } from "./steps";
 import { deleteUnder } from "./storage";
@@ -59,6 +60,8 @@ function isBuildStage(step: string): step is BuildStage {
  *    listed file's bytes against its sha256, and the digest the manager
  *    checks against.
  *
+ * A new version of this Worker that resets the container before its first
+ * command went through sends the build to a fresh container once (restart.ts).
  * The container is destroyed at the end whatever happened. Failures come back
  * as a {@link BuildFailure} naming the step, never as a thrown error, so the
  * manager gets the step, the exit code, and the output over RPC intact.
@@ -368,9 +371,10 @@ export async function runBuild(input: unknown, deps: BuildDeps): Promise<BuildOu
   let sandbox: BuildSandbox | null = null;
   let outcome: BuildOutcome;
   try {
-    sandbox = deps.openSandbox(
+    sandbox = restartOnRuntimeUpdate(
+      (id) => deps.openSandbox(id, instanceType),
       await sandboxId(installId, request.sha, request.attempt ?? 1),
-      instanceType,
+      (reason) => log.line(restartNote(reason)),
     );
     const steps = new BuildSteps(sandbox, log, request, keys, deps.bucket);
     await steps.checkout();

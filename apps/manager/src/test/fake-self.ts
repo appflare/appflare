@@ -30,7 +30,7 @@ export interface FakeSelf extends JobUnitsApi {
 
 export function fakeSelf(
   env: UnitEnv,
-  deps: { fetch?: FetchLike; now?: () => number } = {},
+  deps: { fetch?: FetchLike; now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
 ): FakeSelf {
   const calls: FakeSelfCall[] = [];
   const inner: FetchLike = deps.fetch ?? ((input, init) => fetch(input, init));
@@ -62,5 +62,6 @@ export function fakeSelf(
     emptyR2Page: (input) => call("emptyR2Page", input),
     inspectEmailRouting: (input) => call("inspectEmailRouting", input),
     countCronTriggers: (input) => call("countCronTriggers", input),
+    settleSandbox: (input) => call("settleSandbox", input),
   };
 }

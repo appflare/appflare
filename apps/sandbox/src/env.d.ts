@@ -12,6 +12,11 @@ interface Env {
   BUILDS: R2Bucket;
   /** This Worker's Appflare version; also the tag of the image its containers run. */
   APPFLARE_VERSION: string;
+  /**
+   * The version answering (`id` is the version id). Optional: a sandbox Worker
+   * deployed by an older CLI may lack the binding.
+   */
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
   /** Sandbox containers on `standard-1`. */
   Sandbox: DurableObjectNamespace<import("./sandbox").Sandbox>;
   /** Sandbox containers on `standard-2`. */

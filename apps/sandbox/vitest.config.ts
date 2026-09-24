@@ -29,7 +29,11 @@ export default defineConfig({
         compatibilityDate: "2026-08-22",
         compatibilityFlags: ["nodejs_compat"],
         r2Buckets: ["BUILDS"],
-        bindings: { APPFLARE_VERSION: "0.1.0" },
+        bindings: {
+          APPFLARE_VERSION: "0.1.0",
+          // wrangler.jsonc's version metadata binding, as the version it reports.
+          CF_VERSION_METADATA: { id: "version-under-test", tag: "", timestamp: "" },
+        },
       },
     }),
   ],

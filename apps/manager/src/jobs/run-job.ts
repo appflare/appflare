@@ -81,11 +81,13 @@ export interface JobEnv {
   SANDBOX?: unknown;
 }
 
-/** Test seams. Production uses the global `fetch`, `signingKeys`, and `Date.now`. */
+/** Test seams. Production uses the global `fetch`, `signingKeys`, `Date.now`, and timers. */
 export interface JobDeps {
   fetch?: FetchLike;
   signingKeys?: readonly SigningKey[];
   now?: () => number;
+  /** A short wait inside a step, in milliseconds. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface JobContext {

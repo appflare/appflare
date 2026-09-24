@@ -25,10 +25,18 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *     2 on a retried step), and on uninstall each route (1 to 4);
  *   - 1 per health or canary probe (up to 12 probes for the live check, 6 for
  *     an app's canary, 10 for Appflare's own);
+ *   - for a build or installer run in the sandbox Worker (paid tiers): the
+ *     wait for the sandbox Worker to settle, 1 per attempt of the unit
+ *     `settleSandbox` (at most 2), which reads the deployment and asks the
+ *     sandbox Worker up to 30 times in its own invocation; without `SELF` it
+ *     runs here, once, at 1 read plus up to 10 `info()` calls (11); plus the
+ *     `info()` call of each "check sandbox Worker" step, and the run itself;
  *   - the manifest and signature (4 with the release redirects) and KV reads;
  *   - D1: each step's log write (one batch per step, however many lines a
- *     unit brought back) and job updates. D1 binding calls did not count
- *     toward the limit when this was measured, but plan as if they do.
+ *     unit brought back) and job updates; each step that stores or deletes
+ *     a self-deploying app's secret on the sandbox Worker also reads the job
+ *     log once (whether this job already did it). D1 binding calls did not
+ *     count toward the limit when this was measured, but plan as if they do.
  *
  * Worked example, FlareMo: a D1 database with 30 migrations, an R2 bucket,
  * 2 queues with a consumer each, 2 Vectorize indexes, a rate limit, 3 asset
@@ -68,7 +76,7 @@ export interface UnitsEnv {
 
 export function jobUnits(
   env: UnitsEnv,
-  deps: { fetch?: FetchLike; now?: () => number } = {},
+  deps: { fetch?: FetchLike; now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
 ): JobUnitsAccess {
   if (env.SELF !== undefined) return { api: env.SELF, remote: true };
   return { api: createJobUnits(env, deps), remote: false };

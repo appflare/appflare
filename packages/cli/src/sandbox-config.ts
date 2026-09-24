@@ -2,6 +2,7 @@ import {
   type ArtifactManifest,
   SANDBOX_BUCKET_BINDING,
   SANDBOX_BUCKET_NAME,
+  SANDBOX_VERSION_METADATA_BINDING,
   SANDBOX_WORKER_NAME,
   sandboxImage,
 } from "@appflare/schema";
@@ -56,14 +57,20 @@ export interface SandboxWranglerConfig {
   migrations: Record<string, unknown>[];
   /** With a name and no id: wrangler creates the bucket on the first deploy and reuses it after. */
   r2_buckets: { binding: string; bucket_name: string }[];
+  /**
+   * Lets the sandbox Worker report which version answers, so the manager can
+   * wait for a secret change to reach it. Releases before it had none.
+   */
+  version_metadata?: { binding: string };
   vars: { APPFLARE_VERSION: string };
 }
 
 /**
  * The deploy config for a verified sandbox Worker artifact. The artifact must carry
  * exactly the bindings this config declares (the two Sandbox classes, the
- * build bucket, and its version); anything else means a sandbox Worker newer than
- * this CLI, which is refused rather than deployed half-configured.
+ * build bucket, and its version, plus the version metadata binding when it
+ * has one); anything else means a sandbox Worker newer than this CLI, which is
+ * refused rather than deployed half-configured.
  */
 export function buildSandboxWranglerConfig(manifest: ArtifactManifest): SandboxWranglerConfig {
   const { worker } = manifest;
@@ -72,8 +79,14 @@ export function buildSandboxWranglerConfig(manifest: ArtifactManifest): SandboxW
     `r2_bucket:${SANDBOX_BUCKET_BINDING}`,
     "plain_text:APPFLARE_VERSION",
   ]);
+  const versionMetadata = `version_metadata:${SANDBOX_VERSION_METADATA_BINDING}`;
+  let hasVersionMetadata = false;
   for (const binding of worker.bindings) {
     const key = `${binding.type}:${binding.name}`;
+    if (key === versionMetadata && !hasVersionMetadata) {
+      hasVersionMetadata = true;
+      continue;
+    }
     if (!expected.delete(key)) {
       throw new Error(
         `the sandbox Worker artifact has a ${binding.type} binding (${binding.name}) this version of ` +
@@ -111,6 +124,9 @@ export function buildSandboxWranglerConfig(manifest: ArtifactManifest): SandboxW
     },
     migrations: worker.migrations.map((m) => ({ ...m })),
     r2_buckets: [{ binding: SANDBOX_BUCKET_BINDING, bucket_name: SANDBOX_BUCKET_NAME }],
+    ...(hasVersionMetadata
+      ? { version_metadata: { binding: SANDBOX_VERSION_METADATA_BINDING } }
+      : {}),
     vars: { APPFLARE_VERSION: manifest.version },
   };
 }

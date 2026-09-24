@@ -57,6 +57,8 @@ export interface JobSteps {
   /** Fetch for work outside steps. */
   baseFetch: FetchLike;
   now: () => number;
+  /** A short wait inside a step (seconds; a longer wait is a `step.sleep`). */
+  sleep: (ms: number) => Promise<void>;
 }
 
 export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
@@ -89,7 +91,12 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
     current: "start",
     baseFetch,
     now,
-    units: jobUnits(env, { ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }), now }),
+    sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+    units: jobUnits(env, {
+      ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+      ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+      now,
+    }),
     setAccountId(id) {
       accountId = id;
     },

@@ -29,6 +29,8 @@ export interface FakeSandboxOptions {
   failures?: FakeFailure[];
   /** Output a succeeding command prints, for the first pattern its command line matches. */
   outputs?: Array<{ match: RegExp; output: string }>;
+  /** `destroy()` throws this (a container a new version of the Worker reset). */
+  destroyThrows?: string;
 }
 
 export class FakeSandbox implements BuildSandbox {
@@ -107,6 +109,7 @@ export class FakeSandbox implements BuildSandbox {
   }
 
   async destroy(): Promise<void> {
+    if (this.options.destroyThrows !== undefined) throw new Error(this.options.destroyThrows);
     this.destroyed = true;
   }
 }

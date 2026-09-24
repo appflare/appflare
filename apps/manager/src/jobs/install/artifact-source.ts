@@ -19,6 +19,7 @@ import {
 import { z } from "zod";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../../catalog/app-manifest.server";
 import type { BuildKind } from "../../db/schema";
+import { readSettings, SETTING } from "../../db/settings";
 import {
   parseBuildOutcome,
   SandboxProtocolError,
@@ -28,6 +29,7 @@ import {
 } from "../../sandbox/binding";
 import { verifyBuiltManifest, verifyCatalogManifest } from "../../sandbox/verify";
 import type { JobEnv, StepConfig } from "../run-job";
+import { awaitSandboxSettledPhase } from "../sandbox-settle";
 import { JobError, type JobSteps } from "../steps";
 import type { ArtifactHost } from "../units/units";
 import { fetchWhole, sha256Hex } from "./artifact";
@@ -169,7 +171,7 @@ async function buildInSandboxPhase(
   target: { installId: string; slug: string; version: string; build: SandboxBuildParams },
 ): Promise<ArtifactSource> {
   const { build } = target;
-  await steps.run("check sandbox Worker", async ({ log }) => {
+  const checked = await steps.run("check sandbox Worker", async ({ log, orm }) => {
     if (!build.costConfirmed) {
       throw new JobError(
         "this app is built in the account's sandbox Worker on Workers Paid; confirm the build's cost to install it",
@@ -188,9 +190,14 @@ async function buildInSandboxPhase(
       if (error instanceof SandboxProtocolError) throw new JobError(error.message);
       throw error;
     }
+    // The wait before the build reads the sandbox Worker's deployment, so the
+    // account is needed before the job's own preflight reads it.
+    const settings = await readSettings(orm, [SETTING.accountId]);
+    if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
     log.info(`The sandbox Worker ${info.sandboxVersion} builds with ${info.image}.`);
-    return { image: info.image };
+    return { image: info.image, accountId: settings.account_id };
   });
+  steps.setAccountId(checked.accountId);
 
   const catalogText = await steps.run("load catalog manifest", async ({ log, fetch }) => {
     const file = await fetchWhole(fetch, build.manifestUrl);
@@ -231,6 +238,10 @@ async function buildInSandboxPhase(
   }
   const request: BuildRequest = parsedRequest.data;
 
+  // A build writes no secrets, but a secret change made on the sandbox Worker
+  // just before this job may still be rolling out and would reset the build's
+  // container as it starts.
+  await awaitSandboxSettledPhase(steps, checked.accountId);
   const built = await steps.run(
     "build in sandbox",
     async ({ log, attempt }) => {

@@ -21,6 +21,7 @@ import {
   lookupSubdomainPhase,
 } from "../install/phases";
 import type { JobContext } from "../run-job";
+import { awaitSandboxSettledPhase } from "../sandbox-settle";
 import { StepLog } from "../step-log";
 import { createJobSteps, errorMessage, JobError, type JobSteps } from "../steps";
 import type { UninstallJobParams } from "../uninstall";
@@ -49,8 +50,9 @@ import {
  * the job stores on the sandbox Worker first (see phases.ts for its custody).
  *
  * - Install: check the sandbox Worker and the catalog entry, store the token
- *   and secrets, run the deploy, record everything it created as managed by
- *   the app, then check the app's own URL (status-only unless the entry says
+ *   and secrets, wait for the sandbox Worker version they deployed to answer
+ *   (sandbox-settle.ts), run the deploy, record everything it created as
+ *   managed by the app, then check the app's own URL (status-only unless the entry says
  *   otherwise: these apps usually sit behind Cloudflare Access).
  * - Update: run the deploy again at the new pin; the installer converges on
  *   what it deployed before. There is no snapshot and no rollback.
@@ -203,6 +205,9 @@ export async function runSelfDeployingInstall(
       token: input.appToken,
       secrets: params.secrets,
     });
+    // Each write deployed a new version of the sandbox Worker; the run starts
+    // once that version answers.
+    await awaitSandboxSettledPhase(steps, steps.accountId());
     await awaitAppCredentialsPhase(steps, env, {
       installId: params.installId,
       accountId: preflight.accountId,
@@ -399,6 +404,8 @@ export async function runSelfDeployingUpdate(
       token: params.appToken,
       secrets: newSecrets,
     });
+    // After this job's writes, or ones made on the install page just before it.
+    await awaitSandboxSettledPhase(steps, steps.accountId());
     await awaitAppCredentialsPhase(steps, env, {
       installId: params.installId,
       accountId: started.accountId,
@@ -572,6 +579,8 @@ export async function runSelfDeployingUninstall(
         });
       }
       if (destroy) {
+        // A secret change made just before this job may still be rolling out.
+        await awaitSandboxSettledPhase(steps, steps.accountId());
         const subdomain = await lookupSubdomainPhase(steps);
         steps.current = "prepare installer";
         const request = installerRequest({

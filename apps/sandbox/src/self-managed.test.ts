@@ -150,14 +150,19 @@ const DOTENV_REMOVAL = `if [ -e ${DOTENV} ] || [ -L ${DOTENV} ]; then rm -rf -- 
 const HELD: HeldCredentials = { token: TOKEN, secrets: { DATAFORSEO_API_KEY: API_KEY } };
 
 function fake(
-  opts: { failures?: FakeFailure[]; outputs?: Array<{ match: RegExp; output: string }> } = {},
+  opts: {
+    failures?: FakeFailure[];
+    outputs?: Array<{ match: RegExp; output: string }>;
+    destroyThrows?: string;
+  } = {},
 ) {
   return new FakeSandbox({ bucket: env.BUILDS, refHead: SHA, packOutput: {}, ...opts });
 }
 
 function run(
   action: SelfManagedAction,
-  sandbox: FakeSandbox,
+  /** The container each open returns, in order; the last one again after that. */
+  sandbox: FakeSandbox | FakeSandbox[],
   opts: {
     input?: Record<string, unknown>;
     held?: HeldCredentials;
@@ -172,7 +177,10 @@ function run(
     sandboxVersion: "0.4.0",
     openSandbox: (id) => {
       opened.push(id);
-      return sandbox;
+      const list = Array.isArray(sandbox) ? sandbox : [sandbox];
+      const next = list[Math.min(opened.length, list.length) - 1];
+      if (next === undefined) throw new Error("no fake container to open");
+      return next;
     },
     credentials: () => opts.held ?? HELD,
     account: (token, accountId) => {
@@ -283,6 +291,51 @@ describe("deploySelfManaged", () => {
     asDeploy(await promise);
     expect(opened).toEqual([`${await selfManagedSandboxId(INSTALL)}-a2`]);
     expect(await selfManagedSandboxId(INSTALL, 2)).toBe(opened[0]);
+  });
+
+  it("starts again in a fresh container, once, when a new version of the Worker resets the first as it starts", async () => {
+    const RESET =
+      "Sandbox operation sandbox.exec was interrupted while the platform was updating the sandbox runtime";
+    const first = fake({
+      failures: [{ match: /^rm -rf /, throws: RESET }],
+      // Stopping the reset container fails too; that is not the run's problem.
+      destroyThrows: "Durable Object reset because its code was updated",
+    });
+    const fresh = fake();
+    const { promise, opened } = run("deploy", [first, fresh]);
+    const result = asDeploy(await promise);
+
+    const id = await selfManagedSandboxId(INSTALL);
+    expect(opened).toEqual([id, `${id}-r`]);
+    expect(first.commands).toEqual([
+      "rm -rf /workspace/appflare-build && mkdir -p /workspace/appflare-build",
+    ]);
+    expect(fresh.commands[0]).toBe(first.commands[0]);
+    expect(fresh.commands.at(-1)).toBe(`pnpm alchemy deploy --yes --stage ${STAGE}`);
+    expect(fresh.destroyed).toBe(true);
+    // A note in the run's log, not a failure.
+    expect(result.log).toContain("starting again in a fresh container");
+    expect(result.log).not.toContain("FAILED");
+    expect(result.log).not.toContain("Stopping the container failed");
+
+    // The fresh container is reset too: the run fails, retryably, as before.
+    const again = asFailure(
+      await run("deploy", [
+        fake({ failures: [{ match: /^rm -rf /, throws: RESET }] }),
+        fake({ failures: [{ match: /^rm -rf /, throws: RESET }] }),
+      ]).promise,
+    );
+    expect(again).toMatchObject({ step: "checkout", retryable: true });
+
+    // Only the first call starts over: a reset later in the run fails it.
+    const later = fake({
+      failures: [
+        { match: /pnpm install/, throws: "Durable Object reset because its code was updated" },
+      ],
+    });
+    const cut = run("deploy", [later, fake()]);
+    expect(asFailure(await cut.promise)).toMatchObject({ step: "install", retryable: true });
+    expect(cut.opened).toEqual([id]);
   });
 
   it("keeps the token and secrets out of the log and the failure message", async () => {

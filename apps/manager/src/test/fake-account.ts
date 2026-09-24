@@ -71,7 +71,12 @@ export interface FakeAccount {
   queues: Array<{ queue_id: string; queue_name: string }>;
   /** Worker consumers per queue id, as their last create or update body left them. */
   consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
+  /** The sandbox Worker's version at 100% (`GET /workers/scripts/appflare-sandbox/deployments`). */
+  sandboxDeployed: string;
 }
+
+/** The sandbox Worker's deployed version, unless a test sets another. */
+export const SANDBOX_DEPLOYED_VERSION = "5a5d0000-0000-4000-8000-00000000d001";
 
 export const NEW_VERSION = "0a1b2c3d-4e5f-4789-8bcd-ef0123456789";
 
@@ -108,6 +113,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     versionPatches: [],
     queues: [],
     consumers: {},
+    sandboxDeployed: SANDBOX_DEPLOYED_VERSION,
     ...over,
   };
   const script = `/workers/scripts/${state.worker}`;
@@ -133,6 +139,15 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       return fail(failing, "injected failure");
     }
     switch (key) {
+      case "GET /workers/scripts/appflare-sandbox/deployments":
+        return ok({
+          deployments: [
+            {
+              id: "sandbox-dep",
+              versions: [{ version_id: state.sandboxDeployed, percentage: 100 }],
+            },
+          ],
+        });
       case "GET /workers/subdomain":
         return ok({ subdomain: SUBDOMAIN });
       case "GET /workers/scripts":

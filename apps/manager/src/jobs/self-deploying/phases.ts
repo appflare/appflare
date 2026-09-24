@@ -24,9 +24,10 @@ import {
   selfManagedStatusRequestSchema,
   sha256Schema,
 } from "@appflare/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../../db/client";
-import { resources } from "../../db/schema";
+import { job_logs, resources } from "../../db/schema";
 import {
   parseSelfManagedOutcome,
   parseSelfManagedStatus,
@@ -309,11 +310,33 @@ async function refuseWhileSandboxBusy(orm: Database, jobId: string): Promise<voi
 }
 
 /**
+ * Whether this job already logged one of `messages`. Workflows can run a step
+ * again after it finished: live, an OpenSEO install logged a secret as stored
+ * twice, and its uninstall deleted a secret and then found it gone. A secret
+ * step logs its line only after its API call succeeded, so the line means the
+ * call is done: the step then skips both, since every repeated write deploys
+ * yet another version of the sandbox Worker, and a repeated line is noise.
+ */
+async function doneInThisJob(
+  orm: Database,
+  jobId: string,
+  messages: readonly string[],
+): Promise<boolean> {
+  const found = await orm
+    .select({ id: job_logs.id })
+    .from(job_logs)
+    .where(and(eq(job_logs.job_id, jobId), inArray(job_logs.message, [...messages])))
+    .limit(1);
+  return found.length > 0;
+}
+
+/**
  * Stores the app's token and secret values as secrets on the sandbox Worker,
  * one step each, with the manager's token. Secret names are recorded on the
  * install (`kind: "secret"`, managed by the app); values are never logged.
  * Refused while another job runs in the sandbox Worker (see
- * {@link refuseWhileSandboxBusy}).
+ * {@link refuseWhileSandboxBusy}). Each value is stored and logged once per
+ * job, however often its step runs (see {@link doneInThisJob}).
  */
 export async function storeAppCredentialsPhase(
   steps: JobSteps,
@@ -328,20 +351,22 @@ export async function storeAppCredentialsPhase(
   const { installId, token } = target;
   if (token !== undefined) {
     await steps.run("store app token on the sandbox Worker", async ({ log, cf, orm }) => {
+      const stored = `Stored the app's token as the secret ${appTokenSecretName(installId)} on the sandbox Worker (${SANDBOX_WORKER_NAME}); Appflare keeps no copy.`;
+      if (await doneInThisJob(orm, target.jobId, [stored])) return {};
       await refuseWhileSandboxBusy(orm, target.jobId);
       await cf().workers.putSecret(SANDBOX_WORKER_NAME, {
         name: appTokenSecretName(installId),
         text: token,
       });
-      log.info(
-        `Stored the app's token as the secret ${appTokenSecretName(installId)} on the sandbox Worker (${SANDBOX_WORKER_NAME}); Appflare keeps no copy.`,
-      );
+      log.info(stored);
       return {};
     });
   }
   for (const [name, value] of Object.entries(target.secrets)) {
     await steps.run(`store app secret ${name} on the sandbox Worker`, async ({ log, cf, orm }) => {
       if (value.length === 0) throw new JobError(`no value was provided for the secret ${name}`);
+      const stored = `Stored ${name} on the sandbox Worker for the installer, which sets it on the app's Workers.`;
+      if (await doneInThisJob(orm, target.jobId, [stored])) return {};
       await refuseWhileSandboxBusy(orm, target.jobId);
       await cf().workers.putSecret(SANDBOX_WORKER_NAME, {
         name: appSecretSecretName(installId, name),
@@ -360,9 +385,7 @@ export async function storeAppCredentialsPhase(
           managed_by: "app",
         })
         .onConflictDoNothing();
-      log.info(
-        `Stored ${name} on the sandbox Worker for the installer, which sets it on the app's Workers.`,
-      );
+      log.info(stored);
       return {};
     });
   }
@@ -525,8 +548,9 @@ export async function recordDiscoveredPhase(
 }
 
 /**
- * Deletes the app's token and secrets from the sandbox Worker, one step each.
- * One already gone counts as deleted.
+ * Deletes the app's token and secrets from the sandbox Worker, one step each
+ * and each name once. One already gone counts as deleted; a step that runs
+ * again after it finished deletes and logs nothing (see {@link doneInThisJob}).
  */
 export async function forgetAppCredentialsPhase(
   steps: JobSteps,
@@ -534,19 +558,22 @@ export async function forgetAppCredentialsPhase(
   secretNames: readonly string[],
 ): Promise<void> {
   const { installId } = target;
-  const names = [
+  const names = new Set([
     appTokenSecretName(installId),
     ...secretNames.map((n) => appSecretSecretName(installId, n)),
-  ];
+  ]);
   for (const name of names) {
     await steps.run(`remove ${name} from the sandbox Worker`, async ({ log, cf, orm }) => {
+      const deleted = `Deleted the secret ${name} from the sandbox Worker.`;
+      const gone = `The sandbox Worker no longer had the secret ${name}.`;
+      if (await doneInThisJob(orm, target.jobId, [deleted, gone])) return {};
       await refuseWhileSandboxBusy(orm, target.jobId);
       try {
         await cf().workers.deleteSecret(SANDBOX_WORKER_NAME, name);
-        log.info(`Deleted the secret ${name} from the sandbox Worker.`);
+        log.info(deleted);
       } catch (error) {
         if (!isNotFound(error)) throw error;
-        log.info(`The sandbox Worker no longer had the secret ${name}.`);
+        log.info(gone);
       }
       return {};
     });

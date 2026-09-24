@@ -78,7 +78,8 @@ const ID_FIELDS = ["id", "account_id", "namespace_id", "bucket_name"];
  * Checks a sandbox Worker artifact manifest and its zip entry list; returns every
  * problem found (empty = OK): identity and source, `nodejs_compat`, the two
  * Sandbox Durable Object classes with their SQLite migration, the BUILDS
- * bucket without its name, APPFLARE_VERSION, no assets, crons, or D1
+ * bucket without its name, APPFLARE_VERSION, the version metadata binding
+ * the manager reads the answering version from, no assets, crons, or D1
  * migrations, no account-specific id, and a zip holding exactly the listed
  * files.
  */
@@ -137,6 +138,10 @@ export function sandboxArtifactProblems(
   expect(
     version?.text === expected.version,
     `APPFLARE_VERSION is ${JSON.stringify(version?.text)}, expected "${expected.version}"`,
+  );
+  expect(
+    binding("version_metadata", "CF_VERSION_METADATA") !== undefined,
+    "version_metadata binding CF_VERSION_METADATA is missing",
   );
   for (const b of worker.bindings) {
     for (const field of ID_FIELDS) {

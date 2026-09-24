@@ -27,6 +27,7 @@ import {
   selfManagedSandboxId,
   shellQuote,
 } from "./protocol";
+import { restartNote, restartOnRuntimeUpdate } from "./restart";
 import type { BuildSandbox } from "./sandbox";
 import { ContainerSteps, messageOf, StepError } from "./steps";
 
@@ -51,8 +52,11 @@ import { ContainerSteps, messageOf, StepError } from "./steps";
  * 5. discover: read the expected Workers and what they bind back from the
  *    account with the app token. After a destroy, only which Workers remain.
  *
- * The container is destroyed at the end whatever happened. Failures come back
- * as a {@link SelfManagedFailure} naming the step, never as a thrown error.
+ * A new version of this Worker (each secret the manager stores here deploys
+ * one) that resets the container before its first command went through sends
+ * the run to a fresh container once (restart.ts). The container is destroyed
+ * at the end whatever happened. Failures come back as a
+ * {@link SelfManagedFailure} naming the step, never as a thrown error.
  */
 
 export type SelfManagedAction = "deploy" | "destroy";
@@ -215,9 +219,10 @@ export async function runSelfManaged(
     log.redact([token, ...request.secretNames.map((n) => secrets[n] ?? "")]);
     log.line("The app token and secrets are here; they reach only the installer's command.");
 
-    sandbox = deps.openSandbox(
+    sandbox = restartOnRuntimeUpdate(
+      (id) => deps.openSandbox(id, instanceType),
       await selfManagedSandboxId(installId, request.attempt ?? 1),
-      instanceType,
+      (reason) => log.line(restartNote(reason)),
     );
     const container = new ContainerSteps<SelfManagedStep>(
       sandbox,

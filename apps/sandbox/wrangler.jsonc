@@ -47,6 +47,10 @@
     ]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox", "LargeSandbox"] }],
+  // The id of the version answering, which info() reports: every secret the
+  // manager stores here deploys a new version, and the manager waits for it to
+  // answer before it starts a run.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   // Build outputs and logs, under builds/<installId>/<version>/.
   "r2_buckets": [{ "binding": "BUILDS", "bucket_name": "appflare-builds" }],
   "vars": {

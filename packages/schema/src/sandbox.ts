@@ -49,6 +49,13 @@ export const SANDBOX_BUCKET_NAME = "appflare-builds";
 export const SANDBOX_BUCKET_BINDING = "BUILDS";
 
 /**
+ * The sandbox Worker's version metadata binding: `info()` reports the id of
+ * the version that answered, so the manager can tell when a new version (each
+ * secret change deploys one) has reached it.
+ */
+export const SANDBOX_VERSION_METADATA_BINDING = "CF_VERSION_METADATA";
+
+/**
  * The container image a sandbox Worker version runs. Tags are immutable: a sandbox Worker
  * version always runs exactly the image built from its release commit.
  * Docker Hub, because Cloudflare Containers pull only from the Cloudflare
@@ -351,6 +358,12 @@ export const sandboxInfoSchema = z.object({
    * only build.
    */
   features: z.array(z.string().min(1)).max(32).optional(),
+  /**
+   * The id of the Worker version that answered (its
+   * {@link SANDBOX_VERSION_METADATA_BINDING}). Absent from sandbox Workers
+   * deployed without that binding.
+   */
+  versionId: z.string().min(1).max(64).optional(),
 });
 export type SandboxInfo = z.infer<typeof sandboxInfoSchema>;
 

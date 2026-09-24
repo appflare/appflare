@@ -18,14 +18,20 @@ import { catalogOnlyManifest, startInstallCore } from "../../installs/start-inst
 import { startUninstallCore } from "../../installs/start-uninstall.server";
 import { startRollbackCore, startUpdateCore } from "../../installs/versions.server";
 import { baseCatalog } from "../../test/artifact-fixture";
-import { ACC, fakeAccount, SUBDOMAIN, TOKEN } from "../../test/fake-account";
+import {
+  ACC,
+  fakeAccount,
+  SANDBOX_DEPLOYED_VERSION,
+  SUBDOMAIN,
+  TOKEN,
+} from "../../test/fake-account";
 import {
   type FakeSandbox,
   type FakeSandboxOptions,
   fakeSandbox,
   publishedCatalog,
 } from "../../test/fake-sandbox";
-import { fakeStep } from "../../test/fake-step";
+import { type FakeStep, fakeStep } from "../../test/fake-step";
 import { type InstallJobParams, runInstall } from "../install";
 import type { JobEnv } from "../run-job";
 import { runUninstall, type UninstallJobParams } from "../uninstall";
@@ -133,6 +139,20 @@ function world(opts: { catalog: () => CatalogManifest; held: Set<string> }) {
   return { account, fetch, secretCalls, probes };
 }
 
+/**
+ * The fake Workflow engine, except that each step whose name starts with
+ * `prefix` runs a second time after it finished, as Workflows can do.
+ */
+function replayingStep(prefix: string): FakeStep {
+  const step = fakeStep();
+  const run = step.do.bind(step) as (name: string, ...rest: unknown[]) => Promise<unknown>;
+  const again = async (name: string, ...rest: unknown[]) => {
+    const result = await run(name, ...rest);
+    return name.startsWith(prefix) ? run(name, ...rest) : result;
+  };
+  return Object.assign(step, { do: again as FakeStep["do"] });
+}
+
 async function logsOf(jobId: string) {
   return (
     await env.DB.prepare("SELECT level, message FROM job_logs WHERE job_id = ?1 ORDER BY id")
@@ -161,10 +181,18 @@ interface Setup {
   jobEnv: JobEnv;
 }
 
-function setup(opts: { sandbox?: FakeSandboxOptions["selfManaged"] } = {}): Setup {
+function setup(
+  opts: {
+    sandbox?: FakeSandboxOptions["selfManaged"];
+    versionIds?: FakeSandboxOptions["versionIds"];
+  } = {},
+): Setup {
   const held = new Set<string>();
   const state: { catalog: CatalogManifest } = { catalog: selfDeployingCatalog() };
-  const sandbox = fakeSandbox(null, { selfManaged: { held, ...opts.sandbox } });
+  const sandbox = fakeSandbox(null, {
+    selfManaged: { held, ...opts.sandbox },
+    versionIds: opts.versionIds,
+  });
   const w = world({ catalog: () => state.catalog, held });
   return {
     held,
@@ -221,7 +249,7 @@ async function install(s: Setup) {
       params: started.params,
       step,
       env: s.jobEnv,
-      deps: { fetch: s.w.fetch, now: () => NOW },
+      deps: { fetch: s.w.fetch, now: () => NOW, sleep: async () => {} },
     });
   } catch (e) {
     error = e;
@@ -387,6 +415,48 @@ describe("installing a self-deploying app", () => {
     expect(JSON.stringify(logs)).not.toContain(APP_TOKEN);
     expect(JSON.stringify(logs)).not.toContain(SECRET);
     expect(logs.some((l) => l.message.includes("APP_TOKEN_id1"))).toBe(true);
+  });
+
+  it("logs each stored secret once and waits for the sandbox Worker to settle before the run", async () => {
+    // The version from before the secret writes answers first (the sandbox
+    // Worker check asks too, before them).
+    const s = setup({ versionIds: ["old-version", "old-version", SANDBOX_DEPLOYED_VERSION] });
+    const r = await install(s);
+    expect(r.error).toBeNull();
+    const at = (name: string) => r.step.names.indexOf(name);
+    expect(at("store app secret ADMIN_PASSWORD on the sandbox Worker")).toBeLessThan(
+      at("wait for the sandbox Worker to settle"),
+    );
+    expect(at("wait for the sandbox Worker to settle")).toBeLessThan(
+      at("check app token on the sandbox Worker"),
+    );
+    expect(at("check app token on the sandbox Worker")).toBeLessThan(at("deploy in sandbox"));
+    // The check, then the old version once, then the new one three times in a row.
+    expect(s.sandbox.infoCalls).toBe(1 + 1 + 3);
+
+    const messages = (await logsOf(r.jobId)).map((l) => l.message);
+    expect(messages).toContain(
+      "The sandbox Worker is settled: Appflare waited for its deployed version 5a5d0000, and version 5a5d0000 answered (4 answer(s)).",
+    );
+    const stored = messages.filter((m) => m.startsWith("Stored ADMIN_PASSWORD"));
+    expect(stored).toHaveLength(1);
+  });
+
+  it("stores and logs each secret once when its step runs again after it finished", async () => {
+    const s = setup();
+    const started = await startInstall(s);
+    await runInstall({
+      params: started.params,
+      step: replayingStep("store app "),
+      env: s.jobEnv,
+      deps: { fetch: s.w.fetch, now: () => NOW },
+    });
+    expect((await jobRow(started.jobId))?.status).toBe("succeeded");
+    // Each write deploys a new version of the sandbox Worker: none is repeated.
+    expect(s.w.secretCalls).toEqual(["PUT APP_TOKEN_id1", "PUT APP_SECRET_id1_ADMIN_PASSWORD"]);
+    const messages = (await logsOf(started.jobId)).map((l) => l.message);
+    expect(messages.filter((m) => m.startsWith("Stored ADMIN_PASSWORD"))).toHaveLength(1);
+    expect(messages.filter((m) => m.startsWith("Stored the app's token"))).toHaveLength(1);
   });
 
   it("fails on a failing installer and keeps what it needs to destroy later", async () => {
@@ -578,7 +648,7 @@ describe("updating a self-deploying app", () => {
 });
 
 describe("uninstalling a self-deploying app", () => {
-  async function uninstall(s: Setup) {
+  async function uninstall(s: Setup, step: FakeStep = fakeStep()) {
     let params: UninstallJobParams | null = null;
     await startUninstallCore(
       {
@@ -597,7 +667,7 @@ describe("uninstalling a self-deploying app", () => {
     try {
       await runUninstall({
         params: p,
-        step: fakeStep(),
+        step,
         env: s.jobEnv,
         deps: { fetch: s.w.fetch, now: () => NOW },
       });
@@ -630,6 +700,22 @@ describe("uninstalling a self-deploying app", () => {
     ).first<{ n: number }>();
     expect(left?.n).toBe(0);
     expect((await installRow("id1"))?.status).toBe("uninstalled");
+  });
+
+  it("deletes and logs each secret once when its step runs again after it finished", async () => {
+    const s = setup();
+    await install(s);
+    const r = await uninstall(s, replayingStep("remove "));
+    expect(r.error).toBeNull();
+    expect(s.w.secretCalls.filter((c) => c.startsWith("DELETE"))).toEqual([
+      "DELETE APP_TOKEN_id1",
+      "DELETE APP_SECRET_id1_ADMIN_PASSWORD",
+    ]);
+    const messages = (await logsOf("x1")).map((l) => l.message);
+    expect(messages.filter((m) => m.includes("APP_SECRET_id1_ADMIN_PASSWORD"))).toEqual([
+      "Deleted the secret APP_SECRET_id1_ADMIN_PASSWORD from the sandbox Worker.",
+    ]);
+    expect(messages.filter((m) => m.includes("no longer had"))).toEqual([]);
   });
 
   it("fails when the destroy command leaves a Worker behind", async () => {

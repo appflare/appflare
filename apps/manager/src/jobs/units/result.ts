@@ -60,10 +60,12 @@ export interface UnitEnv {
   SANDBOX?: unknown;
 }
 
-/** Test seams; production uses the global `fetch` and `Date.now`. */
+/** Test seams; production uses the global `fetch`, `Date.now`, and timers. */
 export interface UnitDeps {
   fetch?: FetchLike;
   now?: () => number;
+  /** A wait inside a unit, in milliseconds (`settleSandbox` polls with it). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface UnitTools {

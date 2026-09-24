@@ -84,6 +84,15 @@ export async function selfManagedSandboxId(
   return `self-${installId.slice(0, 24)}-${await installHash(installId)}${attemptSuffix(attempt)}`.toLowerCase();
 }
 
+/**
+ * The container a run starts over in when a new version of this Worker reset
+ * its first one as it started (see restart.ts): `<id>-r`, at most 56
+ * characters for the ids above.
+ */
+export function freshSandboxId(id: string): string {
+  return `${id}-r`;
+}
+
 async function installHash(installId: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(installId));
   return [...new Uint8Array(digest)]

@@ -47,6 +47,12 @@ export interface FakeSandboxOptions {
   /** Bytes served as manifest.json instead of the fixture's (a tampered bucket). */
   manifestBytes?: Uint8Array;
   info?: SandboxInfo;
+  /**
+   * The version each `info()` call reports as answering (`versionId`), in
+   * order; the last one again after that. Absent: no `versionId` (a sandbox
+   * Worker without the version metadata binding).
+   */
+  versionIds?: string[];
   progress?: BuildProgress | null;
   selfManaged?: {
     /** Names of the secrets the sandbox Worker holds; everything when absent. */
@@ -60,6 +66,8 @@ export interface FakeSandboxOptions {
 }
 
 export interface FakeSandbox extends SandboxBuildsBinding {
+  /** How often `info()` was called. */
+  infoCalls: number;
   requests: unknown[];
   cleanups: unknown[];
   progressCalls: unknown[];
@@ -157,7 +165,8 @@ export function fakeSandbox(
     log: "Cloning\nInstalling\nPacking\n",
   };
 
-  return {
+  const fake: FakeSandbox = {
+    infoCalls: 0,
     requests,
     cleanups,
     progressCalls,
@@ -165,14 +174,18 @@ export function fakeSandbox(
     runs,
     statusCalls,
     async info() {
-      return structuredClone(
-        opts.info ?? {
+      fake.infoCalls += 1;
+      const versions = opts.versionIds ?? [];
+      const versionId = versions[Math.min(fake.infoCalls, versions.length) - 1];
+      return structuredClone({
+        ...(opts.info ?? {
           protocol: SANDBOX_PROTOCOL_VERSION,
           sandboxVersion: "0.4.0",
           image: SANDBOX_IMAGE,
           features: [SANDBOX_FEATURE_SELF_DEPLOYING],
-        },
-      );
+        }),
+        ...(versionId === undefined ? {} : { versionId }),
+      });
     },
     async deploySelfManaged(input) {
       return selfManagedRun("deploy", input);
@@ -253,6 +266,7 @@ export function fakeSandbox(
       });
     },
   };
+  return fake;
 }
 
 /** The catalog manifest as the catalog publishes it for a sandbox entry, and its digest. */

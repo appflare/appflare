@@ -44,6 +44,12 @@ import {
   UnitItemError,
   type UnitResult,
 } from "./result";
+import {
+  runSandboxSettle,
+  type SandboxSettleResult,
+  type SettleSandboxInput,
+  settleSandboxInputSchema,
+} from "./sandbox-settle";
 
 /**
  * Job units: the pieces of a job that make many subrequests, each small
@@ -194,6 +200,8 @@ export interface JobUnitsApi {
   inspectEmailRouting(input: EmailRoutingInspectInput): Promise<UnitResult<EmailRoutingInspection>>;
   /** Counts the cron triggers of the account's other Workers (reads only). */
   countCronTriggers(input: CronTriggerCountInput): Promise<UnitResult<CronTriggerScan>>;
+  /** Waits for the sandbox Worker to answer from one version before a run starts in it. */
+  settleSandbox(input: SettleSandboxInput): Promise<UnitResult<SandboxSettleResult>>;
 }
 
 /** The unit names, as RPC method names. */
@@ -439,6 +447,10 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
     countCronTriggers: (input) =>
       parsed(cronTriggerCountInputSchema, input, "countCronTriggers", (request) =>
         runCronTriggerCount(env, deps, request),
+      ),
+    settleSandbox: (input) =>
+      parsed(settleSandboxInputSchema, input, "settleSandbox", (request) =>
+        runSandboxSettle(env, deps, request),
       ),
   };
 }

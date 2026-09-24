@@ -601,6 +601,23 @@ describe("sandbox disable", () => {
 });
 
 describe("buildSandboxWranglerConfig", () => {
+  it("declares the version metadata binding when the artifact has one", async () => {
+    const fixture = await buildFixtureArtifact({
+      mutate: (m) => {
+        asSandboxWorker(m);
+        m.worker.bindings.push({ type: "version_metadata", name: "CF_VERSION_METADATA" });
+      },
+    });
+    expect(buildSandboxWranglerConfig(fixture.manifest).version_metadata).toEqual({
+      binding: "CF_VERSION_METADATA",
+    });
+    rmSync(fixture.dir, { recursive: true, force: true });
+
+    const older = await buildFixtureArtifact({ mutate: asSandboxWorker });
+    expect(buildSandboxWranglerConfig(older.manifest).version_metadata).toBeUndefined();
+    rmSync(older.dir, { recursive: true, force: true });
+  });
+
   it("refuses an artifact with a binding this CLI does not know", async () => {
     const fixture = await buildFixtureArtifact({
       mutate: (m) => {

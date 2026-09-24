@@ -11,7 +11,13 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { runBuild } from "./build";
 import { readProgress } from "./log";
-import { BUILD_ENV, MANIFEST_INPUT, MAX_SANDBOX_ID_LENGTH, sandboxId } from "./protocol";
+import {
+  BUILD_ENV,
+  freshSandboxId,
+  MANIFEST_INPUT,
+  MAX_SANDBOX_ID_LENGTH,
+  sandboxId,
+} from "./protocol";
 import { deleteInstallBuilds } from "./storage";
 import { type FakeFailure, FakeSandbox } from "./test/fake-sandbox";
 
@@ -113,7 +119,11 @@ function fake(
   });
 }
 
-function build(sandbox: FakeSandbox, input: Record<string, unknown> = request()) {
+function build(
+  /** The container each open returns, in order; the last one again after that. */
+  sandbox: FakeSandbox | FakeSandbox[],
+  input: Record<string, unknown> = request(),
+) {
   const opened: { id: string; instanceType: string }[] = [];
   let clock = Date.parse("2026-09-23T12:00:00Z");
   const promise = runBuild(input, {
@@ -121,7 +131,10 @@ function build(sandbox: FakeSandbox, input: Record<string, unknown> = request())
     sandboxVersion: "0.1.0",
     openSandbox: (id, instanceType) => {
       opened.push({ id, instanceType });
-      return sandbox;
+      const list = Array.isArray(sandbox) ? sandbox : [sandbox];
+      const next = list[Math.min(opened.length, list.length) - 1];
+      if (next === undefined) throw new Error("no fake container to open");
+      return next;
     },
     // Every reading of the clock moves it 3 s on.
     now: () => {
@@ -318,6 +331,29 @@ describe("runBuild", () => {
     expect(failure.message).toContain("capacity");
   });
 
+  it("builds in a fresh container when a new version of the Worker resets the first as it starts", async () => {
+    const first = fake({
+      failures: [
+        {
+          match: /^rm -rf/,
+          throws:
+            "Sandbox operation sandbox.exec was interrupted while the platform was updating the sandbox runtime",
+        },
+      ],
+      destroyThrows: "Durable Object reset because its code was updated",
+    });
+    const fresh = fake();
+    const { promise, opened } = build([first, fresh]);
+    const result = asResult(await promise);
+    const id = await sandboxId("01J8INSTALL", SHA);
+    expect(opened.map((o) => o.id)).toEqual([id, `${id}-r`]);
+    expect(first.commands).toHaveLength(1);
+    expect(fresh.commands.some((c) => c.startsWith("appflare-pack"))).toBe(true);
+    expect(fresh.destroyed).toBe(true);
+    expect(result.log).toContain("starting again in a fresh container");
+    expect(result.log).not.toContain("FAILED");
+  });
+
   it("refuses a pack that produced another version", async () => {
     const sandbox = fake({
       packOutput: { "widget-1.2.4.zip": ZIP, "manifest.json": packedManifest() },
@@ -386,6 +422,8 @@ describe("cleanup and progress", () => {
       sandboxVersion: "0.1.0",
       image: "docker.io/mendylanda/appflare-sandbox:0.1.0",
       features: [SANDBOX_FEATURE_SELF_DEPLOYING],
+      // The version metadata binding's id (vitest.config.ts).
+      versionId: "version-under-test",
     });
     expect(await builds.cleanup({ installId: "01J8INSTALL", keepVersions: [] })).toEqual({
       deleted: 3,
@@ -407,5 +445,9 @@ describe("sandboxId", () => {
       /^build-01j8install-[0-9a-f]{10}-0123456-a2$/,
     );
     expect((await sandboxId(long, SHA, 20)).length).toBeLessThanOrEqual(MAX_SANDBOX_ID_LENGTH);
+    // So does the fresh container a run starts over in.
+    expect(freshSandboxId(await sandboxId(long, SHA, 20)).length).toBeLessThanOrEqual(
+      MAX_SANDBOX_ID_LENGTH,
+    );
   });
 });
