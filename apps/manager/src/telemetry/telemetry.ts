@@ -35,10 +35,22 @@ export type AcknowledgeNoticeInput = z.infer<typeof acknowledgeNoticeInput>;
 
 export const setTelemetryInput = z.object({ enabled: z.boolean() });
 
+/**
+ * The notice reads in one order on every surface: what leaving it on does
+ * for the people who run Appflare, then the switch, then exactly what is and
+ * is not sent.
+ */
 export const TELEMETRY_COPY = {
   title: "Anonymous usage data",
-  notice:
-    "Appflare sends a small daily report so we can see which versions and features are used and where installs and updates fail. It contains counts, versions, settings such as whether passkeys are on, and error categories. It never contains your Cloudflare account, email addresses, names, domains, secrets or tokens. It is sent from this Worker, not your browser, to PostHog's EU region, where the project is set to discard IP addresses.",
+  benefitsIntro: "Leaving this on helps everyone who runs Appflare. It lets the maintainers:",
+  benefits: [
+    "see which versions are in use, so they know which ones to keep supporting and test updates against;",
+    "learn which install paths and apps fail, so fixes land sooner and updates break less often;",
+    "know which features people use, so work goes where it matters.",
+  ],
+  sent: "What is sent: one small report a day with counts, versions, settings such as whether passkeys are on, and error categories, plus how each install and update went.",
+  neverSent:
+    "Never sent: your Cloudflare account, email addresses, names, domains, secrets or tokens. Reports go from this Worker, not your browser, to PostHog's EU region, where the project is set to discard IP addresses.",
   switchLabel: "Send anonymous usage data",
   scope:
     "This switch covers this manager's reports. The installer (create-appflare) has its own: --no-telemetry, APPFLARE_TELEMETRY=off or DO_NOT_TRACK=1.",

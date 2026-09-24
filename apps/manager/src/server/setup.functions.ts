@@ -5,7 +5,7 @@ import { createDb } from "../db/client";
 import { releaseSettingsLock, tryAcquireSettingsLock } from "../db/settings-lock";
 import { currentAuth } from "./auth.server";
 import { firstAdminInput, setupTokenInput } from "./schemas";
-import { authErrorMessage, hasAnyUser } from "./users.server";
+import { authErrorMessage, hasAnyUser, makeFirstUserOwner } from "./users.server";
 
 /**
  * Setup server functions. These are the only server
@@ -35,8 +35,9 @@ export const checkSetupToken = createServerFn({ method: "POST" })
 
 /**
  * Creates the first user with role `admin` through the admin plugin's
- * `createUser` (public sign-up is disabled, see auth/server.ts). Called without
- * request headers, so Better Auth treats it as a trusted server call.
+ * `createUser` (public sign-up is disabled, see auth/server.ts), and makes
+ * them the owner. Called without request headers, so Better Auth treats it as
+ * a trusted server call.
  */
 export const createFirstAdmin = createServerFn({ method: "POST" })
   .validator(firstAdminInput)
@@ -52,9 +53,10 @@ export const createFirstAdmin = createServerFn({ method: "POST" })
     }
     try {
       if (await hasAnyUser(db)) throw new Error(SETUP_ALREADY_DONE);
-      await currentAuth().api.createUser({
+      const { user } = await currentAuth().api.createUser({
         body: { email: data.email, name: data.name, password: data.password, role: "admin" },
       });
+      await makeFirstUserOwner(db, user.id);
     } catch (error) {
       if (error instanceof Error && error.message === SETUP_ALREADY_DONE) throw error;
       throw new Error(authErrorMessage(error, "Could not create the admin account."));

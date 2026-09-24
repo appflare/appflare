@@ -57,6 +57,14 @@ export function createAuth({ db, secret, baseURL }: AuthDeps) {
       enabled: true,
       disableSignUp: true,
     },
+    user: {
+      additionalFields: {
+        // The one user who can change roles, delete users and hand this over
+        // (see server/users.server.ts). `input: false`: no endpoint accepts it,
+        // so only the manager's own code sets it.
+        isOwner: { type: "boolean", required: false, defaultValue: false, input: false },
+      },
+    },
     rateLimit: {
       enabled: true,
       storage: "database",

@@ -4,12 +4,13 @@ import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 import { previewTelemetry, setTelemetry } from "../telemetry/telemetry.functions";
-import { UsageDataSwitch, WhatIsSentLink } from "./usage-data-notice";
+import { UsageDataBenefits, UsageDataSummary, UsageDataSwitch } from "./usage-data-notice";
 
 /**
- * Settings, Usage data: the notice, the switch (admins change it, members
- * see it; off and disabled while a Worker variable turns usage data off),
- * and a preview of the next daily report, built on request.
+ * Settings, Usage data: what it is for, the switch (admins change it,
+ * members see it; off and disabled while a Worker variable turns usage data
+ * off), what is and is not sent, and a preview of the next daily report,
+ * built on request.
  */
 export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; isAdmin: boolean }) {
   const router = useRouter();
@@ -50,7 +51,7 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
     // (nothing from a development build, whatever the switch says) is spelled out below it.
     <LayerCard>
       <LayerCard.Primary className="grid gap-4 px-5 py-4">
-        <Text variant="secondary">{TELEMETRY_COPY.notice}</Text>
+        <UsageDataBenefits />
         <UsageDataSwitch
           status={status}
           checked={enabled}
@@ -70,7 +71,7 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
         {error !== null && (
           <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
         )}
-        <WhatIsSentLink />
+        <UsageDataSummary />
         <Collapsible.Root onOpenChange={(open) => void onPreviewOpen(open)}>
           <Collapsible.DefaultTrigger>{TELEMETRY_COPY.preview}</Collapsible.DefaultTrigger>
           <Collapsible.DefaultPanel className="grid gap-2">

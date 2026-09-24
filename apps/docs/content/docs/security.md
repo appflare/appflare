@@ -137,9 +137,10 @@ app, never the manager's.
   `SameSite=Lax`, and only the manager's own URL is a trusted origin. Sign-in
   attempts are rate limited, with the counters in the manager's D1 database.
 - **Roles.** Admins change things; members read everything and change nothing but
-  their own passkeys. The
-  server checks the role on every action, not just the UI. See
-  [Users and roles](/guides/users/).
+  their own passkeys. One admin, the owner, is the only one who can change roles,
+  delete users, or transfer ownership; Better Auth's own admin endpoints give admins
+  read access only, so they cannot be used to get around that. The server checks the
+  role on every action, not just the UI. See [Users and roles](/guides/users/).
 
 Apart from the sign-in and setup pages, the only endpoint that answers without a
 session is `/api/health`, also when [Cloudflare Access](#protect-with-cloudflare-access)

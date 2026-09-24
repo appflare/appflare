@@ -22,6 +22,15 @@ export const addUserInput = z.object({
 });
 export type AddUserInput = z.infer<typeof addUserInput>;
 
+export const userIdInput = z.object({ userId: z.string().min(1).max(255) });
+export type UserIdInput = z.infer<typeof userIdInput>;
+
+export const changeUserRoleInput = z.object({
+  userId: z.string().min(1).max(255),
+  role: z.enum(ROLES),
+});
+export type ChangeUserRoleInput = z.infer<typeof changeUserRoleInput>;
+
 /**
  * A pasted Cloudflare API token. Only shape is checked here; Cloudflare decides
  * validity. The value is never echoed back.

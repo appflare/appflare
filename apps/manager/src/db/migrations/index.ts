@@ -14,6 +14,7 @@ import m0010 from "./0010_featured_dismissals.sql?raw";
 import m0011 from "./0011_snapshot_settings.sql?raw";
 import m0012 from "./0012_notification_channels.sql?raw";
 import m0013 from "./0013_update_control.sql?raw";
+import m0014 from "./0014_owner.sql?raw";
 
 /** Every migration in apply order. `schema_version` counts how many have been applied. */
 export const migrations: readonly { tag: string; sql: string }[] = [
@@ -31,4 +32,5 @@ export const migrations: readonly { tag: string; sql: string }[] = [
   { tag: "0011_snapshot_settings", sql: m0011 },
   { tag: "0012_notification_channels", sql: m0012 },
   { tag: "0013_update_control", sql: m0013 },
+  { tag: "0014_owner", sql: m0014 },
 ];

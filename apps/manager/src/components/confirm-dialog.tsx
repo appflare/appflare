@@ -15,6 +15,9 @@ type TriggerRender = ComponentProps<typeof LayerDialog.Trigger>["render"];
  * `onConfirm` does the work; when it throws, its message is shown and the
  * dialog stays open. When it returns, the dialog closes (unless the page
  * already navigated away, as after starting a job).
+ *
+ * Without `trigger`, the dialog is controlled through `open` and
+ * `onOpenChange`, for an action picked from a menu such as a table row's.
  */
 export function ConfirmDialog({
   trigger,
@@ -28,9 +31,11 @@ export function ConfirmDialog({
   onOpen,
   disabled = false,
   size = "base",
+  open: openProp,
+  onOpenChange: onOpenChangeProp,
 }: {
   /** The button that opens the dialog; receives the trigger props to spread. */
-  trigger: TriggerRender;
+  trigger?: TriggerRender;
   title: string;
   description?: ReactNode;
   children?: ReactNode;
@@ -44,13 +49,34 @@ export function ConfirmDialog({
   /** Keeps the action disabled, for example until the body's own choices are complete. */
   disabled?: boolean;
   size?: "sm" | "base" | "lg" | "xl";
+  /** Controlled mode (no `trigger`): whether the dialog is open. */
+  open?: boolean;
+  /** Controlled mode: asked to close (Cancel, Escape, or after `onConfirm`). */
+  onOpenChange?: (open: boolean) => void;
 }) {
   const formId = useId();
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = openProp ?? ownOpen;
   const [typed, setTyped] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const confirmed = confirmText === undefined || typed.trim() === confirmText;
+
+  // A controlled dialog opens without `onOpenChange(true)`: start it clean
+  // when `open` turns true.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setTyped("");
+      setError(null);
+    }
+  }
+
+  function setOpen(next: boolean) {
+    if (openProp === undefined) setOwnOpen(next);
+    onOpenChangeProp?.(next);
+  }
 
   function onOpenChange(next: boolean) {
     setOpen(next);
@@ -77,7 +103,7 @@ export function ConfirmDialog({
 
   return (
     <LayerDialog.Alert open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
-      <LayerDialog.Trigger render={trigger} />
+      {trigger !== undefined && <LayerDialog.Trigger render={trigger} />}
       <LayerDialog.Content size={size}>
         <LayerDialog.Title>{title}</LayerDialog.Title>
         {description !== undefined && (

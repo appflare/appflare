@@ -28,6 +28,7 @@ async function loadGateState(): Promise<{ state: GateState; viewer: Viewer | nul
           email: session.user.email,
           name: session.user.name,
           role: isAdmin ? "admin" : "member",
+          isOwner: isAdmin && session.user.isOwner === true,
         };
   return { state: { hasUser, signedIn: session !== null, isAdmin, tokenConfigured }, viewer };
 }

@@ -9,4 +9,6 @@ export interface Viewer {
   email: string;
   name: string;
   role: Role;
+  /** The owner (always an admin): the only one who changes roles and deletes users. */
+  isOwner: boolean;
 }

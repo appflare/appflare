@@ -1,12 +1,28 @@
 ---
 title: Usage data
-description: The anonymous usage data Appflare sends, what it never sends, where it goes, and the ways to turn it off.
+description: What leaving usage data on does, what Appflare sends and never sends, where it goes, and the ways to turn it off.
 ---
 
 Appflare collects anonymous usage data to decide what to build and fix. It is on by
 default and easy to turn off. The manager sends nothing until an admin has seen the
 notice: in the setup wizard, or, after an update from a version without usage data,
 in a notice on the home page. A development build never sends anything.
+
+## What it does for you
+
+Every manager runs in someone's own Cloudflare account, where the maintainers cannot
+see it. Usage data is how they find out what happens there. Leaving it on lets them:
+
+- **Keep the versions you run working.** They see which versions of the manager are
+  in use, so they know which ones to keep supporting and which upgrade paths to test
+  an update against.
+- **Fix what breaks, sooner.** They learn which install paths, apps and steps fail,
+  and how often, so the most common failures get fixed first and updates break less
+  often.
+- **Work on what matters.** They see which features people use, such as passkeys,
+  automatic updates or notification channels, so time goes where it helps most.
+
+Turning it off changes nothing about how Appflare works for you.
 
 ## What is sent
 

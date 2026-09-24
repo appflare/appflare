@@ -15,6 +15,33 @@ export function WhatIsSentLink() {
   );
 }
 
+/** What leaving usage data on does for the people who run Appflare; shown before the switch. */
+export function UsageDataBenefits() {
+  return (
+    <div className="grid gap-1.5">
+      <Text>{TELEMETRY_COPY.benefitsIntro}</Text>
+      <ul className="grid list-disc gap-1 pl-5">
+        {TELEMETRY_COPY.benefits.map((benefit) => (
+          <li key={benefit}>
+            <Text as="span">{benefit}</Text>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** What is and is never sent, with the link to the full list; shown after the switch. */
+export function UsageDataSummary() {
+  return (
+    <div className="grid gap-1.5">
+      <Text variant="secondary">{TELEMETRY_COPY.sent}</Text>
+      <Text variant="secondary">{TELEMETRY_COPY.neverSent}</Text>
+      <WhatIsSentLink />
+    </div>
+  );
+}
+
 /** The switch, off and disabled with the reason when a Worker variable turns usage data off. */
 export function UsageDataSwitch({
   status,
@@ -54,8 +81,8 @@ export function UsageDataSwitch({
 }
 
 /**
- * The usage-data notice with its switch (on by default) and Continue, which
- * records the choice. The setup step shows it inline; the home page shows it
+ * The usage-data notice: what it is for, its switch (on by default), what is
+ * and is not sent, and Continue, which records the choice. The setup step shows it inline; the home page shows it
  * as a banner to admins of a manager updated from a version without usage
  * data. Nothing is sent before Continue.
  */
@@ -86,9 +113,9 @@ export function UsageDataNotice({
 
   const body = (
     <div className="grid gap-3">
-      <Text>{TELEMETRY_COPY.notice}</Text>
+      <UsageDataBenefits />
       <UsageDataSwitch status={status} checked={enabled} disabled={pending} onChange={setEnabled} />
-      <WhatIsSentLink />
+      <UsageDataSummary />
       {error !== null && (
         <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
       )}

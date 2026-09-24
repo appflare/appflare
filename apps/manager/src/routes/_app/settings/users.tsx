@@ -10,8 +10,9 @@ import { listPasskeys } from "../../../server/passkeys.functions";
 import { listUsers } from "../../../server/users.functions";
 
 /**
- * `/settings/users`: the users (admins add them), the signed-in user's own
- * passkeys, and Cloudflare Access in front of the manager.
+ * `/settings/users`: the users (admins add them; the owner changes roles,
+ * deletes users and transfers ownership), the signed-in user's own passkeys,
+ * and Cloudflare Access in front of the manager.
  */
 export const Route = createFileRoute("/_app/settings/users")({
   staticData: { title: SETTINGS_PAGES.users.label },
@@ -37,7 +38,12 @@ function UsersSettingsPage() {
         parents={[SETTINGS_CRUMB]}
       />
       <Section title="Users" actions={users !== null ? <AddUserDialog /> : undefined}>
-        <UsersSection users={users} viewerId={viewer.id} />
+        <UsersSection
+          users={users}
+          viewerId={viewer.id}
+          // From the list, which heals a missing owner as it loads (users.server.ts).
+          viewerIsOwner={users?.some((u) => u.id === viewer.id && u.isOwner) ?? false}
+        />
       </Section>
       <Section title="Your passkeys">
         <PasskeysSection passkeys={passkeys} />
