@@ -8,6 +8,7 @@ import { createDb, type Database } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { account, featured_dismissals, passkey, session, user } from "../db/schema";
+import { markSeen, readSeenVersion } from "../whats-new/seen.server";
 import {
   changeUserRole,
   deleteUser,
@@ -97,13 +98,16 @@ describe("authorization: only the owner changes users", () => {
 
     it(`deleteUser by ${caller}: ${allowed ? "allowed" : "refused"}`, async () => {
       await seedCast();
+      await markSeen(db(), "member2", "0.4.0");
       const run = deleteUser(db(), caller, { userId: "member2" });
       if (allowed) {
         await run;
         expect(await exists("member2")).toBe(false);
+        expect(await readSeenVersion(db(), "member2")).toBeNull();
       } else {
         expect(await denied(run)).toBe(true);
         expect(await exists("member2")).toBe(true);
+        expect(await readSeenVersion(db(), "member2")).toBe("0.4.0");
       }
     });
 

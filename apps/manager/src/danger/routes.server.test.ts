@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
+import { COLOR_MODE_SCRIPT, COLOR_MODE_SCRIPT_SHA256 } from "../components/color-mode";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -189,8 +190,13 @@ describe("handleRemoveAppflare", () => {
     expect(html).toContain("Delete the manager&#39;s D1 database");
     expect(html).toContain("deletes itself");
     expect(html).toMatch(/<\/html>\n$/);
-    // Self-contained: no scripts, no stylesheets or images to load.
-    expect(html).not.toMatch(/<script|<link|<img|src=/);
+    // Self-contained: nothing to load, and no script but the inline colour mode, allowed by hash.
+    expect(html).not.toMatch(/<link|<img|src=/);
+    expect(html.match(/<script>/g)).toEqual(["<script>"]);
+    expect(html).toContain(`<script>${COLOR_MODE_SCRIPT}</script>`);
+    expect(response.headers.get("content-security-policy")).toContain(
+      `script-src 'sha256-${COLOR_MODE_SCRIPT_SHA256}'`,
+    );
 
     await s.settle();
     const deletes = s.account.deletes();

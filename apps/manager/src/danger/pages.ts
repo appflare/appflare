@@ -1,10 +1,13 @@
+import { COLOR_MODE_SCRIPT, COLOR_MODE_SCRIPT_SHA256 } from "../components/color-mode";
 import type { RemovalStep } from "./removal.server";
 
 /**
  * The static pages the danger-zone actions answer with. Each is complete in
- * itself: styles inline, no scripts, no images, nothing loaded from the
- * manager, because the removal page must still render after the manager
- * Worker has deleted itself. Every value is HTML-escaped.
+ * itself: styles inline, no images, nothing loaded from the manager, because
+ * the removal page must still render after the manager Worker has deleted
+ * itself. The one script is the manager's inline colour-mode script, allowed
+ * by its hash, so the page is light unless the account menu's Appearance
+ * says otherwise. Every value is HTML-escaped.
  */
 
 export function escapeHtml(value: string): string {
@@ -17,8 +20,8 @@ export function escapeHtml(value: string): string {
 }
 
 const STYLE = `
-:root { color-scheme: light dark; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --bg: #ffffff; --card: #f6f8fa; --ok: #1a7f37; --bad: #cf222e; --skip: #59636e; --link: #0969da; }
-@media (prefers-color-scheme: dark) { :root { --fg: #f0f6fc; --muted: #9198a1; --line: #3d444d; --bg: #0d1117; --card: #151b23; --ok: #3fb950; --bad: #f85149; --skip: #9198a1; --link: #4493f8; } }
+:root { color-scheme: light; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --bg: #ffffff; --card: #f6f8fa; --ok: #1a7f37; --bad: #cf222e; --skip: #59636e; --link: #0969da; }
+:root[data-mode="dark"] { color-scheme: dark; --fg: #f0f6fc; --muted: #9198a1; --line: #3d444d; --bg: #0d1117; --card: #151b23; --ok: #3fb950; --bad: #f85149; --skip: #9198a1; --link: #4493f8; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 44rem; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
@@ -47,6 +50,7 @@ function head(title: string): string {
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 <style>${STYLE}</style>
+<script>${COLOR_MODE_SCRIPT}</script>
 </head>
 <body>
 <main>
@@ -60,9 +64,9 @@ export const PAGE_HEADERS = {
   "cache-control": "no-store",
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
-  // Nothing on these pages loads anything: no scripts, no images, no requests back.
-  "content-security-policy":
-    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  // Nothing on these pages loads anything: no images, no requests back, and no
+  // script but the inline colour-mode one, allowed by its hash.
+  "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${COLOR_MODE_SCRIPT_SHA256}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
 } as const;
 
 /** A refused or failed action, with the way back. */

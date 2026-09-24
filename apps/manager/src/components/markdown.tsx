@@ -6,7 +6,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
  * typography. Raw HTML is dropped (`skipHtml`) and react-markdown's default URL
  * transform removes `javascript:` and other unsafe links.
  */
-const components: Components = {
+export const markdownComponents: Components = {
   p: ({ children }) => <Text>{children}</Text>,
   a: ({ href, children }) => (
     <Link href={href} target="_blank" rel="noopener noreferrer">
@@ -47,7 +47,7 @@ const components: Components = {
 export function Markdown({ children }: { children: string }) {
   return (
     <div className="grid gap-3">
-      <ReactMarkdown skipHtml components={components}>
+      <ReactMarkdown skipHtml components={markdownComponents}>
         {children}
       </ReactMarkdown>
     </div>

@@ -1,6 +1,8 @@
 import type { FetchLike } from "@appflare/cf-api";
 import { indexArtifactsSchema } from "@appflare/schema";
 import { z } from "zod";
+import { pickReleaseNotes } from "../whats-new/release-notes";
+import { storeReleaseNotes } from "../whats-new/release-notes.server";
 import { releaseFetch } from "./release-fetch";
 import { compareVersions, isUpdateAvailable, parseVersion } from "./versions";
 
@@ -11,10 +13,11 @@ import { compareVersions, isUpdateAvailable, parseVersion } from "./versions";
  * reads the releases list, picks the newest published (not draft, not
  * pre-release) manager release, and keeps it in KV under `manager:latest`
  * with the time of the check. Whether an update is available is computed at
- * read time against the running `APPFLARE_VERSION`.
+ * read time against the running `APPFLARE_VERSION`. The same list also
+ * gives "What's new" its release notes (whats-new/).
  *
  * KV writes are scarce on the free plan (1,000 a day): one write per check,
- * so the half-hourly cron costs 48 a day.
+ * so the half-hourly cron costs 48 a day, plus one when the notes change.
  */
 
 export const DEFAULT_MANAGER_RELEASES_URL =
@@ -194,12 +197,20 @@ export async function refreshManagerReleases(
     throw new ManagerReleasesError(`The release feed at ${where} did not return a list.`);
   }
   const picked = pickLatestManagerRelease(json, { viaApi: token !== undefined });
-  if (picked === null) return null;
-  const release: ManagerRelease = {
-    ...picked,
-    checkedAt: (opts.now ?? (() => new Date()))().toISOString(),
-  };
-  await env.KV.put(MANAGER_LATEST_KEY, JSON.stringify(release));
+  let release: ManagerRelease | null = null;
+  if (picked !== null) {
+    release = { ...picked, checkedAt: (opts.now ?? (() => new Date()))().toISOString() };
+    await env.KV.put(MANAGER_LATEST_KEY, JSON.stringify(release));
+  }
+  // "What's new" reads the same list: written only when the notes changed. Its
+  // failure is logged and never stops the update check or the rest of the cron.
+  try {
+    await storeReleaseNotes(env.KV, pickReleaseNotes(json));
+  } catch (error) {
+    console.error("release notes not stored", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   return release;
 }
 

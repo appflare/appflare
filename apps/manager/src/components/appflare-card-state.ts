@@ -105,3 +105,40 @@ export const UPDATED_TO_KEY = "appflare:updated-to";
 
 /** The "updated" card hides after this long, unless a health check or a dismissal ends it first. */
 export const UPDATED_CARD_MS = 30_000;
+
+/** What the folded sidebar shows instead of the card: one icon, its label, and where it leads. */
+export interface AppflareRailItem {
+  tone: "success" | "update" | "progress" | "warning" | "danger";
+  label: string;
+  /** The job's log while one is followed; else Settings, Appflare updates. */
+  href: string;
+}
+
+/** The icon-rail form of the card; null when there is no card. */
+export function appflareRailItem(
+  state: AppflareCardState,
+  jobId: string | null,
+  updatesHref: string,
+): AppflareRailItem | null {
+  const jobHref = jobId === null ? updatesHref : `/jobs/${jobId}`;
+  switch (state.kind) {
+    case "current":
+      return null;
+    case "updated":
+      return { tone: "success", label: `Appflare updated to ${state.version}`, href: updatesHref };
+    case "available":
+      return { tone: "update", label: `Appflare ${state.latest} is available`, href: updatesHref };
+    case "running":
+      return { tone: "progress", label: `Updating to ${state.target}`, href: jobHref };
+    case "switching":
+      return { tone: "progress", label: `Switching to ${state.target}`, href: jobHref };
+    case "stalled":
+      return {
+        tone: "warning",
+        label: `Updated to ${state.target}; the new version did not answer yet`,
+        href: jobHref,
+      };
+    case "failed":
+      return { tone: "danger", label: `Update to ${state.target} failed`, href: jobHref };
+  }
+}

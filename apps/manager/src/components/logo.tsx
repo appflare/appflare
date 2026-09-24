@@ -29,3 +29,30 @@ export function Logo({ height = 20, className }: { height?: number; className?: 
     </svg>
   );
 }
+
+/** The mark's four quadrants are the first paths of the full logo; the letters follow. */
+const MARK_PATHS = INK_PATHS.slice(0, 4);
+
+/**
+ * The mark alone (no word), square, for the folded sidebar. Same colours as
+ * {@link Logo}. Decorative: whatever holds it carries the name.
+ */
+export function LogoMark({ size = 20, className }: { size?: number; className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox={`0 0 ${VIEW_BOX.height} ${VIEW_BOX.height}`}
+      width={size}
+      height={size}
+      className={cn("shrink-0", className)}
+      aria-hidden
+    >
+      <g style={{ fill: "light-dark(#000, #fff)" }}>
+        {MARK_PATHS.map((d) => (
+          <path key={d} d={d} />
+        ))}
+      </g>
+      <path fill={CLOUD_ORANGE} d={CLOUD_PATH} />
+    </svg>
+  );
+}

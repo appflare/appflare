@@ -2,7 +2,8 @@ import { and, asc, count, eq, sql } from "drizzle-orm";
 import { AuthGuardError } from "../auth/guards";
 import { hasRole, type Role } from "../auth/roles";
 import type { Database } from "../db/client";
-import { user } from "../db/schema";
+import { settings, user } from "../db/schema";
+import { seenKey } from "../whats-new/seen.server";
 
 /** True once any user exists: from then on `/setup` no longer creates admins. */
 export async function hasAnyUser(db: Database): Promise<boolean> {
@@ -193,7 +194,8 @@ export interface DeletedUser {
  * owner and the caller still is at that moment (another tab may have
  * transferred ownership since the checks above). Sessions, accounts, passkeys
  * and dismissals go with the user through their `ON DELETE CASCADE` foreign
- * keys, which D1 enforces.
+ * keys, which D1 enforces. Their "What's new" read marker (a `settings` row)
+ * is deleted in the same batch, and only when the user was.
  */
 export async function deleteUser(
   db: Database,
@@ -203,16 +205,27 @@ export async function deleteUser(
   await requireOwner(db, actorId);
   const target = await requireUser(db, input.userId);
   if (target.isOwner) throw new UserChangeError(USER_CHANGE_MESSAGES.deleteOwner);
-  const deleted = await db
-    .delete(user)
-    .where(
-      and(
-        eq(user.id, target.id),
-        sql`coalesce(${user.isOwner}, 0) = 0`,
-        sql`EXISTS (SELECT 1 FROM "user" AS "caller" WHERE "caller"."id" = ${actorId} AND "caller"."is_owner" = 1)`,
+  const [deleted] = await db.batch([
+    db
+      .delete(user)
+      .where(
+        and(
+          eq(user.id, target.id),
+          sql`coalesce(${user.isOwner}, 0) = 0`,
+          sql`EXISTS (SELECT 1 FROM "user" AS "caller" WHERE "caller"."id" = ${actorId} AND "caller"."is_owner" = 1)`,
+        ),
+      )
+      .returning({ id: user.id }),
+    // Their "What's new" row, only once the user is actually gone.
+    db
+      .delete(settings)
+      .where(
+        and(
+          eq(settings.key, seenKey(target.id)),
+          sql`NOT EXISTS (SELECT 1 FROM "user" WHERE "user"."id" = ${target.id})`,
+        ),
       ),
-    )
-    .returning({ id: user.id });
+  ]);
   if (deleted.length === 0) throw new UserChangeError(USER_CHANGE_MESSAGES.deleteNotAllowed);
   return { email: target.email, wasAdmin: target.role === "admin" };
 }

@@ -26,8 +26,8 @@ export const FULL_WIDTH_ACTION = "w-full justify-center";
  * full logo, then one card vertically centred on the page (title, one-line
  * subtitle, the screen's content), then a footer line with the version.
  *
- * Light or dark follows the browser, like the rest of the manager (see
- * `color-mode.ts`); the logo turns white in dark mode. `wide` fits the
+ * Light, or dark when chosen in the account menu's Appearance, like the rest
+ * of the manager (see `color-mode.ts`); the logo turns white in dark mode. `wide` fits the
  * Cloudflare token step's longer copy and two-button rows.
  */
 export function AuthLayout({

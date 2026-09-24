@@ -17,9 +17,6 @@ declare module "@tanstack/react-router" {
   }
 }
 
-/** Kumo's `bg-kumo-base` in light mode (white) and dark mode (neutral-925, oklch(17% 0 0)). */
-const THEME_COLOR = { light: "#ffffff", dark: "#0f0f0f" };
-
 export const Route = createRootRoute({
   head: ({ matches }) => {
     const page = matches.findLast((match) => match.staticData.title !== undefined)?.staticData
@@ -40,7 +37,9 @@ export const Route = createRootRoute({
         { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
         { rel: "manifest", href: "/site.webmanifest" },
       ],
-      // Dark mode follows the browser; set before the first paint.
+      // Light unless the account menu's Appearance says otherwise; set before the first
+      // paint. The script also writes the `theme-color` meta, which React must not own:
+      // one it rendered would be duplicated on hydration once the script changed it.
       scripts: [{ children: COLOR_MODE_SCRIPT }],
     };
   },
@@ -65,13 +64,6 @@ function RootDocument({ children }: { children: ReactNode }) {
     <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
-        {/* One per colour scheme. Written here because head() keeps a single meta per name. */}
-        <meta
-          name="theme-color"
-          media="(prefers-color-scheme: light)"
-          content={THEME_COLOR.light}
-        />
-        <meta name="theme-color" media="(prefers-color-scheme: dark)" content={THEME_COLOR.dark} />
       </head>
       <body className="bg-kumo-base text-kumo-default antialiased">
         {/* Kumo portals popups to <body>; the app root gets its own stacking context. */}

@@ -1,18 +1,20 @@
-import { Button, LayerCard, Link, Loader, Text } from "@cloudflare/kumo";
+import { Button, LayerCard, Link, Loader, Sidebar, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   CheckCircleIcon,
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { startSelfUpdate } from "../catalog/manager-releases.functions";
 import { MANAGER_UPDATES_HREF, type ManagerStatus } from "../installs/pending-updates";
 import type { JobView } from "../jobs/jobs.functions";
 import { POLL_MS, useLiveJob, useVersionSwitch } from "../jobs/live-job";
 import {
   type AppflareCardState,
+  type AppflareRailItem,
   appflareCardState,
+  appflareRailItem,
   type CardJob,
   UPDATED_CARD_MS,
   UPDATED_TO_KEY,
@@ -93,6 +95,27 @@ export function AppflareVersion({ version }: { version: string }) {
   );
 }
 
+const RAIL_ICONS: Record<AppflareRailItem["tone"], ReactNode> = {
+  success: <CheckCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-success" />,
+  update: <ArrowCircleUpIcon weight="fill" className="size-4 shrink-0 text-kumo-link" />,
+  progress: <Loader size="sm" />,
+  warning: <WarningCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-warning" />,
+  danger: <WarningCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-danger" />,
+};
+
+/** The card in the folded sidebar: a menu button whose tooltip carries the message. */
+function RailItem({ item }: { item: AppflareRailItem }) {
+  return (
+    <div className="shrink-0 px-[11px] pb-2">
+      <Sidebar.Menu>
+        <Sidebar.MenuButton href={item.href} icon={RAIL_ICONS[item.tone]} tooltip={item.label}>
+          {item.label}
+        </Sidebar.MenuButton>
+      </Sidebar.Menu>
+    </div>
+  );
+}
+
 /**
  * The bottom of the sidebar, above the footer: Appflare's own update. No
  * card while Appflare is up to date (the footer shows the version). When a
@@ -103,8 +126,19 @@ export function AppflareVersion({ version }: { version: string }) {
  * dismissed, the next health poll, or 30 seconds), and a failure is shown in
  * the card with a link to the log. The self-update's
  * details and the automatic-update setting stay on Settings, Appflare updates.
+ * In the folded sidebar (`collapsed`) the card is one icon with its message
+ * as a tooltip, linking to the job's log or to Settings, Appflare updates;
+ * it keeps following the job, so the page still reloads onto a new version.
  */
-export function AppflareCard({ manager, isAdmin }: { manager: ManagerStatus; isAdmin: boolean }) {
+export function AppflareCard({
+  manager,
+  isAdmin,
+  collapsed = false,
+}: {
+  manager: ManagerStatus;
+  isAdmin: boolean;
+  collapsed?: boolean;
+}) {
   const [jobId, setJobId] = useState<string | null>(manager.activeJobId);
   const [updatedDone, setUpdatedDone] = useState(false);
   const endUpdated = useCallback(() => setUpdatedDone(true), []);
@@ -154,6 +188,10 @@ export function AppflareCard({ manager, isAdmin }: { manager: ManagerStatus; isA
     isAdmin,
   });
   useUpdatedCardTimeout(state.kind === "updated" ? state.version : null, endUpdated);
+  if (collapsed) {
+    const item = appflareRailItem(state, jobId, MANAGER_UPDATES_HREF);
+    return item === null ? null : <RailItem item={item} />;
+  }
   return (
     <CardBody
       state={state}

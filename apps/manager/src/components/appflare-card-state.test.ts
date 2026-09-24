@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ManagerStatus } from "../installs/pending-updates";
-import { appflareCardState, type CardJob } from "./appflare-card-state";
+import { appflareCardState, appflareRailItem, type CardJob } from "./appflare-card-state";
 
 const upToDate: ManagerStatus = {
   current: "0.4.0",
@@ -133,5 +133,39 @@ describe("appflareCardState", () => {
       target: "0.5.0",
       retry: "0.5.1",
     });
+  });
+});
+
+describe("appflareRailItem", () => {
+  const updates = "/settings/appflare-updates";
+
+  it("shows nothing while Appflare is up to date", () => {
+    expect(appflareRailItem({ kind: "current", version: "0.4.0" }, null, updates)).toBeNull();
+  });
+
+  it("links an available release to Appflare updates", () => {
+    expect(
+      appflareRailItem(
+        { kind: "available", current: "0.4.0", latest: "0.5.0", canUpdate: true },
+        null,
+        updates,
+      ),
+    ).toEqual({ tone: "update", label: "Appflare 0.5.0 is available", href: updates });
+  });
+
+  it("links a followed self-update to its log", () => {
+    expect(
+      appflareRailItem({ kind: "running", target: "0.5.0", step: "Uploading" }, "job-1", updates),
+    ).toEqual({ tone: "progress", label: "Updating to 0.5.0", href: "/jobs/job-1" });
+    expect(
+      appflareRailItem(
+        { kind: "failed", target: "0.5.0", error: "boom", retry: "0.5.0" },
+        "job-1",
+        updates,
+      ),
+    ).toEqual({ tone: "danger", label: "Update to 0.5.0 failed", href: "/jobs/job-1" });
+    expect(appflareRailItem({ kind: "stalled", target: "0.5.0" }, null, updates)?.href).toBe(
+      updates,
+    );
   });
 });
