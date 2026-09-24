@@ -1,9 +1,11 @@
-import type { Requirement } from "@appflare/schema";
+import type { InstallTier, Requirement } from "@appflare/schema";
 
 /**
  * What each catalog `requires` value asks of the Cloudflare account, as shown
  * on the app's catalog page before installing. Client-safe: the page and the
- * install job's log use the same words.
+ * install job's log use the same words. `sentence` describes an `artifact`
+ * tier app; {@link requirementSentence} swaps in the other tiers' wording
+ * where the requirement means something else for them.
  */
 export const REQUIREMENTS: Record<Requirement, { label: string; sentence: string }> = {
   r2: {
@@ -38,6 +40,29 @@ export const REQUIREMENTS: Record<Requirement, { label: string; sentence: string
 };
 
 /**
+ * Sentences that differ from {@link REQUIREMENTS} for the tiers that run in
+ * the account's sandbox Worker. There the container is where the app is
+ * built (`sandbox`) or where its own installer runs (`self-deploying`), not
+ * something the app itself runs. A self-deploying app's installer creates
+ * its own Workers, and Appflare does not set Email Routing up for it.
+ */
+const TIER_SENTENCES: Record<
+  Exclude<InstallTier, "artifact">,
+  Partial<Record<Requirement, string>>
+> = {
+  sandbox: {
+    containers:
+      "The app is built in a container in this account, which needs the Workers Paid plan.",
+  },
+  "self-deploying": {
+    containers:
+      "The app's installer runs in a container in this account, which needs the Workers Paid plan.",
+    "email-routing":
+      "Email Routing must be enabled on a zone in the account so that email can be delivered to the app. Appflare does not set Email Routing up for an app that deploys itself.",
+  },
+};
+
+/**
  * The Email Routing sentence for an app whose manifest sets
  * `install.emailRouting`: Appflare sets routing up itself, on the zone the
  * admin chooses in the install form.
@@ -53,15 +78,27 @@ export function requirementLabel(value: string): string {
 }
 
 /**
- * The sentence for a requirement. `provisionsEmailRouting`: the app's manifest
- * sets `install.emailRouting`, so the install sets Email Routing up itself.
+ * The sentence for a requirement of an app of `tier`. `provisionsEmailRouting`:
+ * the app's manifest sets `install.emailRouting`, so the install sets Email
+ * Routing up itself. Only installs Appflare deploys do that; a self-deploying
+ * app's installer deploys it instead.
  */
 export function requirementSentence(
   value: string,
-  context: { provisionsEmailRouting?: boolean } = {},
+  context: { tier: InstallTier; provisionsEmailRouting?: boolean },
 ): string | null {
-  if (value === "email-routing" && context.provisionsEmailRouting === true) {
+  const { tier } = context;
+  if (
+    value === "email-routing" &&
+    context.provisionsEmailRouting === true &&
+    tier !== "self-deploying"
+  ) {
     return EMAIL_ROUTING_PROVISIONED;
+  }
+  if (tier !== "artifact") {
+    const byTier: Partial<Record<string, string>> = TIER_SENTENCES[tier];
+    const sentence = byTier[value];
+    if (sentence !== undefined) return sentence;
   }
   return byName[value]?.sentence ?? null;
 }

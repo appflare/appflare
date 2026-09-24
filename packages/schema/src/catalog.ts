@@ -372,7 +372,8 @@ export const catalogEmailRoutingSchema = z
       "Email the app receives through Email Routing. The install form asks for one of the " +
       "account's zones; the install turns Email Routing on there if it is off, then points the " +
       "listed addresses (and, with `catchAll`, every other address) at the app's Worker, which " +
-      "must export an `email` handler. Uninstalling removes what the install added.",
+      "must export an `email` handler. Uninstalling removes what the install added. Not for the " +
+      "self-deploying tier, whose own installer deploys the app.",
     anyOf: [
       { required: ["catchAll"], properties: { catchAll: { const: true } } },
       { required: ["rules"], properties: { rules: { minItems: 1 } } },
@@ -540,7 +541,8 @@ export const catalogInstallSchema = z
     /**
      * Email the app receives through Email Routing; see
      * {@link catalogEmailRoutingSchema}. Optional for the same reason as
-     * `fixedWorkerName`.
+     * `fixedWorkerName`. Refused on `self-deploying` entries: their own
+     * installer deploys the app, and Appflare sets up no routing for it.
      */
     emailRouting: catalogEmailRoutingSchema.optional(),
     /**
@@ -569,11 +571,19 @@ export const catalogInstallSchema = z
     if (problem !== null) {
       ctx.addIssue({ code: "custom", path: [problem.path], message: problem.message });
     }
+    if (install.emailRouting !== undefined && install.tier === "self-deploying") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["emailRouting"],
+        message:
+          "install.emailRouting is not allowed for the self-deploying tier: the app's own installer deploys it, and Appflare sets up no Email Routing for it",
+      });
+    }
   })
   // The refinements do not reach the JSON Schema; `allOf` states them there
   // (no `sandbox`, or a tier that runs in the sandbox Worker; `selfDeploying`
-  // exactly when the tier is `self-deploying`), so editors refuse the same
-  // manifests.
+  // exactly when the tier is `self-deploying`; no `emailRouting` on a
+  // `self-deploying` entry), so editors refuse the same manifests.
   .meta({
     allOf: [
       {
@@ -592,6 +602,12 @@ export const catalogInstallSchema = z
             not: { required: ["selfDeploying"] },
             properties: { tier: { not: { const: "self-deploying" } } },
           },
+        ],
+      },
+      {
+        anyOf: [
+          { not: { required: ["emailRouting"] } },
+          { properties: { tier: { not: { const: "self-deploying" } } } },
         ],
       },
     ],

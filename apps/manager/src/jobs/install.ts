@@ -172,7 +172,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         }
         for (const requirement of requires) {
           log.info(
-            `Requires ${requirementLabel(requirement)}: ${requirementSentence(requirement, { provisionsEmailRouting: manifest.catalog.install.emailRouting !== undefined }) ?? "see the app's catalog page."}`,
+            `Requires ${requirementLabel(requirement)}: ${requirementSentence(requirement, { tier: manifest.catalog.install.tier, provisionsEmailRouting: manifest.catalog.install.emailRouting !== undefined }) ?? "see the app's catalog page."}`,
           );
         }
         if (params.requirementsConfirmed === true) {

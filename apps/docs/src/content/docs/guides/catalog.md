@@ -40,16 +40,18 @@ When an app needs something beyond the free Workers plan, a **Before you install
 box lists it. Tick **This account meets these requirements** to enable the
 **Install** button; apps that need Workers Paid also ask you to confirm the plan.
 The manager cannot check most of these for you. R2 is the exception: the install
-checks that R2 is enabled before it creates anything.
+checks that R2 is enabled before it creates anything, except for a
+[self-deploying app](/guides/builds/#self-deploying-apps), whose own installer
+creates its resources.
 
 | Requirement | What it means |
 | --- | --- |
 | R2 | R2 must be enabled on the account. Cloudflare asks for a payment method before enabling R2, even on its free tier. |
 | A zone on this account | The account needs an active zone, a domain added to Cloudflare. |
-| Email Routing | Email Routing must be enabled on a zone so email reaches the app's Worker. |
+| Email Routing | Email Routing must be enabled on a zone so email reaches the app's Worker. Appflare does not set Email Routing up for a self-deploying app. |
 | Workers AI | The app runs models on Workers AI. Use beyond the daily free allocation needs Workers Paid. |
 | Browser Rendering | The app drives a headless browser. The free plan allows limited browser time a day. |
-| Containers | The app runs Containers, which need Workers Paid. |
+| Containers | The app runs Containers, which need Workers Paid. For a [sandbox tier](/guides/builds/) app, the app is built in a container in your account instead; for a self-deploying app, its installer runs in one. Both need Workers Paid. |
 
 ### Apps that need their own token
 

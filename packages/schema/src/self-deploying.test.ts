@@ -73,6 +73,27 @@ describe("install.selfDeploying in the catalog manifest", () => {
     }
   });
 
+  it("refuses install.emailRouting, which only the tiers Appflare deploys itself take", () => {
+    const emailRouting = { rules: ["inbox"] };
+    const result = catalogManifestSchema.safeParse(withInstall({ emailRouting }));
+    expect(result.success).toBe(false);
+    expect(result.error?.issues).toEqual([
+      expect.objectContaining({
+        path: ["install", "emailRouting"],
+        message:
+          "install.emailRouting is not allowed for the self-deploying tier: the app's own installer deploys it, and Appflare sets up no Email Routing for it",
+      }),
+    ]);
+    const { selfDeploying: _omit, ...rest } = manifest.install;
+    for (const tier of ["artifact", "sandbox"]) {
+      const other = catalogManifestSchema.safeParse({
+        ...manifest,
+        install: { ...rest, tier, emailRouting },
+      });
+      expect(other.success, `${tier}: ${JSON.stringify(other.error?.issues)}`).toBe(true);
+    }
+  });
+
   it("refuses shell syntax, environment assignments and options first in the commands", () => {
     for (const deployCommand of [
       ["pnpm", "alchemy", "deploy;", "rm"],

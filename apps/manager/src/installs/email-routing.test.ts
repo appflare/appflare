@@ -205,12 +205,15 @@ describe("permissions and wording", () => {
   });
 
   it("says Appflare sets Email Routing up only for apps that ask for it", () => {
-    const generic = requirementSentence("email-routing");
-    const provisioned = requirementSentence("email-routing", { provisionsEmailRouting: true });
+    const generic = requirementSentence("email-routing", { tier: "artifact" });
+    const provisioned = requirementSentence("email-routing", {
+      tier: "artifact",
+      provisionsEmailRouting: true,
+    });
     expect(generic).toContain("must be enabled");
     expect(provisioned).toContain("Appflare turns Email Routing on");
-    expect(requirementSentence("zone", { provisionsEmailRouting: true })).toBe(
-      requirementSentence("zone"),
+    expect(requirementSentence("zone", { tier: "artifact", provisionsEmailRouting: true })).toBe(
+      requirementSentence("zone", { tier: "artifact" }),
     );
   });
 });

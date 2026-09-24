@@ -416,6 +416,13 @@ describe("install.sandbox", () => {
         },
         // The self-deploying tier's rule (see self-deploying.test.ts).
         expect.anything(),
+        // No Email Routing on a self-deploying entry.
+        {
+          anyOf: [
+            { not: { required: ["emailRouting"] } },
+            { properties: { tier: { not: { const: "self-deploying" } } } },
+          ],
+        },
       ],
       properties: {
         sandbox: {

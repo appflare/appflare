@@ -137,7 +137,7 @@
             }
           },
           "additionalProperties": false,
-          "description": "Email the app receives through Email Routing. The install form asks for one of the account's zones; the install turns Email Routing on there if it is off, then points the listed addresses (and, with `catchAll`, every other address) at the app's Worker, which must export an `email` handler. Uninstalling removes what the install added.",
+          "description": "Email the app receives through Email Routing. The install form asks for one of the account's zones; the install turns Email Routing on there if it is off, then points the listed addresses (and, with `catchAll`, every other address) at the app's Worker, which must export an `email` handler. Uninstalling removes what the install added. Not for the self-deploying tier, whose own installer deploys the app.",
           "anyOf": [
             {
               "required": [
@@ -293,6 +293,26 @@
                   "selfDeploying"
                 ]
               },
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "emailRouting"
+                ]
+              }
+            },
+            {
               "properties": {
                 "tier": {
                   "not": {

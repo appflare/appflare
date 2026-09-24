@@ -341,6 +341,7 @@ function Prerequisites({
                       <li key={r}>
                         <span className="font-semibold">{requirementLabel(r)}.</span>{" "}
                         {requirementSentence(r, {
+                          tier: app.tier,
                           provisionsEmailRouting:
                             detail.catalog?.install.emailRouting !== undefined,
                         })}
