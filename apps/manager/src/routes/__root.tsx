@@ -1,6 +1,7 @@
 import { LinkProvider, Toasty } from "@cloudflare/kumo";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { COLOR_MODE_SCRIPT } from "../components/color-mode";
 import { RouterAnchor } from "../components/router-anchor";
 import appCss from "../styles.css?url";
 
@@ -39,6 +40,8 @@ export const Route = createRootRoute({
         { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
         { rel: "manifest", href: "/site.webmanifest" },
       ],
+      // Dark mode follows the browser; set before the first paint.
+      scripts: [{ children: COLOR_MODE_SCRIPT }],
     };
   },
   shellComponent: RootDocument,
@@ -58,7 +61,8 @@ function RootComponent() {
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    // The head script sets `data-mode` on this element before React hydrates it.
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
         {/* One per colour scheme. Written here because head() keeps a single meta per name. */}

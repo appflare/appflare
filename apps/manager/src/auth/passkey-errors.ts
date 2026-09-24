@@ -55,12 +55,10 @@ export function passkeySignInErrorMessage(error: PasskeyError): string {
   if (WRONG_ADDRESS.has(code)) return PASSKEY_MESSAGES.wrongAddress;
   if (code === "PASSKEY_NOT_FOUND") return PASSKEY_MESSAGES.unknownPasskey;
   if (code === "CHALLENGE_NOT_FOUND") return PASSKEY_MESSAGES.expired;
-  // Anything else from the server (for example a banned account) carries its own
-  // readable message; the plugin's generic codes do not.
-  if (code === "AUTHENTICATION_FAILED" || code === "UNKNOWN_ERROR" || !error.message) {
-    return PASSKEY_MESSAGES.signInFailed;
-  }
-  return error.message;
+  // Better Auth's origin check and a Cloudflare Access refusal both answer 403.
+  if (error.status === 403) return PASSKEY_MESSAGES.wrongAddress;
+  // Anything else carries wording written for developers, never shown as is.
+  return PASSKEY_MESSAGES.signInFailed;
 }
 
 export function passkeyRegistrationErrorMessage(error: PasskeyError): string {

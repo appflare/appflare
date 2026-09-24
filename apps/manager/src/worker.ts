@@ -72,7 +72,7 @@ export default {
     return (
       (await migrated(env, request)) ??
       // Cloudflare Access protection, when on: checked before any routing.
-      (await accessGate.check(request, env.DB)) ??
+      (await accessGate.check(request, env.DB, env.APPFLARE_VERSION)) ??
       handler.fetch(request)
     );
   },

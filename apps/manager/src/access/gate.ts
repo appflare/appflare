@@ -1,7 +1,9 @@
 import { type AccessConfig, readAccessConfig } from "./config";
+import { ACCESS_DENIED_CODE, SERVER_FN_HEADER } from "./denied";
+import { renderAccessDeniedPage } from "./denied-page";
 import { ACCESS_JWT_HEADER, type AccessJwtFailure, verifyAccessJwt } from "./jwt";
 import { type AccessKeyStore, createAccessKeyStore } from "./keys";
-import { ACCESS_RECOVERY_COMMAND, accessRecoverySteps } from "./recovery";
+import { accessRecoverySteps } from "./recovery";
 
 /**
  * The request check that runs in the Worker's `fetch` before any routing while
@@ -33,8 +35,11 @@ export interface AccessGateOptions {
 }
 
 export interface AccessGate {
-  /** Null to let the request through; otherwise the response to send instead. */
-  check(request: Request, db: D1Database): Promise<Response | null>;
+  /**
+   * Null to let the request through; otherwise the response to send instead.
+   * `version` (the running Appflare version) goes in the refusal page's footer.
+   */
+  check(request: Request, db: D1Database, version?: string): Promise<Response | null>;
   /** Drops the cached on/off state so the next request reads it again. */
   invalidate(): void;
 }
@@ -62,7 +67,7 @@ export function createAccessGate(options: AccessGateOptions = {}): AccessGate {
   }
 
   return {
-    async check(request, db) {
+    async check(request, db, version) {
       const url = new URL(request.url);
       if (ACCESS_EXEMPT_PATHS.has(url.pathname)) return null;
 
@@ -70,7 +75,7 @@ export function createAccessGate(options: AccessGateOptions = {}): AccessGate {
       try {
         config = await currentConfig(db);
       } catch {
-        return refuse("settings-unavailable", url, null, request);
+        return refuse("settings-unavailable", url, null, request, version);
       }
       if (config === null) return null;
 
@@ -81,7 +86,7 @@ export function createAccessGate(options: AccessGateOptions = {}): AccessGate {
         now(),
       );
       if (result.ok) return null;
-      return refuse(result.reason, url, config, request);
+      return refuse(result.reason, url, config, request, version);
     },
     invalidate() {
       cached = null;
@@ -94,10 +99,11 @@ function refuse(
   url: URL,
   config: AccessConfig | null,
   request: Request,
+  version: string | undefined,
 ): Response {
   // The reason and path only: never the token, never the query string.
   console.warn(`access: refused ${request.method} ${url.pathname} (${reason})`);
-  return accessDeniedResponse(reason, config, request);
+  return accessDeniedResponse(reason, config, request, version);
 }
 
 /** The one gate the Worker uses; server functions invalidate it after a change. */
@@ -155,64 +161,44 @@ const REASON_TEXT: Record<AccessDenial, { title: string; detail: string }> = {
   },
 };
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-/** The 403 answer: an HTML page for browsers, JSON for everything else. */
+/**
+ * The 403 answer: an HTML page for browsers, JSON with `code:
+ * "access_denied"` for everything else. Server function calls get that JSON
+ * as `application/problem+json`, so the app's client throws it (see
+ * `denied.ts`) and the route error screen explains it.
+ */
 export function accessDeniedResponse(
   reason: AccessDenial,
   config: AccessConfig | null,
   request: Request,
+  version?: string,
 ): Response {
   const { title, detail } = REASON_TEXT[reason];
   const headers = { "cache-control": "no-store" };
   const wantsHtml = (request.headers.get("accept") ?? "").includes("text/html");
   if (!wantsHtml) {
-    return Response.json(
-      { error: `${title}. ${detail}`, reason, protectedBy: "Cloudflare Access" },
-      { status: 403, headers },
-    );
+    const body = {
+      code: ACCESS_DENIED_CODE,
+      error: `${title}. ${detail}`,
+      reason,
+      protectedBy: "Cloudflare Access",
+    };
+    const contentType =
+      request.headers.get(SERVER_FN_HEADER) === "true"
+        ? "application/problem+json"
+        : "application/json";
+    return new Response(JSON.stringify(body), {
+      status: 403,
+      headers: { ...headers, "content-type": contentType },
+    });
   }
-  const address = config?.domain ? `https://${config.domain}/` : null;
-  const [step1, step2] = accessRecoverySteps(config?.domain || new URL(request.url).hostname);
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>${escapeHtml(title)} · Appflare</title>
-<style>
-  :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.5; }
-  body { margin: 0; padding: 4rem 1.5rem; }
-  main { max-width: 36rem; margin: 0 auto; }
-  h1 { font-size: 1.375rem; margin: 0 0 0.75rem; }
-  p, ol { margin: 0 0 1rem; }
-  li { margin: 0 0 0.5rem; }
-  .muted { opacity: 0.75; font-size: 0.875rem; }
-  code { font-size: 0.8125rem; word-break: break-all; }
-</style>
-</head>
-<body>
-<main>
-<p class="muted">Appflare · protected by Cloudflare Access</p>
-<h1>${escapeHtml(title)}</h1>
-<p>${escapeHtml(detail)}</p>
-${address === null ? "" : `<p><a href="${escapeHtml(address)}">Open the manager</a></p>`}
-<p class="muted">Locked out? An admin turns Access protection off in Settings. If Settings cannot be reached:</p>
-<ol class="muted">
-<li>${escapeHtml(step1)}</li>
-<li>${escapeHtml(step2)}<br><code>${escapeHtml(ACCESS_RECOVERY_COMMAND)}</code></li>
-</ol>
-</main>
-</body>
-</html>`;
+  const html = renderAccessDeniedPage({
+    title,
+    detail,
+    address: config?.domain ? `https://${config.domain}/` : null,
+    steps: accessRecoverySteps(config?.domain || new URL(request.url).hostname),
+    version: version ?? null,
+  });
   return new Response(html, {
     status: 403,
     headers: { ...headers, "content-type": "text/html; charset=utf-8" },

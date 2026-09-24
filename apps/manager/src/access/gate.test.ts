@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { COLOR_MODE_SCRIPT } from "../components/color-mode";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import {
@@ -11,6 +12,7 @@ import {
   type TestAccessTeam,
 } from "../test/access-jwt";
 import { type AccessConfig, clearAccessConfig, writeAccessConfig } from "./config";
+import { isAccessDenied } from "./denied";
 import { type AccessGate, createAccessGate } from "./gate";
 import { createAccessKeyStore } from "./keys";
 
@@ -77,19 +79,40 @@ describe("access gate, protection on", () => {
   });
 
   it("refuses a request without the header with a 403 page", async () => {
-    const response = await gate.check(request("/", { accept: "text/html" }), env.DB);
+    const response = await gate.check(request("/", { accept: "text/html" }), env.DB, "1.2.3");
     expect(response?.status).toBe(403);
     expect(response?.headers.get("content-type")).toContain("text/html");
     const html = (await response?.text()) ?? "";
+    expect(html.startsWith("<!doctype html>")).toBe(true);
+    expect(html).toContain("<h1");
     expect(html).toContain("Sign in with Cloudflare Access");
-    expect(html).toContain(`https://${HOST}/`);
-    expect(html).toContain("DELETE FROM settings WHERE key LIKE &#39;access_%&#39;");
+    expect(html).toContain(`href="https://${HOST}/"`);
+    expect(html).toContain("DELETE FROM settings WHERE key LIKE &#x27;access_%&#x27;");
+    // The sign-in screens' layout: the logo, the app's stylesheet, the version footer.
+    expect(html).toContain('aria-label="Appflare"');
+    // The href is the built stylesheet's hashed URL, which only a build has.
+    expect(html).toContain('<link rel="stylesheet"');
+    expect(html).toContain(`<script>${COLOR_MODE_SCRIPT}</script>`);
+    expect(html).toContain("1.2.3");
   });
 
   it("answers non-browser requests with JSON", async () => {
-    const response = await gate.check(request("/_serverFn/abc"), env.DB);
+    const response = await gate.check(request("/api/auth/get-session"), env.DB);
     expect(response?.status).toBe(403);
-    expect(await response?.json()).toMatchObject({ reason: "missing" });
+    expect(response?.headers.get("content-type")).toBe("application/json");
+    expect(await response?.json()).toMatchObject({ code: "access_denied", reason: "missing" });
+  });
+
+  it("answers a server function call with an error the app's client throws", async () => {
+    const call = request("/_serverFn/abc", { accept: "application/json" });
+    call.headers.set("x-tsr-serverFn", "true");
+    const response = await gate.check(call, env.DB);
+    expect(response?.status).toBe(403);
+    // TanStack Start's client returns `application/json` bodies as results and
+    // throws `new Error(await response.text())` for other types.
+    expect(response?.headers.get("content-type")).toBe("application/problem+json");
+    const thrown = new Error((await response?.text()) ?? "");
+    expect(isAccessDenied(thrown)).toBe(true);
   });
 
   it("refuses an expired token", async () => {

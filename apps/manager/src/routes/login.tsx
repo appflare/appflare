@@ -1,5 +1,5 @@
-import { Banner, Button, Input, Text } from "@cloudflare/kumo";
-import { CheckCircleIcon, FingerprintIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Button, Input } from "@cloudflare/kumo";
+import { FingerprintIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { z } from "zod";
@@ -9,23 +9,34 @@ import {
   passkeySignInErrorMessage,
   passkeysSupported,
 } from "../auth/passkey-errors";
-import { AuthLayout } from "../components/auth-layout";
+import { passwordSignInErrorMessage } from "../auth/sign-in-errors";
+import {
+  AuthError,
+  AuthLayout,
+  AuthSuccess,
+  FULL_WIDTH_ACTION,
+  OrDivider,
+} from "../components/auth-layout";
+import { PasswordInput } from "../components/password-input";
 import { getSetupStatus } from "../server/setup.functions";
+import { loadAppflareVersion } from "../server/version.functions";
 
 /** `/login`: Better Auth email + password, or a passkey the user added in Settings. */
 export const Route = createFileRoute("/login")({
   staticData: { title: "Sign in" },
   validateSearch: z.object({ created: z.boolean().optional() }),
   beforeLoad: async () => {
+    const [{ needsSetup }, version] = await Promise.all([getSetupStatus(), loadAppflareVersion()]);
     // Until the first admin exists, everything leads to /setup.
-    const { needsSetup } = await getSetupStatus();
     if (needsSetup) throw redirect({ to: "/setup" });
+    return { version };
   },
   component: LoginPage,
 });
 
 function LoginPage() {
   const { created } = Route.useSearch();
+  const { version } = Route.useRouteContext();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<"password" | "passkey" | null>(null);
@@ -40,7 +51,7 @@ function LoginPage() {
       password: String(form.get("password") ?? ""),
     });
     if (signInError) {
-      setError(signInError.message ?? "Sign-in failed.");
+      setError(passwordSignInErrorMessage(signInError));
       setPending(null);
       return;
     }
@@ -63,52 +74,47 @@ function LoginPage() {
     await router.navigate({ to: "/" });
   }
 
+  const justCreated = created === true;
   return (
-    <AuthLayout title="Sign in" description="Use your Appflare account.">
-      <form className="grid gap-4" onSubmit={onSubmit}>
-        {created === true && error === null && (
-          <Banner
-            icon={<CheckCircleIcon weight="fill" />}
-            title="Admin account created"
-            description="Sign in with the email and password you just chose."
-          />
+    <AuthLayout
+      title="Sign in to Appflare"
+      description="Use your email and password, or a passkey."
+      version={version}
+      {...(justCreated ? { step: 2 as const } : {})}
+    >
+      <div className="grid gap-5">
+        {error !== null ? (
+          <AuthError message={error} />
+        ) : (
+          justCreated && (
+            <AuthSuccess title="Admin account created" description="Sign in with it to continue." />
+          )
         )}
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-        <Input label="Email" name="email" type="email" autoComplete="username" required />
-        <Input
-          label="Password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-        />
+        <form className="grid gap-4" onSubmit={onSubmit}>
+          <Input label="Email" name="email" type="email" autoComplete="username" required />
+          <PasswordInput label="Password" name="password" autoComplete="current-password" />
+          <Button
+            type="submit"
+            variant="primary"
+            className={FULL_WIDTH_ACTION}
+            loading={pending === "password"}
+            disabled={pending === "passkey"}
+          >
+            Sign in
+          </Button>
+        </form>
+        <OrDivider />
         <Button
-          type="submit"
-          variant="primary"
-          loading={pending === "password"}
-          disabled={pending === "passkey"}
+          variant="secondary"
+          icon={<FingerprintIcon />}
+          className={FULL_WIDTH_ACTION}
+          loading={pending === "passkey"}
+          disabled={pending === "password"}
+          onClick={onPasskey}
         >
-          Sign in
+          Sign in with a passkey
         </Button>
-      </form>
-      <div className="flex items-center gap-3" aria-hidden="true">
-        <div className="h-px flex-1 bg-kumo-hairline" />
-        <Text variant="secondary" size="sm">
-          or
-        </Text>
-        <div className="h-px flex-1 bg-kumo-hairline" />
       </div>
-      <Button
-        variant="secondary"
-        icon={<FingerprintIcon />}
-        loading={pending === "passkey"}
-        disabled={pending === "password"}
-        onClick={onPasskey}
-      >
-        Sign in with a passkey
-      </Button>
     </AuthLayout>
   );
 }

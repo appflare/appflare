@@ -119,10 +119,10 @@ export function AppShell({
           </Sidebar.Group>
         </Sidebar.Content>
         <AppflareCard manager={pending.manager} isAdmin={viewer.role === "admin"} />
-        {/* Account menu at the start, Appflare's version at the end. */}
+        {/* Appflare's version at the start, the account menu at the end. */}
         <Sidebar.Footer className="justify-between gap-3">
-          <AccountMenu viewer={viewer} />
           <AppflareVersion version={pending.manager.current} />
+          <AccountMenu viewer={viewer} />
         </Sidebar.Footer>
       </Sidebar>
       <main className="min-w-0 flex-1 overflow-y-auto px-8 py-6">

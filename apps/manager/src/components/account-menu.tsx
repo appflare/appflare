@@ -46,7 +46,7 @@ export function AccountMenu({ viewer }: { viewer: AccountViewer }) {
           {accountInitial(viewer)}
         </span>
       </DropdownMenu.Trigger>
-      <DropdownMenu.Content side="top" align="start" className="min-w-60">
+      <DropdownMenu.Content side="top" align="end" className="min-w-60">
         <DropdownMenu.Group>
           <DropdownMenu.Label className="grid gap-1 font-normal">
             <span className="flex min-w-0 items-center justify-between gap-3">

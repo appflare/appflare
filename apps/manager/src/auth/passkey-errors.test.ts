@@ -27,10 +27,13 @@ describe("passkeySignInErrorMessage", () => {
     );
   });
 
-  it("keeps readable server messages and replaces generic ones", () => {
+  it("never shows the server's own message", () => {
     expect(
       passkeySignInErrorMessage({ code: "BANNED_USER", message: "You have been banned" }),
-    ).toBe("You have been banned");
+    ).toBe(PASSKEY_MESSAGES.signInFailed);
+    expect(passkeySignInErrorMessage({ message: "Invalid origin", status: 403 })).toBe(
+      PASSKEY_MESSAGES.wrongAddress,
+    );
     expect(
       passkeySignInErrorMessage({
         code: "AUTHENTICATION_FAILED",

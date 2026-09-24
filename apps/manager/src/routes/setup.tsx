@@ -10,13 +10,16 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
 import { z } from "zod";
 import { authClient } from "../auth/client";
-import { AuthLayout } from "../components/auth-layout";
+import { serverErrorMessage } from "../auth/sign-in-errors";
+import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { CloudflareTokenForm, type SavedToken } from "../components/cloudflare-token-form";
+import { PasswordInput } from "../components/password-input";
 import { UsageDataNotice } from "../components/usage-data-notice";
 import { enterSetup } from "../server/gate.functions";
 import { MIN_PASSWORD_LENGTH } from "../server/schemas";
 import { checkSetupToken, createFirstAdmin, INVALID_SETUP_LINK } from "../server/setup.functions";
 import { getTokenStatus } from "../server/token.functions";
+import { loadAppflareVersion } from "../server/version.functions";
 import type { TelemetryStatus } from "../telemetry/telemetry";
 import { getTelemetryStatus } from "../telemetry/telemetry.functions";
 
@@ -42,17 +45,19 @@ export const Route = createFileRoute("/setup")({
       stripTokenFromAddressBar();
     }
     // Redirects to /login (users exist, no session) or / (setup complete).
-    const gate = await enterSetup();
+    const [gate, version] = await Promise.all([enterSetup(), loadAppflareVersion()]);
     if (gate.step === "cloudflare-token") {
-      return { step: gate.step, token: null, telemetry: await getTelemetryStatus() };
+      return { step: gate.step, token: null, telemetry: await getTelemetryStatus(), version };
     }
-    if (gate.step !== "create-admin") return { step: gate.step, token: null, telemetry: null };
+    if (gate.step !== "create-admin") {
+      return { step: gate.step, token: null, telemetry: null, version };
+    }
     const token = heldToken;
-    if (token === null) return { step: "invalid" as const, token: null, telemetry: null };
+    if (token === null) return { step: "invalid" as const, token: null, telemetry: null, version };
     const { valid } = await checkSetupToken({ data: { token } });
     return valid
-      ? { step: "create-admin" as const, token, telemetry: null }
-      : { step: "invalid" as const, token: null, telemetry: null };
+      ? { step: "create-admin" as const, token, telemetry: null, version }
+      : { step: "invalid" as const, token: null, telemetry: null, version };
   },
   component: SetupPage,
 });
@@ -76,13 +81,17 @@ function stripTokenFromAddressBar() {
 }
 
 function SetupPage() {
-  const { step, token, telemetry } = Route.useLoaderData();
+  const { step, token, telemetry, version } = Route.useLoaderData();
   switch (step) {
     case "create-admin":
-      return <CreateAdminStep token={token ?? ""} />;
+      return <CreateAdminStep token={token ?? ""} version={version} />;
     case "invalid":
       return (
-        <AuthLayout title="Set up Appflare">
+        <AuthLayout
+          title="Set up Appflare"
+          description="Setup creates the first admin account."
+          version={version}
+        >
           <Banner
             variant="error"
             icon={<WarningCircleIcon weight="fill" />}
@@ -92,14 +101,14 @@ function SetupPage() {
         </AuthLayout>
       );
     case "cloudflare-token":
-      return <CloudflareTokenStep telemetry={telemetry} />;
+      return <CloudflareTokenStep telemetry={telemetry} version={version} />;
     case "wait-for-admin":
-      return <WaitForAdminStep />;
+      return <WaitForAdminStep version={version} />;
   }
 }
 
 /** A member signed in before the token step: nothing to do here but sign out. */
-function WaitForAdminStep() {
+function WaitForAdminStep({ version }: { version: string | null }) {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
 
@@ -110,14 +119,20 @@ function WaitForAdminStep() {
   }
 
   return (
-    <AuthLayout title="Set up Appflare">
+    <AuthLayout title="Set up Appflare" description="Setup is not finished yet." version={version}>
       <Banner
         variant="secondary"
         icon={<InfoIcon weight="fill" />}
         title="An admin needs to finish setup"
         description="Appflare needs a Cloudflare API token before anyone can use it. Ask an admin to sign in and add one."
       />
-      <Button variant="secondary" icon={<SignOutIcon />} loading={signingOut} onClick={signOut}>
+      <Button
+        variant="secondary"
+        icon={<SignOutIcon />}
+        className={FULL_WIDTH_ACTION}
+        loading={signingOut}
+        onClick={signOut}
+      >
         Sign out
       </Button>
     </AuthLayout>
@@ -127,14 +142,24 @@ function WaitForAdminStep() {
 /** How often the success card checks whether the redeployed Worker has the token. */
 const SECRET_POLL_MS = 3000;
 
-function CloudflareTokenStep({ telemetry }: { telemetry: TelemetryStatus | null }) {
+function CloudflareTokenStep({
+  telemetry,
+  version,
+}: {
+  telemetry: TelemetryStatus | null;
+  version: string | null;
+}) {
   const [saved, setSaved] = useState<SavedToken | null>(null);
-  if (saved !== null) return <TokenSavedCard saved={saved} telemetry={telemetry} />;
+  if (saved !== null) {
+    return <TokenSavedCard saved={saved} telemetry={telemetry} version={version} />;
+  }
   return (
     <AuthLayout
       width="wide"
+      step={3}
       title="Connect Cloudflare"
-      description="Appflare installs and updates apps in this Cloudflare account with an API token you create. It is stored as an encrypted secret on this Worker and never leaves it."
+      description="Appflare installs and updates apps with an API token you create."
+      version={version}
     >
       <CloudflareTokenForm mode="setup" onSaved={setSaved} />
     </AuthLayout>
@@ -148,9 +173,11 @@ function CloudflareTokenStep({ telemetry }: { telemetry: TelemetryStatus | null 
 function TokenSavedCard({
   saved,
   telemetry,
+  version,
 }: {
   saved: SavedToken;
   telemetry: TelemetryStatus | null;
+  version: string | null;
 }) {
   const router = useRouter();
   const [hasSecret, setHasSecret] = useState(false);
@@ -175,8 +202,10 @@ function TokenSavedCard({
   return (
     <AuthLayout
       width="wide"
+      step={3}
       title="Cloudflare connected"
       description={`The token is saved on the Worker "${saved.workerName}" in account ${saved.accountId}.`}
+      version={version}
     >
       <div className="grid gap-4">
         <div className="flex items-start gap-2">
@@ -212,15 +241,19 @@ function TokenSavedCard({
           />
         )}
         {telemetry !== null && <UsageDataNotice status={telemetry} />}
-        <Button variant="primary" onClick={() => void router.navigate({ to: "/" })}>
-          Go to Installed apps
-        </Button>
       </div>
+      <Button
+        variant="primary"
+        className={FULL_WIDTH_ACTION}
+        onClick={() => void router.navigate({ to: "/" })}
+      >
+        Go to Installed apps
+      </Button>
     </AuthLayout>
   );
 }
 
-function CreateAdminStep(props: { token: string }) {
+function CreateAdminStep(props: { token: string; version: string | null }) {
   const [token] = useState(props.token);
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -243,38 +276,33 @@ function CreateAdminStep(props: { token: string }) {
       heldToken = null;
       await router.navigate({ to: "/login", search: { created: true } });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create the admin account.");
+      setError(serverErrorMessage(err, "Could not create the admin account. Try again."));
       setPending(false);
     }
   }
 
   return (
     <AuthLayout
+      step={1}
       title="Create the admin account"
-      description="This is the first user. Admins install apps and manage other users."
+      description="The owner installs apps and manages users."
+      version={props.version}
     >
       <form className="grid gap-4" onSubmit={onSubmit}>
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
+        {error !== null && <AuthError message={error} />}
         <Input label="Name" name="name" autoComplete="name" required maxLength={100} />
         <Input label="Email" name="email" type="email" autoComplete="email" required />
-        <Input
+        <PasswordInput
           label="Password"
           name="password"
-          type="password"
           autoComplete="new-password"
-          required
           minLength={MIN_PASSWORD_LENGTH}
           maxLength={128}
           description={`At least ${MIN_PASSWORD_LENGTH} characters.`}
         />
-        <Button type="submit" variant="primary" loading={pending}>
+        <Button type="submit" variant="primary" className={FULL_WIDTH_ACTION} loading={pending}>
           Create admin account
         </Button>
-        <Text variant="secondary" size="sm">
-          You will sign in with this account next.
-        </Text>
       </form>
     </AuthLayout>
   );

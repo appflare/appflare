@@ -86,7 +86,8 @@ export function AppflareVersion({ version }: { version: string }) {
     <Text variant="secondary" truncate>
       {/* `text-kumo-subtle` wins over the plain variant's colour at rest; its hover colour stays. */}
       <Link href={MANAGER_UPDATES_HREF} variant="plain" className="text-kumo-subtle">
-        Appflare <span className="font-mono text-[0.9em]">{version}</span>
+        {/* Plain text: a smaller monospace span sat above the baseline in Kumo's inline-flex Link. */}
+        Appflare {version}
       </Link>
     </Text>
   );
@@ -216,7 +217,7 @@ function CardBody({
               <Text bold>Appflare {state.latest} is available</Text>
               {state.canUpdate && (
                 <Button
-                  className="justify-self-end"
+                  className="justify-self-start"
                   size="sm"
                   variant="primary"
                   icon={<ArrowCircleUpIcon />}
@@ -282,7 +283,7 @@ function CardBody({
               {logLink}
               {state.retry !== null && (
                 <Button
-                  className="justify-self-end"
+                  className="justify-self-start"
                   size="sm"
                   variant="secondary"
                   icon={<ArrowCircleUpIcon />}
