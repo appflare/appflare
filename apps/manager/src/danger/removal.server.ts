@@ -17,7 +17,7 @@ import {
 import type { JobUnitsAccess } from "../jobs/units/client";
 import { failureError } from "../jobs/units/result";
 import { deletesBuildBucket } from "./danger";
-import type { RemovalTargets } from "./removal-plan.server";
+import type { ManagerTargets, RemovalTargets } from "./removal-plan.server";
 
 /**
  * Removing Appflare from the account: every step is one Cloudflare API call
@@ -35,8 +35,9 @@ import type { RemovalTargets } from "./removal-plan.server";
  * 5. the Cloudflare Access applications in front of the manager, last, so a
  *    removal that stops at any earlier step leaves the manager protected.
  *
- * The manager Worker itself is deleted by {@link deleteManagerWorker}, which
- * the caller runs after the final page, once the D1 database is gone.
+ * The manager Worker itself, and then its Workflow, are deleted by
+ * {@link deleteManagerWorker}, which the caller runs after the final page,
+ * once the D1 database is gone.
  *
  * Until the D1 database is deleted, a failed step, or a page that can no
  * longer be written (the browser went away), stops the removal: the manager
@@ -347,18 +348,31 @@ export async function runRemoval(deps: RemovalDeps): Promise<RemovalOutcome> {
 
 /**
  * The last step, once the D1 database is gone and the final page was sent
- * (or could not be): the manager Worker, with its Workflow, cron trigger and
- * workers.dev route. True when deleted (or already gone).
+ * (or could not be): the manager Worker, with its cron trigger and
+ * workers.dev route, then its Workflow. Deleting a Worker leaves the
+ * Workflow it ran (and that Workflow's instances) in the account, so it is
+ * deleted by name afterwards. True when the Worker was deleted (or was
+ * already gone); a Workflow that cannot be deleted is logged.
  */
 export async function deleteManagerWorker(
   api: CloudflareClient,
-  workerName: string,
+  manager: Pick<ManagerTargets, "workerName" | "workflowName">,
 ): Promise<boolean> {
   try {
-    await deleted(() => api.workers.deleteScript(workerName, { force: true }));
-    return true;
+    await deleted(() => api.workers.deleteScript(manager.workerName, { force: true }));
   } catch (error) {
     console.error("removal: could not delete the manager Worker", { error: message(error) });
     return false;
   }
+  const workflowName = manager.workflowName;
+  if (workflowName !== null) {
+    try {
+      await deleted(() => api.workflows.deleteWorkflow(workflowName));
+    } catch (error) {
+      console.error(`removal: could not delete the Workflow ${workflowName}`, {
+        error: message(error),
+      });
+    }
+  }
+  return true;
 }

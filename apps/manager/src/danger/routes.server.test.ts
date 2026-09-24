@@ -12,6 +12,7 @@ import {
   type FakeRemovalOptions,
   fakeRemovalAccount,
   MANAGER_WORKER,
+  MANAGER_WORKFLOW,
 } from "../test/fake-removal";
 import { fakeSelf } from "../test/fake-self";
 import { seedInstall } from "../test/seed-install";
@@ -170,7 +171,7 @@ describe("handleRemoveAppflare", () => {
     expect(response.status).toBe(200);
     await response.text();
     await s.settle();
-    expect(s.account.deletes().at(-1)).toBe(`DELETE /a/workers/scripts/${MANAGER_WORKER}`);
+    expect(s.account.deletes().at(-2)).toBe(`DELETE /a/workers/scripts/${MANAGER_WORKER}`);
   });
 
   it("streams each step, then deletes the manager Worker last, after the page is complete", async () => {
@@ -193,8 +194,10 @@ describe("handleRemoveAppflare", () => {
 
     await s.settle();
     const deletes = s.account.deletes();
-    expect(deletes.at(-1)).toBe(`DELETE /a/workers/scripts/${MANAGER_WORKER}`);
-    expect(deletes.at(-2)).toBe("DELETE /a/d1/database/d1-manager");
+    // Deleting a Worker leaves its Workflow, so the Workflow goes by name after it.
+    expect(deletes.at(-1)).toBe(`DELETE /a/workflows/${MANAGER_WORKFLOW}`);
+    expect(deletes.at(-2)).toBe(`DELETE /a/workers/scripts/${MANAGER_WORKER}`);
+    expect(deletes.at(-3)).toBe("DELETE /a/d1/database/d1-manager");
     expect(deletes[0]).toBe("DELETE /a/r2/buckets/appflare-builds/objects/builds/b0.zip");
   });
 

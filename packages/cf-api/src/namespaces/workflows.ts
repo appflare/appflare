@@ -14,5 +14,15 @@ export function createWorkflows(http: HttpApi) {
     getWorkflow(name: string): Promise<WorkflowInfo> {
       return http.result("GET", http.acct(`/workflows/${enc(name)}`));
     },
+
+    /**
+     * `DELETE /workflows/{workflow_name}`: the Workflow and its instances.
+     * Deleting the Worker that runs a Workflow leaves the Workflow in place,
+     * so whoever removes the Worker for good deletes its Workflow too.
+     * Throws `CloudflareApiError` (404 when absent).
+     */
+    deleteWorkflow(name: string): Promise<unknown> {
+      return http.result("DELETE", http.acct(`/workflows/${enc(name)}`));
+    },
   };
 }

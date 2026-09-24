@@ -641,6 +641,13 @@ describe("workflows", () => {
     const { client } = make({ status: 404, errors: [{ code: 10200, message: "not found" }] });
     await expect(client.workflows.getWorkflow("nope")).rejects.toMatchObject({ status: 404 });
   });
+
+  it("deleteWorkflow -> DELETE /workflows/{name}", async () => {
+    const { fake, client } = make({ result: { status: "ok" } });
+    await client.workflows.deleteWorkflow("appflare-jobs");
+    expect(fake.last().method).toBe("DELETE");
+    expect(fake.last().url).toBe(`${A}/workflows/appflare-jobs`);
+  });
 });
 
 describe("access", () => {

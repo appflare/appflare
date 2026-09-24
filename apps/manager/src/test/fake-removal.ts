@@ -13,6 +13,7 @@ import { ACC, TOKEN } from "./fake-account";
 
 export const ACCOUNT_NAME = "Ada's Account";
 export const MANAGER_WORKER = "appflare";
+export const MANAGER_WORKFLOW = "appflare-jobs";
 export const GATEWAY_ZONE_ID = "z-gw";
 export const GATEWAY_ZONE_NAME = "gateway.example";
 
@@ -61,6 +62,12 @@ export function fakeRemovalAccount(options: FakeRemovalOptions = {}) {
       return ok([
         { type: "d1", name: "DB", id: "d1-manager" },
         { type: "kv_namespace", name: "KV", namespace_id: "kv-manager" },
+        {
+          type: "workflow",
+          name: "JOBS",
+          workflow_name: MANAGER_WORKFLOW,
+          class_name: "JobWorkflow",
+        },
         { type: "service", name: "SELF", service: MANAGER_WORKER },
       ]);
     }

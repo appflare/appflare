@@ -232,7 +232,7 @@ export async function handleRemoveAppflare(
     // The D1 database is gone: the manager Worker goes too, after its page
     // (or right away when the browser is no longer reading it).
     await sleep(SELF_DELETE_DELAY_MS);
-    if (await deleteManagerWorker(api, targets.manager.workerName)) {
+    if (await deleteManagerWorker(api, targets.manager)) {
       console.log(`removal: deleted the Worker ${targets.manager.workerName}`);
     }
   };

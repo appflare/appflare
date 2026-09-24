@@ -28,6 +28,11 @@ export interface ManagerTargets {
   d1Id: string | null;
   /** The KV namespace bound as `KV`; null when the Worker binds none. */
   kvId: string | null;
+  /**
+   * The Workflow the Worker runs as `JOBS`; null when it binds none, or binds
+   * one that another Worker runs. Deleting the Worker leaves it in place.
+   */
+  workflowName: string | null;
 }
 
 export interface SandboxTargets {
@@ -63,6 +68,16 @@ async function bindingsOf(api: CloudflareClient, workerName: string): Promise<Bi
     if (error instanceof CloudflareApiError && error.status === 404) return null;
     throw error;
   }
+}
+
+/** The `JOBS` Workflow, when the manager Worker itself runs it. */
+function ownWorkflow(bindings: Binding[], workerName: string): string | null {
+  const jobs = bindings.find((b) => b.type === "workflow" && b.name === "JOBS");
+  if (jobs === undefined) return null;
+  const script = jobs.script_name;
+  if (typeof script === "string" && script.length > 0 && script !== workerName) return null;
+  const name = jobs.workflow_name;
+  return typeof name === "string" && name.length > 0 ? name : null;
 }
 
 function boundId(bindings: Binding[], type: string, name: string, field: string): string | null {
@@ -124,6 +139,7 @@ export async function findRemovalTargets(
       workerName,
       d1Id: boundId(managerBindings, "d1", "DB", "id"),
       kvId: boundId(managerBindings, "kv_namespace", "KV", "namespace_id"),
+      workflowName: ownWorkflow(managerBindings, workerName),
     },
     gateway: await readGateway(orm),
     sandbox: {

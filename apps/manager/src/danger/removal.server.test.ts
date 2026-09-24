@@ -17,6 +17,7 @@ import {
   GATEWAY_ZONE_ID,
   GATEWAY_ZONE_NAME,
   MANAGER_WORKER,
+  MANAGER_WORKFLOW,
 } from "../test/fake-removal";
 import { fakeSelf } from "../test/fake-self";
 import { deleteManagerWorker, type RemovalStep, runRemoval } from "./removal.server";
@@ -90,7 +91,12 @@ describe("findRemovalTargets", () => {
     expect(targets).toEqual({
       accountId: ACC,
       accountName: ACCOUNT_NAME,
-      manager: { workerName: MANAGER_WORKER, d1Id: "d1-manager", kvId: "kv-manager" },
+      manager: {
+        workerName: MANAGER_WORKER,
+        d1Id: "d1-manager",
+        kvId: "kv-manager",
+        workflowName: MANAGER_WORKFLOW,
+      },
       gateway: GATEWAY,
       sandbox: { worker: "sandbox", bucket: true, appTokens: 1 },
       accessAppIds: ["access-health", "access-app"],
@@ -183,7 +189,12 @@ describe("runRemoval", () => {
     const again = await run(w, {
       accountId: ACC,
       accountName: ACCOUNT_NAME,
-      manager: { workerName: MANAGER_WORKER, d1Id: "d1-manager", kvId: "kv-manager" },
+      manager: {
+        workerName: MANAGER_WORKER,
+        d1Id: "d1-manager",
+        kvId: "kv-manager",
+        workflowName: MANAGER_WORKFLOW,
+      },
       gateway: GATEWAY,
       sandbox: { worker: "sandbox", bucket: true, appTokens: 0 },
       accessAppIds: ["access-health", "access-app"],
@@ -313,13 +324,37 @@ describe("runRemoval", () => {
 });
 
 describe("deleteManagerWorker", () => {
-  it("deletes the manager Worker with force, and treats a missing one as deleted", async () => {
+  const manager = { workerName: MANAGER_WORKER, workflowName: MANAGER_WORKFLOW };
+
+  it("deletes the manager Worker with force, then its Workflow, and treats missing ones as deleted", async () => {
     const w = world();
-    expect(await deleteManagerWorker(w.api, MANAGER_WORKER)).toBe(true);
-    expect(await deleteManagerWorker(w.api, MANAGER_WORKER)).toBe(true);
-    expect(w.account.deletes()).toEqual([
+    expect(await deleteManagerWorker(w.api, manager)).toBe(true);
+    expect(await deleteManagerWorker(w.api, manager)).toBe(true);
+    const pair = [
       `DELETE /a/workers/scripts/${MANAGER_WORKER}`,
-      `DELETE /a/workers/scripts/${MANAGER_WORKER}`,
-    ]);
+      `DELETE /a/workflows/${MANAGER_WORKFLOW}`,
+    ];
+    expect(w.account.deletes()).toEqual([...pair, ...pair]);
+  });
+
+  it("leaves the Workflow alone when the Worker could not be deleted", async () => {
+    const w = world({
+      fail: { [`DELETE /a/workers/scripts/${MANAGER_WORKER}`]: { status: 500, code: 10013 } },
+    });
+    expect(await deleteManagerWorker(w.api, manager)).toBe(false);
+    expect(w.account.deletes()).toEqual([`DELETE /a/workers/scripts/${MANAGER_WORKER}`]);
+  });
+
+  it("still reports the Worker deleted when its Workflow cannot be deleted", async () => {
+    const w = world({
+      fail: { [`DELETE /a/workflows/${MANAGER_WORKFLOW}`]: { status: 500, code: 10001 } },
+    });
+    expect(await deleteManagerWorker(w.api, manager)).toBe(true);
+  });
+
+  it("deletes no Workflow when the manager runs none of its own", async () => {
+    const w = world();
+    expect(await deleteManagerWorker(w.api, { ...manager, workflowName: null })).toBe(true);
+    expect(w.account.deletes()).toEqual([`DELETE /a/workers/scripts/${MANAGER_WORKER}`]);
   });
 });
