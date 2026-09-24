@@ -256,7 +256,7 @@ export async function sandboxEnable(
 
   await withWorkdir(async ({ dir, neutralConfig }) => {
     const wrangler = wranglerFor(ctx, dir, neutralConfig);
-    await ensureAccount(wrangler, ui, { env, yes: options.yes });
+    await ensureAccount(wrangler, ui, { env, yes: options.yes, telemetry: ctx.telemetry });
     const credential = await wranglerCredential(wrangler);
     const access = apiAccess(wrangler, credential);
     await checkContainersAccessBeforeDeploy(ctx, credential, access);
@@ -446,7 +446,7 @@ export async function sandboxDisable(
   }
   await withWorkdir(async ({ dir, neutralConfig }) => {
     const wrangler = wranglerFor(ctx, dir, neutralConfig);
-    await ensureAccount(wrangler, ui, { env: ctx.env, yes: false });
+    await ensureAccount(wrangler, ui, { env: ctx.env, yes: false, telemetry: ctx.telemetry });
     const existing = await deployedSandboxWorker(wrangler);
     if (existing === null && !options.purge) {
       throw new Error(`There is no sandbox Worker ("${SANDBOX_WORKER_NAME}") in this account.`);

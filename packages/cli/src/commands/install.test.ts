@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CommandContext } from "../context.ts";
+import { CliTelemetry } from "../telemetry.ts";
 import {
   buildFixtureArtifact,
   type FakeHandler,
@@ -231,6 +232,48 @@ describe("install", () => {
     await install({ artifactDir, yes: true, allowUnsigned: false }, t.ctx);
     expect(t.lines.join("\n")).toContain("has not answered yet");
     expect(t.results).toHaveLength(1);
+  });
+
+  it("deploys the manager with this run's install id, or with usage data off", async () => {
+    const on = setup();
+    on.ctx.telemetry = new CliTelemetry({
+      env: {},
+      optOut: false,
+      fetch: on.ctx.fetch,
+      ui: on.ctx.ui,
+    });
+    await install({ artifactDir, yes: true, allowUnsigned: false }, on.ctx);
+    expect(on.config()?.vars).toMatchObject({ APPFLARE_INSTALL_ID: on.ctx.telemetry.installId });
+    expect(on.ctx.telemetry).toMatchObject({
+      step: "health",
+      nameIsDefault: true,
+      loginNeeded: false,
+    });
+
+    const off = setup();
+    off.ctx.telemetry = new CliTelemetry({
+      env: {},
+      optOut: true,
+      fetch: off.ctx.fetch,
+      ui: off.ctx.ui,
+    });
+    await install({ artifactDir, yes: true, allowUnsigned: false }, off.ctx);
+    expect(off.config()?.vars).toMatchObject({ APPFLARE_TELEMETRY: "off" });
+    expect(JSON.stringify(off.config())).not.toContain("APPFLARE_INSTALL_ID");
+  });
+
+  it("records the step a failed install reached", async () => {
+    const t = setup({ deploy: () => ({ code: 1 }) });
+    t.ctx.telemetry = new CliTelemetry({
+      env: {},
+      optOut: false,
+      fetch: t.ctx.fetch,
+      ui: t.ctx.ui,
+    });
+    await expect(install({ artifactDir, yes: true, allowUnsigned: false }, t.ctx)).rejects.toThrow(
+      "wrangler deploy",
+    );
+    expect(t.ctx.telemetry.step).toBe("deploy");
   });
 
   it("rejects a Node version below 22", async () => {

@@ -66,7 +66,9 @@ export function createAuth({ db, secret, baseURL }: AuthDeps) {
       // Cloudflare sets this header on every request; it cannot be spoofed by the client.
       ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
     },
-    // No telemetry of any kind. Off by default; pinned here.
+    // Better Auth's own telemetry (sent to Better Auth, not Appflare) stays off.
+    // Off by default; pinned here. Appflare's anonymous usage data is separate
+    // (telemetry/).
     telemetry: { enabled: false },
     plugins: [
       admin({

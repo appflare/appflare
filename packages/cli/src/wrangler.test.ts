@@ -92,7 +92,7 @@ describe("createWrangler", () => {
       PATH: "/bin",
       CLOUDFLARE_ACCOUNT_ID: "acc-1",
       WRANGLER_OUTPUT_FILE_PATH: "/tmp/appflare-x/out.ndjson",
-      // The user's explicit choice wins over the no-telemetry default.
+      // The user's explicit choice wins over the default of wrangler's metrics off.
       WRANGLER_SEND_METRICS: "true",
       WRANGLER_SEND_ERROR_REPORTS: "false",
     });
@@ -104,7 +104,7 @@ describe("createWrangler", () => {
 });
 
 describe("helpers", () => {
-  it("defaults telemetry off", () => {
+  it("defaults wrangler's own metrics and error reports off", () => {
     expect(wranglerEnv({})).toMatchObject({
       WRANGLER_SEND_METRICS: "false",
       WRANGLER_SEND_ERROR_REPORTS: "false",

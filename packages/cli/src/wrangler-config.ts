@@ -110,7 +110,11 @@ function stringField(binding: WorkerBinding, field: string): string {
  */
 export function buildWranglerConfig(
   manifest: ArtifactManifest,
-  options: { name: string },
+  options: {
+    name: string;
+    /** Plain-text variables added to the artifact's own (the CLI's usage-data choice). */
+    vars?: Record<string, string>;
+  },
 ): GeneratedWranglerConfig {
   const { worker } = manifest;
   const { name } = options;
@@ -161,6 +165,7 @@ export function buildWranglerConfig(
         );
     }
   }
+  Object.assign(vars, options.vars ?? {});
   if (d1.length > 1) {
     throw new Error(
       "the manager artifact has more than one D1 binding; this installer supports one",

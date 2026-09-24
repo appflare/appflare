@@ -72,8 +72,13 @@ async function preflight(wrangler: Wrangler, config: GeneratedWranglerConfig): P
  * path; nothing is written to the current directory.
  */
 export async function install(options: InstallOptions, ctx: CommandContext): Promise<void> {
-  const { ui, env } = ctx;
+  const { ui, env, telemetry } = ctx;
+  if (telemetry) telemetry.step = "node_version";
   checkNodeVersion(ctx.nodeVersion);
+  if (telemetry) {
+    telemetry.step = "start";
+    telemetry.nameIsDefault = (options.name ?? DEFAULT_WORKER_NAME) === DEFAULT_WORKER_NAME;
+  }
   const name = validateWorkerName(options.name ?? DEFAULT_WORKER_NAME);
   if (options.version !== undefined && options.artifactDir !== undefined) {
     throw new Error("--version and --artifact-dir cannot be used together");
@@ -93,7 +98,8 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
 
   await withWorkdir(async ({ dir, neutralConfig }) => {
     const wrangler = wranglerFor(ctx, dir, neutralConfig);
-    await ensureAccount(wrangler, ui, { env, yes: options.yes });
+    await ensureAccount(wrangler, ui, { env, yes: options.yes, telemetry });
+    if (telemetry) telemetry.step = "release_download";
 
     let artifactDir: string;
     let expectedVersion: string | undefined;
@@ -110,6 +116,7 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
       ui.info(`Release ${release.tag}`);
     }
 
+    if (telemetry) telemetry.step = "verify";
     const verified = await verifyArtifact({
       dir: artifactDir,
       allowUnsigned: options.allowUnsigned,
@@ -117,6 +124,7 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
       expectedVersion,
     });
     const { manifest } = verified;
+    if (telemetry) telemetry.managerVersion = manifest.version;
     ui.info(
       verified.keyId
         ? `Signature OK (key ${verified.keyId}), Appflare ${manifest.version}`
@@ -126,16 +134,23 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
     const projectDir = path.join(dir, "project");
     const unpacked = await unpackArtifact(manifest, verified.zipPath, projectDir);
     ui.info(`Checked ${unpacked.moduleCount} Worker modules and ${unpacked.assetCount} assets`);
-    const config = buildWranglerConfig(manifest, { name });
+    // With usage data on, the manager continues this run's install id; with it
+    // off (flag or environment), the manager is deployed with it off too.
+    const config = buildWranglerConfig(manifest, {
+      name,
+      ...(telemetry ? { vars: telemetry.managerVars() } : {}),
+    });
     const configPath = path.join(projectDir, "wrangler.json");
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
+    if (telemetry) telemetry.step = "preflight";
     ui.step("Checking the account for an existing install");
     await preflight(wrangler, config);
 
     ui.step(
       `Deploying the manager as "${name}" (wrangler creates its D1 database and KV namespace)`,
     );
+    if (telemetry) telemetry.step = "deploy";
     const outputFile = path.join(dir, "wrangler-output.ndjson");
     const deploy = await wrangler.run(wranglerArgs.deploy(configPath), {
       // Without --yes, a terminal lets wrangler ask before taking over a
@@ -157,6 +172,7 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
       // Inside the try: from here on the Worker is live, so any failure must
       // come with the advice on how to start over.
       const deployed = parseDeployOutput(await readFile(outputFile, "utf8").catch(() => ""), name);
+      if (telemetry) telemetry.step = "secrets";
       ui.step("Setting the manager's secrets");
       const setupToken = generateSetupToken();
       const secrets: [string, string][] = [
@@ -173,6 +189,7 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
         ui.info(`${secretName} set`);
       }
 
+      if (telemetry) telemetry.step = "health";
       ui.step(`Waiting for ${deployed.url} to answer`);
       const health = await waitForHealth(ctx.fetch, deployed.url, {
         sleep: ctx.sleep,

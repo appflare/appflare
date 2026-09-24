@@ -1,11 +1,13 @@
 import { Badge, Empty, LayerCard, Link, LinkButton, Table } from "@cloudflare/kumo";
 import { PackageIcon, StorefrontIcon } from "@phosphor-icons/react";
-import { createFileRoute, getRouteApi } from "@tanstack/react-router";
+import { createFileRoute, getRouteApi, useRouter } from "@tanstack/react-router";
 import { HealthIcon } from "../../components/install-health";
 import { PageHeader } from "../../components/page-header";
 import { PendingUpdatesBanner } from "../../components/pending-updates-banner";
 import { StatusBadge } from "../../components/status-badge";
+import { UsageDataNotice } from "../../components/usage-data-notice";
 import { type InstallRow, listInstalls } from "../../installs/installs.functions";
+import { getTelemetryNotice } from "../../telemetry/telemetry.functions";
 
 /**
  * `/`: the pending updates (apps and Appflare itself, read by the layout's
@@ -13,11 +15,16 @@ import { type InstallRow, listInstalls } from "../../installs/installs.functions
  * name, status (with an icon when its last health check did not verify the
  * Worker), version, and update-available. Several installs of one app are
  * listed one by one. Uninstalled apps that kept data are listed under
- * Settings, Removed apps; the others are not listed anywhere.
+ * Settings, Removed apps; the others are not listed anywhere. Admins of a
+ * manager updated from a version without usage data first see the usage-data
+ * notice, until one of them answers it.
  */
 export const Route = createFileRoute("/_app/")({
   staticData: { title: "Installed apps" },
-  loader: () => listInstalls(),
+  loader: async () => {
+    const [rows, notice] = await Promise.all([listInstalls(), getTelemetryNotice()]);
+    return { rows, notice };
+  },
   component: InstalledPage,
 });
 
@@ -26,8 +33,9 @@ const layout = getRouteApi("/_app");
 const mono = "font-mono text-[0.9em]";
 
 function InstalledPage() {
-  const rows = Route.useLoaderData();
+  const { rows, notice } = Route.useLoaderData();
   const pending = layout.useLoaderData();
+  const router = useRouter();
   return (
     <>
       <PageHeader
@@ -41,6 +49,9 @@ function InstalledPage() {
           ) : undefined
         }
       />
+      {notice.show && (
+        <UsageDataNotice status={notice.status} via="banner" onDone={() => router.invalidate()} />
+      )}
       <PendingUpdatesBanner pending={pending} />
       {rows.length > 0 ? (
         <ActiveTable rows={rows} />

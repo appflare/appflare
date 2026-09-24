@@ -4,6 +4,7 @@ import { CatalogError, refreshCatalogIndex } from "./catalog/index.server";
 import { ManagerReleasesError, refreshManagerReleases } from "./catalog/manager-releases.server";
 import { ensureMigrated } from "./db/migrate";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
+import { reportTelemetry } from "./telemetry/report.server";
 
 /**
  * The manager's Worker entry (custom entry so it can export more than
@@ -75,8 +76,9 @@ export default {
   /**
    * Cron: refresh the catalog index into KV, then check the manager's own
    * release feed. Update-available (for apps and for Appflare) is computed
-   * at read time from those caches, so nothing else is written. The
-   * scheduled handler never starts jobs.
+   * at read time from those caches. Then the anonymous usage-data report
+   * (telemetry/report.server.ts), which sends nothing until an admin has
+   * seen the notice. The scheduled handler never starts jobs.
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
@@ -93,6 +95,12 @@ export default {
     } catch (error) {
       if (!(error instanceof ManagerReleasesError)) throw error;
       console.error("release feed check failed", { error: error.message });
+    }
+    // Anonymous usage data, after the caches above are fresh; never fails the run.
+    const usage = await reportTelemetry(env);
+    if (usage.status === "failed") console.warn("usage data not sent", { reason: usage.reason });
+    else if (usage.status === "sent" && usage.events > 0) {
+      console.log(`usage data sent: ${usage.events} event(s)`);
     }
   },
 } satisfies ExportedHandler<Env>;

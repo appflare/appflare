@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CliTelemetry } from "./telemetry.ts";
 import type { Ui } from "./ui.ts";
 import { parseJsonOutput, type Wrangler, WranglerError, wranglerArgs } from "./wrangler.ts";
 
@@ -98,10 +99,13 @@ async function whoami(wrangler: Wrangler): Promise<WhoamiState> {
 export async function ensureAccount(
   wrangler: Wrangler,
   ui: Ui,
-  options: { env: NodeJS.ProcessEnv; yes: boolean },
+  options: { env: NodeJS.ProcessEnv; yes: boolean; telemetry?: CliTelemetry | undefined },
 ): Promise<Account> {
+  const { telemetry } = options;
+  if (telemetry) telemetry.step = "login";
   ui.step("Checking your Cloudflare login");
   let state = await whoami(wrangler);
+  if (telemetry) telemetry.loginNeeded = !state.loggedIn;
   if (!state.loggedIn) {
     if (options.env.CLOUDFLARE_API_TOKEN) {
       throw new Error("CLOUDFLARE_API_TOKEN is set, but wrangler could not log in with it.");
@@ -125,6 +129,10 @@ export async function ensureAccount(
     }
   }
 
+  if (telemetry) {
+    telemetry.step = "account";
+    telemetry.severalAccounts = state.accounts.length > 1;
+  }
   const choice = chooseAccount(state.accounts, {
     envAccountId: options.env.CLOUDFLARE_ACCOUNT_ID,
     yes: options.yes,
@@ -145,6 +153,7 @@ export async function ensureAccount(
     account = choice.accounts.find((a) => a.id === id) as Account;
   }
   wrangler.accountId = account.id;
+  if (telemetry) telemetry.step = "run";
   ui.info(`Account: ${account.name} (${account.id})`);
   return account;
 }

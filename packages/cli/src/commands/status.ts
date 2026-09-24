@@ -58,7 +58,7 @@ export async function status(options: StatusOptions, ctx: CommandContext): Promi
   const { ui } = ctx;
   await withWorkdir(async ({ dir, neutralConfig }) => {
     const wrangler = wranglerFor(ctx, dir, neutralConfig);
-    await ensureAccount(wrangler, ui, { env: ctx.env, yes: false });
+    await ensureAccount(wrangler, ui, { env: ctx.env, yes: false, telemetry: ctx.telemetry });
     ui.step(`Reading "${name}"`);
     const deployments = await listDeployments(wrangler, name);
     if (deployments === null) {
@@ -66,6 +66,7 @@ export async function status(options: StatusOptions, ctx: CommandContext): Promi
     }
     const active = activeVersionId(deployments);
     const detail = active ? await viewVersion(wrangler, name, active) : null;
+    if (detail) ctx.telemetry?.useManagerBindings(detail.resources.bindings);
     const versions = await listVersions(wrangler, name);
     const url = options.url ?? (await resolveWorkersDevUrl(wrangler, ctx.fetch, name));
     const health = url ? await checkHealth(ctx.fetch, url) : null;

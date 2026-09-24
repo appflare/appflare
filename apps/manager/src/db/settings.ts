@@ -44,6 +44,25 @@ export const SETTING = {
    * absent means free. Cloudflare's API offers no plan signal to read.
    */
   accountPlan: "account_plan",
+  /**
+   * Anonymous usage data (telemetry/). `telemetry` is `on` or `off`; absent
+   * means no admin has seen the notice yet, so nothing is sent.
+   */
+  telemetry: "telemetry",
+  /** ISO 8601 time an admin first saw the usage-data notice (setup step, banner, or Settings). */
+  telemetryNoticeAt: "telemetry_notice_at",
+  /** The random id every event is tied to (a UUIDv4). Kept when usage data is turned off. */
+  telemetryInstallId: "telemetry_install_id",
+  /** Epoch ms up to which job starts and ends have been reported. */
+  telemetryCursor: "telemetry_cursor",
+  /** UTC day (`YYYY-MM-DD`) of the last heartbeat sent. */
+  telemetryHeartbeatDay: "telemetry_heartbeat_day",
+  /** `YYYY-MM-DD <role>`: the last UTC day the manager was opened, and the first opener's role. */
+  telemetryOpenedDay: "telemetry_opened_day",
+  /** UTC day of the last "manager opened" event sent. */
+  telemetryOpenedSentDay: "telemetry_opened_sent_day",
+  /** `1` once "manager setup completed" was sent; `skipped` when it never will be. */
+  telemetrySetupSent: "telemetry_setup_sent",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

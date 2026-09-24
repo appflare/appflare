@@ -10,6 +10,7 @@ import { PageHeader } from "../../../components/page-header";
 import { PasskeysSection } from "../../../components/passkeys-section";
 import { PlaceholderCard } from "../../../components/placeholder-card";
 import { SandboxCard } from "../../../components/sandbox-card";
+import { UsageDataCard } from "../../../components/usage-data-card";
 import { UsersSection } from "../../../components/users-section";
 import { WorkersPlanCard } from "../../../components/workers-plan-card";
 import { listRemovedApps } from "../../../installs/removed-apps.functions";
@@ -18,12 +19,13 @@ import { listPasskeys } from "../../../server/passkeys.functions";
 import { getSandboxStatus } from "../../../server/sandbox.functions";
 import { getTokenStatus } from "../../../server/token.functions";
 import { listUsers } from "../../../server/users.functions";
+import { getTelemetryStatus } from "../../../telemetry/telemetry.functions";
 
 /**
  * `/settings`: users, your passkeys, the Cloudflare token, the account's
  * Workers plan, Cloudflare Access protection, sandbox builds, Appflare's own
  * updates (`#appflare-updates`, which the home page's list of pending
- * updates links to), and the way to Removed apps.
+ * updates links to), anonymous usage data, and the way to Removed apps.
  */
 export const Route = createFileRoute("/_app/settings/")({
   staticData: { title: "Settings" },
@@ -37,6 +39,7 @@ export const Route = createFileRoute("/_app/settings/")({
       sandboxStatus,
       managerUpdate,
       removedApps,
+      telemetry,
     ] = await Promise.all([
       context.viewer.role === "admin" ? listUsers() : null,
       listPasskeys(),
@@ -46,6 +49,7 @@ export const Route = createFileRoute("/_app/settings/")({
       getSandboxStatus(),
       getManagerUpdate(),
       listRemovedApps(),
+      getTelemetryStatus(),
     ]);
     return {
       users,
@@ -56,6 +60,7 @@ export const Route = createFileRoute("/_app/settings/")({
       sandboxStatus,
       managerUpdate,
       removedApps: removedApps.length,
+      telemetry,
     };
   },
   component: SettingsPage,
@@ -90,6 +95,7 @@ function SettingsPage() {
     sandboxStatus,
     managerUpdate,
     removedApps,
+    telemetry,
   } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   return (
@@ -119,6 +125,9 @@ function SettingsPage() {
       </Section>
       <Section id="appflare-updates" title="Appflare updates">
         <AppflareUpdatesCard state={managerUpdate} isAdmin={viewer.role === "admin"} />
+      </Section>
+      <Section id="usage-data" title="Usage data">
+        <UsageDataCard status={telemetry} isAdmin={viewer.role === "admin"} />
       </Section>
       <Section title="Removed apps">
         <LayerCard>

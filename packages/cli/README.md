@@ -93,6 +93,7 @@ Without `--yes`, in a terminal, you are asked in each of those cases.
 | `--name <name>` | Worker name (default `appflare`). |
 | `-y`, `--yes` | Never prompt; fail where a question would be needed (see above). |
 | `--allow-unsigned` | Development only. Needs `APPFLARE_DEV=1` and `--artifact-dir`; accepts an artifact without `manifest.sig` and prints a warning. |
+| `--no-telemetry` | Send no anonymous usage data, and install the manager with its usage data turned off (`APPFLARE_TELEMETRY=off`). Every command accepts it. |
 
 `GITHUB_TOKEN`, if set, is sent to `api.github.com` when fetching releases and
 downloading their files. Set it while the repository is private (for example
@@ -188,6 +189,34 @@ sandbox Worker's name (or with `--i-understand-data-loss`).
 
 ## Privacy
 
-Appflare sends no telemetry. The installer also turns off wrangler's usage metrics
-and error reports for the commands it runs, unless you set `WRANGLER_SEND_METRICS`
-or `WRANGLER_SEND_ERROR_REPORTS` yourself.
+Appflare collects anonymous usage data to decide what to build and fix. It is on by
+default, and the installer says so before it does anything else.
+
+The installer sends one event when a command ends: which command it was, whether it
+worked, how long it took, how far it got and an error category, the installer's
+version, the operating system, CPU architecture and Node.js major version, whether it
+ran in a terminal, in CI or under a coding agent, and whether the Worker name was the
+default. It never sends your Cloudflare account id or name, the Worker name, email
+addresses, domains, paths, your user name or hostname, or any error message. Events
+go to PostHog Cloud's EU region and are tied to a random id, never to a person;
+PostHog discards IP addresses.
+
+`create-appflare` deploys the manager with that random id as the variable
+`APPFLARE_INSTALL_ID`, so the manager's own usage data continues it. The manager
+sends nothing until an admin has seen its notice during setup, where it can be
+turned off; it can be changed later under Settings, Usage data. That switch covers
+the manager's reports only, not the installer's.
+
+Turn the installer's off with any one of:
+
+- `--no-telemetry` on any command;
+- `APPFLARE_TELEMETRY=off` (or `0`, `false`) or `DO_NOT_TRACK=1` in the environment.
+
+With it off, the installer sends nothing and deploys the manager with
+`APPFLARE_TELEMETRY=off`, which keeps the manager's usage data off for good (remove
+the variable from the Worker to decide in Settings instead). Commands other than
+install also send nothing for a manager that has the variable.
+
+The installer also turns off wrangler's own usage metrics and error reports (which
+would go to Cloudflare) for the commands it runs, unless you set
+`WRANGLER_SEND_METRICS` or `WRANGLER_SEND_ERROR_REPORTS` yourself.

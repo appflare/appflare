@@ -1,5 +1,6 @@
 import type { SigningKey } from "@appflare/schema";
 import type { FetchLike } from "./release.ts";
+import type { CliTelemetry } from "./telemetry.ts";
 import type { Ui } from "./ui.ts";
 import { createWrangler, type Spawner, type Wrangler } from "./wrangler.ts";
 
@@ -21,6 +22,11 @@ export interface CommandContext {
   sleep?: (ms: number) => Promise<void>;
   /** How long `create-appflare` waits for the new manager to answer; 90 s by default. */
   healthTimeoutMs?: number;
+  /**
+   * This run's anonymous usage data (`main` sets it). Without it nothing is
+   * recorded, and the manager is deployed without a usage-data variable.
+   */
+  telemetry?: CliTelemetry;
 }
 
 /** The context's wrangler, bound to a private working directory. */

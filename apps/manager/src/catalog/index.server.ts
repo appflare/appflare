@@ -190,6 +190,11 @@ export async function getCatalogApp(
   return { ok: true, app: read.index.apps.find((a) => a.slug === slug) ?? null };
 }
 
+/** The cached index without refreshing it; null when nothing readable is cached. */
+export async function readCachedCatalogIndex(kv: KVNamespace): Promise<IndexJson | null> {
+  return parseCached(await kv.get(CATALOG_INDEX_KEY))?.index ?? null;
+}
+
 /**
  * The app's entry in the cached index, without refreshing: jobs compare a
  * request against what the admin saw, and never fetch the index themselves.

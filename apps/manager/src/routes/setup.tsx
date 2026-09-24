@@ -1,4 +1,4 @@
-import { Banner, Button, Input, LinkButton, Loader, Text } from "@cloudflare/kumo";
+import { Banner, Button, Input, Loader, Text } from "@cloudflare/kumo";
 import {
   CheckCircleIcon,
   InfoIcon,
@@ -12,16 +12,22 @@ import { z } from "zod";
 import { authClient } from "../auth/client";
 import { AuthLayout } from "../components/auth-layout";
 import { CloudflareTokenForm, type SavedToken } from "../components/cloudflare-token-form";
+import { UsageDataNotice } from "../components/usage-data-notice";
 import { enterSetup } from "../server/gate.functions";
 import { MIN_PASSWORD_LENGTH } from "../server/schemas";
 import { checkSetupToken, createFirstAdmin, INVALID_SETUP_LINK } from "../server/setup.functions";
 import { getTokenStatus } from "../server/token.functions";
+import type { TelemetryStatus } from "../telemetry/telemetry";
+import { getTelemetryStatus } from "../telemetry/telemetry.functions";
 
 /**
  * `/setup?token=…`. Before any user exists: validate the
  * setup token, then create the first admin. After that, signed in as an admin:
- * the Cloudflare token step. Once the token is configured `/setup` redirects to
- * `/`; until then every signed-in page redirects here (`_app.tsx`).
+ * the Cloudflare token step, then the anonymous usage-data notice, whose
+ * Continue records the choice and leaves setup. Once the token is configured
+ * `/setup` redirects to `/`; until then every signed-in page redirects here
+ * (`_app.tsx`). An admin who leaves before Continue sees the notice on the
+ * home page instead.
  */
 export const Route = createFileRoute("/setup")({
   staticData: { title: "Set up" },
@@ -37,13 +43,16 @@ export const Route = createFileRoute("/setup")({
     }
     // Redirects to /login (users exist, no session) or / (setup complete).
     const gate = await enterSetup();
-    if (gate.step !== "create-admin") return { step: gate.step, token: null };
+    if (gate.step === "cloudflare-token") {
+      return { step: gate.step, token: null, telemetry: await getTelemetryStatus() };
+    }
+    if (gate.step !== "create-admin") return { step: gate.step, token: null, telemetry: null };
     const token = heldToken;
-    if (token === null) return { step: "invalid" as const, token: null };
+    if (token === null) return { step: "invalid" as const, token: null, telemetry: null };
     const { valid } = await checkSetupToken({ data: { token } });
     return valid
-      ? { step: "create-admin" as const, token }
-      : { step: "invalid" as const, token: null };
+      ? { step: "create-admin" as const, token, telemetry: null }
+      : { step: "invalid" as const, token: null, telemetry: null };
   },
   component: SetupPage,
 });
@@ -67,7 +76,7 @@ function stripTokenFromAddressBar() {
 }
 
 function SetupPage() {
-  const { step, token } = Route.useLoaderData();
+  const { step, token, telemetry } = Route.useLoaderData();
   switch (step) {
     case "create-admin":
       return <CreateAdminStep token={token ?? ""} />;
@@ -83,7 +92,7 @@ function SetupPage() {
         </AuthLayout>
       );
     case "cloudflare-token":
-      return <CloudflareTokenStep />;
+      return <CloudflareTokenStep telemetry={telemetry} />;
     case "wait-for-admin":
       return <WaitForAdminStep />;
   }
@@ -118,9 +127,9 @@ function WaitForAdminStep() {
 /** How often the success card checks whether the redeployed Worker has the token. */
 const SECRET_POLL_MS = 3000;
 
-function CloudflareTokenStep() {
+function CloudflareTokenStep({ telemetry }: { telemetry: TelemetryStatus | null }) {
   const [saved, setSaved] = useState<SavedToken | null>(null);
-  if (saved !== null) return <TokenSavedCard saved={saved} />;
+  if (saved !== null) return <TokenSavedCard saved={saved} telemetry={telemetry} />;
   return (
     <AuthLayout
       width="wide"
@@ -136,7 +145,14 @@ function CloudflareTokenStep() {
  * Storing `CF_API_TOKEN` deploys a new version of this Worker. Poll until a
  * request lands on a version that has the binding.
  */
-function TokenSavedCard({ saved }: { saved: SavedToken }) {
+function TokenSavedCard({
+  saved,
+  telemetry,
+}: {
+  saved: SavedToken;
+  telemetry: TelemetryStatus | null;
+}) {
+  const router = useRouter();
   const [hasSecret, setHasSecret] = useState(false);
 
   useEffect(() => {
@@ -195,9 +211,17 @@ function TokenSavedCard({ saved }: { saved: SavedToken }) {
             }
           />
         )}
-        <LinkButton href="/" variant="primary">
-          Go to Installed apps
-        </LinkButton>
+        {telemetry !== null ? (
+          <UsageDataNotice
+            status={telemetry}
+            via="setup"
+            onDone={() => router.navigate({ to: "/" })}
+          />
+        ) : (
+          <Button variant="primary" onClick={() => void router.navigate({ to: "/" })}>
+            Go to Installed apps
+          </Button>
+        )}
       </div>
     </AuthLayout>
   );

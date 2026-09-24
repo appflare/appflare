@@ -39,7 +39,7 @@ export async function rollback(options: RollbackOptions, ctx: CommandContext): P
   const { ui } = ctx;
   await withWorkdir(async ({ dir, neutralConfig }) => {
     const wrangler = wranglerFor(ctx, dir, neutralConfig);
-    await ensureAccount(wrangler, ui, { env: ctx.env, yes: options.yes });
+    await ensureAccount(wrangler, ui, { env: ctx.env, yes: options.yes, telemetry: ctx.telemetry });
     const deployments = await listDeployments(wrangler, name);
     if (deployments === null) {
       throw new Error(`There is no Worker named "${name}" in this account.`);
@@ -80,6 +80,9 @@ export async function rollback(options: RollbackOptions, ctx: CommandContext): P
         return null;
       }
       const version = await viewVersion(wrangler, name, versionId).catch(() => null);
+      if (version && versionId === current) {
+        ctx.telemetry?.useManagerBindings(version.resources.bindings);
+      }
       return version ? appflareVersionOf(version) : null;
     };
     const describe = (versionId: string | null, appflare: string | null) =>

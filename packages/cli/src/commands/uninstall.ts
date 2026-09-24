@@ -198,13 +198,14 @@ export async function uninstall(options: UninstallOptions, ctx: CommandContext):
     const wrangler = wranglerFor(ctx, dir, neutralConfig);
     // `--yes` confirms the deletion only; with several accounts the user is
     // still asked which one (or sets CLOUDFLARE_ACCOUNT_ID).
-    await ensureAccount(wrangler, ui, { env: ctx.env, yes: false });
+    await ensureAccount(wrangler, ui, { env: ctx.env, yes: false, telemetry: ctx.telemetry });
     const deployments = await listDeployments(wrangler, name);
     if (deployments === null && !options.purge) {
       throw new Error(`There is no Worker named "${name}" in this account.`);
     }
     const active = deployments ? activeVersionId(deployments) : null;
     const bindings = active ? (await viewVersion(wrangler, name, active)).resources.bindings : [];
+    ctx.telemetry?.useManagerBindings(bindings);
     if (deployments !== null && !(await isManager(wrangler, ctx, name, bindings, options.url))) {
       throw new Error(
         `The Worker "${name}" is not an Appflare manager (it lacks the manager's bindings and ` +

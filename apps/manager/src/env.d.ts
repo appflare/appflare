@@ -31,6 +31,15 @@ interface ManagerOptionalVars {
    * self-update). Read it through `sandboxBinding()`.
    */
   SANDBOX?: unknown;
+  /**
+   * `off` (or `0`, `false`) turns anonymous usage data off on this Worker,
+   * whatever Settings says. The CLI sets it for `--no-telemetry`.
+   */
+  APPFLARE_TELEMETRY?: string;
+  /** `1` turns anonymous usage data off, like `APPFLARE_TELEMETRY=off`. */
+  DO_NOT_TRACK?: string;
+  /** The random install id the CLI used for its own usage data; the manager continues it. */
+  APPFLARE_INSTALL_ID?: string;
 }
 
 declare namespace Cloudflare {

@@ -98,8 +98,9 @@ export function resolveWranglerBin(): string {
 
 /**
  * The environment for every wrangler child: the caller's environment, the
- * chosen account, and Appflare's no-telemetry defaults for
- * anything the user has not set explicitly.
+ * chosen account, and wrangler's own usage metrics and error reports
+ * (which go to Cloudflare) turned off for anything the user has not set
+ * explicitly.
  */
 export function wranglerEnv(base: NodeJS.ProcessEnv, accountId?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base };
