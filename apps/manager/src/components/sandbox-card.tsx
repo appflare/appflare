@@ -1,3 +1,4 @@
+import { SANDBOX_BUCKET_NAME } from "@appflare/schema";
 import { Badge, Banner, Button, LayerCard, Link, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
@@ -12,6 +13,7 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import type { CapabilitiesView } from "../capabilities/capabilities";
+import { buildCostLine, CONTAINERS_PRICING_URL, estimateBuild } from "../sandbox/cost";
 import { sandboxPreflightProblems } from "../sandbox/preflight";
 import {
   connectSandbox,
@@ -33,13 +35,18 @@ const SANDBOX_WORKER = "appflare-sandbox";
  * Worker builds on Workers Paid.
  *
  * - Off, on an account where Workers Paid is detected: "Enable sandbox
- *   builds" starts a job that deploys the sandbox Worker release this
- *   Appflare pins, its bucket and container applications, and connects to
- *   it. What keeps it from working (R2 off, the token without Containers)
- *   is named first, from the account capabilities above.
- * - Connected: the sandbox Worker's version and image; "Update sandbox" when
- *   this Appflare pins a newer release; "Disable sandbox builds" behind the
- *   typed name, refused while an app still needs it.
+ *   builds" asks for confirmation (what it creates, and what builds cost),
+ *   then starts a job that deploys the sandbox Worker release this Appflare
+ *   pins, its bucket and container applications, and connects to it. What
+ *   keeps it from working (R2 off, the token without Containers) is named
+ *   first, from the account capabilities above.
+ * - Connected: the sandbox Worker's version and image; "Update sandbox"
+ *   (confirmed the same way) when this Appflare pins a newer release;
+ *   "Disable sandbox builds" behind the typed name, refused while an app
+ *   still needs it.
+ * - When the last enable, update or disable job failed and none has
+ *   succeeded since, its first error line and a link to its log, so a
+ *   stopped run does not look like a card that was never used.
  */
 export function SandboxCard({
   status,
@@ -66,6 +73,9 @@ export function SandboxCard({
           Workers Paid and are not signed.
         </Text>
         {status.activeJob !== null && <RunningJob job={status.activeJob} />}
+        {status.activeJob === null && status.lastFailure !== null && (
+          <LastFailure failure={status.lastFailure} />
+        )}
         {status.connected ? (
           <Connected status={status} isAdmin={isAdmin} />
         ) : (
@@ -95,6 +105,89 @@ function RunningJob({ job }: { job: { id: string; kind: string } }) {
         </>
       }
     />
+  );
+}
+
+/** The last enable, update or disable job failed, and none has succeeded since. */
+function LastFailure({ failure }: { failure: NonNullable<SandboxCardState["lastFailure"]> }) {
+  return (
+    <Banner
+      variant="error"
+      icon={<WarningCircleIcon weight="fill" />}
+      title={`${jobKindLabel(failure)} failed`}
+      description={
+        <span className="grid gap-1">
+          <span className="break-words">{failure.message}</span>
+          <span>
+            See <Link href={`/jobs/${failure.id}`}>its job log</Link> for what happened.
+          </span>
+        </span>
+      }
+    />
+  );
+}
+
+/**
+ * What enabling or updating costs, for both confirmations: Workers Paid
+ * usage while a build runs, nothing in between, and the estimate for a build
+ * of the default size and length (each app shows its own before it builds).
+ */
+function SandboxUsageNote() {
+  return (
+    <div className="grid gap-2">
+      <Text>
+        Workers Paid usage applies while builds run: each build runs one container, billed as
+        container time beyond what Workers Paid includes each month. Nothing runs between builds.
+      </Text>
+      <Text variant="secondary" size="sm">
+        A typical build: {buildCostLine(estimateBuild())}. Each app shows its own estimate before it
+        is built.
+      </Text>
+      <Link href={CONTAINERS_PRICING_URL} target="_blank" rel="noopener noreferrer">
+        Containers pricing
+        <Link.ExternalIcon />
+      </Link>
+    </div>
+  );
+}
+
+function EnableDialog({ status, disabled }: { status: SandboxCardState; disabled: boolean }) {
+  const start = useStartSandboxJob();
+  return (
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button {...p} variant="primary" icon={<PowerIcon />} disabled={disabled}>
+          Enable sandbox builds
+        </Button>
+      )}
+      title="Enable sandbox builds"
+      description={`Appflare creates the sandbox Worker ${status.pinnedVersion} (${SANDBOX_WORKER}) in this account, with two container applications that run its image and the R2 bucket ${SANDBOX_BUCKET_NAME}, then connects to it.`}
+      actionLabel="Enable"
+      destructive={false}
+      onConfirm={() => start("enable")}
+    >
+      <SandboxUsageNote />
+    </ConfirmDialog>
+  );
+}
+
+function UpdateDialog({ status, disabled }: { status: SandboxCardState; disabled: boolean }) {
+  const start = useStartSandboxJob();
+  return (
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button {...p} variant="primary" icon={<ArrowCircleUpIcon />} disabled={disabled}>
+          Update sandbox
+        </Button>
+      )}
+      title="Update sandbox"
+      description={`Appflare uploads the sandbox Worker ${status.pinnedVersion} and rolls both container applications out to its image. Builds wait until it is done.`}
+      actionLabel="Update"
+      destructive={false}
+      onConfirm={() => start("update")}
+    >
+      <SandboxUsageNote />
+    </ConfirmDialog>
   );
 }
 
@@ -159,7 +252,6 @@ function ActionButton({
 }
 
 function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boolean }) {
-  const start = useStartSandboxJob();
   const busy = status.activeJob !== null;
   return (
     <div className="grid gap-4">
@@ -191,13 +283,7 @@ function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boo
         <div className="flex flex-wrap items-start justify-end gap-2">
           <DisableDialog status={status} disabled={busy} />
           {(status.updateAvailable || status.info === null) && (
-            <ActionButton
-              label="Update sandbox"
-              icon={<ArrowCircleUpIcon />}
-              variant="primary"
-              disabled={busy}
-              action={() => start("update")}
-            />
+            <UpdateDialog status={status} disabled={busy} />
           )}
         </div>
       )}
@@ -214,7 +300,6 @@ function NotConnected({
   capabilities: CapabilitiesView;
   isAdmin: boolean;
 }) {
-  const start = useStartSandboxJob();
   const busy = status.activeJob !== null;
   const paidDetected = capabilities.plan.source === "detected" && capabilities.plan.plan === "paid";
   const problems = sandboxPreflightProblems({
@@ -268,13 +353,7 @@ function NotConnected({
         <div className="flex flex-wrap items-start justify-end gap-2">
           {status.workerExists === true && <DisableDialog status={status} disabled={busy} />}
           {status.workerExists === true && <ConnectButton disabled={busy} />}
-          <ActionButton
-            label="Enable sandbox builds"
-            icon={<PowerIcon />}
-            variant="primary"
-            disabled={busy || problems.length > 0}
-            action={() => start("enable")}
-          />
+          <EnableDialog status={status} disabled={busy || problems.length > 0} />
         </div>
       ) : (
         <Text variant="secondary" size="sm">

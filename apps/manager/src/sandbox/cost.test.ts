@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCostLine,
   buildCostSentence,
   describeInstance,
   estimateBuild,
@@ -32,6 +33,12 @@ describe("estimateBuild", () => {
   it("says what a build runs on and costs, with the minutes worded as an estimate", () => {
     expect(buildCostSentence(estimateBuild("standard-1", 5))).toBe(
       "Each build runs a standard-1 (1/2 vCPU, 4 GiB memory, 8 GB disk) container for an estimated 5 minutes (the catalog's estimate; a build is billed for as long as it actually runs). A build of that length costs about US$0.006 beyond the container usage Workers Paid includes each month (enough for about 75 such builds). A build whose container stops or times out runs once more, which costs as much again.",
+    );
+  });
+
+  it("shortens it to one line for an app page and the sandbox builds card", () => {
+    expect(buildCostLine(estimateBuild())).toBe(
+      "standard-1 (1/2 vCPU, 4 GiB memory, 8 GB disk) for an estimated 10 minutes: about US$0.012 a build of that length beyond the included usage",
     );
   });
 

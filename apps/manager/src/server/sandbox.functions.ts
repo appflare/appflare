@@ -16,7 +16,9 @@ import {
 } from "../sandbox/connect.server";
 import {
   activeSandboxWorkerJob,
+  lastSandboxJobFailure,
   SandboxJobError,
+  type SandboxJobFailure,
   startSandboxJobCore,
 } from "../sandbox/jobs.server";
 import { PINNED_SANDBOX_VERSION, sandboxUpdateAvailable } from "../sandbox/release";
@@ -37,6 +39,8 @@ export interface SandboxCardState extends SandboxStatus {
   updateAvailable: boolean;
   /** An enable, update or disable job that is queued or running. */
   activeJob: { id: string; kind: string } | null;
+  /** The most recent enable, update or disable job, when it failed and no newer one succeeded. */
+  lastFailure: SandboxJobFailure | null;
   /** Apps that need the sandbox Worker, which keep it from being disabled. */
   inUseBy: string[];
 }
@@ -54,8 +58,9 @@ export const getSandboxStatus = createServerFn({ method: "GET" }).handler(
           }
         : {}),
     });
-    const [activeJob, inUse] = await Promise.all([
+    const [activeJob, lastFailure, inUse] = await Promise.all([
       activeSandboxWorkerJob(env.DB),
+      lastSandboxJobFailure(env.DB),
       installsNeedingSandbox(createDb(env.DB)),
     ]);
     return {
@@ -63,6 +68,7 @@ export const getSandboxStatus = createServerFn({ method: "GET" }).handler(
       pinnedVersion: PINNED_SANDBOX_VERSION,
       updateAvailable: sandboxUpdateAvailable(status.info?.sandboxVersion),
       activeJob,
+      lastFailure,
       inUseBy: inUse.map((i) => i.label),
     };
   },

@@ -56,6 +56,7 @@ import { PageHeader } from "../../../components/page-header";
 import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
 import {
+  buildCostLine,
   describeInstance,
   estimatedMinutes,
   estimateIndexBuild,
@@ -446,8 +447,7 @@ function BuildRow({ build }: { build: IndexBuild }) {
           sandbox Worker, on Workers Paid
         </span>
         <Text as="span" variant="secondary" size="sm">
-          {describeInstance(estimate)} for {estimatedMinutes(estimate.minutes)}: about{" "}
-          {formatUsd(estimate.usd)} a build of that length beyond the included usage
+          {buildCostLine(estimate)}
         </Text>
       </span>
     </DescriptionItem>

@@ -109,6 +109,18 @@ export function estimatedMinutes(minutes: number): string {
   return `an estimated ${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
+/**
+ * "standard-1 (1/2 vCPU, 4 GiB memory, 8 GB disk) for an estimated 10
+ * minutes: about US$0.012 a build of that length beyond the included usage",
+ * the short line an app page and the sandbox builds card show.
+ */
+export function buildCostLine(estimate: BuildEstimate): string {
+  return (
+    `${describeInstance(estimate)} for ${estimatedMinutes(estimate.minutes)}: about ` +
+    `${formatUsd(estimate.usd)} a build of that length beyond the included usage`
+  );
+}
+
 /** The sentence the install form and the update confirmation show. */
 export function buildCostSentence(estimate: BuildEstimate): string {
   return (

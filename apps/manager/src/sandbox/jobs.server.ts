@@ -1,17 +1,18 @@
 import type { CloudflareClient } from "@appflare/cf-api";
 import { probeContainers, probeR2 } from "@appflare/cf-api/capabilities";
 import { SANDBOX_WORKER_NAME } from "@appflare/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { NO_REMOVAL_IN_PROGRESS_SQL } from "../danger/removal-flag";
 import { createDb } from "../db/client";
-import { jobs } from "../db/schema";
+import { job_logs, jobs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { reconcileJobs, type WorkflowLookup } from "../jobs/reconcile.server";
 import { refuseDuringSelfUpdate } from "../jobs/self-update/guard";
 import { installsNeedingSandbox, sandboxInUseMessage } from "./blockers";
 import type { SandboxDisableJobParams } from "./disable-job";
 import type { SandboxEnableJobParams } from "./enable-job";
+import { firstLine, lastSandboxFailure } from "./failure-hint";
 import { sandboxPreflightProblems } from "./preflight";
 import { PINNED_SANDBOX_VERSION } from "./release";
 
@@ -142,11 +143,48 @@ export async function activeSandboxWorkerJob(
     .select({ id: jobs.id, kind: jobs.kind })
     .from(jobs)
     .where(
-      and(
-        inArray(jobs.kind, ["sandbox_enable", "sandbox_update", "sandbox_disable"]),
-        inArray(jobs.status, ["queued", "running"]),
-      ),
+      and(inArray(jobs.kind, SANDBOX_WORKER_KINDS), inArray(jobs.status, ["queued", "running"])),
     )
     .limit(1);
   return row ?? null;
+}
+
+const SANDBOX_WORKER_KINDS = ["sandbox_enable", "sandbox_update", "sandbox_disable"] as const;
+
+/** A failed sandbox job the Settings card names, with the line that says why. */
+export interface SandboxJobFailure {
+  id: string;
+  kind: string;
+  /** The job's first error log line, else the first line of its recorded error. */
+  message: string;
+}
+
+/**
+ * The most recent failed enable, update or disable job, unless a newer one
+ * succeeded (see `lastSandboxFailure`). Its first error log line names the
+ * step that failed and why; a job refused before it ran has no log, only
+ * its recorded error.
+ */
+export async function lastSandboxJobFailure(db: D1Database): Promise<SandboxJobFailure | null> {
+  const orm = createDb(db);
+  // Job ids are ULIDs, so they sort by creation time.
+  const recent = await orm
+    .select({ id: jobs.id, kind: jobs.kind, status: jobs.status, error: jobs.error })
+    .from(jobs)
+    .where(inArray(jobs.kind, SANDBOX_WORKER_KINDS))
+    .orderBy(desc(jobs.id))
+    .limit(20);
+  const failed = lastSandboxFailure(recent);
+  if (failed === null) return null;
+  const [line] = await orm
+    .select({ message: job_logs.message })
+    .from(job_logs)
+    .where(and(eq(job_logs.job_id, failed.id), eq(job_logs.level, "error")))
+    .orderBy(asc(job_logs.id))
+    .limit(1);
+  return {
+    id: failed.id,
+    kind: failed.kind,
+    message: firstLine(line?.message) ?? firstLine(failed.error) ?? "The job failed.",
+  };
 }
