@@ -7,7 +7,7 @@ import {
   Input,
   LayerCard,
   LayerDialog,
-  Select,
+  Radio,
   Table,
   Text,
   useKumoToastManager,
@@ -171,9 +171,11 @@ function UserRowMenu({
       />
       <DropdownMenu.Content>
         {safe.map((a) => (
+          // Icons go in as components: Kumo sizes and spaces a component
+          // icon, but renders an element as it is, flush against the label.
           <DropdownMenu.Item
             key={a.kind}
-            icon={a.kind === "transfer" ? <CrownSimpleIcon /> : <UserGearIcon />}
+            icon={a.kind === "transfer" ? CrownSimpleIcon : UserGearIcon}
             onClick={() => onPick(user, a)}
           >
             {actionLabel(a)}
@@ -183,7 +185,7 @@ function UserRowMenu({
         {destructive.map((a) => (
           <DropdownMenu.Item
             key={a.kind}
-            icon={<TrashIcon />}
+            icon={TrashIcon}
             variant="danger"
             onClick={() => onPick(user, a)}
           >
@@ -286,7 +288,19 @@ function UserActionDialog({
   }
 }
 
-const ROLE_ITEMS: Record<Role, string> = { member: "Member (read only)", admin: "Admin" };
+/** The roles a new user can get, as the add dialog offers them. */
+const ROLE_CHOICES: readonly { role: Role; label: string; description: string }[] = [
+  {
+    role: "member",
+    label: "Member",
+    description: "Sees everything and changes nothing, apart from their own passkeys.",
+  },
+  {
+    role: "admin",
+    label: "Admin",
+    description: "Installs, updates and uninstalls apps, changes settings, and adds users.",
+  },
+];
 
 type Created = {
   email: string;
@@ -367,12 +381,22 @@ export function AddUserDialog() {
               )}
               <Input label="Email" name="email" type="email" autoComplete="off" required />
               <Input label="Name" name="name" autoComplete="off" required maxLength={100} />
-              <Select
-                label="Role"
+              <Radio.Group
+                legend="Role"
                 value={role}
-                onValueChange={(v) => setRole(v === "admin" ? "admin" : "member")}
-                items={ROLE_ITEMS}
-              />
+                onValueChange={(v: string) => setRole(v === "admin" ? "admin" : "member")}
+                orientation="horizontal"
+                appearance="card"
+              >
+                {ROLE_CHOICES.map((c) => (
+                  <Radio.Item
+                    key={c.role}
+                    value={c.role}
+                    label={c.label}
+                    description={c.description}
+                  />
+                ))}
+              </Radio.Group>
             </form>
           ) : (
             <div className="grid gap-4">

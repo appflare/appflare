@@ -242,10 +242,13 @@ export const AUTO_UPDATE_COPY = {
     on: "On",
     off: "Off",
   },
+  inheritDescription: 'Follows "Automatically update apps" in Settings, General.',
   needsApproval:
     "Updates of this app build it in your account or run its own installer, which you approve each time, so Appflare never starts them on its own.",
   installOn:
     "Appflare starts an update when a new version needs nothing from you; anything else waits here.",
+  installOnNeedsApproval:
+    "Updates of this app still wait for an admin, who approves each build or installer run.",
   installOff: "Updates of this app start only when an admin starts them.",
   waiting: (version: string) =>
     `Version ${version} needs something from you (a new secret or a confirmation), so Appflare left it for you. It tries again on its own only when a newer version is out.`,

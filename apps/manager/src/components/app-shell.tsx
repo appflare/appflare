@@ -83,15 +83,25 @@ export function AppShell({
               {NAV.map((item) => {
                 const current = isCurrent(pathname, item);
                 const badge = sidebarUpdateBadge(item.href, pending);
+                const subPages = item.href === "/settings" && current ? SETTINGS_PAGE_LIST : [];
+                // Only the innermost current entry is highlighted: a settings
+                // page, or Settings itself when no page in the list matches.
+                const subActive = subPages.some((page) => isCurrentPage(pathname, page.href, true));
                 return (
                   <Sidebar.MenuItem key={item.href}>
-                    <Sidebar.MenuButton href={item.href} icon={item.icon} active={current}>
+                    <Sidebar.MenuButton
+                      href={item.href}
+                      icon={item.icon}
+                      active={current && !subActive}
+                    >
                       {item.label}
                       <CountBadge count={badge.count} label={badge.label} />
                     </Sidebar.MenuButton>
-                    {item.href === "/settings" && current && (
-                      <Sidebar.MenuSub aria-label="Settings pages">
-                        {SETTINGS_PAGE_LIST.map((page) => (
+                    {subPages.length > 0 && (
+                      // Kumo's sub-menu starts right under its parent; a small gap keeps
+                      // the two apart when both are hovered or highlighted.
+                      <Sidebar.MenuSub aria-label="Settings pages" className="mt-1">
+                        {subPages.map((page) => (
                           <Sidebar.MenuSubButton
                             key={page.href}
                             href={page.href}
@@ -109,7 +119,8 @@ export function AppShell({
           </Sidebar.Group>
         </Sidebar.Content>
         <AppflareCard manager={pending.manager} isAdmin={viewer.role === "admin"} />
-        <Sidebar.Footer className="gap-3">
+        {/* Account menu at the start, Appflare's version at the end. */}
+        <Sidebar.Footer className="justify-between gap-3">
           <AccountMenu viewer={viewer} />
           <AppflareVersion version={pending.manager.current} />
         </Sidebar.Footer>

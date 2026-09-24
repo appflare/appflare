@@ -52,8 +52,8 @@ export function gatewayBindingName(installId: string): string {
 }
 
 /**
- * How the owner proves the hostname: `http`, a CNAME to the gateway (live in
- * about a minute and a half); `txt`, TXT records first, then the CNAME, so a
+ * How the domain is verified: `http`, a CNAME to the gateway (live in about
+ * two minutes); `txt`, TXT records first, then the CNAME, so a
  * name that already serves a site moves without downtime.
  */
 export const VALIDATION_METHODS = ["http", "txt"] as const;
@@ -62,11 +62,11 @@ export type ValidationMethod = (typeof VALIDATION_METHODS)[number];
 export const VALIDATION_LABELS: Record<ValidationMethod, { label: string; help: string }> = {
   http: {
     label: "CNAME",
-    help: "For a name that serves nothing yet. Add one CNAME record; the domain is live about a minute and a half later.",
+    help: "The name is not in use yet. The owner adds one CNAME record and the domain is live in about two minutes. Visitors see an error until then.",
   },
   txt: {
     label: "TXT records first",
-    help: "For a name that already serves a site. Add TXT records; once the certificate is ready, change the CNAME and nothing goes down.",
+    help: "The name already shows another website. The owner adds two TXT records now and keeps the old site running; once the certificate is ready they switch the CNAME, with no downtime.",
   },
 };
 

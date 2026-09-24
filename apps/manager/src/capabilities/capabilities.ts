@@ -101,6 +101,33 @@ export function capabilitiesView(
   };
 }
 
+/** Whether Settings offers the manual Workers plan choice, and why it is there. */
+export type ManualPlanControl =
+  | { show: false }
+  | {
+      show: true;
+      /**
+       * Whether the token lacks Billing: Read (or the probes have not run
+       * yet), so adding that permission would make the choice unnecessary.
+       * False when the token can read the subscriptions but they do not name
+       * a Workers plan, such as a contract plan.
+       */
+      billingHint: boolean;
+    };
+
+/**
+ * The manual Workers plan choice is only a fallback: hidden while the plan is
+ * detected (a choice there would change nothing), shown otherwise.
+ */
+export function manualPlanControl(view: CapabilitiesView): ManualPlanControl {
+  if (view.plan.source === "detected") return { show: false };
+  const plan = view.workersPlan;
+  return {
+    show: true,
+    billingHint: plan === null || (plan.state === "unknown" && plan.reason === "no-permission"),
+  };
+}
+
 export const PLAN_LABELS: Record<AccountPlan, string> = {
   free: "Workers Free",
   paid: "Workers Paid",

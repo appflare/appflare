@@ -7,6 +7,7 @@ import { migrations } from "../db/migrations/index";
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import { ACC, TOKEN } from "../test/fake-account";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
+import { checkSubdomainInZone } from "./custom-domain-input";
 import {
   addCustomDomainCore,
   CustomDomainError,
@@ -242,6 +243,19 @@ describe("addCustomDomainCore", () => {
         deleted_at: null,
       },
     ]);
+  });
+
+  it("attaches the zone's root when the subdomain is left empty", async () => {
+    const { world, api } = fakeZoneApi();
+    // The add dialog turns an empty subdomain into the zone's own name.
+    const checked = checkSubdomainInZone("", "example.com");
+    if (!checked.ok) throw new Error(checked.error);
+    const result = await addCustomDomainCore(deps(api), add(checked.hostname));
+    expect(result).toEqual({ ok: true, resourceId: "i1:domain:id1", hostname: "example.com" });
+    expect(world.bodies).toEqual([
+      { zone_id: "z-a", hostname: "example.com", service: "cut", environment: "production" },
+    ]);
+    expect(await domainRows()).toMatchObject([{ name: "example.com", cf_id: "cfd-1" }]);
   });
 
   it("warns about address records at the hostname and replaces them only when told to", async () => {

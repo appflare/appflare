@@ -8,7 +8,7 @@ import {
   Input,
   LayerCard,
   LayerDialog,
-  Select,
+  Radio,
   SensitiveInput,
   Text,
 } from "@cloudflare/kumo";
@@ -26,6 +26,7 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import {
+  CHANNEL_KIND_DESCRIPTIONS,
   CHANNEL_KIND_LABELS,
   CHANNEL_KINDS,
   type ChannelKind,
@@ -348,7 +349,7 @@ function ChannelDialog({ mode }: { mode: Mode }) {
           {secret !== null
             ? NOTIFICATION_COPY.signingSecret
             : editing === null
-              ? KIND_HELP[kind]
+              ? "Choose where Appflare sends messages, then the events it sends there."
               : reenter
                 ? `The stored credentials cannot be read any more. Enter its details again to use it.${kind === "webhook" ? " The webhook gets a new signing secret, shown once after saving." : ""}`
                 : "Change its name and events. Enter credentials only to replace the stored ones, which are never shown."}
@@ -367,15 +368,27 @@ function ChannelDialog({ mode }: { mode: Mode }) {
           ) : (
             <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
               {editing === null && (
-                <Select
-                  label="Kind"
+                <Radio.Group
+                  legend="Kind"
+                  // How to get the credentials for the chosen kind, right under the choice.
+                  description={KIND_HELP[kind]}
                   value={kind}
-                  onValueChange={(v) => {
+                  onValueChange={(v: string) => {
                     const next = CHANNEL_KINDS.find((k) => k === v);
                     if (next !== undefined) setKind(next);
                   }}
-                  items={CHANNEL_KIND_LABELS}
-                />
+                  orientation="horizontal"
+                  appearance="card"
+                >
+                  {CHANNEL_KINDS.map((k) => (
+                    <Radio.Item
+                      key={k}
+                      value={k}
+                      label={CHANNEL_KIND_LABELS[k]}
+                      description={CHANNEL_KIND_DESCRIPTIONS[k]}
+                    />
+                  ))}
+                </Radio.Group>
               )}
               <Input
                 label="Name"

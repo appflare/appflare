@@ -21,6 +21,14 @@ export const CHANNEL_KIND_LABELS: Record<ChannelKind, string> = {
   webhook: "Webhook",
 };
 
+/** One line under each kind where a new channel's kind is chosen. */
+export const CHANNEL_KIND_DESCRIPTIONS: Record<ChannelKind, string> = {
+  telegram: "A bot posts to a chat, a group, or a channel.",
+  slack: "An incoming webhook posts to a channel.",
+  discord: "A channel's webhook posts the messages.",
+  webhook: "Signed JSON posted to a URL you run.",
+};
+
 export const EVENT_LABELS: Record<NotificationEvent, string> = {
   update_available: "Update available",
   update_applied: "Update applied",

@@ -28,9 +28,15 @@ export function parseAccountPlan(value: string | null | undefined): AccountPlan 
 /** Words the settings card and the confirmations use. */
 export const ACCOUNT_PLAN_COPY = {
   title: "Workers plan",
-  explanation:
-    "Appflare reads the Workers plan from the account's subscriptions when the Cloudflare token has the optional Billing: Read permission. When it cannot, the plan an admin sets here applies. On Workers Paid, installs and updates skip the Workers Paid confirmations and the count of the account's cron triggers.",
+  /** Legend of the manual choice, shown only while Appflare cannot detect the plan. */
+  manualLegend: "Which Workers plan is this account on?",
   labels: { free: "Workers Free", paid: "Workers Paid" } satisfies Record<AccountPlan, string>,
+  descriptions: {
+    free: "Apps that need Workers Paid ask for a confirmation, and installs count the account's cron triggers.",
+    paid: "Installs and updates skip the Workers Paid confirmations and the count of cron triggers.",
+  } satisfies Record<AccountPlan, string>,
+  /** Under the manual choice when the token cannot read the account's subscriptions. */
+  billingHint: "Add Billing: Read to the token and Appflare detects this itself.",
   remember: "Remember this for the account",
   rememberDescription:
     "Records Workers Paid in Settings, so installs and updates stop asking while Appflare cannot detect the plan. Change it there if the plan changes.",

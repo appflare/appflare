@@ -51,7 +51,7 @@ export function InstallAutoUpdateCard({
   const on = effectiveAutoUpdate(choice, install.autoUpdateDefault);
   const needsApproval = install.build.kind !== "artifact";
   return (
-    // The radio group's legend titles the card; the note under it says whether it is on.
+    // The radio group's legend titles the card; each choice says what it does.
     <LayerCard>
       <LayerCard.Primary className="grid gap-3 px-5 py-4">
         <Radio.Group
@@ -59,22 +59,33 @@ export function InstallAutoUpdateCard({
           value={choice}
           onValueChange={(next: string) => void onChange(next)}
           disabled={!isAdmin || pending}
-          orientation="horizontal"
+          appearance="card"
         >
           <Radio.Item
             label={AUTO_UPDATE_COPY.choiceLabels.inherit(install.autoUpdateDefault)}
+            description={AUTO_UPDATE_COPY.inheritDescription}
             value="inherit"
           />
-          <Radio.Item label={AUTO_UPDATE_COPY.choiceLabels.on} value="on" />
-          <Radio.Item label={AUTO_UPDATE_COPY.choiceLabels.off} value="off" />
+          <Radio.Item
+            label={AUTO_UPDATE_COPY.choiceLabels.on}
+            // For an app whose updates an admin approves, "On" changes nothing yet; say so.
+            description={
+              needsApproval ? AUTO_UPDATE_COPY.installOnNeedsApproval : AUTO_UPDATE_COPY.installOn
+            }
+            value="on"
+          />
+          <Radio.Item
+            label={AUTO_UPDATE_COPY.choiceLabels.off}
+            description={AUTO_UPDATE_COPY.installOff}
+            value="off"
+          />
         </Radio.Group>
-        <Text variant="secondary" size="sm">
-          {needsApproval
-            ? AUTO_UPDATE_COPY.needsApproval
-            : on
-              ? AUTO_UPDATE_COPY.installOn
-              : AUTO_UPDATE_COPY.installOff}
-        </Text>
+        {/* The choices describe themselves; only an app the cron never updates needs a word more. */}
+        {needsApproval && (
+          <Text variant="secondary" size="sm">
+            {AUTO_UPDATE_COPY.needsApproval}
+          </Text>
+        )}
         {on &&
           !needsApproval &&
           install.updateAvailable &&

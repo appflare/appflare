@@ -189,116 +189,118 @@ function CardBody({
       </Link>
     );
   return (
-    <LayerCard className="mx-3 mb-3 shrink-0">
-      <LayerCard.Primary className="grid gap-2 px-3 py-2.5 whitespace-normal">
-        {state.kind === "updated" && (
-          <div className="flex items-center gap-2">
-            <CheckCircleIcon weight="fill" className="shrink-0 text-kumo-success" />
-            <Text bold>Appflare updated to {state.version}</Text>
-            <Button
-              className="ml-auto"
-              shape="square"
-              size="sm"
-              variant="ghost"
-              icon={XIcon}
-              aria-label="Dismiss"
-              title="Dismiss"
-              onClick={onDismiss}
-            />
-          </div>
-        )}
-        {state.kind === "available" && (
-          <>
-            <div className="grid gap-0.5">
+    // The wrapper holds the sidebar's inset: a layered LayerCard is `w-full`,
+    // so a margin on the card itself pushed it past the sidebar's right edge.
+    <div className="shrink-0 px-3 pb-3">
+      <LayerCard>
+        <LayerCard.Primary className="grid gap-2 px-3 py-2.5 whitespace-normal">
+          {state.kind === "updated" && (
+            <div className="flex items-center gap-2">
+              <CheckCircleIcon weight="fill" className="shrink-0 text-kumo-success" />
+              <Text bold>Appflare updated to {state.version}</Text>
+              <Button
+                className="ml-auto"
+                shape="square"
+                size="sm"
+                variant="ghost"
+                icon={XIcon}
+                aria-label="Dismiss"
+                title="Dismiss"
+                onClick={onDismiss}
+              />
+            </div>
+          )}
+          {state.kind === "available" && (
+            <>
+              {/* No "running" line: the footer right below shows the current version. */}
               <Text bold>Appflare {state.latest} is available</Text>
+              {state.canUpdate && (
+                <Button
+                  className="justify-self-end"
+                  size="sm"
+                  variant="primary"
+                  icon={<ArrowCircleUpIcon />}
+                  loading={starting}
+                  onClick={() => onUpdate(state.latest)}
+                >
+                  Update
+                </Button>
+              )}
+            </>
+          )}
+          {(state.kind === "running" || state.kind === "switching") && (
+            <>
+              <div className="flex items-center gap-2">
+                <Loader size="sm" />
+                <Text bold>
+                  {state.kind === "running" ? "Updating" : "Switching"} to {state.target}
+                </Text>
+              </div>
+              <div className={clamp}>
+                <Text size="sm" variant="secondary">
+                  {state.kind === "switching"
+                    ? "This page reloads once the new version answers."
+                    : (state.step ?? "Starting…")}
+                </Text>
+              </div>
+              {logLink}
+            </>
+          )}
+          {state.kind === "stalled" && (
+            <>
+              <div className="flex items-center gap-2">
+                <WarningCircleIcon weight="fill" className="shrink-0 text-kumo-warning" />
+                <Text bold>Updated to {state.target}</Text>
+              </div>
               <Text size="sm" variant="secondary">
-                Running {state.current}
+                The new version did not answer yet.{" "}
+                <Link
+                  href="#"
+                  variant="inline"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    window.location.reload();
+                  }}
+                >
+                  Reload
+                </Link>
               </Text>
-            </div>
-            {state.canUpdate && (
-              <Button
-                size="sm"
-                variant="primary"
-                icon={<ArrowCircleUpIcon />}
-                loading={starting}
-                onClick={() => onUpdate(state.latest)}
-              >
-                Update
-              </Button>
-            )}
-          </>
-        )}
-        {(state.kind === "running" || state.kind === "switching") && (
-          <>
-            <div className="flex items-center gap-2">
-              <Loader size="sm" />
-              <Text bold>
-                {state.kind === "running" ? "Updating" : "Switching"} to {state.target}
-              </Text>
-            </div>
-            <div className={clamp}>
-              <Text size="sm" variant="secondary">
-                {state.kind === "switching"
-                  ? "This page reloads once the new version answers."
-                  : (state.step ?? "Starting…")}
-              </Text>
-            </div>
-            {logLink}
-          </>
-        )}
-        {state.kind === "stalled" && (
-          <>
-            <div className="flex items-center gap-2">
-              <WarningCircleIcon weight="fill" className="shrink-0 text-kumo-warning" />
-              <Text bold>Updated to {state.target}</Text>
-            </div>
-            <Text size="sm" variant="secondary">
-              The new version did not answer yet.{" "}
-              <Link
-                href="#"
-                variant="inline"
-                onClick={(event) => {
-                  event.preventDefault();
-                  window.location.reload();
-                }}
-              >
-                Reload
-              </Link>
+              {logLink}
+            </>
+          )}
+          {state.kind === "failed" && (
+            <>
+              <div className="flex items-center gap-2">
+                <WarningCircleIcon weight="fill" className="shrink-0 text-kumo-danger" />
+                <Text bold>Update to {state.target} failed</Text>
+              </div>
+              <div className={clamp}>
+                <Text size="sm" variant="secondary">
+                  {state.error ?? "The current version keeps serving."}
+                </Text>
+              </div>
+              {logLink}
+              {state.retry !== null && (
+                <Button
+                  className="justify-self-end"
+                  size="sm"
+                  variant="secondary"
+                  icon={<ArrowCircleUpIcon />}
+                  loading={starting}
+                  onClick={() => state.retry !== null && onUpdate(state.retry)}
+                >
+                  Try again
+                </Button>
+              )}
+            </>
+          )}
+          {error !== null && (
+            <Text size="sm" variant="error">
+              {error}
             </Text>
-            {logLink}
-          </>
-        )}
-        {state.kind === "failed" && (
-          <>
-            <div className="flex items-center gap-2">
-              <WarningCircleIcon weight="fill" className="shrink-0 text-kumo-danger" />
-              <Text bold>Update to {state.target} failed</Text>
-            </div>
-            <div className={clamp}>
-              <Text size="sm" variant="secondary">
-                {state.error ?? "The current version keeps serving."}
-              </Text>
-            </div>
-            {logLink}
-            {state.retry !== null && (
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<ArrowCircleUpIcon />}
-                loading={starting}
-                onClick={() => state.retry !== null && onUpdate(state.retry)}
-              >
-                Try again
-              </Button>
-            )}
-          </>
-        )}
-        {error !== null && (
-          <Text size="sm" variant="error">
-            {error}
-          </Text>
-        )}
-      </LayerCard.Primary>
-    </LayerCard>
+          )}
+        </LayerCard.Primary>
+      </LayerCard>
+    </div>
   );
 }

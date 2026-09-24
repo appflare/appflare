@@ -2,11 +2,22 @@ import { Badge, Banner, Button, LayerCard, Link, Radio, Text } from "@cloudflare
 import { ArrowClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
-import { ACCOUNT_PLAN_COPY, type AccountPlan, accountPlanSchema } from "../account/plan";
+import {
+  ACCOUNT_PLAN_COPY,
+  ACCOUNT_PLANS,
+  type AccountPlan,
+  accountPlanSchema,
+} from "../account/plan";
 import { setAccountPlan } from "../account/plan.functions";
 import { DescriptionItem, DescriptionList } from "../components/description-list";
 import { Timestamp } from "../components/timestamp";
-import { type CapabilitiesView, PLAN_LABELS, SOURCE_LABELS, unknownSentence } from "./capabilities";
+import {
+  type CapabilitiesView,
+  manualPlanControl,
+  PLAN_LABELS,
+  SOURCE_LABELS,
+  unknownSentence,
+} from "./capabilities";
 import { recheckAccountCapabilities } from "./capabilities.functions";
 
 /** Where an admin turns R2 on (the dashboard asks for a payment method once). */
@@ -43,16 +54,62 @@ function Note({ children }: { children: ReactNode }) {
 
 function PlanRow({ view }: { view: CapabilitiesView }) {
   const { plan, source } = view.plan;
+  const control = manualPlanControl(view);
   return (
     <Row label="Workers plan">
       <Value
         text={source === "default" ? "Not known, treated as Workers Free" : PLAN_LABELS[plan]}
         source={source === "default" ? null : SOURCE_LABELS[source]}
       />
-      {view.workersPlan?.state === "unknown" && (
+      {/* A missing Billing: Read is named under the manual choice instead. */}
+      {control.show && !control.billingHint && view.workersPlan?.state === "unknown" && (
         <Note>{unknownSentence(view.workersPlan, "plan")}</Note>
       )}
     </Row>
+  );
+}
+
+/**
+ * The Workers plan an admin sets, offered only while Appflare cannot detect
+ * it; members see it without being able to change it.
+ */
+function ManualPlanChoice({
+  view,
+  value,
+  onChange,
+  disabled,
+  isAdmin,
+}: {
+  view: CapabilitiesView;
+  value: AccountPlan | null;
+  onChange(next: string): void;
+  disabled: boolean;
+  isAdmin: boolean;
+}) {
+  const control = manualPlanControl(view);
+  if (!control.show) return null;
+  return (
+    <div className="grid gap-2">
+      <Radio.Group
+        legend={ACCOUNT_PLAN_COPY.manualLegend}
+        description={control.billingHint ? ACCOUNT_PLAN_COPY.billingHint : undefined}
+        value={value ?? ""}
+        onValueChange={(next: string) => onChange(next)}
+        disabled={disabled}
+        orientation="horizontal"
+        appearance="card"
+      >
+        {ACCOUNT_PLANS.map((plan) => (
+          <Radio.Item
+            key={plan}
+            label={ACCOUNT_PLAN_COPY.labels[plan]}
+            description={ACCOUNT_PLAN_COPY.descriptions[plan]}
+            value={plan}
+          />
+        ))}
+      </Radio.Group>
+      {!isAdmin && <Note>Only admins can change it.</Note>}
+    </div>
   );
 }
 
@@ -173,7 +230,6 @@ export function AccountCapabilitiesCard({
     setSaving(false);
   }
 
-  const detected = view.plan.source === "detected";
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
@@ -207,26 +263,13 @@ export function AccountCapabilitiesCard({
           <R2Row view={view} />
           <ContainersRow view={view} />
         </DescriptionList>
-        <div className="grid gap-2">
-          <Text variant="secondary">{ACCOUNT_PLAN_COPY.explanation}</Text>
-          <Radio.Group
-            legend="Workers plan when Appflare cannot detect it"
-            value={manual ?? ""}
-            onValueChange={(next: string) => void onManualChange(next)}
-            disabled={!isAdmin || saving}
-            orientation="horizontal"
-          >
-            <Radio.Item label={ACCOUNT_PLAN_COPY.labels.free} value="free" />
-            <Radio.Item label={ACCOUNT_PLAN_COPY.labels.paid} value="paid" />
-          </Radio.Group>
-          {detected && manual !== null && manual !== view.plan.plan && (
-            <Note>
-              The detected plan applies. Your choice is used again if Appflare stops being able to
-              detect the plan.
-            </Note>
-          )}
-          {!isAdmin && <Note>Only admins can change it.</Note>}
-        </div>
+        <ManualPlanChoice
+          view={view}
+          value={manual}
+          onChange={(next) => void onManualChange(next)}
+          disabled={!isAdmin || saving}
+          isAdmin={isAdmin}
+        />
         {error !== null && (
           <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
         )}

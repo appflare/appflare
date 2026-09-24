@@ -3,7 +3,7 @@ import {
   Banner,
   Button,
   InlineCopyText,
-  InputGroup,
+  Input,
   LayerCard,
   LayerDialog,
   Link,
@@ -292,7 +292,7 @@ export function ValidationChoice({
 }) {
   return (
     <Radio.Group
-      legend="How the owner proves the name"
+      legend="How the domain is verified"
       value={value}
       onValueChange={(v) => {
         if (VALIDATION_METHODS.includes(v as ValidationMethod)) onChange(v as ValidationMethod);
@@ -419,31 +419,23 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
             )}
             {gateway !== null && (
               <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
-                <InputGroup
+                {/* A whole hostname, not a URL: no scheme in front, and no zone after it. */}
+                <Input
                   label="Hostname"
-                  error={
-                    hostnameError === undefined
-                      ? undefined
-                      : { message: hostnameError, match: true }
-                  }
+                  error={hostnameError}
                   description={
                     checked?.ok === true && checked.apex
                       ? `${checked.hostname} is a whole domain (an apex). Its DNS host must support a CNAME at the apex (CNAME flattening or ALIAS); many do not.`
                       : "One exact hostname, such as app.example.org."
                   }
                   disabled={pending}
-                >
-                  <InputGroup.Addon>https://</InputGroup.Addon>
-                  <InputGroup.Input
-                    aria-label="Hostname"
-                    placeholder="app.example.org"
-                    value={hostname}
-                    onChange={(e) => setHostname(e.currentTarget.value)}
-                    onBlur={() => setTouched(true)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </InputGroup>
+                  placeholder="app.example.org"
+                  value={hostname}
+                  onChange={(e) => setHostname(e.currentTarget.value)}
+                  onBlur={() => setTouched(true)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
                 <ValidationChoice value={method} onChange={setMethod} disabled={pending} />
                 <Text variant="secondary" size="sm">
                   Visitors reach it through <span className={mono}>{gateway.hostname}</span>.{" "}

@@ -420,6 +420,21 @@ describe("startInstallCore", () => {
       });
     });
 
+    it("passes a zone's root on as the custom domain", async () => {
+      const f = await buildArtifactFixture();
+      const h = harness(f);
+      // What the install form sends for an empty subdomain in example.com.
+      await startInstallCore(
+        h.deps,
+        input({ domain: { kind: "custom", zoneId: "z1", hostname: "example.com" } }),
+      );
+      expect(h.created[0]?.params.domain).toEqual({
+        kind: "custom",
+        zoneId: "z1",
+        hostname: "example.com",
+      });
+    });
+
     it("refuses an external domain until the gateway is set up, then passes it on", async () => {
       const f = await buildArtifactFixture();
       const h = harness(f);

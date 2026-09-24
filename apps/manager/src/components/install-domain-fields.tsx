@@ -1,4 +1,4 @@
-import { Banner, InputGroup, Link, Loader, Radio, Select, Text } from "@cloudflare/kumo";
+import { Banner, Input, Link, Loader, Radio, Select, Text } from "@cloudflare/kumo";
 import { InfoIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import {
@@ -6,13 +6,14 @@ import {
   EXTERNAL_DOMAIN_COST,
   type ValidationMethod,
 } from "../gateway/gateway";
-import { checkHostnameInZone } from "../installs/custom-domain-input";
+import { checkSubdomainInZone } from "../installs/custom-domain-input";
 import { getDomainOptions } from "../installs/custom-domains.functions";
 import type { DomainOptions } from "../installs/custom-domains.server";
 import type { ExternalDomainOptions } from "../installs/external-domain-input";
 import { getExternalDomainOptions } from "../installs/external-domains.functions";
 import type { InstallDomainInput } from "../installs/install-input";
 import { ValidationChoice } from "./external-domains-section";
+import { ZoneHostnameField } from "./zone-hostname-field";
 
 type Choice = "none" | "custom" | "external";
 
@@ -39,6 +40,9 @@ export function InstallDomainFields({
   const [external, setExternal] = useState<ExternalDomainOptions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [zoneId, setZoneId] = useState<string | null>(null);
+  /** Custom domain: what comes before the zone (empty for its root). */
+  const [subdomain, setSubdomain] = useState("");
+  /** External domain: the whole hostname. */
   const [hostname, setHostname] = useState("");
   const [touched, setTouched] = useState(false);
   const [method, setMethod] = useState<ValidationMethod>("http");
@@ -69,7 +73,7 @@ export function InstallDomainFields({
   }, [choice, custom, external]);
 
   const zone = custom?.zones.find((z) => z.id === zoneId) ?? null;
-  const customCheck = zone === null ? null : checkHostnameInZone(hostname, zone.name);
+  const customCheck = zone === null ? null : checkSubdomainInZone(subdomain, zone.name);
   const gateway = external?.gateway ?? null;
   const externalCheck =
     gateway === null
@@ -101,7 +105,7 @@ export function InstallDomainFields({
     <div className="grid gap-4">
       <Radio.Group
         legend="Address"
-        description="Where the app answers besides its workers.dev URL. The install adds the domain once the app runs; more can be added later on its page."
+        description="The install adds a domain once the app runs; its workers.dev URL keeps working."
         value={choice}
         onValueChange={(v) => {
           setChoice(v === "custom" || v === "external" ? v : "none");
@@ -109,10 +113,23 @@ export function InstallDomainFields({
           setLoadError(null);
         }}
         disabled={disabled}
+        appearance="card"
       >
-        <Radio.Item value="none" label="workers.dev only" />
-        <Radio.Item value="custom" label="Custom domain, in one of this account's domains" />
-        <Radio.Item value="external" label="External domain, whose DNS is managed elsewhere" />
+        <Radio.Item
+          value="none"
+          label="workers.dev only"
+          description="The app answers on its workers.dev URL. Domains can be added on its page later."
+        />
+        <Radio.Item
+          value="custom"
+          label="Custom domain"
+          description="A hostname in one of this account's domains. Cloudflare creates its DNS record and certificate."
+        />
+        <Radio.Item
+          value="external"
+          label="External domain"
+          description="A hostname whose DNS is managed elsewhere. Its owner adds a CNAME to the gateway."
+        />
       </Radio.Group>
 
       {loading && loadError === null && (
@@ -147,18 +164,15 @@ export function InstallDomainFields({
             items={Object.fromEntries(custom.zones.map((z) => [z.id, z.name]))}
             disabled={disabled}
           />
-          <HostnameField
-            value={hostname}
-            onChange={setHostname}
+          <ZoneHostnameField
+            zoneName={zone?.name ?? null}
+            value={subdomain}
+            onChange={setSubdomain}
             onBlur={() => setTouched(true)}
+            checked={customCheck}
             error={hostnameError}
-            disabled={disabled || zone === null}
-            placeholder={zone === null ? "app.example.com" : `app.${zone.name}`}
-            description={
-              zone === null
-                ? "Choose a domain first."
-                : `${zone.name} itself or a name under it. A hostname that already has DNS records is not replaced during the install; add it on the app's page then.`
-            }
+            disabled={disabled}
+            hint="If it already has DNS records, the install leaves them; add the domain on the app's page then."
           />
         </>
       )}
@@ -178,18 +192,22 @@ export function InstallDomainFields({
       )}
       {choice === "external" && gateway !== null && (
         <>
-          <HostnameField
-            value={hostname}
-            onChange={setHostname}
-            onBlur={() => setTouched(true)}
+          {/* A whole hostname, not a URL: no scheme in front, and no zone after it. */}
+          <Input
+            label="Hostname"
             error={hostnameError}
-            disabled={disabled}
-            placeholder="app.example.org"
             description={
               externalCheck?.ok === true && externalCheck.apex
                 ? `${externalCheck.hostname} is a whole domain (an apex). Its DNS host must support a CNAME at the apex (CNAME flattening or ALIAS).`
                 : "One exact hostname whose DNS is managed outside this account."
             }
+            disabled={disabled}
+            placeholder="app.example.org"
+            value={hostname}
+            onChange={(e) => setHostname(e.currentTarget.value)}
+            onBlur={() => setTouched(true)}
+            autoComplete="off"
+            spellCheck={false}
           />
           <ValidationChoice value={method} onChange={setMethod} disabled={disabled} />
           <Banner
@@ -217,43 +235,5 @@ export function InstallDomainFields({
         </>
       )}
     </div>
-  );
-}
-
-function HostnameField({
-  value,
-  onChange,
-  onBlur,
-  error,
-  disabled,
-  placeholder,
-  description,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  onBlur: () => void;
-  error: string | undefined;
-  disabled: boolean;
-  placeholder: string;
-  description: string;
-}) {
-  return (
-    <InputGroup
-      label="Hostname"
-      error={error === undefined ? undefined : { message: error, match: true }}
-      description={description}
-      disabled={disabled}
-    >
-      <InputGroup.Addon>https://</InputGroup.Addon>
-      <InputGroup.Input
-        aria-label="Hostname"
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => onChange(e.currentTarget.value)}
-        onBlur={onBlur}
-        autoComplete="off"
-        spellCheck={false}
-      />
-    </InputGroup>
   );
 }

@@ -66,3 +66,35 @@ export function checkHostnameInZone(input: string, zoneName: string): HostnameCh
   }
   return { ok: true, hostname };
 }
+
+/** What a domain field shows in place of a subdomain that is left empty. */
+export const ROOT_DOMAIN_PLACEHOLDER = "Leave empty for the root domain";
+
+/**
+ * The hostname in zone `zoneName` that a domain field means, where the zone
+ * is a fixed suffix and the admin types only what comes before it: empty is
+ * the zone itself (its root, or apex), which Workers Custom Domains serve
+ * like any other name. A whole hostname in the zone, pasted in full, is taken
+ * as it is rather than doubling the zone; any other dotted name is refused
+ * (a deeper name is typed in full). The result is then checked like
+ * any hostname in the zone (checkHostnameInZone), which is also what the
+ * server applies to the hostname it receives.
+ */
+export function checkSubdomainInZone(input: string, zoneName: string): HostnameCheck {
+  const zone = zoneName.trim().toLowerCase().replace(/\.$/, "");
+  const typed = input.trim().toLowerCase().replace(/\.+$/, "");
+  if (/[/:?#@\s]/.test(typed)) {
+    return {
+      ok: false,
+      error: `Enter only the name before .${zone}, such as app, without https:// or a path.`,
+    };
+  }
+  if (typed.length === 0) return checkHostnameInZone(zone, zone);
+  if (typed === zone || typed.endsWith(`.${zone}`)) return checkHostnameInZone(typed, zone);
+  // A dotted name that does not end in the zone is most likely another
+  // domain typed in full ("evil.com"), not a name meant to go under the zone.
+  if (typed.includes(".")) {
+    return { ok: false, error: `Enter a name under ${zone}, or leave empty for the root.` };
+  }
+  return checkHostnameInZone(`${typed}.${zone}`, zone);
+}

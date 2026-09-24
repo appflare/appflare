@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   capabilitiesView,
+  manualPlanControl,
   paidPlanBadge,
   parseStoredCapabilities,
   requirementBadge,
@@ -151,5 +152,46 @@ describe("unknownSentence", () => {
     expect(
       unknownSentence({ ...NO_PERMISSION, reason: "error", detail: "fetch failed" }, "r2"),
     ).toBe("The check failed: fetch failed");
+  });
+});
+
+describe("the manual Workers plan choice", () => {
+  it("is hidden while the plan is detected, from the subscriptions or from Containers", () => {
+    for (const probes of [
+      stored({ workersPlan: { state: "paid" } }),
+      stored({ workersPlan: { state: "free" } }),
+      stored({ containers: { state: "available" } }),
+    ]) {
+      expect(manualPlanControl(capabilitiesView("free", probes))).toEqual({ show: false });
+      expect(manualPlanControl(capabilitiesView(null, probes))).toEqual({ show: false });
+    }
+  });
+
+  it("shows with the Billing: Read hint when the token cannot read the subscriptions", () => {
+    expect(manualPlanControl(capabilitiesView(null, stored()))).toEqual({
+      show: true,
+      billingHint: true,
+    });
+    expect(manualPlanControl(capabilitiesView("paid", stored()))).toEqual({
+      show: true,
+      billingHint: true,
+    });
+  });
+
+  it("shows with the hint before the first check", () => {
+    expect(manualPlanControl(capabilitiesView(null, null))).toEqual({
+      show: true,
+      billingHint: true,
+    });
+  });
+
+  it("shows without the hint when Billing: Read would not help", () => {
+    for (const reason of ["unrecognised", "error"] as const) {
+      const probes = stored({ workersPlan: { ...NO_PERMISSION, reason } });
+      expect(manualPlanControl(capabilitiesView(null, probes)), reason).toEqual({
+        show: true,
+        billingHint: false,
+      });
+    }
   });
 });

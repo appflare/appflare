@@ -2,7 +2,6 @@ import {
   Banner,
   Button,
   Checkbox,
-  InputGroup,
   LayerCard,
   LayerDialog,
   Link,
@@ -23,7 +22,7 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import { accountTokenTemplateUrl } from "../cloudflare/token-template";
-import { checkHostnameInZone } from "../installs/custom-domain-input";
+import { checkSubdomainInZone } from "../installs/custom-domain-input";
 import {
   addCustomDomain,
   checkCustomDomain,
@@ -40,6 +39,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { formatTime } from "./format";
 import { HealthBadge } from "./install-health";
 import { Section } from "./section";
+import { ZoneHostnameField } from "./zone-hostname-field";
 
 /**
  * `/apps/$installId` → Custom domains (admins only): the hostnames that serve
@@ -215,7 +215,7 @@ interface Conflict {
 }
 
 /**
- * Pick a zone, type a hostname in it, add. When the hostname already has DNS
+ * Pick a zone, type the subdomain (nothing for the zone's root), add. When the hostname already has DNS
  * records, the server answers with them instead of adding; the admin must tick
  * that they may be replaced, and the next submit asks Cloudflare to replace
  * them.
@@ -227,7 +227,7 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
   const [options, setOptions] = useState<DomainOptions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [zoneId, setZoneId] = useState<string | null>(null);
-  const [hostname, setHostname] = useState("");
+  const [subdomain, setSubdomain] = useState("");
   const [touched, setTouched] = useState(false);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [replace, setReplace] = useState(false);
@@ -241,7 +241,7 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
     setOptions(null);
     setLoadError(null);
     setZoneId(null);
-    setHostname("");
+    setSubdomain("");
     setTouched(false);
     setConflict(null);
     setReplace(false);
@@ -258,7 +258,8 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
   }
 
   const zone = options?.zones.find((z) => z.id === zoneId) ?? null;
-  const checked = zone === null ? null : checkHostnameInZone(hostname, zone.name);
+  // `subdomain` is what comes before the zone; empty means the zone itself.
+  const checked = zone === null ? null : checkSubdomainInZone(subdomain, zone.name);
   const hostnameError = touched && checked !== null && !checked.ok ? checked.error : undefined;
 
   function resetConflict() {
@@ -353,34 +354,18 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
                   items={Object.fromEntries(options.zones.map((z) => [z.id, z.name]))}
                   disabled={pending}
                 />
-                <InputGroup
-                  label="Hostname"
-                  error={
-                    hostnameError === undefined
-                      ? undefined
-                      : { message: hostnameError, match: true }
-                  }
-                  description={
-                    zone === null
-                      ? "Choose a domain first."
-                      : `${zone.name} itself or a name under it, such as app.${zone.name}.`
-                  }
-                  disabled={pending || zone === null}
-                >
-                  <InputGroup.Addon>https://</InputGroup.Addon>
-                  <InputGroup.Input
-                    aria-label="Hostname"
-                    placeholder={zone === null ? "app.example.com" : `app.${zone.name}`}
-                    value={hostname}
-                    onChange={(e) => {
-                      setHostname(e.currentTarget.value);
-                      resetConflict();
-                    }}
-                    onBlur={() => setTouched(true)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </InputGroup>
+                <ZoneHostnameField
+                  zoneName={zone?.name ?? null}
+                  value={subdomain}
+                  onChange={(next) => {
+                    setSubdomain(next);
+                    resetConflict();
+                  }}
+                  onBlur={() => setTouched(true)}
+                  checked={checked}
+                  error={hostnameError}
+                  disabled={pending}
+                />
                 {conflict !== null && (
                   <div className="grid gap-3">
                     <Banner
