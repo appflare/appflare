@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { indexAppArtifact, indexAppSchema, indexJsonSchema } from "./catalog-index";
+import {
+  featuredItemSchema,
+  indexAppArtifact,
+  indexAppSchema,
+  indexJsonSchema,
+  isFeaturedItemActive,
+} from "./catalog-index";
 
 const base = "https://github.com/appflare/catalog/releases/download/cut@0.1.0";
 
@@ -121,5 +127,88 @@ describe("indexAppSchema for sandbox tier entries", () => {
         build: { ...sandboxApp.build, instanceType: "basic" },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("index media", () => {
+  const [row] = validIndex.apps;
+  if (row === undefined) throw new Error("the fixture index has no app");
+  const site = "https://appflare.github.io/catalog/apps/cut";
+
+  it("accepts an icon, a cover and screenshots, and defaults screenshots to none", () => {
+    const media = {
+      icon: { url: `${site}/icon.svg`, sha256: "a".repeat(64) },
+      cover: { url: `${site}/cover.png`, sha256: "b".repeat(64) },
+      screenshots: [
+        { url: `${site}/screenshots/01-links.png`, sha256: "c".repeat(64), alt: "Links" },
+      ],
+    };
+    expect(indexAppSchema.parse({ ...row, media }).media).toEqual(media);
+    expect(indexAppSchema.parse({ ...row, media: {} }).media).toEqual({ screenshots: [] });
+  });
+
+  it("refuses http URLs, bad digests and screenshots without alt text", () => {
+    const bad = [
+      { icon: { url: "http://appflare.github.io/icon.png", sha256: "a".repeat(64) } },
+      { cover: { url: `${site}/cover.png`, sha256: "short" } },
+      { screenshots: [{ url: `${site}/s.png`, sha256: "a".repeat(64) }] },
+    ];
+    for (const media of bad) {
+      expect(indexAppSchema.safeParse({ ...row, media }).success).toBe(false);
+    }
+  });
+});
+
+describe("featured items and the stats URL", () => {
+  const item = {
+    id: "acme-2026-10",
+    title: "Acme Edge",
+    text: "Deploy faster.",
+    sponsor: { name: "Acme", url: "https://acme.example" },
+    link: { url: "https://acme.example/edge", label: "Learn more" },
+  };
+  const { link: _link, ...unlinked } = item;
+
+  it("defaults featured to an empty array and accepts a stats URL", () => {
+    const parsed = indexJsonSchema.parse({
+      ...validIndex,
+      stats: "https://appflare.github.io/catalog/stats.json",
+    });
+    expect(parsed.featured).toEqual([]);
+    expect(parsed.stats).toBe("https://appflare.github.io/catalog/stats.json");
+  });
+
+  it("accepts an item with a link, or one promoting an app in the index", () => {
+    expect(featuredItemSchema.parse(item).id).toBe("acme-2026-10");
+    const featured = [{ ...unlinked, slug: "cut" }];
+    expect(indexJsonSchema.safeParse({ ...validIndex, featured }).success).toBe(true);
+  });
+
+  it("refuses an item with neither link nor slug, a bad id or window, or an unknown slug", () => {
+    expect(featuredItemSchema.safeParse(unlinked).success).toBe(false);
+    expect(featuredItemSchema.safeParse({ ...item, id: "Acme" }).success).toBe(false);
+    expect(
+      featuredItemSchema.safeParse({
+        ...item,
+        startsAt: "2026-10-02T00:00:00Z",
+        endsAt: "2026-10-01T00:00:00Z",
+      }).success,
+    ).toBe(false);
+    const featured = [{ ...item, slug: "nope" }];
+    expect(indexJsonSchema.safeParse({ ...validIndex, featured }).success).toBe(false);
+  });
+
+  it("refuses two items with the same id", () => {
+    expect(indexJsonSchema.safeParse({ ...validIndex, featured: [item, item] }).success).toBe(
+      false,
+    );
+  });
+
+  it("knows when an item is inside its window", () => {
+    const windowed = { startsAt: "2026-10-01T00:00:00Z", endsAt: "2026-11-01T00:00:00Z" };
+    expect(isFeaturedItemActive(windowed, new Date("2026-09-30T23:59:59Z"))).toBe(false);
+    expect(isFeaturedItemActive(windowed, new Date("2026-10-15T00:00:00Z"))).toBe(true);
+    expect(isFeaturedItemActive(windowed, new Date("2026-11-01T00:00:00Z"))).toBe(false);
+    expect(isFeaturedItemActive({}, new Date())).toBe(true);
   });
 });

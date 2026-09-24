@@ -1,4 +1,5 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { user } from "./auth-schema";
 
 /**
  * The manager's D1 schema. Better Auth's tables (`user`, `session`,
@@ -234,4 +235,21 @@ export const snapshots = sqliteTable(
     target_catalog_version: text("target_catalog_version"),
   },
   (t) => [index("snapshots_install_id_idx").on(t.install_id)],
+);
+
+/**
+ * Sponsored catalog items a user has hidden, by the item's id in the index.
+ * Per user, because members browse the catalog too and hiding an item is not
+ * a manager setting. A row for an item the index no longer lists is harmless.
+ */
+export const featured_dismissals = sqliteTable(
+  "featured_dismissals",
+  {
+    user_id: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    item_id: text("item_id").notNull(),
+    dismissed_at: timestamp("dismissed_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.user_id, t.item_id] })],
 );

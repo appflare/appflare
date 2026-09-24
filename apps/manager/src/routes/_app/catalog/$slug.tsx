@@ -23,6 +23,7 @@ import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.fu
 import { requirementLabel, requirementSentence } from "../../../catalog/requirements";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { InstallCheckBadge, PlanBadge, TierBadge } from "../../../components/catalog-badges";
+import { AppCover, AppIcon, PopularityLine, Screenshots } from "../../../components/catalog-media";
 import { CronTriggersField } from "../../../components/cron-triggers-field";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
@@ -111,7 +112,18 @@ function CatalogEntryPage() {
   return (
     <>
       <PageHeader title={app.name} description={app.summary} actions={back} />
+      {detail.images.cover !== null && (
+        <AppCover src={detail.images.cover} alt={`${app.name}: ${app.summary}`} />
+      )}
       <AboutCard detail={detail} />
+      {detail.images.screenshots.length > 0 && (
+        <LayerCard>
+          <LayerCard.Secondary>Screenshots</LayerCard.Secondary>
+          <LayerCard.Primary className="px-5 py-4">
+            <Screenshots items={detail.images.screenshots} />
+          </LayerCard.Primary>
+        </LayerCard>
+      )}
       <Prerequisites
         detail={detail}
         confirmation={
@@ -168,7 +180,10 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>About</span>
+        <span className="flex items-center gap-3">
+          <AppIcon src={detail.images.icon} size={28} />
+          <span>About</span>
+        </span>
         <div className="flex items-center gap-2">
           <TierBadge tier={app.tier} />
           <PlanBadge plan={app.plan} />
@@ -211,6 +226,12 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
               <Row label="License">{catalog.license}</Row>
             </>
           )}
+          {detail.popularity !== null &&
+            (detail.popularity.stars !== null || detail.popularity.installsKnown) && (
+              <Row label="Popularity">
+                <PopularityLine popularity={detail.popularity} />
+              </Row>
+            )}
           {detail.authors.length > 0 && (
             <Row label={detail.authors.length === 1 ? "Author" : "Authors"}>
               <Authors authors={detail.authors} />

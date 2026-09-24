@@ -1,6 +1,7 @@
 export * from "./artifact";
 export * from "./catalog";
 export * from "./catalog-index";
+export * from "./catalog-stats";
 export * from "./keys";
 export * from "./limits";
 export * from "./sandbox";

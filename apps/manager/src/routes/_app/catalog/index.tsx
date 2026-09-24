@@ -1,4 +1,13 @@
-import { Badge, Banner, Button, Empty, LayerCard, LinkButton, Text } from "@cloudflare/kumo";
+import {
+  Badge,
+  Banner,
+  Button,
+  Empty,
+  LayerCard,
+  LinkButton,
+  Select,
+  Text,
+} from "@cloudflare/kumo";
 import {
   ArrowRightIcon,
   ArrowsClockwiseIcon,
@@ -6,34 +15,57 @@ import {
   StorefrontIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import { z } from "zod";
 import { authorNames } from "../../../catalog/authors";
 import {
   type CatalogListItem,
   listCatalog,
   refreshCatalog,
 } from "../../../catalog/catalog.functions";
+import { sortByPopularity } from "../../../catalog/popularity";
 import {
   InstallCheckBadge,
   PlanBadge,
   RequirementIcons,
   TierBadge,
 } from "../../../components/catalog-badges";
+import { AppIcon, PopularityLine } from "../../../components/catalog-media";
+import { FeaturedCard } from "../../../components/featured-card";
 import { formatDateTime } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
 
-/** `/catalog`: apps from the KV-cached `index.json`. */
+const SORTS = { popular: "Most popular", name: "Name" } as const;
+type Sort = keyof typeof SORTS;
+
+/**
+ * `/catalog`: apps from the KV-cached `index.json`, most popular first when
+ * the catalog publishes recent popularity numbers, and the sponsored item
+ * (if any) above the list.
+ */
 export const Route = createFileRoute("/_app/catalog/")({
   staticData: { title: "Catalog" },
+  validateSearch: z.object({ sort: z.enum(["popular", "name"]).optional() }),
   loader: () => listCatalog(),
   component: CatalogPage,
 });
 
+/** The apps in the chosen order; "popular" without recent numbers keeps the index order. */
+function sortedApps(apps: CatalogListItem[], sort: Sort, hasStats: boolean): CatalogListItem[] {
+  if (sort === "name") return [...apps].sort((a, b) => a.name.localeCompare(b.name));
+  return hasStats ? sortByPopularity(apps) : apps;
+}
+
 function CatalogPage() {
   const catalog = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
+  const search = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const hasStats = catalog.statsGeneratedAt !== null;
+  const sort: Sort = search.sort ?? "popular";
+  const apps = sortedApps(catalog.apps, sort, hasStats);
   return (
     <>
       <PageHeader
@@ -41,10 +73,25 @@ function CatalogPage() {
         description="Cloudflare-native apps you can install into this account."
         actions={viewer.role === "admin" ? <RefreshButton /> : undefined}
       />
-      {catalog.updatedAt !== null && (
-        <Text variant="secondary" size="sm">
-          Catalog updated {formatDateTime(catalog.updatedAt)}.
-        </Text>
+      {(catalog.updatedAt !== null || hasStats) && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Text variant="secondary" size="sm">
+            {catalog.updatedAt !== null && `Catalog updated ${formatDateTime(catalog.updatedAt)}.`}
+          </Text>
+          {hasStats && (
+            <Select
+              label="Sort by"
+              value={sort}
+              onValueChange={(value) =>
+                void navigate({ search: { sort: value === "name" ? "name" : "popular" } })
+              }
+              items={SORTS}
+            />
+          )}
+        </div>
+      )}
+      {catalog.featured !== null && (
+        <FeaturedCard key={catalog.featured.id} item={catalog.featured} />
       )}
       {catalog.unreadable > 0 && (
         <Banner
@@ -68,7 +115,7 @@ function CatalogPage() {
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {catalog.apps.map((app) => (
+          {apps.map((app) => (
             <AppCard key={app.slug} app={app} />
           ))}
         </div>
@@ -81,7 +128,10 @@ function AppCard({ app }: { app: CatalogListItem }) {
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span className="truncate">{app.name}</span>
+        <span className="flex min-w-0 items-center gap-3">
+          <AppIcon src={app.images.icon} size={28} />
+          <span className="truncate">{app.name}</span>
+        </span>
         <span className="flex shrink-0 items-center gap-2">
           {app.tier !== "artifact" && <TierBadge tier={app.tier} />}
           <PlanBadge plan={app.plan} />
@@ -101,6 +151,7 @@ function AppCard({ app }: { app: CatalogListItem }) {
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <InstallCheckBadge lastVerified={app.lastVerified} />
+          <PopularityLine popularity={app.popularity} />
           <RequirementIcons requires={app.requires} />
         </div>
         <div className="flex items-center justify-between gap-3">

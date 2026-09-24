@@ -14,6 +14,7 @@ import journal from "./migrations/meta/_journal.json";
 
 const EXPECTED_TABLES = [
   "account",
+  "featured_dismissals",
   "installs",
   "job_logs",
   "jobs",

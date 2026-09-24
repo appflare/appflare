@@ -23,7 +23,17 @@ import { requireRole, requireSession } from "../server/auth.server";
 import { getCatalogManifest } from "./app-manifest.server";
 import { appAuthors } from "./authors";
 import { cronTriggerCount } from "./cron-triggers";
-import { CatalogError, getCatalogIndex, refreshCatalogIndex } from "./index.server";
+import { type FeaturedCard, featuredCard, pickFeatured } from "./featured";
+import { dismissedFeaturedIds, dismissFeaturedItem } from "./featured.server";
+import {
+  CatalogError,
+  catalogIndexUrl,
+  getCatalogIndex,
+  refreshCatalogIndex,
+} from "./index.server";
+import { type AppMediaView, appMediaView } from "./media";
+import { type AppPopularity, appPopularity, freshStats } from "./popularity";
+import { readCatalogStats } from "./stats.server";
 
 /** Catalog browsing. */
 
@@ -37,6 +47,10 @@ export interface InstalledRef {
 export interface CatalogListItem extends IndexApp {
   /** Installs of this app that are not uninstalled. */
   instances: InstalledRef[];
+  /** The entry's images, as manager paths. */
+  images: AppMediaView;
+  /** Stars and install counts; null when the catalog publishes none (or they are stale). */
+  popularity: AppPopularity | null;
 }
 
 export interface CatalogList {
@@ -47,6 +61,16 @@ export interface CatalogList {
   error: string | null;
   /** Entries of the published catalog this version of Appflare could not read. */
   unreadable: number;
+  /** The sponsored item to show this user, if any. */
+  featured: FeaturedCard | null;
+  /** When the popularity numbers were computed; null when there are none recent enough to show. */
+  statsGeneratedAt: string | null;
+}
+
+/** Popularity for the index's apps, when the index names a stats file and it is recent. */
+async function currentStats(indexStatsUrl: string | undefined) {
+  if (indexStatsUrl === undefined) return null;
+  return freshStats(await readCatalogStats(env.KV), new Date());
 }
 
 interface ActiveInstalls {
@@ -84,20 +108,57 @@ async function activeInstalls(): Promise<ActiveInstalls> {
 /** Any signed-in user. */
 export const listCatalog = createServerFn({ method: "GET" }).handler(
   async (): Promise<CatalogList> => {
-    await requireSession();
+    const session = await requireSession();
     const [read, active] = await Promise.all([getCatalogIndex(env), activeInstalls()]);
-    if (!read.ok) return { apps: [], updatedAt: read.updatedAt, error: read.error, unreadable: 0 };
+    if (!read.ok) {
+      return {
+        apps: [],
+        updatedAt: read.updatedAt,
+        error: read.error,
+        unreadable: 0,
+        featured: null,
+        statsGeneratedAt: null,
+      };
+    }
+    const indexUrl = catalogIndexUrl(env);
+    const { apps } = read.index;
+    const [stats, dismissed] = await Promise.all([
+      currentStats(read.index.stats),
+      read.index.featured.length === 0
+        ? new Set<string>()
+        : dismissedFeaturedIds(createDb(env.DB), session.user.id),
+    ]);
+    const item = pickFeatured(read.index.featured, dismissed, new Date());
     return {
-      apps: read.index.apps.map((app) => ({
+      apps: apps.map((app) => ({
         ...app,
         instances: active.bySlug.get(app.slug) ?? [],
+        images: appMediaView(app.media, indexUrl),
+        popularity: appPopularity(stats, app.slug),
       })),
       updatedAt: read.updatedAt,
       error: null,
       unreadable: read.unreadable,
+      featured:
+        item === null
+          ? null
+          : featuredCard(item, indexUrl, (slug) => apps.find((a) => a.slug === slug)?.name ?? null),
+      statsGeneratedAt: stats?.generatedAt ?? null,
     };
   },
 );
+
+/**
+ * Any signed-in user: hide a sponsored item for themselves. Members browse
+ * the catalog too, so this needs a session, not the admin role.
+ */
+export const dismissFeatured = createServerFn({ method: "POST" })
+  .validator(z.object({ itemId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/) }))
+  .handler(async ({ data }): Promise<{ ok: true }> => {
+    const session = await requireSession();
+    await dismissFeaturedItem(createDb(env.DB), session.user.id, data.itemId);
+    return { ok: true };
+  });
 
 /** Admin only: re-fetch `index.json` now. */
 export const refreshCatalog = createServerFn({ method: "POST" }).handler(
@@ -115,6 +176,10 @@ export const refreshCatalog = createServerFn({ method: "POST" }).handler(
 
 export interface CatalogDetail {
   app: IndexApp | null;
+  /** The entry's cover and screenshots (and icon), as manager paths. */
+  images: AppMediaView;
+  /** Stars and install counts; null when the catalog publishes none (or they are stale). */
+  popularity: AppPopularity | null;
   /** The signed catalog manifest (form definitions, links, license). */
   catalog: CatalogManifest | null;
   /**
@@ -208,16 +273,29 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       sandboxConnected: sandboxBinding(env) !== undefined,
       cronTriggers: 0,
       accountPlan,
+      images: appMediaView(undefined, ""),
+      popularity: null,
     };
     const read = await getCatalogIndex(env);
     if (!read.ok) return { app: null, error: read.error, ...empty };
     const app = read.index.apps.find((a) => a.slug === data.slug) ?? null;
     if (app === null) return { app: null, error: null, ...empty };
-    const active = await activeInstalls();
+    const [active, stats] = await Promise.all([activeInstalls(), currentStats(read.index.stats)]);
     const instances = active.bySlug.get(app.slug) ?? [];
+    const shown = {
+      images: appMediaView(app.media, catalogIndexUrl(env)),
+      popularity: appPopularity(stats, app.slug),
+    };
     const manifest = await getCatalogManifest(env, app);
     if (!manifest.ok) {
-      return { ...empty, app, authors: appAuthors(app, null), instances, error: manifest.error };
+      return {
+        ...empty,
+        ...shown,
+        app,
+        authors: appAuthors(app, null),
+        instances,
+        error: manifest.error,
+      };
     }
     const { install } = manifest.catalog;
     const fixed = hasFixedWorkerName(install);
@@ -232,6 +310,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
         : planBindings(install.workerName, manifest.manifest.worker.bindings);
     return {
       ...empty,
+      ...shown,
       app,
       catalog: manifest.catalog,
       authors: appAuthors(app, manifest.catalog),

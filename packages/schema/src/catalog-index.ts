@@ -15,6 +15,43 @@ import {
  * One row per app plus a top-level `generatedAt`.
  */
 
+/** An https:// URL (the regex keeps the rule in any exported JSON Schema). */
+const httpsUrlSchema = z
+  .url({ protocol: /^https$/, error: "must be an https:// URL" })
+  .regex(/^https:\/\//, "must be an https:// URL");
+
+/**
+ * One image the catalog site hosts next to `index.json`, pinned by the
+ * sha256 of its exact bytes. The manager serves an image only when its URL is
+ * on the index's own origin and the bytes it fetched match the digest, so an
+ * index can never make a manager's users load images from anywhere else.
+ */
+export const indexMediaFileSchema = z.object({
+  url: httpsUrlSchema,
+  sha256: sha256Schema,
+});
+export type IndexMediaFile = z.infer<typeof indexMediaFileSchema>;
+
+/** Most screenshots one entry lists. */
+export const MAX_SCREENSHOTS = 8;
+
+/** A screenshot, with the text a screen reader reads for it. */
+export const indexScreenshotSchema = indexMediaFileSchema.extend({
+  alt: z.string().min(1).max(200),
+});
+export type IndexScreenshot = z.infer<typeof indexScreenshotSchema>;
+
+/**
+ * An entry's images: `icon` (square, for lists), `cover` (1200x630, also the
+ * size of an OpenGraph image) and `screenshots`, in display order.
+ */
+export const indexMediaSchema = z.object({
+  icon: indexMediaFileSchema.optional(),
+  cover: indexMediaFileSchema.optional(),
+  screenshots: z.array(indexScreenshotSchema).max(MAX_SCREENSHOTS).default([]),
+});
+export type IndexMedia = z.infer<typeof indexMediaSchema>;
+
 /** Release-asset URLs for one app version. */
 export const indexArtifactsSchema = z.object({
   zip: z.url(),
@@ -78,6 +115,8 @@ export const indexAppSchema = z
     /** Who packages the app for the catalog. */
     maintainers: z.array(z.string().min(1)),
     build: indexBuildSchema.optional(),
+    /** The entry's images; optional so an index published before they existed still parses. */
+    media: indexMediaSchema.optional(),
   })
   .superRefine((app, ctx) => {
     if ((app.artifacts === undefined) !== (app.digest === undefined)) {
@@ -122,9 +161,84 @@ export function indexAppArtifact(
     : { artifacts: app.artifacts, digest: app.digest };
 }
 
-/** The published catalog index, `index.json`. */
-export const indexJsonSchema = z.object({
-  generatedAt: z.iso.datetime(),
-  apps: z.array(indexAppSchema),
-});
+/**
+ * One item of the catalog's sponsored slot. It can promote anything, an app
+ * in the catalog or not. The manager always labels it "Sponsored" (the label
+ * lives in the manager, so no index can remove it), shows at most one item at
+ * a time on the catalog page, and lets each user hide it.
+ */
+export const featuredItemSchema = z
+  .object({
+    /** Stable id; hiding an item keys on it. Never reused: a new campaign gets a new id. */
+    id: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]{0,62}$/, "must be lowercase letters, digits and dashes"),
+    title: z.string().min(1).max(60),
+    /** Plain text, no markdown or HTML, rendered as text. */
+    text: z.string().min(1).max(200),
+    sponsor: z.object({
+      name: z.string().min(1).max(60),
+      url: httpsUrlSchema.optional(),
+    }),
+    /** 1200x630, like an app cover; hosted on the catalog site itself and pinned by digest. */
+    image: indexMediaFileSchema.extend({ alt: z.string().min(1).max(200) }).optional(),
+    link: z.object({ url: httpsUrlSchema, label: z.string().min(1).max(30) }).optional(),
+    /** A catalog app this item promotes; the card then opens that app's page. */
+    slug: z.string().min(1).optional(),
+    startsAt: z.iso.datetime().optional(),
+    endsAt: z.iso.datetime().optional(),
+  })
+  .refine((item) => item.link !== undefined || item.slug !== undefined, {
+    message: "an item needs a link or a slug",
+    path: ["link"],
+  })
+  .refine(
+    (item) =>
+      item.startsAt === undefined ||
+      item.endsAt === undefined ||
+      Date.parse(item.startsAt) < Date.parse(item.endsAt),
+    { message: "endsAt must be after startsAt", path: ["endsAt"] },
+  );
+export type FeaturedItem = z.infer<typeof featuredItemSchema>;
+
+/** Whether a featured item is inside its `startsAt`..`endsAt` window at `now`. */
+export function isFeaturedItemActive(
+  item: Pick<FeaturedItem, "startsAt" | "endsAt">,
+  now: Date,
+): boolean {
+  const t = now.getTime();
+  if (item.startsAt !== undefined && t < Date.parse(item.startsAt)) return false;
+  if (item.endsAt !== undefined && t >= Date.parse(item.endsAt)) return false;
+  return true;
+}
+
+/**
+ * The published catalog index, `index.json`. `featured` is always written,
+ * as an empty array while there is no sponsor; `stats` is the URL of the
+ * catalog's popularity file (`catalogStatsSchema`), fetched with the index.
+ */
+export const indexJsonSchema = z
+  .object({
+    generatedAt: z.iso.datetime(),
+    apps: z.array(indexAppSchema),
+    featured: z.array(featuredItemSchema).default([]),
+    stats: httpsUrlSchema.optional(),
+  })
+  .superRefine((index, ctx) => {
+    const ids = new Set<string>();
+    const slugs = new Set(index.apps.map((app) => app.slug));
+    index.featured.forEach((item, i) => {
+      if (ids.has(item.id)) {
+        ctx.addIssue({ code: "custom", path: ["featured", i, "id"], message: "duplicate id" });
+      }
+      ids.add(item.id);
+      if (item.slug !== undefined && !slugs.has(item.slug)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["featured", i, "slug"],
+          message: `no app "${item.slug}" in the index`,
+        });
+      }
+    });
+  });
 export type IndexJson = z.infer<typeof indexJsonSchema>;
