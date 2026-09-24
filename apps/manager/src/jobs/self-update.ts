@@ -13,6 +13,7 @@ import { releaseFetch } from "../catalog/release-fetch";
 import { createDb } from "../db/client";
 import { jobs, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { MANAGER_SUBDOMAIN } from "../installs/workers-dev";
 import { fetchWhole, sha256Hex } from "./install/artifact";
 import {
   loadVerifiedManifest,
@@ -321,7 +322,8 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
     // 5. Canary on the version's preview URL.
     const subdomain = await lookupSubdomainPhase(steps);
     await run("enable version previews", async ({ log, cf }) => {
-      await cf().workers.enableSubdomain(workerName, { enabled: true, previews_enabled: true });
+      // Appflare keeps its own workers.dev URL (see MANAGER_SUBDOMAIN).
+      await cf().workers.enableSubdomain(workerName, MANAGER_SUBDOMAIN);
       log.info("Preview URLs are enabled for Appflare's Worker.");
       return {};
     });

@@ -6,7 +6,7 @@ import {
   type FetchLike,
   type Zone,
 } from "@appflare/cf-api";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { ulid } from "ulidx";
 import {
   CUSTOM_DOMAINS_FEATURE,
@@ -18,6 +18,7 @@ import { type HealthStatus, installs, resources } from "../db/schema";
 import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
 import { checkHostnameInZone } from "./custom-domain-input";
 import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
+import { lastAddressRefusal } from "./workers-dev.server";
 
 /**
  * Custom domains of an install: a hostname in one of the account's zones that
@@ -350,6 +351,8 @@ interface InstallRow {
   status: string;
   workerName: string;
   manifestJson: string | null;
+  /** Whether the Worker answers on its workers.dev URL. */
+  workersDev: boolean;
 }
 
 async function readInstall(db: D1Database, installId: string): Promise<InstallRow> {
@@ -359,6 +362,7 @@ async function readInstall(db: D1Database, installId: string): Promise<InstallRo
       status: installs.status,
       workerName: installs.worker_name,
       manifestJson: installs.manifest_json,
+      workersDev: installs.workers_dev_enabled,
     })
     .from(installs)
     .where(eq(installs.id, installId))
@@ -398,6 +402,22 @@ export async function removeCustomDomainCore(
     throw new CustomDomainError("The uninstall removes this app's custom domains.");
   }
   const domain = await readDomain(deps.db, request);
+  // With workers.dev off, the last custom domain is the app's only address.
+  if (!install.workersDev) {
+    const others = await createDb(deps.db)
+      .select({ id: resources.id })
+      .from(resources)
+      .where(
+        and(
+          eq(resources.install_id, request.installId),
+          eq(resources.kind, CUSTOM_DOMAIN_KIND),
+          isNull(resources.deleted_at),
+          ne(resources.id, domain.id),
+        ),
+      );
+    const refusal = lastAddressRefusal(install.workersDev, others.length);
+    if (refusal !== null) throw new CustomDomainError(refusal);
+  }
   await detachCustomDomain(deps.api, {
     hostname: domain.name,
     cfId: domain.cf_id,
@@ -469,7 +489,7 @@ export interface CustomDomainCheck {
 /**
  * "Check" next to a custom domain: one GET of `https://<hostname><health
  * path>`, the same probe as the install's "Check now". It is not recorded:
- * the install's health stays the check of its workers.dev URL, and a new
+ * the install's health stays the check of its main address, and a new
  * domain may take a while before its certificate and DNS record are live.
  */
 export async function checkCustomDomainCore(

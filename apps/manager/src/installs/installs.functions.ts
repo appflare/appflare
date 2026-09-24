@@ -9,12 +9,21 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
+import type { AutoUpdateChoice } from "../auto-update/auto-update";
+import { readAutoUpdateDefaults } from "../auto-update/auto-update.server";
 import { getCatalogManifest } from "../catalog/app-manifest.server";
 import { getCatalogIndex } from "../catalog/index.server";
 import { isUpdateAvailable } from "../catalog/versions";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
-import { type BuildKind, type HealthStatus, installs, jobs, resources } from "../db/schema";
+import {
+  type BuildKind,
+  type HealthStatus,
+  installs,
+  type JobStarter,
+  jobs,
+  resources,
+} from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { recordedCatalog } from "../jobs/self-deploying/phases";
@@ -26,6 +35,7 @@ import { renderPostInstall, workersDevUrl } from "./post-install";
 import { isDeleteRetainedJob } from "./removed-apps.server";
 import { CUSTOM_DOMAIN_KIND, EMAIL_ROUTE_KIND } from "./resource-kinds";
 import { catalogOnlyManifest, StartInstallError, startInstallCore } from "./start-install.server";
+import { domainHostnames, primaryDomain } from "./workers-dev";
 
 /** Installs: start one (admin), list them, and show one. Uninstall lives in `uninstall.functions.ts`. */
 
@@ -75,6 +85,7 @@ export interface InstallRow {
   version: string;
   latestVersion: string | null;
   updateAvailable: boolean;
+  /** Where the app is reached: its workers.dev URL, or its first custom domain while that is off. */
   workerUrl: string | null;
   /** ISO 8601 */
   updatedAt: string;
@@ -106,16 +117,36 @@ async function subdomain(): Promise<string | null> {
 export const listInstalls = createServerFn({ method: "GET" }).handler(
   async (): Promise<InstallRow[]> => {
     await requireSession();
-    const [rows, read, sub] = await Promise.all([
-      createDb(env.DB)
+    const db = createDb(env.DB);
+    const [rows, read, sub, domainRows] = await Promise.all([
+      db
         .select()
         .from(installs)
         .where(ne(installs.status, "uninstalled"))
         .orderBy(desc(installs.installed_at)),
       getCatalogIndex(env),
       subdomain(),
+      db
+        .select({
+          id: resources.id,
+          installId: resources.install_id,
+          kind: resources.kind,
+          name: resources.name,
+        })
+        .from(resources)
+        .where(and(eq(resources.kind, CUSTOM_DOMAIN_KIND), isNull(resources.deleted_at))),
     ]);
     const catalog = new Map(read.ok ? read.index.apps.map((a) => [a.slug, a]) : []);
+    /** Where the app is reached: workers.dev, or its primary custom domain while that is off. */
+    const primaryUrl = (row: (typeof rows)[number]): string | null => {
+      const domain = row.workers_dev_enabled
+        ? null
+        : primaryDomain(
+            domainHostnames(domainRows.filter((d) => d.installId === row.id)),
+            row.served_domain,
+          );
+      return domain === null ? workersDevUrl(row.worker_name, sub) : `https://${domain}`;
+    };
     return rows.map((row) => {
       const listed = catalog.get(row.app_slug);
       return {
@@ -129,7 +160,7 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
         latestVersion: listed?.version ?? null,
         updateAvailable:
           row.status === "installed" && isUpdateAvailable(row.catalog_version, listed?.version),
-        workerUrl: row.status === "installed" ? workersDevUrl(row.worker_name, sub) : null,
+        workerUrl: row.status === "installed" ? primaryUrl(row) : null,
         updatedAt: row.updated_at.toISOString(),
         uninstalledAt: row.uninstalled_at?.toISOString() ?? null,
         ...healthOf(row),
@@ -189,6 +220,16 @@ export interface InstallDetail extends InstallRow {
   forgotten: boolean;
   /** The job currently queued or running for this install, if any. */
   activeJobId: string | null;
+  /** The Worker answers on its workers.dev URL (else only on its custom domains). */
+  workersDevEnabled: boolean;
+  /** `https://<worker>.<subdomain>.workers.dev`, whether or not it is on; null when the subdomain is unknown. */
+  workersDevUrl: string | null;
+  /** The install's automatic-update choice. */
+  autoUpdate: AutoUpdateChoice;
+  /** The catalog version automatic updates left for an admin, if any. */
+  autoUpdateWaiting: string | null;
+  /** "Automatically update apps", which `inherit` follows. */
+  autoUpdateDefault: boolean;
   jobs: Array<{
     id: string;
     kind: string;
@@ -200,6 +241,8 @@ export interface InstallDetail extends InstallRow {
     error: string | null;
     startedAt: string | null;
     finishedAt: string | null;
+    /** Who started it: an admin, or the cron (automatic updates). */
+    startedBy: JobStarter;
   }>;
   /**
    * Markdown with `{{workerUrl}}`/`{{workerName}}` filled in, then Appflare's
@@ -235,7 +278,7 @@ export const getInstall = createServerFn({ method: "GET" })
     if (active.length > 0) await reconcileJobs(env.DB, env.JOBS, active);
     const [row] = await db.select().from(installs).where(eq(installs.id, data.installId)).limit(1);
     if (row === undefined) return null;
-    const [resourceRows, jobRows, read, sub] = await Promise.all([
+    const [resourceRows, jobRows, read, sub, autoUpdateDefaults] = await Promise.all([
       // Everything not deleted: live resources, and those an uninstall kept.
       db
         .select()
@@ -246,9 +289,18 @@ export const getInstall = createServerFn({ method: "GET" })
       db.select().from(jobs).where(eq(jobs.install_id, row.id)).orderBy(desc(jobs.id)),
       getCatalogIndex(env),
       subdomain(),
+      readAutoUpdateDefaults(db),
     ]);
     const listed = read.ok ? read.index.apps.find((a) => a.slug === row.app_slug) : undefined;
     const workerUrl = workersDevUrl(row.worker_name, sub);
+    // Where the app is reached: its primary custom domain while workers.dev is off.
+    const domain = row.workers_dev_enabled
+      ? null
+      : primaryDomain(
+          domainHostnames(resourceRows.filter((r) => r.retained_at === null)),
+          row.served_domain,
+        );
+    const primaryUrl = domain === null ? workerUrl : `https://${domain}`;
     let name = listed?.name ?? row.app_slug;
     let postInstall: string[] = [];
     let tokenPermissions: TokenPermission[] = [];
@@ -258,7 +310,7 @@ export const getInstall = createServerFn({ method: "GET" })
       // A self-deploying install records its catalog manifest, not an artifact's.
       name = installerCatalog.name;
       postInstall = installerCatalog.postInstall.map((p) =>
-        renderPostInstall(p.content, { workerUrl, workerName: row.worker_name }),
+        renderPostInstall(p.content, { workerUrl: primaryUrl, workerName: row.worker_name }),
       );
       tokenPermissions = installerCatalog.tokenPermissions;
     } else if (row.manifest_json !== null) {
@@ -266,7 +318,7 @@ export const getInstall = createServerFn({ method: "GET" })
       if (manifest.success) {
         name = manifest.data.catalog.name;
         postInstall = manifest.data.catalog.postInstall.map((p) =>
-          renderPostInstall(p.content, { workerUrl, workerName: row.worker_name }),
+          renderPostInstall(p.content, { workerUrl: primaryUrl, workerName: row.worker_name }),
         );
         if (sendsEmail(manifest.data.worker.bindings)) postInstall.push(SEND_EMAIL_NOTE);
         tokenPermissions = manifest.data.catalog.tokenPermissions;
@@ -300,7 +352,12 @@ export const getInstall = createServerFn({ method: "GET" })
       latestVersion: listed?.version ?? null,
       updateAvailable:
         row.status === "installed" && isUpdateAvailable(row.catalog_version, listed?.version),
-      workerUrl: row.status === "installed" ? workerUrl : null,
+      workerUrl: row.status === "installed" ? primaryUrl : null,
+      workersDevEnabled: row.workers_dev_enabled,
+      workersDevUrl: workerUrl,
+      autoUpdate: row.auto_update,
+      autoUpdateDefault: autoUpdateDefaults.apps,
+      autoUpdateWaiting: row.auto_update_waiting,
       updatedAt: row.updated_at.toISOString(),
       uninstalledAt: row.uninstalled_at?.toISOString() ?? null,
       ...healthOf(row),
@@ -320,7 +377,7 @@ export const getInstall = createServerFn({ method: "GET" })
       vars: Object.fromEntries(
         Object.entries(parseVars(row.config_json)).map(([name, value]) => [
           name,
-          renderPlaceholders(value, { workerUrl, workerName: row.worker_name }),
+          renderPlaceholders(value, { workerUrl: primaryUrl, workerName: row.worker_name }),
         ]),
       ),
       // Email routes are listed under Email; their ids carry encoded state.
@@ -347,6 +404,7 @@ export const getInstall = createServerFn({ method: "GET" })
         error: j.error,
         startedAt: j.started_at?.toISOString() ?? null,
         finishedAt: j.finished_at?.toISOString() ?? null,
+        startedBy: j.started_by,
       })),
       postInstall,
       tokenPermissions,

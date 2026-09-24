@@ -408,12 +408,15 @@ async function install(
   clock?: { now: () => number; onSleep: (name: string, duration: string | number) => void },
   /** `local`: a manager without the `SELF` binding runs the units in the job's invocation. */
   units: "self" | "local" = "self",
+  /** Runs once the install row exists, before the job starts. */
+  beforeRun?: (installId: string) => Promise<void>,
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeWorld(fixture, world);
   const started = await start(fixture, input);
   const { jobId, installId } = started;
   const params = { ...started.params, ...paramsOver };
+  await beforeRun?.(installId);
   const step = fakeStep(clock === undefined ? {} : { onSleep: clock.onSleep });
   fake.state.stepOf = () => step.names.at(-1);
   const self = fakeSelf(jobEnv(), {
@@ -585,6 +588,19 @@ describe("install job", () => {
     expect(everything).toContain(`POST /accounts/${ACC}/storage/kv/namespaces -> 200`);
     expect(r.logs.some((l) => l.level === "warn" && l.message.includes("1042"))).toBe(true);
     expect(r.logs.at(-1)?.message).toMatch(/^Installed cut 1\.0\.0 at https:\/\/cut\.appflare-dev/);
+  });
+
+  it("sends the install's stored workers.dev choice, keeping version previews on", async () => {
+    const r = await install({}, {}, {}, {}, undefined, "self", async (installId) => {
+      await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0 WHERE id = ?1")
+        .bind(installId)
+        .run();
+    });
+    expect(r.error).toBeNull();
+    expect(r.fake.state.subdomainEnabled).toEqual({ enabled: false, previews_enabled: true });
+    // No workers.dev route is recorded for a Worker that does not answer there.
+    expect(r.resources.some((row) => (row as { kind: string }).kind === "subdomain")).toBe(false);
+    expect(r.logs.some((l) => l.message.startsWith("Left https://cut."))).toBe(true);
   });
 
   it("creates a Vectorize index with the recorded shape and passes Workers AI through", async () => {

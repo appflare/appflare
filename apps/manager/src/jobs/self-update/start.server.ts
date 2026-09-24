@@ -5,7 +5,7 @@ import {
   type ManagerRelease,
 } from "../../catalog/manager-releases.server";
 import { createDb } from "../../db/client";
-import { jobs } from "../../db/schema";
+import { type JobStarter, jobs } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import { reconcileJobs, type WorkflowLookup } from "../reconcile.server";
 import type { SelfUpdateJobParams } from "../self-update";
@@ -32,6 +32,8 @@ export interface StartSelfUpdateDeps {
   workflows: WorkflowLookup;
   createJob(id: string, params: SelfUpdateJobParams): Promise<{ id: string }>;
   now?: () => Date;
+  /** Who starts the job; an admin unless the cron does (automatic updates). */
+  startedBy?: JobStarter;
   newId?: () => string;
 }
 
@@ -82,13 +84,14 @@ export async function startSelfUpdateCore(
   };
   const claimed = await deps.db
     .prepare(
-      `INSERT INTO jobs (id, install_id, kind, status, input_json)
-       SELECT ?1, NULL, 'self_update', 'queued', ?2
+      `INSERT INTO jobs (id, install_id, kind, status, input_json, started_by)
+       SELECT ?1, NULL, 'self_update', 'queued', ?2, ?3
        WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE status IN ('queued', 'running'))`,
     )
     .bind(
       jobId,
       JSON.stringify({ version: latest.version, fromVersion: currentVersion, tag: latest.tag }),
+      deps.startedBy ?? "admin",
     )
     .run();
   if (claimed.meta.changes !== 1) throw new SelfUpdateError(BUSY);

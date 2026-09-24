@@ -274,6 +274,8 @@ describe("self_update job", () => {
     expect(r.self.calls.map((c) => c.unit)).toEqual(["uploadAssetPart", "uploadWorker"]);
     for (const call of r.self.calls) expect(call.subrequests).toBeLessThan(40);
 
+    // Appflare keeps its own workers.dev URL; previews are on for the canary.
+    expect(r.fake.state.subdomainCalls).toEqual([{ enabled: true, previews_enabled: true }]);
     // Canary on the version's own preview, then promotion.
     expect(r.fake.state.previewHosts).toEqual([
       `0a1b2c3d-${WORKER}.${SUBDOMAIN}.workers.dev`,

@@ -12,7 +12,7 @@ import { ulid } from "ulidx";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { createDb, type Database } from "../db/client";
-import { installs, jobs, resources, snapshots } from "../db/schema";
+import { installs, type JobStarter, jobs, resources, snapshots } from "../db/schema";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import type { RollbackJobParams } from "../jobs/rollback";
 import { installerRunId } from "../jobs/self-deploying/phases";
@@ -53,6 +53,8 @@ export interface StartJobDeps<P> {
   createJob(id: string, params: P): Promise<{ id: string }>;
   now?: () => Date;
   newId?: () => string;
+  /** Who starts the job; an admin unless the cron does (automatic updates). */
+  startedBy?: JobStarter;
 }
 
 const BUSY =
@@ -106,15 +108,15 @@ export async function claim<P extends { jobId: string }>(
   const [claimed] = await deps.db.batch([
     deps.db
       .prepare(
-        `INSERT INTO jobs (id, install_id, kind, status, input_json)
-         SELECT ?1, ?2, ?3, 'queued', ?4
+        `INSERT INTO jobs (id, install_id, kind, status, input_json, started_by)
+         SELECT ?1, ?2, ?3, 'queued', ?4, ?5
          WHERE EXISTS (SELECT 1 FROM installs WHERE id = ?2 AND status = 'installed')
            AND NOT EXISTS (
              SELECT 1 FROM jobs WHERE install_id = ?2 AND status IN ('queued', 'running')
            )
            AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
       )
-      .bind(jobId, input.installId, input.kind, input.inputJson),
+      .bind(jobId, input.installId, input.kind, input.inputJson, deps.startedBy ?? "admin"),
     deps.db
       .prepare(
         `UPDATE installs SET status = 'updating', updated_at = ?3

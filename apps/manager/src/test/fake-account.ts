@@ -73,6 +73,12 @@ export interface FakeAccount {
   consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
   /** The sandbox Worker's version at 100% (`GET /workers/scripts/appflare-sandbox/deployments`). */
   sandboxDeployed: string;
+  /** Answers of custom domain hosts, in order per host (the last one repeats). */
+  domainHealth: Record<string, Array<{ status: number; body: string }>>;
+  /** Custom domain hosts probed, in order. */
+  domainProbes: string[];
+  /** A version upload answers without the new version's id (the version is made all the same). */
+  uploadWithoutId: boolean;
   /** Secret names a version has (`GET .../versions/<id>` lists them as `secret_text` bindings). */
   versionSecrets: Record<string, string[]>;
 }
@@ -117,6 +123,9 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     consumers: {},
     sandboxDeployed: SANDBOX_DEPLOYED_VERSION,
     versionSecrets: {},
+    domainHealth: {},
+    domainProbes: [],
+    uploadWithoutId: false,
     ...over,
   };
   const script = `/workers/scripts/${state.worker}`;
@@ -214,13 +223,15 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
         const form = await request.formData();
         const metadata = JSON.parse(String(form.get("metadata"))) as Record<string, unknown>;
         const id = state.versions.length === 0 ? NEW_VERSION : `version-${state.versions.length}`;
+        const annotations = metadata.annotations as Record<string, string> | undefined;
         state.versions.push({
           id,
           metadata,
           modules: [...form.keys()].filter((k) => k !== "metadata"),
+          ...(annotations === undefined ? {} : { annotations }),
         });
         return ok({
-          id,
+          ...(state.uploadWithoutId ? {} : { id }),
           number: state.versions.length,
           metadata: { has_preview: state.hasPreview },
         });
@@ -408,6 +419,11 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     if (host.endsWith(`-${state.worker}.${SUBDOMAIN}.workers.dev`)) {
       state.previewHosts.push(host);
       return next(state.previews);
+    }
+    const domain = state.domainHealth[host];
+    if (domain !== undefined) {
+      state.domainProbes.push(host);
+      return next(domain);
     }
     return fixture?.serve(input, init) ?? new Response("not found", { status: 404 });
   };

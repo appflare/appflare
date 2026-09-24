@@ -1,5 +1,6 @@
 import handler from "@tanstack/react-start/server-entry";
 import { accessGate } from "./access/gate";
+import { runScheduledUpdates, scheduledUpdatesLog } from "./auto-update/cron.server";
 import { refreshCapabilitiesDaily } from "./capabilities/capabilities.server";
 import { CatalogError, refreshCatalogIndex } from "./catalog/index.server";
 import { ManagerReleasesError, refreshManagerReleases } from "./catalog/manager-releases.server";
@@ -82,7 +83,8 @@ export default {
    * at read time from those caches. Once a day it also re-reads the
    * account's capabilities (capabilities/). Then the anonymous usage-data report
    * (telemetry/report.server.ts), which sends nothing until an admin has
-   * seen the notice. The scheduled handler never starts jobs.
+   * seen the notice. It starts update jobs only for what automatic updates
+   * allow (auto-update/), and only updates that need nothing from an admin.
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
@@ -106,6 +108,14 @@ export default {
       if (capabilities === "checked") console.log("account capabilities checked");
     } catch (error) {
       console.error("account capability check failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // Automatic updates, from the caches refreshed above (auto-update/cron.server.ts).
+    try {
+      for (const line of scheduledUpdatesLog(await runScheduledUpdates(env))) console.log(line);
+    } catch (error) {
+      console.error("automatic updates failed", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

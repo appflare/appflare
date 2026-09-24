@@ -52,12 +52,37 @@ of such apps skip step 5. When a new version also changes its Durable Object cla
 once. The job then deploys directly, and the change to the classes cannot be undone
 with a rollback.
 
+## Automatic updates
+
+Under **Settings**, **Automatic updates**, admins can turn on **Automatically update
+apps**. It is off by default. Each app's page has an **Automatic updates** choice: use
+the account setting, or turn automatic updates on or off for that app.
+
+When automatic updates are on for an app, the cron checks every 30 minutes whether the
+catalog has a newer version. It starts the update on its own only when that version
+needs nothing from you:
+
+- no value for a secret the new version adds,
+- no confirmation that the new version cannot be checked before it goes live,
+- no Workers Paid confirmation for more cron triggers,
+- no build or installer run to approve (apps built in your account never update on
+  their own).
+
+Anything else waits for you on the app's page, as described above, and the cron does
+not try that version again; it tries the next one the catalog publishes. An automatic
+update runs the same job, with the same snapshot and checks. The cron starts at most
+three app updates per run. It does not try a version again after its update failed,
+or after you rolled the app back from it. The app's job list shows **Automatic** for
+jobs the cron started.
+
 ## Roll back
 
 Each update adds a row under **Versions** on the app's page: when the snapshot was
 taken, the catalog version, and the Worker version. Select **Roll back** on a row to
 deploy that Worker version again to all traffic. A rollback runs as a job and ends
-with a health check.
+with a health check. If automatic updates were on for the app, the rollback turns
+them off, so the cron does not install the version you left again; turn them back on
+on the app's page once a fixed version is out.
 
 A rollback changes the Worker only. **Databases are not changed.** If the newer
 version changed its data, the older code may not read it. Restore a database

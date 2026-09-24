@@ -19,6 +19,7 @@ import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { workerNameSchema } from "../installs/install-input";
+import { workersDevSubdomain } from "../installs/workers-dev";
 import {
   type ArtifactOrigin,
   resolveArtifactPhase,
@@ -502,10 +503,18 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const host = `${params.workerName}.${subdomain}.workers.dev`;
 
     await run("enable workers.dev route", async ({ log, cf, orm }) => {
-      await cf().workers.enableSubdomain(params.workerName, {
-        enabled: true,
-        previews_enabled: true,
-      });
+      // The install's stored choice (on for every new install); previews stay on.
+      const [row] = await orm
+        .select({ workersDev: installs.workers_dev_enabled })
+        .from(installs)
+        .where(eq(installs.id, params.installId))
+        .limit(1);
+      const enabled = row?.workersDev ?? true;
+      await cf().workers.enableSubdomain(params.workerName, workersDevSubdomain(enabled));
+      if (!enabled) {
+        log.info(`Left https://${host} off; version previews are on.`);
+        return {};
+      }
       await recordResource(orm, {
         kind: "subdomain",
         key: host,

@@ -324,7 +324,8 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
               modules,
             });
             return {
-              versionId: result.id,
+              // A reply without an id reads as none, which the job reports.
+              versionId: result.id ?? null,
               scriptId: null,
               hasPreview: result.metadata?.has_preview ?? null,
               modules: modules.length,

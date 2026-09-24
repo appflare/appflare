@@ -108,6 +108,8 @@ interface RunOptions {
   resources?: SeedResource[];
   /** Answers some requests before the fake account does (another fake in front). */
   front?: (request: Request) => Promise<Response | null>;
+  /** The install's stored workers.dev choice (on unless set). */
+  workersDev?: boolean;
 }
 
 async function reconfigure(opts: RunOptions = {}) {
@@ -132,6 +134,11 @@ async function reconfigure(opts: RunOptions = {}) {
     buildKind: opts.buildKind ?? "artifact",
     ...(opts.resources === undefined ? {} : { resources: opts.resources }),
   });
+  if (opts.workersDev === false) {
+    await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0 WHERE id = ?1")
+      .bind(INSTALL_ID)
+      .run();
+  }
   const sandbox: FakeSandbox | undefined =
     opts.buildKind === "sandbox"
       ? fakeSandbox(fixture, { stored: [{ installId: INSTALL_ID, version: "1.0.0", slug: "cut" }] })
@@ -331,6 +338,18 @@ describe("settings change job", () => {
     expect(r.logs.at(-1)?.message).toBe(
       "Changed the settings of cut at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 200)).",
     );
+  });
+
+  it("keeps workers.dev as stored and checks health on the first custom domain while it is off", async () => {
+    const r = await reconfigure({
+      workersDev: false,
+      resources: [...RESOURCES, { kind: "domain", name: "links.example.com", cfId: "dom-1" }],
+      world: { domainHealth: { "links.example.com": [{ status: 200, body: "ok" }] } },
+    });
+    expect(r.error).toBeNull();
+    expect(r.fake.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
+    expect(r.fake.state.domainProbes).toEqual(["links.example.com"]);
+    expect(r.install).toMatchObject({ health_status: "verified", workers_dev_enabled: 0 });
   });
 
   it("promotes the uploaded version itself when no secret changes", async () => {

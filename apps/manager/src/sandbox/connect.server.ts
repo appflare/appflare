@@ -2,6 +2,7 @@ import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { SANDBOX_ENTRYPOINT, SANDBOX_WORKER_NAME, type SandboxInfo } from "@appflare/schema";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
+import { MANAGER_SUBDOMAIN } from "../installs/workers-dev";
 import { probeHealth } from "../jobs/install/health";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { refuseDuringSelfUpdate } from "../jobs/self-update/guard";
@@ -201,7 +202,8 @@ export async function connectSandboxCore(deps: ConnectSandboxDeps): Promise<Conn
       (deps.now ?? (() => new Date()))(),
     );
   }
-  await api.workers.enableSubdomain(workerName, { enabled: true, previews_enabled: true });
+  // Appflare keeps its own workers.dev URL (see MANAGER_SUBDOMAIN).
+  await api.workers.enableSubdomain(workerName, MANAGER_SUBDOMAIN);
 
   const url = previewUrl(created.id, workerName, subdomain, "/api/health");
   const started = Date.now();

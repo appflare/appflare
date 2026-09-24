@@ -46,3 +46,15 @@ domain sends one request to it.
 
 Select **Remove** next to the domain. The app stops answering on that hostname.
 Uninstalling an app removes all of its custom domains first.
+
+## Turn off the workers.dev URL
+
+Once a custom domain serves the app, admins can turn off **Serve on workers.dev** on
+the app's page. Appflare first sends one request to the app's custom domains and
+turns the `workers.dev` URL off only when one of them answers as the app. Updates keep
+the choice, and their checks still work because Cloudflare keeps the Worker's
+preview URLs. While it is off, health checks, **Open app** and the `{{workerUrl}}`
+value an app's settings may use all point at the domain that answered (or, once that
+domain is removed, the first remaining one), and the last custom domain cannot be
+removed. A setting that uses `{{workerUrl}}` changes with the app's next update or
+settings change. Turn the switch back on at any time.

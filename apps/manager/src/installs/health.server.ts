@@ -4,10 +4,11 @@ import { createDb } from "../db/client";
 import { type HealthStatus, installs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
-import { workersDevUrl } from "./post-install";
+import { readAppBaseUrl } from "./app-address.server";
 
 /**
- * "Check now" on an install's page: one GET of the Worker's URL at the app's
+ * "Check now" on an install's page: one GET of the app's address (its
+ * workers.dev URL, or its primary custom domain while workers.dev is off) at its
  * health path (the catalog's `install.healthPath`, else `/`), recorded on the
  * install the way the jobs' final health check records it. One probe, no
  * retries: the admin can press the button again.
@@ -50,6 +51,8 @@ export async function checkInstallHealthCore(
       status: installs.status,
       workerName: installs.worker_name,
       manifestJson: installs.manifest_json,
+      workersDev: installs.workers_dev_enabled,
+      servedDomain: installs.served_domain,
     })
     .from(installs)
     .where(eq(installs.id, input.installId))
@@ -59,7 +62,16 @@ export async function checkInstallHealthCore(
     throw new HealthCheckError(`Only an installed app can be checked; this one is ${row.status}.`);
   }
   const settings = await readSettings(orm, [SETTING.accountSubdomain]);
-  const base = workersDevUrl(row.workerName, settings.account_subdomain);
+  const base = await readAppBaseUrl(
+    orm,
+    {
+      id: input.installId,
+      worker_name: row.workerName,
+      workers_dev_enabled: row.workersDev,
+      served_domain: row.servedDomain,
+    },
+    settings.account_subdomain,
+  );
   if (base === null) {
     throw new HealthCheckError("The account's workers.dev subdomain is not known yet.");
   }

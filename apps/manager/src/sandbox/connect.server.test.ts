@@ -90,6 +90,8 @@ describe("connectSandboxCore", () => {
         },
       },
     ]);
+    // Appflare keeps its own workers.dev URL; previews are on for the check.
+    expect(r.account.state.subdomainCalls).toEqual([{ enabled: true, previews_enabled: true }]);
     expect(r.account.state.previewHosts).toEqual([
       `${NEW_VERSION.slice(0, 8)}-appflare.${SUBDOMAIN}.workers.dev`,
       `${NEW_VERSION.slice(0, 8)}-appflare.${SUBDOMAIN}.workers.dev`,

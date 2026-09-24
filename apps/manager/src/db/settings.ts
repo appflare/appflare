@@ -70,6 +70,13 @@ export const SETTING = {
   telemetryOpenedSentDay: "telemetry_opened_sent_day",
   /** `1` once "manager setup completed" was sent; `skipped` when it never will be. */
   telemetrySetupSent: "telemetry_setup_sent",
+  /**
+   * Automatic updates (auto-update/), `on` or `off`; absent means off.
+   * `auto_update_apps` is the default of every install left on "Use the
+   * account default"; `auto_update_manager` covers Appflare itself.
+   */
+  autoUpdateApps: "auto_update_apps",
+  autoUpdateManager: "auto_update_manager",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

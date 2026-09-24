@@ -13,6 +13,7 @@ import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { EMAIL_ROUTE_KIND } from "../installs/resource-kinds";
+import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
 import { sandboxBinding } from "../sandbox/binding";
 import { sha256Hex } from "./install/artifact";
 import {
@@ -289,6 +290,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         zipUrl: install.artifact_url,
         sandboxBuild: install.build_kind === "sandbox",
         storedVars: parseStoredVars(install.config_json),
+        workersDev: install.workers_dev_enabled,
+        servedDomain: install.served_domain,
         resources: rows
           .filter((r) => r.kind !== EMAIL_ROUTE_KIND)
           .map(
@@ -311,7 +314,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       };
     });
     steps.setAccountId(started.accountId);
-    const { workerName } = started;
+    const { workerName, workersDev } = started;
 
     // The manifest the install recorded, read again outside the step (step
     // results are kept small) and held to the digest the step checked.
@@ -444,7 +447,15 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           });
 
     const subdomain = await lookupSubdomainPhase(steps);
-    const url = `https://${workerName}.${subdomain}.workers.dev${healthPath}`;
+    // Where the app is reached, for `{{workerUrl}}` and the health check.
+    const appBase = appBaseUrl({
+      workerName,
+      subdomain,
+      workersDev,
+      domains: domainHostnames(started.resources),
+      served: started.servedDomain,
+    });
+    const url = `${appBase}${healthPath}`;
 
     if (redeploy) {
       // Snapshot, before anything changes (the settings before the change included).
@@ -474,7 +485,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         manifest.assets.files,
         host,
       );
-      const vars = installVars(manifest, params.vars, { workerName, subdomain });
+      const vars = installVars(manifest, params.vars, {
+        workerName,
+        subdomain,
+        workerUrl: appBase,
+      });
 
       const uploaded = await run("upload Worker version", async ({ log }) => {
         for (const warning of vars.warnings) log.warn(warning);
@@ -550,7 +565,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         });
       } else {
         await run("enable version previews", async ({ log, cf }) => {
-          await cf().workers.enableSubdomain(workerName, { enabled: true, previews_enabled: true });
+          // The workers.dev URL stays as the admin left it; previews are always on.
+          await cf().workers.enableSubdomain(workerName, workersDevSubdomain(workersDev));
           log.info("Preview URLs are enabled for this Worker.");
           return {};
         });

@@ -8,6 +8,7 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useState } from "react";
+import { startedByLabel } from "../../../auto-update/auto-update";
 import { compareVersions } from "../../../catalog/versions";
 import { formatDateTime, formatTime, jobKindLabel } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
@@ -194,6 +195,7 @@ function JobPage() {
                 <span className="font-mono text-[0.9em]">{job.workerVersionId}</span>
               </Row>
             )}
+            <Row label="Started by">{startedByLabel(job.startedBy)}</Row>
             <Row label="Started">{formatDateTime(job.startedAt)}</Row>
             <Row label="Finished">{formatDateTime(job.finishedAt)}</Row>
           </dl>

@@ -283,6 +283,23 @@ export function previewUrl(
   return `https://${prefix}-${workerName}.${subdomain}.workers.dev${path}`;
 }
 
+/**
+ * The `workers/message` annotation of the version an update uploads. It names
+ * the job, so a failure can find the version even when the upload's answer
+ * did not say its id.
+ */
+export function updateVersionMessage(slug: string, version: string, jobId: string): string {
+  return `Appflare: ${slug} ${version} (update ${jobId})`;
+}
+
+/**
+ * The `workers/message` annotation of the version a failed update makes to
+ * take the secrets it introduced off the Worker's newest version.
+ */
+export function updateSecretsUndoneMessage(jobId: string): string {
+  return `Appflare: update ${jobId} undone`;
+}
+
 /** Why the new version cannot be checked before it serves traffic (shown to the admin and logged). */
 export const NO_PREVIEW_REASON =
   "Workers that implement a Durable Object have no version preview URL, so the new version cannot be checked before it serves traffic; the health check after the update still runs";

@@ -22,13 +22,13 @@ import {
 import { recordedCatalog, settingsRunId } from "../jobs/self-deploying/phases";
 import { lastDurableObjectTagOf, updatePath } from "../jobs/update/plan";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
+import { readAppBaseUrl } from "./app-address.server";
 import {
   type InstallVarField,
   installVarFields,
   missingRequiredVar,
   varValueProblem,
 } from "./install-vars";
-import { workersDevUrl } from "./post-install";
 import type { StartReconfigureInput } from "./reconfigure-input";
 import { EMAIL_ROUTE_KIND } from "./resource-kinds";
 import { catalogOnlyManifest } from "./start-install.server";
@@ -214,7 +214,8 @@ export async function readInstallSettingsCore(
     fields: ctx.fields.map((f) => ({ ...f, stored: stored[f.name] ?? null })),
     placeholders: {
       workerName: install.worker_name,
-      workerUrl: workersDevUrl(install.worker_name, deps.subdomain),
+      // Where the app is reached: its custom domain while workers.dev is off.
+      workerUrl: await readAppBaseUrl(orm, install, deps.subdomain),
     },
     secrets: ctx.slots,
     canRemoveSecrets: install.build_kind !== "self-deploying",

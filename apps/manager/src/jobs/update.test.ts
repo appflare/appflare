@@ -1,5 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import type { FetchLike } from "@appflare/cf-api";
 import { type ArtifactManifest, MAX_WORKER_MODULES } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
@@ -10,7 +11,7 @@ import {
   buildArtifactFixture,
   ZIP_URL,
 } from "../test/artifact-fixture";
-import { type FakeAccount, fakeAccount, NEW_VERSION, TOKEN } from "../test/fake-account";
+import { type FakeAccount, fakeAccount, NEW_VERSION, SUBDOMAIN, TOKEN } from "../test/fake-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import {
@@ -69,6 +70,8 @@ async function update(
   units: "self" | "local" = "self",
   /** Runs after the install is seeded, before the job starts. */
   afterSeed?: () => Promise<void>,
+  /** Wraps the fake's fetch (to change the account while the job runs). */
+  wrapFetch?: (fake: ReturnType<typeof fakeAccount>) => FetchLike,
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeAccount(fixture, {
@@ -97,14 +100,15 @@ async function update(
   if (!("jobId" in started) || params === null) throw new Error("no Workflow params");
   const { jobId } = started;
   const step = fakeStep();
-  const self = fakeSelf(jobEnv(), { fetch: fake.fetch });
+  const fetch = wrapFetch?.(fake) ?? fake.fetch;
+  const self = fakeSelf(jobEnv(), { fetch });
   let error: unknown = null;
   try {
     await runUpdate({
       params,
       step,
       env: units === "self" ? { ...jobEnv(), SELF: self } : jobEnv(),
-      deps: { fetch: fake.fetch, signingKeys: fixture.keys },
+      deps: { fetch, signingKeys: fixture.keys },
     });
   } catch (e) {
     error = e;
@@ -225,7 +229,10 @@ describe("update job", () => {
       ],
       assets: { jwt: "completion-jwt", config: {} },
       keep_bindings: ["secret_text"],
-      annotations: { "workers/message": "Appflare: cut 1.1.0", "workers/tag": "1.1.0" },
+      annotations: {
+        "workers/message": "Appflare: cut 1.1.0 (update job1)",
+        "workers/tag": "1.1.0",
+      },
     });
     expect(version?.modules).toEqual(["worker.js"]);
 
@@ -292,6 +299,9 @@ describe("update job", () => {
       manifest_json: OLD_MANIFEST,
     });
     expect(r.snapshot).not.toBeNull();
+    // It introduced no secret, so there is nothing to take off the newest version.
+    expect(r.fake.state.versionPatches).toEqual([]);
+    expect(r.step.names).not.toContain("put back the previous secrets");
     expect(r.logs.at(-1)?.message).toBe(
       `Update failed at "canary check 6". Version ${NEW_VERSION} was uploaded but never promoted; the previous version keeps serving all traffic.`,
     );
@@ -469,6 +479,170 @@ describe("update job", () => {
     expect(JSON.stringify(r.logs)).not.toContain(SECRET);
     expect(r.logs.some((l) => l.message === "New secret API_KEY: set with the new version.")).toBe(
       true,
+    );
+  });
+
+  it("takes the secrets it introduced off the newest version when it fails before promotion", async () => {
+    const SECRET = "new-secret-value-DO-NOT-LEAK";
+    const r = await update(
+      {
+        ...NEW_APP,
+        catalog: {
+          secrets: [
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+            { name: "API_KEY", label: "API key", generate: false },
+          ],
+        },
+      },
+      { previews: [{ status: 500, body: "boom" }] },
+      {},
+      { secrets: { API_KEY: SECRET } },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe("canary check 6: the Worker answered HTTP 500");
+    expect(r.step.names.slice(-2)).toEqual(["put back the previous secrets", "mark update failed"]);
+    expect(r.fake.state.calls).not.toContain("POST /workers/scripts/cut/deployments");
+    // The upload carried the new value; the serving version never had the
+    // secret, so the newest version drops it and the next upload cannot copy it.
+    expect(r.fake.state.versionPatches).toEqual([
+      {
+        env: { API_KEY: null },
+        annotations: { "workers/message": "Appflare: update job1 undone" },
+      },
+    ]);
+    expect(r.install).toMatchObject({ status: "installed", current_version_id: OLD_VERSION });
+    expect(r.logs.at(-1)?.message).toBe(
+      `Update failed at "canary check 6". Version ${NEW_VERSION} was uploaded but never promoted; the previous version keeps serving all traffic. The secrets it introduced were taken off the Worker's newest version, so the next upload does not carry them.`,
+    );
+    expect(JSON.stringify(r.logs)).not.toContain(SECRET);
+    expect(JSON.stringify(r.fake.state.versionPatches)).not.toContain(SECRET);
+  });
+
+  it("leaves the secrets alone when a newer upload happened after its own", async () => {
+    const r = await update(
+      {
+        ...NEW_APP,
+        catalog: {
+          secrets: [
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+            { name: "API_KEY", label: "API key", generate: false },
+          ],
+        },
+      },
+      { previews: [{ status: 500, body: "boom" }] },
+      {},
+      { secrets: { API_KEY: "value" } },
+      "self",
+      undefined,
+      // Someone uploads another version while the canary runs.
+      (fake) => async (input, init) => {
+        const preview = new URL(input).host.endsWith(`-cut.${SUBDOMAIN}.workers.dev`);
+        if (preview && !fake.state.versions.some((v) => v.id === "someone-elses")) {
+          fake.state.versions.push({ id: "someone-elses", metadata: {}, modules: [] });
+        }
+        return fake.fetch(input, init);
+      },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.fake.state.versionPatches).toEqual([]);
+    expect(r.logs.at(-1)?.message).toContain(
+      "Another version was uploaded meanwhile; it keeps whatever secrets it was given.",
+    );
+  });
+
+  it("sends the stored workers.dev choice and checks health on the first custom domain while it is off", async () => {
+    const r = await update(
+      NEW_APP,
+      { domainHealth: { "links.example.com": [{ status: 200, body: "ok" }] } },
+      {
+        resources: [
+          ...RESOURCES,
+          { kind: "domain", name: "links.example.com", cfId: "dom-1" },
+          { kind: "domain", name: "zz.example.com", cfId: "dom-2" },
+        ],
+      },
+      {},
+      "self",
+      async () => {
+        await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0 WHERE id = ?1")
+          .bind(INSTALL_ID)
+          .run();
+      },
+    );
+    expect(r.error).toBeNull();
+    // Previews stay on for the canary; the workers.dev URL stays off.
+    expect(r.fake.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
+    expect(r.fake.state.domainProbes).toEqual(["links.example.com"]);
+    expect(r.install).toMatchObject({ health_status: "verified", workers_dev_enabled: 0 });
+    expect(r.logs.at(-1)?.message).toContain("at https://links.example.com/ (health: verified");
+  });
+
+  it("uses the domain the switch verified for {{workerUrl}} and the health check", async () => {
+    const r = await update(
+      {
+        ...NEW_APP,
+        catalog: {
+          vars: [
+            { name: "BASE_URL", label: "Base URL", default: "{{workerUrl}}", required: false },
+          ],
+        },
+      },
+      { domainHealth: { "zz.example.com": [{ status: 200, body: "ok" }] } },
+      {
+        resources: [
+          ...RESOURCES,
+          { kind: "domain", name: "links.example.com", cfId: "dom-1" },
+          { kind: "domain", name: "zz.example.com", cfId: "dom-2" },
+        ],
+      },
+      {},
+      "self",
+      async () => {
+        await env.DB.prepare(
+          "UPDATE installs SET workers_dev_enabled = 0, served_domain = 'zz.example.com' WHERE id = ?1",
+        )
+          .bind(INSTALL_ID)
+          .run();
+      },
+    );
+    expect(r.error).toBeNull();
+    const bindings = r.fake.state.versions[0]?.metadata.bindings as Array<Record<string, unknown>>;
+    expect(bindings).toContainEqual({
+      type: "plain_text",
+      name: "BASE_URL",
+      text: "https://zz.example.com",
+    });
+    expect(r.fake.state.domainProbes).toEqual(["zz.example.com"]);
+  });
+
+  it("takes the secrets it introduced off an upload that did not report its version", async () => {
+    const r = await update(
+      {
+        ...NEW_APP,
+        catalog: {
+          secrets: [
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+            { name: "API_KEY", label: "API key", generate: false },
+          ],
+        },
+      },
+      { uploadWithoutId: true },
+      {},
+      { secrets: { API_KEY: "value" } },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      "upload Worker version: Cloudflare did not report the id of the uploaded version",
+    );
+    // Found by the upload's annotation, which names this job.
+    expect(r.fake.state.versionPatches).toEqual([
+      {
+        env: { API_KEY: null },
+        annotations: { "workers/message": "Appflare: update job1 undone" },
+      },
+    ]);
+    expect(r.logs.at(-1)?.message).toBe(
+      `Update failed at "upload Worker version". Nothing was deployed; the previous version keeps serving all traffic. Resources created so far stay recorded. The secrets it introduced were taken off the Worker's newest version, so the next upload does not carry them.`,
     );
   });
 

@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { createDb } from "../db/client";
-import { installs, job_logs, jobs } from "../db/schema";
+import { installs, type JobStarter, job_logs, jobs } from "../db/schema";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { sandboxBinding } from "../sandbox/binding";
 import {
@@ -43,6 +43,8 @@ export interface JobView {
   workerVersionId: string | null;
   /** A self-update's target Appflare version; null for other kinds. */
   targetVersion: string | null;
+  /** Who started it: an admin, or the cron (automatic updates). */
+  startedBy: JobStarter;
   startedAt: string | null;
   finishedAt: string | null;
   install: {
@@ -140,6 +142,7 @@ export const getJob = createServerFn({ method: "GET" })
       error: job.error,
       workerVersionId: job.worker_version_id,
       targetVersion: targetVersionOf(job.kind, job.input_json),
+      startedBy: job.started_by,
       startedAt: job.started_at?.toISOString() ?? null,
       finishedAt: job.finished_at?.toISOString() ?? null,
       install: installRows[0] ?? null,

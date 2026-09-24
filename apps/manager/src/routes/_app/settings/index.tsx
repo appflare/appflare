@@ -1,6 +1,8 @@
 import { LayerCard, LinkButton, Text } from "@cloudflare/kumo";
 import { ArrowRightIcon } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
+import { getAutoUpdateSettings } from "../../../auto-update/auto-update.functions";
+import { AutomaticUpdatesCard } from "../../../auto-update/automatic-updates-card";
 import { AccountCapabilitiesCard } from "../../../capabilities/account-capabilities-card";
 import { getAccountCapabilities } from "../../../capabilities/capabilities.functions";
 import { getManagerUpdate } from "../../../catalog/manager-releases.functions";
@@ -26,7 +28,8 @@ import { getTelemetryStatus } from "../../../telemetry/telemetry.functions";
  * `/settings`: users, your passkeys, the Cloudflare token, the account's
  * capabilities and Workers plan, Cloudflare Access protection, sandbox builds, Appflare's own
  * updates (`#appflare-updates`, which the home page's list of pending
- * updates links to), anonymous usage data, and the way to Removed apps.
+ * updates links to), automatic updates, anonymous usage data, and the way to
+ * Removed apps.
  */
 export const Route = createFileRoute("/_app/settings/")({
   staticData: { title: "Settings" },
@@ -41,6 +44,7 @@ export const Route = createFileRoute("/_app/settings/")({
       managerUpdate,
       removedApps,
       telemetry,
+      autoUpdate,
     ] = await Promise.all([
       context.viewer.role === "admin" ? listUsers() : null,
       listPasskeys(),
@@ -51,6 +55,7 @@ export const Route = createFileRoute("/_app/settings/")({
       getManagerUpdate(),
       listRemovedApps(),
       getTelemetryStatus(),
+      getAutoUpdateSettings(),
     ]);
     return {
       users,
@@ -62,6 +67,7 @@ export const Route = createFileRoute("/_app/settings/")({
       managerUpdate,
       removedApps: removedApps.length,
       telemetry,
+      autoUpdate,
     };
   },
   component: SettingsPage,
@@ -97,6 +103,7 @@ function SettingsPage() {
     managerUpdate,
     removedApps,
     telemetry,
+    autoUpdate,
   } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   return (
@@ -126,6 +133,9 @@ function SettingsPage() {
       </Section>
       <Section id="appflare-updates" title="Appflare updates">
         <AppflareUpdatesCard state={managerUpdate} isAdmin={viewer.role === "admin"} />
+      </Section>
+      <Section id="automatic-updates" title="Automatic updates">
+        <AutomaticUpdatesCard settings={autoUpdate} isAdmin={viewer.role === "admin"} />
       </Section>
       <Section id="notifications" title="Notifications">
         <NotificationsLinkCard />

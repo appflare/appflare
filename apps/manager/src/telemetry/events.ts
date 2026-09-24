@@ -73,6 +73,10 @@ export interface HeartbeatInput {
   accessEnabled: boolean;
   sandboxConnected: boolean;
   managerBehindLatest: boolean;
+  /** "Automatically update Appflare" is on. */
+  managerSelfUpdateAuto: boolean;
+  /** "Automatically update apps" (the default of installs that follow it) is on. */
+  autoUpdateDefault: boolean;
   /** Installs that are not uninstalled. */
   installs: readonly {
     slug: string;
@@ -81,6 +85,8 @@ export interface HeartbeatInput {
     version: string;
     /** When the running version was deployed (ms). */
     updatedAt: number;
+    /** The install's automatic-update choice (`inherit`, `on`, `off`). */
+    autoUpdate: string;
   }[];
   /** Latest version of each app in the cached catalog index; null when nothing is cached. */
   catalogVersions: ReadonlyMap<string, string> | null;
@@ -127,8 +133,12 @@ export function heartbeatProperties(input: HeartbeatInput): Record<string, Telem
     "behind_30_90d",
     "behind_gt_90d",
   ]);
+  const byAutoUpdate = counts(["on", "off", "inherit"]);
   const apps = new Set<string>();
   for (const install of input.installs) {
+    if (install.autoUpdate in byAutoUpdate) {
+      byAutoUpdate[install.autoUpdate as keyof typeof byAutoUpdate]++;
+    }
     if (install.status in byStatus) byStatus[install.status as keyof typeof byStatus]++;
     const tier = tierName(install.buildKind);
     if (tier !== null && tier in byTier) byTier[tier as keyof typeof byTier]++;
@@ -163,10 +173,9 @@ export function heartbeatProperties(input: HeartbeatInput): Record<string, Telem
     access_enabled: input.accessEnabled,
     sandbox_connected: input.sandboxConnected,
     manager_behind_latest: input.managerBehindLatest,
-    // TODO: fill these three from the update-control settings once the manager has them.
-    manager_self_update_auto: null,
-    auto_update_default: null,
-    installs_auto_update: null,
+    manager_self_update_auto: input.managerSelfUpdateAuto,
+    auto_update_default: input.autoUpdateDefault ? "on" : "off",
+    installs_auto_update: byAutoUpdate,
     notification_channels: { ...input.notificationChannels },
     installs_total: input.installs.length,
     installs_by_status: byStatus,
@@ -195,6 +204,8 @@ export interface JobRow {
   buildKind: string | null;
   /** A rollback's snapshot: the version the update it undoes moved to. */
   snapshotTargetVersion: string | null;
+  /** Who started the job (`admin` or `schedule`). */
+  startedBy: string;
 }
 
 function parseInput(text: string | null): Record<string, unknown> {
@@ -268,8 +279,8 @@ export function jobProperties(
     catalog_version: custom ? null : version,
     from_version: custom ? null : from,
     tier: jobTier(row, input),
-    // TODO: report `auto` for updates started by auto-update once the manager has it.
-    trigger: "manual",
+    // `auto`: the cron started it (automatic updates); `manual`: an admin did.
+    trigger: row.startedBy === "schedule" ? "auto" : "manual",
   };
 }
 

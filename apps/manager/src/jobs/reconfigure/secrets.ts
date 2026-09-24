@@ -131,31 +131,60 @@ export function undoSecretsPatch(
  * version_id }` in the merge patch restores the serving value, and the next
  * upload keeps it). It does so only while the newest version is this job's
  * own; a version someone uploaded since is left alone, and said so.
+ *
+ * An update uses the same step: the secrets a new version introduces ride on
+ * its upload, so there the uploaded version itself carries the new values
+ * (`carrier: "upload"`), and a failure before promotion leaves them on the
+ * newest version just the same.
  */
 export async function undoSecretChangesPhase(
   steps: JobSteps,
   input: {
     jobId: string;
     workerName: string;
-    /** The version this job uploaded (before its secrets patch). */
-    uploadedVersionId: string;
+    /**
+     * The version this job uploaded (before its secrets patch); null when the
+     * upload's answer did not say (an update then finds it by `uploadMessage`).
+     */
+    uploadedVersionId: string | null;
     /** The version serving all traffic, which the snapshot recorded. */
     servingVersionId: string;
     changes: SecretChanges;
     slots: readonly SecretSlot[];
+    /**
+     * Which version carries the job's new values: `patch` (default), the one
+     * its secrets patch made from the upload; `upload`, the upload itself.
+     */
+    carrier?: "patch" | "upload";
+    /** With `carrier: "upload"`: the upload's `workers/message` annotation. */
+    uploadMessage?: string;
+    /** The annotation of the version that puts the serving secrets back. */
+    undoneMessage?: string;
   },
 ): Promise<"undone" | "not-needed" | "left"> {
   const { jobId, workerName } = input;
+  const undoneMessage = input.undoneMessage ?? secretsUndoneMessage(jobId);
   const result = await steps.run("put back the previous secrets", async ({ log, cf }) => {
     const api = cf();
     const newest = newestVersion(await api.versions.listVersions(workerName));
     const message = newest?.annotations?.["workers/message"];
-    if (message === secretsUndoneMessage(jobId)) {
+    if (message === undoneMessage) {
       log.info(`Version ${newest?.id} already has the secrets of the serving version back.`);
       return { outcome: "undone" as const };
     }
-    if (message !== secretVersionMessage(jobId)) {
-      if (newest === undefined || newest.id === input.uploadedVersionId) {
+    const carries =
+      input.carrier === "upload"
+        ? newest !== undefined &&
+          (newest.id === input.uploadedVersionId ||
+            (input.uploadMessage !== undefined && message === input.uploadMessage))
+        : message === secretVersionMessage(jobId);
+    if (!carries) {
+      if (
+        newest === undefined ||
+        // The upload never reported a version and none is annotated as its own.
+        (input.carrier === "upload" && input.uploadedVersionId === null) ||
+        (input.carrier !== "upload" && newest.id === input.uploadedVersionId)
+      ) {
         // The patch never happened: the upload kept the serving secrets.
         log.info("The Worker's newest version does not carry this job's secret changes.");
         return { outcome: "not-needed" as const };
@@ -167,7 +196,7 @@ export async function undoSecretChangesPhase(
     }
     const restored = await api.versions.patchLatestVersion(workerName, {
       env: undoSecretsPatch(input.changes, input.slots, input.servingVersionId),
-      annotations: { "workers/message": secretsUndoneMessage(jobId) },
+      annotations: { "workers/message": undoneMessage },
     });
     log.info(
       `Version ${restored.id} has the secrets of the serving version ${input.servingVersionId} again, so the next upload keeps those and not this job's.`,

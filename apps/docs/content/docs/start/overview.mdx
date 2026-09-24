@@ -52,7 +52,8 @@ yet; until it is, run it [from a checkout](/start/install/#from-a-checkout).)
 The D1 database holds users, settings, install records, and job logs. The KV
 namespace caches the catalog. The Workflow runs installs, updates, rollbacks, and
 uninstalls as durable jobs. The cron trigger refreshes the catalog and checks for new
-releases; it never starts a job on its own.
+releases. It starts update jobs on its own only when you turn on
+[automatic updates](/guides/updates/#automatic-updates).
 
 ## The parts
 

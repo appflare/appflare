@@ -84,6 +84,8 @@ const REPORT_KEYS = [
   SETTING.accountCapabilities,
   SETTING.accessEnabledAt,
   SETTING.cfTokenVerifiedAt,
+  SETTING.autoUpdateApps,
+  SETTING.autoUpdateManager,
 ] as const;
 
 type ReportSettings = Partial<Record<(typeof REPORT_KEYS)[number], string>>;
@@ -110,7 +112,7 @@ function heartbeatStatements(db: D1Database): D1PreparedStatement[] {
     ),
     db.prepare("SELECT count(*) AS passkeys, count(DISTINCT user_id) AS users FROM passkey"),
     db.prepare(
-      `SELECT app_slug, status, build_kind, catalog_version, updated_at
+      `SELECT app_slug, status, build_kind, catalog_version, updated_at, auto_update
        FROM installs WHERE status <> 'uninstalled'`,
     ),
     db.prepare(
@@ -174,12 +176,15 @@ async function heartbeatInput(
     accessEnabled: settings.access_enabled_at !== undefined,
     sandboxConnected: sandboxBinding(env) !== undefined,
     managerBehindLatest: managerUpdateView(env.APPFLARE_VERSION, latest).updateAvailable,
+    managerSelfUpdateAuto: settings.auto_update_manager === "on",
+    autoUpdateDefault: settings.auto_update_apps === "on",
     installs: (installs ?? []).map((row) => ({
       slug: String(row.app_slug),
       status: String(row.status),
       buildKind: String(row.build_kind),
       version: String(row.catalog_version),
       updatedAt: num(row.updated_at),
+      autoUpdate: String(row.auto_update ?? "inherit"),
     })),
     catalogVersions: versions,
     installsWithDomain: feature("domain"),
@@ -227,6 +232,7 @@ function jobsStatement(db: D1Database, from: number, to: number): D1PreparedStat
   return db
     .prepare(
       `SELECT j.id, j.kind, j.status, j.input_json, j.error, j.started_at, j.finished_at,
+              j.started_by,
               i.app_slug, i.catalog_version, i.build_kind, s.target_catalog_version
        FROM jobs j
        LEFT JOIN installs i ON i.id = j.install_id
@@ -254,6 +260,7 @@ function jobRows(result: D1Result | undefined): JobRow[] {
     buildKind: typeof r.build_kind === "string" ? r.build_kind : null,
     snapshotTargetVersion:
       typeof r.target_catalog_version === "string" ? r.target_catalog_version : null,
+    startedBy: typeof r.started_by === "string" ? r.started_by : "admin",
   }));
 }
 

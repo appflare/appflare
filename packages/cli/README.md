@@ -200,8 +200,8 @@ version, the operating system, CPU architecture and Node.js major version, wheth
 ran in a terminal, in CI or under a coding agent, and whether the Worker name was the
 default. It never sends your Cloudflare account id or name, the Worker name, email
 addresses, domains, paths, your user name or hostname, or any error message. Events
-go to PostHog Cloud's EU region and are tied to a random id, never to a person;
-PostHog discards IP addresses.
+go to PostHog Cloud's EU region and are tied to a random id, never to a person; the
+PostHog project is set to discard IP addresses.
 
 `create-appflare` deploys the manager with that random id as the variable
 `APPFLARE_INSTALL_ID`, so the manager's own usage data continues it. The manager

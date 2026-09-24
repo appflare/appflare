@@ -422,6 +422,22 @@ describe("removeCustomDomainCore", () => {
     });
   });
 
+  it("refuses to remove the last custom domain while workers.dev is off", async () => {
+    const { world, api } = fakeZoneApi();
+    const d = deps(api);
+    await addCustomDomainCore(d, add("cut.example.com"));
+    await addCustomDomainCore(d, add("www.example.com"));
+    await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0").run();
+
+    const first = { installId: INSTALL_ID, resourceId: "i1:domain:id1" };
+    expect(await removeCustomDomainCore(d, first)).toEqual({ hostname: "cut.example.com" });
+    const last = { installId: INSTALL_ID, resourceId: "i1:domain:id2" };
+    await expect(removeCustomDomainCore(d, last)).rejects.toThrow(
+      "This is the app's only address: its workers.dev URL is off.",
+    );
+    expect(world.calls).not.toContain("DELETE /workers/domains/cfd-2");
+  });
+
   it("leaves domains to a running uninstall and refuses other kinds of resource", async () => {
     const { api } = fakeZoneApi();
     await addCustomDomainCore(deps(api), add("cut.example.com"));

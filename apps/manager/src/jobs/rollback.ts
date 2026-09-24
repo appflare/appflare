@@ -2,11 +2,13 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { type ArtifactManifest, artifactManifestSchema } from "@appflare/schema";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
+import { effectiveAutoUpdate, settingOn } from "../auto-update/auto-update";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
-import { QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
+import { CUSTOM_DOMAIN_KIND, QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
+import { appBaseUrl, domainHostnames } from "../installs/workers-dev";
 import { healthCheckOfManifest, healthLabel } from "./install/health";
 import {
   checkLiveHealthPhase,
@@ -124,6 +126,25 @@ export async function reconcileSecretRecords(
   return { restored: restored.sort(), absent: absent.sort() };
 }
 
+/**
+ * After a rollback, the cron must not move the app straight back to the
+ * version the admin just left: its automatic updates are turned off when
+ * they were on (by its own choice or the account default). True when this
+ * changed the install's choice.
+ */
+export async function turnOffAutoUpdate(orm: Database, installId: string): Promise<boolean> {
+  const [row] = await orm
+    .select({ choice: installs.auto_update })
+    .from(installs)
+    .where(eq(installs.id, installId))
+    .limit(1);
+  if (row === undefined) return false;
+  const defaults = await readSettings(orm, [SETTING.autoUpdateApps]);
+  if (!effectiveAutoUpdate(row.choice, settingOn(defaults.auto_update_apps))) return false;
+  await orm.update(installs).set({ auto_update: "off" }).where(eq(installs.id, installId));
+  return true;
+}
+
 export async function runRollback(ctx: JobContext): Promise<void> {
   const parsed = rollbackJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid rollback job payload");
@@ -198,16 +219,17 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       if (snapshot === undefined) {
         throw new JobError("the snapshot does not belong to this install");
       }
-      const crons = await orm
-        .select({ name: resources.name })
+      const recordedRows = await orm
+        .select({ id: resources.id, kind: resources.kind, name: resources.name })
         .from(resources)
         .where(
           and(
             eq(resources.install_id, params.installId),
-            eq(resources.kind, "cron"),
+            inArray(resources.kind, ["cron", CUSTOM_DOMAIN_KIND]),
             isNull(resources.deleted_at),
           ),
         );
+      const crons = recordedRows.filter((r) => r.kind === "cron");
       // Queue consumers belong to the script: the snapshot's version gets the
       // consumers it had.
       const queueRows = await orm
@@ -261,6 +283,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
             : consumerPlansOf(snapshot.manifest_json),
         healthPath: healthCheckOfManifest(snapshot.manifest_json).path,
         healthMode: healthCheckOfManifest(snapshot.manifest_json).mode,
+        workersDev: install.workers_dev_enabled,
+        servedDomain: install.served_domain,
+        domains: domainHostnames(recordedRows),
       };
     });
     steps.setAccountId(started.accountId);
@@ -317,6 +342,11 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           log.info(`Secrets this version does not have: ${changed.absent.join(", ")}.`);
         }
       }
+      if (await turnOffAutoUpdate(orm, params.installId)) {
+        log.info(
+          `Automatic updates of this app are now off, so the cron does not update it to ${started.fromVersion} again. Turn them back on on the app's page once a fixed version is out.`,
+        );
+      }
       return {};
     });
 
@@ -346,7 +376,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     }
 
     const subdomain = await lookupSubdomainPhase(steps);
-    const url = `https://${workerName}.${subdomain}.workers.dev${started.healthPath}`;
+    const url = `${appBaseUrl({ workerName, subdomain, workersDev: started.workersDev, domains: started.domains, served: started.servedDomain })}${started.healthPath}`;
     // Recorded rather than fatal: the snapshot's version already serves. A
     // job started before health modes existed has none recorded.
     const health = await checkLiveHealthPhase(steps, step, url, started.healthMode ?? "default");

@@ -138,6 +138,73 @@ describe("rollback job", () => {
     expect(r.fake.state.restores).toEqual([]);
   });
 
+  it("turns automatic updates of the app off, so the cron does not update it straight back", async () => {
+    await env.DB.prepare(
+      "INSERT INTO settings (key, value, updated_at) VALUES ('auto_update_apps', 'on', 1)",
+    ).run();
+    const r = await rollback();
+    expect(r.error).toBeNull();
+    expect(r.install).toMatchObject({ auto_update: "off" });
+    const logs = (
+      await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'rb1'").all<{
+        message: string;
+      }>()
+    ).results.map((l) => l.message);
+    expect(logs).toContain(
+      "Automatic updates of this app are now off, so the cron does not update it to 1.1.0 again. Turn them back on on the app's page once a fixed version is out.",
+    );
+  });
+
+  it("leaves the automatic-update choice alone when they were off", async () => {
+    const r = await rollback();
+    expect(r.install).toMatchObject({ auto_update: "inherit" });
+    const logs = (
+      await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'rb1'").all<{
+        message: string;
+      }>()
+    ).results.map((l) => l.message);
+    expect(logs.some((m) => m.startsWith("Automatic updates"))).toBe(false);
+  });
+
+  it("checks health on the first custom domain while workers.dev is off", async () => {
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, name, cf_id, created_at) VALUES
+         ('i1:domain:01B', ?1, 'domain', 'second.example.com', 'dom-2', 2),
+         ('i1:domain:01A', ?1, 'domain', 'links.example.com', 'dom-1', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0 WHERE id = ?1")
+      .bind(INSTALL_ID)
+      .run();
+    const r = await rollback({
+      domainHealth: { "links.example.com": [{ status: 200, body: "ok" }] },
+    });
+    expect(r.error).toBeNull();
+    expect(r.fake.state.domainProbes).toEqual(["links.example.com"]);
+    expect(r.install).toMatchObject({ health_status: "verified" });
+  });
+
+  it("checks health on the domain the switch verified, while it is still attached", async () => {
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, name, cf_id, created_at) VALUES
+         ('i1:domain:01A', ?1, 'domain', 'links.example.com', 'dom-1', 1),
+         ('i1:domain:01B', ?1, 'domain', 'second.example.com', 'dom-2', 2)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "UPDATE installs SET workers_dev_enabled = 0, served_domain = 'second.example.com' WHERE id = ?1",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const r = await rollback({
+      domainHealth: { "second.example.com": [{ status: 200, body: "ok" }] },
+    });
+    expect(r.error).toBeNull();
+    expect(r.fake.state.domainProbes).toEqual(["second.example.com"]);
+  });
+
   it("makes the secret records match the secrets the rolled-back version has", async () => {
     // Since the snapshot: API_KEY was removed (record deleted), NEW_TOKEN added.
     await env.DB.prepare(

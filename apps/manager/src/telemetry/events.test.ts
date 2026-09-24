@@ -47,6 +47,8 @@ function heartbeat(overrides: Partial<HeartbeatInput> = {}): HeartbeatInput {
     accessEnabled: false,
     sandboxConnected: true,
     managerBehindLatest: false,
+    managerSelfUpdateAuto: true,
+    autoUpdateDefault: false,
     installs: [
       {
         slug: "cut",
@@ -54,16 +56,32 @@ function heartbeat(overrides: Partial<HeartbeatInput> = {}): HeartbeatInput {
         buildKind: "artifact",
         version: "1.0.0",
         updatedAt: NOW - 10 * DAY,
+        autoUpdate: "on",
       },
-      { slug: "cut", status: "installed", buildKind: "artifact", version: "1.1.0", updatedAt: NOW },
+      {
+        slug: "cut",
+        status: "installed",
+        buildKind: "artifact",
+        version: "1.1.0",
+        updatedAt: NOW,
+        autoUpdate: "inherit",
+      },
       {
         slug: "open-seo",
         status: "updating",
         buildKind: "self-deploying",
         version: "2.0.0",
         updatedAt: NOW - 100 * DAY,
+        autoUpdate: "inherit",
       },
-      { slug: "private", status: "failed", buildKind: "sandbox", version: "0.1.0", updatedAt: NOW },
+      {
+        slug: "private",
+        status: "failed",
+        buildKind: "sandbox",
+        version: "0.1.0",
+        updatedAt: NOW,
+        autoUpdate: "off",
+      },
     ],
     catalogVersions: new Map([
       ["cut", "1.1.0"],
@@ -92,9 +110,9 @@ describe("heartbeatProperties", () => {
       access_enabled: false,
       sandbox_connected: true,
       manager_behind_latest: false,
-      manager_self_update_auto: null,
-      auto_update_default: null,
-      installs_auto_update: null,
+      manager_self_update_auto: true,
+      auto_update_default: "off",
+      installs_auto_update: { on: 1, off: 1, inherit: 2 },
       notification_channels: { telegram: 1, slack: 0, discord: 2, webhook: 0 },
       installs_total: 4,
       installs_by_status: { installed: 2, failed: 1, installing: 0, updating: 1, uninstalling: 0 },
@@ -150,6 +168,7 @@ function job(overrides: Partial<JobRow>): JobRow {
     installVersion: "1.1.0",
     buildKind: "artifact",
     snapshotTargetVersion: null,
+    startedBy: "admin",
     ...overrides,
   };
 }
@@ -180,6 +199,28 @@ describe("jobEvents", () => {
       cf_code: null,
     });
     expect(JSON.stringify(events)).not.toContain("my-links");
+  });
+
+  it("reports a job the cron started as an automatic one", async () => {
+    const scheduled = job({
+      kind: "update",
+      startedBy: "schedule",
+      inputJson: JSON.stringify({ version: "1.1.0", fromVersion: "1.0.0" }),
+    });
+    const events = await jobEvents(
+      [scheduled, job({ id: "02" })],
+      window,
+      {},
+      "id",
+      true,
+      versions,
+    );
+    expect(events.map((e) => [e.properties.kind, e.properties.trigger])).toEqual([
+      ["update", "auto"],
+      ["update", "auto"],
+      ["install", "manual"],
+      ["install", "manual"],
+    ]);
   });
 
   it("reports only the moments inside the window", async () => {

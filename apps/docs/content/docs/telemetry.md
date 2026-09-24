@@ -23,8 +23,9 @@ Once a day, the manager sends one report with:
   setup, and whether a newer manager release exists.
 - **Users:** how many users and admins there are, whether passkeys are in use, and
   how many users have one.
-- **Features:** whether Cloudflare Access protection is on, and whether the sandbox
-  Worker is connected.
+- **Features:** whether Cloudflare Access protection is on, whether the sandbox
+  Worker is connected, whether Appflare and apps update automatically, and how many
+  apps use the account setting for automatic updates or override it with on or off.
 - **Apps:** how many are installed, counted by status (installed, failed,
   installing, updating, uninstalling), by build type (prebuilt, sandbox,
   self-deploying), and by version age (current, or, when the catalog has a newer
@@ -41,7 +42,7 @@ when it ends, with:
 
 - the kind of job, the app's catalog slug (`custom` for an app from a custom
   catalog), the version it moves from and to (none for a custom catalog's app), the
-  build type, and what started it (today always an admin);
+  build type, and what started it (an admin, or the schedule for automatic updates);
 - when it ends: whether it succeeded, how long it took, and for a failure, its
   error category (such as `cloudflare_permission`, `plan_limit` or `d1_migration`),
   the phase it failed in (such as `resources`, `upload` or `health`), and, for a

@@ -8,6 +8,8 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { startedByLabel } from "../../../auto-update/auto-update";
+import { InstallAutoUpdateCard } from "../../../auto-update/install-auto-update-card";
 import { AppCredentialsCard } from "../../../components/app-credentials-card";
 import { AppSettingsSection } from "../../../components/app-settings-section";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
@@ -21,6 +23,7 @@ import { StatusBadge } from "../../../components/status-badge";
 import { UninstallDialog } from "../../../components/uninstall-dialog";
 import { UpdateBanner } from "../../../components/update-banner";
 import { VersionsSection } from "../../../components/versions-section";
+import { WorkersDevSwitch } from "../../../components/workers-dev-switch";
 import {
   getInstall,
   type InstallDetail,
@@ -30,7 +33,8 @@ import { getInstallSettings } from "../../../installs/reconfigure.functions";
 import { listSnapshots } from "../../../installs/versions.functions";
 
 /**
- * `/apps/$installId`: status and health, custom domains, email routes, resources, jobs,
+ * `/apps/$installId`: status and health, the workers.dev switch, custom domains, email
+ * routes, resources, automatic updates, jobs (with who started them),
  * the Cloudflare token the app needs for itself (if any), the app's post-install notes,
  * its settings and secret names (admins change them and redeploy under Settings),
  * update and rollback, and, in a danger zone at the bottom (admins), uninstall
@@ -151,6 +155,11 @@ function InstallPage() {
           isAdmin={isAdmin}
         />
       )}
+      {!gone && isAdmin && install.build.kind !== "self-deploying" && (
+        <Section title="workers.dev URL">
+          <WorkersDevSwitch install={install} />
+        </Section>
+      )}
       {!gone && isAdmin && <CustomDomainsSection install={install} />}
       {!gone && install.emailRoutes.length > 0 && (
         <Section title="Email">
@@ -206,6 +215,7 @@ function InstallPage() {
           )}
         </Section>
       )}
+      {!gone && <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />}
       {!gone && <VersionsSection install={install} snapshots={snapshots} isAdmin={isAdmin} />}
       <Section title="Jobs">
         <LayerCard className="p-0">
@@ -214,6 +224,7 @@ function InstallPage() {
               <Table.Row>
                 <Table.Head>Job</Table.Head>
                 <Table.Head>Status</Table.Head>
+                <Table.Head>Started by</Table.Head>
                 <Table.Head>Started</Table.Head>
                 <Table.Head>Finished</Table.Head>
               </Table.Row>
@@ -227,6 +238,7 @@ function InstallPage() {
                   <Table.Cell>
                     <StatusBadge status={job.status} of="job" />
                   </Table.Cell>
+                  <Table.Cell>{startedByLabel(job.startedBy)}</Table.Cell>
                   <Table.Cell>{formatDateTime(job.startedAt)}</Table.Cell>
                   <Table.Cell>{formatDateTime(job.finishedAt)}</Table.Cell>
                 </Table.Row>
@@ -436,16 +448,23 @@ function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boole
           <Row label="URL">
             {install.workerUrl !== null ? (
               <span className="grid gap-1">
-                <Link href={install.workerUrl} target="_blank" rel="noopener noreferrer">
-                  {install.workerUrl}
-                  <Link.ExternalIcon />
-                </Link>
+                {install.workersDevEnabled && (
+                  <Link href={install.workerUrl} target="_blank" rel="noopener noreferrer">
+                    {install.workerUrl}
+                    <Link.ExternalIcon />
+                  </Link>
+                )}
                 {install.domains.map((d) => (
                   <Link key={d.id} href={d.url} target="_blank" rel="noopener noreferrer">
                     {d.url}
                     <Link.ExternalIcon />
                   </Link>
                 ))}
+                {!install.workersDevEnabled && (
+                  <Text as="span" variant="secondary" size="sm">
+                    Not served on workers.dev
+                  </Text>
+                )}
               </span>
             ) : install.status === "uninstalled" ? (
               "None; the Worker is deleted"

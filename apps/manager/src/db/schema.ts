@@ -1,4 +1,5 @@
 import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { AUTO_UPDATE_CHOICES } from "../auto-update/auto-update";
 import { user } from "./auth-schema";
 
 /**
@@ -85,6 +86,14 @@ export type JobKind = (typeof JOB_KINDS)[number];
 
 export const JOB_STATUSES = ["queued", "running", "succeeded", "failed"] as const;
 
+/**
+ * Who started a job: `admin`, a signed-in admin (every job before automatic
+ * updates existed), or `schedule`, the cron, which starts updates of apps and
+ * of Appflare itself when automatic updates are on.
+ */
+export const JOB_STARTERS = ["admin", "schedule"] as const;
+export type JobStarter = (typeof JOB_STARTERS)[number];
+
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
 
 /**
@@ -132,6 +141,25 @@ export const installs = sqliteTable("installs", {
   health_status: text("health_status", { enum: HEALTH_STATUSES }),
   /** When the last health check probed the Worker. */
   health_checked_at: timestamp("health_checked_at"),
+  /** Whether the cron may update this install on its own (see `AUTO_UPDATE_CHOICES`). */
+  auto_update: text("auto_update", { enum: AUTO_UPDATE_CHOICES }).notNull().default("inherit"),
+  /**
+   * The catalog version the cron left for an admin (its update needs a
+   * secret or a confirmation); the cron does not try it again, only a newer one.
+   */
+  auto_update_waiting: text("auto_update_waiting"),
+  /**
+   * Whether the Worker answers on its workers.dev URL. Every deploy sends it,
+   * with version previews always on (update checks use them). Turned off only
+   * while a custom domain serves the app.
+   */
+  workers_dev_enabled: integer("workers_dev_enabled", { mode: "boolean" }).notNull().default(true),
+  /**
+   * The custom domain hostname that answered as the app when workers.dev was
+   * turned off: the app's address while it is off and the domain is still
+   * attached (else its first custom domain).
+   */
+  served_domain: text("served_domain"),
   installed_at: timestamp("installed_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
   /** Set when the uninstall job finishes (status `uninstalled`). */
@@ -188,6 +216,8 @@ export const jobs = sqliteTable(
      * new code before the switch) can never complete the job.
      */
     promoting_version: text("promoting_version"),
+    /** Who started the job (see `JOB_STARTERS`). */
+    started_by: text("started_by", { enum: JOB_STARTERS }).notNull().default("admin"),
     started_at: timestamp("started_at"),
     finished_at: timestamp("finished_at"),
   },

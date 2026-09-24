@@ -43,7 +43,7 @@ export const setTelemetryInput = z.object({ enabled: z.boolean() });
 export const TELEMETRY_COPY = {
   title: "Anonymous usage data",
   notice:
-    "Appflare sends a small daily report so we can see which versions and features are used and where installs and updates fail. It contains counts, versions, settings such as whether passkeys are on, and error categories. It never contains your Cloudflare account, email addresses, names, domains, secrets or tokens. It is sent from this Worker, not your browser, and stored in PostHog's EU region without IP addresses.",
+    "Appflare sends a small daily report so we can see which versions and features are used and where installs and updates fail. It contains counts, versions, settings such as whether passkeys are on, and error categories. It never contains your Cloudflare account, email addresses, names, domains, secrets or tokens. It is sent from this Worker, not your browser, to PostHog's EU region, where the project is set to discard IP addresses.",
   switchLabel: "Send anonymous usage data",
   scope:
     "This switch covers this manager's reports. The installer (create-appflare) has its own: --no-telemetry, APPFLARE_TELEMETRY=off or DO_NOT_TRACK=1.",

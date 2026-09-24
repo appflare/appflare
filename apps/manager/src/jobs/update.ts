@@ -16,6 +16,7 @@ import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
+import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
 import {
   artifactOriginOf,
   cleanupSandboxBuildsPhase,
@@ -45,6 +46,7 @@ import {
 } from "./install/queue-consumers";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import { RESOURCE_LABEL } from "./install/resources";
+import { undoSecretChangesPhase } from "./reconfigure/secrets";
 import type { JobContext } from "./run-job";
 import { runSelfDeployingUpdate } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
@@ -61,6 +63,8 @@ import {
   secretBindings,
   updatePath,
   updateRefusal,
+  updateSecretsUndoneMessage,
+  updateVersionMessage,
   vectorizeShapesOf,
 } from "./update/plan";
 import { takeSnapshotPhase } from "./update/snapshot";
@@ -87,7 +91,8 @@ import { takeSnapshotPhase } from "./update/snapshot";
  *    before anything serves the new version.
  * 7. Apply new D1 migration files, before promotion (as wrangler does).
  * 8. Promote the version to 100% of traffic.
- * 9. Health check on the Worker's own URL. The version already serves, so
+ * 9. Health check on the app's address (its workers.dev URL, or its first custom
+ *    domain while workers.dev is off). The version already serves, so
  *    the result is recorded on the install and never fails the job.
  *
  * A version that brings Durable Object migrations takes another path from
@@ -98,7 +103,9 @@ import { takeSnapshotPhase } from "./update/snapshot";
  *
  * The install is `updating` while the job runs and returns to `installed`
  * whatever happens. On failure the job records `<step>: <message>`; the
- * install's recorded version changes only once the new version serves.
+ * install's recorded version changes only once the new version serves. A
+ * failure after the upload and before promotion first takes the secrets the
+ * version introduced off the Worker's newest version again.
  */
 
 export const updateJobParams = z.object({
@@ -143,6 +150,22 @@ export type UpdateJobParams = z.infer<typeof updateJobParams>;
 /** The canary retries 1042 and route propagation for a shorter time: the Worker's route is already live. */
 export const CANARY_MAX_ATTEMPTS = 6;
 
+type SecretsUndoOutcome = "undone" | "not-needed" | "left" | "failed";
+
+/** What the failure report adds about secret values the unpromoted upload carried. */
+function secretsNote(outcome: SecretsUndoOutcome | null): string {
+  switch (outcome) {
+    case "undone":
+      return " The secrets it introduced were taken off the Worker's newest version, so the next upload does not carry them.";
+    case "left":
+      return " Another version was uploaded meanwhile; it keeps whatever secrets it was given.";
+    case "failed":
+      return " Appflare could not take the secrets it introduced off the Worker's newest version: the next upload would carry them. Retry the update, or set those secrets as you want them, before changing the app's settings.";
+    default:
+      return "";
+  }
+}
+
 function parseVars(json: string | null): Record<string, string> {
   if (json === null) return {};
   try {
@@ -171,6 +194,17 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   let servingRecord: Partial<typeof installs.$inferInsert> | null = null;
   /** D1 databases that got new migration files (named when a failure leaves them ahead of the code). */
   const migrated: string[] = [];
+  /**
+   * Set once an uploaded version carries secrets this version introduces:
+   * what a failure before promotion needs to take them off again.
+   */
+  let secretsUndo: {
+    workerName: string;
+    servingVersionId: string;
+    names: string[];
+    /** The upload's annotation, which finds its version when the upload did not name it. */
+    uploadMessage: string;
+  } | null = null;
 
   try {
     const started = await run("start", async ({ log, orm }) => {
@@ -247,12 +281,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         previousConsumers: consumerPlansOf(install.manifest_json),
         emailRouting: emailRoutingOfManifest(install.manifest_json),
         userVars: parseVars(install.config_json),
+        workersDev: install.workers_dev_enabled,
+        servedDomain: install.served_domain,
         origin: artifactOriginOf(app, params.buildConfirmed === true),
         resources: recorded,
       };
     });
     steps.setAccountId(started.accountId);
-    const { workerName } = started;
+    const { workerName, workersDev } = started;
 
     // 1. The new artifact manifest (a sandbox tier app is built first).
     const source = await resolveArtifactPhase(steps, env, deps.signingKeys, {
@@ -363,7 +399,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     }
 
     // 2. Snapshot, before anything changes.
-    await takeSnapshotPhase(steps, {
+    const snapshot = await takeSnapshotPhase(steps, {
       installId: params.installId,
       jobId: params.jobId,
       workerName,
@@ -401,7 +437,19 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const subdomain = await lookupSubdomainPhase(steps);
     // A stored value this version cannot read falls back to its default; the
     // upload step says so in its log.
-    const vars = installVars(manifest, started.userVars, { workerName, subdomain });
+    // Where the app is reached, for `{{workerUrl}}` and the health check below.
+    const appBase = appBaseUrl({
+      workerName,
+      subdomain,
+      workersDev,
+      domains: domainHostnames(started.resources),
+      served: started.servedDomain,
+    });
+    const vars = installVars(manifest, started.userVars, {
+      workerName,
+      subdomain,
+      workerUrl: appBase,
+    });
 
     /** The metadata of the upload (never logged: it holds new secret values). */
     function uploadMetadata(): ScriptMetadata {
@@ -505,13 +553,25 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     }
 
     if (fullDeploy === null) {
-      // 5. The new version: every module in ONE multipart request.
+      // 5. The new version: every module in ONE multipart request. From here
+      // until promotion, a failure takes the secrets it introduces off the
+      // newest version again, even when the upload made a version and did not
+      // say which (it is found by its annotation).
+      const introduced = Object.keys(secretValues);
+      if (introduced.length > 0) {
+        secretsUndo = {
+          workerName,
+          servingVersionId: snapshot.versionId,
+          names: introduced,
+          uploadMessage: updateVersionMessage(started.slug, params.version, params.jobId),
+        };
+      }
       const uploaded = await run("upload Worker version", async ({ log }) => {
         for (const warning of vars.warnings) log.warn(warning);
         const metadata: VersionMetadata = {
           ...uploadMetadata(),
           annotations: {
-            "workers/message": `Appflare: ${started.slug} ${params.version}`,
+            "workers/message": updateVersionMessage(started.slug, params.version, params.jobId),
             "workers/tag": params.version,
           },
         };
@@ -540,7 +600,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         });
       } else {
         await run("enable version previews", async ({ log, cf }) => {
-          await cf().workers.enableSubdomain(workerName, { enabled: true, previews_enabled: true });
+          // The workers.dev URL stays as the admin left it; previews are always on.
+          await cf().workers.enableSubdomain(workerName, workersDevSubdomain(workersDev));
           log.info("Preview URLs are enabled for this Worker.");
           return {};
         });
@@ -629,7 +690,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     );
 
     // 9. Live health check, recorded rather than fatal: the version already serves.
-    const url = `https://${workerName}.${subdomain}.workers.dev${healthPath}`;
+    const url = `${appBase}${healthPath}`;
     const health = await checkLiveHealthPhase(steps, step, url, healthMode);
 
     // A sandbox build stays in the bucket while it may be needed: the version
@@ -670,6 +731,30 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const wasPromoted = promoted;
     const serving = servingRecord;
     const aheadOfCode = wasPromoted ? [] : [...migrated];
+    // The unpromoted upload is the Worker's newest version, and the next
+    // upload (with `keep_bindings: ["secret_text"]`) would copy the secret
+    // values it introduced from it: take them off first, as a failed settings
+    // change does (see ./reconfigure/secrets.ts).
+    let secretsBack: SecretsUndoOutcome | null = null;
+    const undo = secretsUndo;
+    if (!wasPromoted && undo !== null) {
+      try {
+        secretsBack = await undoSecretChangesPhase(steps, {
+          jobId: params.jobId,
+          workerName: undo.workerName,
+          uploadedVersionId: version,
+          uploadMessage: undo.uploadMessage,
+          servingVersionId: undo.servingVersionId,
+          // Only the names matter: each one the serving version lacks is dropped.
+          changes: { set: {}, unset: undo.names },
+          slots: [],
+          carrier: "upload",
+          undoneMessage: updateSecretsUndoneMessage(params.jobId),
+        });
+      } catch {
+        secretsBack = "failed";
+      }
+    }
     await step.do("mark update failed", async () => {
       const orm = createDb(env.DB);
       const at = new Date(now());
@@ -697,12 +782,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         );
       } else if (version !== null) {
         log.error(
-          `Update failed at "${failedAt}". Version ${version} was uploaded but never promoted; the previous version keeps serving all traffic.`,
+          `Update failed at "${failedAt}". Version ${version} was uploaded but never promoted; the previous version keeps serving all traffic.${secretsNote(secretsBack)}`,
           { versionId: version },
         );
       } else {
         log.error(
-          `Update failed at "${failedAt}". Nothing was deployed; the previous version keeps serving all traffic. Resources created so far stay recorded.`,
+          `Update failed at "${failedAt}". Nothing was deployed; the previous version keeps serving all traffic. Resources created so far stay recorded.${secretsNote(secretsBack)}`,
         );
       }
       await log.flush(env.DB, params.jobId);
