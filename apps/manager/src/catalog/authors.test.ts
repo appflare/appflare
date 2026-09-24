@@ -37,9 +37,9 @@ describe("authorNames", () => {
 describe("authorLinks", () => {
   it("lists the website by host, then GitHub, then X", () => {
     expect(authorLinks({ ...cloudflare, x: "Cloudflare" })).toEqual([
-      { label: "cloudflare.com", href: "https://www.cloudflare.com" },
-      { label: "GitHub", href: "https://github.com/cloudflare" },
-      { label: "X", href: "https://x.com/Cloudflare" },
+      { kind: "website", label: "cloudflare.com", href: "https://www.cloudflare.com" },
+      { kind: "github", label: "GitHub", href: "https://github.com/cloudflare" },
+      { kind: "x", label: "X", href: "https://x.com/Cloudflare" },
     ]);
   });
 

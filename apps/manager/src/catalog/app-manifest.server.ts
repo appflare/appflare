@@ -118,6 +118,27 @@ function parseCatalog(text: string): CatalogManifest | null {
 }
 
 /**
+ * The catalog manifest behind an index entry when it is already cached in KV
+ * (verified before it was stored), without fetching anything; null when it is
+ * not cached yet. The catalog list uses it to read every entry cheaply.
+ */
+export async function readCachedCatalogManifest(
+  env: AppManifestEnv,
+  app: IndexApp,
+): Promise<Extract<CatalogManifestRead, { ok: true }> | null> {
+  const release = indexAppArtifact(app);
+  if (release !== null && app.tier === "artifact") {
+    const cached = await env.KV.get(manifestCacheKey(release.digest));
+    const manifest = cached === null ? null : parse(cached);
+    return manifest === null ? null : { ok: true, catalog: manifest.catalog, manifest };
+  }
+  if (app.tier === "artifact" || app.build === undefined) return null;
+  const cached = await env.KV.get(catalogManifestCacheKey(app.build.manifestDigest));
+  const catalog = cached === null ? null : parseCatalog(cached);
+  return catalog === null ? null : { ok: true, catalog, manifest: null };
+}
+
+/**
  * The catalog manifest behind an index entry, whatever its tier: from the
  * signed artifact manifest for an `artifact` entry, or, for a `sandbox` or
  * `self-deploying`

@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env, waitUntil } from "cloudflare:workers";
 import {
   type CatalogAuthor,
   type CatalogManifest,
@@ -22,6 +22,8 @@ import { suggestWorkerName } from "../installs/instance-names";
 import { planBindings } from "../jobs/install/bindings";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
+import { appFacts } from "./app-facts";
+import { listAppFacts } from "./app-facts.server";
 import { getCatalogManifest } from "./app-manifest.server";
 import { appAuthors } from "./authors";
 import { cronTriggerCount } from "./cron-triggers";
@@ -35,6 +37,7 @@ import {
 } from "./index.server";
 import { type AppMediaView, appMediaView } from "./media";
 import { type AppPopularity, appPopularity, freshStats } from "./popularity";
+import type { AppPrimitives } from "./primitives";
 import { readCatalogStats } from "./stats.server";
 
 /** Catalog browsing. */
@@ -54,6 +57,10 @@ export interface CatalogListItem extends IndexApp {
   images: AppMediaView;
   /** Stars and install counts; null when the catalog publishes none (or they are stale). */
   popularity: AppPopularity | null;
+  /** The Cloudflare primitives the app uses, as far as its manifests are known. */
+  primitives: AppPrimitives;
+  /** The catalog manifest's categories; empty until it has been read. */
+  categories: string[];
 }
 
 export interface CatalogList {
@@ -128,12 +135,14 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
     }
     const indexUrl = catalogIndexUrl(env);
     const { apps } = read.index;
-    const [stats, dismissed, capabilities] = await Promise.all([
+    const [stats, dismissed, capabilities, facts] = await Promise.all([
       currentStats(read.index.stats),
       read.index.featured.length === 0
         ? new Set<string>()
         : dismissedFeaturedIds(createDb(env.DB), session.user.id),
       readCapabilitiesView(createDb(env.DB)),
+      // Manifests not cached yet are fetched after the response, for the next view.
+      listAppFacts(env, apps, waitUntil),
     ]);
     const item = pickFeatured(read.index.featured, dismissed, new Date());
     return {
@@ -142,6 +151,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
         instances: active.bySlug.get(app.slug) ?? [],
         images: appMediaView(app.media, indexUrl),
         popularity: appPopularity(stats, app.slug),
+        ...(facts.get(app.slug) ?? appFacts(app, null)),
       })),
       updatedAt: read.updatedAt,
       error: null,
@@ -229,6 +239,10 @@ export interface CatalogDetail {
   accountPlan: AccountPlan;
   /** What the account capability probes found, for the requirement badges. */
   capabilities: CapabilitiesView;
+  /** The Cloudflare primitives the app uses, as far as its manifests are known. */
+  primitives: AppPrimitives;
+  /** The catalog manifest's categories; empty when it could not be loaded. */
+  categories: string[];
 }
 
 /**
@@ -287,6 +301,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       capabilities,
       images: appMediaView(undefined, ""),
       popularity: null,
+      ...appFacts({ tier: "artifact", requires: [] }, null),
     };
     const read = await getCatalogIndex(env);
     if (!read.ok) return { app: null, error: read.error, ...empty };
@@ -297,6 +312,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
     const shown = {
       images: appMediaView(app.media, catalogIndexUrl(env)),
       popularity: appPopularity(stats, app.slug),
+      ...appFacts(app, null),
     };
     const manifest = await getCatalogManifest(env, app);
     if (!manifest.ok) {
@@ -323,6 +339,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
     return {
       ...empty,
       ...shown,
+      ...appFacts(app, manifest),
       app,
       catalog: manifest.catalog,
       authors: appAuthors(app, manifest.catalog),

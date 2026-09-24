@@ -1,26 +1,45 @@
-import type { InstallTier, Plan, Requirement } from "@appflare/schema";
-import { Badge, Text } from "@cloudflare/kumo";
+import type { InstallTier, Plan } from "@appflare/schema";
+import { Badge, cn, Text } from "@cloudflare/kumo";
 import {
   ArchiveIcon,
   BrowserIcon,
+  ClockIcon,
+  CubeIcon,
+  DatabaseIcon,
   EnvelopeSimpleIcon,
+  FlowArrowIcon,
   GlobeIcon,
   type Icon,
-  PuzzlePieceIcon,
+  ImageIcon,
+  KeyIcon,
+  LightningIcon,
+  LockKeyIcon,
+  QueueIcon,
   SealCheckIcon,
   ShippingContainerIcon,
   SparkleIcon,
+  VectorThreeIcon,
 } from "@phosphor-icons/react";
-import { type CapabilitiesView, requirementBadge } from "../capabilities/capabilities";
-import { requirementLabel } from "../catalog/requirements";
+import type { CapabilitiesView } from "../capabilities/capabilities";
+import { installedState } from "../catalog/installed-state";
+import {
+  type AppPrimitives,
+  AVAILABILITY_LABELS,
+  type Availability,
+  PRIMITIVE_LABELS,
+  type PrimitiveId,
+  type PrimitiveStatus,
+  primitiveStatuses,
+  primitivesNote,
+} from "../catalog/primitives";
 import { installCheckBadgeCopy, PLAN_BADGES } from "./catalog-badge-copy";
 import { Tooltip } from "./tooltip";
 
 /**
  * What the catalog index says about an app beyond its name: the Workers plan it
- * needs, when the catalog last checked that it installs, and what the account must offer.
- * The catalog list and each app's page render these same components so their
- * wording always matches.
+ * needs, how it is built, when the catalog last checked that it installs, what
+ * it runs on, and whether it is installed here. The catalog list and each
+ * app's page render these same components so their wording always matches.
  */
 
 /** The index's `plan`. */
@@ -81,60 +100,176 @@ export function InstallCheckBadge({ lastVerified }: { lastVerified: string | nul
   );
 }
 
-/** One icon per `requires` value; a compile error here means a new requirement needs one. */
-const REQUIREMENT_ICONS: Record<Requirement, Icon> = {
+/** One icon per primitive; a compile error here means a new primitive needs one. */
+export const PRIMITIVE_ICONS: Record<PrimitiveId, Icon> = {
+  kv: KeyIcon,
+  d1: DatabaseIcon,
   r2: ArchiveIcon,
-  zone: GlobeIcon,
-  "email-routing": EnvelopeSimpleIcon,
+  "durable-objects": CubeIcon,
+  hyperdrive: LightningIcon,
+  vectorize: VectorThreeIcon,
+  queues: QueueIcon,
+  workflows: FlowArrowIcon,
+  cron: ClockIcon,
   "workers-ai": SparkleIcon,
   "browser-rendering": BrowserIcon,
+  images: ImageIcon,
   containers: ShippingContainerIcon,
+  "email-routing": EnvelopeSimpleIcon,
+  zone: GlobeIcon,
+  access: LockKeyIcon,
 };
 
-/** Looked up by plain string: a newer catalog may list a requirement this manager does not know yet. */
-const iconsByName: Partial<Record<string, Icon>> = REQUIREMENT_ICONS;
+/** The tint of a primitive's chip: green available, amber not available, grey unknown. */
+const CHIP_TONES: Record<Availability, string> = {
+  available: "bg-kumo-success-tint text-kumo-success",
+  unavailable: "bg-kumo-warning-tint text-kumo-warning",
+  unknown: "bg-kumo-recessed text-kumo-subtle",
+};
+
+const BADGE_VARIANTS: Record<Availability, "success" | "warning" | "neutral"> = {
+  available: "success",
+  unavailable: "warning",
+  unknown: "neutral",
+};
+
+function statusText(status: PrimitiveStatus): string {
+  return `${PRIMITIVE_LABELS[status.id]}: ${AVAILABILITY_LABELS[status.availability]}. ${status.reason}`;
+}
+
+/** One primitive as a small tinted icon, named with its availability by tooltip and screen-reader text. */
+function PrimitiveChip({ status }: { status: PrimitiveStatus }) {
+  const PrimitiveIcon = PRIMITIVE_ICONS[status.id];
+  const text = statusText(status);
+  return (
+    <Tooltip
+      content={text}
+      className={cn(
+        "flex size-7 items-center justify-center rounded-md",
+        CHIP_TONES[status.availability],
+      )}
+    >
+      <PrimitiveIcon size={16} aria-hidden />
+      <span className="sr-only">{text}</span>
+    </Tooltip>
+  );
+}
 
 /**
- * The index's `requires` as a row of icons, each named by a tooltip with the
- * same label the app's prerequisites callout uses. With the account's
- * detected capabilities, an icon is green when the account meets the
- * requirement, amber when it does not, and neutral when Appflare cannot
- * tell; the tooltip says which. Renders nothing when the app needs nothing
- * beyond the Workers baseline.
+ * The primitives line of a catalog card: every primitive the app uses as an
+ * icon, always rendered. "Worker only" when the app needs nothing beyond a
+ * Worker; a muted note when the list may be incomplete.
  */
-export function RequirementIcons({
-  requires,
-  capabilities = null,
+export function PrimitiveIcons({
+  primitives,
+  capabilities,
+  tier,
 }: {
-  requires: readonly string[];
-  capabilities?: CapabilitiesView | null;
+  primitives: AppPrimitives;
+  capabilities: CapabilitiesView | null;
+  tier: InstallTier;
 }) {
-  if (requires.length === 0) return null;
+  const statuses = primitiveStatuses(primitives, capabilities);
+  const note = primitivesNote(primitives, tier);
   return (
-    <span className="inline-flex items-center gap-2">
-      <Text as="span" variant="secondary" size="sm">
-        Requires
-      </Text>
-      {requires.map((requirement) => {
-        const RequirementIcon = iconsByName[requirement] ?? PuzzlePieceIcon;
-        const badge = capabilities === null ? null : requirementBadge(requirement, capabilities);
-        const label =
-          badge === null
-            ? requirementLabel(requirement)
-            : `${requirementLabel(requirement)}. ${badge.label}`;
-        const tone =
-          badge === null
-            ? "text-kumo-subtle"
-            : badge.met
-              ? "text-kumo-success"
-              : "text-kumo-warning";
-        return (
-          <Tooltip key={requirement} content={label} className={tone}>
-            <RequirementIcon size={18} aria-hidden weight={badge === null ? "regular" : "fill"} />
-            <span className="sr-only">{label}</span>
-          </Tooltip>
-        );
-      })}
+    <div className="flex min-h-7 flex-wrap items-center gap-1.5">
+      {statuses.map((status) => (
+        <PrimitiveChip key={status.id} status={status} />
+      ))}
+      {statuses.length === 0 && note === null && (
+        <Tooltip content="Needs nothing beyond a Worker, which every plan includes.">
+          <Text as="span" variant="secondary" size="sm">
+            Worker only
+          </Text>
+        </Tooltip>
+      )}
+      {note !== null && (
+        <Tooltip content={note}>
+          <Text as="span" variant="secondary" size="sm">
+            More on its page
+          </Text>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+/** The app page's primitives: a badge per primitive with its name and availability. */
+export function PrimitiveBadges({
+  primitives,
+  capabilities,
+  tier,
+}: {
+  primitives: AppPrimitives;
+  capabilities: CapabilitiesView | null;
+  tier: InstallTier;
+}) {
+  const statuses = primitiveStatuses(primitives, capabilities);
+  const note = primitivesNote(primitives, tier);
+  return (
+    <div className="grid justify-items-center gap-2">
+      <div className="flex flex-wrap justify-center gap-2">
+        {statuses.map((status) => {
+          const PrimitiveIcon = PRIMITIVE_ICONS[status.id];
+          return (
+            <Tooltip key={status.id} content={statusText(status)}>
+              <Badge
+                variant={BADGE_VARIANTS[status.availability]}
+                icon={<PrimitiveIcon aria-hidden />}
+              >
+                {PRIMITIVE_LABELS[status.id]}
+                <span className="sr-only">: {AVAILABILITY_LABELS[status.availability]}</span>
+              </Badge>
+            </Tooltip>
+          );
+        })}
+        {statuses.length === 0 && note === null && (
+          <Text as="span" variant="secondary">
+            Worker only: nothing beyond a Worker, which every plan includes.
+          </Text>
+        )}
+      </div>
+      {note !== null && (
+        <Text as="span" variant="secondary" size="sm">
+          {note}
+        </Text>
+      )}
+    </div>
+  );
+}
+
+/** What the three tints mean, once, above the cards. */
+export function AvailabilityLegend() {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+      {(Object.keys(CHIP_TONES) as Availability[]).map((availability) => (
+        <span key={availability} className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className={cn("size-3 rounded-sm ring ring-kumo-hairline", CHIP_TONES[availability])}
+          />
+          <Text as="span" variant="secondary" size="sm">
+            {AVAILABILITY_LABELS[availability]}
+          </Text>
+        </span>
+      ))}
     </span>
+  );
+}
+
+/** Whether the app is installed here: one dot badge for one install or several; nothing when it is not. */
+export function InstalledBadge({
+  instances,
+}: {
+  instances: ReadonlyArray<{ status: string; instanceName: string }>;
+}) {
+  const state = installedState(instances);
+  if (state === null) return null;
+  return (
+    <Tooltip content={state.details.join(", ")}>
+      <Badge variant={state.tone} appearance="dot">
+        {state.label}
+      </Badge>
+    </Tooltip>
   );
 }

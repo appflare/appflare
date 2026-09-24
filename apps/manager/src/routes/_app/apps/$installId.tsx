@@ -144,7 +144,7 @@ function InstallPage() {
             : `${install.name}, Worker ${install.workerName}`
         }
         parents={[HOME_CRUMB]}
-        icon={<AppIcon src={install.icon} size={40} />}
+        icon={<AppIcon src={install.icon} name={install.name} size={40} />}
         titleAction={isAdmin ? <RenameInstallDialog install={install} /> : undefined}
         actions={
           install.workerUrl !== null ? (

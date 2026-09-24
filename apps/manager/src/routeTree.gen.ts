@@ -28,6 +28,7 @@ import { Route as AppSettingsRemovedAppsRouteImport } from './routes/_app/settin
 import { Route as AppSettingsUsageDataRouteImport } from './routes/_app/settings/usage-data'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiCatalogAvatarHandleRouteImport } from './routes/api/catalog/avatar/$handle'
 import { Route as ApiCatalogMediaDigestRouteImport } from './routes/api/catalog/media/$digest'
 
 const AppRoute = AppRouteImport.update({
@@ -126,6 +127,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCatalogAvatarHandleRoute = ApiCatalogAvatarHandleRouteImport.update({
+  id: '/api/catalog/avatar/$handle',
+  path: '/api/catalog/avatar/$handle',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCatalogMediaDigestRoute = ApiCatalogMediaDigestRouteImport.update({
   id: '/api/catalog/media/$digest',
   path: '/api/catalog/media/$digest',
@@ -151,6 +157,7 @@ export interface FileRoutesByFullPath {
   '/catalog/': typeof AppCatalogIndexRoute
   '/jobs/': typeof AppJobsIndexRoute
   '/settings/': typeof AppSettingsIndexRoute
+  '/api/catalog/avatar/$handle': typeof ApiCatalogAvatarHandleRoute
   '/api/catalog/media/$digest': typeof ApiCatalogMediaDigestRoute
 }
 export interface FileRoutesByTo {
@@ -172,6 +179,7 @@ export interface FileRoutesByTo {
   '/catalog': typeof AppCatalogIndexRoute
   '/jobs': typeof AppJobsIndexRoute
   '/settings': typeof AppSettingsIndexRoute
+  '/api/catalog/avatar/$handle': typeof ApiCatalogAvatarHandleRoute
   '/api/catalog/media/$digest': typeof ApiCatalogMediaDigestRoute
 }
 export interface FileRoutesById {
@@ -195,6 +203,7 @@ export interface FileRoutesById {
   '/_app/catalog/': typeof AppCatalogIndexRoute
   '/_app/jobs/': typeof AppJobsIndexRoute
   '/_app/settings/': typeof AppSettingsIndexRoute
+  '/api/catalog/avatar/$handle': typeof ApiCatalogAvatarHandleRoute
   '/api/catalog/media/$digest': typeof ApiCatalogMediaDigestRoute
 }
 export interface FileRouteTypes {
@@ -218,6 +227,7 @@ export interface FileRouteTypes {
     | '/catalog/'
     | '/jobs/'
     | '/settings/'
+    | '/api/catalog/avatar/$handle'
     | '/api/catalog/media/$digest'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -239,6 +249,7 @@ export interface FileRouteTypes {
     | '/catalog'
     | '/jobs'
     | '/settings'
+    | '/api/catalog/avatar/$handle'
     | '/api/catalog/media/$digest'
   id:
     | '__root__'
@@ -261,6 +272,7 @@ export interface FileRouteTypes {
     | '/_app/catalog/'
     | '/_app/jobs/'
     | '/_app/settings/'
+    | '/api/catalog/avatar/$handle'
     | '/api/catalog/media/$digest'
   fileRoutesById: FileRoutesById
 }
@@ -270,6 +282,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiCatalogAvatarHandleRoute: typeof ApiCatalogAvatarHandleRoute
   ApiCatalogMediaDigestRoute: typeof ApiCatalogMediaDigestRoute
 }
 
@@ -408,6 +421,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/catalog/avatar/$handle': {
+      id: '/api/catalog/avatar/$handle'
+      path: '/api/catalog/avatar/$handle'
+      fullPath: '/api/catalog/avatar/$handle'
+      preLoaderRoute: typeof ApiCatalogAvatarHandleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/catalog/media/$digest': {
       id: '/api/catalog/media/$digest'
       path: '/api/catalog/media/$digest'
@@ -460,6 +480,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiCatalogAvatarHandleRoute: ApiCatalogAvatarHandleRoute,
   ApiCatalogMediaDigestRoute: ApiCatalogMediaDigestRoute,
 }
 export const routeTree = rootRouteImport

@@ -1,8 +1,9 @@
+import { installTierSchema, planSchema } from "@appflare/schema";
 import {
-  Badge,
   Banner,
   Button,
   Empty,
+  InputGroup,
   LayerCard,
   LinkButton,
   Select,
@@ -12,61 +13,109 @@ import {
 import {
   ArrowRightIcon,
   ArrowsClockwiseIcon,
+  MagnifyingGlassIcon,
   StorefrontIcon,
   WarningCircleIcon,
+  XIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import type { CapabilitiesView } from "../../../capabilities/capabilities";
 import { authorNames } from "../../../catalog/authors";
+import {
+  type BrowseQuery,
+  browseApps,
+  categoriesOf,
+  categoryLabel,
+  isFiltered,
+  SORTS,
+  type Sort,
+} from "../../../catalog/browse";
 import {
   type CatalogListItem,
   listCatalog,
   refreshCatalog,
 } from "../../../catalog/catalog.functions";
-import { sortByPopularity } from "../../../catalog/popularity";
 import {
+  AvailabilityLegend,
   InstallCheckBadge,
+  InstalledBadge,
   PlanBadge,
-  RequirementIcons,
+  PrimitiveIcons,
   TierBadge,
 } from "../../../components/catalog-badges";
 import { AppIcon, PopularityLine } from "../../../components/catalog-media";
 import { FeaturedCard } from "../../../components/featured-card";
 import { PageHeader } from "../../../components/page-header";
-import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
 
-const SORTS = { popular: "Most popular", name: "Name" } as const;
-type Sort = keyof typeof SORTS;
+/** A search parameter that is dropped, not an error, when a link carries a value this page does not know. */
+function lenient<T extends z.ZodType>(schema: T) {
+  return schema.optional().catch(undefined);
+}
+
+const searchSchema = z.object({
+  q: lenient(z.string().max(200)),
+  installed: lenient(z.enum(["yes", "no"])),
+  plan: lenient(planSchema),
+  tier: lenient(installTierSchema),
+  category: lenient(z.string().min(1).max(60)),
+  sort: lenient(z.enum(["popular", "name", "checked"])),
+});
 
 /**
- * `/catalog`: apps from the KV-cached `index.json`, most popular first when
- * the catalog publishes recent popularity numbers, and the sponsored item
- * (if any) above the list.
+ * `/catalog`: apps from the KV-cached `index.json`, with a search over names,
+ * summaries, authors and primitives, filters for installed, plan, tier and
+ * category, and a sort; all kept in the URL so a filtered list can be shared.
+ * The sponsored item (if any) sits above the list. Every card has the same
+ * slots in the same order so apps can be compared down a column.
  */
 export const Route = createFileRoute("/_app/catalog/")({
   staticData: { title: "Catalog" },
-  validateSearch: z.object({ sort: z.enum(["popular", "name"]).optional() }),
+  validateSearch: searchSchema,
   loader: () => listCatalog(),
   component: CatalogPage,
 });
 
-/** The apps in the chosen order; "popular" without recent numbers keeps the index order. */
-function sortedApps(apps: CatalogListItem[], sort: Sort, hasStats: boolean): CatalogListItem[] {
-  if (sort === "name") return [...apps].sort((a, b) => a.name.localeCompare(b.name));
-  return hasStats ? sortByPopularity(apps) : apps;
-}
+const ANY = "any";
+
+const INSTALLED_ITEMS = { [ANY]: "All apps", yes: "Installed", no: "Not installed" };
+const PLAN_ITEMS = { [ANY]: "Any plan", free: "Free plan", paid: "Workers Paid" };
+const TIER_ITEMS = {
+  [ANY]: "Any build",
+  artifact: "Signed release",
+  sandbox: "Built in your account",
+  "self-deploying": "Self-deploying",
+};
 
 function CatalogPage() {
   const catalog = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
+  const [text, setText] = useSearchText(search.q, (q) => update({ q }));
   const hasStats = catalog.statsGeneratedAt !== null;
-  const sort: Sort = search.sort ?? "popular";
-  const apps = sortedApps(catalog.apps, sort, hasStats);
+  const sort: Sort = search.sort ?? (hasStats ? "popular" : "name");
+  const query: BrowseQuery = { ...search, sort };
+  const apps = browseApps(catalog.apps, query, hasStats);
+  const filtered = isFiltered(query);
+  const categories = categoriesOf(catalog.apps);
+
+  function update(patch: Partial<BrowseQuery>) {
+    void navigate({
+      search: (prev) => ({ ...prev, ...patch }),
+      replace: true,
+      resetScroll: false,
+    });
+  }
+  function clearFilters() {
+    void navigate({ search: { sort: search.sort }, replace: true, resetScroll: false });
+  }
+  const sortItems: Partial<Record<Sort, string>> = hasStats
+    ? SORTS
+    : { name: SORTS.name, checked: SORTS.checked };
+
   return (
     <>
       <PageHeader
@@ -74,28 +123,6 @@ function CatalogPage() {
         description="Cloudflare-native apps you can install into this account."
         actions={viewer.role === "admin" ? <RefreshButton /> : undefined}
       />
-      {(catalog.updatedAt !== null || hasStats) && (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Text variant="secondary" size="sm">
-            {catalog.updatedAt !== null && (
-              <>
-                Catalog updated <Timestamp iso={catalog.updatedAt} />.
-              </>
-            )}
-          </Text>
-          {hasStats && (
-            <Select
-              aria-label="Sort apps"
-              value={sort}
-              onValueChange={(value) =>
-                void navigate({ search: { sort: value === "name" ? "name" : "popular" } })
-              }
-              items={SORTS}
-              renderValue={(value) => `Sort: ${SORTS[value === "name" ? "name" : "popular"]}`}
-            />
-          )}
-        </div>
-      )}
       {catalog.featured !== null && (
         <FeaturedCard key={catalog.featured.id} item={catalog.featured} />
       )}
@@ -120,20 +147,171 @@ function CatalogPage() {
           description="The catalog index was loaded but lists no apps."
         />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2">
-          {apps.map((app) => (
-            <AppCard key={app.slug} app={app} capabilities={catalog.capabilities} />
-          ))}
-        </div>
+        <>
+          <div className="grid gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <InputGroup className="min-w-64 flex-1">
+                <InputGroup.Addon>
+                  <MagnifyingGlassIcon />
+                </InputGroup.Addon>
+                <InputGroup.Input
+                  type="search"
+                  value={text}
+                  placeholder="Search apps, authors, services"
+                  aria-label="Search apps"
+                  onChange={(e) => setText(e.target.value)}
+                />
+                {text !== "" && (
+                  <InputGroup.Addon align="end" className="pr-1">
+                    <InputGroup.Button
+                      shape="square"
+                      icon={XIcon}
+                      aria-label="Clear search"
+                      onClick={() => setText("")}
+                    />
+                  </InputGroup.Addon>
+                )}
+              </InputGroup>
+              <Select
+                aria-label="Installed"
+                value={search.installed ?? ANY}
+                items={INSTALLED_ITEMS}
+                onValueChange={(value) =>
+                  update({ installed: value === "yes" || value === "no" ? value : undefined })
+                }
+              />
+              <Select
+                aria-label="Plan"
+                value={search.plan ?? ANY}
+                items={PLAN_ITEMS}
+                onValueChange={(value) =>
+                  update({ plan: value === "free" || value === "paid" ? value : undefined })
+                }
+              />
+              <Select
+                aria-label="How it is built"
+                value={search.tier ?? ANY}
+                items={TIER_ITEMS}
+                onValueChange={(value) => {
+                  const tier = installTierSchema.safeParse(value);
+                  update({ tier: tier.success ? tier.data : undefined });
+                }}
+              />
+              {categories.length > 0 && (
+                <Select
+                  aria-label="Category"
+                  value={search.category ?? ANY}
+                  items={{
+                    [ANY]: "All categories",
+                    ...Object.fromEntries(categories.map((c) => [c, categoryLabel(c)])),
+                  }}
+                  onValueChange={(value) =>
+                    update({
+                      category: typeof value === "string" && value !== ANY ? value : undefined,
+                    })
+                  }
+                />
+              )}
+              <Select
+                aria-label="Sort apps"
+                value={sort}
+                items={sortItems}
+                renderValue={(value) => `Sort: ${SORTS[value as Sort] ?? SORTS.name}`}
+                onValueChange={(value) => {
+                  const next = z.enum(["popular", "name", "checked"]).safeParse(value);
+                  update({ sort: next.success ? next.data : undefined });
+                }}
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+                <Text as="span" variant="secondary" size="sm">
+                  {filtered
+                    ? `${apps.length} of ${catalog.apps.length} apps`
+                    : `${catalog.apps.length} apps`}
+                  {catalog.updatedAt !== null && (
+                    <>
+                      {" "}
+                      · catalog updated <Timestamp iso={catalog.updatedAt} />
+                    </>
+                  )}
+                </Text>
+                {filtered && (
+                  <Button variant="ghost" size="sm" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                )}
+              </span>
+              <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+                <Text as="span" variant="secondary" size="sm">
+                  Services on this account:
+                </Text>
+                <AvailabilityLegend />
+              </span>
+            </div>
+          </div>
+          {apps.length === 0 ? (
+            <Empty
+              icon={<MagnifyingGlassIcon size={48} className="text-kumo-inactive" />}
+              title="No apps match"
+              description="Try other words, or clear the filters to see every app."
+              contents={<Button onClick={clearFilters}>Clear filters</Button>}
+            />
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+              {apps.map((app) => (
+                <AppCard key={app.slug} app={app} capabilities={catalog.capabilities} />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </>
   );
 }
 
 /**
- * One app: icon and name (never cut short; the badges wrap below a long
- * name), summary, authors, version, checks, and the way to its page. Cards
- * in a row are as tall as the tallest, with their actions at the bottom.
+ * The search box's text: the URL's `q`, so back and forward bring the words
+ * back, and while someone types, their own draft (every keystroke replaces
+ * `q`, and a navigation still in flight must not overwrite newer letters).
+ * A `q` the box did not write itself (back, forward, Clear filters) drops
+ * the draft.
+ */
+function useSearchText(
+  q: string | undefined,
+  write: (q: string | undefined) => void,
+): [string, (text: string) => void] {
+  const [draft, setDraft] = useState<string | null>(null);
+  // Values the box wrote that the URL has not reached yet, and the newest one.
+  const inFlight = useRef(new Set<string>());
+  const latest = useRef<string | null>(null);
+  useEffect(() => {
+    const current = q ?? "";
+    if (current === latest.current) {
+      inFlight.current.clear();
+      latest.current = null;
+      return;
+    }
+    if (inFlight.current.has(current)) return;
+    inFlight.current.clear();
+    latest.current = null;
+    setDraft(null);
+  }, [q]);
+  function type(text: string) {
+    const next = text.trim() === "" ? undefined : text;
+    inFlight.current.add(next ?? "");
+    latest.current = next ?? "";
+    setDraft(text);
+    write(next);
+  }
+  return [draft ?? q ?? "", type];
+}
+
+/**
+ * One app, with the same slots in the same order on every card: header
+ * (icon or monogram, name, tier and plan), summary (two lines), meta
+ * (authors, version), status (install check, popularity), primitives
+ * (always), and a footer with the installed state and the one action.
  */
 function AppCard({
   app,
@@ -142,54 +320,53 @@ function AppCard({
   app: CatalogListItem;
   capabilities: CapabilitiesView | null;
 }) {
+  const authors = app.authors === undefined ? "" : authorNames(app.authors);
   return (
     <LayerCard className="flex h-full flex-col">
-      <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+      <LayerCard.Secondary className="flex items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-3">
-          <AppIcon src={app.images.icon} size={28} />
+          <AppIcon src={app.images.icon} name={app.name} size={28} />
           <Text as="h2" bold>
             {app.name}
           </Text>
         </span>
-        <span className="flex flex-wrap items-center gap-2">
-          {app.tier !== "artifact" && <TierBadge tier={app.tier} />}
+        <span className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <TierBadge tier={app.tier} />
           <PlanBadge plan={app.plan} />
         </span>
       </LayerCard.Secondary>
-      <LayerCard.Primary className="flex flex-1 flex-col gap-4 px-5 py-4">
-        <div className="grid gap-1.5">
-          <Text>{app.summary}</Text>
-          {app.authors !== undefined && (
-            <Text variant="secondary" size="sm">
-              By {authorNames(app.authors)}
-            </Text>
-          )}
-          <Text variant="secondary" size="sm">
-            Version <span className="font-mono text-[0.9em]">{app.version}</span>
+      <LayerCard.Primary className="flex flex-1 flex-col gap-3 px-5 py-4">
+        <div className="grid gap-1">
+          <Text>
+            <span className="line-clamp-2 min-h-[2lh]" title={app.summary}>
+              {app.summary}
+            </span>
+          </Text>
+          <Text variant="secondary" size="sm" truncate>
+            {authors !== "" && <>By {authors} · </>}
+            <span className="font-mono text-[0.9em]">{app.version}</span>
           </Text>
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex min-h-7 flex-wrap items-center gap-x-4 gap-y-2">
           <InstallCheckBadge lastVerified={app.lastVerified} />
           <PopularityLine popularity={app.popularity} />
-          <RequirementIcons requires={app.requires} capabilities={capabilities} />
         </div>
-        <div className="mt-auto flex items-center justify-between gap-3">
-          <InstancesBadge instances={app.instances} />
-          <LinkButton href={`/catalog/${app.slug}`} variant="secondary" icon={<ArrowRightIcon />}>
-            {app.instances.length > 0 ? "Details" : "View and install"}
+        <PrimitiveIcons primitives={app.primitives} capabilities={capabilities} tier={app.tier} />
+        <div className="mt-auto flex items-center justify-between gap-3 pt-1">
+          <InstalledBadge instances={app.instances} />
+          <LinkButton
+            href={`/catalog/${app.slug}`}
+            variant="secondary"
+            icon={<ArrowRightIcon />}
+            className="ml-auto"
+            aria-label={`Details of ${app.name}`}
+          >
+            Details
           </LinkButton>
         </div>
       </LayerCard.Primary>
     </LayerCard>
   );
-}
-
-/** One install shows its status; several show how many there are. */
-function InstancesBadge({ instances }: { instances: CatalogListItem["instances"] }) {
-  const [only] = instances;
-  if (only === undefined) return <span />;
-  if (instances.length === 1) return <StatusBadge status={only.status} of="install" />;
-  return <Badge variant="neutral">{instances.length} installs</Badge>;
 }
 
 /** Admin only: re-fetch `index.json` now instead of waiting for the cron; a toast says how it went. */

@@ -1,21 +1,52 @@
 import { type CatalogAuthor, type IndexBuild, SELF_DEPLOYING_TOOLS } from "@appflare/schema";
-import { Badge, Banner, Checkbox, Empty, LayerCard, Link, Table, Text } from "@cloudflare/kumo";
+import {
+  Badge,
+  Banner,
+  Checkbox,
+  Empty,
+  LayerCard,
+  Link,
+  LinkButton,
+  Table,
+  Text,
+} from "@cloudflare/kumo";
 import {
   CheckCircleIcon,
+  GithubLogoIcon,
+  GlobeIcon,
+  type Icon,
   StorefrontIcon,
   WarningCircleIcon,
   WarningIcon,
+  XLogoIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
-import { paidPlanBadge, requirementBadge } from "../../../capabilities/capabilities";
+import { requirementBadge } from "../../../capabilities/capabilities";
 import { CapabilityBadge } from "../../../capabilities/capability-badge";
-import { authorLinks, maintainerProfile } from "../../../catalog/authors";
+import { type AuthorLink, authorLinks, maintainerProfile } from "../../../catalog/authors";
+import { avatarSrc } from "../../../catalog/avatar";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
-import { requirementLabel, requirementSentence } from "../../../catalog/requirements";
+import { licenseParts } from "../../../catalog/license";
+import {
+  type RequirementCheck,
+  type RequirementChecks,
+  requirementChecks,
+} from "../../../catalog/requirement-checks";
+import { requirementSentence } from "../../../catalog/requirements";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
-import { InstallCheckBadge, PlanBadge, TierBadge } from "../../../components/catalog-badges";
-import { AppCover, AppIcon, PopularityLine, Screenshots } from "../../../components/catalog-media";
+import {
+  InstallCheckBadge,
+  PlanBadge,
+  PrimitiveBadges,
+  TierBadge,
+} from "../../../components/catalog-badges";
+import {
+  AppIcon,
+  AuthorAvatar,
+  ImageCarousel,
+  PopularityLine,
+} from "../../../components/catalog-media";
 import { CronTriggersField } from "../../../components/cron-triggers-field";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { resourceKindLabel } from "../../../components/format";
@@ -35,8 +66,9 @@ import {
  * needs for itself (if any), the installs of this app, and the install form (an
  * app may be installed several times under different Worker names, unless its
  * Worker name is fixed). An app with cron triggers says how many it uses
- * against the free plan's 5 per account. When the app lists account requirements, the admin
- * confirms them in the prerequisites callout before the Install button enables.
+ * against the free plan's 5 per account. When the account is not known to
+ * offer everything the app asks for, the admin confirms what is left in the
+ * prerequisites callout before the Install button enables.
  */
 const CATALOG_CRUMB = { label: "Catalog", href: "/catalog" };
 
@@ -88,25 +120,40 @@ function CatalogEntryPage() {
           ? `${app.name} is deployed by its own installer in your sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`
           : null;
   const installable = catalog !== null && detail.suggestedWorkerName !== null;
+  const checks = requirementChecks(
+    { plan: app.plan, requires: [...new Set([...app.requires, ...(catalog?.requires ?? [])])] },
+    detail.capabilities,
+  );
+  // Nothing left to confirm when the account is known to offer everything.
+  const confirmed = requirementsConfirmed || checks.pending.length === 0;
+  const images = [
+    ...(detail.images.cover === null
+      ? []
+      : [{ src: detail.images.cover, alt: `${app.name}: ${app.summary}` }]),
+    ...detail.images.screenshots,
+  ];
   return (
     <>
       <PageHeader
         title={app.name}
         description={app.summary}
         parents={[CATALOG_CRUMB]}
-        icon={<AppIcon src={detail.images.icon} size={40} />}
+        icon={<AppIcon src={detail.images.icon} name={app.name} size={40} />}
       />
       <AboutCard detail={detail} />
-      {detail.images.screenshots.length > 0 && (
+      {images.length > 0 && (
         <LayerCard>
-          <LayerCard.Secondary>Screenshots</LayerCard.Secondary>
+          <LayerCard.Secondary>
+            {detail.images.cover !== null ? "Images" : "Screenshots"}
+          </LayerCard.Secondary>
           <LayerCard.Primary className="px-5 py-4">
-            <Screenshots items={detail.images.screenshots} />
+            <ImageCarousel items={images} label={`${app.name} images`} />
           </LayerCard.Primary>
         </LayerCard>
       )}
       <Prerequisites
         detail={detail}
+        checks={checks}
         confirmation={
           installable
             ? {
@@ -148,7 +195,7 @@ function CatalogEntryPage() {
           defaultWorkerName={detail.suggestedWorkerName}
           fixedWorkerName={detail.fixedWorkerName}
           blockedReason={blockedReason}
-          requirementsConfirmed={requirementsConfirmed}
+          requirementsConfirmed={confirmed}
           sandboxBuild={sandboxBuild}
           installer={installer}
           cronTriggers={detail.cronTriggers}
@@ -160,10 +207,63 @@ function CatalogEntryPage() {
   );
 }
 
+/** One centred fact of the About grid: a small label above its value. */
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid content-start justify-items-center gap-1.5 text-center">
+      <Text as="span" variant="secondary" size="sm">
+        {label}
+      </Text>
+      <div className="flex min-w-0 flex-wrap items-center justify-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+const LINK_ICONS: Record<AuthorLink["kind"], Icon> = {
+  github: GithubLogoIcon,
+  x: XLogoIcon,
+  website: GlobeIcon,
+};
+
+/** An external link as an icon button; Kumo's `title` puts the label in a tooltip. */
+function IconLink({ href, icon: LinkIcon, label }: { href: string; icon: Icon; label: string }) {
+  return (
+    <LinkButton
+      href={href}
+      external
+      variant="ghost"
+      shape="square"
+      icon={<LinkIcon size={18} aria-hidden />}
+      aria-label={label}
+      title={label}
+    />
+  );
+}
+
+/** The host of a URL without `www.`, for link labels. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * The app at a glance, as a centred grid of facts (version, license, the
+ * catalog's install check, popularity, links), then who wrote and who
+ * packages it, then the Cloudflare primitives it uses and whether this
+ * account offers each.
+ */
 function AboutCard({ detail }: { detail: CatalogDetail }) {
   const { app, catalog } = detail;
   if (app === null) return null;
-  const cover = detail.images.cover;
+  const repoUrl = catalog === null ? null : `https://github.com/${catalog.repo}`;
+  const homepage =
+    catalog === null || catalog.homepage.replace(/\/$/, "") === repoUrl ? null : catalog.homepage;
+  const hasPopularity =
+    detail.popularity !== null &&
+    (detail.popularity.stars !== null || detail.popularity.installsKnown);
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
@@ -173,90 +273,144 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
           <PlanBadge plan={app.plan} />
         </div>
       </LayerCard.Secondary>
-      <LayerCard.Primary
-        className={
-          cover === null
-            ? "px-5 py-4"
-            : "grid items-start gap-5 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]"
-        }
-      >
-        <DescriptionList>
-          <DescriptionItem label="Version">
+      <LayerCard.Primary className="grid gap-5 px-5 py-4">
+        <div className="mx-auto grid w-full max-w-5xl grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
+          <Fact label="Version">
             <span className="font-mono text-[0.9em]">{app.version}</span>
-          </DescriptionItem>
-          {app.tier === "sandbox" && app.build !== undefined && <BuildRow build={app.build} />}
-          {app.tier === "self-deploying" && app.build !== undefined && (
-            <InstallerRow
-              build={app.build}
-              tool={
-                catalog?.install.selfDeploying === undefined
-                  ? null
-                  : SELF_DEPLOYING_TOOLS[catalog.install.selfDeploying.tool].label
-              }
-            />
-          )}
-          {catalog !== null && (
-            <>
-              <DescriptionItem label="Source">
-                <Link
-                  href={`https://github.com/${catalog.repo}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {catalog.repo}
-                  <Link.ExternalIcon />
-                </Link>
-              </DescriptionItem>
-              <DescriptionItem label="Homepage">
-                <Link href={catalog.homepage} target="_blank" rel="noopener noreferrer">
-                  {catalog.homepage}
-                  <Link.ExternalIcon />
-                </Link>
-              </DescriptionItem>
-              <DescriptionItem label="License">{catalog.license}</DescriptionItem>
-            </>
-          )}
-          {detail.popularity !== null &&
-            (detail.popularity.stars !== null || detail.popularity.installsKnown) && (
-              <DescriptionItem label="Popularity">
-                <PopularityLine popularity={detail.popularity} />
-              </DescriptionItem>
+          </Fact>
+          <Fact label="License">
+            {catalog === null ? (
+              <Text as="span" variant="secondary">
+                Not known
+              </Text>
+            ) : (
+              <License expression={catalog.license} />
             )}
-          {detail.authors.length > 0 && (
-            <DescriptionItem label={detail.authors.length === 1 ? "Author" : "Authors"}>
-              <Authors authors={detail.authors} />
-            </DescriptionItem>
-          )}
-          <DescriptionItem label="Packaged by">
-            <Maintainers maintainers={app.maintainers} />
-          </DescriptionItem>
-          <DescriptionItem label="Last checked">
+          </Fact>
+          <Fact label="Install check">
             <InstallCheckBadge lastVerified={app.lastVerified} />
-          </DescriptionItem>
-        </DescriptionList>
-        {cover !== null && (
-          // The cover is the app's 1200x630 card; beside the details it stays card-sized.
-          <AppCover src={cover} alt={`${app.name}: ${app.summary}`} />
+          </Fact>
+          <Fact label="Popularity">
+            {hasPopularity ? (
+              <PopularityLine popularity={detail.popularity} className="justify-center" />
+            ) : (
+              <Text as="span" variant="secondary">
+                No numbers yet
+              </Text>
+            )}
+          </Fact>
+          <Fact label="Links">
+            {repoUrl === null && homepage === null ? (
+              <Text as="span" variant="secondary">
+                None
+              </Text>
+            ) : (
+              <span className="flex items-center gap-1">
+                {repoUrl !== null && (
+                  <IconLink
+                    href={repoUrl}
+                    icon={GithubLogoIcon}
+                    label={`Source code: ${catalog?.repo ?? ""}`}
+                  />
+                )}
+                {homepage !== null && (
+                  <IconLink
+                    href={homepage}
+                    icon={GlobeIcon}
+                    label={`Homepage: ${hostOf(homepage)}`}
+                  />
+                )}
+              </span>
+            )}
+          </Fact>
+        </div>
+        <div className="mx-auto grid w-full max-w-5xl gap-5 border-kumo-hairline border-t pt-5 sm:grid-cols-2">
+          <Fact label={detail.authors.length === 1 ? "Author" : "Authors"}>
+            {detail.authors.length === 0 ? (
+              <Text as="span" variant="secondary">
+                Not known
+              </Text>
+            ) : (
+              detail.authors.map((author) => <Author key={author.name} author={author} />)
+            )}
+          </Fact>
+          <Fact label="Packaged by">
+            <Maintainers maintainers={app.maintainers} />
+          </Fact>
+        </div>
+        <div className="mx-auto grid w-full max-w-5xl border-kumo-hairline border-t pt-5">
+          <Fact label="Runs on">
+            <PrimitiveBadges
+              primitives={detail.primitives}
+              capabilities={detail.capabilities}
+              tier={app.tier}
+            />
+          </Fact>
+        </div>
+        {(app.tier === "sandbox" || app.tier === "self-deploying") && app.build !== undefined && (
+          <div className="mx-auto w-full max-w-5xl border-kumo-hairline border-t pt-5">
+            <DescriptionList>
+              {app.tier === "sandbox" ? (
+                <BuildRow build={app.build} />
+              ) : (
+                <InstallerRow
+                  build={app.build}
+                  tool={
+                    catalog?.install.selfDeploying === undefined
+                      ? null
+                      : SELF_DEPLOYING_TOOLS[catalog.install.selfDeploying.tool].label
+                  }
+                />
+              )}
+            </DescriptionList>
+          </div>
         )}
       </LayerCard.Primary>
     </LayerCard>
   );
 }
 
-/** Each author on its own line: the name, then their website, GitHub, and X where given. */
-function Authors({ authors }: { authors: CatalogAuthor[] }) {
+/** Each SPDX id of the license linked to a plain-language explanation of it. */
+function License({ expression }: { expression: string }) {
   return (
-    <span className="grid gap-0.5">
-      {authors.map((author) => (
-        <span key={author.name} className="flex flex-wrap items-baseline gap-x-3">
-          <span>{author.name}</span>
-          {authorLinks(author).map((link) => (
-            <ExternalLink key={link.href} href={link.href}>
-              {link.label}
-            </ExternalLink>
-          ))}
-        </span>
-      ))}
+    <span>
+      {licenseParts(expression).map((part, i) =>
+        part.href === null ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one fixed string never reorder
+          <span key={i}>{part.text}</span>
+        ) : (
+          <Link
+            // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one fixed string never reorder
+            key={i}
+            href={part.href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {part.text}
+            <Link.ExternalIcon />
+          </Link>
+        ),
+      )}
+    </span>
+  );
+}
+
+/** An author: avatar (GitHub's, through the manager, or a monogram), name, and their links as icons. */
+function Author({ author }: { author: CatalogAuthor }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <AuthorAvatar src={avatarSrc(author.github)} name={author.name} size={28} />
+      <Text as="span">{author.name}</Text>
+      <span className="inline-flex items-center">
+        {authorLinks(author).map((link) => (
+          <IconLink
+            key={link.href}
+            href={link.href}
+            icon={LINK_ICONS[link.kind]}
+            label={`${author.name} on ${link.label}`}
+          />
+        ))}
+      </span>
     </span>
   );
 }
@@ -264,27 +418,19 @@ function Authors({ authors }: { authors: CatalogAuthor[] }) {
 /** The catalog maintainers, each linked to GitHub where the handle allows. */
 function Maintainers({ maintainers }: { maintainers: string[] }) {
   return (
-    <span className="flex flex-wrap gap-x-3">
+    <span className="flex flex-wrap justify-center gap-x-3">
       {maintainers.map((handle) => {
         const profile = maintainerProfile(handle);
         return profile.href === null ? (
           <span key={handle}>{profile.label}</span>
         ) : (
-          <ExternalLink key={handle} href={profile.href}>
+          <Link key={handle} href={profile.href} target="_blank" rel="noopener noreferrer">
             {profile.label}
-          </ExternalLink>
+            <Link.ExternalIcon />
+          </Link>
         );
       })}
     </span>
-  );
-}
-
-function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
-  return (
-    <Link href={href} target="_blank" rel="noopener noreferrer">
-      {children}
-      <Link.ExternalIcon />
-    </Link>
   );
 }
 
@@ -369,16 +515,47 @@ interface RequirementsConfirmation {
   disabledReason: string | null;
 }
 
+/** The sentence and probe badge for one pending requirement. */
+function PendingRequirement({ check, detail }: { check: RequirementCheck; detail: CatalogDetail }) {
+  const { app } = detail;
+  if (app === null) return null;
+  if (check.key === "plan") {
+    return (
+      <li>
+        <span className="font-semibold">Workers Paid.</span> This app needs the Workers Paid plan on
+        this account.{" "}
+        {check.availability === "unavailable" && (
+          <CapabilityBadge badge={{ met: false, label: "Detected: Workers Free" }} />
+        )}
+      </li>
+    );
+  }
+  return (
+    <li>
+      <span className="font-semibold">{check.label}.</span>{" "}
+      {requirementSentence(check.key, {
+        tier: app.tier,
+        provisionsEmailRouting: detail.catalog?.install.emailRouting !== undefined,
+      })}{" "}
+      <CapabilityBadge badge={requirementBadge(check.key, detail.capabilities)} />
+    </li>
+  );
+}
+
 /**
- * Plan, account requirements, and what the install creates. Each requirement
- * gets one sentence; `confirmation` (shown only when the install form is)
- * holds the checkbox that enables the Install button.
+ * Plan, account requirements, and what the install creates. The warning lists
+ * only what this account is not known to offer (not available, or not
+ * checked), each with one sentence; what the account is known to offer is one
+ * quiet line. `confirmation` (shown only when the install form is) holds the
+ * checkbox that enables the Install button while anything is left to confirm.
  */
 function Prerequisites({
   detail,
+  checks,
   confirmation,
 }: {
   detail: CatalogDetail;
+  checks: RequirementChecks;
   confirmation: RequirementsConfirmation | null;
 }) {
   const { app } = detail;
@@ -387,63 +564,57 @@ function Prerequisites({
     ...detail.creates.map((c) => `${resourceKindLabel(c.kind)} for ${c.binding}`),
     ...detail.durableObjects.map((d) => `Durable Object class ${d}`),
   ];
-  const paid = app.plan === "paid";
-  const planBadge = paid ? paidPlanBadge(detail.capabilities) : null;
-  const requirementBadges = app.requires.map((r) => requirementBadge(r, detail.capabilities));
-  // Green only when Appflare detected every requirement as met; anything unknown stays a warning.
-  const allMet =
-    (!paid || planBadge?.met === true) && requirementBadges.every((b) => b?.met === true);
+  const metLine =
+    checks.met.length === 0
+      ? null
+      : `Available on this account: ${checks.met.map((c) => c.label).join(", ")}.`;
   return (
     <div className="grid gap-3">
-      {(paid || app.requires.length > 0) && (
+      {checks.pending.length > 0 ? (
         <Banner
-          variant={allMet ? "default" : "alert"}
-          icon={allMet ? <CheckCircleIcon weight="fill" /> : <WarningIcon weight="fill" />}
-          title={allMet ? "This account meets the requirements" : "Before you install"}
+          variant="alert"
+          icon={<WarningIcon weight="fill" />}
+          title="Before you install"
           description={
             <div className="grid gap-2">
-              {paid && (
-                <span className="inline-flex flex-wrap items-center gap-2">
-                  This app needs the Workers Paid plan on this account.
-                  <CapabilityBadge badge={planBadge} />
-                </span>
+              <span>Check that this account offers what the app needs:</span>
+              <ul className="grid list-disc gap-1 pl-5">
+                {checks.pending.map((check) => (
+                  <PendingRequirement key={check.key} check={check} detail={detail} />
+                ))}
+              </ul>
+              {metLine !== null && (
+                <Text as="span" variant="secondary" size="sm">
+                  {metLine}
+                </Text>
               )}
-              {app.requires.length > 0 && (
-                <>
-                  <span>{paid ? "It also needs:" : "This app needs:"}</span>
-                  <ul className="grid list-disc gap-1 pl-5">
-                    {app.requires.map((r, i) => (
-                      <li key={r}>
-                        <span className="font-semibold">{requirementLabel(r)}.</span>{" "}
-                        {requirementSentence(r, {
-                          tier: app.tier,
-                          provisionsEmailRouting:
-                            detail.catalog?.install.emailRouting !== undefined,
-                        })}{" "}
-                        <CapabilityBadge badge={requirementBadges[i] ?? null} />
-                      </li>
-                    ))}
-                  </ul>
-                  {confirmation !== null && (
-                    <span className="grid gap-1">
-                      <Checkbox
-                        label="This account meets these requirements"
-                        checked={confirmation.checked}
-                        disabled={confirmation.disabledReason !== null}
-                        onCheckedChange={(checked: boolean) => confirmation.onChange(checked)}
-                      />
-                      {confirmation.disabledReason !== null && (
-                        <Text as="span" variant="secondary" size="sm">
-                          {confirmation.disabledReason}
-                        </Text>
-                      )}
-                    </span>
+              {confirmation !== null && (
+                <span className="grid gap-1">
+                  <Checkbox
+                    label="This account meets these requirements"
+                    checked={confirmation.checked}
+                    disabled={confirmation.disabledReason !== null}
+                    onCheckedChange={(checked: boolean) => confirmation.onChange(checked)}
+                  />
+                  {confirmation.disabledReason !== null && (
+                    <Text as="span" variant="secondary" size="sm">
+                      {confirmation.disabledReason}
+                    </Text>
                   )}
-                </>
+                </span>
               )}
             </div>
           }
         />
+      ) : (
+        metLine !== null && (
+          <Banner
+            variant="default"
+            icon={<CheckCircleIcon weight="fill" />}
+            title="This account meets the requirements"
+            description={metLine}
+          />
+        )
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Text variant="secondary" size="sm">

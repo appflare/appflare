@@ -36,14 +36,23 @@ export function authorNames(authors: readonly Pick<CatalogAuthor, "name">[]): st
 }
 
 /** The author's website, GitHub profile, and X profile, in that order, where given. */
-export function authorLinks(author: CatalogAuthor): ProfileLink[] {
-  const links: ProfileLink[] = [];
-  if (author.url !== undefined) links.push({ label: websiteLabel(author.url), href: author.url });
-  if (author.github !== undefined) {
-    links.push({ label: "GitHub", href: `https://github.com/${author.github}` });
+export function authorLinks(author: CatalogAuthor): AuthorLink[] {
+  const links: AuthorLink[] = [];
+  if (author.url !== undefined) {
+    links.push({ kind: "website", label: websiteLabel(author.url), href: author.url });
   }
-  if (author.x !== undefined) links.push({ label: "X", href: `https://x.com/${author.x}` });
+  if (author.github !== undefined) {
+    links.push({ kind: "github", label: "GitHub", href: `https://github.com/${author.github}` });
+  }
+  if (author.x !== undefined) {
+    links.push({ kind: "x", label: "X", href: `https://x.com/${author.x}` });
+  }
   return links;
+}
+
+/** A link next to an author's name, with what it points at so the page can pick its icon. */
+export interface AuthorLink extends ProfileLink {
+  kind: "website" | "github" | "x";
 }
 
 /** A website link's host without `www.`, or "Website" when the URL cannot be read. */

@@ -140,7 +140,7 @@ function InstalledTable({
             <Table.Row key={row.id}>
               <Table.Cell>
                 <div className="flex min-w-0 items-center gap-3">
-                  <AppIcon src={row.icon} size={28} />
+                  <AppIcon src={row.icon} name={row.name} size={28} />
                   <div className="grid min-w-0">
                     <Link href={`/apps/${row.id}`}>{row.label}</Link>
                     {row.name !== row.label && (
