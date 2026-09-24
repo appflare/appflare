@@ -28,14 +28,14 @@
     {
       "name": "appflare-sandbox-standard-1",
       "class_name": "Sandbox",
-      "image": "docker.io/mendylanda/appflare-sandbox:0.1.0",
+      "image": "docker.io/mendylanda/appflare-sandbox:0.1.1",
       "instance_type": "standard-1",
       "max_instances": 2
     },
     {
       "name": "appflare-sandbox-standard-2",
       "class_name": "LargeSandbox",
-      "image": "docker.io/mendylanda/appflare-sandbox:0.1.0",
+      "image": "docker.io/mendylanda/appflare-sandbox:0.1.1",
       "instance_type": "standard-2",
       "max_instances": 1
     }
