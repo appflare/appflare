@@ -1,7 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { getAutoUpdateSettings } from "../../../auto-update/auto-update.functions";
 import { AutomaticUpdatesCard } from "../../../auto-update/automatic-updates-card";
-import { SETTINGS_PAGES } from "../../../components/navigation";
+import { SETTINGS_PAGES, settingsPageForAnchor } from "../../../components/navigation";
 import { PageHeader } from "../../../components/page-header";
 import { PlaceholderCard } from "../../../components/placeholder-card";
 import { Section } from "../../../components/section";
@@ -20,6 +21,13 @@ export const Route = createFileRoute("/_app/settings/")({
 function GeneralSettingsPage() {
   const autoUpdate = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
+  const router = useRouter();
+  // Links from before Settings had pages point at sections of this one
+  // (`/settings#appflare-updates`); they open the page that section became.
+  useEffect(() => {
+    const page = settingsPageForAnchor(window.location.hash);
+    if (page !== null) void router.navigate({ href: page, replace: true });
+  }, [router]);
   return (
     <>
       <PageHeader title="Settings" description={SETTINGS_PAGES.general.description} />

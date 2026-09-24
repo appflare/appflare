@@ -85,7 +85,7 @@ finished or failed, add a [notification channel](/guides/notifications/).
 ## Roll back
 
 Each update and each [settings change](/guides/settings/) adds a row under
-**Versions** on the app's page: when the snapshot was taken, the catalog version, and
+**Versions** on the **Jobs** tab of the app's page: when the snapshot was taken, the catalog version, and
 the Worker version. Select **Roll back** on a row to deploy that Worker version again
 to all traffic, with the settings and secrets it had then. A rollback runs as a job
 and ends with a health check. If automatic updates were on for the app, the rollback turns

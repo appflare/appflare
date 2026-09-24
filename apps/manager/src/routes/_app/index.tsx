@@ -40,8 +40,8 @@ function HomePage() {
   return (
     <>
       <PageHeader
-        title="Installed apps"
-        description="Apps Appflare manages in this Cloudflare account."
+        title="Home"
+        description="The apps Appflare manages in this Cloudflare account."
         actions={
           rows.length > 0 ? (
             <LinkButton href="/catalog" variant="secondary" icon={<StorefrontIcon />}>

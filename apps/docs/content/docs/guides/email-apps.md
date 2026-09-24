@@ -106,7 +106,7 @@ If the install found Email Routing already on, the uninstall never turns it off.
 
 ## Moving to another zone
 
-To receive email for another zone, change it in the app's **Settings** section; see
+To receive email for another zone, change it on the **Settings** tab of the app's page; see
 [Move email to another zone](/guides/settings/#move-email-to-another-zone). The new
 zone is set up first, then the old one is cleaned up as described above.
 

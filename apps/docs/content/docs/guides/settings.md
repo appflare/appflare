@@ -3,17 +3,17 @@ title: Change an app's settings
 description: Change an installed app's settings, rotate or remove its secrets, move its email to another zone, and what a rollback puts back.
 ---
 
-An installed app's page has a **Settings** section. Admins use it to change the app's
+An installed app's page has a **Settings** tab. Admins use it to change the app's
 settings and secrets, and the zone it receives email for, without reinstalling it.
-Members see the same section but cannot change anything.
+Members see the same tab but cannot change anything.
 
-The section lists what the installed version declares, with the labels and help text
+The tab lists what the installed version declares, with the labels and help text
 from the catalog. Change what you need, then select **Save and redeploy**. The manager
 starts a settings change job and opens its live log. **Discard changes** puts the form
 back as it was.
 
 Saving is refused while another job of the app is queued or running, and while
-Appflare updates itself. While a job of the app runs, the section says so, with
+Appflare updates itself. While a job of the app runs, the tab says so, with
 **View log** to follow it.
 
 ## Settings
@@ -49,7 +49,7 @@ rolled-back app gets a value that no longer works.
 ## Remove a secret the app no longer uses
 
 Updates never delete secrets, so a secret an earlier version needed stays on the
-Worker after a newer version stops declaring it. The Settings section lists it with
+Worker after a newer version stops declaring it. The Settings tab lists it with
 **Not used by this version**. Select **Remove** next to it (it then shows **Will be
 removed**) and **Save and redeploy**.
 
@@ -58,7 +58,7 @@ replaced, never removed.
 
 ## Move email to another zone
 
-For an [app that receives email](/guides/email-apps/), the section shows the zone it
+For an [app that receives email](/guides/email-apps/), the tab shows the zone it
 receives email for. To change it:
 
 1. Select **Receive email for another zone** and choose the zone. Appflare inspects
@@ -71,7 +71,7 @@ turning Email Routing off there if this install turned it on and nothing else us
 it. Routing rules name the Worker, not a version, so moving email alone deploys
 nothing.
 
-If removing the old zone's rules stops part way, the section shows **Moving email did
+If removing the old zone's rules stops part way, the tab shows **Moving email did
 not finish** with the zones that still have rules. Select **Finish moving email**: it
 checks the new zone again and removes what is left, without deploying the Worker.
 
@@ -116,9 +116,10 @@ app in place: there is no snapshot, so such a change cannot be rolled back.
 
 ## What a rollback puts back
 
-Each settings change adds a row under **Versions**, just as an update does. Select
-**Roll back** on it to go back to the version that served before the change (see
-[Roll back](/guides/updates/#roll-back)).
+Each settings change adds a row under **Versions**, on the app's **Jobs** tab, just as
+an update does. Select **Undo** on it to go back to the version that served before the
+change (see [Roll back](/guides/updates/#roll-back)). When the app has been updated
+since, the row offers **Roll back** instead, since going back also changes its code.
 
 A rollback puts back:
 

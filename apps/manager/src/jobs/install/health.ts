@@ -30,6 +30,9 @@ import type { HealthStatus } from "../../db/schema";
  * while the route goes live or 1101 when the Worker crashed) are not the
  * Worker's answer and are judged as before, and a plain 404 still waits out
  * the window, since a route that is still going live can answer one too.
+ * The exception is a settings change: the app's URL was serving before that
+ * job, so no route is going live and a plain 404 is the app's own answer; its
+ * live check passes one at once (`routeWasLive`).
  */
 
 export type { HealthMode } from "@appflare/schema";

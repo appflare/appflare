@@ -43,7 +43,7 @@ per account.
 
 Appflare reads your account's Workers plan from its subscriptions when the Cloudflare
 token has the optional **Billing: Read** permission, and shows it in **Settings**, under
-**Account capabilities**, marked **Detected**. It checks when the token is saved, once a
+**Account and capabilities**, marked **Detected**. It checks when the token is saved, once a
 day, and when you select **Re-check**. Without that permission, you state the plan
 there yourself (marked **Set by you**); until you do, Appflare treats the account as on
 Workers Free. A detected plan always comes first.

@@ -5,8 +5,8 @@ description: Send messages about updates, jobs and failing health checks to Tele
 
 Appflare can tell you when something needs attention: an update is available, an
 update or install finished, an app's health check started failing. Messages go to
-**notification channels**, which admins manage under **Settings**, **Notification
-channels**. Members cannot view or change them.
+**notification channels**, which admins manage under **Settings**,
+**Notifications**. Members cannot view or change them.
 
 Messages name the app, its version and its Worker, and link to the manager. They
 never contain secrets or tokens. A failed job links to its log instead of quoting
@@ -56,7 +56,7 @@ See [Health checks](/guides/health/).
 
 ## Add a channel
 
-1. Open **Settings**, **Notification channels**, and select **Add channel**.
+1. Open **Settings**, **Notifications**, and select **Add channel**.
 2. Choose the **Kind** and give the channel a **Name**, such as "Team chat".
 3. Enter the credentials, as described below for each kind.
 4. Pick the **Events**.
@@ -260,8 +260,8 @@ Credentials never appear in messages, logs, or error text.
 The encryption key is derived from the manager's `BETTER_AUTH_SECRET`, a Worker
 secret set at install. If that secret is ever replaced, the stored credentials can no
 longer be read. Each channel then shows **Credentials unreadable** and sends nothing.
-To fix a Telegram, Slack or Discord channel, select **Edit** and enter its
-credentials again. A webhook channel cannot be repaired that way: remove it, add it
-again, and give your receiver the new signing secret.
+To fix a channel, select **Edit** and enter its details again. A webhook channel
+repaired this way gets a new signing secret, shown once after saving: give it to your
+receiver. Removing the channel and adding it again works too.
 
 See the [security model](/security/#notification-credentials).

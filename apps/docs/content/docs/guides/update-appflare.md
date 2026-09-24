@@ -10,7 +10,7 @@ signature.
 
 ## Update from Settings
 
-Open **Settings** and find the **Appflare** card. It shows the running version, the
+Open **Settings > Appflare updates** and find the **Appflare** card. It shows the running version, the
 latest release, and when it last checked. Admins can select **Check now** to look
 for a release right away.
 

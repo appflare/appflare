@@ -14,7 +14,7 @@ Each app's catalog card shows **Free plan** or **Workers Paid**.
 | --- | --- |
 | 50 subrequests per invocation | The manager installs apps from a Workflow that must stay within this budget. This is why a catalog app can have at most 21 Worker modules. |
 | 3 MB Worker size, compressed | Apps with a larger Worker need Workers Paid and are marked that way in the catalog. |
-| 5 cron triggers per account | The manager uses one (every 30 minutes). Apps with cron triggers share the other four. The catalog page says how many an app uses, and an install stops before it creates anything if the account would pass 5. The count is skipped when the account's Workers plan (detected, or set in **Settings**, **Account capabilities**) is Workers Paid, or when you tick **This account is on Workers Paid** for that install or update. |
+| 5 cron triggers per account | The manager uses one (every 30 minutes). Apps with cron triggers share the other four. The catalog page says how many an app uses, and an install stops before it creates anything if the account would pass 5. The count is skipped when the account's Workers plan (detected, or set in **Settings**, **Account and capabilities**) is Workers Paid, or when you tick **This account is on Workers Paid** for that install or update. |
 | 10 D1 databases per account | The manager uses one. Each app that binds D1 uses one per database, per install. |
 
 Other free plan quotas, such as requests per day and KV writes per day, apply to

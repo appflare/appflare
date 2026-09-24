@@ -3,7 +3,7 @@ title: Uninstall an app
 description: What an uninstall deletes, what you can keep, how to delete kept data later, and how to finish an uninstall that stopped.
 ---
 
-Uninstall is in the **Danger zone** at the bottom of the app's page, which only
+Uninstall is in the **Danger zone** at the bottom of the **Overview** tab of the app's page, which only
 admins see. Select **Uninstall**; the dialog lists everything the uninstall deletes
 and asks you to type the Worker name to confirm.
 
