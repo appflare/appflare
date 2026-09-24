@@ -1,24 +1,15 @@
 import { parseArgs } from "node:util";
 import { install } from "./commands/install.ts";
-import { rollback } from "./commands/rollback.ts";
-import { sandboxDisable, sandboxEnable } from "./commands/sandbox.ts";
-import { status } from "./commands/status.ts";
-import { uninstall } from "./commands/uninstall.ts";
 import type { CommandContext } from "./context.ts";
-import { CliTelemetry } from "./telemetry.ts";
+import { CliTelemetry, cliVersion } from "./telemetry.ts";
 import { CancelledError } from "./ui.ts";
 
-export const USAGE = `Appflare installer: installs and manages the Appflare manager in your Cloudflare account.
+export const USAGE = `create-appflare: installs Appflare, a self-hosted app manager for Cloudflare, into your Cloudflare account.
 
 Usage:
-  npx create-appflare [options]              install the manager (default command)
-  npx @appflare/cli status [--name <name>] [--url <url>]
-  npx @appflare/cli rollback [--name <name>] [--list | --to <version-id>] [--yes] [--url <url>]
-  npx @appflare/cli uninstall --yes [--name <name>] [--purge [--i-understand-data-loss]] [--url <url>]
-  npx @appflare/cli sandbox enable [--version <x.y.z> | --artifact-dir <dir>] [--yes]
-  npx @appflare/cli sandbox disable --yes [--purge [--i-understand-data-loss]]
+  npx create-appflare [options]
 
-Install options:
+Options:
   --version <x.y.z>       manager release to install (default: the latest)
   --artifact-dir <dir>    use manifest.json, manifest.sig and appflare-<version>.zip
                           from <dir> instead of downloading a release
@@ -30,88 +21,70 @@ Install options:
                           accept an artifact without manifest.sig
   --no-telemetry          send no anonymous usage data, and install the manager
                           with its usage data turned off (APPFLARE_TELEMETRY=off)
-
-Status options:
-  --url <url>             the manager's URL (default: looked up from the account)
-
-Rollback options:
-  --list                  print recent versions with ids and dates; change nothing
-  --to <version-id>       version to roll back to (default: the previous deployment)
-  -y, --yes               do not ask for confirmation
-  --url <url>             the manager's URL for the health check afterwards
-
-Uninstall options:
-  --yes                   required; deletes the manager Worker (and its Workflow).
-                          With several accounts it still asks which one; without a
-                          terminal set CLOUDFLARE_ACCOUNT_ID.
-  --purge                 also delete the manager's D1 database and KV namespace
-                          (all its data): the ones the manager Worker is bound
-                          to, or, if the Worker is gone, the ones named exactly
-                          <name> and <name>-kv. Asks you to type the manager's
-                          name. Installed apps are never touched.
-  --i-understand-data-loss
-                          with --yes --purge: do not ask for the name
-  --url <url>             the manager's URL, to recognize it by /api/health
-                          (default: looked up from the account)
-
-Sandbox builds (needs Workers Paid):
-  sandbox enable          deploy or update the sandbox Worker "appflare-sandbox",
-                          which builds sandbox tier apps from their pinned commit
-                          in Cloudflare Containers in your account. --version,
-                          --artifact-dir, --yes and --allow-unsigned work as for
-                          install. Each build runs a standard-1 container; a
-                          10-minute build costs about US$0.012 beyond the usage
-                          Workers Paid includes.
-  sandbox disable --yes   delete the sandbox Worker and its container
-                          applications. The R2 bucket appflare-builds (build
-                          outputs and logs) stays unless --purge is given, which
-                          asks you to type the sandbox Worker's name (or pass
-                          --i-understand-data-loss).
+  -v, --version           print this installer's version (--version without a value)
+  -h, --help              print this help
 
 It uses wrangler: log in with \`npx wrangler login\` first, or let the installer
 open the login for you. With several accounts, set CLOUDFLARE_ACCOUNT_ID or pick
 one when asked.
 
-Every command sends anonymous usage data (one event when it ends: the command,
-outcome, duration, error category, OS and Node.js version; never account ids,
-names or domains). --no-telemetry on any command, or APPFLARE_TELEMETRY=off or
-DO_NOT_TRACK=1 in the environment, turns it off.
+Once the manager runs, you manage it from its own Settings:
+  Settings > Appflare updates                 the running version, updates
+  Settings > Account and capabilities         sandbox builds: enable, update, disable
+  Settings > General > Remove Appflare        remove the manager and its data
+To return to an earlier manager version, roll back on the Worker's Deployments
+page in the Cloudflare dashboard, or run \`npx wrangler rollback --name <name>\`.
+
+The installer sends anonymous usage data (one event when it ends: outcome,
+duration, error category, OS and Node.js version; never account ids, names or
+domains). --no-telemetry, or APPFLARE_TELEMETRY=off or DO_NOT_TRACK=1 in the
+environment, turns it off.
 `;
 
-const COMMANDS = ["install", "status", "rollback", "uninstall", "sandbox", "help"] as const;
-type Command = (typeof COMMANDS)[number];
-
-function isCommand(value: string | undefined): value is Command {
-  return (COMMANDS as readonly string[]).includes(value ?? "");
-}
-
-/** Splits `argv` into the command (default `install`) and its arguments. */
-export function splitCommand(argv: string[]): { command: Command; args: string[] } {
-  const [first, ...rest] = argv;
-  return isCommand(first) ? { command: first, args: rest } : { command: "install", args: argv };
-}
-
-/** The option every command accepts; removed before a command parses its own. */
+/** The option that turns usage data off; removed before the install parses its own. */
 export const NO_TELEMETRY_FLAG = "--no-telemetry";
 
 /**
- * Runs the CLI. Returns the process exit code. A command that starts (past
- * `--help` and its argument checks) sends one usage-data event when it ends,
- * unless usage data is off.
+ * Commands earlier versions of this package had, and where each one's job is
+ * done now. Named here so running one says where to go instead of only
+ * "unexpected argument".
+ */
+export const REMOVED_COMMANDS: Readonly<Record<string, string>> = {
+  status: "open the manager: Settings > Appflare updates shows the running version and updates",
+  rollback:
+    "roll back on the manager Worker's Deployments page in the Cloudflare dashboard, or run `npx wrangler rollback --name <name>`",
+  uninstall: "open the manager: Settings > General > Remove Appflare removes it and its data",
+  sandbox:
+    "open the manager: Settings > Account and capabilities > Sandbox builds enables, updates and disables them",
+};
+
+/**
+ * Whether `argv` asks for the installer's own version: `-v`, or `--version`
+ * with no value after it (`--version <x.y.z>` picks the manager release).
+ */
+export function wantsVersion(argv: readonly string[]): boolean {
+  return argv.some((arg, i) => {
+    if (arg === "-v") return true;
+    if (arg !== "--version") return false;
+    const next = argv[i + 1];
+    return next === undefined || next.startsWith("-");
+  });
+}
+
+/**
+ * Runs `create-appflare`. Returns the process exit code. An install that
+ * starts (past `--help`, `--version` and its argument checks) sends one
+ * usage-data event when it ends, unless usage data is off.
  */
 export async function main(argv: string[], ctx: CommandContext): Promise<number> {
   const optOut = argv.includes(NO_TELEMETRY_FLAG);
   const telemetry =
     ctx.telemetry ?? new CliTelemetry({ env: ctx.env, optOut, fetch: ctx.fetch, ui: ctx.ui });
-  const { command, args } = splitCommand(argv.filter((a) => a !== NO_TELEMETRY_FLAG));
-  if (command === "help") {
-    process.stdout.write(USAGE);
-    return 0;
-  }
+  const args = argv.filter((a) => a !== NO_TELEMETRY_FLAG);
   let outcome: "succeeded" | "failed" | "cancelled" = "succeeded";
   let failure: unknown;
   try {
-    return await run(command, args, { ...ctx, telemetry });
+    return await run(args, { ...ctx, telemetry });
   } catch (error) {
     failure = error;
     if (error instanceof CancelledError) {
@@ -129,194 +102,50 @@ export async function main(argv: string[], ctx: CommandContext): Promise<number>
 }
 
 async function run(
-  command: Exclude<Command, "help">,
   args: string[],
   ctx: CommandContext & { telemetry: CliTelemetry },
 ): Promise<number> {
-  const { telemetry } = ctx;
-  switch (command) {
-    case "install": {
-      const { values, positionals } = parseArgs({
-        args,
-        options: {
-          version: { type: "string" },
-          "artifact-dir": { type: "string" },
-          name: { type: "string" },
-          yes: { type: "boolean", short: "y", default: false },
-          "allow-unsigned": { type: "boolean", default: false },
-          help: { type: "boolean", short: "h" },
-        },
-      });
-      if (values.help) {
-        process.stdout.write(USAGE);
-        return 0;
-      }
-      rejectPositionals(positionals);
-      ctx.ui.banner();
-      telemetry.begin("install", values.yes);
-      await install(
-        {
-          version: values.version,
-          artifactDir: values["artifact-dir"],
-          name: values.name,
-          yes: values.yes,
-          allowUnsigned: values["allow-unsigned"],
-        },
-        ctx,
-      );
-      return 0;
-    }
-    case "status": {
-      const { values, positionals } = parseArgs({
-        args,
-        options: {
-          name: { type: "string" },
-          url: { type: "string" },
-          help: { type: "boolean", short: "h" },
-        },
-      });
-      if (values.help) {
-        process.stdout.write(USAGE);
-        return 0;
-      }
-      rejectPositionals(positionals);
-      telemetry.begin("status", false);
-      await status({ name: values.name, url: values.url }, ctx);
-      return 0;
-    }
-    case "rollback": {
-      const { values, positionals } = parseArgs({
-        args,
-        options: {
-          name: { type: "string" },
-          to: { type: "string" },
-          list: { type: "boolean", default: false },
-          url: { type: "string" },
-          yes: { type: "boolean", short: "y", default: false },
-          help: { type: "boolean", short: "h" },
-        },
-      });
-      if (values.help) {
-        process.stdout.write(USAGE);
-        return 0;
-      }
-      rejectPositionals(positionals);
-      if (values.list && values.to !== undefined) {
-        throw new Error("--list and --to cannot be used together");
-      }
-      telemetry.begin("rollback", values.yes);
-      await rollback(
-        { name: values.name, to: values.to, list: values.list, url: values.url, yes: values.yes },
-        ctx,
-      );
-      return 0;
-    }
-    case "uninstall": {
-      const { values, positionals } = parseArgs({
-        args,
-        options: {
-          name: { type: "string" },
-          yes: { type: "boolean", short: "y", default: false },
-          purge: { type: "boolean", default: false },
-          url: { type: "string" },
-          "i-understand-data-loss": { type: "boolean", default: false },
-          help: { type: "boolean", short: "h" },
-        },
-      });
-      if (values.help) {
-        process.stdout.write(USAGE);
-        return 0;
-      }
-      rejectPositionals(positionals);
-      telemetry.begin("uninstall", values.yes);
-      telemetry.purge = values.purge;
-      await uninstall(
-        {
-          name: values.name,
-          yes: values.yes,
-          purge: values.purge,
-          iUnderstandDataLoss: values["i-understand-data-loss"],
-          url: values.url,
-        },
-        ctx,
-      );
-      return 0;
-    }
-    case "sandbox":
-      return await runSandbox(args, ctx);
-  }
-}
-
-/** `sandbox enable|disable`. */
-async function runSandbox(
-  args: string[],
-  ctx: CommandContext & { telemetry: CliTelemetry },
-): Promise<number> {
-  const [sub, ...rest] = args;
-  if (sub === "enable") {
-    const { values, positionals } = parseArgs({
-      args: rest,
-      options: {
-        version: { type: "string" },
-        "artifact-dir": { type: "string" },
-        yes: { type: "boolean", short: "y", default: false },
-        "allow-unsigned": { type: "boolean", default: false },
-        help: { type: "boolean", short: "h" },
-      },
-    });
-    if (values.help) {
-      process.stdout.write(USAGE);
-      return 0;
-    }
-    rejectPositionals(positionals);
-    ctx.telemetry.begin("sandbox enable", values.yes);
-    await sandboxEnable(
-      {
-        version: values.version,
-        artifactDir: values["artifact-dir"],
-        yes: values.yes,
-        allowUnsigned: values["allow-unsigned"],
-      },
-      ctx,
-    );
+  if (args.includes("--help") || args.includes("-h")) {
+    ctx.ui.result(USAGE.trimEnd());
     return 0;
   }
-  if (sub === "disable") {
-    const { values, positionals } = parseArgs({
-      args: rest,
-      options: {
-        yes: { type: "boolean", short: "y", default: false },
-        purge: { type: "boolean", default: false },
-        "i-understand-data-loss": { type: "boolean", default: false },
-        help: { type: "boolean", short: "h" },
-      },
-    });
-    if (values.help) {
-      process.stdout.write(USAGE);
-      return 0;
-    }
-    rejectPositionals(positionals);
-    ctx.telemetry.begin("sandbox disable", values.yes);
-    ctx.telemetry.purge = values.purge;
-    await sandboxDisable(
-      {
-        yes: values.yes,
-        purge: values.purge,
-        iUnderstandDataLoss: values["i-understand-data-loss"],
-      },
-      ctx,
-    );
+  if (wantsVersion(args)) {
+    ctx.ui.result(cliVersion());
     return 0;
   }
-  if (sub === undefined || sub === "--help" || sub === "-h") {
-    process.stdout.write(USAGE);
-    return sub === undefined ? 1 : 0;
+  // Checked before parsing, so a removed command's own flags (`rollback --to`,
+  // `uninstall --purge`) do not hide the pointer to its replacement.
+  const [command] = args;
+  const instead = command === undefined ? undefined : REMOVED_COMMANDS[command];
+  if (instead !== undefined) {
+    throw new Error(`\`${command}\` is no longer part of the installer; ${instead}.`);
   }
-  throw new Error(`unknown sandbox command: ${sub} (use enable or disable)`);
-}
-
-function rejectPositionals(positionals: string[]): void {
-  if (positionals.length > 0) {
-    throw new Error(`unexpected argument: ${positionals[0]} (see --help)`);
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      version: { type: "string" },
+      "artifact-dir": { type: "string" },
+      name: { type: "string" },
+      yes: { type: "boolean", short: "y", default: false },
+      "allow-unsigned": { type: "boolean", default: false },
+    },
+  });
+  const [unexpected] = positionals;
+  if (unexpected !== undefined) {
+    throw new Error(`unexpected argument: ${unexpected} (see --help)`);
   }
+  ctx.ui.banner();
+  ctx.telemetry.begin(values.yes);
+  await install(
+    {
+      version: values.version,
+      artifactDir: values["artifact-dir"],
+      name: values.name,
+      yes: values.yes,
+      allowUnsigned: values["allow-unsigned"],
+    },
+    ctx,
+  );
+  return 0;
 }

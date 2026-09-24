@@ -210,7 +210,14 @@ describe("install", () => {
     await expect(install({ artifactDir, yes: true, allowUnsigned: false }, t.ctx)).rejects.toThrow(
       "boom",
     );
-    expect(t.lines.join("\n")).toContain("uninstall --yes --name appflare");
+    expect(t.lines).toEqual(
+      expect.arrayContaining([
+        "!   npx wrangler delete --name appflare",
+        "!   npx wrangler workflows delete appflare-jobs",
+        "!   npx wrangler d1 delete appflare",
+        "!   npx wrangler kv namespace delete appflare-kv",
+      ]),
+    );
     expect(t.results).toEqual([]);
   });
 
@@ -219,7 +226,7 @@ describe("install", () => {
     await expect(install({ artifactDir, yes: true, allowUnsigned: false }, t.ctx)).rejects.toThrow(
       "did not report a deploy",
     );
-    expect(t.lines.join("\n")).toContain("uninstall --yes --name appflare");
+    expect(t.lines.join("\n")).toContain("npx wrangler delete --name appflare");
     expect(t.calls.some((c) => c.args[0] === "secret")).toBe(false);
   });
 

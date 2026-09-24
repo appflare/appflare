@@ -1,8 +1,7 @@
 import { defineConfig } from "tsdown";
 
 // Library entry (`index`) and the bin (`cli`), ESM + .d.ts into dist/, like
-// @appflare/pack. `@appflare/schema` and `@appflare/cf-api/capabilities` are
-// bundled (JS and types) from their built
+// @appflare/pack. `@appflare/schema` is bundled (JS and types) from its built
 // dist/ so the published package has no `@appflare/*` runtime dependency;
 // wrangler, zod, and @clack/prompts stay external `dependencies`.
 export default defineConfig({

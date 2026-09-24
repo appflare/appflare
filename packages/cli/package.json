@@ -2,7 +2,7 @@
   "name": "@appflare/cli",
   "version": "0.1.0",
   "private": true,
-  "description": "Install and manage Appflare, a self-hosted app manager for Cloudflare, in your own Cloudflare account.",
+  "description": "Install Appflare, a self-hosted app manager for Cloudflare, into your own Cloudflare account.",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -17,8 +17,7 @@
   },
   "types": "./dist/index.d.ts",
   "bin": {
-    "create-appflare": "./bin/appflare.js",
-    "appflare": "./bin/appflare.js"
+    "create-appflare": "./bin/appflare.js"
   },
   "files": [
     "bin",
@@ -47,7 +46,6 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@appflare/cf-api": "workspace:*",
     "@appflare/pack": "workspace:*",
     "@appflare/schema": "workspace:*"
   }

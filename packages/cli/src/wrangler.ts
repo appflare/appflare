@@ -115,7 +115,7 @@ export function wranglerEnv(base: NodeJS.ProcessEnv, accountId?: string): NodeJS
 }
 
 /**
- * Argument lists for every wrangler command the CLI runs (wrangler 4.136).
+ * Argument lists for every wrangler command the installer runs (wrangler 4.136).
  * Kept as data so tests pin them without spawning anything.
  */
 export const wranglerArgs = {
@@ -146,53 +146,9 @@ export const wranglerArgs = {
     worker,
     "--json",
   ],
-  versionsList: (worker: string): string[] => ["versions", "list", "--name", worker, "--json"],
-  versionsView: (worker: string, versionId: string): string[] => [
-    "versions",
-    "view",
-    versionId,
-    "--name",
-    worker,
-    "--json",
-  ],
-  rollback: (worker: string, versionId: string, message: string): string[] => [
-    "rollback",
-    versionId,
-    "--name",
-    worker,
-    "--message",
-    message,
-    "--yes",
-  ],
-  /**
-   * `--force` skips wrangler's confirmation AND sends `force=true` on the
-   * DELETE (wrangler 4.136.2), so the Worker is deleted even when other
-   * Workers depend on it (service bindings, Durable Objects, tail consumers).
-   * The CLI requires `--yes` before running it.
-   */
-  delete: (worker: string): string[] => ["delete", "--name", worker, "--force"],
-  /** Deletes the Workflow and its instances; asks nothing. Exits non-zero (API code 10200) when it does not exist. */
-  workflowsDelete: (workflow: string): string[] => ["workflows", "delete", workflow],
   d1List: (): string[] => ["d1", "list", "--json"],
-  /** `-y` skips wrangler's confirmation; the CLI confirms first. Looks the database up by name. */
-  d1Delete: (databaseName: string): string[] => ["d1", "delete", databaseName, "-y"],
-  /** By id, never by title; `-y` skips wrangler's confirmation. */
-  kvDelete: (namespaceId: string): string[] => [
-    "kv",
-    "namespace",
-    "delete",
-    "--namespace-id",
-    namespaceId,
-    "-y",
-  ],
   /** Prints JSON without a flag. */
   kvList: (): string[] => ["kv", "namespace", "list"],
-  /** Fails while the bucket holds objects. */
-  r2BucketDelete: (bucket: string): string[] => ["r2", "bucket", "delete", bucket],
-  /** By application id; asks nothing when stdin is not a terminal. */
-  containersDelete: (id: string): string[] => ["containers", "delete", id],
-  /** Prints `{"type":"oauth"|"api_token",…,"token":…}`. Output must never be shown. */
-  authToken: (): string[] => ["auth", "token", "--json"],
 };
 
 /** Options for {@link createWrangler}. */

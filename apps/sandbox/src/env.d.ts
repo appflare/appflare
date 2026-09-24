@@ -1,6 +1,7 @@
 /**
- * The bindings of wrangler.jsonc (and of the config `appflare sandbox enable`
- * generates, which declares the same ones). Keep the two in step.
+ * The bindings of wrangler.jsonc (and of the upload the manager's "Enable
+ * sandbox builds" job makes, apps/manager/src/sandbox/deploy-plan.ts, which
+ * declares the same ones). Keep the two in step.
  *
  * Besides these, the manager sets secrets per self-deploying install
  * (`APP_TOKEN_<installId>`, `APP_SECRET_<installId>_<name>`) through the Cloudflare

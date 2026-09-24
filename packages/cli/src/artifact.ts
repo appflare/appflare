@@ -13,16 +13,12 @@ import {
 /** `manifest.app` of every manager artifact. */
 export const MANAGER_APP = "appflare";
 
-/** `manifest.app` of every sandbox Worker artifact (the optional sandbox Worker). */
-export const SANDBOX_APP = "appflare-sandbox";
-
 /** What each artifact is called in messages. */
 const APP_LABELS: Record<string, string> = {
   [MANAGER_APP]: "the Appflare manager",
-  [SANDBOX_APP]: "the Appflare sandbox Worker",
 };
 
-/** A verified artifact (the manager, or the sandbox Worker). */
+/** A verified artifact. */
 export interface VerifiedArtifact {
   manifest: ArtifactManifest;
   zipPath: string;

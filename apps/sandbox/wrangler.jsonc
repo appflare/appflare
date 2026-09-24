@@ -4,9 +4,9 @@
   // account. The manager reaches it only through a service binding to the
   // `SandboxBuilds` entrypoint; it has no public URL.
   //
-  // Users never deploy this file: `appflare sandbox enable` generates the same
-  // configuration from the sandbox Worker's signed release (packages/cli/src/sandbox-config.ts)
-  // and deploys that. This file is for tests and packing.
+  // Users never deploy this file: the manager's "Enable sandbox builds" job uploads the
+  // same configuration from the sandbox Worker's signed release
+  // (apps/manager/src/sandbox/deploy-plan.ts). This file is for tests and packing.
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "appflare-sandbox",
   // Pinned to the Appflare Dev account so local wrangler commands cannot target

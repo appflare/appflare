@@ -58,8 +58,8 @@ releases. It starts update jobs on its own only when you turn on
 ## The parts
 
 - **The manager** is the Worker above, with its web UI.
-- **The installer**, `create-appflare`, puts the manager into your account. The same
-  package, `@appflare/cli`, can check on it, roll it back, and remove it.
+- **The installer**, `create-appflare`, puts the manager into your account. Everything
+  after that, updates and removal included, happens in the manager's Settings.
 - **The catalog** is a public GitHub repository, `appflare/catalog`. Its CI builds
   each app from a pinned commit, signs it, and publishes it. See
   [How the catalog works](/catalog/how-it-works/).

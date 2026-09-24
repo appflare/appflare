@@ -48,16 +48,15 @@ with **Appflare update available**.
 The Settings page only offers newer versions. To return to an earlier one, use
 either of these. Both work even if the manager's UI does not load.
 
-- From your computer:
-
-  ```sh
-  npx @appflare/cli rollback
-  ```
-
-  See [Command line](/guides/cli/#rollback). `@appflare/cli` is not on npm yet;
-  until it is, run `node packages/cli/bin/appflare.js rollback`
-  [from a checkout](/start/install/#from-a-checkout).
 - In the Cloudflare dashboard, open the `appflare` Worker, go to **Deployments**, and
   roll back there.
+- From your computer, with wrangler logged in to the account:
+
+  ```sh
+  npx wrangler rollback --name appflare
+  ```
+
+  Without a version id it returns to the previous deployment; wrangler asks for an
+  optional message and a confirmation.
 
 A rollback changes the Worker only. The manager's database stays as it is.

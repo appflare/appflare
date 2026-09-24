@@ -1,9 +1,10 @@
-import { confirm, isCancel, select, text } from "@clack/prompts";
+import { isCancel, select } from "@clack/prompts";
 
 /**
- * Everything the CLI says or asks. Progress, warnings, and prompts go to
- * stderr; only a command's result (the manager URL, the status report) goes to
- * stdout, so `create-appflare > link.txt` captures just the link.
+ * Everything the installer says or asks. Progress, warnings, and prompts go
+ * to stderr; only the result (the manager URL, or what `--help` and
+ * `--version` print) goes to stdout, so `create-appflare > link.txt` captures
+ * just the link.
  */
 export interface Ui {
   /** Whether prompts can be shown (stdin and stderr are terminals). */
@@ -13,11 +14,8 @@ export interface Ui {
   step(message: string): void;
   info(message: string): void;
   warn(message: string): void;
-  /** The command's result, on stdout. */
+  /** The run's result, on stdout. */
   result(message: string): void;
-  confirm(message: string): Promise<boolean>;
-  /** Free-text input; returns what the user typed. */
-  text(message: string, placeholder?: string): Promise<string>;
   select<T extends string>(
     message: string,
     options: { value: T; label: string; hint?: string }[],
@@ -80,20 +78,6 @@ export function terminalUi(env: NodeJS.ProcessEnv = process.env): Ui {
     info: (message) => err(`  ${message}`),
     warn: (message) => err(`! ${message}`),
     result: (message) => process.stdout.write(`${message}\n`),
-    async confirm(message) {
-      const answer = await confirm({ message, output: process.stderr });
-      if (isCancel(answer)) {
-        throw new CancelledError();
-      }
-      return answer;
-    },
-    async text(message, placeholder) {
-      const answer = await text({ message, placeholder, output: process.stderr });
-      if (isCancel(answer)) {
-        throw new CancelledError();
-      }
-      return answer;
-    },
     async select(message, options) {
       const answer = await select({
         message,

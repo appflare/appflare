@@ -4,7 +4,7 @@ import type { CliTelemetry } from "./telemetry.ts";
 import type { Ui } from "./ui.ts";
 import { createWrangler, type Spawner, type Wrangler } from "./wrangler.ts";
 
-/** Everything a command touches outside its own logic; tests replace each piece. */
+/** Everything the installer touches outside its own logic; tests replace each piece. */
 export interface CommandContext {
   ui: Ui;
   env: NodeJS.ProcessEnv;

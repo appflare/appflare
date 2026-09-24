@@ -33,8 +33,8 @@ to clone it and to download the release.
 {/*
   The prompt builds the installer from a checkout and forbids npx on purpose: the
   package names are not published, and whoever claimed them on npm would have their
-  code run with the reader's Cloudflare login. Once create-appflare and @appflare/cli
-  are published, step 4 can go back to `npx create-appflare@latest`.
+  code run with the reader's Cloudflare login. Once create-appflare is published,
+  step 4 can go back to `npx create-appflare@latest`.
 */}
 
 <Prompt>
@@ -56,15 +56,14 @@ Do these steps yourself:
 1. Run `node --version`. Appflare needs Node.js 22 or newer. If it is older, stop and tell me.
 2. Run `npx wrangler whoami`. If it says I am not logged in, run `npx wrangler login`, tell me to approve the request on the page it opens in my browser, and wait until the command finishes.
 3. If `whoami` lists more than one account, show me the account names and ask which one to use. Set CLOUDFLARE_ACCOUNT_ID to that account's id for every command below.
-4. Build the installer from a checkout of the Appflare repository. It is not published to npm: never run `npx create-appflare`, `npx @appflare/cli`, or any npm package with a similar name. Clone https://github.com/appflare/appflare into the new directory. The repository is private until launch: if the clone is refused, use `gh repo clone appflare/appflare` with my gh login, and if that is refused too, stop and tell me. In the clone, run `pnpm install` and `pnpm --filter "@appflare/cli..." build`. The installer is `node packages/cli/bin/appflare.js` and the other commands are `node packages/cli/bin/appflare.js <command>`, run from the clone. Without pnpm, use `npx pnpm@10` in its place. The installer downloads the release from GitHub: while the repository is private, or if GitHub rate-limits the download, put `GITHUB_TOKEN="$(gh auth token)"` in front of the installer command, which keeps the token out of the output.
+4. Build the installer from a checkout of the Appflare repository. It is not published to npm: never run `npx create-appflare`, `npx @appflare/cli`, or any npm package with a similar name. Clone https://github.com/appflare/appflare into the new directory. The repository is private until launch: if the clone is refused, use `gh repo clone appflare/appflare` with my gh login, and if that is refused too, stop and tell me. In the clone, run `pnpm install` and `pnpm --filter "@appflare/cli..." build`. The installer is `node packages/cli/bin/appflare.js`, run from the clone. Without pnpm, use `npx pnpm@10` in its place. The installer downloads the release from GitHub: while the repository is private, or if GitHub rate-limits the download, put `GITHUB_TOKEN="$(gh auth token)"` in front of the installer command, which keeps the token out of the output.
 5. Ask me to confirm that the account already has a workers.dev subdomain. I can see it, or set one up, under Workers & Pages in the Cloudflare dashboard. Do not run the installer until I confirm: without a subdomain the deploy fails partway, leaves resources behind, and a second attempt is refused.
-6. Run the installer with --yes. Its standard output is the manager's address and nothing else; progress and errors go to the terminal:
+6. Run the installer with --yes. Its standard output is the manager's address and nothing else; progress and errors go to the terminal, including "The manager is up (version ...)" once it answers. Keep the address and that version for your summary:
      <installer> --yes
    If it fails:
    - A Worker, D1 database, or KV namespace named appflare (or appflare-kv) already exists: stop and ask me. Do not delete it.
    - Anything else: show me the error and stop. Do not retry or clean up; the error says how to start over, and I decide.
 7. Open the manager's address in my browser, for example with `open` on macOS or `xdg-open` on Linux. If you cannot open a browser, show me the address and ask me to open it myself. The address is not a secret.
-8. Run the status command (`<other commands> status`). It prints the manager's URL, its version, and whether it answers. Keep the URL for your summary.
 
 Then give me this checklist of what only I can do, in the setup page you opened:
 
@@ -75,7 +74,7 @@ Then give me this checklist of what only I can do, in the setup page you opened:
 5. Optional: to put the manager behind Cloudflare Access (Settings > Users and access > Protect with Cloudflare Access), create a Zero Trust organization in the Cloudflare dashboard first. Its Free plan covers up to 50 users.
 6. Optional: to serve apps on domains whose DNS is managed outside this account (external domains), turn on Cloudflare for SaaS for one domain of the account in the Cloudflare dashboard (that domain, SSL/TLS, Custom Hostnames, Enable), then set up the gateway in Settings > Domains. Cloudflare asks for a payment method first; 100 external domains are included, then each costs $0.10 a month.
 
-End with the manager's URL, the version the status command reported, and anything that did not work.
+End with the manager's URL, the version the installer reported (or that the manager had not answered yet), and anything that did not work. After setup, everything else happens in the manager: updates in Settings > Appflare updates, sandbox builds in Settings > Account and capabilities, and removal in Settings > General.
 ```
 
 </Prompt>

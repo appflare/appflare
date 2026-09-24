@@ -22,7 +22,7 @@ import { accessRecoverySteps } from "./recovery";
  * routes, which carry all data. Access itself guards the assets at the edge.
  */
 
-/** Paths answered without an Access token: the health check canaries and `appflare status` read. */
+/** Paths answered without an Access token: what the health check canaries and the installer read. */
 export const ACCESS_EXEMPT_PATHS: ReadonlySet<string> = new Set(["/api/health"]);
 
 export type AccessDenial = AccessJwtFailure | "settings-unavailable";

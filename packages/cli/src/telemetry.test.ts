@@ -85,11 +85,11 @@ describe("CliTelemetry", () => {
 
   it("prints the notice once, and only when on", () => {
     const on = telemetry();
-    on.t.begin("install", false);
-    on.t.begin("install", false);
+    on.t.begin(false);
+    on.t.begin(false);
     expect(on.lines).toEqual(telemetryNotice().map((l) => `  ${l}`));
     const off = telemetry({}, true);
-    off.t.begin("install", false);
+    off.t.begin(false);
     expect(off.lines).toEqual([]);
   });
 
@@ -98,7 +98,7 @@ describe("CliTelemetry", () => {
     await t.finish("failed", new Error("nothing started"));
     expect(rec.sent).toEqual([]);
 
-    t.begin("install", true);
+    t.begin(true);
     t.nameIsDefault = false;
     t.loginNeeded = false;
     t.severalAccounts = true;
@@ -144,7 +144,7 @@ describe("CliTelemetry", () => {
 
   it("names cancellations and successes", async () => {
     const cancelled = telemetry();
-    cancelled.t.begin("install", false);
+    cancelled.t.begin(false);
     cancelled.t.step = "account";
     await cancelled.t.finish("cancelled", new CancelledError());
     expect(cancelled.rec.sent[0]?.body.batch[0]?.properties).toMatchObject({
@@ -152,39 +152,13 @@ describe("CliTelemetry", () => {
       error_category: "cancelled",
     });
     const ok = telemetry();
-    ok.t.begin("status", false);
+    ok.t.begin(false);
     await ok.t.finish("succeeded");
     expect(ok.rec.sent[0]?.body.batch[0]).toMatchObject({
-      event: "cli command finished",
-      properties: {
-        command: "status",
-        outcome: "succeeded",
-        error_category: null,
-        last_step: "done",
-        install_id_known: false,
-      },
+      event: "cli setup finished",
+      properties: { outcome: "succeeded", error_category: null, last_step: "done" },
     });
-  });
-
-  it("continues the manager's install id, and stays quiet for a manager with usage data off", async () => {
-    const id = "6f1c3c1e-2b1a-4c1d-9e1f-0a1b2c3d4e5f";
-    const known = telemetry();
-    known.t.begin("uninstall", true);
-    known.t.useManagerBindings([
-      { type: "plain_text", name: "APPFLARE_VERSION", text: "0.5.0" },
-      { type: "plain_text", name: "APPFLARE_INSTALL_ID", text: id },
-    ]);
-    await known.t.finish("succeeded");
-    expect(known.rec.sent[0]?.body.batch[0]).toMatchObject({
-      distinct_id: id,
-      properties: { install_id_known: true, manager_version: "0.5.0" },
-    });
-
-    const quiet = telemetry();
-    quiet.t.begin("status", false);
-    quiet.t.useManagerBindings([{ type: "plain_text", name: "APPFLARE_TELEMETRY", text: "off" }]);
-    await quiet.t.finish("succeeded");
-    expect(quiet.rec.sent).toEqual([]);
+    expect(ok.rec.sent[0]?.body.batch[0]?.properties).not.toHaveProperty("command");
   });
 
   it("never lets a failed send affect the run", async () => {
@@ -197,7 +171,7 @@ describe("CliTelemetry", () => {
         throw new Error("offline");
       },
     });
-    t.begin("status", false);
+    t.begin(false);
     await expect(t.finish("succeeded")).resolves.toBeUndefined();
   });
 
@@ -208,24 +182,35 @@ describe("CliTelemetry", () => {
 
 describe("main", () => {
   function context(fetch: CommandContext["fetch"]): CommandContext {
-    return { ui: fakeUi().ui, env: {}, fetch };
+    // No Node.js version check passes, so the install fails at its first step.
+    return { ui: fakeUi().ui, env: {}, fetch, nodeVersion: "20.0.0" };
   }
 
-  it("sends the run's event when a command ends, and nothing with --no-telemetry", async () => {
+  it("sends the run's event when the install ends, and nothing with --no-telemetry", async () => {
     const on = recorder();
-    expect(await main(["uninstall"], context(on.fetch))).toBe(1);
-    expect(on.sent.map((s) => s.body.batch[0]?.properties)).toEqual([
-      expect.objectContaining({ command: "uninstall", outcome: "failed", purge: false }),
+    expect(await main(["--yes"], context(on.fetch))).toBe(1);
+    expect(on.sent.map((s) => s.body.batch[0])).toEqual([
+      expect.objectContaining({
+        event: "cli setup finished",
+        properties: expect.objectContaining({
+          outcome: "failed",
+          error_category: "node_version",
+          yes_flag: true,
+        }),
+      }),
     ]);
 
     const off = recorder();
-    expect(await main(["uninstall", "--no-telemetry"], context(off.fetch))).toBe(1);
+    expect(await main(["--yes", "--no-telemetry"], context(off.fetch))).toBe(1);
     expect(off.sent).toEqual([]);
   });
 
-  it("sends nothing for --help or a command that never started", async () => {
+  it("sends nothing for --help, --version, or arguments it refuses", async () => {
     const rec = recorder();
-    expect(await main(["status", "--bogus"], context(rec.fetch))).toBe(1);
+    expect(await main(["--bogus"], context(rec.fetch))).toBe(1);
+    expect(await main(["status"], context(rec.fetch))).toBe(1);
+    expect(await main(["--help"], context(rec.fetch))).toBe(0);
+    expect(await main(["--version"], context(rec.fetch))).toBe(0);
     expect(rec.sent).toEqual([]);
   });
 });

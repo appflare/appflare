@@ -18,8 +18,8 @@ import { ENABLE_SANDBOX_PLACE } from "./connect-copy";
  * Connected means the running Worker has its `SANDBOX` service binding; that
  * binding is the only record (no setting that could disagree with it). The
  * sandbox Worker itself is deployed by the "Enable sandbox builds" job
- * (./enable-job.ts), or by the CLI (`appflare sandbox enable`), because it
- * needs Containers, which only Workers Paid accounts have.
+ * (./enable-job.ts), because it needs Containers, which only Workers Paid
+ * accounts have.
  *
  * Changing the binding does not re-upload the manager: a new version is made
  * from the latest one with `PATCH /workers/workers/<name>/versions/latest`

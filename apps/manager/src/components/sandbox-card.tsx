@@ -12,7 +12,6 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import type { CapabilitiesView } from "../capabilities/capabilities";
-import { ENABLE_SANDBOX_COMMAND } from "../sandbox/connect-copy";
 import { sandboxPreflightProblems } from "../sandbox/preflight";
 import {
   connectSandbox,
@@ -229,10 +228,6 @@ function NotConnected({
           Appflare has not detected Workers Paid on this account, which sandbox builds need. If the
           account is on Workers Paid, add Containers: Edit to Appflare's token (or Billing: Read)
           and choose Re-check under Account capabilities.
-        </Text>
-        <Text variant="secondary" size="sm">
-          Scripted setups can also run <span className="font-mono">{ENABLE_SANDBOX_COMMAND}</span>{" "}
-          on a computer with a wrangler login to this account.
         </Text>
         {isAdmin && status.workerExists === true && (
           <LeftoverWorker status={status} disabled={busy} />

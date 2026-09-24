@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { checkHealth, waitForHealth } from "./health.ts";
-import { activeVersionId, type Deployment, previousVersionId } from "./worker-info.ts";
 
 describe("checkHealth", () => {
   it("reads the manager's health body", async () => {
@@ -47,26 +46,5 @@ describe("waitForHealth", () => {
     );
     expect(health.ok).toBe(true);
     expect(sleeps).toEqual([5, 5]);
-  });
-});
-
-describe("deployment helpers", () => {
-  const d = (created_on: string, versions: [string, number][]): Deployment => ({
-    id: created_on,
-    created_on,
-    versions: versions.map(([version_id, percentage]) => ({ version_id, percentage })),
-  });
-  it("finds the active and previous stable versions, skipping split deployments", () => {
-    const list = [
-      d("1", [["v-1", 100]]),
-      d("2", [
-        ["v-1", 50],
-        ["v-2", 50],
-      ]),
-      d("3", [["v-3", 100]]),
-    ];
-    expect(activeVersionId(list)).toBe("v-3");
-    expect(previousVersionId(list)).toBe("v-1");
-    expect(previousVersionId([d("1", [["v-1", 100]])])).toBeNull();
   });
 });

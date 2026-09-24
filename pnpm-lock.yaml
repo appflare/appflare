@@ -246,9 +246,6 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
     devDependencies:
-      '@appflare/cf-api':
-        specifier: workspace:*
-        version: link:../cf-api
       '@appflare/pack':
         specifier: workspace:*
         version: link:../pack

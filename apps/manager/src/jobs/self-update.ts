@@ -46,8 +46,8 @@ import { activeVersionId, bookmarksJson, previewUrl } from "./update/plan";
  *    free plan's subrequests is refused before anything is read or changed.
  * 2. Snapshot: the version serving all traffic, the running Appflare
  *    version, and a D1 Time Travel bookmark of the manager's database, as a
- *    `snapshots` row without an install. `appflare rollback` and the
- *    Cloudflare dashboard can return to that version without the manager.
+ *    `snapshots` row without an install. The Cloudflare dashboard (or
+ *    `wrangler rollback`) can return to that version without the manager.
  * 3. Upload the static assets, Range-fetched from the release zip.
  * 4. Upload the new Worker version with the running script's own bindings
  *    (its D1, KV, and Workflow, whatever they are named in this account),
@@ -239,7 +239,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
         })
         .onConflictDoNothing();
       log.info(
-        `Snapshot taken: version ${deployed.versionId} and a bookmark of the database. If the new version misbehaves, \`npx @appflare/cli rollback\` or the Cloudflare dashboard's Deployments page returns to it.`,
+        `Snapshot taken: version ${deployed.versionId} and a bookmark of the database. If the new version misbehaves, the Cloudflare dashboard's Deployments page returns to it.`,
       );
       return {};
     });

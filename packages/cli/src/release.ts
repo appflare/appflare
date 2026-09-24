@@ -3,22 +3,22 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { z } from "zod";
-import { artifactZipName, MANAGER_APP, SANDBOX_APP } from "./artifact.ts";
+import { artifactZipName, MANAGER_APP } from "./artifact.ts";
 
-/** Where manager and sandbox Worker releases are published (docs/RELEASING.md). */
+/** Where manager releases are published (docs/RELEASING.md). */
 export const RELEASE_REPO = "appflare/appflare";
 /** Manager release tags are `manager@<version>`. */
 export const RELEASE_TAG_PREFIX = "manager@";
 
 /**
  * One kind of release in RELEASE_REPO: its tag prefix, its zip's name, and
- * how messages call it. The manager and the sandbox Worker are released the
- * same way (`<prefix><version>` with the zip, `manifest.json`, and
+ * how messages call it. Every signed Worker release in the repository has the
+ * same shape (`<prefix><version>` with the zip, `manifest.json`, and
  * `manifest.sig`); only these differ.
  */
 export interface ReleaseChannel {
   tagPrefix: string;
-  /** "manager", "sandbox Worker": used in messages. */
+  /** "manager": used in messages. */
   label: string;
   /** The artifact's `manifest.app`; its zip is `<app>-<version>.zip`. */
   app: string;
@@ -31,13 +31,6 @@ export const MANAGER_RELEASES: ReleaseChannel = {
   label: "manager",
   app: MANAGER_APP,
   laterHint: "or update from the manager later",
-};
-
-export const SANDBOX_RELEASES: ReleaseChannel = {
-  tagPrefix: "sandbox@",
-  label: "sandbox Worker",
-  app: SANDBOX_APP,
-  laterHint: "or run `appflare sandbox enable` again later to update",
 };
 
 const GITHUB_API = "https://api.github.com";

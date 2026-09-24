@@ -1,6 +1,3 @@
-/** The CLI command that deploys the sandbox Worker (Workers Paid), for scripted setups. Client-safe. */
-export const ENABLE_SANDBOX_COMMAND = "npx @appflare/cli sandbox enable";
-
 /** Where an admin enables, updates and disables sandbox builds in the manager. Client-safe. */
 export const ENABLE_SANDBOX_PLACE = "Settings > Account and capabilities > Sandbox builds";
 

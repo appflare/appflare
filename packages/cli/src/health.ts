@@ -6,9 +6,6 @@ const healthSchema = z.looseObject({
   version: z.string(),
   db: z.string(),
   schemaVersion: z.number().optional(),
-  // Newer managers also report the newest release their cron has seen.
-  latestVersion: z.string().nullable().optional(),
-  updateAvailable: z.boolean().optional(),
 });
 
 export type Health =
@@ -17,9 +14,6 @@ export type Health =
       version: string;
       db: string;
       schemaVersion?: number;
-      /** Newest release the manager knows of; null when it has not checked, undefined on older managers. */
-      latestVersion?: string | null;
-      updateAvailable?: boolean;
     }
   | { ok: false; reason: string };
 
@@ -48,8 +42,6 @@ export async function checkHealth(
         version: body.version,
         db: body.db,
         schemaVersion: body.schemaVersion,
-        latestVersion: body.latestVersion,
-        updateAvailable: body.updateAvailable,
       };
     }
     const detail = body ? `version ${body.version}, db ${body.db}` : text.slice(0, 120).trim();
@@ -57,35 +49,6 @@ export async function checkHealth(
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
-}
-
-/** The update line of `status`: whether the running manager is behind the newest release. */
-export function describeUpdate(health: Health | null): string {
-  if (health === null || !health.ok) {
-    return "unknown (the manager did not answer)";
-  }
-  if (health.latestVersion === undefined) {
-    return `unknown (manager ${health.version} does not report updates)`;
-  }
-  if (health.latestVersion === null) {
-    return `unknown (manager ${health.version} has not checked for releases yet)`;
-  }
-  if (typeof health.updateAvailable !== "boolean") {
-    return `unknown (manager ${health.version} reports ${health.latestVersion} as the latest release but not whether it is newer)`;
-  }
-  return health.updateAvailable
-    ? `Update available: ${health.latestVersion} (running ${health.version})`
-    : `Up to date (running ${health.version}, latest ${health.latestVersion})`;
-}
-
-/** One line for a health result. */
-export function describeHealth(health: Health | null): string {
-  if (health === null) {
-    return "not checked (no URL)";
-  }
-  return health.ok
-    ? `ok (version ${health.version}, db ${health.db})`
-    : `FAILING: ${health.reason}`;
 }
 
 /**
@@ -100,8 +63,6 @@ export async function waitForHealth(
     timeoutMs?: number;
     intervalMs?: number;
     sleep?: (ms: number) => Promise<void>;
-    /** Also wait until this accepts a healthy answer (for example, the expected version). */
-    accept?: (health: Extract<Health, { ok: true }>) => boolean;
   } = {},
 ): Promise<Health> {
   const timeoutMs = options.timeoutMs ?? 90_000;
@@ -111,8 +72,7 @@ export async function waitForHealth(
   let last: Health = { ok: false, reason: "not checked" };
   for (;;) {
     last = await checkHealth(fetchFn, workerUrl);
-    const done = last.ok && (options.accept?.(last) ?? true);
-    if (done || Date.now() + intervalMs > deadline) {
+    if (last.ok || Date.now() + intervalMs > deadline) {
       return last;
     }
     await sleep(intervalMs);

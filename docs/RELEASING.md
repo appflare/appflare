@@ -118,12 +118,13 @@ cd /tmp/appflare-deploy && npm ci && npx wrangler deploy --dry-run
 
 ## The sandbox Worker
 
-The optional sandbox Worker (`apps/sandbox`, `appflare sandbox enable`) is released
+The optional sandbox Worker (`apps/sandbox`, enabled from the manager's Settings) is released
 separately from the manager, under its own version (`apps/sandbox/package.json`):
 
 - Git tag and GitHub Release `sandbox@<version>`, with the assets
   `appflare-sandbox-<version>.zip`, `manifest.json`, and `manifest.sig`, signed with
-  the same key as the manager. `appflare sandbox enable` downloads the newest one.
+  the same key as the manager. The manager's **Enable sandbox builds** job downloads the
+  version its own release comes with.
 - Container image `docker.io/mendylanda/appflare-sandbox:<version>`, which the released Worker
   names in its `containers` config. Docker Hub, because Cloudflare Containers pull
   from the Cloudflare registry, Docker Hub, Amazon ECR, and Google Artifact Registry

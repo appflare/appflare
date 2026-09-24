@@ -160,7 +160,7 @@ export async function buildFixtureArtifact(options: FixtureOptions = {}): Promis
   return { dir, manifest, manifestBytes };
 }
 
-/** A scripted wrangler for command tests: answers by the command words, records every call. */
+/** A scripted wrangler for installer tests: answers by the command words, records every call. */
 export interface FakeCall {
   args: string[];
   cwd: string;
@@ -210,7 +210,7 @@ export function fakeSpawner(handlers: Record<string, FakeHandler>): {
 }
 
 /** A UI that records output and answers prompts from a queue. */
-export function fakeUi(options: { interactive?: boolean; answers?: (string | boolean)[] } = {}) {
+export function fakeUi(options: { interactive?: boolean; answers?: string[] } = {}) {
   const lines: string[] = [];
   const results: string[] = [];
   const answers = [...(options.answers ?? [])];
@@ -221,8 +221,6 @@ export function fakeUi(options: { interactive?: boolean; answers?: (string | boo
     info: (m) => lines.push(`  ${m}`),
     warn: (m) => lines.push(`! ${m}`),
     result: (m) => results.push(m),
-    confirm: async () => answers.shift() as boolean,
-    text: async () => answers.shift() as string,
     select: async <T extends string>() => answers.shift() as T,
   };
   return { ui, lines, results };

@@ -53,10 +53,10 @@ No. Installs and updates use the catalog's current version. After an update you 
 ## What happens to my apps if the manager breaks?
 
 Nothing. Installed apps are ordinary Workers in your account and do not depend on
-the manager at runtime. To repair the manager, roll it back with
-`npx @appflare/cli rollback` or from the Worker's **Deployments** page in the
-Cloudflare dashboard. (`@appflare/cli` is not on npm yet; until it is, run
-`node packages/cli/bin/appflare.js rollback` [from a checkout](/start/install/#from-a-checkout).)
+the manager at runtime. To repair the manager, roll it back from the Worker's
+**Deployments** page in the Cloudflare dashboard, or with
+`npx wrangler rollback --name appflare`. See
+[Go back](/guides/update-appflare/#go-back).
 
 ## How do I remove Appflare entirely?
 
@@ -66,21 +66,10 @@ Cloudflare dashboard. (`@appflare/cli` is not on npm yet; until it is, run
 2. Note any resources you kept. Each app's page lists them under **Kept in the
    account**; after the next step, nothing lists them. Delete them in the Cloudflare
    dashboard when you no longer need them.
-3. From your computer, remove the manager and its data:
-
-   ```sh
-   npx @appflare/cli uninstall --yes --purge
-   ```
-
-   This deletes the manager Worker, its Workflow, its D1 database, and its KV
-   namespace, after you type the manager's name. See
-   [Command line](/guides/cli/#uninstall). Until `@appflare/cli` is on npm, run
-   `node packages/cli/bin/appflare.js uninstall --yes --purge`
-   [from a checkout](/start/install/#from-a-checkout).
+3. As the owner, open **Settings**, **General**, and select **Remove Appflare** in
+   the danger zone. It deletes the manager Worker, its Workflow, its D1 database and
+   its KV namespace, and also the external domains gateway and the sandbox Worker with
+   its build bucket. See
+   [Rotate the auth secret or remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account).
 4. In the Cloudflare dashboard, revoke the `Appflare` API token, and any tokens you
    created for apps.
-
-The owner can do step 3 from the browser instead: **Remove Appflare from this
-account** in Settings also removes the external domains gateway and the sandbox
-Worker with its build bucket. See
-[Rotate the auth secret or remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account).

@@ -21,7 +21,7 @@ export interface HealthBody {
  * `GET /api/health`: unauthenticated; the build's version plus a D1 ping that
  * reads `schema_version`, and the newest release from the cron's KV cache (one
  * KV read, no outbound call). Canary checks compare `version` against the
- * version they just uploaded; `appflare status` reads `updateAvailable`.
+ * version they just uploaded; `create-appflare` waits for `db` to be ok.
  */
 export async function healthResponse(env: {
   DB: D1Database;

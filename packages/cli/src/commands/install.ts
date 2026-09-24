@@ -14,7 +14,7 @@ import { listD1Databases, listDeployments, listKvNamespaces } from "../worker-in
 import { type Wrangler, WranglerError, wranglerArgs } from "../wrangler.ts";
 import { buildWranglerConfig, type GeneratedWranglerConfig } from "../wrangler-config.ts";
 
-/** Options of the default command, `create-appflare`. */
+/** Options of `create-appflare`. */
 export interface InstallOptions {
   /** Manager release to install (`manager@<version>`); the newest published one by default. */
   version?: string;
@@ -38,8 +38,9 @@ async function preflight(wrangler: Wrangler, config: GeneratedWranglerConfig): P
   const { name } = config;
   if ((await listDeployments(wrangler, name)) !== null) {
     throw new Error(
-      `A Worker named "${name}" already exists in this account. See it with ` +
-        `\`npx @appflare/cli status --name ${name}\`, or install another copy with --name <other>.`,
+      `A Worker named "${name}" already exists in this account. If it is an Appflare manager, ` +
+        "open it and update it from Settings > Appflare updates; otherwise install another " +
+        "copy with --name <other>.",
     );
   }
   const databases = await listD1Databases(wrangler);
@@ -63,6 +64,24 @@ async function preflight(wrangler: Wrangler, config: GeneratedWranglerConfig): P
       );
     }
   }
+}
+
+/**
+ * The wrangler commands that delete what a deploy created, in an order that
+ * works: the Worker first, then its Workflows (Cloudflare keeps them when the
+ * Worker goes), D1 database, and KV namespace (by title, which is the name
+ * wrangler provisioned it under).
+ */
+export function startOverCommands(config: GeneratedWranglerConfig): string[] {
+  return [
+    `npx wrangler delete --name ${config.name}`,
+    ...(config.workflows ?? []).map((w) => `npx wrangler workflows delete ${w.name}`),
+    ...(config.d1_databases ?? []).map((db) => `npx wrangler d1 delete ${db.database_name}`),
+    ...(config.kv_namespaces ?? []).map(
+      (kv) =>
+        `npx wrangler kv namespace delete ${autoProvisionedResourceName(config.name, kv.binding)}`,
+    ),
+  ];
 }
 
 /**
@@ -206,10 +225,10 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
       ui.result(formatManagerUrl(deployed.url));
     } catch (error) {
       ui.warn(
-        `The manager Worker "${name}" was deployed, but setup did not finish. To start over, run ` +
-          `\`npx @appflare/cli uninstall --yes --name ${name}\`, delete the D1 database and KV ` +
-          "namespace it lists, and run create-appflare again.",
+        `The manager Worker "${name}" was deployed, but setup did not finish. To start over, ` +
+          "delete what it created, then run create-appflare again:",
       );
+      for (const command of startOverCommands(config)) ui.warn(`  ${command}`);
       throw error;
     }
   }, ctx.tmpRoot);

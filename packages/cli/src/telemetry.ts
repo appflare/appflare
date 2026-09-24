@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import {
   commonTelemetryProperties,
   INSTALL_ID_VAR,
-  isInstallId,
   TELEMETRY_BATCH_URL,
   TELEMETRY_DOCS_URL,
   TELEMETRY_VAR,
@@ -15,9 +14,9 @@ import type { Ui } from "./ui.ts";
 import { CancelledError } from "./ui.ts";
 
 /**
- * The CLI's anonymous usage data: one event per run, sent when the command
- * ends (whether it worked, failed, or was cancelled), never earlier. It says
- * which command ran, how it ended, how long it took, the step it reached and
+ * The installer's anonymous usage data: one event per run, sent when the
+ * install ends (whether it worked, failed, or was cancelled), never earlier.
+ * It says how it ended, how long it took, the step it reached and
  * an error category, and the machine's OS, CPU architecture and Node.js major
  * version. It never says the account, the Worker's name, paths, the user's
  * name or hostname, or any message text.
@@ -29,7 +28,7 @@ import { CancelledError } from "./ui.ts";
  * the manager's events continue it.
  */
 
-/** How far a command got; `last_step` of the event and the source of its error category. */
+/** How far the install got; `last_step` of the event and the source of its error category. */
 export type CliStep =
   | "start"
   | "node_version"
@@ -134,22 +133,16 @@ export interface CliTelemetryOptions {
 export class CliTelemetry {
   /** Whether this run may send. */
   enabled: boolean;
-  /** `install`, `status`, `rollback`, `uninstall`, `sandbox enable`, `sandbox disable`. */
-  command = "install";
   yesFlag = false;
-  /** The command got past its argument checks and printed the notice; only then is an event sent. */
+  /** The run got past its argument checks and printed the notice; only then is an event sent. */
   started = false;
   /** The install id events are tied to; null when off. */
   installId: string | null;
-  /** The manager's install id was read from its Worker (commands other than install). */
-  installIdKnown = false;
   step: CliStep = "start";
   managerVersion: string | null = null;
   severalAccounts: boolean | null = null;
   loginNeeded: boolean | null = null;
   nameIsDefault: boolean | null = null;
-  /** `uninstall --purge`, `sandbox disable --purge`. */
-  purge: boolean | null = null;
   private startedAt: number;
 
   constructor(private readonly options: CliTelemetryOptions) {
@@ -158,15 +151,10 @@ export class CliTelemetry {
     this.startedAt = (options.now ?? Date.now)();
   }
 
-  private get isInstall(): boolean {
-    return this.command === "install";
-  }
-
-  /** The command starts: prints the notice once, when usage data is on. */
-  begin(command: string, yesFlag: boolean): void {
+  /** The install starts: prints the notice once, when usage data is on. */
+  begin(yesFlag: boolean): void {
     if (this.started) return;
     this.started = true;
-    this.command = command;
     this.yesFlag = yesFlag;
     this.startedAt = (this.options.now ?? Date.now)();
     if (!this.enabled) return;
@@ -178,30 +166,6 @@ export class CliTelemetry {
     return this.enabled && this.installId !== null
       ? { [INSTALL_ID_VAR]: this.installId }
       : { [TELEMETRY_VAR]: "off" };
-  }
-
-  /**
-   * A command that read the manager's bindings continues its install id, and
-   * sends nothing for a manager deployed with usage data off.
-   */
-  useManagerBindings(bindings: readonly { type: string; name: string; text?: unknown }[]): void {
-    const text = (name: string) => {
-      const value = bindings.find((b) => b.type === "plain_text" && b.name === name)?.text;
-      return typeof value === "string" ? value : undefined;
-    };
-    this.managerVersion = text("APPFLARE_VERSION") ?? this.managerVersion;
-    if (
-      telemetryLock({ APPFLARE_TELEMETRY: text(TELEMETRY_VAR), DO_NOT_TRACK: text("DO_NOT_TRACK") })
-    ) {
-      this.enabled = false;
-      this.installId = null;
-      return;
-    }
-    const id = text(INSTALL_ID_VAR);
-    if (this.enabled && isInstallId(id)) {
-      this.installId = id;
-      this.installIdKnown = true;
-    }
   }
 
   /** The event's properties for an ending. */
@@ -220,12 +184,10 @@ export class CliTelemetry {
     const nodeMajor = Number((options.nodeVersion ?? process.versions.node).split(".")[0]);
     return {
       ...commonTelemetryProperties("cli", this.managerVersion),
-      ...(this.isInstall ? {} : { command: this.command, install_id_known: this.installIdKnown }),
       outcome,
       duration_s: Math.max(0, Math.round((now - this.startedAt) / 1000)),
       error_category: errorCategory,
       last_step: this.step,
-      ...(this.purge === null ? {} : { purge: this.purge }),
       cli_version: options.version ?? cliVersion(),
       os: options.platform ?? process.platform,
       arch: options.arch ?? process.arch,
@@ -247,10 +209,9 @@ export class CliTelemetry {
   async finish(outcome: "succeeded" | "failed" | "cancelled", error?: unknown): Promise<void> {
     if (!this.started || !this.enabled || this.installId === null) return;
     if (outcome === "succeeded") this.step = "done";
-    const event = this.isInstall ? "cli setup finished" : "cli command finished";
     const body = telemetryBatchBody(this.installId, [
       {
-        event,
+        event: "cli setup finished",
         uuid: crypto.randomUUID(),
         timestamp: new Date((this.options.now ?? Date.now)()).toISOString(),
         properties: this.properties(outcome, error),

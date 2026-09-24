@@ -35,9 +35,8 @@ npx create-appflare
 
 <Callout title="Not on npm yet">
 
-The installer is not published to npm yet, so `npx create-appflare` and
-`npx @appflare/cli` do not work today. Until they do, run it
-[from a checkout](#from-a-checkout).
+The installer is not published to npm yet, so `npx create-appflare` does not work
+today. Until it does, run it [from a checkout](#from-a-checkout).
 
 </Callout>
 
@@ -53,9 +52,7 @@ pnpm --filter "@appflare/cli..." build
 node packages/cli/bin/appflare.js
 ```
 
-`node packages/cli/bin/appflare.js` takes the same options as `npx create-appflare`,
-and the same commands as `npx @appflare/cli`. For example,
-`node packages/cli/bin/appflare.js status` runs `npx @appflare/cli status`.
+`node packages/cli/bin/appflare.js` takes the same options as `npx create-appflare`.
 
 ### What the installer does
 
@@ -88,9 +85,25 @@ directory, and no git repository is created.
 | `--name <name>` | Worker name. Defaults to `appflare`. The D1 database and KV namespace follow it. |
 | `-y`, `--yes` | Never ask. Fail where a question would be needed: several accounts, no `workers.dev` subdomain, or a Workflow name that another Worker owns. |
 | `--artifact-dir <dir>` | Install from a downloaded release in `<dir>` instead of fetching it. The signature is still required. |
+| `--no-telemetry` | Send no [usage data](/telemetry/), and install the manager with its usage data turned off. |
+| `-v`, `--version` | Print the installer's version. `--version` followed by a value picks the release instead. |
+| `-h`, `--help` | Print the options. |
 
 If GitHub rate-limits the download, set `GITHUB_TOKEN`. The installer sends it only
 to `api.github.com`.
+
+If the install fails after the deploy, the installer prints the `wrangler` commands
+that delete what it created, so you can run it again.
+
+The installer only installs. Once the manager runs, you manage it from its own
+**Settings**:
+
+| To | Go to |
+| --- | --- |
+| See the running version and update Appflare | **Settings > Appflare updates**. See [Update Appflare](/guides/update-appflare/). |
+| Return to an earlier manager version | The Worker's **Deployments** page in the Cloudflare dashboard. See [Go back](/guides/update-appflare/#go-back). |
+| Enable, update, or disable sandbox builds | **Settings > Account and capabilities**. See [Sandbox builds](/guides/builds/). |
+| Remove Appflare and its data | **Settings > General > Remove Appflare**. See [Remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account). |
 
 ## The setup wizard
 

@@ -78,19 +78,17 @@ when it ends, with:
 
 ### Installer
 
-The installer sends one event per run, when the command ends:
+The installer sends one event per run, when the install ends:
 
-- the command (setup, `status`, `rollback`, `uninstall`, `sandbox enable`,
-  `sandbox disable`), whether it succeeded, failed or was cancelled, how long it
-  took, the last step it reached, and an error category (such as `wrangler_login`,
-  `wrangler_deploy` or `health_timeout`);
+- whether it succeeded, failed or was cancelled, how long it took, the last step it
+  reached, and an error category (such as `wrangler_login`, `wrangler_deploy` or
+  `health_timeout`);
 - the installer's version, the operating system, CPU architecture and Node.js major
   version;
 - whether it ran interactively, in CI, or with `--yes`; whether the Worker name was
   the default one; whether the login had several accounts; whether a wrangler login
   was needed; the coding agent it ran under, if any (such as `claude`, `codex` or
-  `cursor`, from the variables those agents set); and, for `uninstall` and
-  `sandbox disable`, whether `--purge` was given.
+  `cursor`, from the variables those agents set).
 
 ## What is never sent
 
@@ -137,9 +135,7 @@ Any one of these stops everything:
   notice says usage data is off. Updates of the manager keep the variable.
 
 When the installer's usage data is off by the flag or a variable, it deploys the
-manager with `APPFLARE_TELEMETRY=off`, so the manager's is locked off too. The
-installer's other commands also send nothing for a manager that has either variable
-set.
+manager with `APPFLARE_TELEMETRY=off`, so the manager's is locked off too.
 
 When it is off, nothing is sent, not even the fact that it is off. Turning it on
 again continues with the same random id, and jobs that ran while it was off are not

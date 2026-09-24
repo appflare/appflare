@@ -33,23 +33,8 @@ describe("wranglerArgs", () => {
       "appflare",
       "--json",
     ]);
-    expect(wranglerArgs.versionsList("appflare")).toEqual([
-      "versions",
-      "list",
-      "--name",
-      "appflare",
-      "--json",
-    ]);
-    expect(wranglerArgs.rollback("appflare", "v-1", "why")).toEqual([
-      "rollback",
-      "v-1",
-      "--name",
-      "appflare",
-      "--message",
-      "why",
-      "--yes",
-    ]);
-    expect(wranglerArgs.delete("appflare")).toEqual(["delete", "--name", "appflare", "--force"]);
+    expect(wranglerArgs.d1List()).toEqual(["d1", "list", "--json"]);
+    expect(wranglerArgs.kvList()).toEqual(["kv", "namespace", "list"]);
   });
 });
 
