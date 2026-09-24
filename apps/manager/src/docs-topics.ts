@@ -29,6 +29,7 @@ export const DOCS_TOPICS = {
   rollbackJob: "guides/updates#roll-back",
   databaseRestore: "guides/updates#restore-a-database-to-a-bookmark",
   appflareUpdateJob: "guides/update-appflare#update-from-settings",
+  deployCopyCleanup: "start/deploy-button#clean-up-the-deploy-copy",
 } as const satisfies Record<string, string>;
 
 export type DocsTopic = keyof typeof DOCS_TOPICS;

@@ -23,6 +23,13 @@ name: release
 #                 creates or completes the GitHub Release manager@<version>. The
 #                 only job that creates tags or releases. Then waits until the
 #                 release's public view lists the three assets.
+#   deploy-repo-build  read-only, no secrets; for the current version only,
+#                 writes the public deploy repository (appflare/deploy) that the
+#                 "Deploy to Cloudflare" button deploys from, from the signed
+#                 release (scripts/build-deploy-repo.ts)
+#   deploy-repo   DEPLOY_REPO_PUSH_KEY only; replaces appflare/deploy's files and
+#                 pushes one commit named after the version. Skipped, with a
+#                 notice, while that secret is not set.
 #
 # Manual runs (workflow_dispatch) may name a `version` to (re)release that exact
 # version from the commit that set it; without it they behave like a push.
@@ -532,6 +539,160 @@ jobs:
             echo "${tag} lists [${names}] so far; checking again in 20 s"
             sleep 20
           done
+
+  # --------------------------------------------------------------------------
+  # The public deploy repository appflare/deploy, which the "Deploy to
+  # Cloudflare" button deploys from (scripts/deploy-repo.ts): the signed
+  # release unpacked into a prebuilt npm project, one commit per release.
+  # --------------------------------------------------------------------------
+
+  deploy-repo-build:
+    name: build the deploy repository
+    needs: [plan, release]
+    # Only the current, non-pre-release version: re-releasing an older version
+    # must never put it back in front of the button. Also when the release was
+    # already published (release skipped), so a deploy repository that missed
+    # a version catches up on the next run; the push job leaves a repository
+    # that already holds the version alone.
+    if: >-
+      always()
+      && needs.plan.result == 'success'
+      && (needs.release.result == 'success'
+        || (needs.release.result == 'skipped' && needs.plan.outputs.release == 'false'))
+      && needs.plan.outputs.latest == 'true'
+      && !contains(needs.plan.outputs.version, '-')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Builds workspace code and resolves the npm lockfile: no secrets, read-only
+    # token, no persisted credentials.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile
+      - name: Write the deploy repository from the signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The published release, exactly what managers and the installer download.
+          gh release download "manager@${VERSION}" --repo "${GITHUB_REPOSITORY}" \
+            --dir "${RUNNER_TEMP}/release" \
+            --pattern "appflare-${VERSION}.zip" --pattern manifest.json --pattern manifest.sig
+          # The generator verifies the release with the CLI's own code (signature
+          # against the embedded keys, every file's sha256) before unpacking it.
+          pnpm exec turbo run build --filter=@appflare/cli...
+          out="${RUNNER_TEMP}/deploy-repo"
+          node scripts/build-deploy-repo.ts \
+            --artifact-dir "${RUNNER_TEMP}/release" \
+            --out "${out}" \
+            --version "${VERSION}"
+          # tar keeps the dotfiles (.gitignore) exactly as written.
+          tar -C "${out}" -czf "${RUNNER_TEMP}/deploy-repo.tgz" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deploy-repo
+          path: ${{ runner.temp }}/deploy-repo.tgz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  deploy-repo:
+    name: push the deploy repository
+    needs: [plan, deploy-repo-build]
+    # always(): the build job may run after a skipped release job, which would
+    # otherwise skip this one too.
+    if: always() && needs.deploy-repo-build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Holds DEPLOY_REPO_PUSH_KEY, a deploy key with write access to
+    # appflare/deploy only. No checkout of this repository, no dependency
+    # install, no build: it only replaces the deploy repository's files and
+    # pushes one commit. Until the key is added, it reports and does nothing.
+    permissions: {}
+    env:
+      DEPLOY_REPOSITORY: appflare/deploy
+    steps:
+      - name: Download the deploy repository
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: deploy-repo
+          path: ${{ runner.temp }}/deploy-repo-artifact
+      - name: Commit and push
+        env:
+          DEPLOY_REPO_PUSH_KEY: ${{ secrets.DEPLOY_REPO_PUSH_KEY }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_REPO_PUSH_KEY}" ]; then
+            echo "::notice title=DEPLOY_REPO_PUSH_KEY is not set::${DEPLOY_REPOSITORY} was not updated to ${VERSION}. Add a deploy key with write access to ${DEPLOY_REPOSITORY} and store its private key as the DEPLOY_REPO_PUSH_KEY Actions secret (docs/RELEASING.md), then re-run this workflow."
+            exit 0
+          fi
+          umask 077
+          key="${RUNNER_TEMP}/deploy-repo-key"
+          printf '%s\n' "${DEPLOY_REPO_PUSH_KEY}" > "${key}"
+          # GitHub's published SSH host key (api.github.com/meta, ssh_keys).
+          known="${RUNNER_TEMP}/known_hosts"
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "${known}"
+          export GIT_SSH_COMMAND="ssh -i ${key} -o IdentitiesOnly=yes -o UserKnownHostsFile=${known} -o StrictHostKeyChecking=yes"
+          trap 'rm -f "${key}"' EXIT
+
+          repo="${RUNNER_TEMP}/deploy-repo"
+          git init -q -b main "${repo}"
+          cd "${repo}"
+          git remote add origin "git@github.com:${DEPLOY_REPOSITORY}.git"
+          # Fails on a missing repository or a key without access; prints nothing
+          # while the repository is still empty.
+          heads="$(git ls-remote --heads origin main)"
+          if [ -n "${heads}" ]; then
+            git fetch -q --depth=1 origin main
+            git checkout -q -B main FETCH_HEAD
+            # One commit per release: a repository already holding this version
+            # (or a newer one) is left as it is, even if its lockfile would
+            # resolve differently today.
+            current="$(jq -r '.version // empty' package.json 2> /dev/null || true)"
+            if [ -n "${current}" ] \
+              && [ "$(printf '%s\n%s\n' "${current}" "${VERSION}" | sort -V | tail -n 1)" = "${current}" ]; then
+              echo "::notice::${DEPLOY_REPOSITORY} already holds Appflare ${current}; left as it is"
+              exit 0
+            fi
+            git rm -rq --ignore-unmatch .
+          fi
+          git clean -fdxq
+          archive="${RUNNER_TEMP}/deploy-repo-artifact/deploy-repo.tgz"
+          # Regular files and directories only, and nothing inside .git: a link
+          # or a .git path could make the commit or the push reach outside the
+          # repository's own files.
+          if tar -tvzf "${archive}" | grep -E '^[lh]'; then
+            echo "::error::the deploy repository archive contains a symbolic or hard link"
+            exit 1
+          fi
+          if tar -tzf "${archive}" | grep -E '^(\./)?\.git(/|$)'; then
+            echo "::error::the deploy repository archive contains a .git path"
+            exit 1
+          fi
+          tar -xzf "${archive}" --exclude=./.git --exclude=.git --no-same-owner -C .
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::notice::${DEPLOY_REPOSITORY} already holds Appflare ${VERSION}"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q \
+            -m "chore(release): appflare ${VERSION}" \
+            -m "Generated from the signed release manager@${VERSION} of ${GITHUB_REPOSITORY} (${SHA})."
+          git push -q origin main
+          echo "${DEPLOY_REPOSITORY} now holds Appflare ${VERSION}: $(git rev-parse HEAD)"
 
   # --------------------------------------------------------------------------
   # The sandbox Worker (apps/sandbox, `appflare sandbox enable`): released the

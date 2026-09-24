@@ -6,6 +6,7 @@
     "start/overview",
     "start/install",
     "start/install-with-an-agent",
+    "start/deploy-button",
     "---Using Appflare---",
     "guides/catalog",
     "guides/install-apps",

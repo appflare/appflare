@@ -11,6 +11,9 @@ importers:
 
   .:
     devDependencies:
+      '@appflare/cli':
+        specifier: workspace:*
+        version: link:packages/cli
       '@appflare/pack':
         specifier: workspace:*
         version: link:packages/pack

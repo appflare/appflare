@@ -1,7 +1,20 @@
 ---
 title: Install Appflare
-description: Requirements, the installer, and the setup wizard.
+description: The three ways to install, the installer, and the setup wizard.
 ---
+
+## Three ways to install
+
+All three deploy the same signed release into your own account and end in the same
+[setup wizard](#the-setup-wizard).
+
+| | The installer | An AI agent | The Deploy to Cloudflare button |
+| --- | --- | --- | --- |
+| How | Run `npx create-appflare` in a terminal | Paste [a prompt](/start/install-with-an-agent/) into a coding agent; it runs the installer | Select the button in your browser: [Deploy with the button](/start/deploy-button/) |
+| You need | Node.js 22 | Node.js 22 and a coding agent | A GitHub or GitLab account |
+| Leaves behind | Nothing | Nothing | A copy of the deploy repository in your Git account and a Workers Builds connection, which you remove afterwards |
+
+The rest of this page covers the installer.
 
 ## Requirements
 

@@ -17,7 +17,8 @@
     "check": "turbo run typecheck lint test",
     "wrangler": "dotenv -e .env -o -- wrangler",
     "release:pack": "node scripts/release-pack.ts",
-    "icons": "node scripts/render-icons.ts"
+    "icons": "node scripts/render-icons.ts",
+    "deploy-repo": "node scripts/build-deploy-repo.ts"
   },
   "pnpm": {
     "overrides": {
@@ -25,6 +26,7 @@
     }
   },
   "devDependencies": {
+    "@appflare/cli": "workspace:*",
     "@appflare/pack": "workspace:*",
     "@biomejs/biome": "2.5.14",
     "@changesets/cli": "3.0.3",

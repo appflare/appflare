@@ -168,9 +168,43 @@ export function createMigrator(migrations: readonly Migration[], options: Migrat
       if (current !== null) return { schemaVersion: current, applied: [] };
       const outcome = await migrate(db);
       current = outcome.schemaVersion;
+      if (current > target) {
+        // Detected once per isolate; the home page explains it (schemaDowngrade).
+        console.warn("the database is ahead of this version", {
+          schemaVersion: current,
+          known: target,
+        });
+      }
       return outcome;
     },
   };
+}
+
+/**
+ * The migrations this build knows, so the `schema_version` it brings a
+ * database to. A database recorded above it was migrated by a newer version.
+ */
+export const KNOWN_SCHEMA_VERSION = MIGRATIONS.length;
+
+/** The database is ahead of the code serving it: `recorded` migrations applied, `known` in this build. */
+export interface SchemaDowngrade {
+  recorded: number;
+  known: number;
+}
+
+/**
+ * Whether an older version now runs against a database a newer one
+ * migrated: after a rollback from the dashboard, or a redeploy of an old
+ * build over a self-updated manager (a push to the copy the "Deploy to
+ * Cloudflare" button left behind does exactly that). Migrations are
+ * additive, so the old code keeps serving, but what the newer version added
+ * is missing until Appflare is updated again. Null when it is not.
+ */
+export function schemaDowngrade(
+  recorded: number,
+  known: number = KNOWN_SCHEMA_VERSION,
+): SchemaDowngrade | null {
+  return recorded > known ? { recorded, known } : null;
 }
 
 const manager = createMigrator(MIGRATIONS);

@@ -40,6 +40,13 @@ interface ManagerOptionalVars {
   DO_NOT_TRACK?: string;
   /** The random install id the CLI used for its own usage data; the manager continues it. */
   APPFLARE_INSTALL_ID?: string;
+  /**
+   * How this manager was first deployed. `deploy-button` on managers the
+   * "Deploy to Cloudflare" button deployed (the deploy repository's
+   * wrangler.jsonc sets it); unset otherwise. Read it through
+   * `deployButtonInstalled()`.
+   */
+  APPFLARE_INSTALL_SOURCE?: string;
 }
 
 declare namespace Cloudflare {

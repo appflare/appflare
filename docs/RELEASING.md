@@ -69,11 +69,52 @@ Organization Actions secrets of `appflare`:
 | `APPFLARE_SIGNING_KEY` | `sign` jobs here and in `appflare/catalog` | Base64 PKCS#8 Ed25519 private key |
 | `DOCKERHUB_USERNAME` | `sandbox-image.yml` | A Docker Hub account with push access to the `mendylanda` namespace |
 | `DOCKERHUB_TOKEN` | `sandbox-image.yml` | A Docker Hub access token of that account, Read & Write scope |
+| `DEPLOY_REPO_PUSH_KEY` | `deploy-repo` job of `release.yml` | Private key of a deploy key with write access to `appflare/deploy` (see below) |
 | `CLOUDFLARE_API_TOKEN` | later: CI installs into a test account | API token for that account |
 | `CLOUDFLARE_ACCOUNT_ID` | later: same | That account's id |
 
 The release fails with a clear error if `APPFLARE_SIGNING_KEY` is not set, and the
-sandbox image workflow if either Docker Hub secret is not set.
+sandbox image workflow if either Docker Hub secret is not set. Without
+`DEPLOY_REPO_PUSH_KEY` the deploy repository is not updated; the run shows a notice
+and succeeds.
+
+## The deploy repository
+
+The "Deploy to Cloudflare" button deploys from the public repository
+[`appflare/deploy`](https://github.com/appflare/deploy). It holds the current manager
+release as a prebuilt npm project: the release's Worker modules and static assets,
+a `wrangler.jsonc`, a `package.json` whose `deploy` script is `wrangler deploy`, and a
+`package-lock.json`. `scripts/deploy-repo.ts` explains every choice (no build step,
+no `SELF` binding, no secrets, `APPFLARE_INSTALL_SOURCE=deploy-button`).
+
+After each release of the current version, two jobs of `release.yml` update it:
+
+- **deploy-repo-build** (no secrets) downloads the published release, verifies its
+  signature and every file's hash, and writes the repository's contents with
+  `node scripts/build-deploy-repo.ts`.
+- **deploy-repo** (holds only `DEPLOY_REPO_PUSH_KEY`, runs no code from this
+  repository) replaces the files on `main` of `appflare/deploy` and pushes one
+  commit, `chore(release): appflare <version>`. A repository that already holds this
+  version or a newer one is left alone, so re-runs and older versions never add
+  commits.
+
+To set up the key once:
+
+```sh
+ssh-keygen -t ed25519 -N "" -C "appflare release: appflare/deploy" -f deploy-repo-key
+gh repo deploy-key add deploy-repo-key.pub --repo appflare/deploy --allow-write --title "appflare release"
+gh secret set DEPLOY_REPO_PUSH_KEY --org appflare --repos appflare < deploy-repo-key
+rm deploy-repo-key deploy-repo-key.pub
+```
+
+To generate the repository locally from a release directory (a downloaded
+`manager@<version>` release, or `pnpm release:pack` output with `--allow-unsigned`):
+
+```sh
+pnpm exec turbo run build --filter=@appflare/cli...
+pnpm deploy-repo --artifact-dir /tmp/manager-release --out /tmp/appflare-deploy --allow-unsigned
+cd /tmp/appflare-deploy && npm ci && npx wrangler deploy --dry-run
+```
 
 ## The sandbox Worker
 

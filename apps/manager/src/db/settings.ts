@@ -95,6 +95,12 @@ export const SETTING = {
    * while it runs (danger/removal-flag.ts). No job starts while it is set.
    */
   removalInProgress: "removal_in_progress",
+  /**
+   * ISO 8601 time an admin dismissed the home page's "Clean up the deploy
+   * copy" card (deploy-button/). Shown only on managers deployed with the
+   * "Deploy to Cloudflare" button, and only until then.
+   */
+  deployCopyDismissedAt: "deploy_copy_dismissed_at",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

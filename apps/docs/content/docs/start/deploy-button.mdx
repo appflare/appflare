@@ -1,0 +1,97 @@
+---
+title: Deploy with the button
+description: Deploy Appflare from your browser with the Deploy to Cloudflare button, then remove what the button leaves behind.
+---
+
+The Deploy to Cloudflare button deploys Appflare without a terminal. It works through
+Cloudflare's Workers Builds: the button copies a repository into your GitHub or GitLab
+account and deploys that copy. Appflare does not need the copy afterwards, and it
+updates itself without it, so the last step is to remove it.
+
+**[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy)**
+
+The button deploys from [github.com/appflare/deploy](https://github.com/appflare/deploy),
+which holds the latest Appflare release, prebuilt. Nothing is built during the deploy.
+
+## Before you start
+
+- **A Cloudflare account.** The free Workers plan works.
+- **A GitHub or GitLab account.** The button always copies the repository into one;
+  there is no way to deploy without it.
+- **A `workers.dev` subdomain** on the account. If it has none, register one in the
+  dashboard under Workers & Pages first.
+- **A free cron trigger.** Appflare uses one. A free account has five in total, and the
+  deploy fails if all five are in use.
+- **No Appflare in the account yet.** Appflare's Workflow has a fixed name,
+  `appflare-jobs`, and a second deploy would take it over from the first.
+- **Permission to create an API token** for the account, for the setup wizard.
+
+## Deploy
+
+1. Open **[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy)**,
+   sign in, and pick the account.
+2. Under **Git account**, choose your GitHub or GitLab account or organization. The
+   first time, select **Connect GitHub** (or GitLab) and install the Cloudflare Workers
+   and Pages app. Giving it access to only selected repositories is enough.
+3. Check the form:
+   - Leave **Create private Git repository** ticked.
+   - **Project name** becomes the Worker's name and its address. It defaults to
+     `appflare`.
+   - The D1 database defaults to `appflare`; the KV namespace is named after the
+     project. Keep **Create new** for both.
+   - The form asks for no secrets. Leave the build command empty and the deploy
+     command as `npm run deploy`.
+4. Select **Create and deploy** and wait for the build to finish, usually a minute or
+   two.
+5. Open `https://<project name>.<your-subdomain>.workers.dev`.
+
+## Set up
+
+The [setup wizard](/start/install/#the-setup-wizard) opens on the first visit. It asks
+for a Cloudflare API token before anything else: only someone who can create a token
+for this account can set Appflare up. Then create your admin account. The wizard also
+generates the secret that signs sessions, `BETTER_AUTH_SECRET`, and stores it with the
+token as encrypted secrets on Appflare's Worker.
+
+## Clean up the deploy copy
+
+The button leaves two things behind: the copy of the repository in your Git account,
+and a Workers Builds connection from that copy to Appflare's Worker. While the
+connection stays, **any push to the copy deploys the version it holds over the one
+Appflare has updated itself to.** Appflare cannot remove either one: the Workers Builds
+API does not accept the account-owned token Appflare holds.
+
+After setup, admins see a **Clean up the deploy copy** card on the home page with links
+for both steps:
+
+1. **Disconnect Workers Builds.** In the Cloudflare dashboard, open the Worker, then
+   **Settings** > **Builds**, and select **Disconnect**.
+2. **Delete the copy.** On GitHub, open the repository, then **Settings**, and select
+   **Delete this repository** at the bottom. On GitLab, open the project, then
+   **Settings** > **General** > **Advanced** > **Delete project**.
+
+Optionally, also:
+
+- delete the API token Workers Builds may have created for its builds (dashboard,
+  **My Profile** > **API Tokens**);
+- uninstall the Cloudflare Workers and Pages app from
+  [github.com/settings/installations](https://github.com/settings/installations) (or the
+  organization's settings) if nothing else uses it.
+
+Dismiss the card when you are done. It does not come back.
+
+## Caveats
+
+- **A push to the copy downgrades Appflare** to the version the copy holds, and
+  removes bindings Appflare added to itself since. If that older version is also older
+  than Appflare's database, Appflare shows a banner saying so. Either way, open
+  **Settings** > **Appflare updates**, update to the newest version again, and then
+  disconnect Workers Builds.
+- **Until Appflare updates itself once**, it runs every step of a job inside the job
+  itself. A manager installed with `create-appflare` hands the heaviest steps to
+  itself over a service binding, which the button cannot declare (the binding would
+  name the Worker, and the form lets you rename it). The next
+  [update of Appflare](/guides/update-appflare/) adds the binding. On the free plan, an
+  install of a large app may fail before then.
+- **Names.** The KV namespace is named after the project, not `appflare-kv` as with
+  `create-appflare`. Appflare does not depend on either name.

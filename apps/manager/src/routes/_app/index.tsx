@@ -23,6 +23,12 @@ import { PendingUpdatesBanner } from "../../components/pending-updates-banner";
 import { StatusBadge } from "../../components/status-badge";
 import { type StartUpdateHandle, useStartUpdate } from "../../components/update-banner";
 import { UsageDataNotice } from "../../components/usage-data-notice";
+import {
+  dismissDeployCopy,
+  getDeployCopyCleanup,
+  getSchemaDowngrade,
+} from "../../deploy-button/deploy-copy.functions";
+import { DeployCopyCard, DowngradeBanner } from "../../deploy-button/deploy-copy-card";
 import { type InstallRow, listInstalls } from "../../installs/installs.functions";
 import { dismissTelemetryNotice, getTelemetryNotice } from "../../telemetry/telemetry.functions";
 
@@ -38,13 +44,21 @@ import { dismissTelemetryNotice, getTelemetryNotice } from "../../telemetry/tele
  * are listed under Settings, Removed apps; the others are not listed
  * anywhere. Admins of a manager updated from a version without usage data
  * see the usage-data notice above the rest, once for the whole manager: when
- * one of them dismisses it, it is gone for all.
+ * one of them dismisses it, it is gone for all. Before everything, a banner
+ * while an older Appflare serves a database a newer one migrated; and for
+ * admins of a manager the "Deploy to Cloudflare" button deployed, the
+ * "Clean up the deploy copy" card, until one of them dismisses it.
  */
 export const Route = createFileRoute("/_app/")({
   staticData: { title: "Home" },
   loader: async () => {
-    const [rows, notice] = await Promise.all([listInstalls(), getTelemetryNotice()]);
-    return { rows, notice };
+    const [rows, notice, deployCopy, downgrade] = await Promise.all([
+      listInstalls(),
+      getTelemetryNotice(),
+      getDeployCopyCleanup(),
+      getSchemaDowngrade(),
+    ]);
+    return { rows, notice, deployCopy, downgrade };
   },
   component: HomePage,
 });
@@ -54,7 +68,7 @@ const layout = getRouteApi("/_app");
 const mono = "font-mono text-[0.9em]";
 
 function HomePage() {
-  const { rows, notice } = Route.useLoaderData();
+  const { rows, notice, deployCopy, downgrade } = Route.useLoaderData();
   const pending = layout.useLoaderData();
   const { viewer } = layout.useRouteContext();
   const isAdmin = viewer.role === "admin";
@@ -73,6 +87,18 @@ function HomePage() {
           ) : undefined
         }
       />
+      {downgrade !== null && (
+        <DowngradeBanner version={downgrade.version} deployButton={downgrade.deployButton} />
+      )}
+      {deployCopy !== null && (
+        <DeployCopyCard
+          cleanup={deployCopy}
+          onDismiss={async () => {
+            await dismissDeployCopy();
+            await router.invalidate();
+          }}
+        />
+      )}
       {notice.show && (
         <UsageDataNotice
           status={notice.status}
