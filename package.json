@@ -16,7 +16,8 @@
     "test:dist": "turbo run test:dist",
     "check": "turbo run typecheck lint test",
     "wrangler": "dotenv -e .env -o -- wrangler",
-    "release:pack": "node scripts/release-pack.ts"
+    "release:pack": "node scripts/release-pack.ts",
+    "icons": "node scripts/render-icons.ts"
   },
   "pnpm": {
     "overrides": {

@@ -3,10 +3,13 @@ import {
   type AutoUpdateCandidate,
   effectiveAutoUpdate,
   MAX_APP_ATTEMPTS_PER_RUN,
+  NEEDS_ADMIN_COPY,
   planAppUpdates,
   planSelfUpdate,
+  planUpdateAll,
   settingOn,
   startedByLabel,
+  unattendedUpdateBlock,
 } from "./auto-update";
 
 function candidate(over: Partial<AutoUpdateCandidate> = {}): AutoUpdateCandidate {
@@ -115,6 +118,76 @@ describe("planAppUpdates", () => {
     expect(
       decisions.map((d) => (d.action === "try" ? d.installId : `${d.installId}:${d.reason}`)),
     ).toEqual(["a", "off:off", "b", "c", "d:limit"]);
+  });
+});
+
+describe("planUpdateAll", () => {
+  it("splits the listed updates into those it starts and those that need an admin", () => {
+    const decisions = planUpdateAll([
+      // The automatic-update setting does not matter: an admin asked.
+      candidate({ installId: "own-off", choice: "off" }),
+      candidate({ installId: "waits", waiting: "1.1.0" }),
+      candidate({ installId: "sandbox", buildKind: "sandbox" }),
+      candidate({ installId: "now-sandbox", latest: { version: "1.1.0", tier: "sandbox" } }),
+      candidate({ installId: "installer", buildKind: "self-deploying" }),
+      candidate({ installId: "tried", triedBefore: "failed" }),
+      candidate({ installId: "rolled", triedBefore: "rolled-back" }),
+      candidate({ installId: "busy", status: "updating" }),
+      candidate({ installId: "unlisted", latest: null }),
+      candidate({ installId: "current", latest: { version: "1.0.0", tier: "artifact" } }),
+    ]);
+    expect(decisions).toEqual([
+      { installId: "own-off", action: "try", version: "1.1.0" },
+      { installId: "waits", action: "try", version: "1.1.0" },
+      { installId: "sandbox", action: "needs-admin", version: "1.1.0", reason: "needs-approval" },
+      {
+        installId: "now-sandbox",
+        action: "needs-admin",
+        version: "1.1.0",
+        reason: "needs-approval",
+      },
+      { installId: "installer", action: "needs-admin", version: "1.1.0", reason: "needs-approval" },
+      { installId: "tried", action: "needs-admin", version: "1.1.0", reason: "failed-before" },
+      { installId: "rolled", action: "needs-admin", version: "1.1.0", reason: "rolled-back" },
+      { installId: "busy", action: "skip", reason: "not-installed" },
+      { installId: "unlisted", action: "skip", reason: "not-in-catalog" },
+      { installId: "current", action: "skip", reason: "up-to-date" },
+    ]);
+    for (const reason of ["needs-approval", "failed-before", "rolled-back"] as const) {
+      expect(NEEDS_ADMIN_COPY[reason]).toMatch(/^[A-Z].*\.$/);
+    }
+  });
+
+  it("tries at most the cron's per-run number; the ones needing an admin do not count", () => {
+    const decisions = planUpdateAll(
+      [
+        candidate({ installId: "a" }),
+        candidate({ installId: "sandbox", buildKind: "sandbox" }),
+        candidate({ installId: "b" }),
+        candidate({ installId: "c" }),
+      ],
+      2,
+    );
+    expect(decisions.map((d) => `${d.installId}:${d.action}`)).toEqual([
+      "a:try",
+      "sandbox:needs-admin",
+      "b:try",
+      "c:skip",
+    ]);
+    expect(decisions.at(-1)).toEqual({ installId: "c", action: "skip", reason: "limit" });
+  });
+
+  it("judges an update by the same rules as the cron", () => {
+    for (const c of [
+      candidate(),
+      candidate({ buildKind: "sandbox" }),
+      candidate({ triedBefore: "failed" }),
+      candidate({ status: "failed" }),
+    ]) {
+      const block = unattendedUpdateBlock(c);
+      const cron = planAppUpdates([{ ...c, choice: "on" }], false)[0];
+      expect(cron?.action === "skip" ? cron.reason : null).toBe(block);
+    }
   });
 });
 

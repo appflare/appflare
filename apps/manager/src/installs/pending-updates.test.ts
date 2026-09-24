@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { type PendingInstallRow, pendingUpdates, pendingUpdatesTitle } from "./pending-updates";
+import {
+  MANAGER_UPDATES_HREF,
+  type ManagerStatus,
+  type PendingInstallRow,
+  pendingUpdates,
+  pendingUpdatesTitle,
+  sidebarUpdateBadge,
+} from "./pending-updates";
 
 const row = (over: Partial<PendingInstallRow> & { id: string }): PendingInstallRow => ({
   status: "installed",
@@ -10,7 +17,12 @@ const row = (over: Partial<PendingInstallRow> & { id: string }): PendingInstallR
   ...over,
 });
 
-const noManager = { current: "0.4.0", latest: null, updateAvailable: false };
+const upToDate: ManagerStatus = {
+  current: "0.4.0",
+  latest: "0.4.0",
+  updateAvailable: false,
+  activeJobId: null,
+};
 
 describe("pendingUpdates", () => {
   it("counts every installed app behind the catalog, each install on its own", () => {
@@ -30,27 +42,39 @@ describe("pendingUpdates", () => {
         ["cut", "1.1.0"],
         ["brain", "2.0.0"],
       ]),
-      noManager,
+      upToDate,
     );
     expect(pending.apps).toEqual([
       { installId: "a", instanceName: "Links", version: "1.0.0", latestVersion: "1.1.0" },
       { installId: "b", instanceName: "b", version: "1.0.0", latestVersion: "1.1.0" },
     ]);
-    expect(pending.manager).toBeNull();
-    expect(pending.total).toBe(2);
   });
 
-  it("adds one for a newer Appflare release", () => {
-    const pending = pendingUpdates([], new Map(), {
+  it("passes Appflare's own version along without counting its update with the apps", () => {
+    const manager: ManagerStatus = {
       current: "0.4.0",
       latest: "0.5.0",
       updateAvailable: true,
+      activeJobId: null,
+    };
+    const pending = pendingUpdates([], new Map(), manager);
+    expect(pending).toEqual({ apps: [], manager });
+    // The sidebar's Home count and the home page's title only ever count apps.
+    expect(pending.apps).toHaveLength(0);
+  });
+
+  it("puts the app count on Home only, never a count for Appflare's own update", () => {
+    const pending = pendingUpdates([row({ id: "a" })], new Map([["cut", "1.1.0"]]), {
+      current: "0.4.0",
+      latest: "0.5.0",
+      updateAvailable: true,
+      activeJobId: null,
     });
-    expect(pending).toEqual({ apps: [], manager: { current: "0.4.0", latest: "0.5.0" }, total: 1 });
-    expect(
-      pendingUpdates([], new Map(), { current: "0.5.0", latest: "0.5.0", updateAvailable: false })
-        .total,
-    ).toBe(0);
+    expect(sidebarUpdateBadge("/", pending)).toEqual({ count: 1, label: "1 update available" });
+    for (const href of ["/settings", MANAGER_UPDATES_HREF, "/catalog", "/jobs"]) {
+      expect(sidebarUpdateBadge(href, pending).count).toBe(0);
+    }
+    expect(sidebarUpdateBadge("/", pendingUpdates([], new Map(), upToDate)).count).toBe(0);
   });
 
   it("titles the count", () => {

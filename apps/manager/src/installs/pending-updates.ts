@@ -2,10 +2,11 @@ import { isUpdateAvailable } from "../catalog/versions";
 
 /**
  * Pending updates, for the home page and the sidebar: installs the catalog
- * lists a newer version of, and a newer Appflare release. Only an installed
- * app counts (one that is updating, failed, or uninstalled does not), and
- * every install counts on its own, so two installs of one app are two
- * updates. Client-safe (no bindings).
+ * lists a newer version of. Only an installed app counts (one that is
+ * updating, failed, or uninstalled does not), and every install counts on
+ * its own, so two installs of one app are two updates. Appflare's own
+ * version travels along for the sidebar's Appflare card, which offers its
+ * update; it is never counted with the apps. Client-safe (no bindings).
  */
 
 export interface PendingAppUpdate {
@@ -16,12 +17,22 @@ export interface PendingAppUpdate {
   latestVersion: string;
 }
 
+/** Appflare itself, as the sidebar's Appflare card shows it. */
+export interface ManagerStatus {
+  /** The running version. */
+  current: string;
+  /** The newest release the release feed reported; null until a check found one. */
+  latest: string | null;
+  /** Whether `latest` is newer than the running version. */
+  updateAvailable: boolean;
+  /** The self-update queued or running, if any. */
+  activeJobId: string | null;
+}
+
 export interface PendingUpdates {
+  /** The apps to update: Home's count in the sidebar and the home page's list. */
   apps: PendingAppUpdate[];
-  /** A newer Appflare release than the running version; null when there is none. */
-  manager: { current: string; latest: string } | null;
-  /** Every pending update: the apps, plus one for Appflare itself. */
-  total: number;
+  manager: ManagerStatus;
 }
 
 export interface PendingInstallRow {
@@ -37,7 +48,7 @@ export function pendingUpdates(
   installs: readonly PendingInstallRow[],
   /** The catalog's version of each app, by slug. */
   catalogVersions: ReadonlyMap<string, string>,
-  manager: { current: string; latest: string | null; updateAvailable: boolean },
+  manager: ManagerStatus,
 ): PendingUpdates {
   const apps: PendingAppUpdate[] = [];
   for (const row of installs) {
@@ -51,11 +62,7 @@ export function pendingUpdates(
       latestVersion: latest,
     });
   }
-  const managerUpdate =
-    manager.updateAvailable && manager.latest !== null
-      ? { current: manager.current, latest: manager.latest }
-      : null;
-  return { apps, manager: managerUpdate, total: apps.length + (managerUpdate === null ? 0 : 1) };
+  return { apps, manager };
 }
 
 /** "3 updates available", "1 update available". */
@@ -63,5 +70,18 @@ export function pendingUpdatesTitle(total: number): string {
   return `${total} update${total === 1 ? "" : "s"} available`;
 }
 
-/** Settings, Appflare updates: where the self-update starts. */
+/**
+ * The count on a sidebar item: the app updates on Home, where each one
+ * starts. Nothing else carries one; Appflare's own update is offered by the
+ * Appflare card at the bottom of the sidebar instead.
+ */
+export function sidebarUpdateBadge(
+  href: string,
+  pending: PendingUpdates,
+): { count: number; label: string } {
+  if (href !== "/") return { count: 0, label: "" };
+  return { count: pending.apps.length, label: pendingUpdatesTitle(pending.apps.length) };
+}
+
+/** Settings, Appflare updates: the running version, the release feed, and automatic self-updates. */
 export const MANAGER_UPDATES_HREF = "/settings/appflare-updates";

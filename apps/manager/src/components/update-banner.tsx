@@ -6,7 +6,7 @@ import {
   WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { startUpdate } from "../installs/versions.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
@@ -27,10 +27,7 @@ import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fie
  * remembered for the account).
  */
 export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
-  const jobStarted = useJobStarted();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [needs, setNeeds] = useState<UpdateNeeds | null>(null);
+  const update = useStartUpdate();
 
   if (install.status === "updating") {
     const job = install.jobs.find((j) => j.id === install.activeJobId);
@@ -68,22 +65,6 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
   }
   if (!install.updateAvailable || install.latestVersion === null) return null;
 
-  async function onUpdate() {
-    setPending(true);
-    setError(null);
-    try {
-      const result = await startUpdate({ data: { installId: install.id } });
-      if ("jobId" in result) {
-        await jobStarted(result.jobId, "Update started");
-        return;
-      }
-      setNeeds(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start the update.");
-    }
-    setPending(false);
-  }
-
   const canStart = isAdmin && install.activeJobId === null;
   return (
     <div className="grid gap-3">
@@ -96,22 +77,81 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
             <Button
               variant="primary"
               icon={<ArrowCircleUpIcon />}
-              loading={pending}
-              onClick={onUpdate}
+              loading={update.pendingId === install.id}
+              onClick={() => update.start(install)}
             >
               Update
             </Button>
           ) : undefined
         }
       />
-      {error !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
+      {update.error !== null && (
+        <Banner
+          variant="error"
+          icon={<WarningCircleIcon weight="fill" />}
+          title={update.error.message}
+        />
       )}
-      {needs !== null && (
-        <UpdateDialog install={install} needs={needs} onClose={() => setNeeds(null)} />
-      )}
+      {update.dialog}
     </div>
   );
+}
+
+/** What starting an update needs to know about the install. */
+export type UpdateTarget = Pick<InstallDetail, "id" | "instanceName">;
+
+/**
+ * Starting an app's update from a button: the update job starts and its log
+ * opens, or, when the new version needs secrets or confirmations, `dialog`
+ * asks for them first. `pendingId` is the install whose start is in
+ * flight; `error` says why the last start was refused.
+ */
+export interface StartUpdateHandle {
+  start(install: UpdateTarget): void;
+  pendingId: string | null;
+  error: { installId: string; message: string } | null;
+  /** The dialog asking for what the update needs; render it once. */
+  dialog: ReactNode;
+}
+
+export function useStartUpdate(): StartUpdateHandle {
+  const jobStarted = useJobStarted();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [error, setError] = useState<{ installId: string; message: string } | null>(null);
+  const [asking, setAsking] = useState<{ install: UpdateTarget; needs: UpdateNeeds } | null>(null);
+
+  async function start(install: UpdateTarget) {
+    setPendingId(install.id);
+    setError(null);
+    try {
+      const result = await startUpdate({ data: { installId: install.id } });
+      if ("jobId" in result) {
+        await jobStarted(result.jobId, "Update started");
+        return;
+      }
+      setAsking({ install, needs: result });
+    } catch (err) {
+      setError({
+        installId: install.id,
+        message: err instanceof Error ? err.message : "Could not start the update.",
+      });
+    }
+    setPendingId(null);
+  }
+
+  return {
+    start: (install) => void start(install),
+    pendingId,
+    error,
+    dialog:
+      asking === null ? null : (
+        <UpdateDialog
+          install={asking.install}
+          needs={asking.needs}
+          onClose={() => setAsking(null)}
+        />
+      ),
+  };
 }
 
 function UpdateDialog({
@@ -119,7 +159,7 @@ function UpdateDialog({
   needs,
   onClose,
 }: {
-  install: InstallDetail;
+  install: UpdateTarget;
   needs: UpdateNeeds;
   onClose(): void;
 }) {

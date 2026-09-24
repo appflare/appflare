@@ -7,30 +7,17 @@ import {
   WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { startedByLabel } from "../../../auto-update/auto-update";
-import { compareVersions } from "../../../catalog/versions";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { formatTime, jobKindLabel } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
-import {
-  type BuildProgressView,
-  getJob,
-  type JobLogRow,
-  type JobView,
-} from "../../../jobs/jobs.functions";
+import { type BuildProgressView, getJob, type JobLogRow } from "../../../jobs/jobs.functions";
+import { isActive, useLiveJob, useVersionSwitch } from "../../../jobs/live-job";
 
 const JOBS_CRUMB = { label: "Jobs", href: "/jobs" };
-
-/** How often the page re-reads a queued or running job. */
-const POLL_MS = 2000;
-
-function isActive(job: JobView | null): boolean {
-  return job !== null && (job.status === "queued" || job.status === "running");
-}
 
 /** `/jobs/$jobId`: the live job log. */
 export const Route = createFileRoute("/_app/jobs/$jobId")({
@@ -39,90 +26,9 @@ export const Route = createFileRoute("/_app/jobs/$jobId")({
   component: JobPage,
 });
 
-/**
- * Polls `getJob` every 2 s while the job is queued or running and stops once it
- * has finished (the free plan allows 100k requests a day). A failed poll (for
- * example a 5xx or 404 while Appflare switches versions) is retried on the next
- * tick; an answer without the job never replaces the job already shown.
- */
-function useLiveJob(jobId: string, initial: JobView | null): JobView | null {
-  const [job, setJob] = useState(initial);
-  useEffect(() => setJob(initial), [initial]);
-  const active = isActive(job);
-  useEffect(() => {
-    if (!active) return;
-    let cancelled = false;
-    const timer = setInterval(async () => {
-      try {
-        const next = await getJob({ data: { jobId } });
-        if (!cancelled && next !== null) setJob(next);
-      } catch {
-        // A missed poll is retried on the next tick.
-      }
-    }, POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [jobId, active]);
-  return job;
-}
-
-/** A finished self-update's page stops watching for the switch after this long. */
-const SWITCH_WATCH_MS = 5 * 60 * 1000;
-
-/**
- * A self-update replaces the code serving this page. Polls `/api/health` (a
- * plain URL every version serves, unlike server functions, whose ids change
- * between builds) while the job runs, and after it succeeded until a version
- * at least as new as the target answers (at most a few minutes). Reports
- * whether an older version still answers. When the target version starts
- * answering after an older one did, the page reloads once to load the new
- * version's client.
- */
-function useVersionSwitch(job: JobView | null): { switching: boolean } {
-  const target = job?.kind === "self_update" ? job.targetVersion : null;
-  const [seen, setSeen] = useState<string | null>(null);
-  const [sawOlder, setSawOlder] = useState(false);
-  /** The answering version is the target or newer (or cannot be compared). */
-  const arrived = seen !== null && target !== null && (compareVersions(seen, target) ?? 0) >= 0;
-  const recentlyFinished =
-    job?.finishedAt == null || Date.now() - new Date(job.finishedAt).getTime() < SWITCH_WATCH_MS;
-  const watching =
-    target !== null &&
-    job !== null &&
-    (isActive(job) || (job.status === "succeeded" && recentlyFinished && !arrived));
-  useEffect(() => {
-    if (!watching || target === null) return;
-    let cancelled = false;
-    async function check() {
-      try {
-        const res = await fetch("/api/health", { cache: "no-store" });
-        const body = (await res.json()) as { version?: unknown };
-        if (cancelled || typeof body.version !== "string") return;
-        const version = body.version;
-        setSeen(version);
-        if ((compareVersions(version, target ?? version) ?? 0) < 0) setSawOlder(true);
-      } catch {
-        // Unreachable during the switch; the next tick retries.
-      }
-    }
-    void check();
-    const timer = setInterval(check, POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [watching, target]);
-  useEffect(() => {
-    if (arrived && sawOlder && job?.status !== "failed") window.location.reload();
-  }, [arrived, sawOlder, job?.status]);
-  return { switching: watching && seen !== null && !arrived };
-}
-
 function JobPage() {
   const { jobId } = Route.useParams();
-  const job = useLiveJob(jobId, Route.useLoaderData());
+  const job = useLiveJob(jobId, Route.useLoaderData()) ?? null;
   const { switching } = useVersionSwitch(job);
 
   if (job === null) {

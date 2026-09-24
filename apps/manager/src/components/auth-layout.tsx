@@ -21,7 +21,7 @@ export function AuthLayout({
     <main className="flex min-h-dvh items-center justify-center bg-kumo-recessed px-4 py-10">
       <div className={cn("grid w-full gap-6", width === "wide" ? "max-w-xl" : "max-w-md")}>
         <div className="flex justify-center">
-          <Logo variant="wordmark" height={28} label="Appflare" className="text-kumo-strong" />
+          <Logo height={28} />
         </div>
         <LayerCard>
           <LayerCard.Primary className="grid gap-6 px-6 py-5">

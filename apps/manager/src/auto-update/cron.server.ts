@@ -4,8 +4,13 @@ import { getAppManifest, getCatalogManifest } from "../catalog/app-manifest.serv
 import { readCachedCatalogIndex } from "../catalog/index.server";
 import { isManagerUpdateAvailable, readManagerLatest } from "../catalog/manager-releases.server";
 import { createDb } from "../db/client";
-import { installs } from "../db/schema";
-import { startUpdateCore, type UpdateNeeds, VersionActionError } from "../installs/versions.server";
+import { installs, type JobStarter } from "../db/schema";
+import {
+  type StartUpdateResult,
+  startUpdateCore,
+  type UpdateNeeds,
+  VersionActionError,
+} from "../installs/versions.server";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import type { SelfUpdateJobParams } from "../jobs/self-update";
 import { SelfUpdateError, startSelfUpdateCore } from "../jobs/self-update/start.server";
@@ -152,36 +157,118 @@ function choiceOf(value: string): AutoUpdateChoice {
     : "inherit";
 }
 
+/** The install columns an update decision reads. */
+const candidateColumns = {
+  id: installs.id,
+  slug: installs.app_slug,
+  instanceName: installs.instance_name,
+  workerName: installs.worker_name,
+  status: installs.status,
+  buildKind: installs.build_kind,
+  choice: installs.auto_update,
+  version: installs.catalog_version,
+  waiting: installs.auto_update_waiting,
+};
+
+/** Installs that are not uninstalled, oldest first, as update decisions read them. */
+export function readCandidateRows(db: D1Database) {
+  return createDb(db)
+    .select(candidateColumns)
+    .from(installs)
+    .where(ne(installs.status, "uninstalled"))
+    .orderBy(asc(installs.installed_at));
+}
+export type CandidateRow = Awaited<ReturnType<typeof readCandidateRows>>[number];
+
+/**
+ * What the cron and "Update all" decide on: each install with its catalog
+ * entry and whether an update to that version failed or was rolled back.
+ */
+export async function updateCandidates(
+  db: D1Database,
+  rows: readonly CandidateRow[],
+  listed: ReadonlyMap<string, IndexApp>,
+): Promise<AutoUpdateCandidate[]> {
+  const [failed, rolledBack] = await Promise.all([failedTargets(db), rolledBackTargets(db)]);
+  return rows.map((r) => {
+    const app = listed.get(r.slug);
+    const key = app === undefined ? null : `${r.id} ${app.version}`;
+    return {
+      installId: r.id,
+      status: r.status,
+      buildKind: r.buildKind,
+      choice: choiceOf(r.choice),
+      version: r.version,
+      latest: app === undefined ? null : { version: app.version, tier: app.tier },
+      triedBefore:
+        key === null
+          ? null
+          : failed.has(key)
+            ? "failed"
+            : rolledBack.has(key)
+              ? "rolled-back"
+              : null,
+      waiting: r.waiting,
+    };
+  });
+}
+
+/**
+ * Starts an install's update through the Update button's own start path,
+ * with no secrets and no confirmations: an update that needs any comes back
+ * as its needs instead of starting. Throws `VersionActionError` when the
+ * start path refuses (a job of the install runs, the manifest cannot be read).
+ */
+export async function startUnattendedUpdate(
+  env: ScheduledUpdatesEnv,
+  deps: ScheduledUpdatesDeps,
+  listed: ReadonlyMap<string, IndexApp>,
+  installId: string,
+  startedBy: JobStarter,
+): Promise<StartUpdateResult> {
+  return startUpdateCore(
+    {
+      db: env.DB,
+      workflows: env.JOBS,
+      createJob: (id, params) => env.JOBS.create({ id, params }),
+      startedBy,
+      ...(deps.now === undefined ? {} : { now: deps.now }),
+      ...(deps.newId === undefined ? {} : { newId: deps.newId }),
+      async loadApp(appSlug) {
+        return listed.get(appSlug) ?? null;
+      },
+      async loadManifest(app) {
+        if (deps.loadManifest !== undefined) return deps.loadManifest(app);
+        const read = await getAppManifest(env, app);
+        if (!read.ok) throw new VersionActionError(read.error);
+        return read.manifest;
+      },
+      async loadCatalog(app) {
+        if (deps.loadCatalog !== undefined) return deps.loadCatalog(app);
+        const read = await getCatalogManifest(env, app);
+        if (!read.ok) throw new VersionActionError(read.error);
+        return read.catalog;
+      },
+      sandboxConnected: sandboxBinding(env) !== undefined,
+    },
+    { installId },
+  );
+}
+
 export async function runScheduledUpdates(
   env: ScheduledUpdatesEnv,
   deps: ScheduledUpdatesDeps = {},
 ): Promise<ScheduledUpdatesOutcome> {
   const orm = createDb(env.DB);
   const defaults = await readAutoUpdateDefaults(orm);
-  const rows = await orm
-    .select({
-      id: installs.id,
-      slug: installs.app_slug,
-      status: installs.status,
-      buildKind: installs.build_kind,
-      choice: installs.auto_update,
-      version: installs.catalog_version,
-      waiting: installs.auto_update_waiting,
-    })
-    .from(installs)
-    .where(ne(installs.status, "uninstalled"))
-    .orderBy(asc(installs.installed_at));
+  const rows = await readCandidateRows(env.DB);
   const anyApp = defaults.apps || rows.some((r) => r.choice === "on");
   const outcome: ScheduledUpdatesOutcome = { selfUpdate: null, apps: [], idle: null };
   if (!defaults.manager && !anyApp) return { ...outcome, idle: "off" };
   if (!env.CF_API_TOKEN) return { ...outcome, idle: "no-token" };
-  const failed = await failedTargets(env.DB);
-  const createJob = (id: string, params: UpdateJobParams | SelfUpdateJobParams) =>
-    env.JOBS.create({ id, params });
-
   // 1. Appflare itself.
   if (defaults.manager) {
-    const latest = await readManagerLatest(env.KV);
+    const [latest, failed] = await Promise.all([readManagerLatest(env.KV), failedTargets(env.DB)]);
     const decision = planSelfUpdate({
       enabled: true,
       devBuild: isDevBuild(env.APPFLARE_VERSION),
@@ -200,7 +287,7 @@ export async function runScheduledUpdates(
             currentVersion: env.APPFLARE_VERSION,
             hasToken: true,
             workflows: env.JOBS,
-            createJob,
+            createJob: (id, params) => env.JOBS.create({ id, params }),
             startedBy: "schedule",
             ...(deps.now === undefined ? {} : { now: deps.now }),
             ...(deps.newId === undefined ? {} : { newId: deps.newId }),
@@ -222,28 +309,7 @@ export async function runScheduledUpdates(
   const index = await readCachedCatalogIndex(env.KV);
   const listed = new Map((index?.apps ?? []).map((a) => [a.slug, a]));
   const slugOf = new Map(rows.map((r) => [r.id, r.slug]));
-  const rolledBack = await rolledBackTargets(env.DB);
-  const candidates: AutoUpdateCandidate[] = rows.map((r) => {
-    const app = listed.get(r.slug);
-    const key = app === undefined ? null : `${r.id} ${app.version}`;
-    return {
-      installId: r.id,
-      status: r.status,
-      buildKind: r.buildKind,
-      choice: choiceOf(r.choice),
-      version: r.version,
-      latest: app === undefined ? null : { version: app.version, tier: app.tier },
-      triedBefore:
-        key === null
-          ? null
-          : failed.has(key)
-            ? "failed"
-            : rolledBack.has(key)
-              ? "rolled-back"
-              : null,
-      waiting: r.waiting,
-    };
-  });
+  const candidates = await updateCandidates(env.DB, rows, listed);
   let started = 0;
   for (const decision of planAppUpdates(candidates, defaults.apps)) {
     const slug = slugOf.get(decision.installId) ?? "";
@@ -268,34 +334,8 @@ export async function runScheduledUpdates(
       continue;
     }
     try {
-      const result = await startUpdateCore(
-        {
-          db: env.DB,
-          workflows: env.JOBS,
-          createJob,
-          startedBy: "schedule",
-          ...(deps.now === undefined ? {} : { now: deps.now }),
-          ...(deps.newId === undefined ? {} : { newId: deps.newId }),
-          async loadApp(appSlug) {
-            return listed.get(appSlug) ?? null;
-          },
-          async loadManifest(app) {
-            if (deps.loadManifest !== undefined) return deps.loadManifest(app);
-            const read = await getAppManifest(env, app);
-            if (!read.ok) throw new VersionActionError(read.error);
-            return read.manifest;
-          },
-          async loadCatalog(app) {
-            if (deps.loadCatalog !== undefined) return deps.loadCatalog(app);
-            const read = await getCatalogManifest(env, app);
-            if (!read.ok) throw new VersionActionError(read.error);
-            return read.catalog;
-          },
-          sandboxConnected: sandboxBinding(env) !== undefined,
-        },
-        // No secrets and no confirmations: an update that needs any comes back as needs.
-        { installId: decision.installId },
-      );
+      // No secrets and no confirmations: an update that needs any comes back as needs.
+      const result = await startUnattendedUpdate(env, deps, listed, decision.installId, "schedule");
       if ("jobId" in result) {
         started += 1;
         outcome.apps.push({

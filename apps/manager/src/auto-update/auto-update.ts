@@ -73,6 +73,31 @@ export type AppDecision =
   | { installId: string; action: "try"; version: string }
   | { installId: string; action: "skip"; reason: AppSkipReason };
 
+/** Why an update is not offered at all: nothing to update to. */
+export type NoUpdateReason = "not-installed" | "not-in-catalog" | "up-to-date";
+/** Why an offered update is left for an admin to start from the app's page. */
+export type NeedsAdminReason = "needs-approval" | "failed-before" | "rolled-back";
+
+/**
+ * Whether an install's update may start without an admin's input, judged
+ * before its signed manifest is read (which tells about new secrets and
+ * confirmations): null when it may be tried. Shared by the cron and by
+ * "Update all" on the home page.
+ */
+export function unattendedUpdateBlock(
+  c: AutoUpdateCandidate,
+): NoUpdateReason | NeedsAdminReason | null {
+  if (c.status !== "installed") return "not-installed";
+  if (c.latest === null) return "not-in-catalog";
+  if (!isUpdateAvailable(c.version, c.latest.version)) return "up-to-date";
+  // Building in the account, or running the app's own installer, costs
+  // money on Workers Paid; the admin approves every run.
+  if (c.buildKind !== "artifact" || c.latest.tier !== "artifact") return "needs-approval";
+  if (c.triedBefore === "failed") return "failed-before";
+  if (c.triedBefore === "rolled-back") return "rolled-back";
+  return null;
+}
+
 /**
  * Which installs the cron tries to update now, in the given order, at most
  * `maxAttempts` of them. A tried update may still need an admin (a new
@@ -93,20 +118,61 @@ export function planAppUpdates(
       reason,
     });
     if (!effectiveAutoUpdate(c.choice, appsDefault)) return skip("off");
-    if (c.status !== "installed") return skip("not-installed");
+    const block = unattendedUpdateBlock(c);
+    if (block !== null) return skip(block);
+    // Already covered by the block; narrows `latest` for what follows.
     if (c.latest === null) return skip("not-in-catalog");
-    if (!isUpdateAvailable(c.version, c.latest.version)) return skip("up-to-date");
-    // Building in the account, or running the app's own installer, costs
-    // money on Workers Paid; the admin approves every run.
-    if (c.buildKind !== "artifact" || c.latest.tier !== "artifact") return skip("needs-approval");
-    if (c.triedBefore === "failed") return skip("failed-before");
-    if (c.triedBefore === "rolled-back") return skip("rolled-back");
     if (c.waiting === c.latest.version) return skip("waiting");
     if (tried >= maxAttempts) return skip("limit");
     tried += 1;
     return { installId: c.installId, action: "try", version: c.latest.version };
   });
 }
+
+export type UpdateAllDecision =
+  | { installId: string; action: "try"; version: string }
+  | { installId: string; action: "needs-admin"; version: string; reason: NeedsAdminReason }
+  | { installId: string; action: "skip"; reason: NoUpdateReason | "limit" };
+
+/**
+ * "Update all" on the home page: which of the listed installs to start now,
+ * by the cron's rules minus the automatic-update setting (an admin asked).
+ * An update the cron would leave for an admin is listed as needing one; an
+ * update that a new secret or a confirmation holds back is found out only
+ * when starting it. Any version the cron left waiting is tried again, since
+ * the admin may have changed something. At most `maxAttempts` are tried per
+ * request, like a cron run, for the same subrequest budget.
+ */
+export function planUpdateAll(
+  candidates: readonly AutoUpdateCandidate[],
+  maxAttempts: number = MAX_APP_ATTEMPTS_PER_RUN,
+): UpdateAllDecision[] {
+  let tried = 0;
+  return candidates.map((c): UpdateAllDecision => {
+    const block = unattendedUpdateBlock(c);
+    if (block === "not-installed" || block === "not-in-catalog" || block === "up-to-date") {
+      return { installId: c.installId, action: "skip", reason: block };
+    }
+    // Already covered by the block; narrows `latest` for what follows.
+    if (c.latest === null)
+      return { installId: c.installId, action: "skip", reason: "not-in-catalog" };
+    const version = c.latest.version;
+    if (block !== null) {
+      return { installId: c.installId, action: "needs-admin", version, reason: block };
+    }
+    if (tried >= maxAttempts) return { installId: c.installId, action: "skip", reason: "limit" };
+    tried += 1;
+    return { installId: c.installId, action: "try", version };
+  });
+}
+
+/** Why an update waits for an admin, as a sentence shown beside the app's name. */
+export const NEEDS_ADMIN_COPY: Record<NeedsAdminReason, string> = {
+  "needs-approval":
+    "It is built in your account or runs its own installer, which you approve each time.",
+  "failed-before": "An update to this version failed before.",
+  "rolled-back": "It was rolled back from this version.",
+};
 
 export type SelfUpdateSkipReason =
   | "off"

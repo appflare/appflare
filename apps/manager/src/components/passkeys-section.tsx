@@ -31,7 +31,8 @@ import { Timestamp } from "./timestamp";
 export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
   const supported = passkeysSupported();
   return (
-    <div className="grid gap-3">
+    // The account menu links here; the margin keeps the section title above in view.
+    <div id="passkeys" className="grid scroll-mt-16 gap-3">
       <div className="flex items-center justify-between gap-4">
         <Text variant="secondary">
           Sign in with your fingerprint, face, screen lock, or a security key instead of your

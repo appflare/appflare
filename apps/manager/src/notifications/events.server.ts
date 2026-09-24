@@ -249,7 +249,7 @@ export async function detectConditions(
           catalogVersion: r.catalog_version,
         })),
         new Map(index.apps.map((a) => [a.slug, a.version])),
-        { current: env.APPFLARE_VERSION, latest: null, updateAvailable: false },
+        { current: env.APPFLARE_VERSION, latest: null, updateAvailable: false, activeJobId: null },
       );
       const byId = new Map(installs.map((r) => [r.id, r]));
       for (const update of pending.apps) {
