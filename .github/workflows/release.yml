@@ -31,7 +31,7 @@ name: release
 # way, from apps/sandbox/package.json's version, as the GitHub Release
 # sandbox@<version> with appflare-sandbox-<version>.zip, manifest.json, and
 # manifest.sig. Between signing and the release, sandbox-image
-# (.github/workflows/sandbox-image.yml) pushes docker.io/appflare/sandbox:<version>
+# (.github/workflows/sandbox-image.yml) pushes docker.io/mendylanda/appflare-sandbox:<version>
 # from the version commit, so a published sandbox Worker release always has its
 # image; its digest goes into the release notes. A manual run may name a
 # `sandbox_version` to (re)release that version.
@@ -882,7 +882,7 @@ jobs:
           if ! grep -q '[^[:space:]]' "${notes}"; then
             echo "No changelog entry for ${VERSION}." > "${notes}"
           fi
-          printf '\n---\nBuilt from %s@%s. Signed with key id %s. manifest.json sha256: %s.\nContainer image: docker.io/appflare/sandbox:%s@%s\n' \
+          printf '\n---\nBuilt from %s@%s. Signed with key id %s. manifest.json sha256: %s.\nContainer image: docker.io/mendylanda/appflare-sandbox:%s@%s\n' \
             "${repo}" "${SHA}" "${KEY_ID}" "${digest}" "${VERSION}" "${IMAGE_DIGEST}" >> "${notes}"
           flags=(--latest=false)
           if [[ "${VERSION}" == *-* ]]; then

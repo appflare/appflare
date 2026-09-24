@@ -146,7 +146,7 @@ describe("object keys", () => {
   });
 
   it("tags the image with the sandbox Worker version", () => {
-    expect(sandboxImage("0.1.0")).toBe("docker.io/appflare/sandbox:0.1.0");
+    expect(sandboxImage("0.1.0")).toBe("docker.io/mendylanda/appflare-sandbox:0.1.0");
   });
 });
 

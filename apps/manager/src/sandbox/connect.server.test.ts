@@ -180,7 +180,7 @@ describe("readSandboxStatus", () => {
       info: {
         protocol: 1,
         sandboxVersion: "0.4.0",
-        image: "docker.io/appflare/sandbox:0.4.0",
+        image: "docker.io/mendylanda/appflare-sandbox:0.4.0",
         features: ["self-deploying"],
       },
       problem: null,
@@ -190,7 +190,11 @@ describe("readSandboxStatus", () => {
 
   it("reports a sandbox Worker that speaks another protocol", async () => {
     const binding = fakeSandbox(await buildArtifactFixture(), {
-      info: { protocol: 2, sandboxVersion: "1.0.0", image: "docker.io/appflare/sandbox:1.0.0" },
+      info: {
+        protocol: 2,
+        sandboxVersion: "1.0.0",
+        image: "docker.io/mendylanda/appflare-sandbox:1.0.0",
+      },
     });
     const status = await readSandboxStatus({ binding });
     expect(status.connected).toBe(true);

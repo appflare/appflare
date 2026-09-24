@@ -3,7 +3,7 @@
 # The Appflare sandbox Worker image: the container a sandbox build runs in.
 #
 #   docker buildx build --platform linux/amd64 -f apps/sandbox/Dockerfile \
-#     -t docker.io/appflare/sandbox:<version> .
+#     -t docker.io/mendylanda/appflare-sandbox:<version> .
 #
 # Build it from the repository root: the packer is built from this checkout,
 # so the image always carries the @appflare/pack of the sandbox Worker's own version.

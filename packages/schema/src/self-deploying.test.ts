@@ -260,7 +260,7 @@ describe("self-deploying runs in the sandbox protocol", () => {
         ok: true,
         action: "deploy",
         ...base,
-        image: "docker.io/appflare/sandbox:0.4.0",
+        image: "docker.io/mendylanda/appflare-sandbox:0.4.0",
         installId: request.installId,
         workers: [{ name: request.expectedWorkers[0], url: "https://x.example.workers.dev" }],
         resources: [

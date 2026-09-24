@@ -406,7 +406,7 @@ describe("updating and uninstalling a sandbox tier app", () => {
       ],
     });
     await env.DB.prepare(
-      "UPDATE installs SET build_kind = 'sandbox', sandbox_image = 'docker.io/appflare/sandbox:0.3.0', built_at = 5 WHERE id = ?1",
+      "UPDATE installs SET build_kind = 'sandbox', sandbox_image = 'docker.io/mendylanda/appflare-sandbox:0.3.0', built_at = 5 WHERE id = ?1",
     )
       .bind(INSTALL_ID)
       .run();
@@ -501,7 +501,7 @@ describe("updating and uninstalling a sandbox tier app", () => {
     });
     expect(r.snapshot).toMatchObject({
       build_kind: "sandbox",
-      sandbox_image: "docker.io/appflare/sandbox:0.3.0",
+      sandbox_image: "docker.io/mendylanda/appflare-sandbox:0.3.0",
       built_at: 5,
     });
     expect(r.sandbox?.cleanups).toEqual([

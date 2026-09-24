@@ -1,6 +1,6 @@
 name: sandbox image
 
-# Builds and pushes the sandbox Worker's container image, docker.io/appflare/sandbox:<version>
+# Builds and pushes the sandbox Worker's container image, docker.io/mendylanda/appflare-sandbox:<version>
 # (docs/RELEASING.md), from the sandbox Worker release tag sandbox@<version>:
 #
 #   plan   read-only; resolves the version and its commit (the tag's, or the
@@ -60,7 +60,7 @@ defaults:
     shell: bash
 
 env:
-  IMAGE: docker.io/appflare/sandbox
+  IMAGE: docker.io/mendylanda/appflare-sandbox
 
 jobs:
   plan:
@@ -136,7 +136,7 @@ jobs:
           [ -n "${DOCKERHUB_USERNAME}" ] || missing+=(DOCKERHUB_USERNAME)
           [ -n "${DOCKERHUB_TOKEN}" ] || missing+=(DOCKERHUB_TOKEN)
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error title=Docker Hub secrets are not set::${missing[*]} missing. The sandbox Worker image is pushed to docker.io/appflare/sandbox. Add DOCKERHUB_USERNAME (an account with push access to the appflare organization on Docker Hub) and DOCKERHUB_TOKEN (a Docker Hub access token with Read & Write scope) as Actions secrets of the appflare organization or this repository, then re-run this workflow (docs/RELEASING.md)."
+            echo "::error title=Docker Hub secrets are not set::${missing[*]} missing. The sandbox Worker image is pushed to docker.io/mendylanda/appflare-sandbox. Add DOCKERHUB_USERNAME (an account with push access to the mendylanda namespace on Docker Hub) and DOCKERHUB_TOKEN (a Docker Hub access token with Read & Write scope) as Actions secrets of the appflare organization or this repository, then re-run this workflow (docs/RELEASING.md)."
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

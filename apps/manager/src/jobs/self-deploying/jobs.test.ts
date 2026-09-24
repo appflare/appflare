@@ -377,7 +377,7 @@ describe("installing a self-deploying app", () => {
       status: "installed",
       build_kind: "self-deploying",
       pin_sha: PIN,
-      sandbox_image: "docker.io/appflare/sandbox:0.4.0",
+      sandbox_image: "docker.io/mendylanda/appflare-sandbox:0.4.0",
       health_status: "verified",
       artifact_digest: (await publishedCatalog(s.catalog)).digest,
     });
@@ -464,7 +464,11 @@ describe("installing a self-deploying app", () => {
     const s = setup();
     const started = await startInstall(s);
     const old = fakeSandbox(null, {
-      info: { protocol: 1, sandboxVersion: "0.3.0", image: "docker.io/appflare/sandbox:0.3.0" },
+      info: {
+        protocol: 1,
+        sandboxVersion: "0.3.0",
+        image: "docker.io/mendylanda/appflare-sandbox:0.3.0",
+      },
     });
     await expect(
       runInstall({

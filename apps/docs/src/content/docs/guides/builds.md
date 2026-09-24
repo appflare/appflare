@@ -47,7 +47,7 @@ It creates:
 | Container applications | `appflare-sandbox-standard-1` (`standard-1`) and `appflare-sandbox-standard-2` (`standard-2`) |
 | R2 bucket | `appflare-builds` |
 
-The containers run the image `docker.io/appflare/sandbox:<version>`, where the
+The containers run the image `docker.io/mendylanda/appflare-sandbox:<version>`, where the
 version is the sandbox Worker's own. Each tag is published once and never changed.
 
 The sandbox Worker has no public URL. It is built to be reached only by your manager,

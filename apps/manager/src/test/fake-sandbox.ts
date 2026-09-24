@@ -36,7 +36,7 @@ import type { ArtifactFixture } from "./artifact-fixture";
  * adds them when the manager stores them); without it, everything is held.
  */
 
-export const SANDBOX_IMAGE = "docker.io/appflare/sandbox:0.4.0";
+export const SANDBOX_IMAGE = "docker.io/mendylanda/appflare-sandbox:0.4.0";
 export const CATALOG_MANIFEST_URL = "https://appflare.github.io/catalog/apps/cut/appflare.json";
 
 export interface FakeSandboxOptions {

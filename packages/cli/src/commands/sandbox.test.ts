@@ -161,13 +161,13 @@ describe("sandbox enable", () => {
         {
           name: "appflare-sandbox-standard-1",
           class_name: "Sandbox",
-          image: "docker.io/appflare/sandbox:0.1.0",
+          image: "docker.io/mendylanda/appflare-sandbox:0.1.0",
           instance_type: "standard-1",
         },
         {
           name: "appflare-sandbox-standard-2",
           class_name: "LargeSandbox",
-          image: "docker.io/appflare/sandbox:0.1.0",
+          image: "docker.io/mendylanda/appflare-sandbox:0.1.0",
           instance_type: "standard-2",
         },
       ],

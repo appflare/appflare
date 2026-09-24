@@ -67,7 +67,7 @@ Organization Actions secrets of `appflare`:
 | Secret | Used by | Contents |
 |---|---|---|
 | `APPFLARE_SIGNING_KEY` | `sign` jobs here and in `appflare/catalog` | Base64 PKCS#8 Ed25519 private key |
-| `DOCKERHUB_USERNAME` | `sandbox-image.yml` | A Docker Hub account with push access to the `appflare` organization |
+| `DOCKERHUB_USERNAME` | `sandbox-image.yml` | A Docker Hub account with push access to the `mendylanda` namespace |
 | `DOCKERHUB_TOKEN` | `sandbox-image.yml` | A Docker Hub access token of that account, Read & Write scope |
 | `CLOUDFLARE_API_TOKEN` | later: CI installs into a test account | API token for that account |
 | `CLOUDFLARE_ACCOUNT_ID` | later: same | That account's id |
@@ -83,7 +83,7 @@ separately from the manager, under its own version (`apps/sandbox/package.json`)
 - Git tag and GitHub Release `sandbox@<version>`, with the assets
   `appflare-sandbox-<version>.zip`, `manifest.json`, and `manifest.sig`, signed with
   the same key as the manager. `appflare sandbox enable` downloads the newest one.
-- Container image `docker.io/appflare/sandbox:<version>`, which the released Worker
+- Container image `docker.io/mendylanda/appflare-sandbox:<version>`, which the released Worker
   names in its `containers` config. Docker Hub, because Cloudflare Containers pull
   from the Cloudflare registry, Docker Hub, Amazon ECR, and Google Artifact Registry
   only (not GitHub's registry).
@@ -102,13 +102,13 @@ pending, the `sandbox-*` jobs release that version from its version commit unles
 - **sandbox-image**: calls `.github/workflows/sandbox-image.yml` with the version
   and the version commit. It builds `apps/sandbox/Dockerfile` for `linux/amd64` from
   the repository root (the image carries `@appflare/pack` built from the same
-  commit) and pushes `docker.io/appflare/sandbox:<version>`. Image tags are
+  commit) and pushes `docker.io/mendylanda/appflare-sandbox:<version>`. Image tags are
   immutable: the workflow never pushes a tag twice, and a re-run for a tag that
   already holds an image from the same commit only reports it. Its job summary
   carries the digest.
 - **sandbox-release**: creates or completes the GitHub Release `sandbox@<version>`
   with the three assets, never as the repository's latest release. Its notes carry
-  the image reference with its digest (`docker.io/appflare/sandbox:<version>@sha256:…`).
+  the image reference with its digest (`docker.io/mendylanda/appflare-sandbox:<version>@sha256:…`).
 
 The image comes before the release, so a published sandbox Worker release always
 has its image. To release one version again, run the `release` workflow by hand

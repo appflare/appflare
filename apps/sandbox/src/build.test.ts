@@ -174,7 +174,7 @@ describe("runBuild", () => {
     expect(result).toMatchObject({
       protocol: SANDBOX_PROTOCOL_VERSION,
       sandboxVersion: "0.1.0",
-      image: "docker.io/appflare/sandbox:0.1.0",
+      image: "docker.io/mendylanda/appflare-sandbox:0.1.0",
       installId: "01J8INSTALL",
       version: "1.2.3",
       size: ZIP.byteLength,
@@ -384,7 +384,7 @@ describe("cleanup and progress", () => {
     expect(await builds.info()).toEqual({
       protocol: SANDBOX_PROTOCOL_VERSION,
       sandboxVersion: "0.1.0",
-      image: "docker.io/appflare/sandbox:0.1.0",
+      image: "docker.io/mendylanda/appflare-sandbox:0.1.0",
       features: [SANDBOX_FEATURE_SELF_DEPLOYING],
     });
     expect(await builds.cleanup({ installId: "01J8INSTALL", keepVersions: [] })).toEqual({

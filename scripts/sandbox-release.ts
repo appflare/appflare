@@ -14,7 +14,7 @@ type ArtifactManifest = PackResult["manifest"];
  * The sandbox Worker is released as `sandbox@<version>` with the assets
  * `appflare-sandbox-<version>.zip`, `manifest.json`, and `manifest.sig`;
  * `appflare sandbox enable` deploys it from them. Its container image,
- * `docker.io/appflare/sandbox:<version>`, is built from the same tag by
+ * `docker.io/mendylanda/appflare-sandbox:<version>`, is built from the same tag by
  * .github/workflows/sandbox-image.yml.
  */
 

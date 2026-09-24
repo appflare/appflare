@@ -31,8 +31,8 @@ describe("sandboxReleaseWranglerConfig", () => {
     expect(config.main).toBe("../src/index.ts");
     expect(config.vars.APPFLARE_VERSION).toBe(VERSION);
     expect(config.containers.map((c) => [c.class_name, c.image, c.instance_type])).toEqual([
-      ["Sandbox", `docker.io/appflare/sandbox:${VERSION}`, "standard-1"],
-      ["LargeSandbox", `docker.io/appflare/sandbox:${VERSION}`, "standard-2"],
+      ["Sandbox", `docker.io/mendylanda/appflare-sandbox:${VERSION}`, "standard-1"],
+      ["LargeSandbox", `docker.io/mendylanda/appflare-sandbox:${VERSION}`, "standard-2"],
     ]);
   });
 

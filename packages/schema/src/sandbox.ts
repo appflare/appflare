@@ -54,7 +54,7 @@ export const SANDBOX_BUCKET_BINDING = "BUILDS";
  * Docker Hub, because Cloudflare Containers pull only from the Cloudflare
  * registry, Docker Hub, Amazon ECR, and Google Artifact Registry.
  */
-export const SANDBOX_IMAGE_REPOSITORY = "docker.io/appflare/sandbox";
+export const SANDBOX_IMAGE_REPOSITORY = "docker.io/mendylanda/appflare-sandbox";
 
 /** Git tags and GitHub Releases of the sandbox Worker are `sandbox@<version>`. */
 export const SANDBOX_RELEASE_TAG_PREFIX = "sandbox@";

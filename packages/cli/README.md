@@ -167,7 +167,7 @@ Cloudflare Containers in your account. It comes from the signed release
 `sandbox@<version>` (`appflare-sandbox-<version>.zip`, `manifest.json`,
 `manifest.sig`), checked like the manager's, and is deployed with wrangler from a
 temporary directory. It creates the Worker (no public URL), two container
-applications running `docker.io/appflare/sandbox:<version>`, and the R2 bucket
+applications running `docker.io/mendylanda/appflare-sandbox:<version>`, and the R2 bucket
 `appflare-builds`. On a free account it stops with "Sandbox builds need Workers
 Paid". Each build runs a `standard-1` container; a 10-minute build costs about
 US$0.012 beyond the usage Workers Paid includes. The manager's support for
