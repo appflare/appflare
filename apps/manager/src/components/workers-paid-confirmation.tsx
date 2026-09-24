@@ -9,6 +9,11 @@ export interface WorkersPaidConfirmationState {
   remember: boolean;
   onRememberChange(remember: boolean): void;
   disabled?: boolean;
+  /**
+   * False when Appflare detected the account's plan: a remembered plan
+   * would not apply while detection works, so it is not offered.
+   */
+  offerRemember?: boolean;
 }
 
 /**
@@ -43,7 +48,7 @@ export function WorkersPaidConfirmation({
           </Text>
         )}
       </div>
-      {state.checked && (
+      {state.checked && state.offerRemember !== false && (
         <div className="grid gap-1 pl-6">
           <Checkbox
             label={ACCOUNT_PLAN_COPY.remember}

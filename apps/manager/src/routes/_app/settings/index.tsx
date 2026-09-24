@@ -1,7 +1,8 @@
 import { LayerCard, LinkButton, Text } from "@cloudflare/kumo";
 import { ArrowRightIcon } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
-import { getAccountPlan } from "../../../account/plan.functions";
+import { AccountCapabilitiesCard } from "../../../capabilities/account-capabilities-card";
+import { getAccountCapabilities } from "../../../capabilities/capabilities.functions";
 import { getManagerUpdate } from "../../../catalog/manager-releases.functions";
 import { AccessCard } from "../../../components/access-card";
 import { AppflareUpdatesCard } from "../../../components/appflare-updates-card";
@@ -12,7 +13,6 @@ import { PlaceholderCard } from "../../../components/placeholder-card";
 import { SandboxCard } from "../../../components/sandbox-card";
 import { UsageDataCard } from "../../../components/usage-data-card";
 import { UsersSection } from "../../../components/users-section";
-import { WorkersPlanCard } from "../../../components/workers-plan-card";
 import { listRemovedApps } from "../../../installs/removed-apps.functions";
 import { getAccessStatus } from "../../../server/access.functions";
 import { listPasskeys } from "../../../server/passkeys.functions";
@@ -23,7 +23,7 @@ import { getTelemetryStatus } from "../../../telemetry/telemetry.functions";
 
 /**
  * `/settings`: users, your passkeys, the Cloudflare token, the account's
- * Workers plan, Cloudflare Access protection, sandbox builds, Appflare's own
+ * capabilities and Workers plan, Cloudflare Access protection, sandbox builds, Appflare's own
  * updates (`#appflare-updates`, which the home page's list of pending
  * updates links to), anonymous usage data, and the way to Removed apps.
  */
@@ -34,7 +34,7 @@ export const Route = createFileRoute("/_app/settings/")({
       users,
       passkeys,
       tokenStatus,
-      accountPlan,
+      capabilities,
       accessStatus,
       sandboxStatus,
       managerUpdate,
@@ -44,7 +44,7 @@ export const Route = createFileRoute("/_app/settings/")({
       context.viewer.role === "admin" ? listUsers() : null,
       listPasskeys(),
       getTokenStatus(),
-      getAccountPlan(),
+      getAccountCapabilities(),
       getAccessStatus(),
       getSandboxStatus(),
       getManagerUpdate(),
@@ -55,7 +55,7 @@ export const Route = createFileRoute("/_app/settings/")({
       users,
       passkeys,
       tokenStatus,
-      accountPlan,
+      capabilities,
       accessStatus,
       sandboxStatus,
       managerUpdate,
@@ -90,7 +90,7 @@ function SettingsPage() {
     users,
     passkeys,
     tokenStatus,
-    accountPlan,
+    capabilities,
     accessStatus,
     sandboxStatus,
     managerUpdate,
@@ -110,8 +110,8 @@ function SettingsPage() {
       <Section title="Cloudflare token">
         <CloudflareTokenCard status={tokenStatus} canRotate={viewer.role === "admin"} />
       </Section>
-      <Section title="Workers plan">
-        <WorkersPlanCard plan={accountPlan} isAdmin={viewer.role === "admin"} />
+      <Section title="Account capabilities">
+        <AccountCapabilitiesCard view={capabilities} isAdmin={viewer.role === "admin"} />
       </Section>
       <Section title="Cloudflare Access">
         <AccessCard

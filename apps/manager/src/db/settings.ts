@@ -40,10 +40,17 @@ export const SETTING = {
   /** ISO 8601 time Access protection was turned on. */
   accessEnabledAt: "access_enabled_at",
   /**
-   * The account's Workers plan as an admin stated it, `free` or `paid`;
-   * absent means free. Cloudflare's API offers no plan signal to read.
+   * The account's Workers plan as an admin stated it, `free` or `paid`. A
+   * plan the capability probes detect wins over it; it applies when they
+   * cannot tell (the token has no "Billing: Read"). Absent means free.
    */
   accountPlan: "account_plan",
+  /**
+   * JSON: what the capability probes last found (R2, Containers, Workers
+   * plan) and when (capabilities/). Written at token save, on "Re-check",
+   * and once a day by the cron.
+   */
+  accountCapabilities: "account_capabilities",
   /**
    * Anonymous usage data (telemetry/). `telemetry` is `on` or `off`; absent
    * means no admin has seen the notice yet, so nothing is sent.

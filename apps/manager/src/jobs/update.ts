@@ -9,7 +9,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { parseAccountPlan } from "../account/plan";
+import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { readCachedCatalogApp } from "../catalog/index.server";
 import { createDb } from "../db/client";
@@ -208,7 +208,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
             isNull(resources.retained_at),
           ),
         );
-      const settings = await readSettings(orm, [SETTING.accountId, SETTING.accountPlan]);
+      const settings = await readSettings(orm, [
+        SETTING.accountId,
+        SETTING.accountPlan,
+        SETTING.accountCapabilities,
+      ]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!env.CF_API_TOKEN) {
         throw new JobError("the Cloudflare API token is not configured; finish setup first");
@@ -225,7 +229,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }));
       return {
         accountId: settings.account_id,
-        accountPaid: parseAccountPlan(settings.account_plan) === "paid",
+        // The detected plan first, then the one an admin set.
+        accountPaid:
+          resolveAccountPlan(
+            settings.account_plan,
+            parseStoredCapabilities(settings.account_capabilities),
+          ).plan === "paid",
         slug: install.app_slug,
         workerName: install.worker_name,
         fromVersion: install.catalog_version,

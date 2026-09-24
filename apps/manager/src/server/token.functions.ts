@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { CloudflareApiError } from "@appflare/cf-api";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
+import { refreshCapabilitiesForNewToken } from "../capabilities/capabilities.server";
 import { apiBaseOption } from "../cloudflare/api-base";
 import { logCfRequest } from "../cloudflare/client.server";
 import type { VerifyTokenResult } from "../cloudflare/verify-token";
@@ -59,20 +60,44 @@ export const verifyToken = createServerFn({ method: "POST" })
     return userFacing(() => verifyTokenStep(deps(data.token)));
   });
 
-/** Admin only, setup: verify, store as `CF_API_TOKEN`, record settings, delete `SETUP_TOKEN`. */
+/**
+ * Reads the account's capabilities (R2, Containers, Workers plan) with the
+ * token just stored: this version of the manager may still hold the previous
+ * one. Best effort; it never fails the save.
+ */
+async function checkCapabilities(accountId: string, token: string): Promise<void> {
+  await refreshCapabilitiesForNewToken(createDb(env.DB), {
+    accountId,
+    token,
+    onRequest: logCfRequest,
+    ...apiBaseOption(env),
+  });
+}
+
+/**
+ * Admin only, setup: verify, store as `CF_API_TOKEN`, record settings, delete
+ * `SETUP_TOKEN`, then read the account's capabilities.
+ */
 export const saveToken = createServerFn({ method: "POST" })
   .validator(cfTokenInput)
   .handler(async ({ data }): Promise<SaveTokenResult> => {
     await requireRole("admin");
-    return userFacing(() => saveTokenStep(deps(data.token)));
+    const saved = await userFacing(() => saveTokenStep(deps(data.token)));
+    await checkCapabilities(saved.accountId, data.token);
+    return saved;
   });
 
-/** Admin only, settings: verify and replace `CF_API_TOKEN` on the same Worker. */
+/**
+ * Admin only, settings: verify and replace `CF_API_TOKEN` on the same Worker,
+ * then read the account's capabilities with the new token.
+ */
 export const rotateToken = createServerFn({ method: "POST" })
   .validator(cfTokenInput)
   .handler(async ({ data }): Promise<RotateTokenResult> => {
     await requireRole("admin");
-    return userFacing(() => rotateTokenStep(deps(data.token)));
+    const rotated = await userFacing(() => rotateTokenStep(deps(data.token)));
+    await checkCapabilities(rotated.accountId, data.token);
+    return rotated;
   });
 
 export interface TokenStatus {

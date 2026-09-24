@@ -12,7 +12,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
-import { parseAccountPlan } from "../account/plan";
+import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { requirementLabel, requirementSentence } from "../catalog/requirements";
 import { createDb, type Database } from "../db/client";
@@ -214,7 +214,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             : `${params.slug} is already installed as "${other.worker}" and only works under one Worker name`,
         );
       }
-      const settings = await readSettings(orm, [SETTING.accountId, SETTING.accountPlan]);
+      const settings = await readSettings(orm, [
+        SETTING.accountId,
+        SETTING.accountPlan,
+        SETTING.accountCapabilities,
+      ]);
       if (!settings.account_id) throw new InstallError("the Cloudflare account is not known yet");
       if (!env.CF_API_TOKEN) {
         throw new InstallError("the Cloudflare API token is not configured; finish setup first");
@@ -224,7 +228,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       );
       return {
         accountId: settings.account_id,
-        accountPaid: parseAccountPlan(settings.account_plan) === "paid",
+        // The detected plan first, then the one an admin set.
+        accountPaid:
+          resolveAccountPlan(
+            settings.account_plan,
+            parseStoredCapabilities(settings.account_capabilities),
+          ).plan === "paid",
       };
     });
     steps.setAccountId(preflight.accountId);

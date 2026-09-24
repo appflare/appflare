@@ -18,6 +18,8 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { paidPlanBadge, requirementBadge } from "../../../capabilities/capabilities";
+import { CapabilityBadge } from "../../../capabilities/capability-badge";
 import { authorLinks, maintainerProfile } from "../../../catalog/authors";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
 import { requirementLabel, requirementSentence } from "../../../catalog/requirements";
@@ -168,6 +170,7 @@ function CatalogEntryPage() {
           installer={installer}
           cronTriggers={detail.cronTriggers}
           accountPlan={detail.accountPlan}
+          planDetected={detail.capabilities.plan.source === "detected"}
         />
       )}
     </>
@@ -406,10 +409,9 @@ function Prerequisites({
           description={
             <div className="grid gap-2">
               {paid && (
-                <span>
+                <span className="inline-flex flex-wrap items-center gap-2">
                   This app needs the Workers Paid plan on this account.
-                  {detail.accountPlan === "paid" &&
-                    " Settings records this account as on Workers Paid."}
+                  <CapabilityBadge badge={paidPlanBadge(detail.capabilities)} />
                 </span>
               )}
               {app.requires.length > 0 && (
@@ -423,7 +425,8 @@ function Prerequisites({
                           tier: app.tier,
                           provisionsEmailRouting:
                             detail.catalog?.install.emailRouting !== undefined,
-                        })}
+                        })}{" "}
+                        <CapabilityBadge badge={requirementBadge(r, detail.capabilities)} />
                       </li>
                     ))}
                   </ul>

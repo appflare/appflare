@@ -6,6 +6,26 @@
 
 export type { AssetManifestFile, AssetUploadManifest } from "./asset-hash";
 export { assetHash, buildAssetsManifest } from "./asset-hash";
+export type {
+  AccountCapabilities,
+  CapabilityClient,
+  CapabilityUnknown,
+  CapabilityUnknownReason,
+  ContainersCapability,
+  R2Capability,
+  WorkersPlanCapability,
+} from "./capabilities";
+export {
+  CONTAINERS_PROBE_NAME,
+  createCapabilityClient,
+  detectedWorkersPlan,
+  failureDetail,
+  probeAccountCapabilities,
+  probeContainers,
+  probeR2,
+  probeWorkersPlan,
+  R2_NOT_ENABLED_CODE,
+} from "./capabilities";
 export type { CloudflareClient } from "./client";
 export { createClient } from "./client";
 export type { CloudflareApiErrorInit, CloudflareError } from "./errors";
@@ -31,6 +51,7 @@ export type {
   AssetBucketFile,
   AssetBucketResult,
 } from "./namespaces/assets";
+export type { SubscriptionsPage } from "./namespaces/billing";
 export type { RestoreArgs } from "./namespaces/d1";
 export type {
   CreateEmailRoutingRuleArgs,

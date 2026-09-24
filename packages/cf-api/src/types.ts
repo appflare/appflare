@@ -339,3 +339,33 @@ export interface AccessJwk {
 export interface AccessCerts {
   keys: AccessJwk[];
 }
+
+/**
+ * One entry of `GET /accounts/{id}/subscriptions` (the fields Appflare reads;
+ * the rest are kept loosely). Seen live: account plans such as `workers_paid`,
+ * `r2_paid`, `teams_free` (`rate_plan.scope` `account`) and one `free` entry
+ * per zone on the free zone plan (`scope` `zone`, with `zone`).
+ */
+export interface AccountSubscription {
+  id?: string;
+  rate_plan?: {
+    id?: string;
+    public_name?: string;
+    scope?: string;
+    externally_managed?: boolean;
+    is_contract?: boolean;
+  };
+  product?: { name?: string; public_name?: string };
+  /** `Paid`, `Trial`, `Provisioned`, `AwaitingPayment`, `Cancelled`, `Failed`, `Expired`. */
+  state?: string;
+  frequency?: string;
+  price?: number;
+  [key: string]: unknown;
+}
+
+/** One entry of `GET /containers/applications`. */
+export interface ContainerApplication {
+  id: string;
+  name: string;
+  [key: string]: unknown;
+}

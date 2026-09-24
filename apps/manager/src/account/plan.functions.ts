@@ -1,19 +1,15 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { createDb } from "../db/client";
-import { requireRole, requireSession } from "../server/auth.server";
+import { requireRole } from "../server/auth.server";
 import { type AccountPlan, setAccountPlanInput } from "./plan";
-import { readAccountPlan, writeAccountPlan } from "./plan.server";
+import { writeAccountPlan } from "./plan.server";
 
-/** Settings, Workers plan: any signed-in user reads it; only admins change it. */
-
-export const getAccountPlan = createServerFn({ method: "GET" }).handler(
-  async (): Promise<AccountPlan> => {
-    await requireSession();
-    return readAccountPlan(createDb(env.DB));
-  },
-);
-
+/**
+ * Settings, Workers plan: only admins set it. Reading it is part of the
+ * account capabilities (capabilities/capabilities.functions.ts), which also
+ * say whether the plan in force was detected or set here.
+ */
 export const setAccountPlan = createServerFn({ method: "POST" })
   .validator(setAccountPlanInput)
   .handler(async ({ data }): Promise<AccountPlan> => {

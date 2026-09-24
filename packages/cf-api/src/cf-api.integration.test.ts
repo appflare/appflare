@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { probeAccountCapabilities } from "./capabilities";
 import { createClient } from "./client";
 import { type DevContext, hasDevContext, loadDevContext } from "./dev";
 
@@ -35,6 +36,23 @@ describe.skipIf(dev === null)("cf-api integration (dev account, read-only)", () 
     for (const script of scripts) {
       expect(typeof script.id).toBe("string");
     }
+  });
+
+  it("reads the account's capabilities with one read call each", async () => {
+    const calls: string[] = [];
+    const client = createClient({
+      ...context,
+      onRequest: ({ method, path, status }) => calls.push(`${method} ${path} -> ${status}`),
+    });
+
+    const capabilities = await probeAccountCapabilities(client);
+    // The dev token may lack a permission; then the probe says so instead of guessing.
+    expect(["enabled", "not-enabled", "unknown"]).toContain(capabilities.r2.state);
+    expect(["available", "needs-workers-paid", "unknown"]).toContain(capabilities.containers.state);
+    expect(["free", "paid", "unknown"]).toContain(capabilities.workersPlan.state);
+    expect(calls.every((c) => c.startsWith("GET "))).toBe(true);
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    expect(JSON.stringify(capabilities)).not.toContain(context.token);
   });
 });
 

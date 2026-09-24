@@ -9,6 +9,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./capabilities": {
+      "@appflare/source": "./src/capabilities.ts",
+      "types": "./dist/capabilities.d.ts",
+      "import": "./dist/capabilities.js"
+    },
     "./dev": {
       "@appflare/source": "./src/dev.ts",
       "types": "./dist/dev.d.ts",
@@ -24,6 +29,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
+      },
+      "./capabilities": {
+        "types": "./dist/capabilities.d.ts",
+        "import": "./dist/capabilities.js"
       },
       "./dev": {
         "types": "./dist/dev.d.ts",

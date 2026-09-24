@@ -1,0 +1,174 @@
+import {
+  type AccountCapabilities,
+  type CapabilityUnknown,
+  type ContainersCapability,
+  detectedWorkersPlan,
+  type R2Capability,
+  type WorkersPlanCapability,
+} from "@appflare/cf-api/capabilities";
+import { z } from "zod";
+import { type AccountPlan, parseAccountPlan } from "../account/plan";
+
+/**
+ * Account capabilities as the manager keeps them: what the probes in
+ * `@appflare/cf-api/capabilities` last found (R2 enabled, Containers
+ * available, Workers plan), when, and the Workers plan every confirmation
+ * reads: the detected one first, then the one an admin set. Client-safe: the
+ * Settings card and the catalog page use the same words.
+ */
+
+const unknownSchema = z.object({
+  state: z.literal("unknown"),
+  reason: z.enum(["no-permission", "unrecognised", "error"]),
+  detail: z.string(),
+});
+
+/** The `account_capabilities` settings row. */
+export const storedCapabilitiesSchema = z.object({
+  /** ISO 8601 time of the probes. */
+  checkedAt: z.string(),
+  r2: z.union([z.object({ state: z.enum(["enabled", "not-enabled"]) }), unknownSchema]),
+  containers: z.union([
+    z.object({ state: z.enum(["available", "needs-workers-paid"]) }),
+    unknownSchema,
+  ]),
+  workersPlan: z.union([z.object({ state: z.enum(["paid", "free"]) }), unknownSchema]),
+});
+export type StoredCapabilities = AccountCapabilities & { checkedAt: string };
+
+/** The stored row, or null when it is absent or unreadable (then nothing counts as detected). */
+export function parseStoredCapabilities(
+  value: string | null | undefined,
+): StoredCapabilities | null {
+  if (!value) return null;
+  try {
+    const parsed = storedCapabilitiesSchema.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where the Workers plan in force comes from. */
+export type AccountPlanSource = "detected" | "set-by-you" | "default";
+
+export interface ResolvedAccountPlan {
+  plan: AccountPlan;
+  source: AccountPlanSource;
+}
+
+/**
+ * The Workers plan every paid-app confirmation and the cron-trigger count
+ * read: what the probes detected, else what an admin set in Settings, else
+ * free.
+ */
+export function resolveAccountPlan(
+  manual: string | null | undefined,
+  stored: StoredCapabilities | null,
+): ResolvedAccountPlan {
+  const detected = stored === null ? null : detectedWorkersPlan(stored);
+  if (detected !== null) return { plan: detected, source: "detected" };
+  if (manual === "free" || manual === "paid") {
+    return { plan: parseAccountPlan(manual), source: "set-by-you" };
+  }
+  return { plan: "free", source: "default" };
+}
+
+/** What Settings and the catalog page show. */
+export interface CapabilitiesView {
+  /** Null until the probes have run once. */
+  checkedAt: string | null;
+  r2: R2Capability | null;
+  containers: ContainersCapability | null;
+  workersPlan: WorkersPlanCapability | null;
+  /** The plan in force and where it comes from. */
+  plan: ResolvedAccountPlan;
+  /** The plan an admin set in Settings, used when none is detected. */
+  manualPlan: AccountPlan | null;
+}
+
+export function capabilitiesView(
+  manual: string | null | undefined,
+  stored: StoredCapabilities | null,
+): CapabilitiesView {
+  return {
+    checkedAt: stored?.checkedAt ?? null,
+    r2: stored?.r2 ?? null,
+    containers: stored?.containers ?? null,
+    workersPlan: stored?.workersPlan ?? null,
+    plan: resolveAccountPlan(manual, stored),
+    manualPlan: manual === "free" || manual === "paid" ? manual : null,
+  };
+}
+
+export const PLAN_LABELS: Record<AccountPlan, string> = {
+  free: "Workers Free",
+  paid: "Workers Paid",
+};
+
+/** The source words next to every value. */
+export const SOURCE_LABELS = {
+  detected: "Detected",
+  "set-by-you": "Set by you",
+} as const satisfies Record<Exclude<AccountPlanSource, "default">, string>;
+
+/** Why a probe could not tell, in one sentence. */
+export function unknownSentence(
+  value: CapabilityUnknown,
+  what: "r2" | "containers" | "plan",
+): string {
+  if (value.reason === "no-permission") {
+    return {
+      r2: "The token cannot list R2 buckets (Workers R2 Storage).",
+      containers:
+        "The token has no Containers permission, so Appflare cannot check. Workers Paid includes Containers.",
+      plan: 'The token cannot read the account\'s subscriptions. Add the optional "Billing: Read" permission to detect the plan.',
+    }[what];
+  }
+  if (value.reason === "unrecognised") {
+    return "Cloudflare's answer did not say which Workers plan applies (for example a contract plan).";
+  }
+  return `The check failed: ${value.detail}`;
+}
+
+/** A value with its tone, as the badge next to a requirement shows it. */
+export interface CapabilityBadge {
+  met: boolean;
+  label: string;
+}
+
+function planBadgeOf({ plan, source }: ResolvedAccountPlan): CapabilityBadge | null {
+  if (source === "default") return null;
+  if (plan === "paid") return { met: true, label: `${SOURCE_LABELS[source]}: Workers Paid` };
+  // An admin's "free" is only the fallback they chose; Cloudflare saying so is news.
+  return source === "detected" ? { met: false, label: "Detected: Workers Free" } : null;
+}
+
+/** For an app that needs Workers Paid: what the account's plan says. */
+export function paidPlanBadge(view: CapabilitiesView): CapabilityBadge | null {
+  return planBadgeOf(view.plan);
+}
+
+/**
+ * For one catalog `requires` value: what the probes found, or null when they
+ * found nothing to say (the requirement then stays for the admin to confirm).
+ * Containers fall back to the Workers plan, which is what they need.
+ */
+export function requirementBadge(
+  requirement: string,
+  view: CapabilitiesView,
+): CapabilityBadge | null {
+  if (requirement === "r2") {
+    if (view.r2?.state === "enabled") return { met: true, label: "Detected: enabled" };
+    if (view.r2?.state === "not-enabled") return { met: false, label: "Detected: not enabled" };
+    return null;
+  }
+  if (requirement === "containers") {
+    if (view.containers?.state === "available") return { met: true, label: "Detected: available" };
+    if (view.containers?.state === "needs-workers-paid") {
+      return { met: false, label: "Detected: needs Workers Paid" };
+    }
+    return planBadgeOf(view.plan);
+  }
+  return null;
+}

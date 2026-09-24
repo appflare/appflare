@@ -41,8 +41,12 @@ per account.
 
 ## Workers Free or Workers Paid
 
-Cloudflare's API does not tell Appflare which Workers plan your account is on, so
-you state it once in **Settings**, under **Workers plan**. It starts as Workers Free.
+Appflare reads your account's Workers plan from its subscriptions when the Cloudflare
+token has the optional **Billing: Read** permission, and shows it in **Settings**, under
+**Account capabilities**, marked **Detected**. It checks when the token is saved, once a
+day, and when you select **Re-check**. Without that permission, you state the plan
+there yourself (marked **Set by you**); until you do, Appflare treats the account as on
+Workers Free. A detected plan always comes first.
 
 - On **Workers Paid**, the install form does not ask you to confirm Workers Paid for
   apps that need it, and installs and updates skip the count of the account's cron
@@ -50,7 +54,7 @@ you state it once in **Settings**, under **Workers plan**. It starts as Workers 
 - On **Workers Free**, the install form asks **This account is on Workers Paid** for
   each app that needs Workers Paid, and offers it as an option for an app with cron
   triggers. Ticking it also offers **Remember this for the account**, which records
-  Workers Paid in Settings.
+  Workers Paid in Settings, unless the plan was detected.
 
 The catalog page and the install form show how many cron triggers an app uses. The
 update dialog shows it too when a new version adds cron triggers.

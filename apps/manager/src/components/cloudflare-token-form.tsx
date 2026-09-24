@@ -13,6 +13,7 @@ import {
   CUSTOM_DOMAINS_FEATURE,
   EMAIL_ROUTING_FEATURE,
   optionalGroupsByFeature,
+  PLAN_DETECTION_FEATURE,
   permissionName,
   splitPermissionGroups,
   userTokenTemplateUrl,
@@ -31,6 +32,8 @@ const FEATURE_PLACES: Readonly<Record<string, string>> = {
   [CUSTOM_DOMAINS_FEATURE]: "Custom domains on an installed app's page",
   [EMAIL_ROUTING_FEATURE]:
     "Installing an app that receives email (it also needs Zone: Read and DNS: Edit from the custom domains list)",
+  [PLAN_DETECTION_FEATURE]:
+    "Reading this account's Workers plan for Settings > Account capabilities, instead of asking you. Appflare only reads the plan names from the account's subscriptions; it never reads invoices or payment details",
 };
 
 export interface SavedToken {

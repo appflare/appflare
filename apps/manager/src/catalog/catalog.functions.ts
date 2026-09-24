@@ -9,8 +9,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { asc, ne } from "drizzle-orm";
 import { z } from "zod";
 import type { AccountPlan } from "../account/plan";
-import { readAccountPlan } from "../account/plan.server";
 import { hasRole } from "../auth/roles";
+import type { CapabilitiesView } from "../capabilities/capabilities";
+import { readCapabilitiesView } from "../capabilities/capabilities.server";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { installs } from "../db/schema";
@@ -217,8 +218,10 @@ export interface CatalogDetail {
    * sandbox tier app, whose wrangler config is read only when it is built.
    */
   cronTriggers: number;
-  /** The account's Workers plan as Settings records it (free when never set). */
+  /** The account's Workers plan in force: detected, else as Settings records it, else free. */
   accountPlan: AccountPlan;
+  /** What the account capability probes found, for the requirement badges. */
+  capabilities: CapabilitiesView;
 }
 
 /**
@@ -258,7 +261,8 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
   .validator(z.object({ slug: z.string().min(1).max(100) }))
   .handler(async ({ data }): Promise<CatalogDetail> => {
     const session = await requireSession();
-    const accountPlan = await readAccountPlan(createDb(env.DB));
+    const capabilities = await readCapabilitiesView(createDb(env.DB));
+    const accountPlan = capabilities.plan.plan;
     const empty = {
       catalog: null,
       authors: [],
@@ -273,6 +277,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       sandboxConnected: sandboxBinding(env) !== undefined,
       cronTriggers: 0,
       accountPlan,
+      capabilities,
       images: appMediaView(undefined, ""),
       popularity: null,
     };

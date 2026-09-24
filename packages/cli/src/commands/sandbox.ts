@@ -1,5 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  createCapabilityClient,
+  detectedWorkersPlan,
+  probeAccountCapabilities,
+} from "@appflare/cf-api/capabilities";
 import { SANDBOX_BUCKET_NAME, SANDBOX_WORKER_NAME } from "@appflare/schema";
 import { ensureAccount } from "../account.ts";
 import { type ApiAccess, type WranglerCredential, wranglerCredential } from "../api-token.ts";
@@ -14,9 +19,11 @@ import {
   explainSandboxDeployFailure,
   hasSandboxBindings,
   isContainerAccessFailure,
+  NEEDS_WORKERS_PAID,
+  R2_NOT_ENABLED,
   SANDBOX_CONTAINERS,
 } from "../sandbox-config.ts";
-import { checkContainersAccess, findContainerApplications } from "../sandbox-containers.ts";
+import { findContainerApplications } from "../sandbox-containers.ts";
 import { withWorkdir } from "../workdir.ts";
 import {
   activeVersionId,
@@ -91,13 +98,17 @@ function apiAccess(wrangler: Wrangler, credential: WranglerCredential | null): A
 }
 
 /**
- * Stops before anything is uploaded when the credential cannot reach
- * Containers: wrangler would otherwise create the bucket and upload the
- * Worker, and fail only at its container application step. Checked for API
- * tokens and `wrangler login` alike, because a login on the free plan is
- * refused the same way. A global API key has no bearer token to check with.
+ * Stops before anything is uploaded when the account cannot run the sandbox
+ * Worker: wrangler would otherwise create the bucket and upload the Worker,
+ * and fail only at its container application step. Uses the same account
+ * capability probes as the manager (one read call each): the Workers plan
+ * from the subscriptions (when the credential may read them), whether
+ * Containers are available to the credential, and whether R2 is enabled.
+ * Checked for API tokens and `wrangler login` alike, because a login on the
+ * free plan is refused the same way. A global API key has no bearer token to
+ * check with. A probe that cannot tell never stops the deploy.
  */
-async function checkContainersAccessBeforeDeploy(
+async function checkAccountBeforeDeploy(
   ctx: CommandContext,
   credential: WranglerCredential | null,
   access: ApiAccess | null,
@@ -105,22 +116,41 @@ async function checkContainersAccessBeforeDeploy(
   if (credential?.type === "api_key") {
     return;
   }
-  ctx.ui.step("Checking that the credential can use Containers");
-  const firstContainer = SANDBOX_CONTAINERS[0].name;
-  const checked = access
-    ? await checkContainersAccess(ctx.fetch, access, firstContainer)
-    : ({ kind: "unknown", reason: "wrangler has no API credential to give" } as const);
-  if (checked.kind === "denied") {
-    throw new Error(
-      `${explainContainersAccess({ apiToken: credential?.type === "api_token" })}\n` +
-        `(Listing container applications answered HTTP ${checked.status}. Nothing was uploaded.)`,
+  ctx.ui.step("Checking that the account can run sandbox builds (Workers plan, Containers, R2)");
+  if (access === null) {
+    ctx.ui.warn(
+      "Could not check the account (wrangler has no API credential to give); deploying anyway.",
     );
-  }
-  if (checked.kind === "unknown") {
-    ctx.ui.warn(`Could not check access to Containers (${checked.reason}); deploying anyway.`);
     return;
   }
-  ctx.ui.info("The credential can use Containers.");
+  const { workersPlan, containers, r2 } = await probeAccountCapabilities(
+    createCapabilityClient({ ...access, fetch: ctx.fetch }),
+  );
+  // Containers answering proves Workers Paid, whatever the subscriptions list.
+  const plan = detectedWorkersPlan({ workersPlan, containers });
+  if (plan === "free" || containers.state === "needs-workers-paid") {
+    throw new Error(`${NEEDS_WORKERS_PAID}\n(Nothing was uploaded.)`);
+  }
+  if (containers.state === "unknown" && containers.reason === "no-permission") {
+    throw new Error(
+      `${explainContainersAccess({ apiToken: credential?.type === "api_token" })}\n` +
+        `(${containers.detail}. Nothing was uploaded.)`,
+    );
+  }
+  if (r2.state === "not-enabled") {
+    throw new Error(`${R2_NOT_ENABLED}\n(Nothing was uploaded.)`);
+  }
+  if (plan === "paid") {
+    ctx.ui.info("The account is on Workers Paid.");
+  }
+  if (containers.state === "unknown") {
+    ctx.ui.warn(`Could not check access to Containers (${containers.detail}); deploying anyway.`);
+  } else {
+    ctx.ui.info("The credential can use Containers.");
+  }
+  if (r2.state === "unknown") {
+    ctx.ui.warn(`Could not check whether R2 is enabled (${r2.detail}); deploying anyway.`);
+  }
 }
 
 /** Deletes the sandbox Worker; `missing` when there is none by that name. */
@@ -259,7 +289,7 @@ export async function sandboxEnable(
     await ensureAccount(wrangler, ui, { env, yes: options.yes, telemetry: ctx.telemetry });
     const credential = await wranglerCredential(wrangler);
     const access = apiAccess(wrangler, credential);
-    await checkContainersAccessBeforeDeploy(ctx, credential, access);
+    await checkAccountBeforeDeploy(ctx, credential, access);
 
     let artifactDir: string;
     let expectedVersion: string | undefined;

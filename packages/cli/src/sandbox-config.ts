@@ -148,6 +148,19 @@ export function hasSandboxBindings(bindings: VersionBinding[]): boolean {
 
 const PLANS_URL = "https://dash.cloudflare.com/?to=/:account/workers/plans";
 
+/** Containers, and so sandbox builds, are refused on Workers Free. */
+export const NEEDS_WORKERS_PAID =
+  "Sandbox builds need Workers Paid. The sandbox Worker runs builds in Cloudflare Containers, " +
+  "which are only available on the Workers Paid plan (US$5 a month). Upgrade the account " +
+  `at ${PLANS_URL}, then run \`npx @appflare/cli sandbox enable\` again.`;
+
+/** Cloudflare's code 10042: R2 has never been enabled on the account. */
+export const R2_NOT_ENABLED =
+  "R2 is not enabled on this account. The sandbox Worker keeps build outputs in an R2 bucket: " +
+  "open R2 in the Cloudflare dashboard once to enable it " +
+  "(https://dash.cloudflare.com/?to=/:account/r2/overview), then run " +
+  "`npx @appflare/cli sandbox enable` again.";
+
 /** What the credential wrangler deploys with is, for wording an access failure. */
 export interface DeployCredential {
   /** An API token from the environment (`CLOUDFLARE_API_TOKEN`), rather than a `wrangler login`. */
@@ -226,22 +239,13 @@ export function explainSandboxDeployFailure(
   // A message that names the plan is unambiguous; a bare refusal at the
   // container step could be the plan or the token.
   if (PAID_PATTERNS.some((pattern) => pattern.test(output))) {
-    return (
-      "Sandbox builds need Workers Paid. The sandbox Worker runs builds in Cloudflare Containers, " +
-      "which are only available on the Workers Paid plan (US$5 a month). Upgrade the account " +
-      `at ${PLANS_URL}, then run \`npx @appflare/cli sandbox enable\` again.`
-    );
+    return NEEDS_WORKERS_PAID;
   }
   if (isContainerAccessFailure(output)) {
     return explainContainersAccess(credential);
   }
   if (/\bcode: 10042\b|enable R2/i.test(output)) {
-    return (
-      "R2 is not enabled on this account. The sandbox Worker keeps build outputs in an R2 bucket: " +
-      "open R2 in the Cloudflare dashboard once to enable it " +
-      "(https://dash.cloudflare.com/?to=/:account/r2/overview), then run " +
-      "`npx @appflare/cli sandbox enable` again."
-    );
+    return R2_NOT_ENABLED;
   }
   return null;
 }

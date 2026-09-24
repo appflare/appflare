@@ -1108,6 +1108,41 @@ describe("install job", () => {
       expect(r.fake.state.schedules).toEqual(["0 1 * * *", "*/15 * * * *"]);
     });
 
+    it("skips the count when the capability probes detected Workers Paid, over a manual free", async () => {
+      await env.DB.prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('account_plan', 'free', 0), ('account_capabilities', ?, 0)",
+      )
+        .bind(
+          JSON.stringify({
+            checkedAt: "2026-09-24T00:00:00.000Z",
+            r2: { state: "enabled" },
+            containers: { state: "available" },
+            workersPlan: { state: "paid" },
+          }),
+        )
+        .run();
+      const r = await install(cronApp, { ...busy(), freeCronLimit: false });
+      expect(r.error).toBeNull();
+      expect(r.step.names).not.toContain("check cron trigger limit");
+    });
+
+    it("counts when the probes detected Workers Free, over a manual paid", async () => {
+      await env.DB.prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('account_plan', 'paid', 0), ('account_capabilities', ?, 0)",
+      )
+        .bind(
+          JSON.stringify({
+            checkedAt: "2026-09-24T00:00:00.000Z",
+            r2: { state: "enabled" },
+            containers: { state: "needs-workers-paid" },
+            workersPlan: { state: "free" },
+          }),
+        )
+        .run();
+      const r = await install(cronApp, busy());
+      expect(r.step.names).toContain("check cron trigger limit");
+    });
+
     it("maps Cloudflare's refusal at the cron trigger step into what to do, without retrying", async () => {
       // A Worker without a scheduled handler still holds triggers, so the
       // count misses them and Cloudflare refuses the schedule.

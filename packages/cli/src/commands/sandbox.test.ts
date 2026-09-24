@@ -96,6 +96,10 @@ interface FakeAccount {
   containersStatus: number;
   /** Answer the bucket lookup with a server error. */
   bucketLookupFails?: boolean;
+  /** The account's Workers plan, as its subscriptions list it; unreadable when absent. */
+  plan?: "free" | "paid";
+  /** R2 was never enabled (Cloudflare's code 10042). */
+  r2Disabled?: boolean;
 }
 
 function setup(
@@ -143,6 +147,35 @@ function setup(
               },
               { status: 404 },
             );
+      }
+      if (url.endsWith("/r2/buckets?per_page=1")) {
+        return account.r2Disabled
+          ? Response.json(
+              {
+                success: false,
+                errors: [
+                  { code: 10042, message: "Please enable R2 through the Cloudflare Dashboard." },
+                ],
+                result: null,
+              },
+              { status: 403 },
+            )
+          : Response.json({ success: true, errors: [], result: { buckets: [] } });
+      }
+      if (url.includes("/subscriptions?")) {
+        if (account.plan === undefined) {
+          return Response.json(
+            { success: false, errors: [{ code: 10000, message: "Authentication error" }] },
+            { status: 403 },
+          );
+        }
+        const plans = account.plan === "paid" ? ["workers_paid", "r2_paid"] : ["free", "r2_paid"];
+        return Response.json({
+          success: true,
+          errors: [],
+          result: plans.map((id) => ({ rate_plan: { id }, state: "Paid" })),
+          result_info: { page: 1, per_page: 50, total_pages: 1 },
+        });
       }
       if (url.includes("/containers/applications?name=") && account.containersStatus !== 200) {
         return Response.json({ success: false }, { status: account.containersStatus });
@@ -197,12 +230,17 @@ describe("sandbox enable", () => {
       "deployments list",
       "deploy --config",
     ]);
-    // A `wrangler login` is checked for Containers too, then the bucket is looked up.
+    // A `wrangler login` is checked too (R2, Containers, plan), then the bucket is looked up.
     expect(t.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
+      "GET https://api.cloudflare.com/client/v4/accounts/acc-1/r2/buckets?per_page=1",
       "GET https://api.cloudflare.com/client/v4/accounts/acc-1/containers/applications?name=appflare-sandbox-standard-1",
+      "GET https://api.cloudflare.com/client/v4/accounts/acc-1/subscriptions?page=1&per_page=50",
       "GET https://api.cloudflare.com/client/v4/accounts/acc-1/r2/buckets/appflare-builds",
     ]);
     expect(t.ui.lines).toContain("  The credential can use Containers.");
+    // A login without billing access cannot read the subscriptions; Containers answering
+    // shows Workers Paid anyway.
+    expect(t.ui.lines).toContain("  The account is on Workers Paid.");
     const deploy = t.calls.at(-1);
     expect(deploy?.args).toContain("--strict");
     expect(deploy?.output).toBe("tee");
@@ -481,10 +519,60 @@ describe("sandbox enable", () => {
     expect(message).toContain("Nothing was uploaded.");
     expect(message).not.toContain(TOKEN);
     expect(commands(t.calls)).toEqual(["whoami --json", "auth token"]);
+    // Read calls only, all with the credential's bearer token; nothing was created.
     expect(t.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
+      "GET https://api.cloudflare.com/client/v4/accounts/acc-1/r2/buckets?per_page=1",
       "GET https://api.cloudflare.com/client/v4/accounts/acc-1/containers/applications?name=appflare-sandbox-standard-1",
+      "GET https://api.cloudflare.com/client/v4/accounts/acc-1/subscriptions?page=1&per_page=50",
     ]);
-    expect(t.requests[0]?.auth).toBe(`Bearer ${TOKEN}`);
+    expect(t.requests.every((r) => r.auth === `Bearer ${TOKEN}`)).toBe(true);
+  });
+
+  it("stops before deploying when the subscriptions show Workers Free", async () => {
+    // Containers could not be checked (a server error), so the subscriptions decide.
+    const t = setup({ auth: () => API_TOKEN }, fakeUi(), {
+      bucket: false,
+      containersStatus: 500,
+      plan: "free",
+    });
+    const message = String(
+      await sandboxEnable({ artifactDir, yes: true, allowUnsigned: false }, t.ctx).catch(
+        (e: Error) => e,
+      ),
+    );
+    expect(message).toContain("Sandbox builds need Workers Paid.");
+    expect(message).toContain("Nothing was uploaded.");
+    expect(commands(t.calls)).not.toContain("deploy --config");
+  });
+
+  it("stops before deploying when R2 was never enabled", async () => {
+    const t = setup({}, fakeUi(), {
+      bucket: false,
+      containersStatus: 200,
+      plan: "paid",
+      r2Disabled: true,
+    });
+    const message = String(
+      await sandboxEnable({ artifactDir, yes: true, allowUnsigned: false }, t.ctx).catch(
+        (e: Error) => e,
+      ),
+    );
+    expect(message).toContain("R2 is not enabled on this account.");
+    expect(commands(t.calls)).not.toContain("deploy --config");
+  });
+
+  it("deploys when Containers answer, even if the subscriptions list no Workers entry", async () => {
+    const t = setup({}, fakeUi(), { bucket: false, containersStatus: 200, plan: "free" });
+    await sandboxEnable({ artifactDir, yes: true, allowUnsigned: false }, t.ctx);
+    expect(t.ui.lines).toContain("  The account is on Workers Paid.");
+    expect(commands(t.calls)).toContain("deploy --config");
+  });
+
+  it("says so when the subscriptions show Workers Paid", async () => {
+    const t = setup({}, fakeUi(), { bucket: false, containersStatus: 200, plan: "paid" });
+    await sandboxEnable({ artifactDir, yes: true, allowUnsigned: false }, t.ctx);
+    expect(t.ui.lines).toContain("  The account is on Workers Paid.");
+    expect(commands(t.calls)).toContain("deploy --config");
   });
 
   it("with an API token that can use Containers, deploys", async () => {

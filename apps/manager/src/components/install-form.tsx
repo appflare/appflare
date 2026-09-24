@@ -68,6 +68,7 @@ export function InstallForm({
   installer = null,
   cronTriggers = 0,
   accountPlan = "free",
+  planDetected = false,
 }: {
   catalog: CatalogManifest;
   /** One per catalog var (`installVarFields`). */
@@ -93,8 +94,10 @@ export function InstallForm({
   installer?: IndexBuild | null;
   /** Distinct cron triggers the artifact declares (0 when none or not known before a build). */
   cronTriggers?: number;
-  /** The account's Workers plan as Settings records it. */
+  /** The account's Workers plan in force: detected, else as Settings records it. */
   accountPlan?: AccountPlan;
+  /** The plan was detected, so remembering one for the account would not apply. */
+  planDetected?: boolean;
 }) {
   const router = useRouter();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
@@ -116,6 +119,7 @@ export function InstallForm({
     onChange: setPaidTicked,
     remember: rememberPaid,
     onRememberChange: setRememberPaid,
+    offerRemember: !planDetected,
   };
   const [buildConfirmed, setBuildConfirmed] = useState(false);
   const [appToken, setAppToken] = useState("");

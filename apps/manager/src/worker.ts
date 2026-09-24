@@ -1,7 +1,9 @@
 import handler from "@tanstack/react-start/server-entry";
 import { accessGate } from "./access/gate";
+import { refreshCapabilitiesDaily } from "./capabilities/capabilities.server";
 import { CatalogError, refreshCatalogIndex } from "./catalog/index.server";
 import { ManagerReleasesError, refreshManagerReleases } from "./catalog/manager-releases.server";
+import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
 import { reportTelemetry } from "./telemetry/report.server";
@@ -76,7 +78,8 @@ export default {
   /**
    * Cron: refresh the catalog index into KV, then check the manager's own
    * release feed. Update-available (for apps and for Appflare) is computed
-   * at read time from those caches. Then the anonymous usage-data report
+   * at read time from those caches. Once a day it also re-reads the
+   * account's capabilities (capabilities/). Then the anonymous usage-data report
    * (telemetry/report.server.ts), which sends nothing until an admin has
    * seen the notice. The scheduled handler never starts jobs.
    */
@@ -95,6 +98,15 @@ export default {
     } catch (error) {
       if (!(error instanceof ManagerReleasesError)) throw error;
       console.error("release feed check failed", { error: error.message });
+    }
+    // Account capabilities (R2, Containers, Workers plan): once a UTC day, one read call each.
+    try {
+      const capabilities = await refreshCapabilitiesDaily(env, createDb(env.DB));
+      if (capabilities === "checked") console.log("account capabilities checked");
+    } catch (error) {
+      console.error("account capability check failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     // Anonymous usage data, after the caches above are fresh; never fails the run.
     const usage = await reportTelemetry(env);

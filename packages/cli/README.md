@@ -173,8 +173,10 @@ applications running `docker.io/mendylanda/appflare-sandbox:<version>`, and the 
 Paid". `sandbox enable` needs an account on Workers Paid; both `sandbox enable` and
 `sandbox disable` need either a login from `npx wrangler login` or an API token in
 `CLOUDFLARE_API_TOKEN` that includes the Containers permission (Account > Containers >
-Edit) in addition to Workers Scripts and Workers R2 Storage. `sandbox enable` checks
-access to Containers before uploading anything. When Cloudflare refuses Containers, the
+Edit) in addition to Workers Scripts and Workers R2 Storage. Before downloading or
+uploading anything, `sandbox enable` checks the account with the same read-only probes the
+manager uses: the Workers plan (from the account's subscriptions, when the credential may
+read billing), access to Containers, and whether R2 is enabled. When Cloudflare refuses Containers, the
 error names the possible causes (the plan, and for an API token its permission) and how
 to check each. A failed `sandbox enable` rolls back what it uploaded: the Worker when
 the run created it, and the bucket when the run created it and it is empty. Each build

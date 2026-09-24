@@ -60,6 +60,21 @@ export function createR2(http: HttpApi) {
       return acc;
     },
 
+    /**
+     * `GET /r2/buckets?per_page=&cursor=`: ONE page of buckets, with the cursor
+     * for the next page (null on the last). A one-bucket page is the cheapest
+     * way to learn whether R2 is enabled on the account at all.
+     */
+    async listBucketsPage(
+      opts: { perPage?: number; cursor?: string; nameContains?: string } = {},
+    ): Promise<CursorPage<R2Bucket>> {
+      const envelope = await http.send("GET", http.acct("/r2/buckets"), {
+        query: { name_contains: opts.nameContains, per_page: opts.perPage, cursor: opts.cursor },
+      });
+      const result = envelope.result as { buckets?: R2Bucket[] } | null;
+      return { items: result?.buckets ?? [], cursor: envelope.result_info?.cursor || null };
+    },
+
     /** `DELETE /r2/buckets/{name}`. Cloudflare refuses a bucket that still holds objects. */
     deleteBucket(name: string): Promise<unknown> {
       return http.result("DELETE", http.acct(`/r2/buckets/${enc(name)}`));

@@ -50,6 +50,14 @@ export const CUSTOM_DOMAINS_FEATURE = "Custom domains";
  */
 export const EMAIL_ROUTING_FEATURE = "Email Routing";
 
+/**
+ * The Settings feature that reads the account's Workers plan instead of
+ * asking an admin. Cloudflare's Billing: Read also covers the billing
+ * profile and invoices; Appflare only lists the subscriptions, for the plan
+ * names.
+ */
+export const PLAN_DETECTION_FEATURE = "Workers plan detection";
+
 export const TOKEN_PERMISSION_GROUPS = [
   // Upload, version, deploy, and delete app Workers and the manager itself; their
   // secrets, cron triggers, workers.dev routes, and static assets.
@@ -102,6 +110,10 @@ export const TOKEN_PERMISSION_GROUPS = [
     label: "Email Routing Addresses",
     onlyFor: EMAIL_ROUTING_FEATURE,
   },
+  // List the account's subscriptions (`GET /accounts/{id}/subscriptions`) to
+  // read which Workers plan it is on; nothing else of the billing data is read.
+  // Key `billing` is in the template page's key table.
+  { key: "billing", type: "read", label: "Billing", onlyFor: PLAN_DETECTION_FEATURE },
   // Find the account id and name the token belongs to (`GET /accounts`).
   { key: "account_settings", type: "read", label: "Account Settings" },
   // Stream a Worker's live logs while diagnosing an install or update.

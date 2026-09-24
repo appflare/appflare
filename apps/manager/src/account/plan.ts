@@ -1,16 +1,14 @@
 import { z } from "zod";
 
 /**
- * The account's Workers plan, as an admin states it in Settings. Client-safe:
- * no server imports.
+ * The account's Workers plan. Client-safe: no server imports.
  *
- * Cloudflare's API offers nothing the manager's token can read that tells
- * Workers Free from Workers Paid (the account settings and entitlements do
- * not say; subscriptions need a billing permission Appflare does not ask
- * for), so the admin says it once for the account. On Workers Paid, installs
- * and updates take the Workers Paid confirmations as given and skip the count
- * of the account's cron triggers. Absent means free: every confirmation is
- * then asked per install, as it would be without the setting.
+ * The capability probes read it from the account's subscriptions when the
+ * token has the optional "Billing: Read" permission (capabilities/); an
+ * admin's statement in Settings applies when they cannot tell. On Workers
+ * Paid, installs and updates take the Workers Paid confirmations as given and
+ * skip the count of the account's cron triggers. Neither known means free:
+ * every confirmation is then asked per install.
  */
 
 export const ACCOUNT_PLANS = ["free", "paid"] as const;
@@ -31,9 +29,9 @@ export function parseAccountPlan(value: string | null | undefined): AccountPlan 
 export const ACCOUNT_PLAN_COPY = {
   title: "Workers plan",
   explanation:
-    "Cloudflare's API does not tell Appflare which Workers plan this account is on, so an admin states it here. On Workers Paid, installs and updates skip the Workers Paid confirmations and the count of the account's cron triggers.",
+    "Appflare reads the Workers plan from the account's subscriptions when the Cloudflare token has the optional Billing: Read permission. When it cannot, the plan an admin sets here applies. On Workers Paid, installs and updates skip the Workers Paid confirmations and the count of the account's cron triggers.",
   labels: { free: "Workers Free", paid: "Workers Paid" } satisfies Record<AccountPlan, string>,
   remember: "Remember this for the account",
   rememberDescription:
-    "Records Workers Paid in Settings, so installs and updates stop asking. Change it there if the plan changes.",
+    "Records Workers Paid in Settings, so installs and updates stop asking while Appflare cannot detect the plan. Change it there if the plan changes.",
 } as const;

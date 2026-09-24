@@ -16,10 +16,10 @@ describe("the account's Workers plan", () => {
     expect(setAccountPlanInput.safeParse({}).success).toBe(false);
   });
 
-  it("explains why the admin states the plan, and what it changes", () => {
+  it("explains where the plan comes from, and what it changes", () => {
     expect(ACCOUNT_PLAN_COPY.title).toBe("Workers plan");
     expect(ACCOUNT_PLAN_COPY.explanation).toBe(
-      "Cloudflare's API does not tell Appflare which Workers plan this account is on, so an admin states it here. On Workers Paid, installs and updates skip the Workers Paid confirmations and the count of the account's cron triggers.",
+      "Appflare reads the Workers plan from the account's subscriptions when the Cloudflare token has the optional Billing: Read permission. When it cannot, the plan an admin sets here applies. On Workers Paid, installs and updates skip the Workers Paid confirmations and the count of the account's cron triggers.",
     );
     expect(ACCOUNT_PLAN_COPY.labels).toEqual({ free: "Workers Free", paid: "Workers Paid" });
     expect(ACCOUNT_PLAN_COPY.remember).toBe("Remember this for the account");

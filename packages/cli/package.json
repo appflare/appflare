@@ -47,6 +47,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@appflare/cf-api": "workspace:*",
     "@appflare/pack": "workspace:*",
     "@appflare/schema": "workspace:*"
   }

@@ -18,6 +18,15 @@ export default defineConfig([
   // `.`: the API client, which runs inside Workers (the manager). Built for the
   // neutral platform so a stray Node API import fails the build.
   { ...shared, entry: ["src/index.ts"], platform: "neutral", target: "es2023", clean: true },
+  // `./capabilities`: the account capability probes alone (HTTP layer and three
+  // namespaces), for the CLI, which bundles it and must not pull in the rest.
+  {
+    ...shared,
+    entry: ["src/capabilities.ts"],
+    platform: "neutral",
+    target: "es2023",
+    clean: false,
+  },
   // `./dev`: loadDevContext() reads `.env` from disk; Node only.
   { ...shared, entry: ["src/dev.ts"], platform: "node", target: "node22", clean: false },
 ]);

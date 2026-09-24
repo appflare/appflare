@@ -12,10 +12,11 @@ Appflare has two roles.
 
 The first user, created in the setup wizard, is an admin.
 
-Members see the account's **Workers plan** in Settings but cannot change it. Only an
-admin can record it, or tick **Remember this for the account** while installing or
-updating. Recording Workers Paid lets later installs skip the Workers Paid
-confirmation, so set it only when the account really is on Workers Paid.
+Members see the account's capabilities and **Workers plan** in Settings but cannot
+change them. Only an admin can select **Re-check**, record the plan, or tick **Remember
+this for the account** while installing or updating. A recorded plan applies only when
+Appflare cannot detect it; recording Workers Paid lets later installs skip the Workers
+Paid confirmation, so set it only when the account really is on Workers Paid.
 
 ## Add a user
 

@@ -6,6 +6,7 @@ import {
   CUSTOM_DOMAINS_FEATURE,
   EMAIL_ROUTING_FEATURE,
   optionalGroupsByFeature,
+  PLAN_DETECTION_FEATURE,
   permissionName,
   resolveAppTokenPermissions,
   splitPermissionGroups,
@@ -35,11 +36,12 @@ describe("token template URLs", () => {
     expect(groupsOf(userTokenTemplateUrl())).toHaveLength(TOKEN_PERMISSION_GROUPS.length);
   });
 
-  it("asks for edit on resource groups and read on account settings, tail, Access organizations, and zones", () => {
+  it("asks for edit on resource groups and read on account settings, billing, tail, Access organizations, and zones", () => {
     const reads = TOKEN_PERMISSION_GROUPS.filter((g) => g.type === "read").map((g) => g.key);
     expect(reads.sort()).toEqual([
       "access_acct",
       "account_settings",
+      "billing",
       "email_routing_address",
       "workers_tail",
       "zone",
@@ -122,7 +124,17 @@ describe("token template URLs", () => {
           "Email Routing Addresses: Read",
         ],
       },
+      { feature: PLAN_DETECTION_FEATURE, names: ["Billing: Read"] },
     ]);
+  });
+
+  it("asks for Billing: Read only as optional, for reading the Workers plan", () => {
+    const { required, optional } = splitPermissionGroups();
+    expect(required.some((g) => g.key === "billing")).toBe(false);
+    expect(optional.filter((g) => g.onlyFor === PLAN_DETECTION_FEATURE)).toEqual([
+      { key: "billing", type: "read", label: "Billing", onlyFor: PLAN_DETECTION_FEATURE },
+    ]);
+    expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key: "billing", type: "read" });
   });
 });
 
