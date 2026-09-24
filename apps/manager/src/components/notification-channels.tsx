@@ -49,6 +49,7 @@ import {
   sendTestNotification,
   updateNotificationChannel,
 } from "../notifications/channels.functions";
+import { ChannelKindLogo } from "./channel-logos";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Timestamp } from "./timestamp";
 
@@ -121,11 +122,14 @@ function ChannelCard({ channel }: { channel: ChannelView }) {
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
-        <span className="flex flex-wrap items-baseline gap-x-2">
-          <span>{channel.label}</span>
-          <Text as="span" variant="secondary" size="sm">
-            {CHANNEL_KIND_LABELS[channel.kind]}, <span className={mono}>{channel.target}</span>
-          </Text>
+        <span className="flex min-w-0 items-center gap-2">
+          <ChannelKindLogo kind={channel.kind} size={18} />
+          <span className="flex flex-wrap items-baseline gap-x-2">
+            <span>{channel.label}</span>
+            <Text as="span" variant="secondary" size="sm">
+              {CHANNEL_KIND_LABELS[channel.kind]}, <span className={mono}>{channel.target}</span>
+            </Text>
+          </span>
         </span>
         {statusBadge(channel)}
       </LayerCard.Secondary>
@@ -384,7 +388,12 @@ function ChannelDialog({ mode }: { mode: Mode }) {
                     <Radio.Item
                       key={k}
                       value={k}
-                      label={CHANNEL_KIND_LABELS[k]}
+                      label={
+                        <span className="flex items-center gap-2">
+                          <ChannelKindLogo kind={k} />
+                          {CHANNEL_KIND_LABELS[k]}
+                        </span>
+                      }
                       description={CHANNEL_KIND_DESCRIPTIONS[k]}
                     />
                   ))}
