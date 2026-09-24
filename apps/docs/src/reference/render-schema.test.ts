@@ -58,7 +58,7 @@ describe("renderSchemaReference", () => {
     notes: { slug: "The app's id.", "secrets[].name": "Secret name." },
   });
 
-  it("writes front matter Starlight accepts", () => {
+  it("writes front matter Fumadocs accepts", () => {
     expect(page.startsWith('---\ntitle: "Manifest reference"\ndescription: ')).toBe(true);
   });
 
@@ -118,7 +118,7 @@ describe("the catalog manifest reference", () => {
 });
 
 describe("slugify", () => {
-  it("matches the anchors Starlight gives these headings", () => {
+  it("matches the anchors Fumadocs gives these headings", () => {
     expect(slugify("Top-level fields")).toBe("top-level-fields");
     expect(slugify("`install`")).toBe("install");
     expect(slugify("`secrets[]`")).toBe("secrets");

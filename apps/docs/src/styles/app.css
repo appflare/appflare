@@ -1,0 +1,36 @@
+@import "tailwindcss";
+@import "@fumadocs/base-ui/css/neutral.css";
+@import "@fumadocs/base-ui/css/preset.css";
+
+/* The scrollbar's space is always reserved, so pages do not shift sideways. */
+html {
+  scrollbar-gutter: stable;
+}
+
+/*
+ * Blank lines in code blocks keep their height. Fumadocs sizes a line only when
+ * it is empty, but a plain-text block's blank line holds one empty token.
+ */
+.shiki .line:has(> span:only-child:empty) {
+  height: 1lh;
+}
+
+/* Agent prompts wrap to the page width instead of scrolling sideways. */
+.docs-prompt pre {
+  width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Opening a dialog (search, the mobile menu) locks scrolling and pads the body
+ * with an inline style to make up for the hidden scrollbar. The gutter above
+ * already keeps that space, so the padding would shift the page; only
+ * !important overrides an inline style.
+ */
+html > body[data-scroll-locked] {
+  /* biome-ignore lint/complexity/noImportantStyles: overrides an inline style */
+  margin-right: 0px !important;
+  /* biome-ignore lint/complexity/noImportantStyles: overrides an inline style */
+  --removed-body-scroll-bar-size: 0px !important;
+}

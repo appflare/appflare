@@ -256,7 +256,7 @@ function yamlString(text: string): string {
 }
 
 /**
- * The heading anchor Starlight generates, for the characters these headings
+ * The heading anchor Fumadocs generates, for the characters these headings
  * use: lower case, spaces to hyphens, everything that is not a letter, digit,
  * hyphen, or underscore dropped (the github-slugger rules).
  */

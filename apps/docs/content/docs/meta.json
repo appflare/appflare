@@ -1,0 +1,31 @@
+{
+  "title": "Appflare",
+  "description": "A self-hosted app manager for Cloudflare. One Worker in your own account installs, updates, and removes Cloudflare-native apps.",
+  "pages": [
+    "---Getting started---",
+    "start/overview",
+    "start/install",
+    "start/install-with-an-agent",
+    "---Using Appflare---",
+    "guides/catalog",
+    "guides/install-apps",
+    "guides/health",
+    "guides/custom-domains",
+    "guides/email-apps",
+    "guides/updates",
+    "guides/uninstall",
+    "guides/builds",
+    "guides/update-appflare",
+    "guides/users",
+    "guides/cli",
+    "---Catalog---",
+    "catalog/how-it-works",
+    "catalog/submit",
+    "catalog/submit-with-an-agent",
+    "catalog/bumps",
+    "catalog/manifest-reference",
+    "---More---",
+    "security",
+    "faq"
+  ]
+}

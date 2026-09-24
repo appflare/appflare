@@ -1,0 +1,87 @@
+---
+title: Install Appflare with an AI agent
+description: A prompt for your coding agent. It runs the installer and tells you the few steps only you can do.
+---
+
+A coding agent that runs commands on your computer, such as Claude Code, Codex, Cursor,
+or Gemini CLI, can do most of [the install](/start/install/) for you. Copy the prompt
+below and paste it into the agent, in a terminal on the machine you install from.
+
+The agent checks your setup, runs the installer, and opens the setup page. A few steps
+need you, because they happen in your browser or involve secrets:
+
+- approving the Cloudflare login, if wrangler is not logged in yet;
+- choosing the account, if your login reaches several;
+- confirming that the account has a `workers.dev` subdomain;
+- creating the admin account in the setup page, with a password you choose;
+- creating the Cloudflare API token with the permissions the setup page lists, and
+  pasting it into the setup page;
+- enabling R2 or creating a Zero Trust organization, if you want the features that
+  need them.
+
+The prompt tells the agent never to ask for your API token or password, never to accept
+them in the chat, and never to print the setup link. The setup link opens the page that
+creates the first admin, so it is a secret until you have used it. The installer writes
+it to a file that only you can read, and the agent opens it from there.
+
+The installer is not on npm yet, so the agent builds it from a checkout of the Appflare
+repository. That repository is private until launch: the agent needs your GitHub access
+to clone it and to download the release.
+
+## The prompt
+
+{/*
+  The prompt builds the installer from a checkout and forbids npx on purpose: the
+  package names are not published, and whoever claimed them on npm would have their
+  code run with the reader's Cloudflare login. Once create-appflare and @appflare/cli
+  are published, step 4 can go back to `npx create-appflare@latest`.
+*/}
+
+<Prompt>
+
+```text title="Prompt"
+Help me install Appflare, a self-hosted app manager for Cloudflare, into my own Cloudflare account. Read the install guide first:
+https://appflare-docs.appflare-dev.workers.dev/start/install.md
+(all of Appflare's docs for agents: https://appflare-docs.appflare-dev.workers.dev/llms.txt)
+
+Rules for this whole session:
+- Never ask me for a Cloudflare API token, a password, or the setup link, and never accept one in this chat. If I paste a token here anyway, tell me to roll it in the Cloudflare dashboard (My Profile > API Tokens, or Manage Account > Account API Tokens) and to create a new one.
+- Never print the setup link or any secret, and never write one out in a command, a file inside a project, or shell history.
+- Change nothing in my Cloudflare account except through the Appflare installer. If the installer refuses because something already exists, stop and ask me. Never delete anything.
+- Never use --allow-unsigned and never set APPFLARE_DEV.
+- Work in a new directory outside my projects. The installer writes nothing to the current directory.
+
+Do these steps yourself:
+
+1. Run `node --version`. Appflare needs Node.js 22 or newer. If it is older, stop and tell me.
+2. Run `npx wrangler whoami`. If it says I am not logged in, run `npx wrangler login`, tell me to approve the request on the page it opens in my browser, and wait until the command finishes.
+3. If `whoami` lists more than one account, show me the account names and ask which one to use. Set CLOUDFLARE_ACCOUNT_ID to that account's id for every command below.
+4. Build the installer from a checkout of the Appflare repository. It is not published to npm: never run `npx create-appflare`, `npx @appflare/cli`, or any npm package with a similar name. Clone https://github.com/appflare/appflare into the new directory. The repository is private until launch: if the clone is refused, use `gh repo clone appflare/appflare` with my gh login, and if that is refused too, stop and tell me. In the clone, run `pnpm install` and `pnpm --filter "@appflare/cli..." build`. The installer is `node packages/cli/bin/appflare.js` and the other commands are `node packages/cli/bin/appflare.js <command>`, run from the clone. Without pnpm, use `npx pnpm@10` in its place. The installer downloads the release from GitHub: while the repository is private, or if GitHub rate-limits the download, put `GITHUB_TOKEN="$(gh auth token)"` in front of the installer command, which keeps the token out of the output.
+5. Ask me to confirm that the account already has a workers.dev subdomain. I can see it, or set one up, under Workers & Pages in the Cloudflare dashboard. Do not run the installer until I confirm: without a subdomain the deploy fails partway, leaves resources behind, and a second attempt is refused.
+6. Run the installer with --yes, sending its standard output to a file only I can read. Standard output carries nothing but the setup link; progress and errors still reach the terminal:
+     umask 077 && <installer> --yes > "$HOME/appflare-setup-link.txt"
+   If it fails:
+   - A Worker, D1 database, or KV namespace named appflare (or appflare-kv) already exists: stop and ask me. Do not delete it.
+   - Anything else: show me the error and stop. Do not retry or clean up; the error says how to start over, and I decide.
+7. Open the setup link in my browser without printing it, for example `open "$(cat "$HOME/appflare-setup-link.txt")"` on macOS or `xdg-open "$(cat "$HOME/appflare-setup-link.txt")"` on Linux. If you cannot open a browser, tell me the file's path and ask me to open the link in it myself.
+8. Run the status command (`<other commands> status`). It prints the manager's URL, its version, and whether it answers. Keep the URL for your summary.
+
+Then give me this checklist of what only I can do, in the setup page you opened:
+
+1. Create the admin account: a name, an email, and a password of at least 12 characters that I choose. Do not suggest a password.
+2. Select "Create token". The Cloudflare dashboard opens a token form named Appflare with the permissions already selected: Workers Scripts, Workers KV Storage, D1, Workers R2 Storage, Queues, and Vectorize (Edit); Account Settings and Workers Tail (Read); and, for optional features only, Access: Apps and Policies (Edit) and Access: Organizations, Identity Providers, and Groups (Read) for Cloudflare Access, Zone (Read), DNS (Edit) and Workers Routes (Edit) for custom domains, and Zone Settings (Edit), Email Routing Rules (Edit) and Email Routing Addresses (Read) for apps that receive email. Choose the account, create the token, copy it, and paste it into the setup page, never into this chat. Select Verify, then Save and continue. An account-owned token needs the Super Administrator role; otherwise use "Create a user token instead".
+3. Optional: to install apps that store files in R2, enable R2 in the Cloudflare dashboard under R2 Object Storage. Cloudflare asks for a payment method first, although R2's free tier costs nothing.
+4. Optional: to put the manager behind Cloudflare Access (Settings > Protect with Cloudflare Access), create a Zero Trust organization in the Cloudflare dashboard first. Its Free plan covers up to 50 users.
+5. Tell you when setup is done, so you can delete "$HOME/appflare-setup-link.txt". The link stops working after setup anyway.
+
+End with the manager's URL, the version the status command reported, and anything that did not work.
+```
+
+</Prompt>
+
+## What happens next
+
+When you finish the setup page, you sign in to the manager and can
+[browse the catalog](/guides/catalog/) and [install an app](/guides/install-apps/). The
+[install guide](/start/install/#the-setup-wizard) explains each step of the setup
+page and [where the token lives](/start/install/#where-the-token-lives).

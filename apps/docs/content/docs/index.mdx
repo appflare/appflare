@@ -1,17 +1,20 @@
 ---
 title: Appflare
 description: A self-hosted app manager for Cloudflare. One Worker in your own account installs, updates, and removes Cloudflare-native apps.
-template: splash
-hero:
-  tagline: A self-hosted app manager for Cloudflare. One Worker in your own account installs, updates, and removes Cloudflare-native apps.
-  actions:
-    - text: Install Appflare
-      link: /start/install/
-      icon: right-arrow
-    - text: What Appflare is
-      link: /start/overview/
-      variant: minimal
 ---
+
+<Cards>
+  <Card title="Install Appflare" href="/start/install/">
+    Requirements, the installer, and the setup wizard.
+  </Card>
+  <Card title="What Appflare is" href="/start/overview/">
+    A self-hosted app manager that runs as one Worker in your own Cloudflare account.
+  </Card>
+  <Card title="Install Appflare with an AI agent" href="/start/install-with-an-agent/">
+    A prompt for your coding agent: it runs the installer and tells you the few steps only
+    you can do.
+  </Card>
+</Cards>
 
 ## How it works
 
@@ -19,10 +22,12 @@ You run `npx create-appflare`. It deploys one Worker, the manager, into your
 Cloudflare account. The manager has a web UI where you browse a catalog of apps
 that run on Workers.
 
-:::note[Not on npm yet]
+<Callout title="Not on npm yet">
+
 The installer is not published to npm yet. Until it is, run it
 [from a checkout](/start/install/#from-a-checkout) of this repository.
-:::
+
+</Callout>
 
 When you install an app, the manager creates what the app needs (KV namespaces, D1
 databases, R2 buckets, queues, Vectorize indexes, secrets, cron triggers) and

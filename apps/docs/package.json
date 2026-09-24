@@ -4,20 +4,34 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview",
-    "typecheck": "astro sync && tsc --noEmit",
+    "dev": "vite dev",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run"
   },
   "dependencies": {
-    "@astrojs/starlight": "0.42.3",
-    "astro": "7.3.4"
+    "@fumadocs/base-ui": "16.15.14",
+    "@tanstack/react-router": "1.170.38",
+    "@tanstack/react-start": "1.168.57",
+    "fumadocs-core": "16.15.14",
+    "fumadocs-mdx": "15.4.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "takumi-js": "2.14.0"
   },
   "devDependencies": {
     "@appflare/schema": "workspace:*",
-    "@types/node": "22.20.4"
+    "@tailwindcss/vite": "4.3.3",
+    "@types/mdx": "2.0.14",
+    "@types/node": "22.20.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "next-validate-link": "1.6.7",
+    "tailwindcss": "4.3.3",
+    "vite": "8.3.0",
+    "vitest": "4.1.11"
   }
 }

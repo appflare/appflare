@@ -1,8 +1,9 @@
 name: docs
 
-# Builds the documentation site (apps/docs) and deploys it as the Worker
-# `appflare-docs`, static assets only. The manifest reference page is generated
-# from @appflare/schema during the build, so schema changes redeploy the site.
+# Builds the documentation site (apps/docs, Fumadocs on TanStack Start, fully
+# prerendered) and deploys dist/client as the Worker `appflare-docs`, static
+# assets only. The manifest reference page is generated from @appflare/schema
+# during the build, so schema changes redeploy the site.
 
 on:
   push:
@@ -34,7 +35,6 @@ defaults:
 jobs:
   deploy:
     name: build and deploy docs
-    # x64 runners: Pagefind's search index builds there.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -50,8 +50,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Builds @appflare/schema first (turbo's ^build), then the site.
       - run: pnpm exec turbo run build --filter=@appflare/docs...
-      - name: Check the site has search
-        run: test -d apps/docs/dist/pagefind
+      # The build fails on its own when a page cannot be prerendered or an
+      # OpenGraph image cannot be drawn; this catches a file that went missing.
+      - name: Check the site has its search index, agent files, and images
+        working-directory: apps/docs/dist/client
+        run: |
+          for file in index.html 404.html api/search.json llms.txt llms-full.txt \
+            sitemap.xml index.md start/install/index.html start/install.md \
+            og/image.png og/start/install/image.png; do
+            test -s "${file}" || { echo "::error::apps/docs/dist/client/${file} is missing"; exit 1; }
+          done
       # wrangler deploys to the account_id pinned in apps/docs/wrangler.jsonc and
       # ignores CLOUDFLARE_ACCOUNT_ID when the config has one. Both must name the
       # same account, or the token in the secret cannot deploy there.

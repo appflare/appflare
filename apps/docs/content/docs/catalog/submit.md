@@ -169,8 +169,10 @@ The pull request runs these checks:
    path for up to 60 seconds, and deletes everything again. A server error, or no
    answer at all, fails the check. A plain 404 at the end passes.
 
-Pull requests from forks get no CI secrets, so the install check does not run on
-them automatically.
+Pull requests from forks get no CI secrets. The checks build the packer from the
+appflare/appflare repository, which is private until launch and needs a secret to
+read, so a pull request from a fork fails the `verify` check until that repository
+is public.
 
 ## CODEOWNERS
 

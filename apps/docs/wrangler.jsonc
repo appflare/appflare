@@ -11,9 +11,11 @@
   "compatibility_date": "2026-09-21",
   "workers_dev": true,
   "assets": {
-    "directory": "./dist",
-    // Astro writes each page as `<path>/index.html`; unknown paths get the
-    // site's own 404 page.
+    // The prerendered site. `dist/server` holds the bundle the build renders
+    // the pages with; it is never deployed.
+    "directory": "./dist/client",
+    // Each page is `<path>/index.html`; unknown paths get the site's own 404
+    // page (`404.html`).
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   }

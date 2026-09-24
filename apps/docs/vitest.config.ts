@@ -1,9 +1,12 @@
+import { fumadocsMdx } from "fumadocs-mdx/vite";
 import { defineConfig } from "vitest/config";
+import { manifestReference } from "./src/reference/integration.ts";
 
-// Plain Node test project. A Worker package would instead add the `cloudflareTest`
-// plugin from `@cloudflare/vitest-pool-workers` to `plugins` (see the root
-// vitest.config.ts for the full opt-in snippet).
+// Plain Node tests. The two plugins give tests the same content the site is
+// built from: the generated manifest reference, and the pages compiled by
+// Fumadocs MDX (the link check in src/links.test.ts reads them).
 export default defineConfig({
+  plugins: [manifestReference(), fumadocsMdx()],
   test: {
     environment: "node",
   },

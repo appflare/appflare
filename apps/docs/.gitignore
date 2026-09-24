@@ -1,5 +1,5 @@
-# Astro's generated types and build output.
-.astro/
+# Build output, and TanStack Start's scratch space.
 dist/
+.tanstack/
 # Generated from @appflare/schema on every build; never edit by hand.
-src/content/docs/catalog/manifest-reference.md
+content/docs/catalog/manifest-reference.md
