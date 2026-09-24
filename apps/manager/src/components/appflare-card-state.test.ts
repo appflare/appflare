@@ -32,7 +32,7 @@ function state(
 }
 
 describe("appflareCardState", () => {
-  it("shows the running version quietly while it is up to date or nothing is known", () => {
+  it("shows no card while it is up to date or nothing is known", () => {
     expect(state()).toEqual({ kind: "current", version: "0.4.0" });
     expect(state({ manager: { ...upToDate, latest: null } })).toEqual({
       kind: "current",
@@ -99,6 +99,23 @@ describe("appflareCardState", () => {
       kind: "current",
       version: "0.5.0",
     });
+  });
+
+  it("drops the updated card once it was dismissed or has been shown long enough", () => {
+    const now: ManagerStatus = { ...upToDate, current: "0.5.0", latest: "0.5.0" };
+    expect(state({ manager: now, updatedTo: "0.5.0", updatedDone: true })).toEqual({
+      kind: "current",
+      version: "0.5.0",
+    });
+    // The same after a job this page followed to the end.
+    expect(state({ manager: now, job: job({ status: "succeeded" }), updatedDone: true })).toEqual({
+      kind: "current",
+      version: "0.5.0",
+    });
+    // Only the updated card goes; a failure stays.
+    expect(
+      state({ manager: behind, job: job({ status: "failed" }), updatedDone: true }),
+    ).toMatchObject({ kind: "failed" });
   });
 
   it("shows a failure in place and offers the newest release again to admins", () => {

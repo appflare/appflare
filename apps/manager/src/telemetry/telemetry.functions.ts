@@ -3,12 +3,17 @@ import { createServerFn } from "@tanstack/react-start";
 import { hasRole } from "../auth/roles";
 import { requireRole, requireSession } from "../server/auth.server";
 import { previewHeartbeat } from "./report.server";
-import { acknowledgeNotice, readTelemetryStatus, setTelemetryEnabled } from "./state.server";
-import { acknowledgeNoticeInput, setTelemetryInput, type TelemetryStatus } from "./telemetry";
+import {
+  dismissNotice,
+  isNoticeDue,
+  readTelemetryStatus,
+  setTelemetryEnabled,
+} from "./state.server";
+import { setTelemetryInput, type TelemetryStatus } from "./telemetry";
 
 /**
  * Anonymous usage data: any signed-in user reads the state and the preview;
- * only admins record a choice.
+ * only admins change the choice or dismiss the notice.
  */
 
 export const getTelemetryStatus = createServerFn({ method: "GET" }).handler(
@@ -19,27 +24,24 @@ export const getTelemetryStatus = createServerFn({ method: "GET" }).handler(
 );
 
 /**
- * Whether the home page shows the usage-data notice: to admins, while no
- * admin has seen it (a manager updated from a version without usage data)
- * and no Worker variable turns usage data off.
+ * Whether the home page shows the usage-data notice: to admins, once per
+ * manager (see `isNoticeDue`).
  */
 export const getTelemetryNotice = createServerFn({ method: "GET" }).handler(
   async (): Promise<{ show: boolean; status: TelemetryStatus }> => {
     const session = await requireSession();
-    const status = await readTelemetryStatus(env);
-    const show =
-      hasRole(session.user.role, "admin") && status.state === "unset" && status.lockedBy === null;
-    return { show, status };
+    const [status, due] = await Promise.all([readTelemetryStatus(env), isNoticeDue(env)]);
+    return { show: hasRole(session.user.role, "admin") && due, status };
   },
 );
 
-/** The setup step or the home page notice: the admin saw the notice and chose. */
-export const acknowledgeTelemetryNotice = createServerFn({ method: "POST" })
-  .validator(acknowledgeNoticeInput)
-  .handler(async ({ data }): Promise<TelemetryStatus> => {
+/** The home page notice's Dismiss: hides it for every admin of this manager. */
+export const dismissTelemetryNotice = createServerFn({ method: "POST" }).handler(
+  async (): Promise<void> => {
     await requireRole("admin");
-    return acknowledgeNotice(env, data);
-  });
+    await dismissNotice(env);
+  },
+);
 
 /** Settings, Usage data: the switch. */
 export const setTelemetry = createServerFn({ method: "POST" })

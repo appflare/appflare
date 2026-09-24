@@ -16,7 +16,7 @@ export interface CardJob {
 }
 
 export type AppflareCardState =
-  /** Up to date (or nothing known yet): the running version, quietly. */
+  /** Up to date (or nothing known yet): no card; the sidebar footer shows the version. */
   | { kind: "current"; version: string }
   /** Just updated to this version (this page loaded after the switch). */
   | { kind: "updated"; version: string }
@@ -37,7 +37,7 @@ export type AppflareCardState =
       retry: string | null;
     };
 
-export function appflareCardState(input: {
+export interface AppflareCardInput {
   manager: ManagerStatus;
   /** The self-update being followed: undefined while it is read, null when there is none. */
   job: CardJob | null | undefined;
@@ -47,8 +47,22 @@ export function appflareCardState(input: {
   stalled?: boolean;
   /** The version the previous page saw the switch to, if this page loaded right after it. */
   updatedTo: string | null;
+  /**
+   * The "updated" card was dismissed, or has been shown long enough (the new
+   * version answered a health check, or 30 seconds passed): no card again.
+   */
+  updatedDone?: boolean;
   isAdmin: boolean;
-}): AppflareCardState {
+}
+
+export function appflareCardState(input: AppflareCardInput): AppflareCardState {
+  const state = cardState(input);
+  return state.kind === "updated" && input.updatedDone === true
+    ? { kind: "current", version: state.version }
+    : state;
+}
+
+function cardState(input: AppflareCardInput): AppflareCardState {
   const { manager, job, isAdmin } = input;
   const target = job?.targetVersion ?? manager.latest ?? manager.current;
   if (job === undefined) return { kind: "running", target, step: null };
@@ -88,3 +102,6 @@ export function appflareCardState(input: {
 
 /** Where the card keeps the version it saw the switch to, across the reload that follows. */
 export const UPDATED_TO_KEY = "appflare:updated-to";
+
+/** The "updated" card hides after this long, unless a health check or a dismissal ends it first. */
+export const UPDATED_CARD_MS = 30_000;

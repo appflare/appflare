@@ -8,6 +8,7 @@ import { logCfRequest } from "../cloudflare/client.server";
 import type { VerifyTokenResult } from "../cloudflare/verify-token";
 import { createDb } from "../db/client";
 import { readSettings, SETTING } from "../db/settings";
+import { recordSetupNotice } from "../telemetry/state.server";
 import { requireRole, requireSession } from "./auth.server";
 import { cfTokenInput } from "./schemas";
 import {
@@ -75,6 +76,21 @@ async function checkCapabilities(accountId: string, token: string): Promise<void
 }
 
 /**
+ * Records that setup finished for usage data: the next screen shows its
+ * notice, and the first scheduled report after this sends "setup completed".
+ * Best effort; it never fails the save (the report then starts without it).
+ */
+async function recordSetupForUsageData(): Promise<void> {
+  try {
+    await recordSetupNotice(env);
+  } catch (error) {
+    console.warn("could not record the usage-data notice at setup", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
  * Admin only, setup: verify, store as `CF_API_TOKEN`, record settings, delete
  * `SETUP_TOKEN`, then read the account's capabilities.
  */
@@ -83,6 +99,7 @@ export const saveToken = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SaveTokenResult> => {
     await requireRole("admin");
     const saved = await userFacing(() => saveTokenStep(deps(data.token)));
+    await recordSetupForUsageData();
     await checkCapabilities(saved.accountId, data.token);
     return saved;
   });

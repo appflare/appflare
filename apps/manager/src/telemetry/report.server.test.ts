@@ -8,9 +8,11 @@ import { migrations } from "../db/migrations/index";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { CURSOR_LAG_MS, previewHeartbeat, type ReportEnv, reportTelemetry } from "./report.server";
 import {
-  acknowledgeNotice,
+  dismissNotice,
+  isNoticeDue,
   markOpenedToday,
   readTelemetryStatus,
+  recordSetupNotice,
   resetOpenedMemo,
   setTelemetryEnabled,
   TelemetryLockedError,
@@ -92,6 +94,7 @@ async function seed() {
     [SETTING.accountId]: "acc-123",
     [SETTING.accountName]: "Ada's account",
     [SETTING.workerName]: "appflare-ada",
+    [SETTING.cfTokenConfigured]: "1",
     [SETTING.cfTokenVerifiedAt]: new Date(NOW - 70 * MIN).toISOString(),
   });
 }
@@ -107,7 +110,7 @@ describe("before anything is sent", () => {
   it("a development build sends nothing and reads nothing", async () => {
     const ph = posthog();
     const e = managerEnv({ APPFLARE_VERSION: "0.0.0-dev" });
-    await acknowledgeNotice(e, { enabled: true, via: "setup" });
+    await recordSetupNotice(e);
     expect(await reportTelemetry(e, { fetch: ph.fetch, now: () => NOW })).toEqual({
       status: "skipped",
       reason: "development build",
@@ -117,7 +120,7 @@ describe("before anything is sent", () => {
 
   it("APPFLARE_TELEMETRY=off or DO_NOT_TRACK=1 on the Worker locks it off", async () => {
     const ph = posthog();
-    await acknowledgeNotice(managerEnv(), { enabled: true, via: "setup" });
+    await recordSetupNotice(managerEnv());
     for (const vars of [{ APPFLARE_TELEMETRY: "off" }, { DO_NOT_TRACK: "1" }]) {
       const out = await reportTelemetry(managerEnv(vars), { fetch: ph.fetch, now: () => NOW });
       expect(out.status).toBe("skipped");
@@ -131,20 +134,22 @@ describe("before anything is sent", () => {
     });
   });
 
-  it("sends nothing until an admin has seen the notice", async () => {
+  it("sends nothing before setup finished", async () => {
     const ph = posthog();
+    await env.DB.prepare("DELETE FROM settings WHERE key = ?1")
+      .bind(SETTING.cfTokenConfigured)
+      .run();
     const out = await reportTelemetry(managerEnv(), { fetch: ph.fetch, now: () => NOW });
-    expect(out).toEqual({ status: "skipped", reason: "notice not seen" });
+    expect(out).toEqual({ status: "skipped", reason: "setup not finished" });
     expect(ph.sent).toEqual([]);
+    const ids = await readSettings(createDb(env.DB), [SETTING.telemetryInstallId]);
+    expect(ids).toEqual({});
   });
 
   it("sends and writes nothing once turned off, not even that it is off", async () => {
     const ph = posthog();
-    await acknowledgeNotice(
-      managerEnv(),
-      { enabled: false, via: "setup" },
-      new Date(NOW - 60 * MIN),
-    );
+    await recordSetupNotice(managerEnv(), new Date(NOW - 60 * MIN));
+    await setTelemetryEnabled(managerEnv(), false, new Date(NOW - 50 * MIN));
     const before = await env.DB.prepare("SELECT key, value FROM settings ORDER BY key").all();
     await markOpenedToday(managerEnv(), "admin", NOW);
     expect(await reportTelemetry(managerEnv(), { fetch: ph.fetch, now: () => NOW })).toEqual({
@@ -157,26 +162,29 @@ describe("before anything is sent", () => {
   });
 });
 
-describe("the choice", () => {
-  it("keeps the CLI's install id and moves the job cursor to the moment it is turned on", async () => {
+describe("the choice and the notice", () => {
+  it("records setup with the CLI's install id, and moves the job cursor when turned back on", async () => {
     const at = new Date(NOW - 60 * MIN);
     const e = managerEnv({ APPFLARE_INSTALL_ID: CLI_ID });
-    expect(await acknowledgeNotice(e, { enabled: true, via: "setup" }, at)).toMatchObject({
-      state: "on",
-    });
+    await recordSetupNotice(e, at);
     const rows = await readSettings(createDb(env.DB), [
+      SETTING.telemetry,
       SETTING.telemetryInstallId,
       SETTING.telemetryCursor,
       SETTING.telemetryNoticeAt,
       SETTING.telemetrySetupSent,
     ]);
+    // No choice is stored: on by default, and "setup completed" is still due.
     expect(rows).toEqual({
       telemetry_install_id: CLI_ID,
       telemetry_cursor: String(at.getTime()),
       telemetry_notice_at: at.toISOString(),
     });
+    expect(await readTelemetryStatus(e)).toMatchObject({ state: "on", lockedBy: null });
     // Off and on again: same id, fresh cursor.
-    await setTelemetryEnabled(e, false, new Date(NOW - 30 * MIN));
+    expect(await setTelemetryEnabled(e, false, new Date(NOW - 30 * MIN))).toMatchObject({
+      state: "off",
+    });
     await setTelemetryEnabled(e, true, new Date(NOW - 10 * MIN));
     const again = await readSettings(createDb(env.DB), [
       SETTING.telemetryInstallId,
@@ -188,34 +196,50 @@ describe("the choice", () => {
     });
   });
 
-  it("makes its own random id without a valid one from the CLI, and a lock records off", async () => {
-    await acknowledgeNotice(
-      managerEnv({ APPFLARE_INSTALL_ID: "not-an-id", APPFLARE_TELEMETRY: "false" }),
-      { enabled: true, via: "banner" },
-    );
+  it("makes its own random id without a valid one from the CLI, and never reports setup then", async () => {
+    await setTelemetryEnabled(managerEnv({ APPFLARE_INSTALL_ID: "not-an-id" }), true);
     const rows = await readSettings(createDb(env.DB), [
       SETTING.telemetry,
       SETTING.telemetryInstallId,
       SETTING.telemetrySetupSent,
     ]);
-    expect(rows.telemetry).toBe("off");
+    expect(rows.telemetry).toBe("on");
     expect(rows.telemetry_install_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(rows.telemetry_install_id).not.toBe("not-an-id");
     expect(rows.telemetry_setup_sent).toBe("skipped");
   });
+
+  it("shows the home page notice once per manager, never while a variable turns it off", async () => {
+    expect(await isNoticeDue(managerEnv())).toBe(true);
+    expect(await isNoticeDue(managerEnv({ APPFLARE_TELEMETRY: "off" }))).toBe(false);
+    await dismissNotice(managerEnv(), new Date(NOW - 5 * MIN));
+    expect(await isNoticeDue(managerEnv())).toBe(false);
+    // Dismissing again keeps the first time.
+    await dismissNotice(managerEnv(), new Date(NOW));
+    const rows = await readSettings(createDb(env.DB), [
+      SETTING.telemetry,
+      SETTING.telemetryNoticeAt,
+    ]);
+    expect(rows).toEqual({ telemetry_notice_at: new Date(NOW - 5 * MIN).toISOString() });
+  });
+
+  it("does not show the home page notice after setup showed it, or after a choice in Settings", async () => {
+    await recordSetupNotice(managerEnv());
+    expect(await isNoticeDue(managerEnv())).toBe(false);
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await setTelemetryEnabled(managerEnv(), false);
+    expect(await isNoticeDue(managerEnv())).toBe(false);
+  });
 });
 
 describe("the report", () => {
-  async function turnOn(via: "setup" | "banner" = "setup") {
-    await acknowledgeNotice(
-      managerEnv({ APPFLARE_INSTALL_ID: CLI_ID }),
-      { enabled: true, via },
-      new Date(NOW - 60 * MIN),
-    );
+  async function finishSetup() {
+    await recordSetupNotice(managerEnv({ APPFLARE_INSTALL_ID: CLI_ID }), new Date(NOW - 60 * MIN));
   }
 
   it("sends the heartbeat, job events, the opened day and setup completed in one batch", async () => {
-    await turnOn();
+    await finishSetup();
     await markOpenedToday(managerEnv(), "member", NOW - 5 * MIN);
     await markOpenedToday(managerEnv(), "admin", NOW - 4 * MIN);
     const ph = posthog();
@@ -308,7 +332,7 @@ describe("the report", () => {
   });
 
   it("keeps everything for the next run when PostHog refuses the batch", async () => {
-    await turnOn();
+    await finishSetup();
     const down = posthog(503);
     const e = managerEnv();
     expect(await reportTelemetry(e, { fetch: down.fetch, now: () => NOW })).toEqual({
@@ -326,7 +350,7 @@ describe("the report", () => {
   });
 
   it("sends a failed reach as an outcome, never an exception", async () => {
-    await turnOn();
+    await finishSetup();
     const out = await reportTelemetry(managerEnv(), {
       fetch: async () => {
         throw new Error("network down");
@@ -336,8 +360,42 @@ describe("the report", () => {
     expect(out).toEqual({ status: "failed", reason: "could not reach PostHog: network down" });
   });
 
+  it("reports a manager set up before usage data existed from its first run, without setup completed", async () => {
+    // No setup record, no choice, no notice dismissed: on by default all the same.
+    // Its first admin was created at setup, three days and a bit ago.
+    await env.DB.prepare("UPDATE user SET created_at = ?1 WHERE id = 'u1'")
+      .bind(NOW - 3 * 86_400_000 - 30 * MIN)
+      .run();
+    await markOpenedToday(managerEnv(), "admin", NOW - 5 * MIN);
+    const ph = posthog();
+    const e = managerEnv({ APPFLARE_INSTALL_ID: CLI_ID });
+    expect(await reportTelemetry(e, { fetch: ph.fetch, now: () => NOW })).toEqual({
+      status: "sent",
+      events: 2,
+    });
+    const [{ body }] = ph.sent as [Sent];
+    // Jobs from before the first run are not reported.
+    expect(body.batch.map((ev) => ev.event)).toEqual(["manager heartbeat", "manager opened"]);
+    expect(body.batch.every((ev) => ev.distinct_id === CLI_ID)).toBe(true);
+    // Days since setup count from the first user, as the notice was never shown.
+    expect(body.batch[0]?.properties).toMatchObject({ days_since_setup: 3 });
+    const rows = await readSettings(createDb(env.DB), [
+      SETTING.telemetry,
+      SETTING.telemetryInstallId,
+      SETTING.telemetrySetupSent,
+      SETTING.telemetryCursor,
+      SETTING.telemetryNoticeAt,
+    ]);
+    expect(rows).toEqual({
+      telemetry_install_id: CLI_ID,
+      telemetry_setup_sent: "skipped",
+      telemetry_cursor: String(NOW),
+    });
+    // The home page notice is still due: nobody has seen it.
+    expect(await isNoticeDue(e)).toBe(true);
+  });
+
   it("sends the heartbeat once per UTC day", async () => {
-    await turnOn("banner");
     const ph = posthog();
     const e = managerEnv();
     await reportTelemetry(e, { fetch: ph.fetch, now: () => NOW });
@@ -348,13 +406,10 @@ describe("the report", () => {
       s.body.batch.filter((ev) => ev.event === "manager heartbeat").map((ev) => ev.timestamp),
     );
     expect(heartbeats).toEqual(["2026-09-24T00:00:00.000Z", "2026-09-25T00:00:00.000Z"]);
-    // Through the notice banner, setup completed is never reported.
-    const all = ph.sent.flatMap((s) => s.body.batch.map((ev) => ev.event));
-    expect(all).not.toContain("manager setup completed");
   });
 
   it("drops job events older than seven days", async () => {
-    await turnOn();
+    await finishSetup();
     await writeSettings(createDb(env.DB), {
       [SETTING.telemetryCursor]: String(NOW - 30 * 86_400_000),
     });
@@ -376,7 +431,7 @@ describe("the report", () => {
   });
 
   it("sends no slugs or versions of a custom catalog", async () => {
-    await turnOn();
+    await finishSetup();
     const ph = posthog();
     await reportTelemetry(
       managerEnv({ CATALOG_INDEX_URL: "https://apps.example.com/index.json" }),
@@ -398,14 +453,17 @@ describe("the report", () => {
 });
 
 describe("markOpenedToday", () => {
-  it("records only while usage data is on, and only the first opener of a day", async () => {
+  it("records unless usage data is turned off, and only the first opener of a day", async () => {
+    await setTelemetryEnabled(managerEnv(), false);
     await markOpenedToday(managerEnv(), "admin", NOW);
     const read = async () =>
       (await readSettings(createDb(env.DB), [SETTING.telemetryOpenedDay])).telemetry_opened_day;
     expect(await read()).toBeUndefined();
-    // Nothing was written, so the same isolate records the day once an admin
-    // answers the notice (here through the home page banner).
-    await acknowledgeNotice(managerEnv(), { enabled: true, via: "banner" });
+    await markOpenedToday(managerEnv({ APPFLARE_TELEMETRY: "off" }), "admin", NOW);
+    expect(await read()).toBeUndefined();
+    // Nothing was written, so the same isolate records the day once it is
+    // turned back on.
+    await setTelemetryEnabled(managerEnv(), true);
     await markOpenedToday(managerEnv(), "member", NOW);
     resetOpenedMemo();
     await markOpenedToday(managerEnv(), "admin", NOW + MIN);
@@ -422,7 +480,34 @@ describe("previewHeartbeat", () => {
     expect(preview).toMatchObject({
       event: "manager heartbeat",
       distinct_id: null,
-      properties: { users: 2, installs_total: 1, days_since_setup: null },
+      // No notice shown yet: days since setup count from the first user (100 minutes ago).
+      properties: { users: 2, installs_total: 1, days_since_setup: 0 },
+    });
+  });
+
+  it("counts days since setup from the earlier of the first user and the notice", async () => {
+    const days = async () =>
+      (await previewHeartbeat(managerEnv(), NOW)).properties.days_since_setup;
+    // The notice is earlier than the first user (100 minutes ago).
+    await recordSetupNotice(managerEnv(), new Date(NOW - 2 * 86_400_000));
+    expect(await days()).toBe(2);
+    await env.DB.prepare("DELETE FROM settings WHERE key = ?1")
+      .bind(SETTING.telemetryNoticeAt)
+      .run();
+    // An upgraded manager: set up three days ago, notice dismissed just now.
+    // The dismissal does not reset the count.
+    await env.DB.prepare("UPDATE user SET created_at = ?1")
+      .bind(NOW - 3 * 86_400_000)
+      .run();
+    await dismissNotice(managerEnv(), new Date(NOW));
+    expect(await days()).toBe(3);
+    await env.DB.prepare("DELETE FROM settings WHERE key = ?1")
+      .bind(SETTING.telemetryNoticeAt)
+      .run();
+    // Neither known: null.
+    await env.DB.batch([env.DB.prepare("DELETE FROM passkey"), env.DB.prepare("DELETE FROM user")]);
+    expect((await previewHeartbeat(managerEnv(), NOW)).properties).toMatchObject({
+      days_since_setup: null,
     });
   });
 

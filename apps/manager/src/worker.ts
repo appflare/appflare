@@ -82,8 +82,8 @@ export default {
    * release feed. Update-available (for apps and for Appflare) is computed
    * at read time from those caches. Once a day it also re-reads the
    * account's capabilities (capabilities/). Then the anonymous usage-data report
-   * (telemetry/report.server.ts), which sends nothing until an admin has
-   * seen the notice. It starts update jobs only for what automatic updates
+   * (telemetry/report.server.ts), which starts with the first run after setup
+   * and sends nothing once an admin turns it off. It starts update jobs only for what automatic updates
    * allow (auto-update/), and only updates that need nothing from an admin.
    */
   async scheduled(_controller, env) {

@@ -1,5 +1,5 @@
-import { Tooltip } from "@cloudflare/kumo";
 import { formatDate, formatDateTime, formatExactDateTime } from "./format";
+import { Tooltip } from "./tooltip";
 
 /**
  * A point in time as every screen shows it: the medium date and short time

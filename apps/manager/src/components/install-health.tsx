@@ -1,4 +1,4 @@
-import { Badge, Button, Text, Tooltip } from "@cloudflare/kumo";
+import { Badge, Button, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, QuestionIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
@@ -6,6 +6,7 @@ import type { HealthStatus } from "../db/schema";
 import { checkInstallHealth } from "../installs/health.functions";
 import { formatDateTime } from "./format";
 import { Timestamp } from "./timestamp";
+import { Tooltip } from "./tooltip";
 
 /**
  * The health of an install's Worker as its last check recorded it: a badge

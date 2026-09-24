@@ -1,7 +1,8 @@
-import { cn, Text, Tooltip } from "@cloudflare/kumo";
+import { cn, Text } from "@cloudflare/kumo";
 import { CubeIcon, DownloadSimpleIcon, StarIcon } from "@phosphor-icons/react";
 import type { AppMediaView } from "../catalog/media";
 import { type AppPopularity, formatCount } from "../catalog/popularity";
+import { Tooltip } from "./tooltip";
 
 /**
  * Catalog images. Every `src` here is a manager path

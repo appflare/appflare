@@ -2,12 +2,12 @@ import { isInstallId, type TelemetryLock, telemetryLock } from "@appflare/schema
 import { createDb } from "../db/client";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
 import { utcDay } from "./events";
-import type { AcknowledgeNoticeInput, TelemetryStatus } from "./telemetry";
+import type { TelemetryStatus } from "./telemetry";
 
 /**
- * The stored usage-data choice and the Worker variables that override it.
- * Reads and writes `settings` rows only; the cron's report lives in
- * report.server.ts.
+ * The stored usage-data choice, the notice, and the Worker variables that
+ * override the choice. Reads and writes `settings` rows only; the cron's
+ * report lives in report.server.ts.
  */
 
 export interface TelemetryEnv {
@@ -38,27 +38,84 @@ export class TelemetryLockedError extends Error {
   override name = "TelemetryLockedError";
 }
 
+/** On unless an admin turned it off; a Worker variable still overrides it (`lockedBy`). */
 export async function readTelemetryStatus(env: TelemetryEnv): Promise<TelemetryStatus> {
   const row = await readSettings(createDb(env.DB), [SETTING.telemetry]);
-  const stored = row.telemetry;
   return {
-    state: stored === "on" || stored === "off" ? stored : "unset",
+    state: row.telemetry === "off" ? "off" : "on",
     lockedBy: lockOf(env),
     devBuild: isDevBuild(env.APPFLARE_VERSION),
   };
 }
 
 /**
- * The rows that record a choice: the choice itself, and on the first one the
- * time the notice was seen and the install id (the CLI's when it deployed a
- * valid one, so its events and the manager's join up). Turning usage data on
- * moves the job cursor to now, so jobs from before are never reported.
+ * The id every event is tied to: the one the CLI deployed as a variable when
+ * it is valid, so its events and the manager's join up; else a random one.
+ */
+export function newInstallId(env: Pick<TelemetryEnv, "APPFLARE_INSTALL_ID">): string {
+  return isInstallId(env.APPFLARE_INSTALL_ID) ? env.APPFLARE_INSTALL_ID : crypto.randomUUID();
+}
+
+/**
+ * Setup just finished, and its last screen shows the usage-data notice.
+ * Records that the notice was shown (so the home page does not show it
+ * again), the install id, and the job cursor at now, so jobs from before
+ * setup finished are never reported. "Setup completed" stays due: the first
+ * scheduled report sends it. Rows already there are kept.
+ */
+export async function recordSetupNotice(env: TelemetryEnv, now: Date = new Date()): Promise<void> {
+  const db = createDb(env.DB);
+  const current = await readSettings(db, [
+    SETTING.telemetryNoticeAt,
+    SETTING.telemetryInstallId,
+    SETTING.telemetryCursor,
+  ]);
+  const rows: Partial<Record<SettingKey, string>> = {};
+  if (current.telemetry_notice_at === undefined) {
+    rows[SETTING.telemetryNoticeAt] = now.toISOString();
+  }
+  if (!isInstallId(current.telemetry_install_id)) {
+    rows[SETTING.telemetryInstallId] = newInstallId(env);
+  }
+  if (current.telemetry_cursor === undefined) {
+    rows[SETTING.telemetryCursor] = String(now.getTime());
+  }
+  await writeSettings(db, rows, now);
+}
+
+/**
+ * Whether the home page shows the usage-data notice: once per manager, until
+ * an admin dismisses it (or changes the switch in Settings). A new manager
+ * showed it on the last setup screen, so only a manager updated from a
+ * version without usage data, or one whose admins never answered the older
+ * notice, shows it. Never while a Worker variable turns usage data off.
+ */
+export async function isNoticeDue(env: TelemetryEnv): Promise<boolean> {
+  if (lockOf(env) !== null) return false;
+  const row = await readSettings(createDb(env.DB), [SETTING.telemetryNoticeAt]);
+  return row.telemetry_notice_at === undefined;
+}
+
+/** The home page notice was dismissed, for every admin of this manager. */
+export async function dismissNotice(env: TelemetryEnv, now: Date = new Date()): Promise<void> {
+  const db = createDb(env.DB);
+  const row = await readSettings(db, [SETTING.telemetryNoticeAt]);
+  if (row.telemetry_notice_at !== undefined) return;
+  await writeSettings(db, { [SETTING.telemetryNoticeAt]: now.toISOString() }, now);
+}
+
+/**
+ * The rows a choice in Settings writes: the choice itself; the time the
+ * notice was seen, if it was not recorded yet; and the install id when there
+ * is none yet. A manager without one was set up before usage data existed,
+ * so "setup completed" is never sent for it; nor is it once usage data is
+ * turned off before the first report. Turning usage data back on moves the
+ * job cursor to now, so jobs that ran while it was off are never reported.
  */
 async function choiceRows(
   env: TelemetryEnv,
   enabled: boolean,
   now: Date,
-  sendSetupCompleted: boolean,
 ): Promise<Partial<Record<SettingKey, string>>> {
   const current = await readSettings(createDb(env.DB), [
     SETTING.telemetry,
@@ -72,38 +129,15 @@ async function choiceRows(
   if (current.telemetry_notice_at === undefined) {
     rows[SETTING.telemetryNoticeAt] = now.toISOString();
   }
-  if (!isInstallId(current.telemetry_install_id)) {
-    rows[SETTING.telemetryInstallId] = isInstallId(env.APPFLARE_INSTALL_ID)
-      ? env.APPFLARE_INSTALL_ID
-      : crypto.randomUUID();
-  }
-  if (enabled && current.telemetry !== "on") {
+  const hasId = isInstallId(current.telemetry_install_id);
+  if (!hasId) rows[SETTING.telemetryInstallId] = newInstallId(env);
+  if (enabled && current.telemetry === "off") {
     rows[SETTING.telemetryCursor] = String(now.getTime());
   }
-  if (current.telemetry_setup_sent === undefined && !(enabled && sendSetupCompleted)) {
+  if (current.telemetry_setup_sent === undefined && (!enabled || !hasId)) {
     rows[SETTING.telemetrySetupSent] = "skipped";
   }
   return rows;
-}
-
-/**
- * An admin saw the notice (the setup step, or the home page notice after an
- * update from a version without usage data) and chose. Only a choice made in
- * the setup step reports "manager setup completed". With a Worker variable
- * turning usage data off, the choice is recorded as off.
- */
-export async function acknowledgeNotice(
-  env: TelemetryEnv,
-  input: AcknowledgeNoticeInput,
-  now: Date = new Date(),
-): Promise<TelemetryStatus> {
-  const enabled = input.enabled && lockOf(env) === null;
-  await writeSettings(
-    createDb(env.DB),
-    await choiceRows(env, enabled, now, input.via === "setup"),
-    now,
-  );
-  return readTelemetryStatus(env);
 }
 
 /** Settings, Usage data: refused while a Worker variable turns usage data off. */
@@ -118,7 +152,7 @@ export async function setTelemetryEnabled(
       `Usage data is turned off by the ${lock} variable on this Worker. Remove the variable to change it here.`,
     );
   }
-  await writeSettings(createDb(env.DB), await choiceRows(env, enabled, now, false), now);
+  await writeSettings(createDb(env.DB), await choiceRows(env, enabled, now), now);
   return readTelemetryStatus(env);
 }
 
@@ -134,8 +168,9 @@ export function resetOpenedMemo(): void {
  * Records that the manager was opened today, for the daily "manager opened"
  * event. Called on every signed-in page load; once this isolate has written
  * today's row it skips the call, otherwise it runs one conditional upsert
- * that changes nothing unless usage data is on and today is not recorded yet. Only the day and the first opener's role are
- * kept: no pages, no users, no counts.
+ * that changes nothing when usage data is turned off or today is already
+ * recorded. Only the day and the first opener's role are kept: no pages, no
+ * users, no counts.
  */
 export async function markOpenedToday(
   env: TelemetryEnv,
@@ -147,13 +182,13 @@ export async function markOpenedToday(
   if (openedMarkedDay === day) return;
   const result = await env.DB.prepare(
     `INSERT INTO settings (key, value, updated_at)
-     SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM settings WHERE key = ?4 AND value = 'on')
+     SELECT ?1, ?2, ?3 WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = ?4 AND value = 'off')
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
      WHERE substr(settings.value, 1, 10) <> substr(excluded.value, 1, 10)`,
   )
     .bind(SETTING.telemetryOpenedDay, `${day} ${role}`, now, SETTING.telemetry)
     .run();
-  // Only a real write settles the day: with usage data not on yet (or the day
+  // Only a real write settles the day: with usage data turned off (or the day
   // already recorded elsewhere), a later page load tries again.
   if (result.meta.changes > 0) openedMarkedDay = day;
 }

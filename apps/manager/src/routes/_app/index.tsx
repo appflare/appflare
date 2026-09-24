@@ -24,7 +24,7 @@ import { StatusBadge } from "../../components/status-badge";
 import { type StartUpdateHandle, useStartUpdate } from "../../components/update-banner";
 import { UsageDataNotice } from "../../components/usage-data-notice";
 import { type InstallRow, listInstalls } from "../../installs/installs.functions";
-import { getTelemetryNotice } from "../../telemetry/telemetry.functions";
+import { dismissTelemetryNotice, getTelemetryNotice } from "../../telemetry/telemetry.functions";
 
 /**
  * `/` (Home): the pending app updates (read by the layout's loader), with
@@ -37,7 +37,8 @@ import { getTelemetryNotice } from "../../telemetry/telemetry.functions";
  * installs of one app are listed one by one. Uninstalled apps that kept data
  * are listed under Settings, Removed apps; the others are not listed
  * anywhere. Admins of a manager updated from a version without usage data
- * first see the usage-data notice, until one of them answers it.
+ * see the usage-data notice above the rest, once for the whole manager: when
+ * one of them dismisses it, it is gone for all.
  */
 export const Route = createFileRoute("/_app/")({
   staticData: { title: "Home" },
@@ -73,7 +74,13 @@ function HomePage() {
         }
       />
       {notice.show && (
-        <UsageDataNotice status={notice.status} via="banner" onDone={() => router.invalidate()} />
+        <UsageDataNotice
+          status={notice.status}
+          onDismiss={async () => {
+            await dismissTelemetryNotice();
+            await router.invalidate();
+          }}
+        />
       )}
       <PendingUpdatesBanner apps={pending.apps} isAdmin={isAdmin} update={update} />
       {update.error !== null && (

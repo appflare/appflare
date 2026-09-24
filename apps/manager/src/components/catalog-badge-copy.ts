@@ -15,7 +15,7 @@ export interface InstallCheckBadgeCopy {
   checked: boolean;
   /** On the badge: the day, or that there is none yet. */
   label: string;
-  /** In the tooltip: what the check did and exactly when, or that it has not passed yet. */
+  /** In the tooltip, one sentence: what the check did and exactly when, or that it has not passed yet. */
   tooltip: string;
 }
 
@@ -33,13 +33,12 @@ export function installCheckBadgeCopy(lastVerified: string | null): InstallCheck
     return {
       checked: false,
       label: "Not checked yet",
-      tooltip:
-        "The catalog's nightly job has not yet reinstalled this version into a test account and seen it answer.",
+      tooltip: "Not yet installed in a test account by the catalog's nightly check.",
     };
   }
   return {
     checked: true,
     label: `Install checked ${formatDate(lastVerified)}`,
-    tooltip: `The catalog's nightly job reinstalled this exact package into a test account on ${formatExactDateTime(lastVerified)}, and it answered.`,
+    tooltip: `Installed and answered in a test account on ${formatExactDateTime(lastVerified)}.`,
   };
 }

@@ -64,7 +64,10 @@ export interface HeartbeatInput {
   accountPlan: string | undefined;
   /** The catalog index URL is Appflare's own. */
   officialCatalog: boolean;
-  /** When an admin saw the usage-data notice (ms); null when none did yet. */
+  /**
+   * When setup happened (ms): the earlier of the first user's creation and
+   * the usage-data notice first shown. Null when neither is known.
+   */
   noticeAt: number | null;
   users: number;
   admins: number;

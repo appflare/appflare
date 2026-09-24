@@ -28,6 +28,7 @@ import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
+import { tooltipContent } from "./tooltip";
 import {
   WorkersPaidConfirmation,
   type WorkersPaidConfirmationState,
@@ -238,7 +239,9 @@ export function InstallForm({
             ) : (
               <InputGroup
                 label="Worker name"
-                labelTooltip="Resources are named after it. Each install of an app needs its own Worker name."
+                labelTooltip={tooltipContent(
+                  "Resources are named after it. Each install of an app needs its own Worker name.",
+                )}
                 error={nameValid ? undefined : { message: `Use ${WORKER_NAME_HINT}`, match: true }}
                 description={
                   fixedWorkerName

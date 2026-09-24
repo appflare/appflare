@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
 import { type PendingUpdates, sidebarUpdateBadge } from "../installs/pending-updates";
 import type { Viewer } from "../server/session.functions";
 import { AccountMenu } from "./account-menu";
-import { AppflareCard } from "./appflare-card";
+import { AppflareCard, AppflareVersion } from "./appflare-card";
 import { Logo } from "./logo";
 import { isCurrentPage, SETTINGS_PAGE_LIST } from "./navigation";
 
@@ -53,8 +53,8 @@ function CountBadge({ count, label }: { count: number; label: string }) {
 /**
  * Signed-in chrome: Kumo sidebar with the logo, Home, Catalog, Jobs and
  * Settings (whose pages are listed under it while one is open), Appflare's
- * own version with its update, and the account menu. Home carries the count
- * of app updates.
+ * own update while there is one, and a footer with the account menu and
+ * Appflare's version. Home carries the count of app updates.
  */
 export function AppShell({
   viewer,
@@ -108,11 +108,10 @@ export function AppShell({
             </Sidebar.Menu>
           </Sidebar.Group>
         </Sidebar.Content>
-        <div className="shrink-0 px-3 pb-3">
-          <AppflareCard manager={pending.manager} isAdmin={viewer.role === "admin"} />
-        </div>
-        <Sidebar.Footer>
+        <AppflareCard manager={pending.manager} isAdmin={viewer.role === "admin"} />
+        <Sidebar.Footer className="gap-3">
           <AccountMenu viewer={viewer} />
+          <AppflareVersion version={pending.manager.current} />
         </Sidebar.Footer>
       </Sidebar>
       <main className="min-w-0 flex-1 overflow-y-auto px-8 py-6">

@@ -24,7 +24,7 @@ import {
   utcDay,
   uuidV5,
 } from "./events";
-import { isDevBuild, lockOf, type TelemetryEnv } from "./state.server";
+import { isDevBuild, lockOf, newInstallId, type TelemetryEnv } from "./state.server";
 
 /**
  * The usage-data report, sent by the cron. Everything is read from D1 and
@@ -34,9 +34,11 @@ import { isDevBuild, lockOf, type TelemetryEnv } from "./state.server";
  * In order, and nothing is read before the earlier checks pass:
  * 1. a development build sends nothing;
  * 2. `APPFLARE_TELEMETRY=off` (or `DO_NOT_TRACK=1`) on the Worker sends nothing;
- * 3. no stored choice (no admin has seen the notice) sends nothing;
+ * 3. before setup finished (no Cloudflare token yet) nothing is sent;
  * 4. a stored `off` sends and writes nothing;
- * 5. otherwise: the heartbeat once per UTC day, every job start and end since
+ * 5. otherwise (on, whether or not an admin ever chose): a manager without an
+ *    install id (updated from a version without usage data) gets one first;
+ *    then the heartbeat once per UTC day, every job start and end since
  *    the cursor, the last day the manager was opened, and "setup completed"
  *    once. The cursors move only when PostHog accepted the batch, so a failed
  *    send is retried by the next run; anything older than 7 days, or beyond
@@ -72,6 +74,7 @@ export const CURSOR_LAG_MS = 15_000;
 export const MAX_EVENTS = 500;
 
 const REPORT_KEYS = [
+  SETTING.cfTokenConfigured,
   SETTING.telemetry,
   SETTING.telemetryNoticeAt,
   SETTING.telemetryInstallId,
@@ -105,7 +108,7 @@ function heartbeatStatements(db: D1Database): D1PreparedStatement[] {
   return [
     db.prepare("SELECT value FROM settings WHERE key = ?1").bind(SCHEMA_VERSION_KEY),
     db.prepare(
-      `SELECT count(*) AS users,
+      `SELECT count(*) AS users, min(created_at) AS first_user_at,
               coalesce(sum(CASE WHEN ',' || replace(coalesce(role, ''), ' ', '') || ',' LIKE '%,admin,%'
                            THEN 1 ELSE 0 END), 0) AS admins
        FROM user`,
@@ -159,9 +162,15 @@ async function heartbeatInput(
   );
   const feature = (kind: string) => num(features?.find((f) => f.kind === kind)?.installs);
   const latest = await readManagerLatest(env.KV);
-  const noticeAt = settings.telemetry_notice_at
-    ? Date.parse(settings.telemetry_notice_at)
-    : Number.NaN;
+  // Setup time: the earlier of the first user's creation (the first step of
+  // setup) and the first time the usage-data notice was shown. On a manager
+  // updated from a version without usage data the notice comes much later
+  // (a dismissal), so it never moves setup forward.
+  const setupTimes = [
+    settings.telemetry_notice_at ? Date.parse(settings.telemetry_notice_at) : Number.NaN,
+    num(users?.[0]?.first_user_at) || Number.NaN,
+  ].filter((t) => !Number.isNaN(t));
+  const noticeAt = setupTimes.length > 0 ? Math.min(...setupTimes) : Number.NaN;
   return {
     now,
     managerVersion: env.APPFLARE_VERSION,
@@ -282,12 +291,31 @@ export async function reportTelemetry(
 async function report(env: ReportEnv, opts: ReportOptions): Promise<ReportOutcome> {
   const db = createDb(env.DB);
   const settings: ReportSettings = await readSettings(db, REPORT_KEYS);
-  if (settings.telemetry === undefined) return { status: "skipped", reason: "notice not seen" };
-  if (settings.telemetry !== "on") return { status: "skipped", reason: "turned off" };
-  const installId = settings.telemetry_install_id;
-  if (!isInstallId(installId)) return { status: "skipped", reason: "no install id" };
+  if (settings.cf_token_configured !== "1") {
+    return { status: "skipped", reason: "setup not finished" };
+  }
+  if (settings.telemetry === "off") return { status: "skipped", reason: "turned off" };
 
   const now = (opts.now ?? Date.now)();
+  let installId = settings.telemetry_install_id;
+  if (!isInstallId(installId)) {
+    // Set up before usage data existed (setup records the id): report from
+    // now on under a new id. Its setup was long ago, so "setup completed" is
+    // not sent, and jobs from before now are not reported.
+    installId = newInstallId(env);
+    const identity: Partial<Record<SettingKey, string>> = {
+      [SETTING.telemetryInstallId]: installId,
+    };
+    if (settings.telemetry_setup_sent === undefined) {
+      identity[SETTING.telemetrySetupSent] = "skipped";
+    }
+    if (settings.telemetry_cursor === undefined) {
+      identity[SETTING.telemetryCursor] = String(now);
+    }
+    await writeSettings(db, identity, new Date(now));
+    Object.assign(settings, identity);
+  }
+
   const today = utcDay(now);
   const oldest = now - BACKLOG_MS;
   const storedCursor = Number(settings.telemetry_cursor);

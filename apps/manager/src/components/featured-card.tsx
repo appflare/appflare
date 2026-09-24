@@ -7,7 +7,6 @@ import {
   LinkButton,
   Popover,
   Text,
-  Tooltip,
 } from "@cloudflare/kumo";
 import { ArrowRightIcon, InfoIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -15,6 +14,7 @@ import { useState } from "react";
 import { dismissFeatured } from "../catalog/catalog.functions";
 import { type FeaturedCard as FeaturedCardData, safeExternalUrl } from "../catalog/featured";
 import { AppCover } from "./catalog-media";
+import { Tooltip } from "./tooltip";
 
 /**
  * The catalog's sponsored item. The "Sponsored" label and the disclosure

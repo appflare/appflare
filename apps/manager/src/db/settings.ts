@@ -53,10 +53,14 @@ export const SETTING = {
   accountCapabilities: "account_capabilities",
   /**
    * Anonymous usage data (telemetry/). `telemetry` is `on` or `off`; absent
-   * means no admin has seen the notice yet, so nothing is sent.
+   * means no admin has changed it, which is on.
    */
   telemetry: "telemetry",
-  /** ISO 8601 time an admin first saw the usage-data notice (setup step, banner, or Settings). */
+  /**
+   * ISO 8601 time the usage-data notice was first shown for this manager:
+   * the last setup screen, the home page notice dismissed, or a choice in
+   * Settings. While absent, admins see the notice on the home page.
+   */
   telemetryNoticeAt: "telemetry_notice_at",
   /** The random id every event is tied to (a UUIDv4). Kept when usage data is turned off. */
   telemetryInstallId: "telemetry_install_id",

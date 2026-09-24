@@ -11,7 +11,7 @@ describe("installCheckBadgeCopy", () => {
     expect(copy.checked).toBe(true);
     expect(copy.label).toBe("Install checked Sep 23, 2026");
     expect(copy.tooltip).toMatch(
-      /^The catalog's nightly job reinstalled this exact package into a test account on September 23, 2026 at 12:34:56\sPM UTC, and it answered\.$/,
+      /^Installed and answered in a test account on September 23, 2026 at 12:34:56\sPM UTC\.$/,
     );
   });
 
@@ -20,7 +20,7 @@ describe("installCheckBadgeCopy", () => {
     expect(copy.checked).toBe(false);
     expect(copy.label).toBe("Not checked yet");
     expect(copy.tooltip).toBe(
-      "The catalog's nightly job has not yet reinstalled this version into a test account and seen it answer.",
+      "Not yet installed in a test account by the catalog's nightly check.",
     );
   });
 

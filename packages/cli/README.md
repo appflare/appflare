@@ -204,10 +204,10 @@ go to PostHog Cloud's EU region and are tied to a random id, never to a person; 
 PostHog project is set to discard IP addresses.
 
 `create-appflare` deploys the manager with that random id as the variable
-`APPFLARE_INSTALL_ID`, so the manager's own usage data continues it. The manager
-sends nothing until an admin has seen its notice during setup, where it can be
-turned off; it can be changed later under Settings, Usage data. That switch covers
-the manager's reports only, not the installer's.
+`APPFLARE_INSTALL_ID`, so the manager's own usage data continues it. The manager's
+reports start with its first scheduled run after setup, and the last setup screen
+says so; turn them off under Settings, Usage data. That switch covers the manager's
+reports only, not the installer's.
 
 Turn the installer's off with any one of:
 

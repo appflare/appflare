@@ -1,9 +1,8 @@
 import { TELEMETRY_DOCS_URL } from "@appflare/schema";
-import { Banner, Button, Link, Switch, Text } from "@cloudflare/kumo";
-import { ChartBarIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Banner, Link, Switch, Text } from "@cloudflare/kumo";
+import { ChartBarIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
 import { useState } from "react";
-import { type NoticeSurface, TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
-import { acknowledgeTelemetryNotice } from "../telemetry/telemetry.functions";
+import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 
 /** The "What is sent" link to the docs page. */
 export function WhatIsSentLink() {
@@ -81,70 +80,72 @@ export function UsageDataSwitch({
 }
 
 /**
- * The usage-data notice: what it is for, its switch (on by default), what is
- * and is not sent, and Continue, which records the choice. The setup step shows it inline; the home page shows it
- * as a banner to admins of a manager updated from a version without usage
- * data. Nothing is sent before Continue.
+ * The usage-data notice: usage data is on (or which Worker variable turns it
+ * off), what it is for, and how to turn it off. It only informs; nothing
+ * waits for it. The last setup screen shows it as it is; the home page shows
+ * it once per manager, to admins of a manager updated from a version without
+ * usage data, with `onDismiss`, which hides it for every admin.
  */
 export function UsageDataNotice({
   status,
-  via,
-  onDone,
+  onDismiss,
 }: {
   status: TelemetryStatus;
-  via: NoticeSurface;
-  onDone: () => void | Promise<void>;
+  onDismiss?: () => Promise<void>;
 }) {
-  const [enabled, setEnabled] = useState(true);
-  const [pending, setPending] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function onContinue() {
-    setPending(true);
+  async function dismiss(run: () => Promise<void>) {
+    setDismissing(true);
     setError(null);
     try {
-      await acknowledgeTelemetryNotice({ data: { enabled, via } });
-      await onDone();
+      await run();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save the choice.");
-      setPending(false);
+      setError(err instanceof Error ? err.message : "Could not dismiss the notice.");
+      setDismissing(false);
     }
   }
 
-  const body = (
-    <div className="grid gap-3">
-      <UsageDataBenefits />
-      <UsageDataSwitch status={status} checked={enabled} disabled={pending} onChange={setEnabled} />
-      <UsageDataSummary />
+  const locked = status.lockedBy;
+  return (
+    <div className="grid gap-2">
+      <Banner
+        variant={locked === null ? "default" : "secondary"}
+        icon={<ChartBarIcon weight="fill" />}
+        title={locked === null ? TELEMETRY_COPY.noticeOn : TELEMETRY_COPY.noticeOff}
+        description={
+          <div className="grid gap-1.5">
+            {locked === null ? (
+              <>
+                <p>{TELEMETRY_COPY.noticeBody}</p>
+                <p>{TELEMETRY_COPY.noticeTurnOff}</p>
+                {status.devBuild && <p>{TELEMETRY_COPY.devBuild}</p>}
+              </>
+            ) : (
+              <p>{TELEMETRY_COPY.noticeLocked(locked)}</p>
+            )}
+            <span>
+              <WhatIsSentLink />
+            </span>
+          </div>
+        }
+        action={
+          onDismiss === undefined ? undefined : (
+            <Banner.Action
+              variant="ghost"
+              icon={<XIcon />}
+              aria-label={TELEMETRY_COPY.dismiss}
+              title={TELEMETRY_COPY.dismiss}
+              loading={dismissing}
+              onClick={() => void dismiss(onDismiss)}
+            />
+          )
+        }
+      />
       {error !== null && (
         <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
       )}
     </div>
-  );
-  const button = (
-    <Button variant="primary" loading={pending} onClick={() => void onContinue()}>
-      {TELEMETRY_COPY.continue}
-    </Button>
-  );
-
-  if (via === "banner") {
-    return (
-      <Banner
-        variant="default"
-        icon={<ChartBarIcon weight="fill" />}
-        title={TELEMETRY_COPY.title}
-        description={body}
-        action={button}
-      />
-    );
-  }
-  return (
-    <section className="grid gap-3">
-      <Text variant="heading" as="h2">
-        {TELEMETRY_COPY.title}
-      </Text>
-      {body}
-      {button}
-    </section>
   );
 }

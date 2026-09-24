@@ -23,11 +23,11 @@ import { getTelemetryStatus } from "../telemetry/telemetry.functions";
 /**
  * `/setup?token=…`. Before any user exists: validate the
  * setup token, then create the first admin. After that, signed in as an admin:
- * the Cloudflare token step, then the anonymous usage-data notice, whose
- * Continue records the choice and leaves setup. Once the token is configured
+ * the Cloudflare token step, whose last screen says that anonymous usage data
+ * is on and how to turn it off (saving the token records that the notice was
+ * shown, so the home page does not repeat it). Once the token is configured
  * `/setup` redirects to `/`; until then every signed-in page redirects here
- * (`_app.tsx`). An admin who leaves before Continue sees the notice on the
- * home page instead.
+ * (`_app.tsx`).
  */
 export const Route = createFileRoute("/setup")({
   staticData: { title: "Set up" },
@@ -211,17 +211,10 @@ function TokenSavedCard({
             }
           />
         )}
-        {telemetry !== null ? (
-          <UsageDataNotice
-            status={telemetry}
-            via="setup"
-            onDone={() => router.navigate({ to: "/" })}
-          />
-        ) : (
-          <Button variant="primary" onClick={() => void router.navigate({ to: "/" })}>
-            Go to Installed apps
-          </Button>
-        )}
+        {telemetry !== null && <UsageDataNotice status={telemetry} />}
+        <Button variant="primary" onClick={() => void router.navigate({ to: "/" })}>
+          Go to Installed apps
+        </Button>
       </div>
     </AuthLayout>
   );

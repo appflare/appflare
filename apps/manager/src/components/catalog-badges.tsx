@@ -1,5 +1,5 @@
 import type { InstallTier, Plan, Requirement } from "@appflare/schema";
-import { Badge, Text, Tooltip } from "@cloudflare/kumo";
+import { Badge, Text } from "@cloudflare/kumo";
 import {
   ArchiveIcon,
   BrowserIcon,
@@ -14,6 +14,7 @@ import {
 import { type CapabilitiesView, requirementBadge } from "../capabilities/capabilities";
 import { requirementLabel } from "../catalog/requirements";
 import { installCheckBadgeCopy, PLAN_BADGES } from "./catalog-badge-copy";
+import { Tooltip } from "./tooltip";
 
 /**
  * What the catalog index says about an app beyond its name: the Workers plan it

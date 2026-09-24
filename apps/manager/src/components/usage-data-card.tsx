@@ -45,7 +45,6 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
     }
   }
 
-  const unanswered = status.state === "unset" && status.lockedBy === null;
   return (
     // The switch shows the choice; the page title names the card. What is sent in the end
     // (nothing from a development build, whatever the switch says) is spelled out below it.
@@ -58,11 +57,6 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
           disabled={!isAdmin || pending}
           onChange={(next) => void onChange(next)}
         />
-        {unanswered && (
-          <Text variant="secondary" size="sm">
-            {TELEMETRY_COPY.unanswered}
-          </Text>
-        )}
         {!isAdmin && status.lockedBy === null && (
           <Text variant="secondary" size="sm">
             {TELEMETRY_COPY.membersOnly}

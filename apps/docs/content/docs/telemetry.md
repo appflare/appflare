@@ -4,9 +4,11 @@ description: What leaving usage data on does, what Appflare sends and never send
 ---
 
 Appflare collects anonymous usage data to decide what to build and fix. It is on by
-default and easy to turn off. The manager sends nothing until an admin has seen the
-notice: in the setup wizard, or, after an update from a version without usage data,
-in a notice on the home page. A development build never sends anything.
+default and easy to turn off. The manager's first report goes out with its first
+scheduled run after setup finishes. The last screen of the setup wizard says that
+usage data is on and how to turn it off; a manager updated from a version without
+usage data shows the same notice on the home page once, until an admin dismisses it.
+Neither waits for an answer. A development build never sends anything.
 
 ## What it does for you
 
@@ -124,16 +126,15 @@ Any one of these stops everything:
 
 - The **Send anonymous usage data** switch under **Settings**, **Usage data**
   (admins).
-- The same switch in the setup wizard.
 - The installer's flag: `npx create-appflare --no-telemetry`.
 - `APPFLARE_TELEMETRY=off` (`0` and `false` work too) or `DO_NOT_TRACK=1` in the
   installer's environment.
 - The same variables on the manager's Worker, set in the Cloudflare dashboard under
   the Worker's **Settings**, **Variables and Secrets**. Either one locks usage data
-  off: Settings and the setup wizard show the switch off and disabled, with "Turned
-  off by the APPFLARE_TELEMETRY variable on this Worker. Remove the variable to
-  change this here." (naming `DO_NOT_TRACK` when that is the one set). Updates of
-  the manager keep the variable.
+  off: Settings shows the switch off and disabled, with "Turned off by the
+  APPFLARE_TELEMETRY variable on this Worker. Remove the variable to change this
+  here." (naming `DO_NOT_TRACK` when that is the one set), and the setup wizard's
+  notice says usage data is off. Updates of the manager keep the variable.
 
 When the installer's usage data is off by the flag or a variable, it deploys the
 manager with `APPFLARE_TELEMETRY=off`, so the manager's is locked off too. The
