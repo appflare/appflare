@@ -206,18 +206,22 @@ export async function createChannel(
 /**
  * Renames a channel, changes its events, and optionally replaces its
  * credentials (same kind only). A generic webhook keeps its signing secret
- * when its URL changes; replacing the secret is its own action.
+ * when its URL changes; replacing the secret is its own action. When the
+ * stored credentials cannot be read any more (the key they were sealed with
+ * changed), entering them again repairs the channel: a webhook then gets a
+ * fresh signing secret, returned here once, since the old one is lost.
  */
 export async function updateChannel(
   env: ChannelsEnv,
   raw: UpdateChannelInput,
   deps: ChannelsDeps = {},
-): Promise<ChannelView> {
+): Promise<ChannelSaved> {
   const input = updateChannelInput.parse(raw);
   const now = (deps.now ?? Date.now)();
   const row = await readChannel(env.DB, input.id);
   let sealed = row.config;
   let target = row.target;
+  let signingSecret: string | null = null;
   if (input.settings !== undefined) {
     if (input.settings.kind !== row.kind) {
       throw new ChannelError("A channel's kind cannot change; add a new channel instead.");
@@ -226,13 +230,9 @@ export async function updateChannel(
     let stored: StoredConfig;
     if (input.settings.kind === "webhook") {
       const previous = await decryptConfig(k, row.id, row.config);
-      const secret = previous?.kind === "webhook" ? previous.secret : null;
-      if (secret === null) {
-        throw new ChannelError(
-          "The stored signing secret cannot be read. Replace the signing secret first.",
-        );
-      }
-      stored = { ...input.settings, secret };
+      const kept = previous?.kind === "webhook" ? previous.secret : null;
+      if (kept === null) signingSecret = newSigningSecret();
+      stored = { ...input.settings, secret: kept ?? signingSecret ?? newSigningSecret() };
     } else {
       stored = input.settings;
     }
@@ -247,13 +247,16 @@ export async function updateChannel(
     .bind(row.id, input.label, JSON.stringify(input.events), sealed, target, now)
     .run();
   await remember(env, deps, now);
-  return viewOf(env, await readChannel(env.DB, row.id), await pendingOf(env.DB, row.id));
+  return {
+    channel: await viewOf(env, await readChannel(env.DB, row.id), await pendingOf(env.DB, row.id)),
+    signingSecret,
+  };
 }
 
 /**
- * A generic webhook's new signing secret, returned once. Also the way to
- * make a webhook whose credentials cannot be read any more usable again
- * (with its URL entered again first when that is unreadable too).
+ * A generic webhook's new signing secret, returned once. A webhook whose
+ * credentials cannot be read any more is repaired by editing it instead,
+ * which takes its URL again and makes a new secret.
  */
 export async function replaceSigningSecret(
   env: ChannelsEnv,
@@ -267,7 +270,9 @@ export async function replaceSigningSecret(
   const k = await key(env);
   const previous = await decryptConfig(k, row.id, row.config);
   if (previous?.kind !== "webhook") {
-    throw new ChannelError("The stored URL cannot be read. Enter the URL again, then try this.");
+    throw new ChannelError(
+      "The stored URL cannot be read. Edit the channel and enter its details again.",
+    );
   }
   const signingSecret = newSigningSecret();
   const sealed = await encryptConfig(k, row.id, { ...previous, secret: signingSecret });
@@ -306,7 +311,11 @@ export async function sendTest(
   await remember(env, deps, now());
   const config = await decryptConfig(await key(env), row.id, row.config);
   if (config === null) {
-    return { ok: false, detail: "The stored credentials cannot be read. Enter them again." };
+    return {
+      ok: false,
+      detail:
+        "The stored credentials cannot be read. Edit the channel and enter its details again.",
+    };
   }
   const outcome = await sendToChannel(
     config,

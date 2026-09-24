@@ -1,17 +1,7 @@
 import { type CatalogAuthor, type IndexBuild, SELF_DEPLOYING_TOOLS } from "@appflare/schema";
+import { Badge, Banner, Checkbox, Empty, LayerCard, Link, Table, Text } from "@cloudflare/kumo";
 import {
-  Badge,
-  Banner,
-  Checkbox,
-  Empty,
-  LayerCard,
-  Link,
-  LinkButton,
-  Table,
-  Text,
-} from "@cloudflare/kumo";
-import {
-  ArrowLeftIcon,
+  CheckCircleIcon,
   StorefrontIcon,
   WarningCircleIcon,
   WarningIcon,
@@ -27,9 +17,11 @@ import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { InstallCheckBadge, PlanBadge, TierBadge } from "../../../components/catalog-badges";
 import { AppCover, AppIcon, PopularityLine, Screenshots } from "../../../components/catalog-media";
 import { CronTriggersField } from "../../../components/cron-triggers-field";
+import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
+import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
 import {
   describeInstance,
@@ -46,6 +38,8 @@ import {
  * against the free plan's 5 per account. When the app lists account requirements, the admin
  * confirms them in the prerequisites callout before the Install button enables.
  */
+const CATALOG_CRUMB = { label: "Catalog", href: "/catalog" };
+
 export const Route = createFileRoute("/_app/catalog/$slug")({
   loader: ({ params }) => getCatalogEntry({ data: { slug: params.slug } }),
   // The deepest route's title wins over the root's "<page> · Appflare".
@@ -55,32 +49,15 @@ export const Route = createFileRoute("/_app/catalog/$slug")({
   component: CatalogEntryPage,
 });
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <Text as="dt" variant="secondary">
-        {label}
-      </Text>
-      <Text as="dd">{children}</Text>
-    </>
-  );
-}
-
 function CatalogEntryPage() {
   const detail = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   const { slug } = Route.useParams();
   const [requirementsConfirmed, setRequirementsConfirmed] = useState(false);
-  const back = (
-    <LinkButton href="/catalog" variant="ghost" icon={<ArrowLeftIcon />}>
-      Catalog
-    </LinkButton>
-  );
-
   if (detail.app === null) {
     return (
       <>
-        <PageHeader title="Catalog" actions={back} />
+        <PageHeader title="App not found" parents={[CATALOG_CRUMB]} />
         {detail.error !== null ? (
           <Empty
             icon={<WarningCircleIcon size={48} className="text-kumo-inactive" />}
@@ -113,10 +90,12 @@ function CatalogEntryPage() {
   const installable = catalog !== null && detail.suggestedWorkerName !== null;
   return (
     <>
-      <PageHeader title={app.name} description={app.summary} actions={back} />
-      {detail.images.cover !== null && (
-        <AppCover src={detail.images.cover} alt={`${app.name}: ${app.summary}`} />
-      )}
+      <PageHeader
+        title={app.name}
+        description={app.summary}
+        parents={[CATALOG_CRUMB]}
+        icon={<AppIcon src={detail.images.icon} size={40} />}
+      />
       <AboutCard detail={detail} />
       {detail.images.screenshots.length > 0 && (
         <LayerCard>
@@ -133,7 +112,11 @@ function CatalogEntryPage() {
             ? {
                 checked: requirementsConfirmed,
                 onChange: setRequirementsConfirmed,
-                disabled: !canInstall || blockedReason !== null,
+                disabledReason: !canInstall
+                  ? "Only admins can install apps."
+                  : blockedReason !== null
+                    ? "The install form below says why this app cannot be installed now."
+                    : null,
               }
             : null
         }
@@ -180,23 +163,27 @@ function CatalogEntryPage() {
 function AboutCard({ detail }: { detail: CatalogDetail }) {
   const { app, catalog } = detail;
   if (app === null) return null;
+  const cover = detail.images.cover;
   return (
     <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-3">
-          <AppIcon src={detail.images.icon} size={28} />
-          <span>About</span>
-        </span>
-        <div className="flex items-center gap-2">
+      <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
+        <span>About</span>
+        <div className="flex flex-wrap items-center gap-2">
           <TierBadge tier={app.tier} />
           <PlanBadge plan={app.plan} />
         </div>
       </LayerCard.Secondary>
-      <LayerCard.Primary className="px-5 py-4">
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
-          <Row label="Version">
+      <LayerCard.Primary
+        className={
+          cover === null
+            ? "px-5 py-4"
+            : "grid items-start gap-5 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]"
+        }
+      >
+        <DescriptionList>
+          <DescriptionItem label="Version">
             <span className="font-mono text-[0.9em]">{app.version}</span>
-          </Row>
+          </DescriptionItem>
           {app.tier === "sandbox" && app.build !== undefined && <BuildRow build={app.build} />}
           {app.tier === "self-deploying" && app.build !== undefined && (
             <InstallerRow
@@ -210,7 +197,7 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
           )}
           {catalog !== null && (
             <>
-              <Row label="Source">
+              <DescriptionItem label="Source">
                 <Link
                   href={`https://github.com/${catalog.repo}`}
                   target="_blank"
@@ -219,34 +206,38 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
                   {catalog.repo}
                   <Link.ExternalIcon />
                 </Link>
-              </Row>
-              <Row label="Homepage">
+              </DescriptionItem>
+              <DescriptionItem label="Homepage">
                 <Link href={catalog.homepage} target="_blank" rel="noopener noreferrer">
                   {catalog.homepage}
                   <Link.ExternalIcon />
                 </Link>
-              </Row>
-              <Row label="License">{catalog.license}</Row>
+              </DescriptionItem>
+              <DescriptionItem label="License">{catalog.license}</DescriptionItem>
             </>
           )}
           {detail.popularity !== null &&
             (detail.popularity.stars !== null || detail.popularity.installsKnown) && (
-              <Row label="Popularity">
+              <DescriptionItem label="Popularity">
                 <PopularityLine popularity={detail.popularity} />
-              </Row>
+              </DescriptionItem>
             )}
           {detail.authors.length > 0 && (
-            <Row label={detail.authors.length === 1 ? "Author" : "Authors"}>
+            <DescriptionItem label={detail.authors.length === 1 ? "Author" : "Authors"}>
               <Authors authors={detail.authors} />
-            </Row>
+            </DescriptionItem>
           )}
-          <Row label="Packaged by">
+          <DescriptionItem label="Packaged by">
             <Maintainers maintainers={app.maintainers} />
-          </Row>
-          <Row label="Last checked">
+          </DescriptionItem>
+          <DescriptionItem label="Last checked">
             <InstallCheckBadge lastVerified={app.lastVerified} />
-          </Row>
-        </dl>
+          </DescriptionItem>
+        </DescriptionList>
+        {cover !== null && (
+          // The cover is the app's 1200x630 card; beside the details it stays card-sized.
+          <AppCover src={cover} alt={`${app.name}: ${app.summary}`} />
+        )}
       </LayerCard.Primary>
     </LayerCard>
   );
@@ -301,7 +292,7 @@ function ExternalLink({ href, children }: { href: string; children: ReactNode })
 function BuildRow({ build }: { build: IndexBuild }) {
   const estimate = estimateIndexBuild(build);
   return (
-    <Row label="Build">
+    <DescriptionItem label="Build">
       <span className="grid gap-0.5">
         <span>
           From <span className="font-mono text-[0.9em]">{build.pin.slice(0, 12)}</span> in your
@@ -312,7 +303,7 @@ function BuildRow({ build }: { build: IndexBuild }) {
           {formatUsd(estimate.usd)} a build of that length beyond the included usage
         </Text>
       </span>
-    </Row>
+    </DescriptionItem>
   );
 }
 
@@ -320,7 +311,7 @@ function BuildRow({ build }: { build: IndexBuild }) {
 function InstallerRow({ build, tool }: { build: IndexBuild; tool: string | null }) {
   const estimate = estimateIndexBuild(build);
   return (
-    <Row label="Installer">
+    <DescriptionItem label="Installer">
       <span className="grid gap-0.5">
         <span>
           Its own{tool === null ? "" : ` (${tool})`}, run from{" "}
@@ -332,7 +323,7 @@ function InstallerRow({ build, tool }: { build: IndexBuild; tool: string | null 
           {formatUsd(estimate.usd)} a run of that length beyond the included usage. No rollback.
         </Text>
       </span>
-    </Row>
+    </DescriptionItem>
   );
 }
 
@@ -340,10 +331,7 @@ function InstallerRow({ build, tool }: { build: IndexBuild; tool: string | null 
 function Instances({ detail }: { detail: CatalogDetail }) {
   if (detail.instances.length === 0) return null;
   return (
-    <section className="grid gap-3">
-      <Text variant="heading" as="h2">
-        Installed in this account
-      </Text>
+    <Section title="Installed in this account">
       <LayerCard className="p-0">
         <Table>
           <Table.Header>
@@ -370,14 +358,15 @@ function Instances({ detail }: { detail: CatalogDetail }) {
           </Table.Body>
         </Table>
       </LayerCard>
-    </section>
+    </Section>
   );
 }
 
 interface RequirementsConfirmation {
   checked: boolean;
   onChange(checked: boolean): void;
-  disabled: boolean;
+  /** Why the box cannot be ticked now; null when it can. */
+  disabledReason: string | null;
 }
 
 /**
@@ -399,26 +388,31 @@ function Prerequisites({
     ...detail.durableObjects.map((d) => `Durable Object class ${d}`),
   ];
   const paid = app.plan === "paid";
+  const planBadge = paid ? paidPlanBadge(detail.capabilities) : null;
+  const requirementBadges = app.requires.map((r) => requirementBadge(r, detail.capabilities));
+  // Green only when Appflare detected every requirement as met; anything unknown stays a warning.
+  const allMet =
+    (!paid || planBadge?.met === true) && requirementBadges.every((b) => b?.met === true);
   return (
     <div className="grid gap-3">
       {(paid || app.requires.length > 0) && (
         <Banner
-          variant="alert"
-          icon={<WarningIcon weight="fill" />}
-          title="Before you install"
+          variant={allMet ? "default" : "alert"}
+          icon={allMet ? <CheckCircleIcon weight="fill" /> : <WarningIcon weight="fill" />}
+          title={allMet ? "This account meets the requirements" : "Before you install"}
           description={
             <div className="grid gap-2">
               {paid && (
                 <span className="inline-flex flex-wrap items-center gap-2">
                   This app needs the Workers Paid plan on this account.
-                  <CapabilityBadge badge={paidPlanBadge(detail.capabilities)} />
+                  <CapabilityBadge badge={planBadge} />
                 </span>
               )}
               {app.requires.length > 0 && (
                 <>
                   <span>{paid ? "It also needs:" : "This app needs:"}</span>
                   <ul className="grid list-disc gap-1 pl-5">
-                    {app.requires.map((r) => (
+                    {app.requires.map((r, i) => (
                       <li key={r}>
                         <span className="font-semibold">{requirementLabel(r)}.</span>{" "}
                         {requirementSentence(r, {
@@ -426,17 +420,24 @@ function Prerequisites({
                           provisionsEmailRouting:
                             detail.catalog?.install.emailRouting !== undefined,
                         })}{" "}
-                        <CapabilityBadge badge={requirementBadge(r, detail.capabilities)} />
+                        <CapabilityBadge badge={requirementBadges[i] ?? null} />
                       </li>
                     ))}
                   </ul>
                   {confirmation !== null && (
-                    <Checkbox
-                      label="This account meets these requirements"
-                      checked={confirmation.checked}
-                      disabled={confirmation.disabled}
-                      onCheckedChange={(checked: boolean) => confirmation.onChange(checked)}
-                    />
+                    <span className="grid gap-1">
+                      <Checkbox
+                        label="This account meets these requirements"
+                        checked={confirmation.checked}
+                        disabled={confirmation.disabledReason !== null}
+                        onCheckedChange={(checked: boolean) => confirmation.onChange(checked)}
+                      />
+                      {confirmation.disabledReason !== null && (
+                        <Text as="span" variant="secondary" size="sm">
+                          {confirmation.disabledReason}
+                        </Text>
+                      )}
+                    </span>
                   )}
                 </>
               )}

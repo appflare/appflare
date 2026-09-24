@@ -4,9 +4,8 @@ import {
   type IndexBuild,
   renderPlaceholders,
 } from "@appflare/schema";
-import { Banner, Button, Input, InputArea, LayerCard, Text } from "@cloudflare/kumo";
+import { Banner, Button, Input, InputArea, InputGroup, LayerCard, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
-import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import type { AccountPlan } from "../account/plan";
 import {
@@ -24,6 +23,7 @@ import { startInstall } from "../installs/installs.functions";
 import { workersDevUrl } from "../installs/post-install";
 import { CronTriggersField } from "./cron-triggers-field";
 import { EmailRoutingFields } from "./email-routing-fields";
+import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
 import {
@@ -99,7 +99,7 @@ export function InstallForm({
   /** The plan was detected, so remembering one for the account would not apply. */
   planDetected?: boolean;
 }) {
-  const router = useRouter();
+  const jobStarted = useJobStarted();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
   /** Null while the label follows the Worker name. */
   const [label, setLabel] = useState<string | null>(null);
@@ -189,7 +189,7 @@ export function InstallForm({
             : {}),
         },
       });
-      await router.navigate({ to: "/jobs/$jobId", params: { jobId } });
+      await jobStarted(jobId, "Install started");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start the install.");
       setPending(false);
@@ -222,22 +222,31 @@ export function InstallForm({
                 ), so several installs never share one.
               </Text>
             ) : (
-              <Input
+              <InputGroup
                 label="Worker name"
-                value={workerName}
-                onChange={(e) => setWorkerName(e.currentTarget.value.trim())}
-                readOnly={fixedWorkerName}
-                autoComplete="off"
-                spellCheck={false}
-                required
-                maxLength={WORKER_NAME_MAX_LENGTH}
-                error={nameValid ? undefined : `Use ${WORKER_NAME_HINT}`}
+                labelTooltip="Resources are named after it. Each install of an app needs its own Worker name."
+                error={nameValid ? undefined : { message: `Use ${WORKER_NAME_HINT}`, match: true }}
                 description={
                   fixedWorkerName
                     ? `${catalog.name} only works as the Worker "${workerName}", so it installs once per account.`
-                    : `The app is served at https://${workerName || "<name>"}.${subdomain ?? "<your subdomain>"}.workers.dev. Resources are named after it. Each install of an app needs its own Worker name.`
+                    : "The app is served at this address."
                 }
-              />
+              >
+                <InputGroup.Addon>https://</InputGroup.Addon>
+                <InputGroup.Input
+                  aria-label="Worker name"
+                  value={workerName}
+                  onChange={(e) => setWorkerName(e.currentTarget.value.trim())}
+                  readOnly={fixedWorkerName}
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  maxLength={WORKER_NAME_MAX_LENGTH}
+                />
+                <InputGroup.Suffix>
+                  .{subdomain ?? "<your subdomain>"}.workers.dev
+                </InputGroup.Suffix>
+              </InputGroup>
             )}
             <Input
               label="Name"
@@ -290,11 +299,11 @@ export function InstallForm({
             {varFields.length > 0 && (
               <div className="grid gap-4">
                 <div className="grid gap-1.5">
-                  <Text bold>Settings</Text>
+                  <Text bold>Variables</Text>
                   <Text variant="secondary" size="sm">
                     {installer !== null
                       ? "Handed to the app's installer as environment variables."
-                      : "Variables on the app's Worker. Settings marked JSON take a JSON value."}
+                      : "Variables on the app's Worker. Variables marked JSON take a JSON value."}
                   </Text>
                 </div>
                 {varFields.map((field) => (

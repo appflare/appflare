@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { HealthStatus } from "../db/schema";
 import { checkInstallHealth } from "../installs/health.functions";
 import { formatDateTime } from "./format";
+import { Timestamp } from "./timestamp";
 
 /**
  * The health of an install's Worker as its last check recorded it: a badge
@@ -82,7 +83,7 @@ export function InstallHealth({
         <HealthBadge status={status} />
         {checkedAt !== null && (
           <Text as="span" variant="secondary" size="sm">
-            checked {formatDateTime(checkedAt)}
+            checked <Timestamp iso={checkedAt} />
           </Text>
         )}
         {canCheck && (

@@ -66,6 +66,8 @@ export interface CatalogList {
   featured: FeaturedCard | null;
   /** When the popularity numbers were computed; null when there are none recent enough to show. */
   statsGeneratedAt: string | null;
+  /** What the account is known to offer, to mark each app's requirements met or not. */
+  capabilities: CapabilitiesView | null;
 }
 
 /** Popularity for the index's apps, when the index names a stats file and it is recent. */
@@ -119,15 +121,17 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
         unreadable: 0,
         featured: null,
         statsGeneratedAt: null,
+        capabilities: null,
       };
     }
     const indexUrl = catalogIndexUrl(env);
     const { apps } = read.index;
-    const [stats, dismissed] = await Promise.all([
+    const [stats, dismissed, capabilities] = await Promise.all([
       currentStats(read.index.stats),
       read.index.featured.length === 0
         ? new Set<string>()
         : dismissedFeaturedIds(createDb(env.DB), session.user.id),
+      readCapabilitiesView(createDb(env.DB)),
     ]);
     const item = pickFeatured(read.index.featured, dismissed, new Date());
     return {
@@ -145,6 +149,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
           ? null
           : featuredCard(item, indexUrl, (slug) => apps.find((a) => a.slug === slug)?.name ?? null),
       statsGeneratedAt: stats?.generatedAt ?? null,
+      capabilities,
     };
   },
 );

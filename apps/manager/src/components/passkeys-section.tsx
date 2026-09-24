@@ -2,22 +2,16 @@ import {
   Badge,
   Banner,
   Button,
-  Dialog,
   Empty,
   Input,
   LayerCard,
+  LayerDialog,
   Table,
   Text,
 } from "@cloudflare/kumo";
-import {
-  FingerprintIcon,
-  PlusIcon,
-  TrashIcon,
-  WarningCircleIcon,
-  XIcon,
-} from "@phosphor-icons/react";
+import { FingerprintIcon, PlusIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import { authClient } from "../auth/client";
 import {
   PASSKEY_MESSAGES,
@@ -26,7 +20,8 @@ import {
 } from "../auth/passkey-errors";
 import { type PasskeyRow, removePasskey } from "../server/passkeys.functions";
 import { passkeyNameInput } from "../server/schemas";
-import { formatDate, formatExactDateTime } from "./format";
+import { ConfirmDialog } from "./confirm-dialog";
+import { Timestamp } from "./timestamp";
 
 /**
  * Settings → Passkeys: the signed-in user's own passkeys. Adding one runs the
@@ -89,13 +84,7 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
                     </Badge>
                   </Table.Cell>
                   <Table.Cell>
-                    {p.createdAt === null ? (
-                      "Unknown"
-                    ) : (
-                      <span title={formatExactDateTime(p.createdAt)}>
-                        {formatDate(p.createdAt)}
-                      </span>
-                    )}
+                    <Timestamp iso={p.createdAt} dateOnly fallback="Unknown" />
                   </Table.Cell>
                   <Table.Cell>
                     <div className="flex justify-end">
@@ -116,32 +105,10 @@ function passkeyLabel(p: PasskeyRow): string {
   return p.name ?? p.provider ?? "Unnamed passkey";
 }
 
-function DialogHeader({ title, description }: { title: string; description: ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="grid gap-1.5">
-        <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
-        <Dialog.Description className="text-kumo-subtle">{description}</Dialog.Description>
-      </div>
-      <Dialog.Close
-        aria-label="Close"
-        render={(props) => (
-          <Button
-            {...props}
-            variant="secondary"
-            shape="square"
-            icon={<XIcon />}
-            aria-label="Close"
-          />
-        )}
-      />
-    </div>
-  );
-}
-
 /** Names the passkey, then hands over to the browser's passkey prompt. */
 function AddPasskeyDialog() {
   const router = useRouter();
+  const formId = useId();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -178,113 +145,69 @@ function AddPasskeyDialog() {
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger
+    <LayerDialog.Root open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
+      <LayerDialog.Trigger
         render={(p) => (
           <Button {...p} variant="primary" icon={<PlusIcon />}>
             Add passkey
           </Button>
         )}
       />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <DialogHeader
-          title="Add a passkey"
-          description="Name it after the device or password manager that keeps it, so you can tell your passkeys apart. Your browser then asks you to create it."
-        />
-        <form className="grid gap-4" onSubmit={onSubmit}>
-          {error !== null && (
-            <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-          )}
-          <Input
-            label="Name"
-            name="name"
-            placeholder="Work laptop"
-            autoComplete="off"
-            required
-            maxLength={100}
-            disabled={pending}
-          />
-          <div className="flex justify-end gap-2">
-            <Dialog.Close
-              render={(props) => (
-                <Button {...props} disabled={pending}>
-                  Cancel
-                </Button>
-              )}
+      <LayerDialog.Content>
+        <LayerDialog.Title>Add a passkey</LayerDialog.Title>
+        <LayerDialog.Description>
+          Name it after the device or password manager that keeps it, so you can tell your passkeys
+          apart. Your browser then asks you to create it.
+        </LayerDialog.Description>
+        <LayerDialog.Body>
+          <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
+            {error !== null && (
+              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
+            )}
+            <Input
+              label="Name"
+              name="name"
+              placeholder="Work laptop"
+              autoComplete="off"
+              required
+              maxLength={100}
+              disabled={pending}
             />
-            <Button type="submit" variant="primary" loading={pending} icon={<FingerprintIcon />}>
-              Create passkey
-            </Button>
-          </div>
-        </form>
-      </Dialog>
-    </Dialog.Root>
+          </form>
+        </LayerDialog.Body>
+        <LayerDialog.Actions dismissLabel="Cancel">
+          <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+            Create passkey
+          </LayerDialog.Actions.Primary>
+        </LayerDialog.Actions>
+      </LayerDialog.Content>
+    </LayerDialog.Root>
   );
 }
 
 function RemovePasskeyDialog({ passkey }: { passkey: PasskeyRow }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const label = passkeyLabel(passkey);
-
-  function onOpenChange(next: boolean) {
-    if (pending) return;
-    setOpen(next);
-    if (!next) setError(null);
-  }
-
-  async function onRemove() {
-    setPending(true);
-    setError(null);
-    try {
-      await removePasskey({ data: { id: passkey.id } });
-      setOpen(false);
-      await router.invalidate();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not remove the passkey.");
-    } finally {
-      setPending(false);
-    }
-  }
-
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger
-        render={(p) => (
-          <Button
-            {...p}
-            variant="secondary-destructive"
-            size="sm"
-            icon={<TrashIcon />}
-            aria-label={`Remove ${label}`}
-          >
-            Remove
-          </Button>
-        )}
-      />
-      <Dialog className="grid gap-6 px-6 py-5">
-        <DialogHeader
-          title={`Remove ${label}?`}
-          description="You will no longer be able to sign in with it. Delete it from your device or password manager as well."
-        />
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-        <div className="flex justify-end gap-2">
-          <Dialog.Close
-            render={(props) => (
-              <Button {...props} disabled={pending}>
-                Cancel
-              </Button>
-            )}
-          />
-          <Button variant="destructive" loading={pending} onClick={onRemove}>
-            Remove passkey
-          </Button>
-        </div>
-      </Dialog>
-    </Dialog.Root>
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button
+          {...p}
+          variant="secondary-destructive"
+          size="sm"
+          icon={<TrashIcon />}
+          aria-label={`Remove ${label}`}
+        >
+          Remove
+        </Button>
+      )}
+      title={`Remove ${label}`}
+      description="You will no longer be able to sign in with it. Delete it from your device or password manager as well."
+      actionLabel="Remove passkey"
+      onConfirm={async () => {
+        await removePasskey({ data: { id: passkey.id } });
+        await router.invalidate();
+      }}
+    />
   );
 }

@@ -471,6 +471,7 @@ describe("listSnapshotsCore", () => {
         jobStatus: "succeeded",
         jobKind: "update",
         isCurrent: false,
+        sameCode: false,
         crossesDoMigration: false,
         databases: [
           {
@@ -483,6 +484,13 @@ describe("listSnapshotsCore", () => {
       },
     ]);
     expect(await listSnapshotsCore(env.DB, "nope")).toEqual([]);
+    // A settings change of the installed version and artifact: only settings to put back.
+    await env.DB.prepare(
+      "UPDATE snapshots SET catalog_version = '1.1.0', artifact_digest = ?1 WHERE id = 'upd1'",
+    )
+      .bind("0".repeat(64))
+      .run();
+    expect((await listSnapshotsCore(env.DB, INSTALL_ID))[0]?.sameCode).toBe(true);
     // Members see the history without bookmarks.
     const [member] = await listSnapshotsCore(env.DB, INSTALL_ID, { withBookmarks: false });
     expect(member?.databases[0]?.bookmark).toBeNull();

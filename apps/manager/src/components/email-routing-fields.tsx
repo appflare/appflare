@@ -179,7 +179,8 @@ function PermissionsBanner({
             Needed: {missing.join(", ")}. Edit the Appflare token under API Tokens in the Cloudflare
             dashboard, add them for the zones you want to use, and save; an edited token keeps its
             value. Or create a new token and replace the old one under{" "}
-            <Link href="/settings">Settings</Link> with Rotate token.
+            <Link href="/settings/account">Settings, Account and capabilities</Link> with Rotate
+            token.
           </span>
         </span>
       }

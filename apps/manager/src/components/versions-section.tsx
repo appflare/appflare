@@ -2,9 +2,9 @@ import {
   Banner,
   Button,
   ClipboardText,
-  Dialog,
   Input,
   LayerCard,
+  LayerDialog,
   Link,
   Table,
   Text,
@@ -12,20 +12,22 @@ import {
 import {
   ArrowCounterClockwiseIcon,
   CheckCircleIcon,
-  ClockCounterClockwiseIcon,
   DatabaseIcon,
   InfoIcon,
   WarningCircleIcon,
   WarningIcon,
-  XIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
+import { rollbackDialogCopy } from "../installs/rollback-copy";
 import { restoreDatabase, startRollback } from "../installs/versions.functions";
 import type { RestoreDatabaseResult, SnapshotView } from "../installs/versions.server";
-import { formatDateTime } from "./format";
+import { ConfirmDialog } from "./confirm-dialog";
+import { useJobStarted } from "./job-started";
+import { Section } from "./section";
 import { StatusBadge } from "./status-badge";
+import { Timestamp } from "./timestamp";
 
 /**
  * The "Versions" section of `/apps/$installId`: one row per snapshot an
@@ -41,29 +43,6 @@ function shortVersion(id: string | null): string {
   return id === null ? "none" : id.slice(0, 8);
 }
 
-function DialogHeader({ title, description }: { title: string; description: ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="grid gap-1.5">
-        <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
-        <Dialog.Description className="text-kumo-subtle">{description}</Dialog.Description>
-      </div>
-      <Dialog.Close
-        aria-label="Close"
-        render={(props) => (
-          <Button
-            {...props}
-            variant="secondary"
-            shape="square"
-            icon={<XIcon />}
-            aria-label="Close"
-          />
-        )}
-      />
-    </div>
-  );
-}
-
 export function VersionsSection({
   install,
   snapshots,
@@ -76,10 +55,7 @@ export function VersionsSection({
   // Actions need an installed app with no job running.
   const canAct = isAdmin && install.status === "installed" && install.activeJobId === null;
   return (
-    <section className="grid gap-3">
-      <Text variant="heading" as="h2">
-        Versions
-      </Text>
+    <Section title="Versions">
       {install.build.kind === "self-deploying" ? (
         <Text variant="secondary">
           This app's own installer changes it in place on every update, so Appflare takes no
@@ -108,7 +84,7 @@ export function VersionsSection({
                 {snapshots.map((s) => (
                   <Table.Row key={s.id}>
                     <Table.Cell className="align-top whitespace-nowrap">
-                      {formatDateTime(s.takenAt)}
+                      <Timestamp iso={s.takenAt} />
                     </Table.Cell>
                     <Table.Cell className="align-top">
                       <span className={mono}>{s.fromCatalogVersion ?? "unknown"}</span>
@@ -180,7 +156,7 @@ export function VersionsSection({
           </Text>
         </>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -202,83 +178,58 @@ function RollbackUnavailable() {
   );
 }
 
+/**
+ * Confirms a rollback. A snapshot of the code installed now (a settings
+ * change) is worded as undoing that change and needs no word about data;
+ * a rollback to other code says the databases stay as they are.
+ */
 function RollbackDialog({ install, snapshot }: { install: InstallDetail; snapshot: SnapshotView }) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const target = snapshot.fromCatalogVersion ?? shortVersion(snapshot.fromVersionId);
-
-  function onOpenChange(next: boolean) {
-    setOpen(next);
-    if (next) setError(null);
-  }
-
-  async function onConfirm() {
-    setPending(true);
-    setError(null);
-    try {
-      const { jobId } = await startRollback({
-        data: { installId: install.id, snapshotId: snapshot.id },
-      });
-      await router.navigate({ to: "/jobs/$jobId", params: { jobId } });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start the rollback.");
-      setPending(false);
-    }
-  }
-
+  const jobStarted = useJobStarted();
+  const copy = rollbackDialogCopy(snapshot, install.instanceName);
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger
-        render={(p) => (
-          <Button {...p} size="sm" variant="secondary" icon={<ArrowCounterClockwiseIcon />}>
-            Roll back
-          </Button>
-        )}
-      />
-      <Dialog size="base" className="grid gap-6 px-6 py-5">
-        <DialogHeader
-          title={`Roll back ${install.instanceName} to ${target}`}
-          description={
-            <>
-              Deploys Worker version <span className={mono}>{snapshot.fromVersionId}</span> again to
-              all traffic, the version that served before the{" "}
-              {snapshot.jobKind === "reconfigure" ? "settings change" : "update"} on{" "}
-              {formatDateTime(snapshot.takenAt)}, with the settings and secrets it had then.
-            </>
-          }
-        />
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button {...p} size="sm" variant="secondary" icon={<ArrowCounterClockwiseIcon />}>
+          {copy.button}
+        </Button>
+      )}
+      title={copy.title}
+      description={
+        <>
+          {copy.lead} Worker version <span className={mono}>{snapshot.fromVersionId}</span>.
+        </>
+      }
+      actionLabel={copy.action}
+      destructive={false}
+      onConfirm={async () => {
+        const { jobId } = await startRollback({
+          data: { installId: install.id, snapshotId: snapshot.id },
+        });
+        await jobStarted(jobId, copy.button === "Undo" ? "Undoing the change" : "Rollback started");
+      }}
+    >
+      {copy.warnData && (
         <Banner
           variant="alert"
           icon={<WarningIcon weight="fill" />}
           title="Databases are not changed"
           description="If the newer version changed its data, the older code may not read it. Restore a database from this snapshot separately if you need its data as it was."
         />
-        {install.emailRoutes.length > 0 && (
-          <Banner
-            variant="secondary"
-            icon={<InfoIcon weight="fill" />}
-            title="Email Routing is not changed"
-            description="A rollback does not move the app's email back to another zone. If email moved since this snapshot, move it back under Settings."
-          />
-        )}
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-        <div className="flex justify-end gap-2">
-          <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-          <Button
-            variant="primary"
-            icon={<ArrowCounterClockwiseIcon />}
-            loading={pending}
-            onClick={onConfirm}
-          >
-            Roll back
-          </Button>
-        </div>
-      </Dialog>
-    </Dialog.Root>
+      )}
+      {install.emailRoutes.length > 0 && (
+        <Banner
+          variant="secondary"
+          icon={<InfoIcon weight="fill" />}
+          title="Email Routing is not changed"
+          description="A rollback does not move the app's email back to another zone. If email moved since this snapshot, move it back on the Settings tab."
+        />
+      )}
+      {!copy.warnData && install.emailRoutes.length === 0 && (
+        <Text variant="secondary">
+          Databases, custom domains and Email Routing are not changed.
+        </Text>
+      )}
+    </ConfirmDialog>
   );
 }
 
@@ -292,6 +243,7 @@ function RestoreDatabaseDialog({
   database: SnapshotView["databases"][number];
 }) {
   const router = useRouter();
+  const formId = useId();
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState("");
   const [pending, setPending] = useState(false);
@@ -335,91 +287,99 @@ function RestoreDatabaseDialog({
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange} disablePointerDismissal>
-      <Dialog.Trigger
+    <LayerDialog.Alert open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
+      <LayerDialog.Trigger
         render={(p) => (
           <Button {...p} size="sm" variant="secondary-destructive" icon={<DatabaseIcon />}>
             Restore {database.name} to this point
           </Button>
         )}
       />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <DialogHeader
-          title={`Restore database ${database.name}`}
-          description={
+      <LayerDialog.Content size="lg">
+        <LayerDialog.Title>
+          {done === null ? `Restore database ${database.name}` : `Restored ${done.databaseName}`}
+        </LayerDialog.Title>
+        <LayerDialog.Description>
+          Restores <span className={mono}>{database.name}</span> to this point: its state when the
+          snapshot was taken on <Timestamp iso={snapshot.takenAt} />
+          {database.bookmark !== null && (
             <>
-              Restores <span className={mono}>{database.name}</span> to this point: its state when
-              the snapshot was taken on {formatDateTime(snapshot.takenAt)}
-              {database.bookmark !== null && (
-                <>
-                  {" "}
-                  (bookmark <span className={mono}>{database.bookmark}</span>)
-                </>
-              )}
-              .
+              {" "}
+              (bookmark <span className={mono}>{database.bookmark}</span>)
             </>
-          }
-        />
-        {done === null ? (
-          <form className="grid gap-5" onSubmit={onSubmit}>
-            <Banner
-              variant="alert"
-              icon={<WarningIcon weight="fill" />}
-              title="Everything written since then is replaced"
-              description="The Worker is not changed. Cloudflare returns a bookmark of the database as it is now, so this restore can be undone by restoring to that bookmark."
-            />
-            <Input
-              label={`Type ${database.name} to confirm`}
-              value={confirm}
-              onChange={(e) => setConfirm(e.currentTarget.value)}
-              autoComplete="off"
-              spellCheck={false}
-              disabled={pending}
-            />
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
-            <div className="flex justify-end gap-2">
-              <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-              <Button
-                type="submit"
-                variant="destructive"
-                icon={<ClockCounterClockwiseIcon />}
-                loading={pending}
-                disabled={!confirmed}
-              >
-                Restore database
-              </Button>
-            </div>
-          </form>
-        ) : (
-          <div className="grid gap-5">
-            <Banner
-              icon={<CheckCircleIcon weight="fill" />}
-              title={`Restored ${done.databaseName}`}
-              description={
-                done.previousBookmark === null
-                  ? "Cloudflare did not return a bookmark of the state before the restore."
-                  : "To undo this restore, restore the database to the bookmark below, for example with wrangler."
-              }
-            />
-            {done.previousBookmark !== null && (
-              <div className="grid gap-2">
-                <Text bold>Bookmark from just before the restore</Text>
-                <ClipboardText text={done.previousBookmark} size="base" />
-                <ClipboardText
-                  text={`wrangler d1 time-travel restore ${done.databaseName} --bookmark=${done.previousBookmark}`}
-                  size="sm"
-                />
-              </div>
-            )}
-            <div className="flex justify-end gap-2">
+          )}
+          .
+        </LayerDialog.Description>
+        <LayerDialog.Body>
+          {done === null ? (
+            <form id={formId} className="grid gap-5" onSubmit={onSubmit}>
+              <Banner
+                variant="alert"
+                icon={<WarningIcon weight="fill" />}
+                title="Everything written since then is replaced"
+                description="The Worker is not changed. Cloudflare returns a bookmark of the database as it is now, so this restore can be undone by restoring to that bookmark."
+              />
+              <Input
+                label={
+                  <>
+                    Type <strong className="font-medium text-kumo-default">{database.name}</strong>{" "}
+                    to confirm
+                  </>
+                }
+                placeholder={database.name}
+                value={confirm}
+                onChange={(e) => setConfirm(e.currentTarget.value)}
+                autoComplete="off"
+                spellCheck={false}
+                disabled={pending}
+              />
+              {error !== null && (
+                <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
+              )}
+            </form>
+          ) : (
+            <div className="grid gap-5">
+              <Banner
+                icon={<CheckCircleIcon weight="fill" />}
+                title={`Restored ${done.databaseName}`}
+                description={
+                  done.previousBookmark === null
+                    ? "Cloudflare did not return a bookmark of the state before the restore."
+                    : "To undo this restore, restore the database to the bookmark below, for example with wrangler."
+                }
+              />
+              {done.previousBookmark !== null && (
+                <div className="grid gap-2">
+                  <Text bold>Bookmark from just before the restore</Text>
+                  <ClipboardText text={done.previousBookmark} size="base" />
+                  <ClipboardText
+                    text={`wrangler d1 time-travel restore ${done.databaseName} --bookmark=${done.previousBookmark}`}
+                    size="sm"
+                  />
+                </div>
+              )}
               <Link href={`/jobs/${done.jobId}`}>View log</Link>
-              <Dialog.Close render={(props) => <Button {...props}>Close</Button>} />
             </div>
-          </div>
-        )}
-      </Dialog>
-    </Dialog.Root>
+          )}
+        </LayerDialog.Body>
+        <LayerDialog.Actions dismissLabel={done === null ? "Cancel" : "Close"}>
+          {done === null ? (
+            <LayerDialog.Actions.Primary
+              type="submit"
+              form={formId}
+              variant="destructive"
+              loading={pending}
+              disabled={!confirmed}
+            >
+              Restore database
+            </LayerDialog.Actions.Primary>
+          ) : (
+            <LayerDialog.Actions.Primary onClick={() => onOpenChange(false)}>
+              Done
+            </LayerDialog.Actions.Primary>
+          )}
+        </LayerDialog.Actions>
+      </LayerDialog.Content>
+    </LayerDialog.Alert>
   );
 }

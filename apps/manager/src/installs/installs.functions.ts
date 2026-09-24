@@ -12,7 +12,8 @@ import { z } from "zod";
 import type { AutoUpdateChoice } from "../auto-update/auto-update";
 import { readAutoUpdateDefaults } from "../auto-update/auto-update.server";
 import { getCatalogManifest } from "../catalog/app-manifest.server";
-import { getCatalogIndex } from "../catalog/index.server";
+import { catalogIndexUrl, getCatalogIndex } from "../catalog/index.server";
+import { mediaSrc } from "../catalog/media";
 import { isUpdateAvailable } from "../catalog/versions";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
@@ -78,6 +79,8 @@ export interface InstallRow {
   slug: string;
   /** The app's name from the catalog. */
   name: string;
+  /** The app's icon from the catalog, as a manager path; null when it has none. */
+  icon: string | null;
   /** The install's own label (`instance_name`), the Worker name when unset. */
   instanceName: string;
   workerName: string;
@@ -153,6 +156,7 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
         id: row.id,
         slug: row.app_slug,
         name: listed?.name ?? row.app_slug,
+        icon: mediaSrc(listed?.media?.icon, catalogIndexUrl(env)),
         instanceName: row.instance_name ?? row.worker_name,
         workerName: row.worker_name,
         status: row.status,
@@ -345,6 +349,7 @@ export const getInstall = createServerFn({ method: "GET" })
       id: row.id,
       slug: row.app_slug,
       name,
+      icon: mediaSrc(listed?.media?.icon, catalogIndexUrl(env)),
       instanceName: row.instance_name ?? row.worker_name,
       workerName: row.worker_name,
       status: row.status,

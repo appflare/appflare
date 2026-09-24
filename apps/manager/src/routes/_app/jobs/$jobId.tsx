@@ -7,18 +7,23 @@ import {
   WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { startedByLabel } from "../../../auto-update/auto-update";
 import { compareVersions } from "../../../catalog/versions";
-import { formatDateTime, formatTime, jobKindLabel } from "../../../components/format";
+import { DescriptionItem, DescriptionList } from "../../../components/description-list";
+import { formatTime, jobKindLabel } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
+import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
+import { Timestamp } from "../../../components/timestamp";
 import {
   type BuildProgressView,
   getJob,
   type JobLogRow,
   type JobView,
 } from "../../../jobs/jobs.functions";
+
+const JOBS_CRUMB = { label: "Jobs", href: "/jobs" };
 
 /** How often the page re-reads a queued or running job. */
 const POLL_MS = 2000;
@@ -115,17 +120,6 @@ function useVersionSwitch(job: JobView | null): { switching: boolean } {
   return { switching: watching && seen !== null && !arrived };
 }
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <Text as="dt" variant="secondary">
-        {label}
-      </Text>
-      <Text as="dd">{children}</Text>
-    </>
-  );
-}
-
 function JobPage() {
   const { jobId } = Route.useParams();
   const job = useLiveJob(jobId, Route.useLoaderData());
@@ -134,7 +128,7 @@ function JobPage() {
   if (job === null) {
     return (
       <>
-        <PageHeader title="Job" />
+        <PageHeader title="Job not found" parents={[JOBS_CRUMB]} />
         <Empty
           icon={<ListChecksIcon size={48} className="text-kumo-inactive" />}
           title="No such job"
@@ -152,6 +146,7 @@ function JobPage() {
       <PageHeader
         title={title}
         description={`Job ${job.id}`}
+        parents={[JOBS_CRUMB]}
         actions={
           job.install !== null ? (
             <LinkButton
@@ -173,19 +168,19 @@ function JobPage() {
           </div>
         </LayerCard.Secondary>
         <LayerCard.Primary className="px-5 py-4">
-          <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
+          <DescriptionList>
             {job.install !== null && (
-              <Row label="Worker">
+              <DescriptionItem label="Worker">
                 <span className="font-mono text-[0.9em]">{job.install.workerName}</span>
-              </Row>
+              </DescriptionItem>
             )}
             {job.targetVersion !== null && (
-              <Row label="Appflare version">
+              <DescriptionItem label="Appflare version">
                 <span className="font-mono text-[0.9em]">{job.targetVersion}</span>
-              </Row>
+              </DescriptionItem>
             )}
             {job.workerVersionId !== null && (
-              <Row
+              <DescriptionItem
                 label={
                   job.kind === "update" || job.kind === "self_update" || job.kind === "reconfigure"
                     ? "New Worker version"
@@ -193,12 +188,16 @@ function JobPage() {
                 }
               >
                 <span className="font-mono text-[0.9em]">{job.workerVersionId}</span>
-              </Row>
+              </DescriptionItem>
             )}
-            <Row label="Started by">{startedByLabel(job.startedBy)}</Row>
-            <Row label="Started">{formatDateTime(job.startedAt)}</Row>
-            <Row label="Finished">{formatDateTime(job.finishedAt)}</Row>
-          </dl>
+            <DescriptionItem label="Started by">{startedByLabel(job.startedBy)}</DescriptionItem>
+            <DescriptionItem label="Started">
+              <Timestamp iso={job.startedAt} />
+            </DescriptionItem>
+            <DescriptionItem label="Finished">
+              <Timestamp iso={job.finishedAt} />
+            </DescriptionItem>
+          </DescriptionList>
         </LayerCard.Primary>
       </LayerCard>
       {switching && (
@@ -218,10 +217,7 @@ function JobPage() {
         />
       )}
       {job.build !== null && <BuildProgress build={job.build} />}
-      <section className="grid gap-3">
-        <Text variant="heading" as="h2">
-          Log
-        </Text>
+      <Section title="Log">
         {job.logs.length === 0 ? (
           <Text variant="secondary">
             {isActive(job) ? "Waiting for the first step…" : "No log lines were written."}
@@ -244,7 +240,7 @@ function JobPage() {
             </Table>
           </LayerCard>
         )}
-      </section>
+      </Section>
     </>
   );
 }

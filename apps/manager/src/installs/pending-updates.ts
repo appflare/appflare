@@ -64,4 +64,4 @@ export function pendingUpdatesTitle(total: number): string {
 }
 
 /** Settings, Appflare updates: where the self-update starts. */
-export const MANAGER_UPDATES_HREF = "/settings#appflare-updates";
+export const MANAGER_UPDATES_HREF = "/settings/appflare-updates";

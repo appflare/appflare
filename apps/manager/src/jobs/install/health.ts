@@ -131,16 +131,20 @@ export function liveHealthScheduledMs(attempt: number): number {
  * What one live probe says: `pass` settles the check, `retry` keeps probing
  * (1042, no connection, 5xx), `soft-404` keeps probing too, but passes when
  * the window ends: an app may serve 404 at its root, and a plain 404 is also
- * what a route that is still propagating can answer.
+ * what a route that is still propagating can answer. When the route was
+ * already live before the job (a settings change keeps the URL that was
+ * serving), a plain 404 cannot be propagation, so it is the app's own answer
+ * and passes at once.
  */
 export type LiveProbeClass = "pass" | "retry" | "soft-404";
 
 export function classifyLiveProbe(
   probe: HealthProbe,
   mode: HealthMode = "default",
+  routeWasLive = false,
 ): LiveProbeClass {
   if (probe.kind === "error" || isEdge1042(probe)) return "retry";
-  if (probe.status === 404) return "soft-404";
+  if (probe.status === 404) return routeWasLive && !isEdgeErrorPage(probe) ? "pass" : "soft-404";
   if (statusOnlyPass(probe, mode)) return "pass";
   if (probe.status >= 500) return "retry";
   return "pass";
@@ -194,8 +198,10 @@ export function decideLiveHealth(
   elapsedMs: number,
   windowMs: number = LIVE_HEALTH_WINDOW_MS,
   mode: HealthMode = "default",
+  /** The URL served before the job, so a plain 404 is the app's answer (see `classifyLiveProbe`). */
+  routeWasLive = false,
 ): LiveHealthDecision {
-  if (classifyLiveProbe(probe, mode) === "pass") {
+  if (classifyLiveProbe(probe, mode, routeWasLive) === "pass") {
     return { done: true, ...settleHealthProbe(probe, mode) };
   }
   const delaySeconds = liveHealthDelaySeconds(attempt);

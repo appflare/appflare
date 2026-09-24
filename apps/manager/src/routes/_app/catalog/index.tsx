@@ -7,17 +7,18 @@ import {
   LinkButton,
   Select,
   Text,
+  useKumoToastManager,
 } from "@cloudflare/kumo";
 import {
   ArrowRightIcon,
   ArrowsClockwiseIcon,
-  CheckCircleIcon,
   StorefrontIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { z } from "zod";
+import type { CapabilitiesView } from "../../../capabilities/capabilities";
 import { authorNames } from "../../../catalog/authors";
 import {
   type CatalogListItem,
@@ -33,9 +34,9 @@ import {
 } from "../../../components/catalog-badges";
 import { AppIcon, PopularityLine } from "../../../components/catalog-media";
 import { FeaturedCard } from "../../../components/featured-card";
-import { formatDateTime } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { StatusBadge } from "../../../components/status-badge";
+import { Timestamp } from "../../../components/timestamp";
 
 const SORTS = { popular: "Most popular", name: "Name" } as const;
 type Sort = keyof typeof SORTS;
@@ -76,16 +77,21 @@ function CatalogPage() {
       {(catalog.updatedAt !== null || hasStats) && (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Text variant="secondary" size="sm">
-            {catalog.updatedAt !== null && `Catalog updated ${formatDateTime(catalog.updatedAt)}.`}
+            {catalog.updatedAt !== null && (
+              <>
+                Catalog updated <Timestamp iso={catalog.updatedAt} />.
+              </>
+            )}
           </Text>
           {hasStats && (
             <Select
-              label="Sort by"
+              aria-label="Sort apps"
               value={sort}
               onValueChange={(value) =>
                 void navigate({ search: { sort: value === "name" ? "name" : "popular" } })
               }
               items={SORTS}
+              renderValue={(value) => `Sort: ${SORTS[value === "name" ? "name" : "popular"]}`}
             />
           )}
         </div>
@@ -116,7 +122,7 @@ function CatalogPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {apps.map((app) => (
-            <AppCard key={app.slug} app={app} />
+            <AppCard key={app.slug} app={app} capabilities={catalog.capabilities} />
           ))}
         </div>
       )}
@@ -124,20 +130,33 @@ function CatalogPage() {
   );
 }
 
-function AppCard({ app }: { app: CatalogListItem }) {
+/**
+ * One app: icon and name (never cut short; the badges wrap below a long
+ * name), summary, authors, version, checks, and the way to its page. Cards
+ * in a row are as tall as the tallest, with their actions at the bottom.
+ */
+function AppCard({
+  app,
+  capabilities,
+}: {
+  app: CatalogListItem;
+  capabilities: CapabilitiesView | null;
+}) {
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
+    <LayerCard className="flex h-full flex-col">
+      <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <span className="flex min-w-0 items-center gap-3">
           <AppIcon src={app.images.icon} size={28} />
-          <span className="truncate">{app.name}</span>
+          <Text as="h2" bold>
+            {app.name}
+          </Text>
         </span>
-        <span className="flex shrink-0 items-center gap-2">
+        <span className="flex flex-wrap items-center gap-2">
           {app.tier !== "artifact" && <TierBadge tier={app.tier} />}
           <PlanBadge plan={app.plan} />
         </span>
       </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+      <LayerCard.Primary className="flex flex-1 flex-col gap-4 px-5 py-4">
         <div className="grid gap-1.5">
           <Text>{app.summary}</Text>
           {app.authors !== undefined && (
@@ -152,9 +171,9 @@ function AppCard({ app }: { app: CatalogListItem }) {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <InstallCheckBadge lastVerified={app.lastVerified} />
           <PopularityLine popularity={app.popularity} />
-          <RequirementIcons requires={app.requires} />
+          <RequirementIcons requires={app.requires} capabilities={capabilities} />
         </div>
-        <div className="flex items-center justify-between gap-3">
+        <div className="mt-auto flex items-center justify-between gap-3">
           <InstancesBadge instances={app.instances} />
           <LinkButton href={`/catalog/${app.slug}`} variant="secondary" icon={<ArrowRightIcon />}>
             {app.instances.length > 0 ? "Details" : "View and install"}
@@ -173,23 +192,27 @@ function InstancesBadge({ instances }: { instances: CatalogListItem["instances"]
   return <Badge variant="neutral">{instances.length} installs</Badge>;
 }
 
-/** Admin only: re-fetch `index.json` now instead of waiting for the cron. */
+/** Admin only: re-fetch `index.json` now instead of waiting for the cron; a toast says how it went. */
 function RefreshButton() {
   const router = useRouter();
+  const toasts = useKumoToastManager();
   const [pending, setPending] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   async function onRefresh() {
     setPending(true);
-    setResult(null);
     try {
       const { count } = await refreshCatalog();
-      setResult({ ok: true, message: `Loaded ${count} app${count === 1 ? "" : "s"}.` });
       await router.invalidate();
+      toasts.add({
+        title: "Catalog refreshed",
+        description: `Loaded ${count} app${count === 1 ? "" : "s"}.`,
+        variant: "success",
+      });
     } catch (error) {
-      setResult({
-        ok: false,
-        message: error instanceof Error ? error.message : "Could not refresh the catalog.",
+      toasts.add({
+        title: "Could not refresh the catalog",
+        description: error instanceof Error ? error.message : undefined,
+        variant: "error",
       });
     } finally {
       setPending(false);
@@ -197,23 +220,13 @@ function RefreshButton() {
   }
 
   return (
-    <div className="grid justify-items-end gap-2">
-      <Button
-        variant="secondary"
-        icon={<ArrowsClockwiseIcon />}
-        loading={pending}
-        onClick={onRefresh}
-      >
-        Refresh
-      </Button>
-      {result !== null && (
-        <Banner
-          size="sm"
-          variant={result.ok ? "default" : "error"}
-          icon={result.ok ? <CheckCircleIcon weight="fill" /> : <WarningCircleIcon weight="fill" />}
-          title={result.message}
-        />
-      )}
-    </div>
+    <Button
+      variant="secondary"
+      icon={<ArrowsClockwiseIcon />}
+      loading={pending}
+      onClick={onRefresh}
+    >
+      Refresh
+    </Button>
   );
 }

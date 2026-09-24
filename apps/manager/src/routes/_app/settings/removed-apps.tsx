@@ -1,14 +1,11 @@
 import { Badge, Banner, Empty, LayerCard, Link, LinkButton, Text } from "@cloudflare/kumo";
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  TrashSimpleIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react";
+import { ArrowRightIcon, TrashSimpleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
-import { formatDateTime, resourceKindLabel } from "../../../components/format";
+import { resourceKindLabel } from "../../../components/format";
+import { SETTINGS_CRUMB, SETTINGS_PAGES } from "../../../components/navigation";
 import { PageHeader } from "../../../components/page-header";
 import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
+import { Timestamp } from "../../../components/timestamp";
 import { listRemovedApps, type RemovedAppRow } from "../../../installs/removed-apps.functions";
 
 /**
@@ -33,13 +30,9 @@ function RemovedAppsPage() {
   return (
     <>
       <PageHeader
-        title="Removed apps"
-        description="Uninstalled apps whose data was kept in the account when they were uninstalled."
-        actions={
-          <LinkButton href="/settings" variant="secondary" icon={<ArrowLeftIcon />}>
-            Settings
-          </LinkButton>
-        }
+        title={SETTINGS_PAGES.removedApps.label}
+        description={SETTINGS_PAGES.removedApps.description}
+        parents={[SETTINGS_CRUMB]}
       />
       {rows.length === 0 ? (
         <Empty
@@ -63,7 +56,7 @@ function RemovedAppCard({ row, isAdmin }: { row: RemovedAppRow; isAdmin: boolean
           <Link href={`/apps/${row.id}`}>{row.instanceName}</Link>
           <Text as="span" variant="secondary" size="sm">
             {row.name}, Worker <span className={mono}>{row.workerName}</span>, uninstalled{" "}
-            {formatDateTime(row.uninstalledAt)}
+            <Timestamp iso={row.uninstalledAt} />
           </Text>
         </span>
         {busy && <Badge variant="info">Deleting</Badge>}

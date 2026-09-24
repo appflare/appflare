@@ -21,7 +21,6 @@ import {
   WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
-import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useState } from "react";
 import { missingRequiredVar, varValueProblem } from "../installs/install-vars";
 import type { InstallDetail } from "../installs/installs.functions";
@@ -30,6 +29,7 @@ import type { InstallSettings, SettingField } from "../installs/reconfigure.serv
 import type { SecretSlot } from "../jobs/reconfigure/plan";
 import { EmailRoutingFields } from "./email-routing-fields";
 import { VarField } from "./install-form";
+import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { generatedSecret } from "./secret-fields";
 
@@ -51,7 +51,7 @@ export function AppSettingsSection({
   settings: InstallSettings;
   isAdmin: boolean;
 }) {
-  const router = useRouter();
+  const jobStarted = useJobStarted();
   const selfDeploying = settings.kind === "self-deploying";
   const busy = install.activeJobId !== null;
   const canEdit = isAdmin && !busy && settings.unavailable === null;
@@ -133,7 +133,7 @@ export function AppSettingsSection({
           ...(settings.installer === null ? {} : { buildConfirmed }),
         },
       });
-      await router.navigate({ to: "/jobs/$jobId", params: { jobId } });
+      await jobStarted(jobId, "Settings change started");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the settings.");
       setPending(false);
@@ -158,17 +158,14 @@ export function AppSettingsSection({
     settings.fields.length === 0 && settings.secrets.length === 0 && settings.email === null;
 
   return (
-    <section className="grid gap-3">
-      <Text variant="heading" as="h2">
-        Settings
-      </Text>
+    <section aria-label="Settings and secrets" className="grid gap-3">
       <LayerCard>
         <LayerCard.Primary className="px-5 py-4">
           <form className="grid gap-6" onSubmit={onSubmit}>
             <Text variant="secondary">
               {selfDeploying
                 ? "Save and redeploy runs the app's own installer again at the installed commit, with these settings and secrets. It changes the app in place: there is no snapshot and no rollback."
-                : "Save and redeploy uploads the installed version again with these settings and secrets, checks it on a preview where Cloudflare allows it, and only then switches traffic to it. A snapshot is taken first, so a rollback under Versions puts the previous settings and secrets back."}
+                : "Save and redeploy uploads the installed version again with these settings and secrets, checks it on a preview where Cloudflare allows it, and only then switches traffic to it. A snapshot is taken first, so undoing the change from the Jobs tab, under Versions, puts the previous settings and secrets back."}
             </Text>
             {!isAdmin && (
               <Banner
@@ -208,11 +205,11 @@ export function AppSettingsSection({
             <fieldset disabled={!canEdit || pending} className="grid gap-6">
               {settings.fields.length > 0 && (
                 <Group
-                  title="Settings"
+                  title="Variables"
                   description={
                     selfDeploying
-                      ? "Handed to the app's installer as environment variables. A setting left at its default follows the default of each version."
-                      : "Variables on the app's Worker. A setting left at its default follows the default of each version. Settings marked JSON take a JSON value."
+                      ? "Handed to the app's installer as environment variables. A variable left at its default follows the default of each version."
+                      : "Variables on the app's Worker. A variable left at its default follows the default of each version. Variables marked JSON take a JSON value."
                   }
                 >
                   {settings.fields.map((field) => (

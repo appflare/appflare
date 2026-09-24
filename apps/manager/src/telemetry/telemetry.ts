@@ -23,11 +23,6 @@ export interface TelemetryStatus {
   devBuild: boolean;
 }
 
-/** Whether anything would be sent now. */
-export function isSending(status: TelemetryStatus): boolean {
-  return status.state === "on" && status.lockedBy === null && !status.devBuild;
-}
-
 /** Where the admin saw the notice. */
 export const NOTICE_SURFACES = ["setup", "banner"] as const;
 export type NoticeSurface = (typeof NOTICE_SURFACES)[number];

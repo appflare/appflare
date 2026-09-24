@@ -1,18 +1,17 @@
-import { Banner, Button, Checkbox, Dialog, LinkButton, Text } from "@cloudflare/kumo";
+import { Banner, Button, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   ArrowRightIcon,
   InfoIcon,
   WarningCircleIcon,
   WarningIcon,
-  XIcon,
 } from "@phosphor-icons/react";
-import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { startUpdate } from "../installs/versions.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
 import { CronTriggersField } from "./cron-triggers-field";
+import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
 
@@ -28,7 +27,7 @@ import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fie
  * remembered for the account).
  */
 export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
-  const router = useRouter();
+  const jobStarted = useJobStarted();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needs, setNeeds] = useState<UpdateNeeds | null>(null);
@@ -75,7 +74,7 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
     try {
       const result = await startUpdate({ data: { installId: install.id } });
       if ("jobId" in result) {
-        await router.navigate({ to: "/jobs/$jobId", params: { jobId: result.jobId } });
+        await jobStarted(result.jobId, "Update started");
         return;
       }
       setNeeds(result);
@@ -124,7 +123,8 @@ function UpdateDialog({
   needs: UpdateNeeds;
   onClose(): void;
 }) {
-  const router = useRouter();
+  const jobStarted = useJobStarted();
+  const formId = useId();
   const [secrets, setSecrets] = useState(() => initialSecretValues(needs.needsSecrets));
   const [confirmed, setConfirmed] = useState(needs.skipsPreview === null);
   const [buildConfirmed, setBuildConfirmed] = useState(needs.build === null);
@@ -157,7 +157,7 @@ function UpdateDialog({
         },
       });
       if ("jobId" in result) {
-        await router.navigate({ to: "/jobs/$jobId", params: { jobId: result.jobId } });
+        await jobStarted(result.jobId, "Update started");
         return;
       }
       setError("The catalog changed while this form was open. Close it and try again.");
@@ -168,113 +168,104 @@ function UpdateDialog({
   }
 
   return (
-    <Dialog.Root open onOpenChange={(open) => !open && onClose()} disablePointerDismissal>
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="grid gap-1.5">
-            <Dialog.Title className="text-lg font-semibold">
-              Update {install.instanceName} to {needs.version}
-            </Dialog.Title>
-            <Dialog.Description className="text-kumo-subtle">
-              {needs.selfDeploying === true
-                ? "The app's own installer deploys the new version over the installed one. There is no snapshot and no rollback."
-                : "Appflare takes a snapshot of the current version and of each D1 database first."}
-            </Dialog.Description>
-          </div>
-          <Dialog.Close
-            aria-label="Close"
-            render={(props) => (
-              <Button
-                {...props}
-                variant="secondary"
-                shape="square"
-                icon={<XIcon />}
-                aria-label="Close"
+    <LayerDialog.Root
+      open
+      onOpenChange={(open) => !open && onClose()}
+      disablePointerDismissal
+      dismissDisabled={pending}
+    >
+      <LayerDialog.Content size="lg">
+        <LayerDialog.Title>
+          Update {install.instanceName} to {needs.version}
+        </LayerDialog.Title>
+        <LayerDialog.Description>
+          {needs.selfDeploying === true
+            ? "The app's own installer deploys the new version over the installed one. There is no snapshot and no rollback."
+            : "Appflare takes a snapshot of the current version and of each D1 database first."}
+        </LayerDialog.Description>
+        <LayerDialog.Body>
+          <form id={formId} className="grid gap-5" onSubmit={onSubmit}>
+            {needs.build !== null && (
+              <SandboxBuildConfirmation
+                build={needs.build}
+                checked={buildConfirmed}
+                onChange={setBuildConfirmed}
+                disabled={pending}
+                action="update"
+                kind={needs.selfDeploying === true ? "installer" : "build"}
               />
             )}
-          />
-        </div>
-        <form className="grid gap-5" onSubmit={onSubmit}>
-          {needs.build !== null && (
-            <SandboxBuildConfirmation
-              build={needs.build}
-              checked={buildConfirmed}
-              onChange={setBuildConfirmed}
-              disabled={pending}
-              action="update"
-              kind={needs.selfDeploying === true ? "installer" : "build"}
-            />
-          )}
-          {needs.build !== null && needs.skipsPreview === null && needs.selfDeploying !== true && (
-            <Checkbox
-              checked={allowNoPreview}
-              onCheckedChange={(checked: boolean) => setAllowNoPreview(checked)}
-              disabled={pending}
-              label="If the built version cannot be checked on a preview first (it changes or implements Durable Objects), update without that check"
-            />
-          )}
-          {needs.skipsPreview !== null && (
-            <div className="grid gap-3">
-              <Banner
-                variant="alert"
-                icon={<WarningIcon weight="fill" />}
-                title="No preview check for this update"
-                description={`${needs.skipsPreview}.`}
-              />
-              <Checkbox
-                checked={confirmed}
-                onCheckedChange={(checked: boolean) => setConfirmed(checked)}
-                disabled={pending}
-                label="Update without checking the new version first"
-              />
-            </div>
-          )}
-          {needs.cronTriggers !== null && (
-            <CronTriggersField
-              count={needs.cronTriggers}
-              confirmation={{
-                checked: paidConfirmed,
-                onChange: setPaidConfirmed,
-                remember: rememberPaid,
-                onRememberChange: setRememberPaid,
-                disabled: pending,
-              }}
-            />
-          )}
-          {needs.needsSecrets.length > 0 && (
-            <div className="grid gap-4">
-              <div className="grid gap-1.5">
-                <Text bold>New secrets</Text>
-                <Text variant="secondary" size="sm">
-                  This version needs secrets the app does not have yet. They are stored as encrypted
-                  secrets on the app's Worker; Appflare keeps only their names.
-                </Text>
+            {needs.build !== null &&
+              needs.skipsPreview === null &&
+              needs.selfDeploying !== true && (
+                <Checkbox
+                  checked={allowNoPreview}
+                  onCheckedChange={(checked: boolean) => setAllowNoPreview(checked)}
+                  disabled={pending}
+                  label="If the built version cannot be checked on a preview first (it changes or implements Durable Objects), update without that check"
+                />
+              )}
+            {needs.skipsPreview !== null && (
+              <div className="grid gap-3">
+                <Banner
+                  variant="alert"
+                  icon={<WarningIcon weight="fill" />}
+                  title="No preview check for this update"
+                  description={`${needs.skipsPreview}.`}
+                />
+                <Checkbox
+                  checked={confirmed}
+                  onCheckedChange={(checked: boolean) => setConfirmed(checked)}
+                  disabled={pending}
+                  label="Update without checking the new version first"
+                />
               </div>
-              <SecretFields
-                secrets={needs.needsSecrets}
-                values={secrets}
-                onChange={(name, value) => setSecrets((s) => ({ ...s, [name]: value }))}
-                after="the update"
+            )}
+            {needs.cronTriggers !== null && (
+              <CronTriggersField
+                count={needs.cronTriggers}
+                confirmation={{
+                  checked: paidConfirmed,
+                  onChange: setPaidConfirmed,
+                  remember: rememberPaid,
+                  onRememberChange: setRememberPaid,
+                  disabled: pending,
+                }}
               />
-            </div>
-          )}
-          {error !== null && (
-            <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-          )}
-          <div className="flex justify-end gap-2">
-            <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-            <Button
-              type="submit"
-              variant="primary"
-              icon={<ArrowCircleUpIcon />}
-              loading={pending}
-              disabled={!ready}
-            >
-              Update
-            </Button>
-          </div>
-        </form>
-      </Dialog>
-    </Dialog.Root>
+            )}
+            {needs.needsSecrets.length > 0 && (
+              <div className="grid gap-4">
+                <div className="grid gap-1.5">
+                  <Text bold>New secrets</Text>
+                  <Text variant="secondary" size="sm">
+                    This version needs secrets the app does not have yet. They are stored as
+                    encrypted secrets on the app's Worker; Appflare keeps only their names.
+                  </Text>
+                </div>
+                <SecretFields
+                  secrets={needs.needsSecrets}
+                  values={secrets}
+                  onChange={(name, value) => setSecrets((s) => ({ ...s, [name]: value }))}
+                  after="the update"
+                />
+              </div>
+            )}
+            {error !== null && (
+              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
+            )}
+          </form>
+        </LayerDialog.Body>
+        <LayerDialog.Actions dismissLabel="Cancel">
+          <LayerDialog.Actions.Primary
+            type="submit"
+            form={formId}
+            loading={pending}
+            disabled={!ready}
+          >
+            Update
+          </LayerDialog.Actions.Primary>
+        </LayerDialog.Actions>
+      </LayerDialog.Content>
+    </LayerDialog.Root>
   );
 }

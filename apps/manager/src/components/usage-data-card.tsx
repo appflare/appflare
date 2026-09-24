@@ -1,8 +1,8 @@
-import { Badge, Banner, CodeBlock, Collapsible, LayerCard, Loader, Text } from "@cloudflare/kumo";
+import { Banner, CodeBlock, Collapsible, LayerCard, Loader, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { isSending, TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
+import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 import { previewTelemetry, setTelemetry } from "../telemetry/telemetry.functions";
 import { UsageDataSwitch, WhatIsSentLink } from "./usage-data-notice";
 
@@ -44,14 +44,11 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
     }
   }
 
-  const sending = isSending({ ...status, state: enabled ? "on" : "off" });
   const unanswered = status.state === "unset" && status.lockedBy === null;
   return (
+    // The switch shows the choice; the page title names the card. What is sent in the end
+    // (nothing from a development build, whatever the switch says) is spelled out below it.
     <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>{TELEMETRY_COPY.title}</span>
-        <Badge variant={sending ? "info" : "neutral"}>{sending ? "On" : "Off"}</Badge>
-      </LayerCard.Secondary>
       <LayerCard.Primary className="grid gap-4 px-5 py-4">
         <Text variant="secondary">{TELEMETRY_COPY.notice}</Text>
         <UsageDataSwitch

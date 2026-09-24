@@ -1,4 +1,4 @@
-import { Badge, Banner, LayerCard, Switch, Text } from "@cloudflare/kumo";
+import { Banner, LayerCard, Switch, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
@@ -7,15 +7,17 @@ import { setAutoUpdateDefaults } from "./auto-update.functions";
 
 /**
  * Settings, "Automatic updates": "Automatically update apps" (the default of
- * every app that follows it) and "Automatically update Appflare". Admins
- * change them; members see them.
+ * every app that follows it) on General, or "Automatically update Appflare"
+ * on Appflare updates, as `which` says. Admins change them; members see them.
  */
 export function AutomaticUpdatesCard({
   settings,
   isAdmin,
+  which,
 }: {
   settings: AutoUpdateSettings;
   isAdmin: boolean;
+  which: "apps" | "manager";
 }) {
   const router = useRouter();
   const [apps, setApps] = useState(settings.apps);
@@ -40,41 +42,39 @@ export function AutomaticUpdatesCard({
     setPending(false);
   }
 
-  const on = apps || (manager && !settings.devBuild);
   return (
     <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Automatic updates</span>
-        <Badge variant={on ? "info" : "neutral"}>{on ? "On" : "Off"}</Badge>
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-5 px-5 py-4">
-        <div className="grid gap-1">
-          <Switch
-            label={AUTO_UPDATE_COPY.appsLabel}
-            checked={apps}
-            disabled={!isAdmin || pending}
-            onCheckedChange={(next: boolean) => void save({ apps: next })}
-          />
-          <Text variant="secondary" size="sm">
-            {AUTO_UPDATE_COPY.appsHelp}
-          </Text>
-        </div>
-        <div className="grid gap-1">
-          <Switch
-            label={AUTO_UPDATE_COPY.managerLabel}
-            checked={manager}
-            disabled={!isAdmin || pending}
-            onCheckedChange={(next: boolean) => void save({ manager: next })}
-          />
-          <Text variant="secondary" size="sm">
-            {AUTO_UPDATE_COPY.managerHelp}
-          </Text>
-          {settings.devBuild && (
+      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+        {which === "apps" ? (
+          <div className="grid gap-1">
+            <Switch
+              label={AUTO_UPDATE_COPY.appsLabel}
+              checked={apps}
+              disabled={!isAdmin || pending}
+              onCheckedChange={(next: boolean) => void save({ apps: next })}
+            />
             <Text variant="secondary" size="sm">
-              {AUTO_UPDATE_COPY.devBuild}
+              {AUTO_UPDATE_COPY.appsHelp}
             </Text>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="grid gap-1">
+            <Switch
+              label={AUTO_UPDATE_COPY.managerLabel}
+              checked={manager}
+              disabled={!isAdmin || pending}
+              onCheckedChange={(next: boolean) => void save({ manager: next })}
+            />
+            <Text variant="secondary" size="sm">
+              {AUTO_UPDATE_COPY.managerHelp}
+            </Text>
+            {settings.devBuild && (
+              <Text variant="secondary" size="sm">
+                {AUTO_UPDATE_COPY.devBuild}
+              </Text>
+            )}
+          </div>
+        )}
         {!isAdmin && (
           <Text variant="secondary" size="sm">
             {AUTO_UPDATE_COPY.membersOnly}

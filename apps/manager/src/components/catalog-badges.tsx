@@ -11,6 +11,7 @@ import {
   ShippingContainerIcon,
   SparkleIcon,
 } from "@phosphor-icons/react";
+import { type CapabilitiesView, requirementBadge } from "../capabilities/capabilities";
 import { requirementLabel } from "../catalog/requirements";
 import { installCheckBadgeCopy, PLAN_BADGES } from "./catalog-badge-copy";
 
@@ -94,10 +95,19 @@ const iconsByName: Partial<Record<string, Icon>> = REQUIREMENT_ICONS;
 
 /**
  * The index's `requires` as a row of icons, each named by a tooltip with the
- * same label the app's prerequisites callout uses. Renders nothing when the
- * app needs nothing beyond the Workers baseline.
+ * same label the app's prerequisites callout uses. With the account's
+ * detected capabilities, an icon is green when the account meets the
+ * requirement, amber when it does not, and neutral when Appflare cannot
+ * tell; the tooltip says which. Renders nothing when the app needs nothing
+ * beyond the Workers baseline.
  */
-export function RequirementIcons({ requires }: { requires: readonly string[] }) {
+export function RequirementIcons({
+  requires,
+  capabilities = null,
+}: {
+  requires: readonly string[];
+  capabilities?: CapabilitiesView | null;
+}) {
   if (requires.length === 0) return null;
   return (
     <span className="inline-flex items-center gap-2">
@@ -106,10 +116,20 @@ export function RequirementIcons({ requires }: { requires: readonly string[] }) 
       </Text>
       {requires.map((requirement) => {
         const RequirementIcon = iconsByName[requirement] ?? PuzzlePieceIcon;
-        const label = requirementLabel(requirement);
+        const badge = capabilities === null ? null : requirementBadge(requirement, capabilities);
+        const label =
+          badge === null
+            ? requirementLabel(requirement)
+            : `${requirementLabel(requirement)}. ${badge.label}`;
+        const tone =
+          badge === null
+            ? "text-kumo-subtle"
+            : badge.met
+              ? "text-kumo-success"
+              : "text-kumo-warning";
         return (
-          <Tooltip key={requirement} content={label} className="text-kumo-subtle">
-            <RequirementIcon size={18} aria-hidden />
+          <Tooltip key={requirement} content={label} className={tone}>
+            <RequirementIcon size={18} aria-hidden weight={badge === null ? "regular" : "fill"} />
             <span className="sr-only">{label}</span>
           </Tooltip>
         );

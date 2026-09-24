@@ -31,6 +31,7 @@ import {
   updatePath,
   updateRefusal,
 } from "../jobs/update/plan";
+import { snapshotHasSameCode } from "./rollback-copy";
 
 /**
  * Starting updates and rollbacks, restoring a database to a snapshot's
@@ -665,6 +666,11 @@ export interface SnapshotView {
   /** Whether the Worker runs this snapshot's version now (no rollback to offer). */
   isCurrent: boolean;
   /**
+   * The snapshot holds the code installed now (a settings change of this
+   * version): a rollback only puts back settings and secrets.
+   */
+  sameCode: boolean;
+  /**
    * The update changed Durable Object classes (the snapshot's migration tag
    * differs from the Worker's): those changes stay after a rollback.
    */
@@ -690,6 +696,8 @@ export async function listSnapshotsCore(
       currentVersionId: installs.current_version_id,
       doMigrationTag: installs.do_migration_tag,
       manifestJson: installs.manifest_json,
+      catalogVersion: installs.catalog_version,
+      artifactDigest: installs.artifact_digest,
     })
     .from(installs)
     .where(eq(installs.id, installId))
@@ -740,6 +748,10 @@ export async function listSnapshotsCore(
       jobStatus: job?.status ?? null,
       jobKind: job?.kind ?? null,
       isCurrent: row.worker_version_id === install.currentVersionId,
+      sameCode: snapshotHasSameCode(
+        { catalogVersion: row.catalog_version, artifactDigest: row.artifact_digest },
+        install,
+      ),
       crossesDoMigration: row.do_migration_tag !== currentDoTag,
       databases: liveDatabases.flatMap((d) => {
         const bookmark = d.cf_id === null ? undefined : bookmarks[d.cf_id];

@@ -4,7 +4,8 @@ import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { ACCOUNT_PLAN_COPY, type AccountPlan, accountPlanSchema } from "../account/plan";
 import { setAccountPlan } from "../account/plan.functions";
-import { formatExactDateTime } from "../components/format";
+import { DescriptionItem, DescriptionList } from "../components/description-list";
+import { Timestamp } from "../components/timestamp";
 import { type CapabilitiesView, PLAN_LABELS, SOURCE_LABELS, unknownSentence } from "./capabilities";
 import { recheckAccountCapabilities } from "./capabilities.functions";
 
@@ -15,12 +16,9 @@ const PLANS_URL = "https://dash.cloudflare.com/?to=/:account/workers/plans";
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <>
-      <Text as="dt" variant="secondary">
-        {label}
-      </Text>
-      <dd className="grid gap-1">{children}</dd>
-    </>
+    <DescriptionItem label={label}>
+      <span className="grid gap-1">{children}</span>
+    </DescriptionItem>
   );
 }
 
@@ -196,15 +194,19 @@ export function AccountCapabilitiesCard({
         <Text variant="secondary">
           Appflare reads these with its Cloudflare token when the token is saved, once a day, and
           when an admin chooses Re-check.{" "}
-          {view.checkedAt === null
-            ? "They have not been checked yet."
-            : `Last checked ${formatExactDateTime(view.checkedAt)}.`}
+          {view.checkedAt === null ? (
+            "They have not been checked yet."
+          ) : (
+            <>
+              Last checked <Timestamp iso={view.checkedAt} />.
+            </>
+          )}
         </Text>
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-3">
+        <DescriptionList>
           <PlanRow view={view} />
           <R2Row view={view} />
           <ContainersRow view={view} />
-        </dl>
+        </DescriptionList>
         <div className="grid gap-2">
           <Text variant="secondary">{ACCOUNT_PLAN_COPY.explanation}</Text>
           <Radio.Group

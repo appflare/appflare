@@ -131,11 +131,12 @@ describe("changing channels", () => {
   it("renames and changes events without touching credentials", async () => {
     const { channel } = await addChannel();
     const before = await rawRows();
-    const updated = await updateChannel(channelsEnv(), {
+    const { channel: updated, signingSecret } = await updateChannel(channelsEnv(), {
       id: channel.id,
       label: "Renamed",
       events: ["health_failing", "update_available"],
     });
+    expect(signingSecret).toBeNull();
     expect(updated.label).toBe("Renamed");
     // Stored in the canonical order, whatever order they were picked in.
     expect(updated.events).toEqual(["update_available", "health_failing"]);
@@ -144,7 +145,7 @@ describe("changing channels", () => {
 
   it("replaces credentials of the same kind only", async () => {
     const { channel } = await addChannel();
-    const updated = await updateChannel(channelsEnv(), {
+    const { channel: updated } = await updateChannel(channelsEnv(), {
       id: channel.id,
       label: "Ops",
       events: [],
@@ -167,12 +168,13 @@ describe("changing channels", () => {
       events: [],
       settings: { kind: "webhook", url: HOOK_URL },
     });
-    await updateChannel(channelsEnv(), {
+    const moved = await updateChannel(channelsEnv(), {
       id: saved.channel.id,
       label: "W",
       events: [],
       settings: { kind: "webhook", url: "https://other.example.test/hook" },
     });
+    expect(moved.signingSecret).toBeNull();
     let svc = services();
     await sendTest(channelsEnv(), saved.channel.id, { fetch: svc.fetch });
     expect(svc.posted[0]?.url).toBe("https://other.example.test/hook");
@@ -189,6 +191,84 @@ describe("changing channels", () => {
     );
     const { channel } = await addChannel();
     await expect(replaceSigningSecret(channelsEnv(), channel.id)).rejects.toThrow(ChannelError);
+  });
+
+  describe("after the key changed", () => {
+    // Channels sealed with the old BETTER_AUTH_SECRET, read with the new one.
+    const rotated = () => ({ DB: env.DB, BETTER_AUTH_SECRET: "a-different-secret-0123456789" });
+
+    it("editing a webhook with its URL again repairs it with a new signing secret, shown once", async () => {
+      const saved = await addChannel({
+        label: "W",
+        events: ["update_available"],
+        settings: { kind: "webhook", url: HOOK_URL },
+      });
+      expect((await listChannels(rotated()))[0]?.readable).toBe(false);
+      await expect(replaceSigningSecret(rotated(), saved.channel.id)).rejects.toThrow(
+        /Edit the channel and enter its details again/,
+      );
+
+      const repaired = await updateChannel(rotated(), {
+        id: saved.channel.id,
+        label: "W",
+        events: ["update_available"],
+        settings: { kind: "webhook", url: HOOK_URL },
+      });
+      expect(repaired.channel.readable).toBe(true);
+      expect(repaired.signingSecret).toMatch(/\S{20,}/);
+      expect(repaired.signingSecret).not.toBe(saved.signingSecret);
+      expect(await rawRows()).not.toContain(repaired.signingSecret ?? "");
+
+      const svc = services();
+      expect((await sendTest(rotated(), saved.channel.id, { fetch: svc.fetch })).ok).toBe(true);
+      expect(svc.posted[0]?.headers["x-appflare-signature"]).toBe(
+        await signBody(repaired.signingSecret ?? "", svc.posted[0]?.body ?? ""),
+      );
+
+      // Readable again, a later edit keeps that secret.
+      const again = await updateChannel(rotated(), {
+        id: saved.channel.id,
+        label: "W",
+        events: [],
+        settings: { kind: "webhook", url: "https://other.example.test/hook" },
+      });
+      expect(again.signingSecret).toBeNull();
+    });
+
+    it("editing a Telegram, Slack or Discord channel with its details again repairs it", async () => {
+      const kinds = [
+        { kind: "telegram", botToken: BOT_TOKEN, chatId: "-1001234567890" },
+        { kind: "slack", webhookUrl: SLACK_URL },
+        { kind: "discord", webhookUrl: DISCORD_URL },
+      ] as const;
+      for (const settings of kinds) {
+        const { channel } = await addChannel({ label: settings.kind, events: [], settings });
+        const repaired = await updateChannel(rotated(), {
+          id: channel.id,
+          label: settings.kind,
+          events: [],
+          settings,
+        });
+        expect(repaired.channel.readable).toBe(true);
+        expect(repaired.signingSecret).toBeNull();
+      }
+    });
+
+    it("removing the channel and adding it again still works", async () => {
+      const saved = await addChannel({
+        label: "W",
+        events: [],
+        settings: { kind: "webhook", url: HOOK_URL },
+      });
+      await deleteChannel(rotated(), saved.channel.id);
+      const added = await createChannel(rotated(), {
+        label: "W",
+        events: [],
+        settings: { kind: "webhook", url: HOOK_URL },
+      });
+      expect(added.channel.readable).toBe(true);
+      expect(added.signingSecret).not.toBeNull();
+    });
   });
 
   it("removing a channel removes its deliveries", async () => {

@@ -188,9 +188,6 @@ export interface TestResult {
 export const SIGNATURE_HEADER = "X-Appflare-Signature";
 
 export const NOTIFICATION_COPY = {
-  title: "Notification channels",
-  description:
-    "Send messages about updates, jobs and health to Telegram, Slack, Discord or your own webhook.",
   membersOnly: "Only admins can view and change notification channels.",
   empty: "No channels yet. Add one to hear about updates, finished jobs and failing health checks.",
   privacy:

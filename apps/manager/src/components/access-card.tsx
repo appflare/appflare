@@ -3,8 +3,8 @@ import {
   Banner,
   Button,
   Checkbox,
-  Dialog,
   LayerCard,
+  LayerDialog,
   LinkButton,
   Loader,
   Text,
@@ -17,10 +17,9 @@ import {
   LockKeyOpenIcon,
   WarningCircleIcon,
   WarningIcon,
-  XIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { ACCESS_RECOVERY_COMMAND, accessRecoverySteps } from "../access/recovery";
 import {
   type AccessCheck,
@@ -30,7 +29,9 @@ import {
   turnOffAccess,
   turnOnAccess,
 } from "../server/access.functions";
-import { formatDateTime } from "./format";
+import { ConfirmDialog } from "./confirm-dialog";
+import { DescriptionItem, DescriptionList } from "./description-list";
+import { Timestamp } from "./timestamp";
 
 /** Where the dashboard creates a Zero Trust organization. */
 const ZERO_TRUST_DASHBOARD_URL = "https://one.dash.cloudflare.com/";
@@ -87,17 +88,6 @@ export function AccessCard({
   );
 }
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <Text as="dt" variant="secondary">
-        {label}
-      </Text>
-      <Text as="dd">{children}</Text>
-    </>
-  );
-}
-
 function EnabledDetails({ status, isAdmin }: { status: AccessStatus; isAdmin: boolean }) {
   const router = useRouter();
   const [syncing, setSyncing] = useState(false);
@@ -122,22 +112,26 @@ function EnabledDetails({ status, isAdmin }: { status: AccessStatus; isAdmin: bo
 
   return (
     <>
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
-        <Row label="Protected address">
+      <DescriptionList>
+        <DescriptionItem label="Protected address">
           <Text variant="mono" as="span">
             {status.domain ?? "Unknown"}
           </Text>
-        </Row>
-        <Row label="Zero Trust team">
+        </DescriptionItem>
+        <DescriptionItem label="Zero Trust team">
           <Text variant="mono" as="span">
             {status.teamDomain ?? "Unknown"}
           </Text>
-        </Row>
-        <Row label="On since">{formatDateTime(status.enabledAt)}</Row>
+        </DescriptionItem>
+        <DescriptionItem label="On since">
+          <Timestamp iso={status.enabledAt} />
+        </DescriptionItem>
         {status.adminEmails !== null && (
-          <Row label="Allowed admins">{status.adminEmails.join(", ") || "None"}</Row>
+          <DescriptionItem label="Allowed admins">
+            {status.adminEmails.join(", ") || "None"}
+          </DescriptionItem>
         )}
-      </dl>
+      </DescriptionList>
       {error !== null && (
         <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
       )}
@@ -212,117 +206,102 @@ function TurnOnDialog({ viewerEmail }: { viewerEmail: string }) {
     setPending(false);
   }
 
+  const ready = state.step === "checked" && state.check.ok;
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger
+    <LayerDialog.Root open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
+      <LayerDialog.Trigger
         render={(p) => (
           <Button {...p} variant="primary" icon={<LockKeyIcon />}>
             Protect with Cloudflare Access
           </Button>
         )}
       />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="grid gap-1.5">
-            <Dialog.Title className="text-lg font-semibold">
-              Protect with Cloudflare Access
-            </Dialog.Title>
-            <Dialog.Description className="text-kumo-subtle">
-              Appflare creates a self-hosted Access application for this address that allows only
-              the admins' emails.
-            </Dialog.Description>
-          </div>
-          {state.step !== "done" && (
-            <Dialog.Close
-              aria-label="Close"
-              render={(props) => (
-                <Button
-                  {...props}
-                  variant="secondary"
-                  shape="square"
-                  icon={<XIcon />}
-                  aria-label="Close"
+      <LayerDialog.Content size="lg">
+        <LayerDialog.Title>Protect with Cloudflare Access</LayerDialog.Title>
+        <LayerDialog.Description>
+          Appflare creates a self-hosted Access application for this address that allows only the
+          admins' emails.
+        </LayerDialog.Description>
+        <LayerDialog.Body>
+          <div className="grid gap-4">
+            {error !== null && (
+              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
+            )}
+
+            {state.step === "checking" && error === null && (
+              <div className="flex items-center gap-3">
+                <Loader size="sm" />
+                <Text variant="secondary">Checking the token and the Zero Trust organization…</Text>
+              </div>
+            )}
+
+            {state.step === "checked" && !state.check.ok && <ProblemView check={state.check} />}
+
+            {state.step === "checked" && state.check.ok && (
+              <>
+                <DescriptionList>
+                  <DescriptionItem label="Address">
+                    <Text variant="mono" as="span">
+                      {state.check.hostname}
+                    </Text>
+                  </DescriptionItem>
+                  <DescriptionItem label="Zero Trust team">
+                    <Text variant="mono" as="span">
+                      {state.check.teamDomain}
+                    </Text>
+                  </DescriptionItem>
+                  <DescriptionItem label="Allowed emails">
+                    {state.check.adminEmails.join(", ")}
+                  </DescriptionItem>
+                  <DescriptionItem label="Login methods">
+                    {state.check.loginMethods.length > 0
+                      ? state.check.loginMethods.join("; ")
+                      : "None found"}
+                  </DescriptionItem>
+                </DescriptionList>
+                <Banner
+                  variant="alert"
+                  icon={<WarningIcon weight="fill" />}
+                  title={`You must be able to sign in to Access as ${viewerEmail}`}
+                  description={<LockoutWarning hostname={state.check.hostname} />}
                 />
-              )}
-            />
-          )}
-        </div>
+                <Checkbox
+                  checked={confirmed}
+                  onCheckedChange={setConfirmed}
+                  label={`I can sign in through Cloudflare Access as ${viewerEmail}`}
+                />
+              </>
+            )}
 
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-
-        {state.step === "checking" && error === null && (
-          <div className="flex items-center gap-3">
-            <Loader size="sm" />
-            <Text variant="secondary">Checking the token and the Zero Trust organization…</Text>
+            {state.step === "done" && (
+              <Banner
+                icon={<CheckCircleIcon weight="fill" />}
+                title="Cloudflare Access protection is on"
+                description={`Reload to sign in through Access. From now on every visit to ${state.hostname} starts with the Access sign-in.`}
+              />
+            )}
           </div>
+        </LayerDialog.Body>
+        {ready && (
+          <LayerDialog.Actions dismissLabel="Cancel">
+            <LayerDialog.Actions.Primary
+              loading={pending}
+              disabled={!confirmed}
+              onClick={() => void onTurnOn()}
+            >
+              Turn on
+            </LayerDialog.Actions.Primary>
+          </LayerDialog.Actions>
         )}
-
-        {state.step === "checked" && !state.check.ok && <ProblemView check={state.check} />}
-
-        {state.step === "checked" && state.check.ok && (
-          <div className="grid gap-4">
-            <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
-              <Row label="Address">
-                <Text variant="mono" as="span">
-                  {state.check.hostname}
-                </Text>
-              </Row>
-              <Row label="Zero Trust team">
-                <Text variant="mono" as="span">
-                  {state.check.teamDomain}
-                </Text>
-              </Row>
-              <Row label="Allowed emails">{state.check.adminEmails.join(", ")}</Row>
-              <Row label="Login methods">
-                {state.check.loginMethods.length > 0
-                  ? state.check.loginMethods.join("; ")
-                  : "None found"}
-              </Row>
-            </dl>
-            <Banner
-              variant="alert"
-              icon={<WarningIcon weight="fill" />}
-              title={`You must be able to sign in to Access as ${viewerEmail}`}
-              description={<LockoutWarning hostname={state.check.hostname} />}
-            />
-            <Checkbox
-              checked={confirmed}
-              onCheckedChange={setConfirmed}
-              label={`I can sign in through Cloudflare Access as ${viewerEmail}`}
-            />
-            <div className="flex justify-end gap-2">
-              <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-              <Button
-                variant="primary"
-                icon={<LockKeyIcon />}
-                loading={pending}
-                disabled={!confirmed}
-                onClick={onTurnOn}
-              >
-                Turn on
-              </Button>
-            </div>
-          </div>
-        )}
-
         {state.step === "done" && (
-          <div className="grid gap-4">
-            <Banner
-              icon={<CheckCircleIcon weight="fill" />}
-              title="Cloudflare Access protection is on"
-              description={`Reload to sign in through Access. From now on every visit to ${state.hostname} starts with the Access sign-in.`}
-            />
-            <div className="flex justify-end">
-              <Button variant="primary" onClick={() => window.location.reload()}>
-                Reload and sign in
-              </Button>
-            </div>
-          </div>
+          <LayerDialog.Actions>
+            <LayerDialog.Actions.Primary onClick={() => window.location.reload()}>
+              Reload and sign in
+            </LayerDialog.Actions.Primary>
+          </LayerDialog.Actions>
         )}
-      </Dialog>
-    </Dialog.Root>
+      </LayerDialog.Content>
+    </LayerDialog.Root>
   );
 }
 
@@ -365,81 +344,34 @@ function ProblemView({ check }: { check: Extract<AccessCheck, { ok: false }> }) 
         }
         description={check.message}
       />
-      <div className="flex justify-end gap-2">
-        {check.problem === "no-organization" && (
+      {check.problem === "no-organization" && (
+        <div>
           <LinkButton href={ZERO_TRUST_DASHBOARD_URL} external variant="secondary">
             Open Zero Trust
           </LinkButton>
-        )}
-        <Dialog.Close
-          render={(props) => (
-            <Button {...props} variant="primary">
-              Close
-            </Button>
-          )}
-        />
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function TurnOffDialog({ domain }: { domain: string | null }) {
-  const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function onTurnOff() {
-    setPending(true);
-    setError(null);
-    try {
-      await turnOffAccess();
-      // A full reload: Access no longer answers for this address, and the
-      // page's data should come from the unprotected manager.
-      window.location.reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not turn off Cloudflare Access.");
-      setPending(false);
-    }
-  }
-
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        setError(null);
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button {...p} variant="secondary-destructive" icon={<LockKeyOpenIcon />}>
+          Turn off
+        </Button>
+      )}
+      title="Turn off Cloudflare Access"
+      description={`Appflare deletes the Access applications for ${domain ?? "this address"} and stops checking Access tokens. Appflare's own sign-in still protects the manager.`}
+      actionLabel="Turn off"
+      onConfirm={async () => {
+        await turnOffAccess();
+        // A full reload: Access no longer answers for this address, and the
+        // page's data should come from the unprotected manager.
+        window.location.reload();
       }}
-    >
-      <Dialog.Trigger
-        render={(p) => (
-          <Button {...p} variant="secondary-destructive" icon={<LockKeyOpenIcon />}>
-            Turn off
-          </Button>
-        )}
-      />
-      <Dialog size="base" className="grid gap-6 px-6 py-5">
-        <div className="grid gap-1.5">
-          <Dialog.Title className="text-lg font-semibold">Turn off Cloudflare Access?</Dialog.Title>
-          <Dialog.Description className="text-kumo-subtle">
-            Appflare deletes the Access applications for {domain ?? "this address"} and stops
-            checking Access tokens. Appflare's own sign-in still protects the manager.
-          </Dialog.Description>
-        </div>
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-        <div className="flex justify-end gap-2">
-          <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-          <Button
-            variant="destructive"
-            icon={<LockKeyOpenIcon />}
-            loading={pending}
-            onClick={onTurnOff}
-          >
-            Turn off
-          </Button>
-        </div>
-      </Dialog>
-    </Dialog.Root>
+    />
   );
 }

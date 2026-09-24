@@ -1,18 +1,13 @@
-import { Banner, Button, Checkbox, Dialog, Input, Text } from "@cloudflare/kumo";
-import {
-  ArrowClockwiseIcon,
-  TrashIcon,
-  WarningCircleIcon,
-  WarningIcon,
-  XIcon,
-} from "@phosphor-icons/react";
-import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { Banner, Button, Checkbox, Text } from "@cloudflare/kumo";
+import { ArrowClockwiseIcon, TrashIcon, WarningIcon } from "@phosphor-icons/react";
+import { useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { isDataResourceKind, QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
 import type { ResourceUsage } from "../installs/resource-usage.server";
 import { getResourceUsage, retryUninstall, startUninstall } from "../installs/uninstall.functions";
+import { ConfirmDialog } from "./confirm-dialog";
 import { formatBytes, resourceKindLabel } from "./format";
+import { useJobStarted } from "./job-started";
 
 function usageText(usage: ResourceUsage | undefined): string | null {
   if (usage?.kvKeys !== undefined) {
@@ -47,8 +42,9 @@ function workerBoundSummary(install: InstallDetail): string[] {
  * API reports it cheaply, what they hold; what goes with the Worker, custom
  * domains included (they hold no data, and are removed before the Worker), is
  * listed without a choice, and so is what the install set up in Email Routing
- * (removed first). The admin types the Worker name to confirm. Submitting
- * starts the uninstall job and opens its log. In `retry` mode it continues an
+ * (removed first). The admin types the Worker name to confirm, as Kumo's
+ * delete-resource pattern has it. Submitting starts the uninstall job and
+ * opens its log. In `retry` mode it continues an
  * uninstall that stopped part way, listing only what is left; unticking a
  * resource keeps it (for example a bucket Cloudflare refuses to delete).
  * A self-deploying app is removed by its own installer's destroy command,
@@ -61,27 +57,18 @@ export function UninstallDialog({
   install: InstallDetail;
   mode: "start" | "retry";
 }) {
-  const router = useRouter();
+  const jobStarted = useJobStarted();
   const selfDeploying = install.build.kind === "self-deploying";
   const data = selfDeploying ? [] : install.resources.filter((r) => isDataResourceKind(r.kind));
-  const [open, setOpen] = useState(false);
   const [ticked, setTicked] = useState<Set<string>>(() => new Set(data.map((r) => r.id)));
-  const [confirm, setConfirm] = useState("");
   const [usage, setUsage] = useState<Map<string, ResourceUsage>>(new Map());
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  function onOpenChange(next: boolean) {
-    setOpen(next);
-    if (next) {
-      setTicked(new Set(data.map((r) => r.id)));
-      setConfirm("");
-      setError(null);
-      if (data.length > 0) {
-        getResourceUsage({ data: { installId: install.id } })
-          .then((rows) => setUsage(new Map(rows.map((u) => [u.id, u]))))
-          .catch(() => setUsage(new Map()));
-      }
+  function onOpen() {
+    setTicked(new Set(data.map((r) => r.id)));
+    if (data.length > 0) {
+      getResourceUsage({ data: { installId: install.id } })
+        .then((rows) => setUsage(new Map(rows.map((u) => [u.id, u]))))
+        .catch(() => setUsage(new Map()));
     }
   }
 
@@ -94,177 +81,123 @@ export function UninstallDialog({
     });
   }
 
-  const confirmed = confirm.trim() === install.workerName;
-
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!confirmed || pending) return;
-    setPending(true);
-    setError(null);
-    try {
-      const input = { data: { installId: install.id, deleteResources: [...ticked] } };
-      const { jobId } =
-        mode === "retry" ? await retryUninstall(input) : await startUninstall(input);
-      await router.navigate({ to: "/jobs/$jobId", params: { jobId } });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start the uninstall.");
-      setPending(false);
-    }
+  async function onConfirm() {
+    const input = { data: { installId: install.id, deleteResources: [...ticked] } };
+    const { jobId } = mode === "retry" ? await retryUninstall(input) : await startUninstall(input);
+    await jobStarted(jobId, "Uninstall started");
   }
 
   const alsoDeleted = workerBoundSummary(install);
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange} disablePointerDismissal>
-      <Dialog.Trigger
-        render={(p) =>
-          mode === "retry" ? (
-            <Button {...p} variant="secondary-destructive" icon={<ArrowClockwiseIcon />}>
-              Retry uninstall
-            </Button>
-          ) : (
-            <Button {...p} variant="secondary-destructive" icon={<TrashIcon />}>
-              Uninstall
-            </Button>
-          )
+    <ConfirmDialog
+      size="lg"
+      trigger={(p) =>
+        mode === "retry" ? (
+          <Button {...p} variant="secondary-destructive" icon={<ArrowClockwiseIcon />}>
+            Retry uninstall
+          </Button>
+        ) : (
+          <Button {...p} variant="secondary-destructive" icon={<TrashIcon />}>
+            Uninstall
+          </Button>
+        )
+      }
+      title={`${mode === "retry" ? "Finish uninstalling" : "Uninstall"} ${install.instanceName}`}
+      description={
+        selfDeploying
+          ? "Runs the app's own installer in your sandbox Worker to delete everything it created, then removes the app's token and secrets from the sandbox Worker. Nothing can be kept."
+          : mode === "retry"
+            ? "Deletes what the last attempt left, including the Worker if it is still there. Untick a resource to keep it in the account instead."
+            : `Deletes the Worker "${install.workerName}"${alsoDeleted.length > 0 ? ` with ${alsoDeleted.join(", ")}` : ""}, and the resources you tick below.`
+      }
+      confirmText={install.workerName}
+      actionLabel={mode === "retry" ? "Retry uninstall" : "Uninstall"}
+      onOpen={onOpen}
+      onConfirm={onConfirm}
+    >
+      <Banner
+        variant="alert"
+        icon={<WarningIcon weight="fill" />}
+        title="Deleting data is permanent"
+        description={
+          selfDeploying
+            ? "The installer's destroy command deletes the app's databases, buckets and namespaces with everything in them. It runs in a container on Workers Paid, like an install."
+            : "Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare then lists it on this app's page and under Settings, Removed apps, until you delete it or forget the app."
         }
       />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="grid gap-1.5">
-            <Dialog.Title className="text-lg font-semibold">
-              {mode === "retry" ? "Finish uninstalling" : "Uninstall"} {install.instanceName}
-            </Dialog.Title>
-            <Dialog.Description className="text-kumo-subtle">
-              {selfDeploying
-                ? "Runs the app's own installer in your sandbox Worker to delete everything it created, then removes the app's token and secrets from the sandbox Worker. Nothing can be kept."
-                : mode === "retry"
-                  ? "Deletes what the last attempt left, including the Worker if it is still there. Untick a resource to keep it in the account instead."
-                  : `Deletes the Worker "${install.workerName}"${alsoDeleted.length > 0 ? ` with ${alsoDeleted.join(", ")}` : ""}, and the resources you tick below.`}
-            </Dialog.Description>
-          </div>
-          <Dialog.Close
-            aria-label="Close"
-            render={(props) => (
-              <Button
-                {...props}
-                variant="secondary"
-                shape="square"
-                icon={<XIcon />}
-                aria-label="Close"
-              />
-            )}
-          />
+      {selfDeploying && install.resources.length > 0 && (
+        <div className="grid gap-1.5">
+          <Text bold>Deleted by the app's installer</Text>
+          <ul className="grid gap-1">
+            {install.resources.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-baseline gap-x-2">
+                <span>{resourceKindLabel(r.kind)}</span>
+                <span className="font-mono text-[0.9em]">{r.name}</span>
+              </li>
+            ))}
+          </ul>
         </div>
-        <form className="grid gap-5" onSubmit={onSubmit}>
-          <Banner
-            variant="alert"
-            icon={<WarningIcon weight="fill" />}
-            title="Deleting data is permanent"
-            description={
-              selfDeploying
-                ? "The installer's destroy command deletes the app's databases, buckets and namespaces with everything in them. It runs in a container on Workers Paid, like an install."
-                : "Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare then lists it on this page and under Settings, Removed apps, until you delete it or forget the app."
-            }
-          />
-          {selfDeploying && install.resources.length > 0 && (
-            <div className="grid gap-1.5">
-              <Text bold>Deleted by the app's installer</Text>
-              <ul className="grid gap-1">
-                {install.resources.map((r) => (
-                  <li key={r.id} className="flex flex-wrap items-baseline gap-x-2">
+      )}
+      {install.emailRoutes.length > 0 && (
+        <div className="grid gap-1.5">
+          <Text bold>Email Routing</Text>
+          <Text variant="secondary">
+            Undone first, before the Worker, so no mail is sent to a Worker that no longer exists.
+            Nothing here holds data.
+          </Text>
+          <ul className="grid list-disc gap-1 pl-5">
+            {install.emailRoutes.map((r) => (
+              <li key={r.id}>
+                <Text as="span">{r.onUninstall}</Text>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {install.domains.length > 0 && (
+        <div className="grid gap-1.5">
+          <Text bold>Custom domains</Text>
+          <Text variant="secondary">
+            Removed first, before the Worker. A custom domain holds no data, so there is nothing to
+            keep.
+          </Text>
+          <ul className="grid gap-1">
+            {install.domains.map((d) => (
+              <li key={d.id} className="font-mono text-[0.9em]">
+                {d.hostname}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {data.length > 0 ? (
+        <div className="grid gap-3">
+          <Text bold>Data resources</Text>
+          {data.map((r) => {
+            const held = usageText(usage.get(r.id));
+            return (
+              <Checkbox
+                key={r.id}
+                checked={ticked.has(r.id)}
+                onCheckedChange={(checked: boolean) => toggle(r.id, checked)}
+                label={
+                  <span className="flex flex-wrap items-baseline gap-x-2">
                     <span>{resourceKindLabel(r.kind)}</span>
                     <span className="font-mono text-[0.9em]">{r.name}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {install.emailRoutes.length > 0 && (
-            <div className="grid gap-1.5">
-              <Text bold>Email Routing</Text>
-              <Text variant="secondary">
-                Undone first, before the Worker, so no mail is sent to a Worker that no longer
-                exists. Nothing here holds data.
-              </Text>
-              <ul className="grid list-disc gap-1 pl-5">
-                {install.emailRoutes.map((r) => (
-                  <li key={r.id}>
-                    <Text as="span">{r.onUninstall}</Text>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {install.domains.length > 0 && (
-            <div className="grid gap-1.5">
-              <Text bold>Custom domains</Text>
-              <Text variant="secondary">
-                Removed first, before the Worker. A custom domain holds no data, so there is nothing
-                to keep.
-              </Text>
-              <ul className="grid gap-1">
-                {install.domains.map((d) => (
-                  <li key={d.id} className="font-mono text-[0.9em]">
-                    {d.hostname}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {data.length > 0 ? (
-            <div className="grid gap-3">
-              <Text bold>Data resources</Text>
-              {data.map((r) => {
-                const held = usageText(usage.get(r.id));
-                return (
-                  <Checkbox
-                    key={r.id}
-                    checked={ticked.has(r.id)}
-                    onCheckedChange={(checked: boolean) => toggle(r.id, checked)}
-                    disabled={pending}
-                    label={
-                      <span className="flex flex-wrap items-baseline gap-x-2">
-                        <span>{resourceKindLabel(r.kind)}</span>
-                        <span className="font-mono text-[0.9em]">{r.name}</span>
-                        {held !== null && (
-                          <Text as="span" variant="secondary" size="sm">
-                            {held}
-                          </Text>
-                        )}
-                      </span>
-                    }
-                  />
-                );
-              })}
-            </div>
-          ) : selfDeploying ? null : (
-            <Text variant="secondary">This app has no data resources besides its Worker.</Text>
-          )}
-          <Input
-            label={`Type ${install.workerName} to confirm`}
-            value={confirm}
-            onChange={(e) => setConfirm(e.currentTarget.value)}
-            autoComplete="off"
-            spellCheck={false}
-            disabled={pending}
-          />
-          {error !== null && (
-            <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-          )}
-          <div className="flex justify-end gap-2">
-            <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-            <Button
-              type="submit"
-              variant="destructive"
-              icon={<TrashIcon />}
-              loading={pending}
-              disabled={!confirmed}
-            >
-              {mode === "retry" ? "Retry uninstall" : "Uninstall"}
-            </Button>
-          </div>
-        </form>
-      </Dialog>
-    </Dialog.Root>
+                    {held !== null && (
+                      <Text as="span" variant="secondary" size="sm">
+                        {held}
+                      </Text>
+                    )}
+                  </span>
+                }
+              />
+            );
+          })}
+        </div>
+      ) : selfDeploying ? null : (
+        <Text variant="secondary">This app has no data resources besides its Worker.</Text>
+      )}
+    </ConfirmDialog>
   );
 }

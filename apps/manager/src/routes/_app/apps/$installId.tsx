@@ -1,4 +1,15 @@
-import { Badge, Banner, Empty, LayerCard, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
+import {
+  Badge,
+  Banner,
+  Empty,
+  InlineCopyText,
+  LayerCard,
+  Link,
+  LinkButton,
+  Table,
+  Tabs,
+  Text,
+} from "@cloudflare/kumo";
 import {
   ArrowRightIcon,
   ArrowSquareOutIcon,
@@ -6,20 +17,25 @@ import {
   PackageIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { z } from "zod";
 import { startedByLabel } from "../../../auto-update/auto-update";
 import { InstallAutoUpdateCard } from "../../../auto-update/install-auto-update-card";
 import { AppCredentialsCard } from "../../../components/app-credentials-card";
 import { AppSettingsSection } from "../../../components/app-settings-section";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
+import { AppIcon } from "../../../components/catalog-media";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
-import { formatDateTime, jobKindLabel, resourceKindLabel } from "../../../components/format";
+import { DescriptionItem, DescriptionList } from "../../../components/description-list";
+import { jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
 import { PageHeader } from "../../../components/page-header";
 import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
+import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
+import { Timestamp } from "../../../components/timestamp";
 import { UninstallDialog } from "../../../components/uninstall-dialog";
 import { UpdateBanner } from "../../../components/update-banner";
 import { VersionsSection } from "../../../components/versions-section";
@@ -30,19 +46,35 @@ import {
   type ResourceView,
 } from "../../../installs/installs.functions";
 import { getInstallSettings } from "../../../installs/reconfigure.functions";
+import type { InstallSettings } from "../../../installs/reconfigure.server";
 import { listSnapshots } from "../../../installs/versions.functions";
+import type { SnapshotView } from "../../../installs/versions.server";
+
+const TABS = ["overview", "settings", "domains", "resources", "jobs"] as const;
+type Tab = (typeof TABS)[number];
+
+const TAB_LABELS: Record<Tab, string> = {
+  overview: "Overview",
+  settings: "Settings",
+  domains: "Domains and email",
+  resources: "Resources",
+  jobs: "Jobs",
+};
 
 /**
- * `/apps/$installId`: status and health, the workers.dev switch, custom domains, email
- * routes, resources, automatic updates, jobs (with who started them),
- * the Cloudflare token the app needs for itself (if any), the app's post-install notes,
- * its settings and secret names (admins change them and redeploy under Settings),
- * update and rollback, and, in a danger zone at the bottom (admins), uninstall
- * or finishing an uninstall. After an uninstall it shows the `uninstalled`
- * state, the resources that were kept, and the job history; the danger zone
- * then offers deleting what was kept, or forgetting the app.
+ * `/apps/$installId`: the app's name and icon, its update or uninstall state,
+ * then tabs. Overview: details and health, next steps, the Cloudflare token
+ * the app needs for itself (if any), and, at the bottom for admins, the
+ * danger zone (uninstall, finishing an uninstall, or once uninstalled
+ * deleting what was kept or forgetting the app). Settings: the app's
+ * settings and secrets (admins change them and redeploy) and automatic
+ * updates. Domains and email: the workers.dev switch, custom domains, email
+ * routes. Resources: what the install created, and what an uninstall kept.
+ * Jobs: versions to roll back to, and every job with who started it. The
+ * tab is in the URL (`?tab=`), so links and reloads keep it.
  */
 export const Route = createFileRoute("/_app/apps/$installId")({
+  validateSearch: z.object({ tab: z.enum(TABS).optional() }),
   loader: async ({ params }) => {
     const [install, snapshots, settings] = await Promise.all([
       getInstall({ data: { installId: params.installId } }),
@@ -53,43 +85,30 @@ export const Route = createFileRoute("/_app/apps/$installId")({
   },
   // The deepest route's title wins over the root's "<page> · Appflare".
   head: ({ loaderData }) => ({
-    meta: [{ title: `${loaderData?.install?.instanceName ?? "Install"} · Appflare` }],
+    meta: [{ title: `${loaderData?.install?.name ?? "App"} · Appflare` }],
   }),
   component: InstallPage,
 });
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <Text as="dt" variant="secondary">
-        {label}
-      </Text>
-      <Text as="dd">{children}</Text>
-    </>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="grid gap-3">
-      <Text variant="heading" as="h2">
-        {title}
-      </Text>
-      {children}
-    </section>
-  );
-}
+const HOME_CRUMB = { label: "Home", href: "/" };
 
 const mono = "font-mono text-[0.9em]";
+
+/** Tabs an uninstalled app still has: nothing to configure, but what it kept and its history. */
+function tabsFor(install: InstallDetail): readonly Tab[] {
+  return install.status === "uninstalled" ? ["overview", "resources", "jobs"] : TABS;
+}
 
 function InstallPage() {
   const { install, snapshots, settings } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
+  const search = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
   const isAdmin = viewer.role === "admin";
   if (install === null) {
     return (
       <>
-        <PageHeader title="Install" />
+        <PageHeader title="App not found" parents={[HOME_CRUMB]} />
         <Empty
           icon={<PackageIcon size={48} className="text-kumo-inactive" />}
           title="No such install"
@@ -98,12 +117,18 @@ function InstallPage() {
       </>
     );
   }
-  const gone = install.status === "uninstalled";
+  const tabs = tabsFor(install);
+  const tab: Tab = search.tab !== undefined && tabs.includes(search.tab) ? search.tab : "overview";
+  const label = install.instanceName === install.name ? null : install.instanceName;
   return (
     <>
       <PageHeader
-        title={install.instanceName}
-        description={`${install.name}, Worker "${install.workerName}"`}
+        title={install.name}
+        description={
+          label === null ? `Worker ${install.workerName}` : `${label}, Worker ${install.workerName}`
+        }
+        parents={[HOME_CRUMB]}
+        icon={<AppIcon src={install.icon} size={40} />}
         actions={
           install.workerUrl !== null ? (
             <LinkButton
@@ -119,7 +144,46 @@ function InstallPage() {
       />
       <UpdateBanner install={install} isAdmin={isAdmin} />
       <UninstallState install={install} />
-      <Overview install={install} isAdmin={isAdmin} />
+      <Tabs
+        variant="underline"
+        value={tab}
+        onValueChange={(next) => {
+          const picked = TABS.find((t) => t === next) ?? "overview";
+          void navigate({
+            search: picked === "overview" ? {} : { tab: picked },
+            replace: true,
+            resetScroll: false,
+          });
+        }}
+        tabs={tabs.map((value) => ({ value, label: TAB_LABELS[value] }))}
+      />
+      {tab === "overview" && <OverviewTab install={install} isAdmin={isAdmin} />}
+      {tab === "settings" && (
+        <SettingsTab install={install} settings={settings} isAdmin={isAdmin} />
+      )}
+      {tab === "domains" && <DomainsTab install={install} isAdmin={isAdmin} />}
+      {tab === "resources" && <ResourcesTab install={install} />}
+      {tab === "jobs" && <JobsTab install={install} snapshots={snapshots} isAdmin={isAdmin} />}
+    </>
+  );
+}
+
+function OverviewTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
+  const gone = install.status === "uninstalled";
+  return (
+    <>
+      <Details install={install} isAdmin={isAdmin} />
+      {!gone && install.postInstall.length > 0 && (
+        <Section title="Next steps">
+          <LayerCard>
+            <LayerCard.Primary className="grid gap-4 px-5 py-4">
+              {install.postInstall.map((content) => (
+                <Markdown key={content}>{content}</Markdown>
+              ))}
+            </LayerCard.Primary>
+          </LayerCard>
+        </Section>
+      )}
       {!gone && (
         <AppTokenPermissions
           appName={install.name}
@@ -135,18 +199,23 @@ function InstallPage() {
           canEdit={isAdmin}
         />
       )}
-      {!gone && install.postInstall.length > 0 && (
-        <Section title="Next steps">
-          <LayerCard>
-            <LayerCard.Primary className="grid gap-4 px-5 py-4">
-              {install.postInstall.map((content) => (
-                <Markdown key={content}>{content}</Markdown>
-              ))}
-            </LayerCard.Primary>
-          </LayerCard>
-        </Section>
-      )}
-      {!gone && settings !== null && (
+      {isAdmin && <DangerZone install={install} />}
+    </>
+  );
+}
+
+function SettingsTab({
+  install,
+  settings,
+  isAdmin,
+}: {
+  install: InstallDetail;
+  settings: InstallSettings | null;
+  isAdmin: boolean;
+}) {
+  return (
+    <>
+      {settings !== null ? (
         <AppSettingsSection
           // A saved change reloads the page; the form starts from the new values.
           key={install.updatedAt}
@@ -154,48 +223,7 @@ function InstallPage() {
           settings={settings}
           isAdmin={isAdmin}
         />
-      )}
-      {!gone && isAdmin && install.build.kind !== "self-deploying" && (
-        <Section title="workers.dev URL">
-          <WorkersDevSwitch install={install} />
-        </Section>
-      )}
-      {!gone && isAdmin && <CustomDomainsSection install={install} />}
-      {!gone && install.emailRoutes.length > 0 && (
-        <Section title="Email">
-          <LayerCard>
-            <LayerCard.Primary className="px-5 py-4">
-              <ul className="grid list-disc gap-1 pl-5">
-                {install.emailRoutes.map((r) => (
-                  <li key={r.id}>
-                    <Text as="span">{r.label}.</Text>
-                  </li>
-                ))}
-              </ul>
-            </LayerCard.Primary>
-          </LayerCard>
-        </Section>
-      )}
-      {install.retained.length > 0 && (
-        <Section title="Kept in the account">
-          <Text variant="secondary">
-            These were kept when the app was uninstalled. Appflare no longer uses them. When you no
-            longer need the data, an admin can delete them with Delete retained data below, or you
-            can delete them in the Cloudflare dashboard.
-          </Text>
-          <ResourceTable rows={install.retained} />
-        </Section>
-      )}
-      {!gone && (
-        <Section title="Resources">
-          {install.resources.length === 0 ? (
-            <Text variant="secondary">No resources have been created yet.</Text>
-          ) : (
-            <ResourceTable rows={install.resources} />
-          )}
-        </Section>
-      )}
-      {!gone && settings === null && (
+      ) : (
         <Section title="Secrets">
           {install.secretNames.length === 0 ? (
             <Text variant="secondary">No secrets are set.</Text>
@@ -215,9 +243,108 @@ function InstallPage() {
           )}
         </Section>
       )}
-      {!gone && <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />}
-      {!gone && <VersionsSection install={install} snapshots={snapshots} isAdmin={isAdmin} />}
-      <Section title="Jobs">
+      <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />
+    </>
+  );
+}
+
+function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
+  return (
+    <>
+      {isAdmin && install.build.kind !== "self-deploying" && (
+        <Section title="workers.dev URL">
+          <WorkersDevSwitch install={install} />
+        </Section>
+      )}
+      {isAdmin ? (
+        <CustomDomainsSection install={install} />
+      ) : (
+        <Section title="Custom domains">
+          {install.domains.length === 0 ? (
+            <Text variant="secondary">The app is served on its workers.dev URL only.</Text>
+          ) : (
+            <ul className="grid gap-1">
+              {install.domains.map((d) => (
+                <li key={d.id}>
+                  <Link href={d.url} target="_blank" rel="noopener noreferrer">
+                    {d.hostname}
+                    <Link.ExternalIcon />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      )}
+      <Section title="Email">
+        {install.emailRoutes.length === 0 ? (
+          <Text variant="secondary">This app does not receive email through Email Routing.</Text>
+        ) : (
+          <LayerCard>
+            <LayerCard.Primary className="grid gap-3 px-5 py-4">
+              <ul className="grid list-disc gap-1 pl-5">
+                {install.emailRoutes.map((r) => (
+                  <li key={r.id}>
+                    <Text as="span">{r.label}.</Text>
+                  </li>
+                ))}
+              </ul>
+              <Text variant="secondary" size="sm">
+                To receive email for another zone, use the Settings tab.
+              </Text>
+            </LayerCard.Primary>
+          </LayerCard>
+        )}
+      </Section>
+    </>
+  );
+}
+
+function ResourcesTab({ install }: { install: InstallDetail }) {
+  const gone = install.status === "uninstalled";
+  return (
+    <>
+      {install.retained.length > 0 && (
+        <Section
+          title="Kept in the account"
+          description="These were kept when the app was uninstalled. Appflare no longer uses them. When you no longer need the data, an admin can delete them from the danger zone on the Overview tab, or you can delete them in the Cloudflare dashboard."
+        >
+          <ResourceTable rows={install.retained} />
+        </Section>
+      )}
+      {!gone && (
+        <Section title="Resources" description="What the install created in this account.">
+          {install.resources.length === 0 ? (
+            <Text variant="secondary">No resources have been created yet.</Text>
+          ) : (
+            <ResourceTable rows={install.resources} />
+          )}
+        </Section>
+      )}
+      {gone && install.retained.length === 0 && (
+        <Text variant="secondary">
+          The Worker and every resource Appflare created for it are deleted.
+        </Text>
+      )}
+    </>
+  );
+}
+
+function JobsTab({
+  install,
+  snapshots,
+  isAdmin,
+}: {
+  install: InstallDetail;
+  snapshots: SnapshotView[];
+  isAdmin: boolean;
+}) {
+  return (
+    <>
+      {install.status !== "uninstalled" && (
+        <VersionsSection install={install} snapshots={snapshots} isAdmin={isAdmin} />
+      )}
+      <Section title="Job history">
         <LayerCard className="p-0">
           <Table>
             <Table.Header>
@@ -239,15 +366,18 @@ function InstallPage() {
                     <StatusBadge status={job.status} of="job" />
                   </Table.Cell>
                   <Table.Cell>{startedByLabel(job.startedBy)}</Table.Cell>
-                  <Table.Cell>{formatDateTime(job.startedAt)}</Table.Cell>
-                  <Table.Cell>{formatDateTime(job.finishedAt)}</Table.Cell>
+                  <Table.Cell className="whitespace-nowrap">
+                    <Timestamp iso={job.startedAt} />
+                  </Table.Cell>
+                  <Table.Cell className="whitespace-nowrap">
+                    <Timestamp iso={job.finishedAt} />
+                  </Table.Cell>
                 </Table.Row>
               ))}
             </Table.Body>
           </Table>
         </LayerCard>
       </Section>
-      {isAdmin && <DangerZone install={install} />}
     </>
   );
 }
@@ -274,9 +404,9 @@ function DangerAction({
 }
 
 /**
- * The irreversible actions of the page (admins), at the bottom: uninstall
- * (for a self-deploying app the same dialog runs its installer's destroy
- * command), or finishing an uninstall that stopped part way; once
+ * The irreversible actions of the page (admins), at the bottom of Overview:
+ * uninstall (for a self-deploying app the same dialog runs its installer's
+ * destroy command), or finishing an uninstall that stopped part way; once
  * uninstalled, deleting what the uninstall kept, or forgetting the app.
  * Nothing when no action applies.
  */
@@ -329,6 +459,7 @@ function DangerZone({ install }: { install: InstallDetail }) {
 }
 
 function ResourceTable({ rows }: { rows: ResourceView[] }) {
+  const managedColumn = rows.some((r) => r.managedByApp);
   return (
     <LayerCard className="p-0">
       <Table>
@@ -338,7 +469,7 @@ function ResourceTable({ rows }: { rows: ResourceView[] }) {
             <Table.Head>Binding</Table.Head>
             <Table.Head>Name</Table.Head>
             <Table.Head>ID</Table.Head>
-            {rows.some((r) => r.managedByApp) && <Table.Head>Managed by</Table.Head>}
+            {managedColumn && <Table.Head>Managed by</Table.Head>}
           </Table.Row>
         </Table.Header>
         <Table.Body>
@@ -352,9 +483,15 @@ function ResourceTable({ rows }: { rows: ResourceView[] }) {
                 <span className={mono}>{r.name}</span>
               </Table.Cell>
               <Table.Cell>
-                <span className={mono}>{r.cfId ?? ""}</span>
+                {r.cfId !== null && (
+                  <InlineCopyText
+                    labels={{ copyAction: `Copy the ID of ${r.name}`, copied: "ID copied" }}
+                  >
+                    {r.cfId}
+                  </InlineCopyText>
+                )}
               </Table.Cell>
-              {rows.some((row) => row.managedByApp) && (
+              {managedColumn && (
                 <Table.Cell>
                   {r.managedByApp ? (
                     <Badge variant="outline">The app's installer</Badge>
@@ -378,11 +515,14 @@ function UninstallState({ install }: { install: InstallDetail }) {
       <Banner
         variant="secondary"
         icon={<InfoIcon weight="fill" />}
-        title={`Uninstalled ${formatDateTime(install.uninstalledAt)}`}
+        title="Uninstalled"
         description={
-          install.retained.length > 0
-            ? "The Worker is deleted. The resources listed under Kept in the account are still there."
-            : "The Worker and every resource Appflare created for it are deleted."
+          <>
+            Uninstalled <Timestamp iso={install.uninstalledAt} />.{" "}
+            {install.retained.length > 0
+              ? "The Worker is deleted. The resources listed on the Resources tab, under Kept in the account, are still there."
+              : "The Worker and every resource Appflare created for it are deleted."}
+          </>
         }
       />
     );
@@ -411,29 +551,30 @@ function UninstallState({ install }: { install: InstallDetail }) {
       variant="error"
       icon={<WarningCircleIcon weight="fill" />}
       title="The uninstall did not finish"
-      description="Resources already deleted stay deleted. An admin can finish the uninstall from the danger zone at the bottom of this page, and keep anything Cloudflare refuses to delete."
+      description="Resources already deleted stay deleted. An admin can finish the uninstall from the danger zone at the bottom of the Overview tab, and keep anything Cloudflare refuses to delete."
     />
   );
 }
 
-function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
+/** The Overview's details: what is installed, where it serves, its health and build. */
+function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
   const vars = Object.entries(install.vars);
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Overview</span>
+        <span>Details</span>
         <div className="flex items-center gap-2">
           {install.updateAvailable && <Badge variant="info">Update available</Badge>}
           <StatusBadge status={install.status} of="install" />
         </div>
       </LayerCard.Secondary>
       <LayerCard.Primary className="px-5 py-4">
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
-          <Row label="Name">{install.instanceName}</Row>
-          <Row label="App">
-            <Link href={`/catalog/${install.slug}`}>{install.slug}</Link>
-          </Row>
-          <Row label="Version">
+        <DescriptionList>
+          <DescriptionItem label="App">
+            <Link href={`/catalog/${install.slug}`}>{install.name}</Link>
+          </DescriptionItem>
+          <DescriptionItem label="Name">{install.instanceName}</DescriptionItem>
+          <DescriptionItem label="Version">
             <span className={mono}>{install.version}</span>
             {install.updateAvailable && install.latestVersion !== null && (
               <Text as="span" variant="secondary">
@@ -441,11 +582,11 @@ function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boole
                 (catalog has <span className={mono}>{install.latestVersion}</span>)
               </Text>
             )}
-          </Row>
-          <Row label="Worker">
+          </DescriptionItem>
+          <DescriptionItem label="Worker">
             <span className={mono}>{install.workerName}</span>
-          </Row>
-          <Row label="URL">
+          </DescriptionItem>
+          <DescriptionItem label="URL">
             {install.workerUrl !== null ? (
               <span className="grid gap-1">
                 {install.workersDevEnabled && (
@@ -471,22 +612,30 @@ function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boole
             ) : (
               "Not serving yet"
             )}
-          </Row>
+          </DescriptionItem>
           {(install.status === "installed" || install.status === "updating") && (
-            <Row label="Health">
+            <DescriptionItem label="Health">
               <InstallHealth
                 installId={install.id}
                 status={install.healthStatus}
                 checkedAt={install.healthCheckedAt}
                 canCheck={isAdmin && install.status === "installed" && install.activeJobId === null}
               />
-            </Row>
+            </DescriptionItem>
           )}
-          <Row label="Worker version">
-            <span className={mono}>{install.currentVersionId ?? "None yet"}</span>
-          </Row>
+          <DescriptionItem label="Worker version">
+            {install.currentVersionId === null ? (
+              "None yet"
+            ) : (
+              <InlineCopyText
+                labels={{ copyAction: "Copy the Worker version", copied: "Worker version copied" }}
+              >
+                {install.currentVersionId}
+              </InlineCopyText>
+            )}
+          </DescriptionItem>
           {install.build.kind === "self-deploying" ? (
-            <Row label="Deployed">
+            <DescriptionItem label="Deployed">
               <span className="grid gap-1">
                 <span>
                   By the app's own installer
@@ -500,14 +649,14 @@ function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boole
                 </span>
                 {install.build.builtAt !== null && (
                   <Text as="span" variant="secondary" size="sm">
-                    {formatDateTime(install.build.builtAt)}
+                    <Timestamp iso={install.build.builtAt} />
                     {install.build.image === null ? "" : ` with ${install.build.image}`}
                   </Text>
                 )}
               </span>
-            </Row>
+            </DescriptionItem>
           ) : install.build.kind === "sandbox" ? (
-            <Row label="Built">
+            <DescriptionItem label="Built">
               <span className="grid gap-1">
                 <span>
                   Built in your account from{" "}
@@ -519,29 +668,31 @@ function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boole
                 </span>
                 {install.build.builtAt !== null && (
                   <Text as="span" variant="secondary" size="sm">
-                    {formatDateTime(install.build.builtAt)}
+                    <Timestamp iso={install.build.builtAt} />
                   </Text>
                 )}
               </span>
-            </Row>
+            </DescriptionItem>
           ) : (
             install.pinSha !== null && (
-              <Row label="Built from">
+              <DescriptionItem label="Built from">
                 <span className={mono}>{install.pinSha.slice(0, 12)}</span>
                 <Text as="span" variant="secondary">
                   {" "}
                   (signed release)
                 </Text>
-              </Row>
+              </DescriptionItem>
             )
           )}
           {vars.map(([name, value]) => (
-            <Row key={name} label={name}>
+            <DescriptionItem key={name} label={name}>
               <span className={mono}>{value}</span>
-            </Row>
+            </DescriptionItem>
           ))}
-          <Row label="Last change">{formatDateTime(install.updatedAt)}</Row>
-        </dl>
+          <DescriptionItem label="Last change">
+            <Timestamp iso={install.updatedAt} />
+          </DescriptionItem>
+        </DescriptionList>
       </LayerCard.Primary>
     </LayerCard>
   );

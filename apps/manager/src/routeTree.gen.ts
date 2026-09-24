@@ -17,10 +17,15 @@ import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as AppAppsInstallIdRouteImport } from './routes/_app/apps/$installId'
 import { Route as AppCatalogIndexRouteImport } from './routes/_app/catalog/index'
 import { Route as AppCatalogSlugRouteImport } from './routes/_app/catalog/$slug'
+import { Route as AppJobsIndexRouteImport } from './routes/_app/jobs/index'
 import { Route as AppJobsJobIdRouteImport } from './routes/_app/jobs/$jobId'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
+import { Route as AppSettingsAccountRouteImport } from './routes/_app/settings/account'
+import { Route as AppSettingsAppflareUpdatesRouteImport } from './routes/_app/settings/appflare-updates'
 import { Route as AppSettingsNotificationsRouteImport } from './routes/_app/settings/notifications'
 import { Route as AppSettingsRemovedAppsRouteImport } from './routes/_app/settings/removed-apps'
+import { Route as AppSettingsUsageDataRouteImport } from './routes/_app/settings/usage-data'
+import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCatalogMediaDigestRouteImport } from './routes/api/catalog/media/$digest'
 
@@ -63,6 +68,11 @@ const AppCatalogSlugRoute = AppCatalogSlugRouteImport.update({
   path: '/catalog/$slug',
   getParentRoute: () => AppRoute,
 } as any)
+const AppJobsIndexRoute = AppJobsIndexRouteImport.update({
+  id: '/jobs/',
+  path: '/jobs/',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppJobsJobIdRoute = AppJobsJobIdRouteImport.update({
   id: '/jobs/$jobId',
   path: '/jobs/$jobId',
@@ -73,6 +83,17 @@ const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
   path: '/settings/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSettingsAccountRoute = AppSettingsAccountRouteImport.update({
+  id: '/settings/account',
+  path: '/settings/account',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsAppflareUpdatesRoute =
+  AppSettingsAppflareUpdatesRouteImport.update({
+    id: '/settings/appflare-updates',
+    path: '/settings/appflare-updates',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppSettingsNotificationsRoute =
   AppSettingsNotificationsRouteImport.update({
     id: '/settings/notifications',
@@ -82,6 +103,16 @@ const AppSettingsNotificationsRoute =
 const AppSettingsRemovedAppsRoute = AppSettingsRemovedAppsRouteImport.update({
   id: '/settings/removed-apps',
   path: '/settings/removed-apps',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsUsageDataRoute = AppSettingsUsageDataRouteImport.update({
+  id: '/settings/usage-data',
+  path: '/settings/usage-data',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsUsersRoute = AppSettingsUsersRouteImport.update({
+  id: '/settings/users',
+  path: '/settings/users',
   getParentRoute: () => AppRoute,
 } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
@@ -103,10 +134,15 @@ export interface FileRoutesByFullPath {
   '/apps/$installId': typeof AppAppsInstallIdRoute
   '/catalog/$slug': typeof AppCatalogSlugRoute
   '/jobs/$jobId': typeof AppJobsJobIdRoute
+  '/settings/account': typeof AppSettingsAccountRoute
+  '/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
   '/settings/notifications': typeof AppSettingsNotificationsRoute
   '/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
+  '/settings/usage-data': typeof AppSettingsUsageDataRoute
+  '/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/catalog/': typeof AppCatalogIndexRoute
+  '/jobs/': typeof AppJobsIndexRoute
   '/settings/': typeof AppSettingsIndexRoute
   '/api/catalog/media/$digest': typeof ApiCatalogMediaDigestRoute
 }
@@ -118,10 +154,15 @@ export interface FileRoutesByTo {
   '/apps/$installId': typeof AppAppsInstallIdRoute
   '/catalog/$slug': typeof AppCatalogSlugRoute
   '/jobs/$jobId': typeof AppJobsJobIdRoute
+  '/settings/account': typeof AppSettingsAccountRoute
+  '/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
   '/settings/notifications': typeof AppSettingsNotificationsRoute
   '/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
+  '/settings/usage-data': typeof AppSettingsUsageDataRoute
+  '/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/catalog': typeof AppCatalogIndexRoute
+  '/jobs': typeof AppJobsIndexRoute
   '/settings': typeof AppSettingsIndexRoute
   '/api/catalog/media/$digest': typeof ApiCatalogMediaDigestRoute
 }
@@ -135,10 +176,15 @@ export interface FileRoutesById {
   '/_app/apps/$installId': typeof AppAppsInstallIdRoute
   '/_app/catalog/$slug': typeof AppCatalogSlugRoute
   '/_app/jobs/$jobId': typeof AppJobsJobIdRoute
+  '/_app/settings/account': typeof AppSettingsAccountRoute
+  '/_app/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
   '/_app/settings/notifications': typeof AppSettingsNotificationsRoute
   '/_app/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
+  '/_app/settings/usage-data': typeof AppSettingsUsageDataRoute
+  '/_app/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/_app/catalog/': typeof AppCatalogIndexRoute
+  '/_app/jobs/': typeof AppJobsIndexRoute
   '/_app/settings/': typeof AppSettingsIndexRoute
   '/api/catalog/media/$digest': typeof ApiCatalogMediaDigestRoute
 }
@@ -152,10 +198,15 @@ export interface FileRouteTypes {
     | '/apps/$installId'
     | '/catalog/$slug'
     | '/jobs/$jobId'
+    | '/settings/account'
+    | '/settings/appflare-updates'
     | '/settings/notifications'
     | '/settings/removed-apps'
+    | '/settings/usage-data'
+    | '/settings/users'
     | '/api/auth/$'
     | '/catalog/'
+    | '/jobs/'
     | '/settings/'
     | '/api/catalog/media/$digest'
   fileRoutesByTo: FileRoutesByTo
@@ -167,10 +218,15 @@ export interface FileRouteTypes {
     | '/apps/$installId'
     | '/catalog/$slug'
     | '/jobs/$jobId'
+    | '/settings/account'
+    | '/settings/appflare-updates'
     | '/settings/notifications'
     | '/settings/removed-apps'
+    | '/settings/usage-data'
+    | '/settings/users'
     | '/api/auth/$'
     | '/catalog'
+    | '/jobs'
     | '/settings'
     | '/api/catalog/media/$digest'
   id:
@@ -183,10 +239,15 @@ export interface FileRouteTypes {
     | '/_app/apps/$installId'
     | '/_app/catalog/$slug'
     | '/_app/jobs/$jobId'
+    | '/_app/settings/account'
+    | '/_app/settings/appflare-updates'
     | '/_app/settings/notifications'
     | '/_app/settings/removed-apps'
+    | '/_app/settings/usage-data'
+    | '/_app/settings/users'
     | '/api/auth/$'
     | '/_app/catalog/'
+    | '/_app/jobs/'
     | '/_app/settings/'
     | '/api/catalog/media/$digest'
   fileRoutesById: FileRoutesById
@@ -258,6 +319,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCatalogSlugRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/jobs/': {
+      id: '/_app/jobs/'
+      path: '/jobs'
+      fullPath: '/jobs/'
+      preLoaderRoute: typeof AppJobsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/jobs/$jobId': {
       id: '/_app/jobs/$jobId'
       path: '/jobs/$jobId'
@@ -272,6 +340,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings/account': {
+      id: '/_app/settings/account'
+      path: '/settings/account'
+      fullPath: '/settings/account'
+      preLoaderRoute: typeof AppSettingsAccountRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings/appflare-updates': {
+      id: '/_app/settings/appflare-updates'
+      path: '/settings/appflare-updates'
+      fullPath: '/settings/appflare-updates'
+      preLoaderRoute: typeof AppSettingsAppflareUpdatesRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings/notifications': {
       id: '/_app/settings/notifications'
       path: '/settings/notifications'
@@ -284,6 +366,20 @@ declare module '@tanstack/react-router' {
       path: '/settings/removed-apps'
       fullPath: '/settings/removed-apps'
       preLoaderRoute: typeof AppSettingsRemovedAppsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings/usage-data': {
+      id: '/_app/settings/usage-data'
+      path: '/settings/usage-data'
+      fullPath: '/settings/usage-data'
+      preLoaderRoute: typeof AppSettingsUsageDataRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings/users': {
+      id: '/_app/settings/users'
+      path: '/settings/users'
+      fullPath: '/settings/users'
+      preLoaderRoute: typeof AppSettingsUsersRouteImport
       parentRoute: typeof AppRoute
     }
     '/api/auth/$': {
@@ -308,9 +404,14 @@ interface AppRouteChildren {
   AppAppsInstallIdRoute: typeof AppAppsInstallIdRoute
   AppCatalogSlugRoute: typeof AppCatalogSlugRoute
   AppJobsJobIdRoute: typeof AppJobsJobIdRoute
+  AppSettingsAccountRoute: typeof AppSettingsAccountRoute
+  AppSettingsAppflareUpdatesRoute: typeof AppSettingsAppflareUpdatesRoute
   AppSettingsNotificationsRoute: typeof AppSettingsNotificationsRoute
   AppSettingsRemovedAppsRoute: typeof AppSettingsRemovedAppsRoute
+  AppSettingsUsageDataRoute: typeof AppSettingsUsageDataRoute
+  AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppCatalogIndexRoute: typeof AppCatalogIndexRoute
+  AppJobsIndexRoute: typeof AppJobsIndexRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
 }
 
@@ -319,9 +420,14 @@ const AppRouteChildren: AppRouteChildren = {
   AppAppsInstallIdRoute: AppAppsInstallIdRoute,
   AppCatalogSlugRoute: AppCatalogSlugRoute,
   AppJobsJobIdRoute: AppJobsJobIdRoute,
+  AppSettingsAccountRoute: AppSettingsAccountRoute,
+  AppSettingsAppflareUpdatesRoute: AppSettingsAppflareUpdatesRoute,
   AppSettingsNotificationsRoute: AppSettingsNotificationsRoute,
   AppSettingsRemovedAppsRoute: AppSettingsRemovedAppsRoute,
+  AppSettingsUsageDataRoute: AppSettingsUsageDataRoute,
+  AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppCatalogIndexRoute: AppCatalogIndexRoute,
+  AppJobsIndexRoute: AppJobsIndexRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,
 }
 

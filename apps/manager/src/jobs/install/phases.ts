@@ -509,13 +509,25 @@ export async function checkLiveHealthPhase(
   url: string,
   /** How to read the answer (the app's `install.healthMode`). */
   mode: HealthMode = "default",
+  /**
+   * `routeWasLive`: the URL was serving before the job, so a plain 404 is
+   * the app's own answer and settles the check at once.
+   */
+  opts: { routeWasLive?: boolean } = {},
 ): Promise<LiveHealthResult> {
   let firstProbeAt: number | null = null;
   for (let attempt = 1; ; attempt++) {
     const checked = await steps.run(`health check ${attempt}`, async ({ log, fetch }) => {
       const at = steps.now();
       const probe = await probeHealth(fetch, url);
-      const decision = decideLiveHealth(probe, attempt, at - (firstProbeAt ?? at), undefined, mode);
+      const decision = decideLiveHealth(
+        probe,
+        attempt,
+        at - (firstProbeAt ?? at),
+        undefined,
+        mode,
+        opts.routeWasLive === true,
+      );
       if (!decision.done) {
         log.warn(`GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`);
       } else if (decision.status === "verified") {

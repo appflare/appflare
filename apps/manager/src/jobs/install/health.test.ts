@@ -89,6 +89,18 @@ describe("live health window", () => {
     expect(classifyLiveProbe(res(302))).toBe("pass");
   });
 
+  it("passes a plain 404 at once when the route was live before the job, never Cloudflare's pages", () => {
+    expect(classifyLiveProbe(res(404, "Not found"), "default", true)).toBe("pass");
+    expect(classifyLiveProbe(res(404, "Not found"), "status-only", true)).toBe("pass");
+    expect(classifyLiveProbe(edge, "default", true)).toBe("retry");
+    expect(classifyLiveProbe(res(404, "error code: 1101"), "default", true)).toBe("soft-404");
+    expect(decideLiveHealth(res(404, "Not found"), 1, 0, undefined, "default", true)).toEqual({
+      done: true,
+      status: "verified",
+      detail: "HTTP 404",
+    });
+  });
+
   it("backs off 2, 3, 5, 8, then 10 seconds", () => {
     expect([1, 2, 3, 4, 5, 6, 12].map(liveHealthDelaySeconds)).toEqual([2, 3, 5, 8, 10, 10, 10]);
   });

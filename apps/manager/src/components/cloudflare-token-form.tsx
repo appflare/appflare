@@ -20,20 +20,19 @@ import {
 } from "../cloudflare/token-template";
 import type { TokenVerification, VerifyTokenResult } from "../cloudflare/verify-token";
 import { rotateToken, saveToken, verifyToken } from "../server/token.functions";
-
-const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+import { formatDate } from "./format";
 
 const { required } = splitPermissionGroups();
 const optional = optionalGroupsByFeature();
 
 /** Where each optional feature lives, for the list of what its permissions are for. */
 const FEATURE_PLACES: Readonly<Record<string, string>> = {
-  [ACCESS_FEATURE]: `"${ACCESS_FEATURE}" in Settings`,
-  [CUSTOM_DOMAINS_FEATURE]: "Custom domains on an installed app's page",
+  [ACCESS_FEATURE]: `"${ACCESS_FEATURE}" in Settings > Users and access`,
+  [CUSTOM_DOMAINS_FEATURE]: "Custom domains on an installed app's Domains and email tab",
   [EMAIL_ROUTING_FEATURE]:
     "Installing an app that receives email (it also needs Zone: Read and DNS: Edit from the custom domains list)",
   [PLAN_DETECTION_FEATURE]:
-    "Reading this account's Workers plan for Settings > Account capabilities, instead of asking you. Appflare only reads the plan names from the account's subscriptions; it never reads invoices or payment details",
+    "Reading this account's Workers plan for Settings > Account and capabilities, instead of asking you. Appflare only reads the plan names from the account's subscriptions; it never reads invoices or payment details",
 };
 
 export interface SavedToken {
@@ -220,9 +219,7 @@ function VerifiedSummary({ result }: { result: TokenVerification }) {
     ? `${result.accountName} (${result.accountId})`
     : result.accountId;
   const kind = result.tokenType === "account" ? "Account API token" : "User API token";
-  const expiry = result.expiresOn
-    ? `expires ${dateFormat.format(new Date(result.expiresOn))}`
-    : "does not expire";
+  const expiry = result.expiresOn ? `expires ${formatDate(result.expiresOn)}` : "does not expire";
   return (
     <div className="grid gap-3">
       <Banner

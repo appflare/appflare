@@ -56,7 +56,7 @@ export const createNotificationChannel = createServerFn({ method: "POST" })
 
 export const updateNotificationChannel = createServerFn({ method: "POST" })
   .validator(updateChannelInput)
-  .handler(async ({ data }): Promise<ChannelView> => {
+  .handler(async ({ data }): Promise<ChannelSaved> => {
     await requireRole("admin");
     return asUserError(() => updateChannel(env, data, { origin: origin() }));
   });

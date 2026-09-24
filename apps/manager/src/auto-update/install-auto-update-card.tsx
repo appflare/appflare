@@ -1,4 +1,4 @@
-import { Badge, Banner, LayerCard, Radio, Text } from "@cloudflare/kumo";
+import { Banner, LayerCard, Radio, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
@@ -51,13 +51,8 @@ export function InstallAutoUpdateCard({
   const on = effectiveAutoUpdate(choice, install.autoUpdateDefault);
   const needsApproval = install.build.kind !== "artifact";
   return (
+    // The radio group's legend titles the card; the note under it says whether it is on.
     <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>{AUTO_UPDATE_COPY.installLegend}</span>
-        <Badge variant={on && !needsApproval ? "info" : "neutral"}>
-          {on && !needsApproval ? "On" : "Off"}
-        </Badge>
-      </LayerCard.Secondary>
       <LayerCard.Primary className="grid gap-3 px-5 py-4">
         <Radio.Group
           legend={AUTO_UPDATE_COPY.installLegend}

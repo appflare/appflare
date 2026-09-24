@@ -1,14 +1,11 @@
-import { Badge, Banner, Button, Dialog, LayerCard, Text } from "@cloudflare/kumo";
-import { ArrowsClockwiseIcon, CheckCircleIcon, XIcon } from "@phosphor-icons/react";
+import { Badge, Banner, Button, LayerCard, LayerDialog, Text } from "@cloudflare/kumo";
+import { ArrowsClockwiseIcon, CheckCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import type { TokenStatus } from "../server/token.functions";
 import { CloudflareTokenForm, type SavedToken } from "./cloudflare-token-form";
-
-const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
+import { DescriptionItem, DescriptionList } from "./description-list";
+import { Timestamp } from "./timestamp";
 
 /** Settings, "Cloudflare token": what the manager is connected to, and rotation. */
 export function CloudflareTokenCard({
@@ -29,27 +26,27 @@ export function CloudflareTokenCard({
         )}
       </LayerCard.Secondary>
       <LayerCard.Primary className="grid gap-4 px-5 py-4">
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
-          <Row label="Account">{status.accountName ?? "Unknown"}</Row>
-          <Row label="Account ID">
+        <DescriptionList>
+          <DescriptionItem label="Account">{status.accountName ?? "Unknown"}</DescriptionItem>
+          <DescriptionItem label="Account ID">
             <Text variant="mono" as="span">
               {status.accountId ?? "Unknown"}
             </Text>
-          </Row>
-          <Row label="Worker">
+          </DescriptionItem>
+          <DescriptionItem label="Worker">
             <Text variant="mono" as="span">
               {status.workerName ?? "Unknown"}
             </Text>
-          </Row>
-          <Row label="Last verified">
-            {status.verifiedAt ? dateTimeFormat.format(new Date(status.verifiedAt)) : "Never"}
-          </Row>
-          <Row label="Secret binding">
+          </DescriptionItem>
+          <DescriptionItem label="Last verified">
+            <Timestamp iso={status.verifiedAt} fallback="Never" />
+          </DescriptionItem>
+          <DescriptionItem label="Secret binding">
             {status.hasSecret
               ? "CF_API_TOKEN is bound to the running version."
               : "The token is saved; the running version does not have it yet."}
-          </Row>
-        </dl>
+          </DescriptionItem>
+        </DescriptionList>
         {canRotate && (
           <div className="flex justify-end">
             <RotateTokenDialog />
@@ -57,17 +54,6 @@ export function CloudflareTokenCard({
         )}
       </LayerCard.Primary>
     </LayerCard>
-  );
-}
-
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <Text as="dt" variant="secondary">
-        {label}
-      </Text>
-      <Text as="dd">{children}</Text>
-    </>
   );
 }
 
@@ -88,57 +74,39 @@ function RotateTokenDialog() {
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger
+    <LayerDialog.Root open={open} onOpenChange={onOpenChange}>
+      <LayerDialog.Trigger
         render={(p) => (
           <Button {...p} variant="secondary" icon={<ArrowsClockwiseIcon />}>
             Rotate token
           </Button>
         )}
       />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="grid gap-1.5">
-            <Dialog.Title className="text-lg font-semibold">Rotate Cloudflare token</Dialog.Title>
-            <Dialog.Description className="text-kumo-subtle">
-              The new token must be for the same account. It replaces the stored one; revoke the old
-              token in the Cloudflare dashboard afterwards.
-            </Dialog.Description>
-          </div>
-          <Dialog.Close
-            aria-label="Close"
-            render={(props) => (
-              <Button
-                {...props}
-                variant="secondary"
-                shape="square"
-                icon={<XIcon />}
-                aria-label="Close"
-              />
-            )}
-          />
-        </div>
-        {saved === null ? (
-          <CloudflareTokenForm mode="rotate" onSaved={onSaved} />
-        ) : (
-          <div className="grid gap-4">
+      <LayerDialog.Content size="lg">
+        <LayerDialog.Title>Rotate Cloudflare token</LayerDialog.Title>
+        <LayerDialog.Description>
+          The new token must be for the same account. It replaces the stored one; revoke the old
+          token in the Cloudflare dashboard afterwards.
+        </LayerDialog.Description>
+        <LayerDialog.Body>
+          {saved === null ? (
+            <CloudflareTokenForm mode="rotate" onSaved={onSaved} />
+          ) : (
             <Banner
               icon={<CheckCircleIcon weight="fill" />}
               title="Token rotated"
               description={`The new token is stored on "${saved.workerName}". Appflare redeploys itself to pick it up.`}
             />
-            <div className="flex justify-end">
-              <Dialog.Close
-                render={(props) => (
-                  <Button {...props} variant="primary">
-                    Done
-                  </Button>
-                )}
-              />
-            </div>
-          </div>
+          )}
+        </LayerDialog.Body>
+        {saved !== null && (
+          <LayerDialog.Actions>
+            <LayerDialog.Actions.Primary onClick={() => onOpenChange(false)}>
+              Done
+            </LayerDialog.Actions.Primary>
+          </LayerDialog.Actions>
         )}
-      </Dialog>
-    </Dialog.Root>
+      </LayerDialog.Content>
+    </LayerDialog.Root>
   );
 }

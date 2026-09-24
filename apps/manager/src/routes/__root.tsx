@@ -1,4 +1,4 @@
-import { LinkProvider } from "@cloudflare/kumo";
+import { LinkProvider, Toasty } from "@cloudflare/kumo";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { RouterAnchor } from "../components/router-anchor";
@@ -48,7 +48,10 @@ export const Route = createRootRoute({
 function RootComponent() {
   return (
     <LinkProvider component={RouterAnchor}>
-      <Outlet />
+      {/* Kumo toasts, such as the one confirming that a job started. */}
+      <Toasty>
+        <Outlet />
+      </Toasty>
     </LinkProvider>
   );
 }

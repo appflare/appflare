@@ -633,8 +633,12 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       await removeEmailRoutesPhase(steps, oldRoutes, workerName);
     }
 
-    // Recorded rather than fatal, as an update's: the new version serves.
-    const health = redeploy ? await checkLiveHealthPhase(steps, step, url, healthMode) : null;
+    // Recorded rather than fatal, as an update's: the new version serves. The
+    // app's URL was serving before this job, so a plain 404 is the app's own
+    // answer (a setting such as a 404 home page), not a route going live.
+    const health = redeploy
+      ? await checkLiveHealthPhase(steps, step, url, healthMode, { routeWasLive: true })
+      : null;
 
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());

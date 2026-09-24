@@ -8,6 +8,11 @@ import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
 import { CUSTOM_DOMAIN_KIND, QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
+import {
+  rollbackFinishMessage,
+  rollbackStartMessage,
+  snapshotHasSameCode,
+} from "../installs/rollback-copy";
 import { appBaseUrl, domainHostnames } from "../installs/workers-dev";
 import { healthCheckOfManifest, healthLabel } from "./install/health";
 import {
@@ -258,13 +263,24 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         snapshot.catalog_version ?? "the snapshot's version",
       );
       if (emailChange !== null) log.warn(emailChange);
+      const sameCode = snapshotHasSameCode(
+        { catalogVersion: snapshot.catalog_version, artifactDigest: snapshot.artifact_digest },
+        { catalogVersion: install.catalog_version, artifactDigest: install.artifact_digest },
+      );
       log.info(
-        `Rolling back Worker "${install.worker_name}" from ${install.catalog_version} to ${snapshot.catalog_version ?? "the snapshot's version"} (version ${snapshot.worker_version_id}). D1 databases are not changed.`,
+        rollbackStartMessage({
+          workerName: install.worker_name,
+          fromVersion: install.catalog_version,
+          toVersion: snapshot.catalog_version,
+          versionId: snapshot.worker_version_id,
+          sameCode,
+        }),
       );
       return {
         accountId: settings.account_id,
         workerName: install.worker_name,
         fromVersion: install.catalog_version,
+        sameCode,
         versionId: snapshot.worker_version_id,
         toVersion: snapshot.catalog_version,
         recordedCrons: crons.map((c) => c.name),
@@ -399,7 +415,14 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           .where(eq(jobs.id, params.jobId)),
       ]);
       log.info(
-        `Rolled back from ${started.fromVersion} to ${started.toVersion ?? started.versionId} at ${url} (health: ${healthLabel(health)}).`,
+        rollbackFinishMessage({
+          fromVersion: started.fromVersion,
+          toVersion: started.toVersion,
+          versionId: started.versionId,
+          sameCode: started.sameCode,
+          url,
+          health: healthLabel(health),
+        }),
       );
       return {};
     });

@@ -59,7 +59,7 @@ describe("renderMessage", () => {
       { type: "manager_update_available", from: "0.5.0", to: "0.6.0" },
       "Appflare update available",
       "Appflare 0.6.0 is available. This manager runs 0.5.0.",
-      `${M}/settings#appflare-updates`,
+      `${M}/settings/appflare-updates`,
     ],
   ];
 

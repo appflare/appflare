@@ -3,22 +3,24 @@ import {
   Banner,
   Button,
   ClipboardText,
-  Dialog,
   Input,
   LayerCard,
+  LayerDialog,
   Select,
   Table,
   Text,
 } from "@cloudflare/kumo";
-import { InfoIcon, UserPlusIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
+import { InfoIcon, UserPlusIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import type { Role } from "../auth/roles";
 import { addUser, type UserRow } from "../server/users.functions";
+import { Timestamp } from "./timestamp";
 
-const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
-
-/** Settings → Users. `users` is null for members, who see a read-only note. */
+/**
+ * Settings, Users and access: the users. `users` is null for members, who
+ * see a read-only note. The page puts {@link AddUserDialog} beside the title.
+ */
 export function UsersSection({ users, viewerId }: { users: UserRow[] | null; viewerId: string }) {
   if (users === null) {
     return (
@@ -32,9 +34,6 @@ export function UsersSection({ users, viewerId }: { users: UserRow[] | null; vie
   }
   return (
     <div className="grid gap-3">
-      <div className="flex justify-end">
-        <AddUserDialog />
-      </div>
       <LayerCard className="p-0">
         <Table>
           <Table.Header>
@@ -61,7 +60,9 @@ export function UsersSection({ users, viewerId }: { users: UserRow[] | null; vie
                 <Table.Cell>
                   <Badge variant={u.role === "admin" ? "primary" : "neutral"}>{u.role}</Badge>
                 </Table.Cell>
-                <Table.Cell>{dateFormat.format(new Date(u.createdAt))}</Table.Cell>
+                <Table.Cell>
+                  <Timestamp iso={u.createdAt} dateOnly />
+                </Table.Cell>
               </Table.Row>
             ))}
           </Table.Body>
@@ -84,8 +85,9 @@ type Created = {
  * Creates a user with a random temporary password, shown once in this dialog.
  * Closing the dialog discards it from memory.
  */
-function AddUserDialog() {
+export function AddUserDialog() {
   const router = useRouter();
+  const formId = useId();
   const [open, setOpen] = useState(false);
   const [role, setRole] = useState<Role>("member");
   const [pending, setPending] = useState(false);
@@ -128,96 +130,76 @@ function AddUserDialog() {
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger
+    <LayerDialog.Root open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
+      <LayerDialog.Trigger
         render={(p) => (
           <Button {...p} variant="primary" icon={<UserPlusIcon />}>
             Add user
           </Button>
         )}
       />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="grid gap-1.5">
-            <Dialog.Title className="text-lg font-semibold">
-              {created === null ? "Add user" : "User created"}
-            </Dialog.Title>
-            <Dialog.Description className="text-kumo-subtle">
-              {created === null
-                ? "Appflare has no email provider, so you share a temporary password with them."
-                : `Give ${created.email} this temporary password. It is shown only once.`}
-            </Dialog.Description>
-          </div>
-          <Dialog.Close
-            aria-label="Close"
-            render={(props) => (
-              <Button
-                {...props}
-                variant="secondary"
-                shape="square"
-                icon={<XIcon />}
-                aria-label="Close"
+      <LayerDialog.Content>
+        <LayerDialog.Title>{created === null ? "Add user" : "User created"}</LayerDialog.Title>
+        <LayerDialog.Description>
+          {created === null
+            ? "Appflare has no email provider, so you share a temporary password with them."
+            : `Give ${created.email} this temporary password. It is shown only once.`}
+        </LayerDialog.Description>
+        <LayerDialog.Body>
+          {created === null ? (
+            <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
+              {error !== null && (
+                <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
+              )}
+              <Input label="Email" name="email" type="email" autoComplete="off" required />
+              <Input label="Name" name="name" autoComplete="off" required maxLength={100} />
+              <Select
+                label="Role"
+                value={role}
+                onValueChange={(v) => setRole(v === "admin" ? "admin" : "member")}
+                items={ROLE_ITEMS}
               />
-            )}
-          />
-        </div>
-        {created === null ? (
-          <form className="grid gap-4" onSubmit={onSubmit}>
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
-            <Input label="Email" name="email" type="email" autoComplete="off" required />
-            <Input label="Name" name="name" autoComplete="off" required maxLength={100} />
-            <Select
-              label="Role"
-              value={role}
-              onValueChange={(v) => setRole(v === "admin" ? "admin" : "member")}
-              items={ROLE_ITEMS}
-            />
-            <div className="flex justify-end gap-2">
-              <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-              <Button type="submit" variant="primary" loading={pending}>
-                Create user
-              </Button>
-            </div>
-          </form>
-        ) : (
-          <div className="grid gap-4">
-            <ClipboardText text={created.temporaryPassword} />
-            <Banner
-              variant="alert"
-              icon={<WarningCircleIcon weight="fill" />}
-              title="Copy it now"
-              description="Appflare stores only a hash. Closing this dialog discards the password."
-            />
-            {created.accessPolicy === "updated" && (
+            </form>
+          ) : (
+            <div className="grid gap-4">
+              <ClipboardText text={created.temporaryPassword} />
               <Banner
-                variant="secondary"
-                icon={<InfoIcon weight="fill" />}
-                title="Added to the Cloudflare Access policy"
-                description={`${created.email} can now sign in through Cloudflare Access with that email.`}
-              />
-            )}
-            {created.accessPolicy === "failed" && (
-              <Banner
-                variant="error"
+                variant="alert"
                 icon={<WarningCircleIcon weight="fill" />}
-                title="Not added to the Cloudflare Access policy"
-                description={`Cloudflare Access will keep ${created.email} out until the policy lists them. Use "Re-sync admins" under Cloudflare Access.`}
+                title="Copy it now"
+                description="Appflare stores only a hash. Closing this dialog discards the password."
               />
-            )}
-            <div className="flex justify-end">
-              <Dialog.Close
-                render={(props) => (
-                  <Button {...props} variant="primary">
-                    Done
-                  </Button>
-                )}
-              />
+              {created.accessPolicy === "updated" && (
+                <Banner
+                  variant="secondary"
+                  icon={<InfoIcon weight="fill" />}
+                  title="Added to the Cloudflare Access policy"
+                  description={`${created.email} can now sign in through Cloudflare Access with that email.`}
+                />
+              )}
+              {created.accessPolicy === "failed" && (
+                <Banner
+                  variant="error"
+                  icon={<WarningCircleIcon weight="fill" />}
+                  title="Not added to the Cloudflare Access policy"
+                  description={`Cloudflare Access will keep ${created.email} out until the policy lists them. Use "Re-sync admins" under Cloudflare Access.`}
+                />
+              )}
             </div>
-          </div>
-        )}
-      </Dialog>
-    </Dialog.Root>
+          )}
+        </LayerDialog.Body>
+        <LayerDialog.Actions dismissLabel={created === null ? "Cancel" : "Close"}>
+          {created === null ? (
+            <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+              Create user
+            </LayerDialog.Actions.Primary>
+          ) : (
+            <LayerDialog.Actions.Primary onClick={() => onOpenChange(false)}>
+              Done
+            </LayerDialog.Actions.Primary>
+          )}
+        </LayerDialog.Actions>
+      </LayerDialog.Content>
+    </LayerDialog.Root>
   );
 }

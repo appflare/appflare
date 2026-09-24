@@ -4,11 +4,12 @@ import {
   Button,
   Checkbox,
   ClipboardText,
-  Dialog,
   Empty,
   Input,
   LayerCard,
+  LayerDialog,
   Select,
+  SensitiveInput,
   Text,
 } from "@cloudflare/kumo";
 import {
@@ -21,10 +22,9 @@ import {
   TrashIcon,
   WarningCircleIcon,
   WarningIcon,
-  XIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import {
   CHANNEL_KIND_LABELS,
   CHANNEL_KINDS,
@@ -48,7 +48,8 @@ import {
   sendTestNotification,
   updateNotificationChannel,
 } from "../notifications/channels.functions";
-import { formatDateTime } from "./format";
+import { ConfirmDialog } from "./confirm-dialog";
+import { Timestamp } from "./timestamp";
 
 /**
  * Settings, Notification channels (admins only): the channels, each with
@@ -59,28 +60,19 @@ import { formatDateTime } from "./format";
 
 const mono = "font-mono text-[0.9em]";
 
-function CloseButton() {
-  return (
-    <Dialog.Close
-      aria-label="Close"
-      render={(props) => (
-        <Button {...props} variant="secondary" shape="square" icon={<XIcon />} aria-label="Close" />
-      )}
-    />
-  );
-}
-
 function errorText(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
+}
+
+/** "Add channel", which the page puts beside its title. */
+export function AddChannelDialog() {
+  return <ChannelDialog mode={{ kind: "add" }} />;
 }
 
 export function NotificationChannels({ channels }: { channels: ChannelView[] }) {
   return (
     <div className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Text variant="secondary">{NOTIFICATION_COPY.privacy}</Text>
-        <ChannelDialog mode={{ kind: "add" }} />
-      </div>
+      <Text variant="secondary">{NOTIFICATION_COPY.privacy}</Text>
       {channels.length === 0 ? (
         <Empty
           icon={<BellSimpleIcon size={48} className="text-kumo-inactive" />}
@@ -103,7 +95,7 @@ function statusBadge(channel: ChannelView) {
       </Badge>
     );
   }
-  if (channel.lastSuccessAt !== null) return <Badge variant="success">Delivering</Badge>;
+  if (channel.lastSuccessAt !== null) return <Badge variant="success">Delivered</Badge>;
   return <Badge variant="neutral">Nothing sent yet</Badge>;
 }
 
@@ -148,27 +140,27 @@ function ChannelCard({ channel }: { channel: ChannelView }) {
         <div className="grid gap-1.5">
           <Text bold>Deliveries</Text>
           <Text variant="secondary">
-            Last delivered: {formatDateTime(channel.lastSuccessAt)}.
+            Last delivered: <Timestamp iso={channel.lastSuccessAt} />.
             {channel.pending > 0 &&
               ` ${channel.pending} message${channel.pending === 1 ? " is" : "s are"} waiting to be sent or retried.`}
           </Text>
           {channel.failureCount > 0 && channel.lastError !== null && (
             <Text variant="secondary">
               {channel.failureCount} failed attempt{channel.failureCount === 1 ? "" : "s"} since the
-              last delivery. Last error ({formatDateTime(channel.lastFailureAt)}):{" "}
-              <span className={mono}>{channel.lastError}</span>
+              last delivery. Last error (<Timestamp iso={channel.lastFailureAt} />
+              ): <span className={mono}>{channel.lastError}</span>
             </Text>
           )}
           {!channel.readable && (
             <Text variant="secondary">
               The stored credentials cannot be read, so nothing is sent. Edit the channel and enter
-              them again.
+              its details again.
             </Text>
           )}
         </div>
         {test !== null && (
           <Banner
-            variant={test.ok ? "secondary" : "error"}
+            variant={test.ok ? "default" : "error"}
             icon={test.ok ? <CheckCircleIcon weight="fill" /> : <WarningCircleIcon weight="fill" />}
             title={test.ok ? "Test message delivered" : "Test message not delivered"}
             description={test.ok ? undefined : test.detail}
@@ -184,7 +176,9 @@ function ChannelCard({ channel }: { channel: ChannelView }) {
             Send test
           </Button>
           <ChannelDialog mode={{ kind: "edit", channel }} />
-          {channel.kind === "webhook" && <SigningSecretDialog channel={channel} />}
+          {channel.kind === "webhook" && channel.readable && (
+            <SigningSecretDialog channel={channel} />
+          )}
           <RemoveChannelDialog channel={channel} />
         </div>
       </LayerCard.Primary>
@@ -236,10 +230,18 @@ const KIND_HELP: Record<ChannelKind, string> = {
     "Appflare posts JSON to this URL and signs each body with a secret it shows you once, after saving. Your receiver verifies the signature over the raw body, rejects a stale sentAt, and ignores an id it has already seen.",
 };
 
-/** Add a channel, or edit one (credentials are replaced only when entered again). */
+/**
+ * Add a channel, or edit one (credentials are replaced only when entered
+ * again). A channel whose credentials cannot be read any more needs its
+ * details entered again; a webhook repaired this way gets a new signing
+ * secret, shown once, as when it was added.
+ */
 function ChannelDialog({ mode }: { mode: Mode }) {
   const router = useRouter();
+  const formId = useId();
   const editing = mode.kind === "edit" ? mode.channel : null;
+  /** Editing a channel whose stored credentials are unreadable: they must be entered again. */
+  const reenter = editing !== null && !editing.readable;
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<ChannelKind>(editing?.kind ?? "telegram");
   const [label, setLabel] = useState(editing?.label ?? "");
@@ -263,8 +265,7 @@ function ChannelDialog({ mode }: { mode: Mode }) {
     }
   }
 
-  const set = (name: keyof Fields) => (e: { currentTarget: { value: string } }) => {
-    const value = e.currentTarget.value;
+  const set = (name: keyof Fields) => (value: string) => {
     setFields((f) => ({ ...f, [name]: value }));
   };
 
@@ -274,7 +275,7 @@ function ChannelDialog({ mode }: { mode: Mode }) {
     const labelCheck = channelLabelSchema.safeParse(label);
     if (!labelCheck.success) found.label = labelCheck.error.issues[0]?.message ?? "Check the name.";
     let settings: ChannelSettings | undefined;
-    if (editing === null || anyEntered(kind, fields)) {
+    if (editing === null || reenter || anyEntered(kind, fields)) {
       const parsed = channelSettingsSchema.safeParse(settingsOf(kind, fields));
       if (parsed.success) settings = parsed.data;
       else {
@@ -290,16 +291,12 @@ function ChannelDialog({ mode }: { mode: Mode }) {
     setPending(true);
     setFailure(null);
     try {
+      let saved: { signingSecret: string | null };
       if (editing === null) {
         if (settings === undefined) return;
-        const saved = await createNotificationChannel({
-          data: { label, events: picked, settings },
-        });
-        await router.invalidate();
-        if (saved.signingSecret !== null) setSecret(saved.signingSecret);
-        else setOpen(false);
+        saved = await createNotificationChannel({ data: { label, events: picked, settings } });
       } else {
-        await updateNotificationChannel({
+        saved = await updateNotificationChannel({
           data: {
             id: editing.id,
             label,
@@ -307,9 +304,10 @@ function ChannelDialog({ mode }: { mode: Mode }) {
             ...(settings === undefined ? {} : { settings }),
           },
         });
-        await router.invalidate();
-        setOpen(false);
       }
+      await router.invalidate();
+      if (saved.signingSecret !== null) setSecret(saved.signingSecret);
+      else setOpen(false);
     } catch (err) {
       setFailure(errorText(err, "Could not save the channel."));
     } finally {
@@ -317,10 +315,15 @@ function ChannelDialog({ mode }: { mode: Mode }) {
     }
   }
 
-  const keepHint = editing === null ? undefined : "Leave empty to keep the current one.";
+  const keepHint = editing === null || reenter ? undefined : "Leave empty to keep the current one.";
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange} disablePointerDismissal>
-      <Dialog.Trigger
+    <LayerDialog.Root
+      open={open}
+      onOpenChange={onOpenChange}
+      disablePointerDismissal
+      dismissDisabled={pending}
+    >
+      <LayerDialog.Trigger
         render={(p) =>
           editing === null ? (
             <Button {...p} variant="primary" icon={<PlusIcon />}>
@@ -333,143 +336,137 @@ function ChannelDialog({ mode }: { mode: Mode }) {
           )
         }
       />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="grid gap-1.5">
-            <Dialog.Title className="text-lg font-semibold">
-              {secret !== null
-                ? "Webhook signing secret"
-                : editing === null
-                  ? "Add notification channel"
-                  : `Edit ${editing.label}`}
-            </Dialog.Title>
-            <Dialog.Description className="text-kumo-subtle">
-              {secret !== null
-                ? NOTIFICATION_COPY.signingSecret
-                : editing === null
-                  ? KIND_HELP[kind]
-                  : "Change its name and events. Enter credentials only to replace the stored ones, which are never shown."}
-            </Dialog.Description>
-          </div>
-          <CloseButton />
-        </div>
-        {secret !== null ? (
-          <div className="grid gap-4">
-            <ClipboardText text={secret} />
-            <Banner
-              variant="alert"
-              icon={<WarningIcon weight="fill" />}
-              title="Copy it now"
-              description="Appflare stores it encrypted and never shows it again. Replace it from the channel if it is lost."
-            />
-            <div className="flex justify-end">
-              <Dialog.Close
-                render={(props) => (
-                  <Button {...props} variant="primary">
-                    Done
-                  </Button>
-                )}
+      <LayerDialog.Content size="lg">
+        <LayerDialog.Title>
+          {secret !== null
+            ? "Webhook signing secret"
+            : editing === null
+              ? "Add notification channel"
+              : `Edit ${editing.label}`}
+        </LayerDialog.Title>
+        <LayerDialog.Description>
+          {secret !== null
+            ? NOTIFICATION_COPY.signingSecret
+            : editing === null
+              ? KIND_HELP[kind]
+              : reenter
+                ? `The stored credentials cannot be read any more. Enter its details again to use it.${kind === "webhook" ? " The webhook gets a new signing secret, shown once after saving." : ""}`
+                : "Change its name and events. Enter credentials only to replace the stored ones, which are never shown."}
+        </LayerDialog.Description>
+        <LayerDialog.Body>
+          {secret !== null ? (
+            <div className="grid gap-4">
+              <ClipboardText text={secret} />
+              <Banner
+                variant="alert"
+                icon={<WarningIcon weight="fill" />}
+                title="Copy it now"
+                description="Appflare stores it encrypted and never shows it again. Replace it from the channel if it is lost."
               />
             </div>
-          </div>
-        ) : (
-          <form className="grid gap-4" onSubmit={onSubmit}>
-            {editing === null && (
-              <Select
-                label="Kind"
-                value={kind}
-                onValueChange={(v) => {
-                  const next = CHANNEL_KINDS.find((k) => k === v);
-                  if (next !== undefined) setKind(next);
-                }}
-                items={CHANNEL_KIND_LABELS}
+          ) : (
+            <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
+              {editing === null && (
+                <Select
+                  label="Kind"
+                  value={kind}
+                  onValueChange={(v) => {
+                    const next = CHANNEL_KINDS.find((k) => k === v);
+                    if (next !== undefined) setKind(next);
+                  }}
+                  items={CHANNEL_KIND_LABELS}
+                />
+              )}
+              <Input
+                label="Name"
+                value={label}
+                onChange={(e) => setLabel(e.currentTarget.value)}
+                autoComplete="off"
+                maxLength={80}
+                error={errors.label}
+                placeholder="Team chat"
               />
-            )}
-            <Input
-              label="Name"
-              value={label}
-              onChange={(e) => setLabel(e.currentTarget.value)}
-              autoComplete="off"
-              maxLength={80}
-              error={errors.label}
-              placeholder="Team chat"
-            />
-            {kind === "telegram" && (
-              <>
+              {kind === "telegram" && (
+                <>
+                  <SensitiveInput
+                    label="Bot token"
+                    autoComplete="off"
+                    value={fields.botToken}
+                    onValueChange={set("botToken")}
+                    error={errors.botToken}
+                    description={keepHint}
+                  />
+                  <Input
+                    label="Chat id"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={fields.chatId}
+                    onChange={(e) => set("chatId")(e.currentTarget.value)}
+                    error={errors.chatId}
+                    description={
+                      keepHint ??
+                      "A number such as -1001234567890 for a group, or @name for a public channel."
+                    }
+                  />
+                </>
+              )}
+              {(kind === "slack" || kind === "discord") && (
+                <SensitiveInput
+                  label={kind === "slack" ? "Incoming webhook URL" : "Webhook URL"}
+                  autoComplete="off"
+                  value={fields.webhookUrl}
+                  onValueChange={set("webhookUrl")}
+                  error={errors.webhookUrl}
+                  description={keepHint ?? "The URL is a credential: anyone who has it can post."}
+                />
+              )}
+              {kind === "webhook" && (
                 <Input
-                  label="Bot token"
-                  type="password"
+                  label="URL"
+                  type="url"
+                  inputMode="url"
                   autoComplete="off"
                   spellCheck={false}
-                  passwordManagerIgnore
-                  value={fields.botToken}
-                  onChange={set("botToken")}
-                  error={errors.botToken}
-                  description={keepHint}
+                  placeholder="https://example.com/appflare"
+                  value={fields.url}
+                  onChange={(e) => set("url")(e.currentTarget.value)}
+                  error={errors.url}
+                  description={keepHint ?? NOTIFICATION_COPY.webhookAddress}
                 />
-                <Input
-                  label="Chat id"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={fields.chatId}
-                  onChange={set("chatId")}
-                  error={errors.chatId}
-                  description={
-                    keepHint ??
-                    "A number such as -1001234567890 for a group, or @name for a public channel."
-                  }
+              )}
+              <Checkbox.Group
+                legend="Events"
+                description={`${EVENT_LABELS.health_failing}: ${EVENT_DESCRIPTIONS.health_failing}`}
+                value={events}
+                onValueChange={(v: string[]) => setEvents(v)}
+              >
+                {NOTIFICATION_EVENTS.map((e) => (
+                  <Checkbox.Item key={e} value={e} label={EVENT_LABELS[e]} />
+                ))}
+              </Checkbox.Group>
+              {failure !== null && (
+                <Banner
+                  variant="error"
+                  icon={<WarningCircleIcon weight="fill" />}
+                  title={failure}
                 />
-              </>
-            )}
-            {(kind === "slack" || kind === "discord") && (
-              <Input
-                label={kind === "slack" ? "Incoming webhook URL" : "Webhook URL"}
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                passwordManagerIgnore
-                value={fields.webhookUrl}
-                onChange={set("webhookUrl")}
-                error={errors.webhookUrl}
-                description={keepHint ?? "The URL is a credential: anyone who has it can post."}
-              />
-            )}
-            {kind === "webhook" && (
-              <Input
-                label="URL"
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                passwordManagerIgnore
-                value={fields.url}
-                onChange={set("url")}
-                error={errors.url}
-                description={keepHint ?? NOTIFICATION_COPY.webhookAddress}
-              />
-            )}
-            <Checkbox.Group
-              legend="Events"
-              description={`${EVENT_LABELS.health_failing}: ${EVENT_DESCRIPTIONS.health_failing}`}
-              value={events}
-              onValueChange={(v: string[]) => setEvents(v)}
-            >
-              {NOTIFICATION_EVENTS.map((e) => (
-                <Checkbox.Item key={e} value={e} label={EVENT_LABELS[e]} />
-              ))}
-            </Checkbox.Group>
-            {failure !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={failure} />
-            )}
-            <div className="flex justify-end gap-2">
-              <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-              <Button type="submit" variant="primary" loading={pending}>
-                {editing === null ? "Add channel" : "Save"}
-              </Button>
-            </div>
-          </form>
-        )}
-      </Dialog>
-    </Dialog.Root>
+              )}
+            </form>
+          )}
+        </LayerDialog.Body>
+        <LayerDialog.Actions dismissLabel={secret !== null ? "Close" : "Cancel"}>
+          {secret !== null ? (
+            <LayerDialog.Actions.Primary onClick={() => setOpen(false)}>
+              Done
+            </LayerDialog.Actions.Primary>
+          ) : (
+            <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+              {editing === null ? "Add channel" : "Save"}
+            </LayerDialog.Actions.Primary>
+          )}
+        </LayerDialog.Actions>
+      </LayerDialog.Content>
+    </LayerDialog.Root>
   );
 }
 
@@ -503,119 +500,69 @@ function SigningSecretDialog({ channel }: { channel: ChannelView }) {
   }
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange} disablePointerDismissal>
-      <Dialog.Trigger
+    <LayerDialog.Root
+      open={open}
+      onOpenChange={onOpenChange}
+      disablePointerDismissal
+      dismissDisabled={pending}
+    >
+      <LayerDialog.Trigger
         render={(p) => (
           <Button {...p} variant="secondary" icon={<KeyIcon />}>
             Replace signing secret
           </Button>
         )}
       />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="grid gap-1.5">
-            <Dialog.Title className="text-lg font-semibold">
-              {secret === null ? "Replace signing secret" : "New signing secret"}
-            </Dialog.Title>
-            <Dialog.Description className="text-kumo-subtle">
-              {secret === null
-                ? `Makes a new secret for ${channel.label}. The current one stops working at once, so update your receiver right after.`
-                : NOTIFICATION_COPY.signingSecret}
-            </Dialog.Description>
+      <LayerDialog.Content>
+        <LayerDialog.Title>
+          {secret === null ? "Replace signing secret" : "New signing secret"}
+        </LayerDialog.Title>
+        <LayerDialog.Description>
+          {secret === null
+            ? `Makes a new secret for ${channel.label}. The current one stops working at once, so update your receiver right after.`
+            : NOTIFICATION_COPY.signingSecret}
+        </LayerDialog.Description>
+        <LayerDialog.Body>
+          <div className="grid gap-4">
+            {secret !== null && <ClipboardText text={secret} />}
+            {error !== null && (
+              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
+            )}
           </div>
-          <CloseButton />
-        </div>
-        {secret !== null && <ClipboardText text={secret} />}
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-        <div className="flex justify-end gap-2">
+        </LayerDialog.Body>
+        <LayerDialog.Actions dismissLabel={secret === null ? "Cancel" : "Close"}>
           {secret === null ? (
-            <>
-              <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-              <Button
-                variant="primary"
-                icon={<KeyIcon />}
-                loading={pending}
-                onClick={() => void onReplace()}
-              >
-                Replace
-              </Button>
-            </>
+            <LayerDialog.Actions.Primary loading={pending} onClick={() => void onReplace()}>
+              Replace
+            </LayerDialog.Actions.Primary>
           ) : (
-            <Dialog.Close
-              render={(props) => (
-                <Button {...props} variant="primary">
-                  Done
-                </Button>
-              )}
-            />
+            <LayerDialog.Actions.Primary onClick={() => setOpen(false)}>
+              Done
+            </LayerDialog.Actions.Primary>
           )}
-        </div>
-      </Dialog>
-    </Dialog.Root>
+        </LayerDialog.Actions>
+      </LayerDialog.Content>
+    </LayerDialog.Root>
   );
 }
 
 function RemoveChannelDialog({ channel }: { channel: ChannelView }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function onOpenChange(next: boolean) {
-    setOpen(next);
-    if (next) setError(null);
-  }
-
-  async function onRemove() {
-    setPending(true);
-    setError(null);
-    try {
-      await deleteNotificationChannel({ data: { id: channel.id } });
-      setOpen(false);
-      await router.invalidate();
-    } catch (err) {
-      setError(errorText(err, "Could not remove the channel."));
-    }
-    setPending(false);
-  }
-
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger
-        render={(p) => (
-          <Button {...p} variant="secondary-destructive" icon={<TrashIcon />}>
-            Remove
-          </Button>
-        )}
-      />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="grid gap-1.5">
-            <Dialog.Title className="text-lg font-semibold">Remove {channel.label}</Dialog.Title>
-            <Dialog.Description className="text-kumo-subtle">
-              Appflare stops sending to this channel and deletes its stored credentials. Messages
-              waiting for a retry are dropped.
-            </Dialog.Description>
-          </div>
-          <CloseButton />
-        </div>
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-        <div className="flex justify-end gap-2">
-          <Dialog.Close render={(props) => <Button {...props}>Cancel</Button>} />
-          <Button
-            variant="destructive"
-            icon={<TrashIcon />}
-            loading={pending}
-            onClick={() => void onRemove()}
-          >
-            Remove channel
-          </Button>
-        </div>
-      </Dialog>
-    </Dialog.Root>
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button {...p} variant="secondary-destructive" icon={<TrashIcon />}>
+          Remove
+        </Button>
+      )}
+      title={`Remove ${channel.label}`}
+      description="Appflare stops sending to this channel and deletes its stored credentials. Messages waiting for a retry are dropped."
+      confirmText={channel.label}
+      actionLabel="Remove channel"
+      onConfirm={async () => {
+        await deleteNotificationChannel({ data: { id: channel.id } });
+        await router.invalidate();
+      }}
+    />
   );
 }

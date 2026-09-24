@@ -137,7 +137,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: "Appflare update available",
         lines: [`Appflare ${facts.to} is available. This manager runs ${facts.from}.`],
-        url: managerLink(managerUrl, "/settings#appflare-updates"),
+        url: managerLink(managerUrl, "/settings/appflare-updates"),
       };
     case "test":
       return {

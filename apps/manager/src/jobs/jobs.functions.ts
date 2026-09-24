@@ -12,9 +12,19 @@ import {
   sandboxBuildOfInput,
 } from "../sandbox/progress";
 import { requireSession } from "../server/auth.server";
+import { type JobListRow, listRecentJobs } from "./job-list.server";
 import { isRestoreJob, reconcileJobs } from "./reconcile.server";
 
 export type { BuildProgressView } from "../sandbox/progress";
+export type { JobListRow } from "./job-list.server";
+
+/** `/jobs`: any signed-in user; the most recent jobs, newest first. */
+export const listJobs = createServerFn({ method: "GET" }).handler(
+  async (): Promise<JobListRow[]> => {
+    await requireSession();
+    return listRecentJobs(createDb(env.DB));
+  },
+);
 
 /** `/jobs/$jobId`: the job and its log, polled every 2 s while it runs. */
 

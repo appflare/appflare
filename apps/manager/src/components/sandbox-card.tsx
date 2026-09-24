@@ -6,23 +6,13 @@ import {
   WarningIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { ENABLE_SANDBOX_COMMAND } from "../sandbox/connect-copy";
 import { connectSandbox, type SandboxStatus } from "../server/sandbox.functions";
+import { DescriptionItem, DescriptionList } from "./description-list";
 
 /** The public guide to sandbox builds. */
 export const SANDBOX_DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/guides/builds/";
-
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <>
-      <Text as="dt" variant="secondary">
-        {label}
-      </Text>
-      <Text as="dd">{children}</Text>
-    </>
-  );
-}
 
 function DocsLink() {
   return (
@@ -84,14 +74,14 @@ function ConnectedDetails({ status }: { status: SandboxStatus }) {
     );
   }
   return (
-    <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
-      <Row label="Sandbox Worker">
+    <DescriptionList>
+      <DescriptionItem label="Sandbox Worker">
         <span className="font-mono text-[0.9em]">{status.info.sandboxVersion}</span>
-      </Row>
-      <Row label="Image">
+      </DescriptionItem>
+      <DescriptionItem label="Image">
         <span className="font-mono text-[0.9em]">{status.info.image}</span>
-      </Row>
-    </dl>
+      </DescriptionItem>
+    </DescriptionList>
   );
 }
 

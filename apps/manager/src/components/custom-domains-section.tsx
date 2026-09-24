@@ -2,9 +2,9 @@ import {
   Banner,
   Button,
   Checkbox,
-  Dialog,
-  Input,
+  InputGroup,
   LayerCard,
+  LayerDialog,
   Link,
   LinkButton,
   Loader,
@@ -14,16 +14,14 @@ import {
 } from "@cloudflare/kumo";
 import {
   ArrowsClockwiseIcon,
-  GlobeIcon,
   KeyIcon,
   PlusIcon,
   TrashIcon,
   WarningCircleIcon,
   WarningIcon,
-  XIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import { accountTokenTemplateUrl } from "../cloudflare/token-template";
 import { checkHostnameInZone } from "../installs/custom-domain-input";
 import {
@@ -38,8 +36,10 @@ import type {
   DomainOptions,
 } from "../installs/custom-domains.server";
 import type { CustomDomainView, InstallDetail } from "../installs/installs.functions";
+import { ConfirmDialog } from "./confirm-dialog";
 import { formatTime } from "./format";
 import { HealthBadge } from "./install-health";
+import { Section } from "./section";
 
 /**
  * `/apps/$installId` → Custom domains (admins only): the hostnames that serve
@@ -51,13 +51,10 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
   const canAdd = install.status === "installed" && install.activeJobId === null;
   const canRemove = install.status !== "uninstalling" && install.status !== "uninstalled";
   return (
-    <section className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Text variant="heading" as="h2">
-          Custom domains
-        </Text>
-        {canAdd && <AddDomainDialog install={install} />}
-      </div>
+    <Section
+      title="Custom domains"
+      actions={canAdd ? <AddDomainDialog install={install} /> : undefined}
+    >
       {install.domains.length === 0 ? (
         <Text variant="secondary">
           The app is served on its workers.dev URL only. Add a hostname in one of your domains on
@@ -102,7 +99,7 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
           </Table>
         </LayerCard>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -164,29 +161,6 @@ function DomainCheck({
   );
 }
 
-function DialogHeader({ title, description }: { title: string; description: ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="grid gap-1.5">
-        <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
-        <Dialog.Description className="text-kumo-subtle">{description}</Dialog.Description>
-      </div>
-      <Dialog.Close
-        aria-label="Close"
-        render={(props) => (
-          <Button
-            {...props}
-            variant="secondary"
-            shape="square"
-            icon={<XIcon />}
-            aria-label="Close"
-          />
-        )}
-      />
-    </div>
-  );
-}
-
 /**
  * What to change when the token cannot manage custom domains. Editing the
  * token's permissions in the dashboard keeps its value, so Appflare needs no
@@ -212,7 +186,8 @@ function TokenPermissionsBanner({ options }: { options: DomainOptions }) {
             To add them, open API Tokens in the Cloudflare dashboard, edit the Appflare token, add
             these permissions for the domains you want to use, and save. An edited token keeps its
             value, so nothing changes here. Or create a new token and replace the old one under{" "}
-            <Link href="/settings">Settings</Link> with Rotate token.
+            <Link href="/settings/account">Settings, Account and capabilities</Link> with Rotate
+            token.
           </span>
         </span>
       }
@@ -247,6 +222,7 @@ interface Conflict {
  */
 function AddDomainDialog({ install }: { install: InstallDetail }) {
   const router = useRouter();
+  const formId = useId();
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<DomainOptions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -319,115 +295,137 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
     setPending(false);
   }
 
+  const canSubmit = options !== null && options.zones.length > 0;
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange} disablePointerDismissal>
-      <Dialog.Trigger
+    <LayerDialog.Root
+      open={open}
+      onOpenChange={onOpenChange}
+      disablePointerDismissal
+      dismissDisabled={pending}
+    >
+      <LayerDialog.Trigger
         render={(p) => (
           <Button {...p} variant="secondary" icon={<PlusIcon />}>
             Add a domain
           </Button>
         )}
       />
-      <Dialog size="lg" className="grid gap-6 px-6 py-5">
-        <DialogHeader
-          title="Add a custom domain"
-          description={`Serve ${install.instanceName} on a hostname in one of your domains on Cloudflare. Cloudflare creates its DNS record and certificate; the workers.dev URL keeps working.`}
-        />
-        {options === null && loadError === null && (
-          <div className="flex items-center gap-2">
-            <Loader size="sm" />
-            <Text variant="secondary">Reading the account's domains…</Text>
-          </div>
-        )}
-        {loadError !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={loadError} />
-        )}
-        {options !== null && options.missing.length > 0 && (
-          <TokenPermissionsBanner options={options} />
-        )}
-        {options !== null && !options.noZones && options.zones.length === 0 && (
-          <Text variant="secondary">
-            None of the account's domains is active yet ({options.inactiveZones.join(", ")}). A
-            domain can serve an app once Cloudflare shows it as active.
-          </Text>
-        )}
-        {options !== null && options.zones.length > 0 && (
-          <form className="grid gap-4" onSubmit={onSubmit}>
-            <Select
-              label="Domain"
-              placeholder="Choose a domain"
-              value={zoneId}
-              onValueChange={(v) => {
-                setZoneId(typeof v === "string" ? v : null);
-                resetConflict();
-              }}
-              items={Object.fromEntries(options.zones.map((z) => [z.id, z.name]))}
-              disabled={pending}
-            />
-            <Input
-              label="Hostname"
-              placeholder={zone === null ? "app.example.com" : `app.${zone.name}`}
-              value={hostname}
-              onChange={(e) => {
-                setHostname(e.currentTarget.value);
-                resetConflict();
-              }}
-              onBlur={() => setTouched(true)}
-              autoComplete="off"
-              spellCheck={false}
-              disabled={pending || zone === null}
-              error={hostnameError}
-              description={
-                zone === null
-                  ? "Choose a domain first."
-                  : `${zone.name} itself or a name under it, such as app.${zone.name}.`
-              }
-            />
-            {conflict !== null && (
-              <div className="grid gap-3">
-                <Banner
-                  variant="alert"
-                  icon={<WarningIcon weight="fill" />}
-                  title={`${conflict.hostname} already has DNS records`}
-                  description={
-                    conflict.records.length > 0
-                      ? `Adding the domain replaces them: ${recordList(conflict.records)}. Whatever they point to stops receiving traffic for this hostname.`
-                      : "Cloudflare reports DNS records at this hostname that the domain would replace. Whatever they point to stops receiving traffic for this hostname."
-                  }
-                />
-                <Checkbox
-                  checked={replace}
-                  onCheckedChange={(v: boolean) => setReplace(v)}
-                  disabled={pending}
-                  label="Replace the existing DNS records with the one for this app"
-                />
+      <LayerDialog.Content size="lg">
+        <LayerDialog.Title>Add a custom domain</LayerDialog.Title>
+        <LayerDialog.Description>
+          Serve {install.instanceName} on a hostname in one of your domains on Cloudflare.
+          Cloudflare creates its DNS record and certificate; the workers.dev URL keeps working.
+        </LayerDialog.Description>
+        <LayerDialog.Body>
+          <div className="grid gap-4">
+            {options === null && loadError === null && (
+              <div className="flex items-center gap-2">
+                <Loader size="sm" />
+                <Text variant="secondary">Reading the account's domains…</Text>
               </div>
             )}
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
-            <div className="flex justify-end gap-2">
-              <Dialog.Close
-                render={(props) => (
-                  <Button {...props} disabled={pending}>
-                    Cancel
-                  </Button>
-                )}
+            {loadError !== null && (
+              <Banner
+                variant="error"
+                icon={<WarningCircleIcon weight="fill" />}
+                title={loadError}
               />
-              <Button
-                type="submit"
-                variant="primary"
-                icon={<GlobeIcon />}
-                loading={pending}
-                disabled={zone === null || (conflict !== null && !replace)}
-              >
-                {conflict !== null ? "Replace records and add" : "Add domain"}
-              </Button>
-            </div>
-          </form>
+            )}
+            {options !== null && options.missing.length > 0 && (
+              <TokenPermissionsBanner options={options} />
+            )}
+            {options !== null && !options.noZones && options.zones.length === 0 && (
+              <Text variant="secondary">
+                None of the account's domains is active yet ({options.inactiveZones.join(", ")}). A
+                domain can serve an app once Cloudflare shows it as active.
+              </Text>
+            )}
+            {options !== null && options.zones.length > 0 && (
+              <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
+                <Select
+                  label="Domain"
+                  placeholder="Choose a domain"
+                  value={zoneId}
+                  onValueChange={(v) => {
+                    setZoneId(typeof v === "string" ? v : null);
+                    resetConflict();
+                  }}
+                  items={Object.fromEntries(options.zones.map((z) => [z.id, z.name]))}
+                  disabled={pending}
+                />
+                <InputGroup
+                  label="Hostname"
+                  error={
+                    hostnameError === undefined
+                      ? undefined
+                      : { message: hostnameError, match: true }
+                  }
+                  description={
+                    zone === null
+                      ? "Choose a domain first."
+                      : `${zone.name} itself or a name under it, such as app.${zone.name}.`
+                  }
+                  disabled={pending || zone === null}
+                >
+                  <InputGroup.Addon>https://</InputGroup.Addon>
+                  <InputGroup.Input
+                    aria-label="Hostname"
+                    placeholder={zone === null ? "app.example.com" : `app.${zone.name}`}
+                    value={hostname}
+                    onChange={(e) => {
+                      setHostname(e.currentTarget.value);
+                      resetConflict();
+                    }}
+                    onBlur={() => setTouched(true)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </InputGroup>
+                {conflict !== null && (
+                  <div className="grid gap-3">
+                    <Banner
+                      variant="alert"
+                      icon={<WarningIcon weight="fill" />}
+                      title={`${conflict.hostname} already has DNS records`}
+                      description={
+                        conflict.records.length > 0
+                          ? `Adding the domain replaces them: ${recordList(conflict.records)}. Whatever they point to stops receiving traffic for this hostname.`
+                          : "Cloudflare reports DNS records at this hostname that the domain would replace. Whatever they point to stops receiving traffic for this hostname."
+                      }
+                    />
+                    <Checkbox
+                      checked={replace}
+                      onCheckedChange={(v: boolean) => setReplace(v)}
+                      disabled={pending}
+                      label="Replace the existing DNS records with the one for this app"
+                    />
+                  </div>
+                )}
+                {error !== null && (
+                  <Banner
+                    variant="error"
+                    icon={<WarningCircleIcon weight="fill" />}
+                    title={error}
+                  />
+                )}
+              </form>
+            )}
+          </div>
+        </LayerDialog.Body>
+        {canSubmit && (
+          <LayerDialog.Actions dismissLabel="Cancel">
+            <LayerDialog.Actions.Primary
+              type="submit"
+              form={formId}
+              loading={pending}
+              disabled={zone === null || (conflict !== null && !replace)}
+            >
+              {conflict !== null ? "Replace records and add" : "Add domain"}
+            </LayerDialog.Actions.Primary>
+          </LayerDialog.Actions>
         )}
-      </Dialog>
-    </Dialog.Root>
+      </LayerDialog.Content>
+    </LayerDialog.Root>
   );
 }
 
@@ -439,65 +437,26 @@ function RemoveDomainDialog({
   domain: CustomDomainView;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function onOpenChange(next: boolean) {
-    if (pending) return;
-    setOpen(next);
-    if (!next) setError(null);
-  }
-
-  async function onRemove() {
-    setPending(true);
-    setError(null);
-    try {
-      await removeCustomDomain({ data: { installId, resourceId: domain.id } });
-      setOpen(false);
-      await router.invalidate();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not remove the domain.");
-    }
-    setPending(false);
-  }
-
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger
-        render={(p) => (
-          <Button
-            {...p}
-            variant="secondary-destructive"
-            size="sm"
-            icon={<TrashIcon />}
-            aria-label={`Remove ${domain.hostname}`}
-          >
-            Remove
-          </Button>
-        )}
-      />
-      <Dialog className="grid gap-6 px-6 py-5">
-        <DialogHeader
-          title={`Remove ${domain.hostname}?`}
-          description="The app stops answering on this hostname. The workers.dev URL keeps working."
-        />
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-        <div className="flex justify-end gap-2">
-          <Dialog.Close
-            render={(props) => (
-              <Button {...props} disabled={pending}>
-                Cancel
-              </Button>
-            )}
-          />
-          <Button variant="destructive" loading={pending} onClick={onRemove}>
-            Remove domain
-          </Button>
-        </div>
-      </Dialog>
-    </Dialog.Root>
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button
+          {...p}
+          variant="secondary-destructive"
+          size="sm"
+          icon={<TrashIcon />}
+          aria-label={`Remove ${domain.hostname}`}
+        >
+          Remove
+        </Button>
+      )}
+      title={`Remove ${domain.hostname}`}
+      description="The app stops answering on this hostname. The workers.dev URL keeps working."
+      actionLabel="Remove domain"
+      onConfirm={async () => {
+        await removeCustomDomain({ data: { installId, resourceId: domain.id } });
+        await router.invalidate();
+      }}
+    />
   );
 }

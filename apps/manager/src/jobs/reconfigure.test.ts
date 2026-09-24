@@ -340,6 +340,22 @@ describe("settings change job", () => {
     );
   });
 
+  it("takes a plain 404 from the app's own URL as serving at once, since that URL was live before", async () => {
+    const liveHost = `cut.${SUBDOMAIN}.workers.dev`;
+    const r = await reconfigure({
+      request: { vars: { HOME_PAGE: "404" }, secrets: { set: {}, unset: [] } },
+      front: async (request) =>
+        new URL(request.url).host === liveHost ? new Response("Not found", { status: 404 }) : null,
+    });
+    expect(r.error).toBeNull();
+    expect(r.step.names.filter((n) => n.startsWith("health check"))).toEqual(["health check 1"]);
+    expect(r.step.names.some((n) => n.startsWith("health wait"))).toBe(false);
+    expect(r.install).toMatchObject({ status: "installed", health_status: "verified" });
+    expect(r.logs.at(-1)?.message).toBe(
+      "Changed the settings of cut at https://cut.appflare-dev.workers.dev/ (health: verified (HTTP 404)).",
+    );
+  });
+
   it("keeps workers.dev as stored and checks health on the first custom domain while it is off", async () => {
     const r = await reconfigure({
       workersDev: false,
