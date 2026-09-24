@@ -195,7 +195,8 @@ async function main(argv: string[]): Promise<number> {
   const sha = gitHead();
   const env = buildEnv(version);
 
-  // Also builds @appflare/schema's dist/, which the sandbox Worker bundles.
+  // Also builds @appflare/schema's and @appflare/cf-api's dist/, which the
+  // sandbox Worker bundles.
   run("pnpm", ["exec", "turbo", "run", "build", "--filter=@appflare/pack..."], env);
   // Imported only now: it loads @appflare/pack and @appflare/schema from dist/.
   const release = await import("./manager-release.ts");

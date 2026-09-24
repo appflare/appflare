@@ -1,12 +1,13 @@
 import {
   BUILD_LOG_TAIL_CHARS,
   type BuildProgress,
-  type BuildStage,
   buildProgressSchema,
+  type RunStep,
 } from "@appflare/schema";
 
 /**
- * The build log, kept in R2 next to the build's output so the manager can
+ * The log of a build (or of a self-deploying run), kept in R2 next to the
+ * build's output so the manager can
  * show live progress without holding a stream open: the running build
  * rewrites `log.txt` (the last {@link BUILD_LOG_TAIL_CHARS} characters of
  * output) at most every few seconds and at every step, with the state in the
@@ -24,12 +25,13 @@ export interface BuildLogOptions {
 
 export class BuildLog {
   #text = "";
-  #stage: BuildStage = "checkout";
+  #stage: RunStep = "checkout";
   #state: BuildState = "running";
   readonly #startedAt: string;
   #lastFlush = 0;
   #inFlight: Promise<void> | null = null;
   #dirty = false;
+  readonly #redactions: string[] = [];
 
   constructor(private readonly options: BuildLogOptions) {
     this.#startedAt = new Date(options.now()).toISOString();
@@ -40,10 +42,31 @@ export class BuildLog {
     return this.#text;
   }
 
+  /**
+   * Values that must never appear in the log (a self-deploying run's token
+   * and secrets): from now on they are replaced wherever they show up in the
+   * kept output. Best effort: a value split across two writes to R2 may have
+   * its first part written before the rest arrives.
+   */
+  redact(values: readonly string[]): void {
+    for (const value of values) {
+      if (value.length >= 4 && !this.#redactions.includes(value)) this.#redactions.push(value);
+    }
+    this.#text = this.scrub(this.#text);
+  }
+
+  /** `text` with every redacted value replaced. */
+  scrub(text: string): string {
+    let out = text;
+    for (const value of this.#redactions) out = out.replaceAll(value, "[redacted]");
+    return out;
+  }
+
   /** Adds output; writes the log to R2 when the flush interval has passed. */
   append(chunk: string): void {
     if (chunk.length === 0) return;
-    this.#text += chunk;
+    this.#text =
+      this.#redactions.length === 0 ? this.#text + chunk : this.scrub(this.#text + chunk);
     if (this.#text.length > BUILD_LOG_TAIL_CHARS) {
       this.#text = this.#text.slice(-BUILD_LOG_TAIL_CHARS);
     }
@@ -62,7 +85,7 @@ export class BuildLog {
   }
 
   /** Starts a step: records it and writes the log at once. */
-  async stage(stage: BuildStage, title: string): Promise<void> {
+  async stage(stage: RunStep, title: string): Promise<void> {
     this.#stage = stage;
     this.line(`\n== ${title} ==`);
     await this.flush();

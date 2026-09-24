@@ -27,6 +27,8 @@ export interface FakeSandboxOptions {
   /** What `appflare-pack` writes to the output directory: file name to bytes. */
   packOutput: Record<string, Uint8Array>;
   failures?: FakeFailure[];
+  /** Output a succeeding command prints, for the first pattern its command line matches. */
+  outputs?: Array<{ match: RegExp; output: string }>;
 }
 
 export class FakeSandbox implements BuildSandbox {
@@ -64,6 +66,8 @@ export class FakeSandbox implements BuildSandbox {
       if (stdout) options.onOutput(stdout);
       return { exitCode: 0, stdout, stderr: "" };
     };
+    const printed = this.options.outputs?.find((o) => o.match.test(command));
+    if (printed !== undefined) return ok(printed.output);
     if (command.includes("rev-parse HEAD")) return ok(this.#head ? `${this.#head}\n` : "");
     if (command.includes(" fetch -q --depth 1 origin ")) {
       this.#head = this.options.fetchHead ?? /origin ([0-9a-f]{40})/.exec(command)?.[1] ?? "";

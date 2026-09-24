@@ -53,6 +53,7 @@ export function InstallForm({
   blockedReason,
   requirementsConfirmed,
   sandboxBuild = null,
+  installer = null,
 }: {
   catalog: CatalogManifest;
   /** One per catalog var (`installVarFields`). */
@@ -70,6 +71,12 @@ export function InstallForm({
   requirementsConfirmed: boolean;
   /** A sandbox tier app's build, whose cost the admin confirms; null for a prebuilt app. */
   sandboxBuild?: IndexBuild | null;
+  /**
+   * A self-deploying app's installer run, whose cost the admin confirms and
+   * which needs the app's own token; null for other apps. Its installer names
+   * the Workers, so the form has no Worker name.
+   */
+  installer?: IndexBuild | null;
 }) {
   const router = useRouter();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
@@ -83,6 +90,8 @@ export function InstallForm({
   const [editedVars, setEditedVars] = useState<Record<string, string>>({});
   const [paidConfirmed, setPaidConfirmed] = useState(false);
   const [buildConfirmed, setBuildConfirmed] = useState(false);
+  const [appToken, setAppToken] = useState("");
+  const confirmsCost = sandboxBuild ?? installer;
   const receivesEmail = catalog.install.emailRouting !== undefined;
   const [emailZoneId, setEmailZoneId] = useState<string | null>(null);
   const [emailReady, setEmailReady] = useState(false);
@@ -105,9 +114,10 @@ export function InstallForm({
     }
     return out;
   };
-  const nameValid = WORKER_NAME_PATTERN.test(workerName);
+  const nameValid = installer !== null || WORKER_NAME_PATTERN.test(workerName);
+  const shownName = installer !== null ? (label ?? catalog.name) : instanceName;
   const labelValid =
-    instanceName.trim().length > 0 && instanceName.trim().length <= INSTANCE_NAME_MAX_LENGTH;
+    shownName.trim().length > 0 && shownName.trim().length <= INSTANCE_NAME_MAX_LENGTH;
   const disabled = !canInstall || blockedReason !== null || pending;
   const missing =
     !secretsComplete(catalog.secrets, secrets) ||
@@ -119,7 +129,8 @@ export function InstallForm({
     labelValid &&
     !missing &&
     (catalog.plan !== "paid" || paidConfirmed) &&
-    (sandboxBuild === null || buildConfirmed) &&
+    (confirmsCost === null || buildConfirmed) &&
+    (installer === null || appToken.trim().length > 0) &&
     (catalog.requires.length === 0 || requirementsConfirmed) &&
     (!receivesEmail || (emailZoneId !== null && emailReady));
 
@@ -133,12 +144,13 @@ export function InstallForm({
         data: {
           slug: catalog.slug,
           workerName,
-          instanceName: instanceName.trim(),
+          instanceName: shownName.trim(),
           secrets,
           vars: submittedVars(),
           paidConfirmed,
           requirementsConfirmed,
-          ...(sandboxBuild === null ? {} : { buildConfirmed }),
+          ...(confirmsCost === null ? {} : { buildConfirmed }),
+          ...(installer === null ? {} : { appToken: appToken.trim() }),
           ...(receivesEmail && emailZoneId !== null
             ? { emailRouting: { zoneId: emailZoneId } }
             : {}),
@@ -167,40 +179,70 @@ export function InstallForm({
             <Banner variant="secondary" icon={<InfoIcon weight="fill" />} title={blockedReason} />
           )}
           <fieldset disabled={disabled} className="grid gap-6">
-            <Input
-              label="Worker name"
-              value={workerName}
-              onChange={(e) => setWorkerName(e.currentTarget.value.trim())}
-              readOnly={fixedWorkerName}
-              autoComplete="off"
-              spellCheck={false}
-              required
-              maxLength={WORKER_NAME_MAX_LENGTH}
-              error={nameValid ? undefined : `Use ${WORKER_NAME_HINT}`}
-              description={
-                fixedWorkerName
-                  ? `${catalog.name} only works as the Worker "${workerName}", so it installs once per account.`
-                  : `The app is served at https://${workerName || "<name>"}.${subdomain ?? "<your subdomain>"}.workers.dev. Resources are named after it. Each install of an app needs its own Worker name.`
-              }
-            />
+            {installer !== null ? (
+              <Text variant="secondary" size="sm">
+                {catalog.name}'s installer names its Workers after this install (
+                <span className="font-mono text-[0.9em]">
+                  {catalog.install.selfDeploying?.workers[0]?.replace("{{stage}}", "appflare-…") ??
+                    catalog.install.workerName}
+                </span>
+                ), so several installs never share one.
+              </Text>
+            ) : (
+              <Input
+                label="Worker name"
+                value={workerName}
+                onChange={(e) => setWorkerName(e.currentTarget.value.trim())}
+                readOnly={fixedWorkerName}
+                autoComplete="off"
+                spellCheck={false}
+                required
+                maxLength={WORKER_NAME_MAX_LENGTH}
+                error={nameValid ? undefined : `Use ${WORKER_NAME_HINT}`}
+                description={
+                  fixedWorkerName
+                    ? `${catalog.name} only works as the Worker "${workerName}", so it installs once per account.`
+                    : `The app is served at https://${workerName || "<name>"}.${subdomain ?? "<your subdomain>"}.workers.dev. Resources are named after it. Each install of an app needs its own Worker name.`
+                }
+              />
+            )}
             <Input
               label="Name"
-              value={instanceName}
+              value={shownName}
               onChange={(e) => setLabel(e.currentTarget.value)}
               autoComplete="off"
               required
               maxLength={INSTANCE_NAME_MAX_LENGTH}
               error={labelValid ? undefined : `Use 1 to ${INSTANCE_NAME_MAX_LENGTH} characters.`}
-              description="How this install is listed in Appflare. Defaults to the Worker name."
+              description={
+                installer !== null
+                  ? "How this install is listed in Appflare."
+                  : "How this install is listed in Appflare. Defaults to the Worker name."
+              }
             />
+
+            {installer !== null && (
+              <Input
+                label={`${catalog.name}'s Cloudflare API token`}
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                passwordManagerIgnore
+                required
+                value={appToken}
+                onChange={(e) => setAppToken(e.currentTarget.value)}
+                description="The token you created with the permissions listed above. It is stored as a secret on your sandbox Worker, where the app's installer runs with it; Appflare keeps no copy and never uses it itself."
+              />
+            )}
 
             {catalog.secrets.length > 0 && (
               <div className="grid gap-4">
                 <div className="grid gap-1.5">
                   <Text bold>Secrets</Text>
                   <Text variant="secondary" size="sm">
-                    Stored as encrypted secrets on the app's Worker. Appflare keeps only their
-                    names.
+                    {installer !== null
+                      ? "Stored as encrypted secrets on your sandbox Worker for the app's installer, which sets them on the app's Workers. Appflare keeps only their names."
+                      : "Stored as encrypted secrets on the app's Worker. Appflare keeps only their names."}
                   </Text>
                 </div>
                 <SecretFields
@@ -217,7 +259,9 @@ export function InstallForm({
                 <div className="grid gap-1.5">
                   <Text bold>Settings</Text>
                   <Text variant="secondary" size="sm">
-                    Variables on the app's Worker. Settings marked JSON take a JSON value.
+                    {installer !== null
+                      ? "Handed to the app's installer as environment variables."
+                      : "Variables on the app's Worker. Settings marked JSON take a JSON value."}
                   </Text>
                 </div>
                 {varFields.map((field) => (
@@ -243,12 +287,13 @@ export function InstallForm({
               />
             )}
 
-            {sandboxBuild !== null && (
+            {confirmsCost !== null && (
               <SandboxBuildConfirmation
-                build={sandboxBuild}
+                build={confirmsCost}
                 checked={buildConfirmed}
                 onChange={setBuildConfirmed}
                 action="install"
+                kind={installer !== null ? "installer" : "build"}
               />
             )}
 

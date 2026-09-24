@@ -1,4 +1,4 @@
-import type { IndexBuild } from "@appflare/schema";
+import { type IndexBuild, SELF_DEPLOYING_TOOLS } from "@appflare/schema";
 import {
   Badge,
   Banner,
@@ -90,12 +90,15 @@ function CatalogEntryPage() {
   const { app, catalog } = detail;
   const canInstall = viewer.role === "admin";
   const sandboxBuild = app.tier === "sandbox" ? (app.build ?? null) : null;
+  const installer = app.tier === "self-deploying" ? (app.build ?? null) : null;
   const blockedReason =
     detail.fixedWorkerName && detail.instances[0] !== undefined
       ? `${app.name} is already installed as "${detail.instances[0].workerName}". It only works under one Worker name, so it installs once per account.`
       : sandboxBuild !== null && !detail.sandboxConnected
         ? `${app.name} is built in your account by the sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`
-        : null;
+        : installer !== null && !detail.sandboxConnected
+          ? `${app.name} is deployed by its own installer in your sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`
+          : null;
   const installable = catalog !== null && detail.suggestedWorkerName !== null;
   return (
     <>
@@ -114,7 +117,11 @@ function CatalogEntryPage() {
         }
       />
       {catalog !== null && (
-        <AppTokenPermissions appName={app.name} permissions={catalog.tokenPermissions} />
+        <AppTokenPermissions
+          appName={app.name}
+          permissions={catalog.tokenPermissions}
+          custody={installer !== null ? "sandbox" : "app"}
+        />
       )}
       {detail.error !== null && (
         <Banner
@@ -138,6 +145,7 @@ function CatalogEntryPage() {
           blockedReason={blockedReason}
           requirementsConfirmed={requirementsConfirmed}
           sandboxBuild={sandboxBuild}
+          installer={installer}
         />
       )}
     </>
@@ -162,6 +170,16 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
             <span className="font-mono text-[0.9em]">{app.version}</span>
           </Row>
           {app.tier === "sandbox" && app.build !== undefined && <BuildRow build={app.build} />}
+          {app.tier === "self-deploying" && app.build !== undefined && (
+            <InstallerRow
+              build={app.build}
+              tool={
+                catalog?.install.selfDeploying === undefined
+                  ? null
+                  : SELF_DEPLOYING_TOOLS[catalog.install.selfDeploying.tool].label
+              }
+            />
+          )}
           {catalog !== null && (
             <>
               <Row label="Source">
@@ -206,6 +224,26 @@ function BuildRow({ build }: { build: IndexBuild }) {
         <Text as="span" variant="secondary" size="sm">
           {describeInstance(estimate)} for about {estimate.minutes} minutes: about{" "}
           {formatUsd(estimate.usd)} a build beyond the included usage
+        </Text>
+      </span>
+    </Row>
+  );
+}
+
+/** A self-deploying app's installer: which tool, the pinned commit, and what a run costs. */
+function InstallerRow({ build, tool }: { build: IndexBuild; tool: string | null }) {
+  const estimate = estimateIndexBuild(build);
+  return (
+    <Row label="Installer">
+      <span className="grid gap-0.5">
+        <span>
+          Its own{tool === null ? "" : ` (${tool})`}, run from{" "}
+          <span className="font-mono text-[0.9em]">{build.pin.slice(0, 12)}</span> in your sandbox
+          Worker, on Workers Paid
+        </span>
+        <Text as="span" variant="secondary" size="sm">
+          {describeInstance(estimate)} for about {estimate.minutes} minutes: about{" "}
+          {formatUsd(estimate.usd)} a run beyond the included usage. No rollback.
         </Text>
       </span>
     </Row>
@@ -315,9 +353,11 @@ function Prerequisites({
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Text variant="secondary" size="sm">
-          {!detail.createsKnown
-            ? "The install builds the app first. It creates a Worker and the resources the app's wrangler config declares at the pinned commit."
-            : `The install creates a Worker${creates.length > 0 ? " and:" : ", nothing else."}`}
+          {detail.app?.tier === "self-deploying"
+            ? "The app's own installer creates its Workers and resources. Appflare records them after each run and never deletes them itself; uninstalling runs the installer's destroy command."
+            : !detail.createsKnown
+              ? "The install builds the app first. It creates a Worker and the resources the app's wrangler config declares at the pinned commit."
+              : `The install creates a Worker${creates.length > 0 ? " and:" : ", nothing else."}`}
         </Text>
         {creates.map((c) => (
           <Badge key={c} variant="outline">

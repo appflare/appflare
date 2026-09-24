@@ -16,6 +16,11 @@ export const startUpdateInput = installIdInput.extend({
   confirmNoPreview: z.boolean().optional(),
   /** For a sandbox tier app: the admin confirmed the cost of building the new version. */
   buildConfirmed: z.boolean().optional(),
+  /**
+   * For a self-deploying app: a replacement for its own Cloudflare token,
+   * stored on the sandbox Worker before the installer runs. Never logged.
+   */
+  appToken: z.string().max(1024).optional(),
 });
 export type StartUpdateInput = z.infer<typeof startUpdateInput>;
 

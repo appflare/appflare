@@ -7,7 +7,12 @@ describe("sandboxBuildOfInput", () => {
   it("finds the build a job's recorded input names", () => {
     expect(sandboxBuildOfInput(JSON.stringify({ sandboxBuild: true, version: "1.2.0" }))).toEqual({
       version: "1.2.0",
+      kind: "build",
     });
+    // A self-deploying run is logged under its run id.
+    expect(
+      sandboxBuildOfInput(JSON.stringify({ sandboxRun: "deploy-0.1.9", version: "0.1.9" })),
+    ).toEqual({ version: "deploy-0.1.9", kind: "installer" });
     expect(sandboxBuildOfInput(JSON.stringify({ version: "1.2.0" }))).toBeNull();
     expect(sandboxBuildOfInput("not json")).toBeNull();
     expect(sandboxBuildOfInput(null)).toBeNull();

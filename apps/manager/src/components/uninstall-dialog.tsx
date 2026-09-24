@@ -51,6 +51,8 @@ function workerBoundSummary(install: InstallDetail): string[] {
  * starts the uninstall job and opens its log. In `retry` mode it continues an
  * uninstall that stopped part way, listing only what is left; unticking a
  * resource keeps it (for example a bucket Cloudflare refuses to delete).
+ * A self-deploying app is removed by its own installer's destroy command,
+ * which deletes everything it created: the dialog lists it without a choice.
  */
 export function UninstallDialog({
   install,
@@ -60,7 +62,8 @@ export function UninstallDialog({
   mode: "start" | "retry";
 }) {
   const router = useRouter();
-  const data = install.resources.filter((r) => isDataResourceKind(r.kind));
+  const selfDeploying = install.build.kind === "self-deploying";
+  const data = selfDeploying ? [] : install.resources.filter((r) => isDataResourceKind(r.kind));
   const [open, setOpen] = useState(false);
   const [ticked, setTicked] = useState<Set<string>>(() => new Set(data.map((r) => r.id)));
   const [confirm, setConfirm] = useState("");
@@ -132,9 +135,11 @@ export function UninstallDialog({
               {mode === "retry" ? "Finish uninstalling" : "Uninstall"} {install.instanceName}
             </Dialog.Title>
             <Dialog.Description className="text-kumo-subtle">
-              {mode === "retry"
-                ? "Deletes what the last attempt left, including the Worker if it is still there. Untick a resource to keep it in the account instead."
-                : `Deletes the Worker "${install.workerName}"${alsoDeleted.length > 0 ? ` with ${alsoDeleted.join(", ")}` : ""}, and the resources you tick below.`}
+              {selfDeploying
+                ? "Runs the app's own installer in your sandbox Worker to delete everything it created, then removes the app's token and secrets from the sandbox Worker. Nothing can be kept."
+                : mode === "retry"
+                  ? "Deletes what the last attempt left, including the Worker if it is still there. Untick a resource to keep it in the account instead."
+                  : `Deletes the Worker "${install.workerName}"${alsoDeleted.length > 0 ? ` with ${alsoDeleted.join(", ")}` : ""}, and the resources you tick below.`}
             </Dialog.Description>
           </div>
           <Dialog.Close
@@ -155,8 +160,25 @@ export function UninstallDialog({
             variant="alert"
             icon={<WarningIcon weight="fill" />}
             title="Deleting data is permanent"
-            description="Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare lists it on this page afterwards."
+            description={
+              selfDeploying
+                ? "The installer's destroy command deletes the app's databases, buckets and namespaces with everything in them. It runs in a container on Workers Paid, like an install."
+                : "Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare lists it on this page afterwards."
+            }
           />
+          {selfDeploying && install.resources.length > 0 && (
+            <div className="grid gap-1.5">
+              <Text bold>Deleted by the app's installer</Text>
+              <ul className="grid gap-1">
+                {install.resources.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-baseline gap-x-2">
+                    <span>{resourceKindLabel(r.kind)}</span>
+                    <span className="font-mono text-[0.9em]">{r.name}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {install.emailRoutes.length > 0 && (
             <div className="grid gap-1.5">
               <Text bold>Email Routing</Text>
@@ -215,7 +237,7 @@ export function UninstallDialog({
                 );
               })}
             </div>
-          ) : (
+          ) : selfDeploying ? null : (
             <Text variant="secondary">This app has no data resources besides its Worker.</Text>
           )}
           <Input

@@ -151,6 +151,9 @@ importers:
 
   apps/sandbox:
     dependencies:
+      '@appflare/cf-api':
+        specifier: workspace:*
+        version: link:../../packages/cf-api
       '@appflare/schema':
         specifier: workspace:*
         version: link:../../packages/schema

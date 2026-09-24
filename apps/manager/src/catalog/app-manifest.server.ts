@@ -94,7 +94,7 @@ export async function getAppManifest(
   }
 }
 
-/** KV key of a verified sandbox tier catalog manifest, addressed by its sha256. */
+/** KV key of a verified sandbox or self-deploying tier catalog manifest, addressed by its sha256. */
 export function catalogManifestCacheKey(digest: string): string {
   return `catalog:entry:${digest}`;
 }
@@ -103,7 +103,7 @@ export type CatalogManifestRead =
   | {
       ok: true;
       catalog: CatalogManifest;
-      /** The signed artifact manifest; null for a sandbox tier entry, which is built later. */
+      /** The signed artifact manifest; null for a sandbox (built later) or self-deploying tier entry. */
       manifest: ArtifactManifest | null;
     }
   | { ok: false; error: string };
@@ -119,7 +119,8 @@ function parseCatalog(text: string): CatalogManifest | null {
 
 /**
  * The catalog manifest behind an index entry, whatever its tier: from the
- * signed artifact manifest for an `artifact` entry, or, for a `sandbox`
+ * signed artifact manifest for an `artifact` entry, or, for a `sandbox` or
+ * `self-deploying`
  * entry, from the catalog manifest the catalog publishes next to the index
  * (checked against the index's digest, slug, tier and pin, then cached in KV
  * by digest like artifact manifests).
@@ -129,13 +130,16 @@ export async function getCatalogManifest(
   app: IndexApp,
   opts: AppManifestOptions = {},
 ): Promise<CatalogManifestRead> {
-  if (indexAppArtifact(app) !== null && app.tier !== "sandbox") {
+  if (indexAppArtifact(app) !== null && app.tier === "artifact") {
     const read = await getAppManifest(env, app, opts);
     return read.ok ? { ok: true, catalog: read.manifest.catalog, manifest: read.manifest } : read;
   }
   const build = app.build;
-  if (app.tier !== "sandbox" || build === undefined) {
-    return { ok: false, error: `Appflare cannot install ${app.tier} tier apps yet.` };
+  if (app.tier === "artifact" || build === undefined) {
+    return {
+      ok: false,
+      error: `${app.slug} ${app.version} lists neither a release nor a catalog manifest to install it from.`,
+    };
   }
   const key = catalogManifestCacheKey(build.manifestDigest);
   const cached = await env.KV.get(key);
@@ -148,6 +152,7 @@ export async function getCatalogManifest(
       slug: app.slug,
       pin: build.pin,
       digest: build.manifestDigest,
+      tier: app.tier,
     });
     await env.KV.put(key, new TextDecoder().decode(file.bytes), {
       expirationTtl: MANIFEST_TTL_SECONDS,

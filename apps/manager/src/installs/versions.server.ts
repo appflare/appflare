@@ -13,6 +13,7 @@ import { createDb } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import type { RollbackJobParams } from "../jobs/rollback";
+import { installerRunId } from "../jobs/self-deploying/phases";
 import {
   activeSelfUpdateJob,
   NO_ACTIVE_SELF_UPDATE_SQL,
@@ -157,6 +158,11 @@ export interface StartUpdateRequest {
   confirmNoPreview?: boolean;
   /** For a sandbox tier app: the admin confirmed the cost of building the new version. */
   buildConfirmed?: boolean;
+  /**
+   * For a self-deploying app: a replacement for the app's own token, stored
+   * on the sandbox Worker before its installer runs.
+   */
+  appToken?: string;
 }
 
 /** What the admin must provide or confirm before the update can start. */
@@ -166,8 +172,13 @@ export interface UpdateNeeds {
   needsSecrets: CatalogSecret[];
   /** Why the new version cannot be checked before it serves traffic; null when it can. */
   skipsPreview: string | null;
-  /** A sandbox tier app: the build to confirm (container size, expected minutes); else null. */
+  /**
+   * A sandbox tier app: the build to confirm (container size, expected
+   * minutes); a self-deploying app: the installer run to confirm; else null.
+   */
   build: IndexBuild | null;
+  /** The new version is deployed by the app's own installer (no preview, no rollback). */
+  selfDeploying?: boolean;
 }
 
 export type StartUpdateResult = { jobId: string } | UpdateNeeds;
@@ -195,6 +206,10 @@ export async function startUpdateCore(
   });
   if (notNewer !== null) {
     throw new VersionActionError(`There is no newer version to update to: ${notNewer}.`);
+  }
+  const installer = app.tier === "self-deploying" ? (app.build ?? null) : null;
+  if (installer !== null || install.build_kind === "self-deploying") {
+    return startSelfDeployingUpdate(deps, request, install, app, installer);
   }
   const sandbox = app.tier === "sandbox" ? (app.build ?? null) : null;
   let catalog: CatalogManifest;
@@ -286,6 +301,97 @@ export async function startUpdateCore(
 }
 
 /**
+ * An update of a self-deploying app: its own installer deploys the new pin
+ * over the installed one. The admin confirms the run's cost and gives values
+ * for secrets the new version introduces; there is no preview check and no
+ * snapshot.
+ */
+async function startSelfDeployingUpdate(
+  deps: StartUpdateDeps,
+  request: StartUpdateRequest,
+  install: typeof installs.$inferSelect,
+  app: IndexApp,
+  installer: IndexBuild | null,
+): Promise<StartUpdateResult> {
+  if (installer === null || install.build_kind !== "self-deploying") {
+    throw new VersionActionError(
+      `${app.name} changed how it is installed (${install.build_kind === "self-deploying" ? "it no longer ships its own installer" : "it now ships its own installer"}). Uninstall it and install it again.`,
+    );
+  }
+  if (deps.sandboxConnected !== true) {
+    throw new VersionActionError(
+      `${app.name} is deployed by its own installer in this account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in Settings first.`,
+    );
+  }
+  if (deps.loadCatalog === undefined) {
+    throw new VersionActionError(`Appflare cannot update ${app.tier} tier apps here.`);
+  }
+  const catalog = await deps.loadCatalog(app);
+  const recordedSecrets = await createDb(deps.db)
+    .select({ name: resources.name })
+    .from(resources)
+    .where(
+      and(
+        eq(resources.install_id, install.id),
+        eq(resources.kind, "secret"),
+        isNull(resources.deleted_at),
+      ),
+    );
+  const needed = missingSecrets(
+    catalog.secrets,
+    recordedSecrets.map((r) => r.name),
+  );
+  if ((needed.length > 0 && request.secrets === undefined) || request.buildConfirmed !== true) {
+    return {
+      version: app.version,
+      needsSecrets: needed,
+      skipsPreview: null,
+      build: installer,
+      selfDeploying: true,
+    };
+  }
+  const given = request.secrets ?? {};
+  const unknown = Object.keys(given).filter((name) => !needed.some((s) => s.name === name));
+  if (unknown.length > 0) {
+    throw new VersionActionError(`This update does not take: ${unknown.join(", ")}.`);
+  }
+  const secrets: Record<string, string> = {};
+  for (const secret of needed) {
+    const value = given[secret.name] ?? "";
+    if (value.length === 0) {
+      throw new VersionActionError(`${secret.label} (${secret.name}) is required.`);
+    }
+    secrets[secret.name] = value;
+  }
+  const appToken = request.appToken?.trim();
+  const jobId = (deps.newId ?? (() => ulid()))();
+  return claim(deps, {
+    installId: install.id,
+    kind: "update",
+    inputJson: JSON.stringify({
+      installId: install.id,
+      fromVersion: install.catalog_version,
+      version: app.version,
+      secrets: Object.keys(secrets),
+      selfDeploying: true,
+      buildConfirmed: true,
+      appTokenReplaced: appToken !== undefined && appToken.length > 0,
+      sandboxRun: installerRunId("deploy", app.version),
+    }),
+    params: {
+      kind: "update",
+      jobId,
+      installId: install.id,
+      version: app.version,
+      secrets,
+      selfDeploying: true,
+      buildConfirmed: true,
+      ...(appToken === undefined || appToken.length === 0 ? {} : { appToken }),
+    },
+  });
+}
+
+/**
  * For a sandbox tier update: why its new version will likely have no preview
  * check, judged by the installed version, or null.
  */
@@ -309,6 +415,11 @@ export async function startRollbackCore(
   const install = await readInstall(deps.db, request.installId);
   const refusal = statusRefusal(install.status);
   if (refusal !== null) throw new VersionActionError(refusal);
+  if (install.build_kind === "self-deploying") {
+    throw new VersionActionError(
+      "This app is deployed by its own installer, which changes it in place: Appflare takes no snapshot of it and cannot roll it back. Update it to a newer version, or restore its data with the app's own tools.",
+    );
+  }
   const [snapshot] = await createDb(deps.db)
     .select()
     .from(snapshots)

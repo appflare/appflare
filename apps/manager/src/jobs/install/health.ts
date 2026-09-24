@@ -2,6 +2,7 @@ import {
   appHealthMode,
   appHealthPath,
   artifactManifestSchema,
+  catalogManifestSchema,
   type HealthMode,
 } from "@appflare/schema";
 import type { HealthStatus } from "../../db/schema";
@@ -219,8 +220,16 @@ export function healthCheckOfManifest(manifestJson: string | null): HealthCheck 
   const fallback: HealthCheck = { path: "/", mode: "default" };
   if (manifestJson === null) return fallback;
   try {
-    const parsed = artifactManifestSchema.safeParse(JSON.parse(manifestJson));
-    if (!parsed.success) return fallback;
+    const json: unknown = JSON.parse(manifestJson);
+    const parsed = artifactManifestSchema.safeParse(json);
+    if (!parsed.success) {
+      // A self-deploying install records its catalog manifest instead; its
+      // app usually sits behind Cloudflare Access, so status-only is its default.
+      const catalog = catalogManifestSchema.safeParse(json);
+      if (!catalog.success || catalog.data.install.tier !== "self-deploying") return fallback;
+      const { install } = catalog.data;
+      return { path: appHealthPath(install), mode: install.healthMode ?? "status-only" };
+    }
     const { install } = parsed.data.catalog;
     return { path: appHealthPath(install), mode: appHealthMode(install) };
   } catch {

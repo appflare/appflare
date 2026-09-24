@@ -110,3 +110,13 @@ export function buildCostSentence(estimate: BuildEstimate): string {
     "container stops or times out runs once more, which costs as much again."
   );
 }
+
+/** The same for a self-deploying app, whose container runs the app's own installer. */
+export function installerCostSentence(estimate: BuildEstimate): string {
+  return (
+    `Each run of the installer uses a ${describeInstance(estimate)} container for about ` +
+    `${estimate.minutes} minutes, which costs about ${formatUsd(estimate.usd)} beyond the container ` +
+    `usage Workers Paid includes each month (enough for about ${estimate.includedBuilds} such runs). ` +
+    "Updating and uninstalling run it again."
+  );
+}

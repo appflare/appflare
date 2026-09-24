@@ -95,13 +95,13 @@ describe("getCatalogManifest for a sandbox entry", () => {
     ).not.toBeNull();
   });
 
-  it("explains a tier this manager cannot install", async () => {
+  it("explains an entry that has neither a release nor a catalog manifest", async () => {
     const fixture = await buildArtifactFixture();
     const { artifacts: _a, digest: _d, ...rest } = fixture.index;
     const read = await getCatalogManifest(env, { ...rest, tier: "self-deploying" });
     expect(read).toEqual({
       ok: false,
-      error: "Appflare cannot install self-deploying tier apps yet.",
+      error: "cut 1.0.0 lists neither a release nor a catalog manifest to install it from.",
     });
   });
 });

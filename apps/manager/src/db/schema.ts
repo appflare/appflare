@@ -49,9 +49,14 @@ export const RESOURCE_KINDS = [
 /**
  * How an install's running code was built: `artifact`, a release catalog CI
  * built and signed; `sandbox`, built from the pinned commit by the sandbox
- * Worker in this account, unsigned.
+ * Worker in this account, unsigned; `self-deploying`, deployed by the app's
+ * own installer, which the sandbox Worker ran at the pinned commit with the
+ * app's own token. For a self-deploying install, `manifest_json` holds the
+ * catalog manifest (there is no artifact manifest), `artifact_url` and
+ * `artifact_digest` name the published catalog manifest, `worker_name` is
+ * the Worker that serves the app, and every resource is `managed_by: "app"`.
  */
-export const BUILD_KINDS = ["artifact", "sandbox"] as const;
+export const BUILD_KINDS = ["artifact", "sandbox", "self-deploying"] as const;
 export type BuildKind = (typeof BUILD_KINDS)[number];
 
 /**

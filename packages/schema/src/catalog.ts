@@ -1,4 +1,7 @@
 import { z } from "zod";
+// With its extension: the JSON Schema export runs this file directly under
+// Node's type stripping, which resolves relative imports literally.
+import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
 
 /**
  * Schemas for the human-authored catalog manifest `appflare.jsonc`.
@@ -82,7 +85,11 @@ export function buildCommandProblem(command: string): string | null {
   return null;
 }
 
-/** How an app is built. v1 ships `artifact` only. */
+/**
+ * How an app is built: `artifact` (a signed release catalog CI built),
+ * `sandbox` (built from its pinned commit in the account's sandbox Worker),
+ * or `self-deploying` (the app's own installer, run in the sandbox Worker).
+ */
 export const installTierSchema = z.enum(["artifact", "sandbox", "self-deploying"]);
 export type InstallTier = z.infer<typeof installTierSchema>;
 
@@ -525,6 +532,13 @@ export const catalogInstallSchema = z
      * Refused on other tiers, where nothing is built in the user's account.
      */
     sandbox: catalogSandboxSchema.optional(),
+    // --- Self-deploying tier -------------------------------------------------
+    /**
+     * How the sandbox Worker runs the app's own installer; see
+     * {@link catalogSelfDeployingSchema}. Required for, and only allowed for,
+     * the `self-deploying` tier.
+     */
+    selfDeploying: catalogSelfDeployingSchema.optional(),
   })
   .superRefine((install, ctx) => {
     if (install.sandbox !== undefined && install.tier !== "sandbox") {
@@ -534,11 +548,32 @@ export const catalogInstallSchema = z
         message: `install.sandbox is only for sandbox tier entries; this entry's tier is ${install.tier}`,
       });
     }
+    const problem = selfDeployingTierProblem(install);
+    if (problem !== null) {
+      ctx.addIssue({ code: "custom", path: [problem.path], message: problem.message });
+    }
   })
-  // The refinement does not reach the JSON Schema; `anyOf` states it there
-  // (no `sandbox`, or tier `sandbox`), so editors refuse it on other tiers too.
+  // The refinements do not reach the JSON Schema; `allOf` states them there
+  // (no `sandbox`, or tier `sandbox`; `selfDeploying` exactly when the tier is
+  // `self-deploying`), so editors refuse the same manifests.
   .meta({
-    anyOf: [{ not: { required: ["sandbox"] } }, { properties: { tier: { const: "sandbox" } } }],
+    allOf: [
+      {
+        anyOf: [{ not: { required: ["sandbox"] } }, { properties: { tier: { const: "sandbox" } } }],
+      },
+      {
+        anyOf: [
+          {
+            required: ["selfDeploying"],
+            properties: { tier: { const: "self-deploying" } },
+          },
+          {
+            not: { required: ["selfDeploying"] },
+            properties: { tier: { not: { const: "self-deploying" } } },
+          },
+        ],
+      },
+    ],
   });
 export type CatalogInstall = z.infer<typeof catalogInstallSchema>;
 

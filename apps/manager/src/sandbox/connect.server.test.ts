@@ -181,6 +181,7 @@ describe("readSandboxStatus", () => {
         protocol: 1,
         sandboxVersion: "0.4.0",
         image: "docker.io/appflare/sandbox:0.4.0",
+        features: ["self-deploying"],
       },
       problem: null,
       workerExists: null,

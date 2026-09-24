@@ -14,6 +14,11 @@ import type { InstallJobParams } from "../jobs/install";
 import { sandboxBuildOf } from "../jobs/install/artifact-source";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import {
+  expectedWorkers,
+  installerRunId,
+  selfDeployingInputOf,
+} from "../jobs/self-deploying/phases";
+import {
   activeSelfUpdateJob,
   NO_ACTIVE_SELF_UPDATE_SQL,
   refuseDuringSelfUpdate,
@@ -165,31 +170,55 @@ export async function startInstallCore(
   const resolved = resolveInstallInput(manifest, input);
   // Where the artifact comes from: the signed release, or a build of the pin
   // in the account's sandbox Worker, which the admin confirms paying for.
+  // A self-deploying app has no artifact at all: its own installer runs in
+  // the sandbox Worker with a token the admin creates for the app.
   const release = indexAppArtifact(app);
   const build = app.tier === "sandbox" ? (app.build ?? null) : null;
-  if (build === null && (app.tier !== "artifact" || release === null)) {
-    // TODO: self-deploying tier apps (the app's own installer run in the sandbox
-    // Worker) would start here; they are not supported yet.
+  const installer = app.tier === "self-deploying" ? (app.build ?? null) : null;
+  if (build === null && installer === null && (app.tier !== "artifact" || release === null)) {
     throw new StartInstallError(`Appflare cannot install ${app.tier} tier apps yet.`);
   }
-  if (build !== null && deps.sandboxConnected !== true) {
+  const inSandbox = build !== null || installer !== null;
+  if (inSandbox && deps.sandboxConnected !== true) {
     throw new StartInstallError(
-      `${manifest.catalog.name} is built in this account's sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`,
+      `${manifest.catalog.name} ${installer !== null ? "is deployed by its own installer in" : "is built in"} this account's sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`,
     );
   }
-  if (build !== null && input.buildConfirmed !== true) {
+  if (inSandbox && input.buildConfirmed !== true) {
     throw new StartInstallError(
-      `${manifest.catalog.name} is built in this account's sandbox Worker on Workers Paid. Confirm the build's cost.`,
+      installer !== null
+        ? `${manifest.catalog.name}'s installer runs in this account's sandbox Worker on Workers Paid. Confirm its cost.`
+        : `${manifest.catalog.name} is built in this account's sandbox Worker on Workers Paid. Confirm the build's cost.`,
     );
   }
-  const fixed = hasFixedWorkerName(manifest.catalog.install);
+  const appToken = input.appToken?.trim() ?? "";
+  if (installer !== null && appToken.length === 0) {
+    throw new StartInstallError(
+      `${manifest.catalog.name} deploys itself with its own Cloudflare API token. Create one with the permissions listed and enter it.`,
+    );
+  }
+  if (installer === null && input.appToken !== undefined) {
+    throw new StartInstallError(`${manifest.catalog.name} takes no app token.`);
+  }
+  const now = (deps.now ?? (() => new Date()))();
+  const newId = deps.newId ?? (() => ulid());
+  const db = createDb(deps.db);
+  // A self-deploying app needs its install id now, for its Workers' names;
+  // other apps get their ids once the checks below passed.
+  const earlyIds = installer === null ? null : ([newId(), newId()] as const);
+  // A self-deploying app's Workers are named by its installer, after the
+  // install's stage; the first one serves the app and is the install's name.
+  const installerWorkers = earlyIds === null ? [] : expectedWorkers(manifest.catalog, earlyIds[0]);
+  const workerName = installerWorkers[0] ?? input.workerName;
+  const fixed = installer === null && hasFixedWorkerName(manifest.catalog.install);
   const fixedName = manifest.catalog.install.workerName;
-  if (fixed && input.workerName !== fixedName) {
+  if (fixed && workerName !== fixedName) {
     throw new StartInstallError(
       `${manifest.catalog.name} only works as the Worker "${fixedName}"; its Worker name cannot be changed.`,
     );
   }
-  const instanceName = input.instanceName ?? input.workerName;
+  const instanceName =
+    input.instanceName ?? (installer !== null ? manifest.catalog.name : workerName);
   if (deps.listAccountWorkers !== undefined) {
     let existing: string[] = [];
     try {
@@ -197,17 +226,15 @@ export async function startInstallCore(
     } catch {
       // The install job checks the account again before creating anything.
     }
-    if (existing.includes(input.workerName)) {
+    const taken = (installer !== null ? installerWorkers : [workerName]).find((w) =>
+      existing.includes(w),
+    );
+    if (taken !== undefined) {
       throw new StartInstallError(
-        `A Worker named "${input.workerName}" already exists in this account. Appflare does not adopt existing Workers; choose another name.`,
+        `A Worker named "${taken}" already exists in this account. Appflare does not adopt existing Workers; choose another name.`,
       );
     }
   }
-  const now = (deps.now ?? (() => new Date()))();
-  const newId = deps.newId ?? (() => ulid());
-  const installId = newId();
-  const jobId = newId();
-  const db = createDb(deps.db);
 
   // One D1 batch (a transaction), so no partial state is ever left behind:
   // 1. A `failed` install of the same Worker name (or, for an app with a fixed
@@ -218,10 +245,11 @@ export async function startInstallCore(
   //    uses it (nor the app, when its Worker name is fixed), so two concurrent
   //    starts cannot both win.
   // 3. The job row is inserted only if the install row was.
+  const [installId, jobId] = earlyIds ?? [newId(), newId()];
   const inputJson = JSON.stringify({
     slug: app.slug,
     version: app.version,
-    workerName: input.workerName,
+    workerName,
     instanceName,
     secrets: Object.keys(resolved.secrets),
     vars: resolved.vars,
@@ -229,6 +257,14 @@ export async function startInstallCore(
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
     ...(build === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
+    // Names only: the app token lives in the Workflow params alone.
+    ...(installer === null
+      ? {}
+      : {
+          selfDeploying: true,
+          buildConfirmed: true,
+          sandboxRun: installerRunId("deploy", app.version),
+        }),
   });
   const [, claimed] = await deps.db.batch([
     deps.db
@@ -239,12 +275,13 @@ export async function startInstallCore(
              SELECT 1 FROM resources r WHERE r.install_id = installs.id AND r.deleted_at IS NULL
            )`,
       )
-      .bind(input.workerName, app.slug, now.getTime(), fixed ? 1 : 0),
+      .bind(workerName, app.slug, now.getTime(), fixed ? 1 : 0),
     deps.db
       .prepare(
         `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version,
-           artifact_url, artifact_digest, pin_sha, status, config_json, installed_at, updated_at)
-         SELECT ?1, ?2, ?3, ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9
+           artifact_url, artifact_digest, pin_sha, status, config_json, installed_at, updated_at,
+           build_kind)
+         SELECT ?1, ?2, ?3, ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9, ?12
          WHERE NOT EXISTS (
            SELECT 1 FROM installs
            WHERE status != 'uninstalled' AND (worker_name = ?3 OR (?11 = 1 AND app_slug = ?2))
@@ -254,17 +291,21 @@ export async function startInstallCore(
       .bind(
         installId,
         app.slug,
-        input.workerName,
+        workerName,
         app.version,
         // A sandbox build's artifact exists only once the job built it; until
-        // then the install points at the catalog manifest it is built from.
-        release?.artifacts.zip ?? build?.manifest ?? "",
-        release?.digest ?? null,
+        // then the install points at the catalog manifest it is built from. A
+        // self-deploying app never has one: it points at its catalog manifest.
+        release?.artifacts.zip ?? build?.manifest ?? installer?.manifest ?? "",
+        release?.digest ?? installer?.manifestDigest ?? null,
         manifest.source.sha,
         JSON.stringify(resolved.vars),
         now.getTime(),
         instanceName,
         fixed ? 1 : 0,
+        // Known from the start, so an uninstall of a failed install runs the
+        // app's destroy command instead of deleting anything itself.
+        installer === null ? "artifact" : "self-deploying",
       ),
     deps.db
       .prepare(
@@ -286,8 +327,8 @@ export async function startInstallCore(
         and(
           ne(installs.status, "uninstalled"),
           fixed
-            ? or(eq(installs.worker_name, input.workerName), eq(installs.app_slug, app.slug))
-            : eq(installs.worker_name, input.workerName),
+            ? or(eq(installs.worker_name, workerName), eq(installs.app_slug, app.slug))
+            : eq(installs.worker_name, workerName),
         ),
       )
       .limit(1);
@@ -297,9 +338,9 @@ export async function startInstallCore(
       );
     }
     throw new StartInstallError(
-      clash !== undefined && clash.worker !== input.workerName
+      clash !== undefined && clash.worker !== workerName
         ? `${manifest.catalog.name} is already installed as "${clash.worker}". It only works under one Worker name, so it installs once per account.`
-        : `Another install already uses the Worker name "${input.workerName}".`,
+        : `Another install already uses the Worker name "${workerName}".`,
     );
   }
 
@@ -309,12 +350,14 @@ export async function startInstallCore(
     installId,
     slug: app.slug,
     version: app.version,
-    workerName: input.workerName,
-    ...(build !== null
-      ? { build: sandboxBuildOf(build, true) }
-      : release !== null
-        ? { artifacts: release.artifacts, digest: release.digest }
-        : {}),
+    workerName,
+    ...(installer !== null
+      ? { selfDeploying: selfDeployingInputOf(installer, true, appToken) }
+      : build !== null
+        ? { build: sandboxBuildOf(build, true) }
+        : release !== null
+          ? { artifacts: release.artifacts, digest: release.digest }
+          : {}),
     secrets: resolved.secrets,
     vars: resolved.vars,
     paidConfirmed: input.paidConfirmed,

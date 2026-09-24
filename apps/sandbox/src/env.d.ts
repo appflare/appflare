@@ -1,6 +1,11 @@
 /**
  * The bindings of wrangler.jsonc (and of the config `appflare sandbox enable`
  * generates, which declares the same ones). Keep the two in step.
+ *
+ * Besides these, the manager sets secrets per self-deploying install
+ * (`APP_TOKEN_<installId>`, `APP_SECRET_<installId>_<name>`) through the Cloudflare
+ * API; their names are not known in advance, so self-managed.ts reads them by
+ * name instead of through this interface.
  */
 interface Env {
   /** Build outputs and logs, under builds/<installId>/<version>/. */

@@ -87,6 +87,45 @@ The app's build scripts are still third-party code that runs in your account's
 container with internet access, which is why sandbox tier entries are reviewed by the
 catalog like every other entry.
 
+### App tokens of self-deploying apps
+
+A self-deploying app ships its own installer, which the sandbox Worker runs to deploy,
+update and remove the app (see [Self-deploying apps](/guides/builds/#self-deploying-apps)).
+The installer needs to call the Cloudflare API, so it uses a token you create for that
+app, never the manager's.
+
+- **Where the token lives.** The manager stores it as an encrypted secret on the
+  sandbox Worker, `APP_TOKEN_<install>`, through the Cloudflare API, and each of the
+  app's secret values as `APP_SECRET_<install>_<name>`. It never stores them in its
+  database or its logs. Between the install form and that API call, the values exist
+  only in the job's Workflow parameters, which Cloudflare Workflows stores encrypted.
+- **How it reaches the installer.** The manager never sends it over the service
+  binding: a request names only the install. The sandbox Worker reads the token from
+  its own secrets and puts it in the environment of the installer's deploy or destroy
+  command, and of no other command: the checkout, the dependency install and the build
+  still run without credentials. Values the sandbox Worker knows are replaced with
+  `[redacted]` in the output it keeps and returns.
+- **What reads the account.** After a run, the sandbox Worker lists the app's Workers
+  and their bindings with the same app token. The manager's own token is used only to
+  store and delete the secrets on the sandbox Worker.
+- **What the installer can do** is whatever the token allows, for as long as it runs.
+  Create the token with only the permissions the catalog entry lists, and scope it to
+  this account. Like build scripts, the installer is third-party code at a reviewed,
+  pinned commit.
+- **When it goes away.** Uninstalling deletes the token and the secrets from the
+  sandbox Worker once the installer's destroy command has run. Revoke the token in the
+  dashboard afterwards. Deleting the sandbox Worker also deletes every token it held.
+- **Changing them does not cut a run short.** Each secret change deploys a new version
+  of the sandbox Worker, which restarts its containers. The manager refuses to change
+  them while another job that runs in the sandbox Worker is queued or running, and a
+  run that was stopped anyway is retried in a fresh container rather than in the one
+  that may still be working.
+- **No `.env` overrides.** The sandbox Worker deletes any `.env` in the app's checkout
+  before the installer runs, so a file in the repository cannot replace the settings,
+  secrets or credentials Appflare hands it. An app's own settings and secrets may not
+  use names reserved for the installer's credentials (`CLOUDFLARE_*`, `ALCHEMY_*`) or
+  the shell and tools (`PATH`, `NODE_OPTIONS`, `BASH_ENV`, and so on).
+
 ## Sign-in and sessions
 
 - **Setup token.** Until the first admin exists, the manager serves only the setup

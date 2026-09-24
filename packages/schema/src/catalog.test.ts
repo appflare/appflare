@@ -364,19 +364,31 @@ describe("install.sandbox", () => {
     for (const tier of ["artifact", "self-deploying"]) {
       const result = withSandbox({ expectedMinutes: 10 }, tier);
       expect(result.success, tier).toBe(false);
-      expect(result.error?.issues).toEqual([
-        expect.objectContaining({
-          path: ["install", "sandbox"],
-          message: `install.sandbox is only for sandbox tier entries; this entry's tier is ${tier}`,
-        }),
-      ]);
+      // A self-deploying entry without `install.selfDeploying` is refused for that too.
+      expect(result.error?.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["install", "sandbox"],
+            message: `install.sandbox is only for sandbox tier entries; this entry's tier is ${tier}`,
+          }),
+        ]),
+      );
     }
   });
 
   it("states the tier rule in the JSON Schema, so editors refuse it on other tiers", () => {
     const install = z.toJSONSchema(catalogManifestSchema).properties?.install;
     expect(install).toMatchObject({
-      anyOf: [{ not: { required: ["sandbox"] } }, { properties: { tier: { const: "sandbox" } } }],
+      allOf: [
+        {
+          anyOf: [
+            { not: { required: ["sandbox"] } },
+            { properties: { tier: { const: "sandbox" } } },
+          ],
+        },
+        // The self-deploying tier's rule (see self-deploying.test.ts).
+        expect.anything(),
+      ],
       properties: {
         sandbox: {
           additionalProperties: false,

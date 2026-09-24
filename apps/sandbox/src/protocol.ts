@@ -26,6 +26,14 @@ export const STAGE_TIMEOUTS = {
   upload: 5 * 60_000,
   /** Short housekeeping commands (rm, ls, stat, git rev-parse). */
   quick: 60_000,
+  /** A self-deploying app's `install.buildCommand`, run on its own (no packer). */
+  build: 15 * 60_000,
+  /**
+   * A self-deploying app's installer: its deploy or destroy command. With the
+   * checkout, install and build at their limits, a run takes at most 65
+   * minutes plus housekeeping; the manager's step waits 75.
+   */
+  installer: 30 * 60_000,
 } as const;
 
 /** How often, at most, the build log is written to R2 while output arrives. */
@@ -42,15 +50,46 @@ export const MAX_SANDBOX_ID_LENGTH = 63;
  * install id>-<10 hex of its sha256>-<sha7>`, lower case, at most 49
  * characters whatever the install id (up to 64 characters) is. The hash keeps
  * ids that share a prefix apart. A retried build of the same pin lands in the
- * same container and starts from a clean work directory.
+ * same container and starts from a clean work directory, unless the retry is
+ * a later attempt of the caller's (see `attemptSuffix`).
  */
-export async function sandboxId(installId: string, sha: string): Promise<string> {
+export async function sandboxId(
+  installId: string,
+  sha: string,
+  attempt: number = 1,
+): Promise<string> {
+  return `build-${installId.slice(0, 24)}-${await installHash(installId)}-${sha.slice(0, 7)}${attemptSuffix(attempt)}`.toLowerCase();
+}
+
+/**
+ * A later attempt at the same run gets a container of its own (`-a2`, ...):
+ * the previous one may still be running, or restarting, after the run was cut
+ * off, and wiping its work directory would pull it out from under it.
+ */
+function attemptSuffix(attempt: number): string {
+  return attempt > 1 ? `-a${attempt}` : "";
+}
+
+/**
+ * The container of an install's self-deploying runs: `self-<first 24
+ * characters of the install id>-<10 hex of its sha256>`, lower case. One per
+ * install, whatever the pin: an install's runs never overlap (the manager
+ * runs one job per install at a time), and each starts from a clean work
+ * directory.
+ */
+export async function selfManagedSandboxId(
+  installId: string,
+  attempt: number = 1,
+): Promise<string> {
+  return `self-${installId.slice(0, 24)}-${await installHash(installId)}${attemptSuffix(attempt)}`.toLowerCase();
+}
+
+async function installHash(installId: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(installId));
-  const hash = [...new Uint8Array(digest)]
+  return [...new Uint8Array(digest)]
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 10);
-  return `build-${installId.slice(0, 24)}-${hash}-${sha.slice(0, 7)}`.toLowerCase();
 }
 
 export function cloneUrl(repo: string): string {

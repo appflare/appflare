@@ -254,7 +254,9 @@ function BuildProgress({ build }: { build: BuildProgressView }) {
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-2">
           <ShippingContainerIcon aria-hidden />
-          Building in your sandbox Worker
+          {build.kind === "installer"
+            ? "Running the app's installer in your sandbox Worker"
+            : "Building in your sandbox Worker"}
         </span>
         <div className="flex items-center gap-2">
           <Loader size="sm" />
@@ -264,7 +266,7 @@ function BuildProgress({ build }: { build: BuildProgressView }) {
       <LayerCard.Primary className="grid gap-2 px-5 py-4">
         <Text variant="secondary" size="sm">
           Last output at {formatTime(build.updatedAt)}. The end of the output goes to the log below
-          when the build ends.
+          when the {build.kind === "installer" ? "run" : "build"} ends.
         </Text>
         <div className="grid gap-0.5 overflow-x-auto">
           {build.lines.length === 0 ? (

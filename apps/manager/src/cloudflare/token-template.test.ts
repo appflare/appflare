@@ -153,6 +153,18 @@ describe("app token permissions", () => {
     expect(keysOf([{ name: "DNS", scope: "zone" }])).toEqual([{ key: "dns", type: "edit" }]);
   });
 
+  it("maps the Access groups an app that creates its own Access application needs", () => {
+    expect(
+      keysOf([
+        { name: "Access: Apps and Policies", scope: "account" },
+        { name: "Access: Organizations, Identity Providers, and Groups:Read", scope: "account" },
+      ]),
+    ).toEqual([
+      { key: "access", type: "edit" },
+      { key: "access_acct", type: "read" },
+    ]);
+  });
+
   it("maps nothing for unknown names, bare names without a scope, or a contradicting scope", () => {
     expect(
       keysOf([

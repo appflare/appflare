@@ -39,7 +39,8 @@ const TIER_BADGES: Record<InstallTier, { label: string; tooltip: string }> = {
   },
   "self-deploying": {
     label: "Self-deploying",
-    tooltip: "Ships its own installer. Appflare cannot install it yet.",
+    tooltip:
+      "Ships its own installer, which your sandbox Worker runs on Workers Paid with a Cloudflare token you create for the app.",
   },
 };
 

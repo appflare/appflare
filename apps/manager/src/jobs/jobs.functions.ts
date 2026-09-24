@@ -125,6 +125,7 @@ export const getJob = createServerFn({ method: "GET" })
         : await readBuildProgress(sandboxBinding(env), {
             installId: job.install_id,
             version: building.version,
+            kind: building.kind,
           });
     return {
       id: job.id,

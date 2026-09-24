@@ -181,6 +181,69 @@
           },
           "additionalProperties": false,
           "description": "How this app is built in the user's account, for `sandbox` tier entries only. Both fields feed the build cost the manager shows before each install and update."
+        },
+        "selfDeploying": {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "enum": [
+                "alchemy"
+              ],
+              "description": "The installer the app ships. `\"alchemy\"`: an Alchemy stack, which gets the app's token as `CLOUDFLARE_API_TOKEN` and the account id as `CLOUDFLARE_ACCOUNT_ID`."
+            },
+            "deployCommand": {
+              "minItems": 1,
+              "maxItems": 32,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9@%+,./:=_-]+$"
+              },
+              "description": "The command that deploys (or updates) the app, as argv, run at the root of the checkout after the dependency install and `install.buildCommand`, for example `[\"pnpm\", \"alchemy\", \"deploy\", \"--yes\"]`. The sandbox Worker appends the stage option. It must not prompt: it runs without a terminal."
+            },
+            "destroyCommand": {
+              "minItems": 1,
+              "maxItems": 32,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9@%+,./:=_-]+$"
+              },
+              "description": "The command that deletes everything the deploy command created, as argv, for example `[\"pnpm\", \"alchemy\", \"destroy\", \"--yes\"]`. Uninstalling runs it; Appflare never deletes the app's resources itself."
+            },
+            "stageArg": {
+              "type": "string",
+              "pattern": "^--?[a-z][a-z0-9-]*$",
+              "description": "The option the sandbox Worker appends to both commands, followed by the install's stage. Defaults to the tool's own (`\"--stage\"` for Alchemy)."
+            },
+            "stateStore": {
+              "type": "string",
+              "const": "cloudflare",
+              "description": "Where the installer keeps its state. `\"cloudflare\"`: in the account itself (for Alchemy, its `alchemy-state-store` Worker, which the first deploy creates), so every run in a fresh container sees what earlier runs deployed."
+            },
+            "workers": {
+              "minItems": 1,
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]*\\{\\{stage\\}\\}[a-z0-9-]*$"
+              },
+              "description": "The Workers the deploy command creates, with `{{stage}}` for the install's stage, for example `[\"open-seo-{{stage}}\", \"open-seo-{{stage}}-audit\"]`. The first one serves the app: its workers.dev URL is the install's URL and the health check probes it. After each deploy Appflare reads these Workers and records what they bind."
+            }
+          },
+          "required": [
+            "tool",
+            "deployCommand",
+            "destroyCommand",
+            "stateStore",
+            "workers"
+          ],
+          "additionalProperties": false,
+          "description": "How the sandbox Worker runs the app's own installer (self-deploying tier only). The admin creates a Cloudflare API token from `tokenPermissions` for it."
         }
       },
       "required": [
@@ -190,20 +253,52 @@
         "workerName"
       ],
       "additionalProperties": false,
-      "anyOf": [
+      "allOf": [
         {
-          "not": {
-            "required": [
-              "sandbox"
-            ]
-          }
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "sandbox"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "tier": {
+                  "const": "sandbox"
+                }
+              }
+            }
+          ]
         },
         {
-          "properties": {
-            "tier": {
-              "const": "sandbox"
+          "anyOf": [
+            {
+              "required": [
+                "selfDeploying"
+              ],
+              "properties": {
+                "tier": {
+                  "const": "self-deploying"
+                }
+              }
+            },
+            {
+              "not": {
+                "required": [
+                  "selfDeploying"
+                ]
+              },
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
             }
-          }
+          ]
         }
       ]
     },

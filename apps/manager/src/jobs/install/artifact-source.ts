@@ -233,12 +233,13 @@ async function buildInSandboxPhase(
 
   const built = await steps.run(
     "build in sandbox",
-    async ({ log }) => {
+    async ({ log, attempt }) => {
       const binding = sandboxBinding(env);
       if (binding === undefined) throw new JobError("the SANDBOX binding went away");
       let outcome: ReturnType<typeof parseBuildOutcome>;
       try {
-        outcome = parseBuildOutcome(await binding.build(request));
+        // A retry builds in a container of its own (see the request's `attempt`).
+        outcome = parseBuildOutcome(await binding.build({ ...request, attempt }));
       } catch (error) {
         if (error instanceof SandboxProtocolError) throw new JobError(error.message);
         throw error;

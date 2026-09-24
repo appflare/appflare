@@ -5,6 +5,7 @@ import {
   type BuildFailure,
   type BuildResult,
   buildOutcomeSchema,
+  SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
 } from "@appflare/schema";
 import { afterEach, describe, expect, it } from "vitest";
@@ -384,6 +385,7 @@ describe("cleanup and progress", () => {
       protocol: SANDBOX_PROTOCOL_VERSION,
       sandboxVersion: "0.1.0",
       image: "docker.io/appflare/sandbox:0.1.0",
+      features: [SANDBOX_FEATURE_SELF_DEPLOYING],
     });
     expect(await builds.cleanup({ installId: "01J8INSTALL", keepVersions: [] })).toEqual({
       deleted: 3,
@@ -400,5 +402,10 @@ describe("sandboxId", () => {
     expect(id).toMatch(/^build-a{24}-[0-9a-f]{10}-0123456$/);
     expect(await sandboxId(alsoLong, SHA)).not.toBe(id);
     expect(await sandboxId("01J8INSTALL", SHA)).toMatch(/^build-01j8install-[0-9a-f]{10}-0123456$/);
+    // A later attempt of the caller's gets a container of its own.
+    expect(await sandboxId("01J8INSTALL", SHA, 2)).toMatch(
+      /^build-01j8install-[0-9a-f]{10}-0123456-a2$/,
+    );
+    expect((await sandboxId(long, SHA, 20)).length).toBeLessThanOrEqual(MAX_SANDBOX_ID_LENGTH);
   });
 });

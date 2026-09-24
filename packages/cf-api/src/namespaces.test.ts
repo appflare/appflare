@@ -133,6 +133,16 @@ describe("workers", () => {
     expect(await req.request.json()).toEqual({ enabled: true, previews_enabled: true });
   });
 
+  it("getSubdomain -> GET /subdomain", async () => {
+    const { fake, client } = make({ result: { enabled: true, previews_enabled: false } });
+    expect(await client.workers.getSubdomain("hello")).toEqual({
+      enabled: true,
+      previews_enabled: false,
+    });
+    expect(fake.last().method).toBe("GET");
+    expect(fake.last().url).toBe(`${A}/workers/scripts/hello/subdomain`);
+  });
+
   it("getSchedules -> GET /schedules", async () => {
     const { fake, client } = make({ result: { schedules: [] } });
     await client.workers.getSchedules("hello");

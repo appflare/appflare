@@ -43,6 +43,7 @@ import {
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import { RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
+import { runSelfDeployingUpdate } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
 import { settleUnit } from "./units/result";
@@ -118,6 +119,16 @@ export const updateJobParams = z.object({
    * Without it the job refuses such a version before anything changes.
    */
   confirmNoPreview: z.boolean().optional(),
+  /**
+   * A self-deploying tier app: its own installer deploys the new version
+   * (see ./self-deploying/jobs.ts); none of the steps below apply.
+   */
+  selfDeploying: z.boolean().optional(),
+  /**
+   * For a self-deploying app: a replacement for the app's own token, stored
+   * on the sandbox Worker before the installer runs. Only here, never in D1.
+   */
+  appToken: z.string().min(1).max(1024).optional(),
 });
 export type UpdateJobParams = z.infer<typeof updateJobParams>;
 
@@ -138,6 +149,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   const parsed = updateJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid update job payload");
   const params = parsed.data;
+  if (params.selfDeploying === true) {
+    await runSelfDeployingUpdate(ctx, params);
+    return;
+  }
   const { step, env, deps } = ctx;
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;

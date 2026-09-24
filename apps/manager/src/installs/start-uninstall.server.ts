@@ -3,6 +3,7 @@ import { ulid } from "ulidx";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
+import { installerRunId } from "../jobs/self-deploying/phases";
 import {
   activeSelfUpdateJob,
   NO_ACTIVE_SELF_UPDATE_SQL,
@@ -64,7 +65,12 @@ export async function startUninstallCore(
   const retry = request.retry === true;
 
   const [install] = await db
-    .select({ status: installs.status, workerName: installs.worker_name })
+    .select({
+      status: installs.status,
+      workerName: installs.worker_name,
+      buildKind: installs.build_kind,
+      version: installs.catalog_version,
+    })
     .from(installs)
     .where(eq(installs.id, request.installId))
     .limit(1);
@@ -83,8 +89,13 @@ export async function startUninstallCore(
         isNull(resources.retained_at),
       ),
     );
+  // A self-deploying app's installer removes everything it created with its
+  // destroy command; nothing can be kept, so no choice is taken or recorded.
+  const selfDeploying = install.buildKind === "self-deploying";
   let deleteResources: string[];
-  if (request.deleteResources === undefined) {
+  if (selfDeploying) {
+    deleteResources = [];
+  } else if (request.deleteResources === undefined) {
     deleteResources = pending.filter((r) => isDataResourceKind(r.kind)).map((r) => r.id);
   } else {
     const known = new Map(pending.map((r) => [r.id, r.kind]));
@@ -105,6 +116,7 @@ export async function startUninstallCore(
     jobId,
     installId: request.installId,
     deleteResources,
+    ...(selfDeploying ? { selfDeploying: true } : {}),
   };
   const statuses = (retry ? ["uninstalling"] : STARTABLE).map((s) => `'${s}'`).join(", ");
   const at = now.getTime();
@@ -125,7 +137,14 @@ export async function startUninstallCore(
       .bind(
         jobId,
         request.installId,
-        JSON.stringify({ installId: request.installId, deleteResources, retry }),
+        JSON.stringify({
+          installId: request.installId,
+          deleteResources,
+          retry,
+          ...(selfDeploying
+            ? { selfDeploying: true, sandboxRun: installerRunId("destroy", install.version) }
+            : {}),
+        }),
       ),
     deps.db
       .prepare(
@@ -137,7 +156,7 @@ export async function startUninstallCore(
       .prepare(
         `UPDATE resources SET retained_at = ?3
          WHERE install_id = ?2 AND deleted_at IS NULL AND retained_at IS NULL
-           AND kind IN (${DATA_KINDS_SQL})
+           AND kind IN (${DATA_KINDS_SQL}) AND managed_by = 'appflare'
            AND id NOT IN (SELECT value FROM json_each(?4))
            AND EXISTS (SELECT 1 FROM jobs WHERE id = ?1)`,
       )

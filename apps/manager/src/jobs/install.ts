@@ -46,6 +46,8 @@ import { attachQueueConsumersPhase, planQueueConsumers } from "./install/queue-c
 import { explainR2Refusal } from "./install/r2-enablement";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import type { JobContext } from "./run-job";
+import { runSelfDeployingInstall } from "./self-deploying/jobs";
+import { selfDeployingJobInput } from "./self-deploying/phases";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 import { settleUnit } from "./units/result";
@@ -77,6 +79,12 @@ export const installJobParams = z.object({
   digest: sha256Schema.optional(),
   /** A sandbox tier app: what the sandbox Worker builds, and the admin's cost confirmation. */
   build: sandboxBuildParams.optional(),
+  /**
+   * A self-deploying tier app: the catalog manifest its installer comes from,
+   * the admin's cost confirmation, and the app's own token (which the job
+   * stores on the sandbox Worker; never in D1).
+   */
+  selfDeploying: selfDeployingJobInput.optional(),
   secrets: z.record(z.string(), z.string()),
   vars: z.record(z.string(), z.string()),
   paidConfirmed: z.boolean(),
@@ -99,6 +107,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
   const parsed = installJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid install job payload");
   const params = parsed.data;
+  if (params.selfDeploying !== undefined) {
+    // The app's own installer deploys it; there is no artifact to install.
+    await runSelfDeployingInstall(ctx, { ...params, selfDeploying: params.selfDeploying });
+    return;
+  }
   const { step, env, deps } = ctx;
   const db = env.DB;
   const steps = createJobSteps(ctx, params.jobId);
@@ -126,10 +139,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    // 1. Fetch and verify the artifact manifest (a sandbox tier app is built first).
-    // TODO: a self-deploying tier app would branch here to run its own installer in
-    // the sandbox Worker; that tier is not supported yet, and the install start
-    // refuses its entries.
+    // 1. Fetch and verify the artifact manifest (a sandbox tier app is built
+    // first; a self-deploying one never gets here, see the top).
     const source = await resolveArtifactPhase(steps, env, deps.signingKeys, {
       installId: params.installId,
       slug: params.slug,

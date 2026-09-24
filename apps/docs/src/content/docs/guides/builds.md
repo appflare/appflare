@@ -178,6 +178,90 @@ stay within R2's free storage. See Cloudflare's
 [Containers pricing](https://developers.cloudflare.com/containers/pricing/) for the
 current rates.
 
+## Self-deploying apps
+
+Some apps do not deploy with wrangler at all: they ship their own installer, such as
+an [Alchemy](https://alchemy.run) stack that creates several Workers, databases,
+buckets and a Cloudflare Access application in one run. Their catalog entries use the
+**self-deploying** tier. Appflare cannot pack them, so your sandbox Worker runs the
+app's own installer instead, at the commit the catalog pinned.
+
+### Install one
+
+1. Enable the sandbox Worker and connect the manager, as above.
+2. On the app's catalog page, read **This app needs its own Cloudflare token** and
+   create that token with **Create token**. The installer deploys the app with it; the
+   manager's own token is never used for the app.
+3. Fill in the install form: the token, the app's secrets and settings, and the cost
+   confirmation. There is no Worker name to choose: the installer names its Workers
+   after the install's stage, `appflare-` and the last characters of the install's id
+   (for example `open-seo-appflare-x0yzabcd`), so several installs never collide.
+
+The install job then:
+
+1. stores the token, and each of the app's secret values, as secrets on the sandbox
+   Worker (`APP_TOKEN_<install>` and `APP_SECRET_<install>_<name>`);
+2. has the sandbox Worker check out the pinned commit, install its dependencies with
+   install scripts disabled, run the entry's build command without credentials, and
+   then run the installer's deploy command with the token, the account id, the app's
+   settings and its secrets in its environment;
+3. reads back, with the app's token, the Workers the entry says the installer creates
+   and everything they bind (D1 databases, KV namespaces, R2 buckets, queues,
+   Vectorize indexes, Durable Object classes, Workflows), and lists them on the app's
+   page as **managed by the app's installer**;
+4. checks the app at its Worker's workers.dev URL. Such apps usually sit behind
+   Cloudflare Access, so any answer from the Worker itself, a redirect to the Access
+   login included, counts as serving.
+
+The job page shows the installer's output while it runs.
+
+### Update, rollback and uninstall
+
+- **Update** runs the installer's deploy command again at the new pin. The installer
+  compares what it deployed before with what the new version needs and changes only
+  that. Appflare takes no snapshot.
+- **Rollback** is not available. The installer changes the app in place, so there is
+  no earlier version for Appflare to switch back to. Restore data with the app's own
+  tools if an update goes wrong.
+- **Uninstall** runs the installer's destroy command, which deletes everything the
+  installer created, data included; nothing can be kept. Appflare then deletes the
+  app's token and secrets from the sandbox Worker. Appflare never deletes the app's
+  resources itself.
+
+Each run of the installer costs about as much as a sandbox build of the same size; the
+install form and the update dialog show the estimate.
+
+### The app's token
+
+The sandbox Worker holds the token for as long as the app is installed, because updates
+and uninstalls need it. If you rotate the token, or the sandbox Worker was deleted and
+enabled again (which removes its secrets), enter the token again under **App token** on
+the app's page before the next update or uninstall. An update also accepts a new token.
+
+**One change at a time.** Every secret stored on or removed from the sandbox Worker
+deploys a new version of it, which restarts its containers and would stop a build or
+installer run in progress. So Appflare refuses to change those secrets (an install or
+update of a self-deploying app storing its token, an uninstall removing it, or entering
+the token again) while another job that runs in the sandbox Worker is queued or
+running; wait for it to finish, then try again. A run that was stopped anyway is retried
+in a fresh container.
+
+**How many apps fit.** A Worker holds at most 128 environment variables and secrets.
+Each self-deploying install takes one for its token and one per app secret on the
+sandbox Worker, so the sandbox Worker has room for a few dozen such installs.
+
+**Before the installer runs,** the sandbox Worker deletes any `.env` file in the app's
+checkout (committed or written by its build): installers such as Alchemy read it before
+their environment, and the settings Appflare hands them must win.
+
+**What the installer keeps in your account.** Alchemy keeps its state in the account.
+On an account that has never run an Alchemy deploy, the first deploy creates the
+Secrets Store, two secrets in it (the state store's token and encryption key), and an
+`alchemy-state-store` Worker with a workers.dev route, and uses a temporary preview
+Worker to read the token back. That is why such an app's token needs **Secrets Store**
+with Edit, not just Read. Every Alchemy app in the account shares the state store;
+uninstalling one app leaves it in place.
+
 ## Disable it
 
 ```sh
@@ -195,7 +279,9 @@ checks first that the Worker really is an Appflare sandbox Worker and refuses ot
 
 Apps that were built by the sandbox Worker keep running. Without the sandbox Worker,
 sandbox tier apps cannot be built, so they cannot be installed, updated, or
-reinstalled. Settings shows the manager as connected but not answering until its next
+reinstalled. Self-deploying apps keep running too, but cannot be updated or
+uninstalled until the sandbox Worker is back; deleting it also deletes the app tokens
+it held, so enter each app's token again on its page afterwards. Settings shows the manager as connected but not answering until its next
 self-update drops the binding. Without `--purge`, the bucket stays, and enabling the sandbox Worker
 again uses it.
 
@@ -217,6 +303,14 @@ under **Workers & Pages > Plans** in the dashboard and run `sandbox enable` agai
 **A build fails in the install step.** The app's lockfile does not match its
 `package.json` at the pinned commit, or a dependency needs its install script. The
 job log shows the package manager's output; report it on the catalog entry.
+
+**The sandbox Worker does not hold the app's token.** A self-deploying app's update or
+uninstall stops before its installer runs. Enter the token again under **App token** on
+the app's page, then retry.
+
+**The installer finished, but a Worker is missing.** The catalog entry's list of
+Workers does not match what the installer deploys at that commit; report it on the
+catalog entry.
 
 **The first build takes longer.** Cloudflare pulls the sandbox Worker image from Docker Hub
 the first time a container starts in a location. Later builds start faster.

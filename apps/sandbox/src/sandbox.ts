@@ -37,10 +37,16 @@ export interface ExecOutcome {
 }
 
 /**
- * The Sandbox Durable Object that runs `standard-1` build containers. A
- * build runs third-party code; it gets the internet (to clone and install)
- * and holds no credentials: no Cloudflare token or key is ever put in the
+ * The Sandbox Durable Object that runs `standard-1` containers. A build runs
+ * third-party code; it gets the internet (to clone and install) and holds no
+ * credentials: no Cloudflare token or key is ever put in a build's
  * container, so there is nothing in it that could act on an account.
+ *
+ * A self-deploying run (self-managed.ts) uses the same containers for the
+ * app's own installer, and is the one exception: its installer command, and
+ * only that command, gets the app's own token (never the manager's) in its
+ * environment, because deploying is what the installer is for. Its checkout,
+ * dependency install and build run without it, like a build.
  *
  * `deniedHosts` refuses plain-HTTP requests to the Cloudflare API only.
  * @cloudflare/containers matches hosts of HTTPS traffic only when it
@@ -52,6 +58,10 @@ export class Sandbox extends SandboxBase<Env> {
   // every HTTPS client in the container (git, npm, pnpm, yarn, bun, Node's
   // fetch) trust /etc/cloudflare/certs/cloudflare-containers-ca.crt; that can
   // only be tested in a running container, which the tests here cannot start.
+  // Self-deploying runs need api.cloudflare.com over HTTPS, so they would then
+  // move to a container class of their own that allows it, ideally one whose
+  // outbound handler adds the app token to Cloudflare API requests so the
+  // token never enters the container at all.
   override deniedHosts = ["api.cloudflare.com"];
 }
 

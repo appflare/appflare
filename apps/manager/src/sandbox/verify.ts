@@ -3,6 +3,7 @@ import {
   artifactManifestSchema,
   type CatalogManifest,
   catalogManifestSchema,
+  type InstallTier,
 } from "@appflare/schema";
 import { ArtifactError, sha256Hex } from "../jobs/install/artifact";
 
@@ -37,6 +38,12 @@ export interface ExpectedCatalogManifest {
   pin: string;
   /** The index's `build.manifestDigest`. */
   digest: string;
+  /**
+   * The index entry's tier: `sandbox` (the default) or `self-deploying`,
+   * whose catalog manifest is published the same way and holds the
+   * installer's commands.
+   */
+  tier?: Exclude<InstallTier, "artifact">;
 }
 
 /** Verifies a sandbox entry's published catalog manifest. Throws `ArtifactError`. */
@@ -66,9 +73,10 @@ export async function verifyCatalogManifest(
       `the catalog manifest is for "${catalog.slug}", not "${expected.slug}"`,
     );
   }
-  if (catalog.install.tier !== "sandbox") {
+  const tier = expected.tier ?? "sandbox";
+  if (catalog.install.tier !== tier) {
     throw new ArtifactError(
-      `the catalog manifest is a ${catalog.install.tier} tier entry, not a sandbox tier entry`,
+      `the catalog manifest is a ${catalog.install.tier} tier entry, not a ${tier} tier entry`,
     );
   }
   if (catalog.source.sha !== expected.pin) {

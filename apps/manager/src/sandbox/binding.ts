@@ -4,10 +4,15 @@ import {
   type BuildProgress,
   buildOutcomeSchema,
   buildProgressSchema,
+  SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
   SANDBOX_URL_ORIGIN,
   type SandboxInfo,
+  type SelfManagedOutcome,
+  type SelfManagedStatus,
   sandboxInfoSchema,
+  selfManagedOutcomeSchema,
+  selfManagedStatusSchema,
 } from "@appflare/schema";
 import { z } from "zod";
 
@@ -34,6 +39,10 @@ export interface SandboxBuildsBinding {
   build(request: unknown): Promise<unknown>;
   progress(input: unknown): Promise<unknown>;
   cleanup(input: unknown): Promise<unknown>;
+  /** Self-deploying tier (sandbox Workers whose `info().features` lists it). */
+  deploySelfManaged(request: unknown): Promise<unknown>;
+  destroySelfManaged(request: unknown): Promise<unknown>;
+  selfManagedStatus(request: unknown): Promise<unknown>;
 }
 
 /**
@@ -90,6 +99,33 @@ export function parseBuildOutcome(value: unknown): BuildOutcome {
   if (!parsed.success) {
     throw new SandboxProtocolError(
       `the sandbox Worker answered build() with an unexpected shape (${z.prettifyError(parsed.error).replace(/\s+/g, " ")})`,
+    );
+  }
+  return parsed.data;
+}
+
+/** Whether the sandbox Worker runs self-deploying apps' installers. */
+export function runsSelfDeploying(info: SandboxInfo): boolean {
+  return info.features?.includes(SANDBOX_FEATURE_SELF_DEPLOYING) === true;
+}
+
+/** `deploySelfManaged()`'s or `destroySelfManaged()`'s answer, checked. */
+export function parseSelfManagedOutcome(value: unknown): SelfManagedOutcome {
+  const parsed = selfManagedOutcomeSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new SandboxProtocolError(
+      `the sandbox Worker answered a self-deploying run with an unexpected shape (${z.prettifyError(parsed.error).replace(/\s+/g, " ")})`,
+    );
+  }
+  return parsed.data;
+}
+
+/** `selfManagedStatus()`'s answer, checked. */
+export function parseSelfManagedStatus(value: unknown): SelfManagedStatus {
+  const parsed = selfManagedStatusSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new SandboxProtocolError(
+      "the sandbox Worker answered selfManagedStatus() with an unexpected shape",
     );
   }
   return parsed.data;

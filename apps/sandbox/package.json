@@ -11,6 +11,7 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@appflare/cf-api": "workspace:*",
     "@appflare/schema": "workspace:*",
     "@cloudflare/sandbox": "0.12.10",
     "zod": "4.6.5"

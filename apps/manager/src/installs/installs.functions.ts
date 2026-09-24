@@ -1,5 +1,11 @@
 import { env } from "cloudflare:workers";
-import { artifactManifestSchema, renderPlaceholders, type TokenPermission } from "@appflare/schema";
+import {
+  artifactManifestSchema,
+  renderPlaceholders,
+  SELF_DEPLOYING_TOOLS,
+  selfDeployingStage,
+  type TokenPermission,
+} from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -11,6 +17,7 @@ import { createDb } from "../db/client";
 import { type BuildKind, type HealthStatus, installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
+import { recordedCatalog } from "../jobs/self-deploying/phases";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
@@ -129,6 +136,8 @@ export interface ResourceView {
   binding: string | null;
   name: string;
   cfId: string | null;
+  /** Created by the app's own installer, which alone deletes it (self-deploying tier). */
+  managedByApp: boolean;
 }
 
 /** A custom domain of the install (a `domain` resource). */
@@ -143,8 +152,18 @@ export interface CustomDomainView {
 export interface InstallDetail extends InstallRow {
   currentVersionId: string | null;
   pinSha: string | null;
-  /** How the running code was built: a signed release, or a sandbox build in this account. */
-  build: { kind: BuildKind; image: string | null; builtAt: string | null };
+  /**
+   * How the running code was built: a signed release, a sandbox build in this
+   * account, or a deploy by the app's own installer (`installer` names it,
+   * `stage` is the install's stage).
+   */
+  build: {
+    kind: BuildKind;
+    image: string | null;
+    builtAt: string | null;
+    installer: string | null;
+    stage: string | null;
+  };
   /** The settings the admin changed at install, with placeholders filled in. */
   vars: Record<string, string>;
   /** Resources in the account that belong to the install (secrets excluded). */
@@ -221,7 +240,16 @@ export const getInstall = createServerFn({ method: "GET" })
     let name = listed?.name ?? row.app_slug;
     let postInstall: string[] = [];
     let tokenPermissions: TokenPermission[] = [];
-    if (row.manifest_json !== null) {
+    const installerCatalog =
+      row.build_kind === "self-deploying" ? recordedCatalog(row.manifest_json) : null;
+    if (installerCatalog !== null) {
+      // A self-deploying install records its catalog manifest, not an artifact's.
+      name = installerCatalog.name;
+      postInstall = installerCatalog.postInstall.map((p) =>
+        renderPostInstall(p.content, { workerUrl, workerName: row.worker_name }),
+      );
+      tokenPermissions = installerCatalog.tokenPermissions;
+    } else if (row.manifest_json !== null) {
       const manifest = artifactManifestSchema.safeParse(JSON.parse(row.manifest_json));
       if (manifest.success) {
         name = manifest.data.catalog.name;
@@ -238,6 +266,7 @@ export const getInstall = createServerFn({ method: "GET" })
       binding: r.binding,
       name: r.name,
       cfId: r.cf_id,
+      managedByApp: r.managed_by === "app",
     });
     const live = resourceRows.filter((r) => r.retained_at === null);
     const activeJob = jobRows.find((j) => j.status === "queued" || j.status === "running");
@@ -269,6 +298,11 @@ export const getInstall = createServerFn({ method: "GET" })
         kind: row.build_kind,
         image: row.sandbox_image,
         builtAt: row.built_at?.toISOString() ?? null,
+        installer:
+          installerCatalog?.install.selfDeploying === undefined
+            ? null
+            : SELF_DEPLOYING_TOOLS[installerCatalog.install.selfDeploying.tool].label,
+        stage: row.build_kind === "self-deploying" ? selfDeployingStage(row.id) : null,
       },
       // As the Worker gets them: placeholders are kept as entered and filled in by the jobs.
       vars: Object.fromEntries(

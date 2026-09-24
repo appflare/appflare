@@ -8,6 +8,7 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { AppCredentialsCard } from "../../../components/app-credentials-card";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
 import { formatDateTime, jobKindLabel, resourceKindLabel } from "../../../components/format";
@@ -115,7 +116,19 @@ function InstallPage() {
       <UninstallState install={install} />
       <Overview install={install} isAdmin={isAdmin} />
       {!gone && (
-        <AppTokenPermissions appName={install.name} permissions={install.tokenPermissions} />
+        <AppTokenPermissions
+          appName={install.name}
+          permissions={install.tokenPermissions}
+          custody={install.build.kind === "self-deploying" ? "sandbox" : "app"}
+        />
+      )}
+      {!gone && install.build.kind === "self-deploying" && (
+        <AppCredentialsCard
+          installId={install.id}
+          appName={install.name}
+          secretNames={install.secretNames}
+          canEdit={isAdmin}
+        />
       )}
       {!gone && install.postInstall.length > 0 && (
         <Section title="Next steps">
@@ -225,6 +238,7 @@ function ResourceTable({ rows }: { rows: ResourceView[] }) {
             <Table.Head>Binding</Table.Head>
             <Table.Head>Name</Table.Head>
             <Table.Head>ID</Table.Head>
+            {rows.some((r) => r.managedByApp) && <Table.Head>Managed by</Table.Head>}
           </Table.Row>
         </Table.Header>
         <Table.Body>
@@ -240,6 +254,15 @@ function ResourceTable({ rows }: { rows: ResourceView[] }) {
               <Table.Cell>
                 <span className={mono}>{r.cfId ?? ""}</span>
               </Table.Cell>
+              {rows.some((row) => row.managedByApp) && (
+                <Table.Cell>
+                  {r.managedByApp ? (
+                    <Badge variant="outline">The app's installer</Badge>
+                  ) : (
+                    "Appflare"
+                  )}
+                </Table.Cell>
+              )}
             </Table.Row>
           ))}
         </Table.Body>
@@ -355,7 +378,28 @@ function Overview({ install, isAdmin }: { install: InstallDetail; isAdmin: boole
           <Row label="Worker version">
             <span className={mono}>{install.currentVersionId ?? "None yet"}</span>
           </Row>
-          {install.build.kind === "sandbox" ? (
+          {install.build.kind === "self-deploying" ? (
+            <Row label="Deployed">
+              <span className="grid gap-1">
+                <span>
+                  By the app's own installer
+                  {install.build.installer === null ? "" : ` (${install.build.installer})`} from{" "}
+                  <span className={mono}>
+                    {install.pinSha?.slice(0, 12) ?? "an unknown commit"}
+                  </span>{" "}
+                  in your sandbox Worker, as stage{" "}
+                  <span className={mono}>{install.build.stage ?? "unknown"}</span>. Unsigned; no
+                  rollback.
+                </span>
+                {install.build.builtAt !== null && (
+                  <Text as="span" variant="secondary" size="sm">
+                    {formatDateTime(install.build.builtAt)}
+                    {install.build.image === null ? "" : ` with ${install.build.image}`}
+                  </Text>
+                )}
+              </span>
+            </Row>
+          ) : install.build.kind === "sandbox" ? (
             <Row label="Built">
               <span className="grid gap-1">
                 <span>

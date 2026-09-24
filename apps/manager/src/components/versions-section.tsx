@@ -79,7 +79,13 @@ export function VersionsSection({
       <Text variant="heading" as="h2">
         Versions
       </Text>
-      {snapshots.length === 0 ? (
+      {install.build.kind === "self-deploying" ? (
+        <Text variant="secondary">
+          This app's own installer changes it in place on every update, so Appflare takes no
+          snapshot and cannot roll it back. To undo an update, restore the app's data with its own
+          tools; the job log of each update shows what the installer did.
+        </Text>
+      ) : snapshots.length === 0 ? (
         <Text variant="secondary">
           No updates yet. Each update takes a snapshot first: the Worker version that was serving
           and a Time Travel bookmark of each D1 database.

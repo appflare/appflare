@@ -47,8 +47,11 @@ export type IndexBuild = z.infer<typeof indexBuildSchema>;
 
 /**
  * One app entry in the published catalog index. `artifact` tier entries
- * carry the release URLs and the manifest digest; `sandbox` tier entries
- * carry `build` instead and may omit both.
+ * carry the release URLs and the manifest digest; `sandbox` and
+ * `self-deploying` tier entries carry `build` instead and may omit both (a
+ * self-deploying entry's `build` points at the catalog manifest that holds
+ * its installer's commands; `expectedMinutes` and `instanceType` size the
+ * container the installer runs in).
  */
 export const indexAppSchema = z
   .object({
@@ -85,6 +88,15 @@ export const indexAppSchema = z
         code: "custom",
         path: ["build"],
         message: "a sandbox tier entry needs a build block",
+      });
+    }
+    // A self-deploying entry has no artifact either: the manager reads its
+    // catalog manifest (the installer's commands) from the same block.
+    if (app.tier === "self-deploying" && app.build === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["build"],
+        message: "a self-deploying tier entry needs a build block",
       });
     }
   });

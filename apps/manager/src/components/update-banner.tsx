@@ -152,7 +152,9 @@ function UpdateDialog({
               Update {install.instanceName} to {needs.version}
             </Dialog.Title>
             <Dialog.Description className="text-kumo-subtle">
-              Appflare takes a snapshot of the current version and of each D1 database first.
+              {needs.selfDeploying === true
+                ? "The app's own installer deploys the new version over the installed one. There is no snapshot and no rollback."
+                : "Appflare takes a snapshot of the current version and of each D1 database first."}
             </Dialog.Description>
           </div>
           <Dialog.Close
@@ -176,9 +178,10 @@ function UpdateDialog({
               onChange={setBuildConfirmed}
               disabled={pending}
               action="update"
+              kind={needs.selfDeploying === true ? "installer" : "build"}
             />
           )}
-          {needs.build !== null && needs.skipsPreview === null && (
+          {needs.build !== null && needs.skipsPreview === null && needs.selfDeploying !== true && (
             <Checkbox
               checked={allowNoPreview}
               onCheckedChange={(checked: boolean) => setAllowNoPreview(checked)}

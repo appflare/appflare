@@ -193,6 +193,13 @@ const APP_PERMISSION_KEYS: Readonly<Record<string, Omit<PermissionGroup, "type">
   "account.workers r2 storage": { key: "workers_r2", label: "Account: Workers R2 Storage" },
   "account.d1": { key: "d1", label: "Account: D1" },
   "account.queues": { key: "queues", label: "Account: Queues" },
+  // The same two groups the manager asks for to put itself behind Access; apps
+  // that create their own Access application (self-deploying ones) need them.
+  "account.access: apps and policies": { key: "access", label: "Access: Apps and Policies" },
+  "account.access: organizations, identity providers, and groups": {
+    key: "access_acct",
+    label: "Access: Organizations, Identity Providers, and Groups",
+  },
 };
 
 /** One entry of an app's `tokenPermissions`, with the template group it maps to. */

@@ -24,6 +24,7 @@ import { type EmailRouteRecord, removeEmailRoutesPhase } from "./install/email-r
 import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
 import { deleteResource, RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
+import { runSelfDeployingUninstall } from "./self-deploying/jobs";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, isNotFound, JobError } from "./steps";
 import { settleUnit } from "./units/result";
@@ -63,6 +64,11 @@ export const uninstallJobParams = z.object({
   installId: z.string().min(1),
   /** Ids of the data resources to delete. */
   deleteResources: z.array(z.string().min(1)).max(500),
+  /**
+   * A self-deploying tier app: its own installer's destroy command removes
+   * everything (see ./self-deploying/jobs.ts); `deleteResources` does not apply.
+   */
+  selfDeploying: z.boolean().optional(),
 });
 export type UninstallJobParams = z.infer<typeof uninstallJobParams>;
 
@@ -113,6 +119,10 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
   const parsed = uninstallJobParams.safeParse(ctx.params);
   if (!parsed.success) throw new NonRetryableError("invalid uninstall job payload");
   const params = parsed.data;
+  if (params.selfDeploying === true) {
+    await runSelfDeployingUninstall(ctx, params);
+    return;
+  }
   const { step, env } = ctx;
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;
@@ -138,9 +148,8 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       const targets: Target[] = [];
       for (const r of live) {
         if (r.retained_at !== null || !wanted.has(r.id)) continue;
-        // TODO: resources an app's own installer created (`managed_by: "app"`,
-        // self-deploying tier) are removed by that installer, which is not
-        // supported yet; Appflare never deletes them itself.
+        // Resources an app's own installer created (self-deploying tier) are
+        // removed by that installer; Appflare never deletes them itself.
         if (r.managed_by === "app") continue;
         const kind = DATA_RESOURCE_KINDS.find((k) => k === r.kind);
         if (kind !== undefined) targets.push({ id: r.id, kind, name: r.name, cfId: r.cf_id });

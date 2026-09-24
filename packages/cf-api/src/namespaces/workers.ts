@@ -86,6 +86,11 @@ export function createWorkers(http: HttpApi) {
       });
     },
 
+    /** `GET /workers/scripts/{name}/subdomain` — whether its workers.dev route (and previews) are on. */
+    getSubdomain(name: string): Promise<SubdomainResult> {
+      return http.result("GET", http.acct(`/workers/scripts/${enc(name)}/subdomain`));
+    },
+
     /** `GET /workers/scripts/{name}/schedules` (cron triggers). */
     getSchedules(name: string): Promise<{ schedules: WorkerSchedule[] }> {
       return http.result("GET", http.acct(`/workers/scripts/${enc(name)}/schedules`));

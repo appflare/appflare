@@ -57,6 +57,13 @@ export const startInstallInput = z.object({
    */
   buildConfirmed: z.boolean().optional(),
   /**
+   * A self-deploying tier app's own Cloudflare API token, created from the
+   * entry's `tokenPermissions`. The install stores it as a secret on the
+   * sandbox Worker, where the app's installer runs; Appflare keeps no copy.
+   * Required for such an app; refused for others.
+   */
+  appToken: z.string().max(1024).optional(),
+  /**
    * The zone whose email the app receives, for an app whose manifest sets
    * `install.emailRouting`; refused for any other app.
    */

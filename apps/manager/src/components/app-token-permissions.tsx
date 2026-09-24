@@ -22,9 +22,16 @@ const SCOPE_LABELS: Record<NonNullable<TokenPermission["scope"]>, string> = {
 export function AppTokenPermissions({
   appName,
   permissions,
+  custody = "app",
 }: {
   appName: string;
   permissions: readonly TokenPermission[];
+  /**
+   * Where the token goes: `app`, a secret on the app's Worker; `sandbox`, a
+   * secret on the sandbox Worker, where a self-deploying app's own installer
+   * runs with it.
+   */
+  custody?: "app" | "sandbox";
 }) {
   if (permissions.length === 0) return null;
   const resolved = resolveAppTokenPermissions(permissions);
@@ -35,11 +42,21 @@ export function AppTokenPermissions({
       <Text variant="heading" as="h2">
         This app needs its own Cloudflare token
       </Text>
-      <Text variant="secondary">
-        {appName} calls the Cloudflare API with a token you create for it. The token belongs to the
-        app, not to the manager: when the install form asks for it, it is stored as a secret on the
-        app's Worker, never on the manager's; otherwise the app's setup steps say where it goes.
-      </Text>
+      {custody === "sandbox" ? (
+        <Text variant="secondary">
+          {appName} deploys itself: its own installer creates its Workers and resources with a token
+          you create for it, not with the manager's. The install form asks for it and stores it as a
+          secret on your sandbox Worker, where the installer runs; Appflare keeps no copy. Updating
+          and uninstalling use it again, so keep it valid while the app is installed.
+        </Text>
+      ) : (
+        <Text variant="secondary">
+          {appName} calls the Cloudflare API with a token you create for it. The token belongs to
+          the app, not to the manager: when the install form asks for it, it is stored as a secret
+          on the app's Worker, never on the manager's; otherwise the app's setup steps say where it
+          goes.
+        </Text>
+      )}
       <LayerCard className="p-0">
         <Table>
           <Table.Header>
