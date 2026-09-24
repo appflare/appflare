@@ -4,7 +4,11 @@ import path from "node:path";
 import type { ArtifactManifest } from "@appflare/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CommandContext } from "../context.ts";
-import { buildSandboxWranglerConfig, explainSandboxDeployFailure } from "../sandbox-config.ts";
+import {
+  buildSandboxWranglerConfig,
+  explainSandboxDeployFailure,
+  isContainerAccessFailure,
+} from "../sandbox-config.ts";
 import {
   buildFixtureArtifact,
   type FakeHandler,
@@ -18,6 +22,16 @@ import { sandboxDisable, sandboxEnable } from "./sandbox.ts";
 
 const NOT_FOUND = { code: 1, stderr: "This Worker does not exist on your account. [code: 10007]" };
 const TOKEN = "oauth-secret-token";
+const API_TOKEN = { stdout: JSON.stringify({ type: "api_token", token: TOKEN }) };
+
+/** What wrangler 4.136 printed when the Containers API refused an account API token. */
+const CONTAINER_STEP_UNAUTHORIZED =
+  "Uploaded appflare-sandbox (7.89 sec)\n" +
+  "╭ Deploy a container application deploy changes to your application\n" +
+  "│\n" +
+  "│ Container application changes\n" +
+  "│\n" +
+  "✘ [ERROR] Unauthorized\n";
 
 /** Reshapes the fixture artifact into a sandbox Worker artifact. */
 function asSandboxWorker(m: ArtifactManifest): void {
@@ -76,7 +90,19 @@ afterEach(() => {
   rmSync(artifactDir, { recursive: true, force: true });
 });
 
-function setup(overrides: Record<string, FakeHandler> = {}, ui = fakeUi()) {
+/** The fake account: whether the build bucket exists, and how the Containers API answers. */
+interface FakeAccount {
+  bucket: boolean;
+  containersStatus: number;
+  /** Answer the bucket lookup with a server error. */
+  bucketLookupFails?: boolean;
+}
+
+function setup(
+  overrides: Record<string, FakeHandler> = {},
+  ui = fakeUi(),
+  account: FakeAccount = { bucket: false, containersStatus: 200 },
+) {
   let deployedConfig: Record<string, unknown> | undefined;
   const fake = fakeSpawner({
     whoami: () => ({ stdout: LOGGED_IN }),
@@ -84,6 +110,7 @@ function setup(overrides: Record<string, FakeHandler> = {}, ui = fakeUi()) {
     deploy: (call) => {
       const configPath = call.args[call.args.indexOf("--config") + 1] as string;
       deployedConfig = JSON.parse(readFileSync(configPath, "utf8"));
+      account.bucket = true;
       return {};
     },
     delete: () => ({}),
@@ -102,6 +129,24 @@ function setup(overrides: Record<string, FakeHandler> = {}, ui = fakeUi()) {
         url,
         auth: new Headers(init?.headers).get("authorization"),
       });
+      if (url.endsWith("/r2/buckets/appflare-builds")) {
+        if (account.bucketLookupFails) {
+          return new Response("upstream error", { status: 502 });
+        }
+        return account.bucket
+          ? Response.json({ success: true, errors: [], result: { name: "appflare-builds" } })
+          : Response.json(
+              {
+                success: false,
+                errors: [{ code: 10006, message: "The specified bucket does not exist." }],
+                result: null,
+              },
+              { status: 404 },
+            );
+      }
+      if (url.includes("/containers/applications?name=") && account.containersStatus !== 200) {
+        return Response.json({ success: false }, { status: account.containersStatus });
+      }
       if (url.includes("/containers/applications?name=")) {
         // The server filters by name loosely; only exact names may be deleted.
         const name = decodeURIComponent(url.split("name=")[1] ?? "");
@@ -136,7 +181,7 @@ function setup(overrides: Record<string, FakeHandler> = {}, ui = fakeUi()) {
     keys: [key.key],
     sleep: async () => {},
   };
-  return { ctx, calls: fake.calls, ui, requests, config: () => deployedConfig };
+  return { ctx, calls: fake.calls, ui, requests, account, config: () => deployedConfig };
 }
 
 const commands = (calls: { args: string[] }[]) => calls.map((c) => c.args.slice(0, 2).join(" "));
@@ -146,7 +191,18 @@ describe("sandbox enable", () => {
     const t = setup();
     await sandboxEnable({ artifactDir, yes: true, allowUnsigned: false }, t.ctx);
 
-    expect(commands(t.calls)).toEqual(["whoami --json", "deployments list", "deploy --config"]);
+    expect(commands(t.calls)).toEqual([
+      "whoami --json",
+      "auth token",
+      "deployments list",
+      "deploy --config",
+    ]);
+    // A `wrangler login` is checked for Containers too, then the bucket is looked up.
+    expect(t.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
+      "GET https://api.cloudflare.com/client/v4/accounts/acc-1/containers/applications?name=appflare-sandbox-standard-1",
+      "GET https://api.cloudflare.com/client/v4/accounts/acc-1/r2/buckets/appflare-builds",
+    ]);
+    expect(t.ui.lines).toContain("  The credential can use Containers.");
     const deploy = t.calls.at(-1);
     expect(deploy?.args).toContain("--strict");
     expect(deploy?.output).toBe("tee");
@@ -183,6 +239,7 @@ describe("sandbox enable", () => {
     });
     expect(JSON.stringify(t.config())).not.toContain("account_id");
     expect(t.ui.results.join("\n")).toContain("US$0.012");
+    expect(t.ui.results.join("\n")).toContain("Settings > Sandbox builds");
     expect(readdirSync(tmpRoot)).toEqual([]);
   });
 
@@ -258,11 +315,183 @@ describe("sandbox enable", () => {
     ).rejects.toThrow(/^Sandbox builds need Workers Paid\./);
   });
 
-  it("keeps wrangler's own error for other failures", async () => {
-    const t = setup({ deploy: () => ({ code: 1, stderr: "✘ [ERROR] something else" }) });
+  it("keeps wrangler's own error for other failures, and removes the new Worker and its container applications", async () => {
+    const t = setup({
+      deploy: () => ({
+        code: 1,
+        stdout: "Uploaded appflare-sandbox\n",
+        stderr: "✘ [ERROR] something else",
+      }),
+    });
+    const error = await sandboxEnable(
+      { artifactDir, yes: true, allowUnsigned: false },
+      t.ctx,
+    ).catch((e: Error) => e);
+    expect(String(error)).toContain(
+      "`wrangler deploy` failed (exit code 1); see its output above.",
+    );
+    expect(String(error)).toContain('Removed the Worker "appflare-sandbox" this run uploaded.');
+    expect(commands(t.calls).slice(-4)).toEqual([
+      "deploy --config",
+      "delete --name",
+      "auth token",
+      "containers delete",
+    ]);
+  });
+
+  it("explains a refused container step, and removes the Worker and the empty bucket it created", async () => {
+    const t = setup(
+      {
+        auth: () => API_TOKEN,
+        deploy: () => {
+          // wrangler creates the bucket and uploads the Worker before the container step.
+          t.account.bucket = true;
+          t.account.containersStatus = 401;
+          return { code: 1, stdout: CONTAINER_STEP_UNAUTHORIZED };
+        },
+      },
+      fakeUi(),
+      // The pre-deploy check could not tell (for example a network error), so the deploy ran.
+      { bucket: false, containersStatus: 500 },
+    );
+    const error = await sandboxEnable(
+      { artifactDir, yes: true, allowUnsigned: false },
+      t.ctx,
+    ).catch((e: Error) => e);
+    const message = String(error);
+    expect(message).toContain("Cloudflare refused access to Containers");
+    expect(message).toContain("not on Workers Paid");
+    expect(message).toContain("lacks the Containers permission");
+    expect(message).toContain('Removed the Worker "appflare-sandbox" this run uploaded.');
+    expect(message).toContain("Removed the R2 bucket appflare-builds this run created.");
+    expect(message).not.toContain(TOKEN);
+    expect(commands(t.calls).slice(-4)).toEqual([
+      "deploy --config",
+      "delete --name",
+      "auth token",
+      "r2 bucket",
+    ]);
+    expect(t.calls.at(-1)?.args.slice(0, 4)).toEqual(["r2", "bucket", "delete", "appflare-builds"]);
+    // Container applications are still looked up; the refused lookup is not reported.
+    expect(
+      t.requests.filter((r) => r.url.includes("/containers/applications")).length,
+    ).toBeGreaterThan(1);
+    expect(message).not.toContain("Could not look up");
+    expect(commands(t.calls)).not.toContain("containers delete");
+    // The bucket is only deleted, never emptied.
+    expect(t.requests.some((r) => r.url.includes("/objects"))).toBe(false);
+  });
+
+  it("keeps a sandbox Worker and a bucket that existed before a failed deploy", async () => {
+    const t = setup(
+      {
+        ...deployed(sandboxWorkerBindings),
+        deploy: () => ({ code: 1, stdout: CONTAINER_STEP_UNAUTHORIZED }),
+      },
+      fakeUi(),
+      { bucket: true, containersStatus: 200 },
+    );
+    const error = await sandboxEnable(
+      { artifactDir, yes: true, allowUnsigned: false },
+      t.ctx,
+    ).catch((e: Error) => e);
+    const message = String(error);
+    expect(message).toContain("Cloudflare refused access to Containers");
+    expect(message).toContain(
+      'The Worker "appflare-sandbox" existed before this run and was kept. wrangler had already uploaded 0.1.0 to it, so it may now run that version',
+    );
+    expect(message).toContain(
+      "The R2 bucket appflare-builds existed before this run, so it was kept.",
+    );
+    expect(commands(t.calls)).not.toContain("delete --name");
+    expect(commands(t.calls)).not.toContain("r2 bucket");
+    expect(commands(t.calls)).not.toContain("containers delete");
+  });
+
+  it("keeps a bucket it could not account for before the deploy", async () => {
+    const t = setup(
+      {
+        deploy: () => ({
+          code: 1,
+          stdout: "Uploaded appflare-sandbox (1.00 sec)\n",
+          stderr: "✘ [ERROR] boom",
+        }),
+      },
+      fakeUi(),
+      { bucket: false, containersStatus: 200, bucketLookupFails: true },
+    );
+    const error = await sandboxEnable(
+      { artifactDir, yes: true, allowUnsigned: false },
+      t.ctx,
+    ).catch((e: Error) => e);
+    expect(String(error)).toContain(
+      "Could not tell whether the R2 bucket appflare-builds existed before this run, so it was kept",
+    );
+    expect(commands(t.calls)).not.toContain("r2 bucket");
+  });
+
+  it("deletes no Worker when the failed deploy never uploaded one", async () => {
+    const t = setup({ deploy: () => ({ code: 1, stderr: "✘ [ERROR] boom before the upload" }) });
     await expect(
       sandboxEnable({ artifactDir, yes: true, allowUnsigned: false }, t.ctx),
-    ).rejects.toThrow("`wrangler deploy` failed (exit code 1); see its output above.");
+    ).rejects.toThrow("`wrangler deploy` failed (exit code 1)");
+    expect(commands(t.calls)).not.toContain("delete --name");
+    expect(commands(t.calls)).not.toContain("containers delete");
+  });
+
+  it("says so when the uploaded Worker is already gone at rollback", async () => {
+    const t = setup({
+      deploy: () => ({
+        code: 1,
+        stdout: "Uploaded appflare-sandbox (1.00 sec)\n",
+        stderr: "✘ [ERROR] boom",
+      }),
+      delete: () => NOT_FOUND,
+    });
+    const error = await sandboxEnable(
+      { artifactDir, yes: true, allowUnsigned: false },
+      t.ctx,
+    ).catch((e: Error) => e);
+    expect(String(error)).toContain(
+      'The Worker "appflare-sandbox" was already gone; nothing to remove.',
+    );
+    expect(String(error)).not.toContain("FAILED to remove the Worker");
+  });
+
+  it("with a login, stops before deploying when Cloudflare refuses Containers", async () => {
+    const t = setup({}, fakeUi(), { bucket: false, containersStatus: 403 });
+    const error = await sandboxEnable(
+      { artifactDir, yes: true, allowUnsigned: false },
+      t.ctx,
+    ).catch((e: Error) => e);
+    expect(String(error)).toContain("Sandbox builds need Workers Paid");
+    expect(String(error)).toContain("Nothing was uploaded.");
+    expect(commands(t.calls)).not.toContain("deploy --config");
+  });
+
+  it("with an API token, stops before deploying when the token cannot use Containers", async () => {
+    const t = setup({ auth: () => API_TOKEN }, fakeUi(), { bucket: false, containersStatus: 401 });
+    const error = await sandboxEnable(
+      { artifactDir, yes: true, allowUnsigned: false },
+      t.ctx,
+    ).catch((e: Error) => e);
+    const message = String(error);
+    expect(message).toContain("two possible causes");
+    expect(message).toContain("Account > Containers > Edit");
+    expect(message).toContain("Nothing was uploaded.");
+    expect(message).not.toContain(TOKEN);
+    expect(commands(t.calls)).toEqual(["whoami --json", "auth token"]);
+    expect(t.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
+      "GET https://api.cloudflare.com/client/v4/accounts/acc-1/containers/applications?name=appflare-sandbox-standard-1",
+    ]);
+    expect(t.requests[0]?.auth).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("with an API token that can use Containers, deploys", async () => {
+    const t = setup({ auth: () => API_TOKEN });
+    await sandboxEnable({ artifactDir, yes: true, allowUnsigned: false }, t.ctx);
+    expect(t.ui.lines).toContain("  The credential can use Containers.");
+    expect(commands(t.calls)).toContain("deploy --config");
   });
 });
 
@@ -302,6 +531,16 @@ describe("sandbox disable", () => {
       "GET https://api.cloudflare.com/client/v4/accounts/acc-1/containers/applications?name=appflare-sandbox-standard-2",
     ]);
     expect(t.requests.every((r) => r.auth === `Bearer ${TOKEN}`)).toBe(true);
+  });
+
+  it("does not claim to delete a Worker that was already gone", async () => {
+    const t = setup({ ...deployed(sandboxWorkerBindings), delete: () => NOT_FOUND });
+    await sandboxDisable({ yes: true, purge: false, iUnderstandDataLoss: false }, t.ctx);
+    const summary = t.ui.results.join("\n");
+    expect(summary).toContain(
+      'The Worker "appflare-sandbox" was already gone; nothing to delete there.',
+    );
+    expect(summary).not.toContain('Deleted the Worker "appflare-sandbox".');
   });
 
   it("refuses a Worker by that name that is not a sandbox Worker", async () => {
@@ -390,5 +629,26 @@ describe("explainSandboxDeployFailure", () => {
       ),
     ).toMatch(/^R2 is not enabled/);
     expect(explainSandboxDeployFailure("Authentication error [code: 10000]")).toBeNull();
+  });
+
+  it("names both causes of a refused container step for an API token, and the plan for a login", () => {
+    const forToken = explainSandboxDeployFailure(CONTAINER_STEP_UNAUTHORIZED, { apiToken: true });
+    expect(forToken).toContain("two possible causes");
+    expect(forToken).toContain("https://dash.cloudflare.com/?to=/:account/workers/plans");
+    expect(forToken).toContain("Account > Containers > Edit");
+    const forLogin = explainSandboxDeployFailure(CONTAINER_STEP_UNAUTHORIZED, { apiToken: false });
+    expect(forLogin).toContain("Sandbox builds need Workers Paid");
+    expect(forLogin).not.toContain("CLOUDFLARE_API_TOKEN");
+    expect(
+      explainSandboxDeployFailure(
+        "╭ Deploy a container application deploy changes to your application\n✘ [ERROR] Forbidden",
+      ),
+    ).toContain("Cloudflare refused access to Containers");
+    // "Unauthorized" outside the container step is someone else's failure.
+    expect(explainSandboxDeployFailure("✘ [ERROR] Unauthorized")).toBeNull();
+    expect(isContainerAccessFailure(CONTAINER_STEP_UNAUTHORIZED)).toBe(true);
+    expect(isContainerAccessFailure("Uploaded appflare-sandbox\n✘ [ERROR] something else")).toBe(
+      false,
+    );
   });
 });

@@ -26,7 +26,11 @@ built this way.
 - **R2** enabled on the account. The sandbox Worker keeps build outputs and logs in an R2
   bucket. If you have never used R2, open **R2** in the Cloudflare dashboard once to
   enable it.
-- Node.js 22 and a wrangler login, as for [installing Appflare](/start/install/).
+- Node.js 22 and a Cloudflare credential for wrangler, as for
+  [installing Appflare](/start/install/): either a login from `npx wrangler login`, which
+  includes Containers, or an API token in `CLOUDFLARE_API_TOKEN` that has the
+  **Containers** permission (Account > Containers > Edit) in addition to Workers Scripts
+  and Workers R2 Storage. `sandbox enable` and `sandbox disable` both need it.
 
 ## Enable it
 
@@ -58,7 +62,19 @@ specific release. `--yes` never asks anything; with several accounts, set
 `CLOUDFLARE_ACCOUNT_ID`.
 
 If the account is on the free plan, the command stops with **Sandbox builds need
-Workers Paid** and deploys nothing that runs.
+Workers Paid** and deploys nothing that runs. When Cloudflare only answers
+"Unauthorized" for Containers, the command says **Cloudflare refused access to
+Containers**: with a login that means the account is not on Workers Paid; with an API
+token it can also mean the token lacks the Containers permission, and the message says
+how to check both. The command checks access to Containers before it uploads anything
+and stops there when it is refused.
+
+A failed `sandbox enable` rolls back what it uploaded. It deletes the `appflare-sandbox`
+Worker when the run uploaded it and there was none before, with any container
+applications it got, and deletes the `appflare-builds` bucket when the run created it and
+it is empty. A sandbox Worker that was already there is kept; if the new version was
+uploaded before the failure, it may now run that version, so run `sandbox enable` again
+once the cause is fixed. The error lists what was removed.
 
 ## Connect the manager
 

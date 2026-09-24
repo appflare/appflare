@@ -169,9 +169,18 @@ Cloudflare Containers in your account. It comes from the signed release
 temporary directory. It creates the Worker (no public URL), two container
 applications running `docker.io/mendylanda/appflare-sandbox:<version>`, and the R2 bucket
 `appflare-builds`. On a free account it stops with "Sandbox builds need Workers
-Paid". Each build runs a `standard-1` container; a 10-minute build costs about
-US$0.012 beyond the usage Workers Paid includes. The manager's support for
-installing sandbox tier apps through it comes in a following Appflare release.
+Paid". `sandbox enable` needs an account on Workers Paid; both `sandbox enable` and
+`sandbox disable` need either a login from `npx wrangler login` or an API token in
+`CLOUDFLARE_API_TOKEN` that includes the Containers permission (Account > Containers >
+Edit) in addition to Workers Scripts and Workers R2 Storage. `sandbox enable` checks
+access to Containers before uploading anything. When Cloudflare refuses Containers, the
+error names the possible causes (the plan, and for an API token its permission) and how
+to check each. A failed `sandbox enable` rolls back what it uploaded: the Worker when
+the run created it, and the bucket when the run created it and it is empty. Each build
+runs a `standard-1` container; a 10-minute build costs about US$0.012 beyond the usage
+Workers Paid includes. After enabling it, open the manager's **Settings > Sandbox
+builds** and choose **Connect sandbox builds**; sandbox tier and self-deploying apps
+then install through it.
 
 `sandbox disable --yes` deletes the Worker and its container applications and keeps
 the bucket; `--purge` also empties and deletes the bucket after you type the

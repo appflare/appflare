@@ -130,26 +130,94 @@ export function hasSandboxBindings(bindings: VersionBinding[]): boolean {
   );
 }
 
+const PLANS_URL = "https://dash.cloudflare.com/?to=/:account/workers/plans";
+
+/** What the credential wrangler deploys with is, for wording an access failure. */
+export interface DeployCredential {
+  /** An API token from the environment (`CLOUDFLARE_API_TOKEN`), rather than a `wrangler login`. */
+  apiToken: boolean;
+}
+
+/**
+ * Why Cloudflare refused Containers, for both an access failure at wrangler's
+ * container application step and a refused pre-deploy check. With an API
+ * token either cause fits, so both are named with how to check each; a
+ * `wrangler login` already carries the Containers scope, which leaves the plan.
+ */
+export function explainContainersAccess(credential: DeployCredential): string {
+  const again = "then run `npx @appflare/cli sandbox enable` again.";
+  if (!credential.apiToken) {
+    return (
+      "Cloudflare refused access to Containers, which the sandbox Worker runs builds in. " +
+      "Sandbox builds need Workers Paid (US$5 a month): the free plan does not include " +
+      `Containers. Check the account's plan at ${PLANS_URL} and upgrade it there, ${again} ` +
+      "If the account is already on Workers Paid, log in again with `npx wrangler login` so " +
+      "the login includes Containers."
+    );
+  }
+  return [
+    "Cloudflare refused access to Containers, which the sandbox Worker runs builds in. " +
+      "With an API token there are two possible causes; check both:",
+    `1. The account is not on Workers Paid (US$5 a month); the free plan does not include Containers. Check the plan at ${PLANS_URL}.`,
+    "2. The API token in CLOUDFLARE_API_TOKEN lacks the Containers permission. Open the token " +
+      "(My Profile > API Tokens at https://dash.cloudflare.com/profile/api-tokens, or Manage " +
+      "Account > Account API Tokens for an account token) and make sure it has Account > " +
+      "Containers > Edit next to Workers Scripts > Edit and Workers R2 Storage > Edit. Or unset " +
+      "CLOUDFLARE_API_TOKEN and use `npx wrangler login`, which includes Containers.",
+    `Fix the cause, ${again}`,
+  ].join("\n");
+}
+
+/** Cloudflare's plan answers for Containers, in whatever step they come. */
+const PAID_PATTERNS = [
+  /Container image preparation is not enabled/i,
+  /Workers Paid/i,
+  /containers?\b[^\n]{0,120}\b(not enabled|not available|not entitled|paid plan|subscription|upgrade)/i,
+  /\b(not entitled|entitlement)\b[^\n]{0,120}\bcontainers?\b/i,
+];
+
+/** wrangler's heading for the step that creates or updates the container applications. */
+const CONTAINER_STEP = "Deploy a container application";
+
+/**
+ * Whether wrangler's deploy failed at its container application step with an
+ * access or plan error. wrangler words a 401 from the Containers API as a
+ * bare "Unauthorized" and a 403 as "Forbidden", with nothing that says which
+ * cause it is.
+ */
+export function isContainerAccessFailure(output: string): boolean {
+  const at = output.indexOf(CONTAINER_STEP);
+  if (at === -1) {
+    return false;
+  }
+  const after = output.slice(at + CONTAINER_STEP.length);
+  return (
+    /\b(Unauthorized|Forbidden)\b|\b(401|403)\b/.test(after) ||
+    PAID_PATTERNS.some((pattern) => pattern.test(after))
+  );
+}
+
 /**
  * Cloudflare's answer when the account cannot run the sandbox Worker, reworded:
- * Containers need Workers Paid, and R2 must be enabled once in the
- * dashboard. Null when the output says neither.
+ * Containers need Workers Paid (and, for an API token, the Containers
+ * permission), and R2 must be enabled once in the dashboard. Null when the
+ * output says none of these.
  */
-export function explainSandboxDeployFailure(output: string): string | null {
-  const paid = [
-    /Container image preparation is not enabled/i,
-    /Workers Paid/i,
-    /containers?\b[^\n]{0,120}\b(not enabled|not available|not entitled|paid plan|subscription|upgrade)/i,
-    /\b(not entitled|entitlement)\b[^\n]{0,120}\bcontainers?\b/i,
-  ];
-  if (paid.some((pattern) => pattern.test(output))) {
+export function explainSandboxDeployFailure(
+  output: string,
+  credential: DeployCredential = { apiToken: false },
+): string | null {
+  // A message that names the plan is unambiguous; a bare refusal at the
+  // container step could be the plan or the token.
+  if (PAID_PATTERNS.some((pattern) => pattern.test(output))) {
     return (
       "Sandbox builds need Workers Paid. The sandbox Worker runs builds in Cloudflare Containers, " +
       "which are only available on the Workers Paid plan (US$5 a month). Upgrade the account " +
-      "at https://dash.cloudflare.com/?to=/:account/workers/plans, then run " +
-      "`npx @appflare/cli sandbox enable` again. If wrangler created the sandbox Worker " +
-      "before it stopped, `npx @appflare/cli sandbox disable --yes` removes it."
+      `at ${PLANS_URL}, then run \`npx @appflare/cli sandbox enable\` again.`
     );
+  }
+  if (isContainerAccessFailure(output)) {
+    return explainContainersAccess(credential);
   }
   if (/\bcode: 10042\b|enable R2/i.test(output)) {
     return (

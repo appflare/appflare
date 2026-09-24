@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CLOUDFLARE_API, wranglerApiToken } from "./api-token.ts";
+import { type ApiAccess, CLOUDFLARE_API, wranglerApiToken } from "./api-token.ts";
 import type { FetchLike } from "./release.ts";
 import type { Wrangler } from "./wrangler.ts";
 
@@ -111,5 +111,36 @@ export async function emptyBucket(
       kind: "failed",
       reason: `the Cloudflare API call failed: ${error instanceof Error ? error.message : String(error)}`,
     };
+  }
+}
+
+export type BucketState = "present" | "missing" | "unknown";
+
+/**
+ * Whether an R2 bucket exists (`GET /accounts/{account}/r2/buckets/{bucket}`).
+ * `unknown` when the answer is anything but the bucket or Cloudflare's "no
+ * such bucket", so a caller never deletes a bucket it could not account for.
+ */
+export async function bucketState(
+  fetchFn: FetchLike,
+  access: ApiAccess,
+  bucket: string,
+): Promise<BucketState> {
+  const url = `${CLOUDFLARE_API}/accounts/${encodeURIComponent(access.accountId)}/r2/buckets/${encodeURIComponent(bucket)}`;
+  try {
+    const response = await fetchFn(url, {
+      headers: { authorization: `Bearer ${access.token}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = envelopeSchema.safeParse(await response.json().catch(() => null));
+    if (!body.success) {
+      return "unknown";
+    }
+    if (body.data.errors.some((e) => e.code === NO_SUCH_BUCKET)) {
+      return "missing";
+    }
+    return response.ok && body.data.success ? "present" : "unknown";
+  } catch {
+    return "unknown";
   }
 }
