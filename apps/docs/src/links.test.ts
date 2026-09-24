@@ -1,6 +1,11 @@
 import type { FileObject } from "next-validate-link";
-import { describe, expect, it } from "vitest";
-import { findBrokenLinks, findBrokenSiteUrls, type LinkTarget } from "./lib/links.ts";
+import { beforeAll, describe, expect, it } from "vitest";
+import {
+  type BrokenLink,
+  findBrokenLinks,
+  findBrokenSiteUrls,
+  type LinkTarget,
+} from "./lib/links.ts";
 import { pageUrl, siteUrl } from "./lib/shared.ts";
 import { source } from "./lib/source.ts";
 
@@ -23,17 +28,33 @@ async function contentFiles(): Promise<FileObject[]> {
   );
 }
 
+/**
+ * Loading the pages compiles every MDX file on first import, and the scan
+ * parses each one again: several seconds on a shared CI runner, past the
+ * default per-test timeout. Both run once, before the checks that read them,
+ * with a timeout well past what they need.
+ */
+const scanTimeout = 120_000;
+
 describe("internal links", () => {
-  it("point at pages and headings that exist", async () => {
-    const broken = await findBrokenLinks(await contentFiles(), await contentTargets());
-    const report = broken.map(
+  let files: FileObject[];
+  let targets: LinkTarget[];
+  let brokenLinks: BrokenLink[];
+
+  beforeAll(async () => {
+    [files, targets] = await Promise.all([contentFiles(), contentTargets()]);
+    brokenLinks = await findBrokenLinks(files, targets);
+  }, scanTimeout);
+
+  it("point at pages and headings that exist", () => {
+    const report = brokenLinks.map(
       ({ file, line, url, reason }) => `${file}:${line} ${url} (${reason})`,
     );
     expect(report).toEqual([]);
   });
 
-  it("written as absolute URLs of this site, as in the agent prompts, exist", async () => {
-    const broken = findBrokenSiteUrls(await contentFiles(), await contentTargets(), siteUrl);
+  it("written as absolute URLs of this site, as in the agent prompts, exist", () => {
+    const broken = findBrokenSiteUrls(files, targets, siteUrl);
     expect(broken.map(({ file, line, url }) => `${file}:${line} ${url}`)).toEqual([]);
   });
 
