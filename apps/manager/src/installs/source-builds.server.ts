@@ -36,6 +36,16 @@ import { NO_ACTIVE_SELF_UPDATE_SQL, refuseDuringSelfUpdate } from "../jobs/self-
 import { type SourceBuildJobParams, sourceBuildRunId } from "../jobs/source-build";
 import type { UpdateJobParams } from "../jobs/update";
 import { lastDurableObjectTagOf, missingSecrets, updatePath } from "../jobs/update/plan";
+import {
+  afterRefusedClaim,
+  launchSandboxEnable,
+  planSandboxFirst,
+  type SandboxAutoEnableDeps,
+  SandboxAutoEnableError,
+  type SandboxFirst,
+  sandboxEnableClaim,
+  sandboxFirstGuardSql,
+} from "../sandbox/auto-enable.server";
 import { buildsFromRepository } from "../sandbox/binding";
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { GitRefError, type RemoteRefs, resolveRef } from "./git-refs";
@@ -118,6 +128,11 @@ export interface SourceBuildDeps {
   createJob(id: string, params: SourceBuildJobParams): Promise<{ id: string }>;
   /** Whether the manager has its `SANDBOX` binding, and the sandbox Worker's `info()`. */
   sandbox(): Promise<{ connected: boolean; info: SandboxInfo | null }>;
+  /**
+   * Turning sandbox builds on first when they are off. Without it a build is
+   * refused until they are enabled in Settings.
+   */
+  autoEnable?: SandboxAutoEnableDeps;
   /** The branches and tags of a repository (`git ls-remote`); throws `GitRefError`. */
   listRefs(repo: string): Promise<RemoteRefs>;
   /** A catalog app and its verified catalog manifest; throws `SourceBuildError` when unavailable. */
@@ -128,9 +143,10 @@ export interface SourceBuildDeps {
 
 /**
  * SQL condition: no job enables, updates or disables the sandbox Worker now
- * (each replaces it, and with it every container a build would run in).
+ * (each replaces it, and with it every container a build would run in),
+ * other than the enable job bound to ?11, which the build waits for.
  */
-const SANDBOX_WORKER_JOBS_SQL = `NOT EXISTS (SELECT 1 FROM jobs WHERE kind IN ('sandbox_enable', 'sandbox_update', 'sandbox_disable') AND status IN ('queued', 'running'))`;
+const SANDBOX_WORKER_JOBS_SQL = `NOT EXISTS (SELECT 1 FROM jobs WHERE kind IN ('sandbox_enable', 'sandbox_update', 'sandbox_disable') AND status IN ('queued', 'running') AND id IS NOT ?11)`;
 
 /** `owner/repo` of a recorded `https://github.com/owner/repo`, or null. */
 export function repoOfUrl(url: string | null): string | null {
@@ -295,7 +311,11 @@ export async function startSourceBuildCore(
   await refuseDuringSelfUpdate(deps.db, deps.workflows, fail);
   const orm = createDb(deps.db);
   const sandbox = await deps.sandbox();
-  const refusal = sourceBuildRefusal({ ...sandbox, plan: await readAccountPlan(orm) });
+  const accountPlan = await readAccountPlan(orm);
+  // Off: turned on first by a job of its own when the account allows it
+  // (live checks below, once the request itself is known to be buildable).
+  const turnOnFirst = !sandbox.connected && deps.autoEnable !== undefined;
+  const refusal = turnOnFirst ? null : sourceBuildRefusal({ ...sandbox, plan: accountPlan });
   if (refusal !== null) throw fail(refusal);
   if (!request.costConfirmed) {
     throw fail("The build runs in your sandbox Worker on Workers Paid. Confirm its cost.");
@@ -313,6 +333,94 @@ export async function startSourceBuildCore(
 
   const now = (deps.now ?? (() => new Date()))();
   const jobId = newId();
+  let first: SandboxFirst | null = null;
+  if (turnOnFirst && deps.autoEnable !== undefined) {
+    try {
+      first = await planSandboxFirst(deps.db, deps.autoEnable, {
+        plan: accountPlan,
+        neededBy: { jobId, kind: "source_build" },
+        newId,
+        ...(deps.workflows === undefined ? {} : { workflows: deps.workflows }),
+      });
+    } catch (error) {
+      if (error instanceof SandboxAutoEnableError) throw fail(error.message);
+      throw error;
+    }
+  }
+  const forUpdate = plan.purpose === "update" ? 1 : 0;
+  // With sandbox builds off, the build row also requires the enable job it
+  // waits for (or, for a new one, that no job runs), and a new enable job is
+  // inserted last, only if the build's job row was.
+  const claim = async (sandbox: SandboxFirst | null): Promise<boolean> => {
+    const enableJobId = sandbox?.enableJobId ?? null;
+    // Names only: what the job list, the live progress and usage data read.
+    const inputJson = JSON.stringify({
+      purpose: plan.purpose,
+      origin: plan.origin,
+      sandboxRun: sourceBuildRunId(jobId),
+      runKind: "build",
+      buildInstallId: plan.installId,
+      buildConfirmed: true,
+      ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
+    });
+    const results = await deps.db.batch([
+      deps.db
+        .prepare(
+          `INSERT INTO source_builds (id, install_id, purpose, origin, app_slug, repo, requested_ref,
+             build_command_json, status, created_at, updated_at)
+           SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'building', ?9, ?9
+           WHERE (?10 = 0 OR (
+               EXISTS (SELECT 1 FROM installs WHERE id = ?2 AND status = 'installed')
+               AND NOT EXISTS (
+                 SELECT 1 FROM jobs WHERE install_id = ?2 AND status IN ('queued', 'running')
+               )
+             ))
+             AND ${SANDBOX_WORKER_JOBS_SQL}
+             AND ${sandboxFirstGuardSql(sandbox, "?11")}
+             AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
+        )
+        .bind(
+          jobId,
+          plan.installId,
+          plan.purpose,
+          plan.origin,
+          plan.appSlug,
+          plan.repo,
+          plan.ref,
+          JSON.stringify(plan.buildCommand),
+          now.getTime(),
+          forUpdate,
+          enableJobId,
+        ),
+      deps.db
+        .prepare(
+          `INSERT INTO jobs (id, install_id, kind, status, input_json, started_by)
+           SELECT ?1, ?2, 'source_build', 'queued', ?3, 'admin'
+           WHERE EXISTS (SELECT 1 FROM source_builds WHERE id = ?1)`,
+        )
+        .bind(jobId, forUpdate === 1 ? plan.installId : null, inputJson),
+      ...(sandbox?.kind === "enable" ? [sandboxEnableClaim(deps.db, sandbox, jobId)] : []),
+    ]);
+    return results[0]?.meta.changes === 1;
+  };
+  let claimed = await claim(first);
+  if (!claimed) {
+    const next = await afterRefusedClaim(deps.db, first);
+    if (next !== null && "refused" in next) throw fail(next.refused);
+    if (next !== null) {
+      // Another start is turning sandbox builds on: wait for its job.
+      first = next;
+      claimed = await claim(first);
+    }
+  }
+  if (!claimed) {
+    throw fail(
+      plan.purpose === "update"
+        ? "Another job of this install is queued or running, sandbox builds are being changed, or Appflare is updating itself. Wait for it to finish, then try again."
+        : "Sandbox builds are being changed, or Appflare is updating itself. Wait for it to finish, then try again.",
+    );
+  }
+  const enableJobId = first?.enableJobId ?? null;
   const params: SourceBuildJobParams = {
     kind: "source_build",
     jobId,
@@ -330,64 +438,20 @@ export async function startSourceBuildCore(
       ? {}
       : { instanceType: plan.baseline.install.sandbox.instanceType }),
     costConfirmed: true,
+    ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
   };
-  // Names only: what the job list, the live progress and usage data read.
-  const inputJson = JSON.stringify({
-    purpose: plan.purpose,
-    origin: plan.origin,
-    sandboxRun: sourceBuildRunId(jobId),
-    runKind: "build",
-    buildInstallId: plan.installId,
-    buildConfirmed: true,
-  });
-  const forUpdate = plan.purpose === "update" ? 1 : 0;
-  const [claimed] = await deps.db.batch([
-    deps.db
-      .prepare(
-        `INSERT INTO source_builds (id, install_id, purpose, origin, app_slug, repo, requested_ref,
-           build_command_json, status, created_at, updated_at)
-         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'building', ?9, ?9
-         WHERE (?10 = 0 OR (
-             EXISTS (SELECT 1 FROM installs WHERE id = ?2 AND status = 'installed')
-             AND NOT EXISTS (
-               SELECT 1 FROM jobs WHERE install_id = ?2 AND status IN ('queued', 'running')
-             )
-           ))
-           AND ${SANDBOX_WORKER_JOBS_SQL}
-           AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
-      )
-      .bind(
-        jobId,
-        plan.installId,
-        plan.purpose,
-        plan.origin,
-        plan.appSlug,
-        plan.repo,
-        plan.ref,
-        JSON.stringify(plan.buildCommand),
-        now.getTime(),
-        forUpdate,
-      ),
-    deps.db
-      .prepare(
-        `INSERT INTO jobs (id, install_id, kind, status, input_json, started_by)
-         SELECT ?1, ?2, 'source_build', 'queued', ?3, 'admin'
-         WHERE EXISTS (SELECT 1 FROM source_builds WHERE id = ?1)`,
-      )
-      .bind(jobId, forUpdate === 1 ? plan.installId : null, inputJson),
-  ]);
-  if (claimed?.meta.changes !== 1) {
-    throw fail(
-      plan.purpose === "update"
-        ? "Another job of this install is queued or running, sandbox builds are being changed, or Appflare is updating itself. Wait for it to finish, then try again."
-        : "Sandbox builds are being changed, or Appflare is updating itself. Wait for it to finish, then try again.",
-    );
-  }
   try {
+    // The enable job first: the build waits for it.
+    if (deps.autoEnable !== undefined) {
+      await launchSandboxEnable(deps.db, deps.autoEnable, first, now);
+    }
     const instance = await deps.createJob(jobId, params);
     await orm.update(jobs).set({ workflow_instance_id: instance.id }).where(eq(jobs.id, jobId));
   } catch (error) {
-    const reason = `start: could not create the job: ${error instanceof Error ? error.message : String(error)}`;
+    const reason =
+      error instanceof SandboxAutoEnableError
+        ? `start: ${error.message}`
+        : `start: could not create the job: ${error instanceof Error ? error.message : String(error)}`;
     await orm.batch([
       orm
         .update(jobs)

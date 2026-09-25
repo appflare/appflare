@@ -1,4 +1,5 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { decodeTime } from "ulidx";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs } from "../db/schema";
 import { appendSelfUpdateHistory } from "./self-update/record";
@@ -20,6 +21,13 @@ import { StepLog } from "./step-log";
  * function, not a Workflow; their job rows have no instance. One still
  * `running` after {@link RESTORE_STALE_MS} lost its request midway and is
  * failed.
+ *
+ * An install or build that turns sandbox builds on first claims a
+ * `sandbox_enable` job in its own batch, then creates its Workflow instance.
+ * A request that died in between leaves a queued enable job with no
+ * instance, which would keep every later job from starting; one older than
+ * {@link STRANDED_ENABLE_MS} whose instance the engine does not know is
+ * removed (it never ran, so nothing of it exists in the account).
  */
 
 /** The part of a Workflow binding this reads (`env.JOBS`). */
@@ -38,6 +46,23 @@ export interface ActiveJobRow {
 }
 
 const DEAD = new Set(["errored", "terminated", "unknown"]);
+
+/** A queued enable job without a Workflow instance after this long never gets one. */
+export const STRANDED_ENABLE_MS = 5 * 60 * 1000;
+
+/** Whether `row` is an enable job whose start died before creating its instance. */
+function isStrandedEnable(row: ActiveJobRow, at: Date): boolean {
+  if (row.kind !== "sandbox_enable" || row.status !== "queued") return false;
+  if (row.workflow_instance_id !== null) return false;
+  let created: number;
+  try {
+    // Job ids are ULIDs: their first part is the time the start claimed them.
+    created = decodeTime(row.id);
+  } catch {
+    return false;
+  }
+  return at.getTime() - created >= STRANDED_ENABLE_MS;
+}
 
 /** A restore request that has not recorded its end after this long never will. */
 export const RESTORE_STALE_MS = 5 * 60 * 1000;
@@ -128,6 +153,19 @@ export async function reconcileJobs(
       // recorded instance id it may still be being created; any other error
       // (a transient binding failure) says nothing, so the job is left as is.
       const reason = error instanceof Error ? error.message : String(error);
+      if (/not[_ ]found/i.test(reason) && isStrandedEnable(row, now())) {
+        const removed = await createDb(db)
+          .delete(jobs)
+          .where(
+            and(eq(jobs.id, row.id), eq(jobs.status, "queued"), isNull(jobs.workflow_instance_id)),
+          )
+          .returning({ id: jobs.id });
+        if (removed.length > 0) {
+          console.warn("removed an enable job whose start never created it", { jobId: row.id });
+          changed = true;
+        }
+        continue;
+      }
       if (row.workflow_instance_id === null || !/not[_ ]found/i.test(reason)) {
         console.debug("job reconciliation skipped", { jobId: row.id, reason });
         continue;

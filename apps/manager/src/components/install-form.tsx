@@ -11,6 +11,7 @@ import {
   InputArea,
   InputGroup,
   LayerCard,
+  Link,
   Radio,
   Select,
   Text,
@@ -39,6 +40,7 @@ import { EmailRoutingFields } from "./email-routing-fields";
 import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
+import { SANDBOX_CHECKLIST_LINK_LABEL } from "./sandbox-first";
 import {
   initialSecretValues,
   SecretFields,
@@ -87,8 +89,10 @@ export function InstallForm({
   defaultWorkerName,
   fixedWorkerName,
   blockedReason,
+  blockedLink = null,
   requirementsConfirmed,
   sandboxBuild = null,
+  sandboxFirst = false,
   installer = null,
   cronTriggers = 0,
   accountPlan = "free",
@@ -107,6 +111,10 @@ export function InstallForm({
   fixedWorkerName: boolean;
   /** Why the install is not possible right now (for example, already installed). */
   blockedReason: string | null;
+  /** Where to fix what blocks the install, shown under the reason (the checklist row). */
+  blockedLink?: string | null;
+  /** Sandbox builds are off and the install turns them on first; its confirmation says so. */
+  sandboxFirst?: boolean;
   /** The admin ticked "This account meets these requirements" (only asked when `requires` is not empty). */
   requirementsConfirmed: boolean;
   /** A sandbox tier app's build, whose cost the admin confirms; null for a prebuilt app. */
@@ -251,7 +259,16 @@ export function InstallForm({
             />
           )}
           {blockedReason !== null && (
-            <Banner variant="secondary" icon={<InfoIcon weight="fill" />} title={blockedReason} />
+            <Banner
+              variant="secondary"
+              icon={<InfoIcon weight="fill" />}
+              title={blockedReason}
+              description={
+                blockedLink === null ? undefined : (
+                  <Link href={blockedLink}>{SANDBOX_CHECKLIST_LINK_LABEL}</Link>
+                )
+              }
+            />
           )}
           <fieldset disabled={disabled} className="grid gap-6">
             {installer !== null ? (
@@ -389,6 +406,7 @@ export function InstallForm({
                 onChange={setBuildConfirmed}
                 action="install"
                 kind={installer !== null ? "installer" : "build"}
+                sandboxFirst={sandboxFirst}
               />
             )}
 

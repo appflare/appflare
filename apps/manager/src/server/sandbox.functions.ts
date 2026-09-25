@@ -21,6 +21,8 @@ import {
   type SandboxJobFailure,
   startSandboxJobCore,
 } from "../sandbox/jobs.server";
+import type { SandboxReadiness } from "../sandbox/readiness";
+import { readSandboxReadiness } from "../sandbox/readiness.server";
 import { PINNED_SANDBOX_VERSION, sandboxUpdateAvailable } from "../sandbox/release";
 import { requireRole, requireSession } from "./auth.server";
 
@@ -43,6 +45,8 @@ export interface SandboxCardState extends SandboxStatus {
   lastFailure: SandboxJobFailure | null;
   /** Apps that need the sandbox Worker, which keep it from being disabled. */
   inUseBy: string[];
+  /** On, ready to turn on at first need, or what is missing. */
+  readiness: SandboxReadiness;
 }
 
 export const getSandboxStatus = createServerFn({ method: "GET" }).handler(
@@ -58,10 +62,11 @@ export const getSandboxStatus = createServerFn({ method: "GET" }).handler(
           }
         : {}),
     });
-    const [activeJob, lastFailure, inUse] = await Promise.all([
+    const [activeJob, lastFailure, inUse, readiness] = await Promise.all([
       activeSandboxWorkerJob(env.DB),
       lastSandboxJobFailure(env.DB),
       installsNeedingSandbox(createDb(env.DB)),
+      readSandboxReadiness(env, createDb(env.DB)),
     ]);
     return {
       ...status,
@@ -70,7 +75,22 @@ export const getSandboxStatus = createServerFn({ method: "GET" }).handler(
       activeJob,
       lastFailure,
       inUseBy: inUse.map((i) => i.label),
+      readiness,
     };
+  },
+);
+
+/**
+ * The account checklist's sandbox builds row: `on`, `ready-auto` (turned on
+ * by the first install or build that needs it), or what is missing
+ * (`needs-plan`, `needs-permission`, `needs-r2`). Any signed-in user; no
+ * Cloudflare API call. "Enable now" is {@link startSandboxJob} with
+ * `action: "enable"`.
+ */
+export const getSandboxReadiness = createServerFn({ method: "GET" }).handler(
+  async (): Promise<SandboxReadiness> => {
+    await requireSession();
+    return readSandboxReadiness(env, createDb(env.DB));
   },
 );
 

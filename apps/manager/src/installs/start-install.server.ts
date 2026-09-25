@@ -28,6 +28,16 @@ import {
   refuseDuringSelfUpdate,
   selfUpdateBusyMessage,
 } from "../jobs/self-update/guard";
+import {
+  afterRefusedClaim,
+  launchSandboxEnable,
+  planSandboxFirst,
+  type SandboxAutoEnableDeps,
+  SandboxAutoEnableError,
+  type SandboxFirst,
+  sandboxEnableClaim,
+  sandboxFirstGuardSql,
+} from "../sandbox/auto-enable.server";
 import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { installVarFields, missingRequiredVar, varValueProblem } from "./install-vars";
@@ -87,6 +97,11 @@ export interface StartInstallDeps {
   listAccountWorkers?(): Promise<string[]>;
   /** Whether this manager has its `SANDBOX` binding; sandbox tier apps need it. */
   sandboxConnected?: boolean;
+  /**
+   * Turning sandbox builds on first when an app needs them and they are off.
+   * Without it such an install is refused until they are enabled in Settings.
+   */
+  sandboxAutoEnable?: SandboxAutoEnableDeps;
   now?: () => Date;
   newId?: () => string;
 }
@@ -212,7 +227,10 @@ export async function startInstallCore(
     throw new StartInstallError(`Appflare cannot install ${app.tier} tier apps yet.`);
   }
   const inSandbox = build !== null || installer !== null;
-  if (inSandbox && deps.sandboxConnected !== true) {
+  // Off: turned on first by a job of its own, when the account allows it
+  // (checked below, once the form itself is known to be complete).
+  const sandboxFirstNeeded = inSandbox && deps.sandboxConnected !== true;
+  if (sandboxFirstNeeded && deps.sandboxAutoEnable === undefined) {
     throw new StartInstallError(
       `${manifest.catalog.name} ${installer !== null ? "is deployed by its own installer in" : "is built in"} this account's sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`,
     );
@@ -313,77 +331,114 @@ export async function startInstallCore(
   //    starts cannot both win.
   // 3. The job row is inserted only if the install row was.
   const [installId, jobId] = earlyIds ?? [newId(), newId()];
-  const inputJson = JSON.stringify({
-    slug: app.slug,
-    version: app.version,
-    workerName,
-    secrets: Object.keys(resolved.secrets),
-    vars: resolved.vars,
-    paidConfirmed,
-    requirementsConfirmed: input.requirementsConfirmed,
-    ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
-    ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
-    ...(build === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
-    // Names only: the app token lives in the Workflow params alone.
-    ...(installer === null
-      ? {}
-      : {
-          selfDeploying: true,
-          buildConfirmed: true,
-          sandboxRun: installerRunId("deploy", app.version),
-        }),
-  });
-  const [, claimed] = await deps.db.batch([
-    deps.db
-      .prepare(
-        `UPDATE installs SET status = 'uninstalled', uninstalled_at = ?3, updated_at = ?3
-         WHERE status = 'failed' AND (worker_name = ?1 OR (?4 = 1 AND app_slug = ?2))
-           AND NOT EXISTS (
-             SELECT 1 FROM resources r WHERE r.install_id = installs.id AND r.deleted_at IS NULL
-           )`,
-      )
-      .bind(workerName, app.slug, now.getTime(), fixed ? 1 : 0),
-    deps.db
-      .prepare(
-        `INSERT INTO installs (id, app_slug, worker_name, instance_name, display_name,
-           catalog_version, artifact_url, artifact_digest, pin_sha, status, config_json,
-           installed_at, updated_at, build_kind)
-         SELECT ?1, ?2, ?3, coalesce(?10, ?3), ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9, ?12
-         WHERE NOT EXISTS (
-           SELECT 1 FROM installs
-           WHERE status != 'uninstalled' AND (worker_name = ?3 OR (?11 = 1 AND app_slug = ?2))
-         )
-           AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
-      )
-      .bind(
-        installId,
-        app.slug,
-        workerName,
-        app.version,
-        // A sandbox build's artifact exists only once the job built it; until
-        // then the install points at the catalog manifest it is built from. A
-        // self-deploying app never has one: it points at its catalog manifest.
-        release?.artifacts.zip ?? build?.manifest ?? installer?.manifest ?? "",
-        release?.digest ?? installer?.manifestDigest ?? null,
-        manifest.source.sha,
-        JSON.stringify(resolved.vars),
-        now.getTime(),
-        displayName,
-        fixed ? 1 : 0,
-        // Known from the start, so an uninstall of a failed install runs the
-        // app's destroy command instead of deleting anything itself.
-        installer === null ? "artifact" : "self-deploying",
-      ),
-    deps.db
-      .prepare(
-        `INSERT INTO jobs (id, install_id, kind, status, input_json)
-         SELECT ?1, ?2, 'install', 'queued', ?3
-         WHERE EXISTS (SELECT 1 FROM installs WHERE id = ?2)
-           AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
-      )
-      .bind(jobId, installId, inputJson),
-  ]);
-  if (claimed?.meta.changes !== 1) {
+  let first: SandboxFirst | null = null;
+  if (sandboxFirstNeeded && deps.sandboxAutoEnable !== undefined) {
+    try {
+      first = await planSandboxFirst(deps.db, deps.sandboxAutoEnable, {
+        plan: accountPlan,
+        neededBy: { jobId, kind: "install" },
+        newId,
+        ...(deps.workflows === undefined ? {} : { workflows: deps.workflows }),
+      });
+    } catch (error) {
+      if (error instanceof SandboxAutoEnableError) throw new StartInstallError(error.message);
+      throw error;
+    }
+  }
+  const inputJsonFor = (enableJobId: string | null) =>
+    JSON.stringify({
+      slug: app.slug,
+      version: app.version,
+      workerName,
+      secrets: Object.keys(resolved.secrets),
+      vars: resolved.vars,
+      paidConfirmed,
+      requirementsConfirmed: input.requirementsConfirmed,
+      ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
+      ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
+      ...(build === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
+      // Names only: the app token lives in the Workflow params alone.
+      ...(installer === null
+        ? {}
+        : {
+            selfDeploying: true,
+            buildConfirmed: true,
+            sandboxRun: installerRunId("deploy", app.version),
+          }),
+      ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
+    });
+  // 4. With sandbox builds off, the install row also requires the enable job
+  //    it waits for (or, for a new one, that no job runs), and a new enable
+  //    job is inserted last, only if the install's job row was.
+  const claim = async (sandbox: SandboxFirst | null): Promise<boolean> => {
+    const enableJobId = sandbox?.enableJobId ?? null;
+    const results = await deps.db.batch([
+      deps.db
+        .prepare(
+          `UPDATE installs SET status = 'uninstalled', uninstalled_at = ?3, updated_at = ?3
+           WHERE status = 'failed' AND (worker_name = ?1 OR (?4 = 1 AND app_slug = ?2))
+             AND NOT EXISTS (
+               SELECT 1 FROM resources r WHERE r.install_id = installs.id AND r.deleted_at IS NULL
+             )`,
+        )
+        .bind(workerName, app.slug, now.getTime(), fixed ? 1 : 0),
+      deps.db
+        .prepare(
+          `INSERT INTO installs (id, app_slug, worker_name, instance_name, display_name,
+             catalog_version, artifact_url, artifact_digest, pin_sha, status, config_json,
+             installed_at, updated_at, build_kind)
+           SELECT ?1, ?2, ?3, coalesce(?10, ?3), ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9, ?12
+           WHERE NOT EXISTS (
+             SELECT 1 FROM installs
+             WHERE status != 'uninstalled' AND (worker_name = ?3 OR (?11 = 1 AND app_slug = ?2))
+           )
+             AND ${sandboxFirstGuardSql(sandbox, "?13")}
+             AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
+        )
+        .bind(
+          installId,
+          app.slug,
+          workerName,
+          app.version,
+          // A sandbox build's artifact exists only once the job built it; until
+          // then the install points at the catalog manifest it is built from. A
+          // self-deploying app never has one: it points at its catalog manifest.
+          release?.artifacts.zip ?? build?.manifest ?? installer?.manifest ?? "",
+          release?.digest ?? installer?.manifestDigest ?? null,
+          manifest.source.sha,
+          JSON.stringify(resolved.vars),
+          now.getTime(),
+          displayName,
+          fixed ? 1 : 0,
+          // Known from the start, so an uninstall of a failed install runs the
+          // app's destroy command instead of deleting anything itself.
+          installer === null ? "artifact" : "self-deploying",
+          enableJobId,
+        ),
+      deps.db
+        .prepare(
+          `INSERT INTO jobs (id, install_id, kind, status, input_json)
+           SELECT ?1, ?2, 'install', 'queued', ?3
+           WHERE EXISTS (SELECT 1 FROM installs WHERE id = ?2)
+             AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
+        )
+        .bind(jobId, installId, inputJsonFor(enableJobId)),
+      ...(sandbox?.kind === "enable" ? [sandboxEnableClaim(deps.db, sandbox, jobId)] : []),
+    ]);
+    return results[1]?.meta.changes === 1;
+  };
+  let claimed = await claim(first);
+  if (!claimed) {
+    const next = await afterRefusedClaim(deps.db, first);
+    if (next !== null && "refused" in next) throw new StartInstallError(next.refused);
+    if (next !== null) {
+      // Another start is turning sandbox builds on: wait for its job.
+      first = next;
+      claimed = await claim(first);
+    }
+  }
+  const enableJobId = first?.enableJobId ?? null;
+  if (!claimed) {
     // A self-update that started after the check above wins the claim.
     const selfUpdate = await activeSelfJob(deps.db);
     if (selfUpdate !== null) throw new StartInstallError(selfUpdateBusyMessage(selfUpdate));
@@ -442,12 +497,20 @@ export async function startInstallCore(
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
     ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
+    ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
   };
   let instanceId: string;
   try {
+    // The enable job first: the install job waits for it.
+    if (deps.sandboxAutoEnable !== undefined) {
+      await launchSandboxEnable(deps.db, deps.sandboxAutoEnable, first, now);
+    }
     instanceId = (await deps.createJob(jobId, params)).id;
   } catch (error) {
-    const reason = `start: could not create the job: ${error instanceof Error ? error.message : String(error)}`;
+    const reason =
+      error instanceof SandboxAutoEnableError
+        ? `start: ${error.message}`
+        : `start: could not create the job: ${error instanceof Error ? error.message : String(error)}`;
     await db
       .update(jobs)
       .set({ status: "failed", error: reason, finished_at: now })

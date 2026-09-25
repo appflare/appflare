@@ -21,6 +21,7 @@ import { createDb } from "../db/client";
 import { type InstallOrigin, installs, jobs, type SourceBuildStatus } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { reconcileJobs } from "../jobs/reconcile.server";
+import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
 import { sandboxBinding, sandboxInfo } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { installLabel } from "./display-name";
@@ -98,6 +99,7 @@ export const startSourceBuild = createServerFn({ method: "POST" })
           workflows: env.JOBS,
           createJob: (id, params) => env.JOBS.create({ id, params }),
           sandbox: sandboxState,
+          autoEnable: sandboxAutoEnableDeps(env),
           listRefs,
           loadCatalogApp,
         },

@@ -77,6 +77,13 @@ export const sandboxEnableJobParams = z.object({
   version: z.string().min(1),
   /** The running `APPFLARE_VERSION` when the job started. */
   managerVersion: z.string().min(1),
+  /**
+   * The install or build job that turned sandbox builds on at first need,
+   * which waits for this one; absent when an admin enabled them in Settings.
+   */
+  neededBy: z
+    .object({ jobId: z.string().min(1), kind: z.enum(["install", "source_build"]) })
+    .optional(),
 });
 export type SandboxEnableJobParams = z.infer<typeof sandboxEnableJobParams>;
 
@@ -135,6 +142,11 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
       log.info(
         `${params.kind === "sandbox_update" ? "Updating" : "Enabling"} sandbox builds with the sandbox Worker ${version} (image ${sandboxImage(version)}).`,
       );
+      if (params.neededBy !== undefined) {
+        log.info(
+          `Turned on first for the ${params.neededBy.kind === "install" ? "install" : "build"} job ${params.neededBy.jobId}, which waits for this one.`,
+        );
+      }
       return { accountId: settings.account_id, workerName: settings.worker_name };
     });
     steps.setAccountId(started.accountId);

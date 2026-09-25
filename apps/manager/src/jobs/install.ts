@@ -55,6 +55,7 @@ import { attachQueueConsumersPhase, planQueueConsumers } from "./install/queue-c
 import { explainR2Refusal } from "./install/r2-enablement";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import type { JobContext } from "./run-job";
+import { awaitSandboxEnabledPhase, sandboxEnableJobField } from "./sandbox-enable-wait";
 import { runSelfDeployingInstall } from "./self-deploying/jobs";
 import { selfDeployingJobInput } from "./self-deploying/phases";
 import { StepLog } from "./step-log";
@@ -117,6 +118,11 @@ export const installJobParams = z.object({
   emailRouting: emailRoutingJobInput.optional(),
   /** A custom or external domain, added once the Worker serves (never fails the install). */
   domain: installDomainInput.optional(),
+  /**
+   * The `sandbox_enable` job that turns sandbox builds on first, when the
+   * install needs them and they were off at the start; the job waits for it.
+   */
+  sandboxEnableJob: sandboxEnableJobField,
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
 
@@ -169,6 +175,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+    if (params.sandboxEnableJob !== undefined) {
+      await awaitSandboxEnabledPhase(steps, step, env, params.sandboxEnableJob);
+    }
 
     // 1. Fetch and verify the artifact manifest (a sandbox tier app is built
     // first; a self-deploying one never gets here, see the top).

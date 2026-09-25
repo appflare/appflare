@@ -2,8 +2,10 @@ import { Banner, Button, Collapsible, Input, LayerCard, Text } from "@cloudflare
 import { GitBranchIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useState } from "react";
 import { startSourceBuild } from "../installs/source-builds.functions";
+import type { SandboxReadiness } from "../sandbox/readiness";
 import { DocsLink } from "./docs-link";
 import { useJobStarted } from "./job-started";
+import { SandboxMissingBanner } from "./sandbox-first";
 import {
   BuildCommandField,
   buildCommandChoice,
@@ -14,7 +16,8 @@ import {
 
 /**
  * "Advanced: build from source at a commit" under a catalog app's install
- * form (admins, with sandbox builds on, on Workers Paid): builds the app's
+ * form (admins on Workers Paid; sandbox builds on, or turned on first by the
+ * build when the account has what they need): builds the app's
  * repository at a branch, tag or commit the admin chooses, with the catalog's
  * manifest (secrets, settings, build command) as the baseline. The review
  * shows what that commit declares and how it differs from the catalog's
@@ -26,6 +29,7 @@ export function BuildFromSourceCard({
   appName,
   repo,
   pinnedRef,
+  sandbox,
 }: {
   slug: string;
   appName: string;
@@ -33,6 +37,8 @@ export function BuildFromSourceCard({
   repo: string;
   /** The ref the catalog's release is pinned to, shown as the example. */
   pinnedRef: string;
+  /** Sandbox builds: on, turned on first by this build, or what is missing. */
+  sandbox: SandboxReadiness;
 }) {
   const jobStarted = useJobStarted();
   const [open, setOpen] = useState(false);
@@ -41,7 +47,11 @@ export function BuildFromSourceCard({
   const [costConfirmed, setCostConfirmed] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ready = buildCommandError(buildCommand) === null && costConfirmed && !pending;
+  const ready =
+    sandbox.missing === null &&
+    buildCommandError(buildCommand) === null &&
+    costConfirmed &&
+    !pending;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -95,12 +105,20 @@ export function BuildFromSourceCard({
                 disabled={pending}
                 detectDescription="The catalog's build command for this app, else its package.json build script."
               />
-              <SourceBuildCostConfirmation
-                checked={costConfirmed}
-                onChange={setCostConfirmed}
-                disabled={pending}
-                what={`${appName} at that commit`}
-              />
+              {sandbox.missing !== null ? (
+                <SandboxMissingBanner
+                  title="Sandbox builds are off, and Appflare cannot turn them on"
+                  missing={sandbox.missing}
+                />
+              ) : (
+                <SourceBuildCostConfirmation
+                  checked={costConfirmed}
+                  onChange={setCostConfirmed}
+                  disabled={pending}
+                  what={`${appName} at that commit`}
+                  sandboxFirst={sandbox.state === "ready-auto"}
+                />
+              )}
               {error !== null && (
                 <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
               )}

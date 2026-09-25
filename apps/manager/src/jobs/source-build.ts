@@ -31,6 +31,7 @@ import { verifySourceBuildManifest } from "../sandbox/verify";
 import { fetchWhole } from "./install/artifact";
 import { BUILD_LOG_LINES, SANDBOX_BUILD_STEP } from "./install/artifact-source";
 import type { JobContext } from "./run-job";
+import { awaitSandboxEnabledPhase, sandboxEnableJobField } from "./sandbox-enable-wait";
 import { awaitSandboxSettledPhase } from "./sandbox-settle";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
@@ -77,6 +78,11 @@ export const sourceBuildJobParams = z.object({
   instanceType: sandboxInstanceTypeSchema.optional(),
   /** The admin confirmed the build's cost on Workers Paid. */
   costConfirmed: z.boolean(),
+  /**
+   * The `sandbox_enable` job that turns sandbox builds on first, when they
+   * were off at the start; the build waits for it.
+   */
+  sandboxEnableJob: sandboxEnableJobField,
 });
 export type SourceBuildJobParams = z.infer<typeof sourceBuildJobParams>;
 
@@ -128,6 +134,9 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+    if (params.sandboxEnableJob !== undefined) {
+      await awaitSandboxEnabledPhase(steps, step, env, params.sandboxEnableJob);
+    }
 
     const checked = await run("check sandbox Worker", async ({ log, orm }) => {
       if (!params.costConfirmed) {

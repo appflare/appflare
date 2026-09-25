@@ -4,8 +4,10 @@ import { GitBranchIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useId, useState } from "react";
 import { NOT_FROM_CATALOG } from "../installs/source-build-input";
 import { startSourceBuild } from "../installs/source-builds.functions";
+import type { SandboxReadiness } from "../sandbox/readiness";
 import { DocsLink } from "./docs-link";
 import { useJobStarted } from "./job-started";
+import { SandboxMissingBanner } from "./sandbox-first";
 import {
   BuildCommandField,
   buildCommandChoice,
@@ -15,25 +17,33 @@ import {
 } from "./source-build-fields";
 
 /**
- * "From a repository" on the Catalog page (admins, with sandbox builds on,
- * on Workers Paid): the admin names a public GitHub repository and
+ * "From a repository" on the Catalog page (admins on Workers Paid; sandbox
+ * builds on, or turned on first by the build when the account has what they
+ * need, else the dialog says what is missing): the admin names a public
+ * GitHub repository and
  * optionally a branch, tag or commit and a build command; the sandbox Worker
  * builds it, and the build's review page shows what it declares before
  * anything is installed. The build's log opens once it starts.
  */
-export function RepositoryBuildButton() {
+export function RepositoryBuildButton({ sandbox }: { sandbox: SandboxReadiness }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button variant="secondary" icon={<GitBranchIcon />} onClick={() => setOpen(true)}>
         From a repository
       </Button>
-      {open && <RepositoryBuildDialog onClose={() => setOpen(false)} />}
+      {open && <RepositoryBuildDialog sandbox={sandbox} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
-function RepositoryBuildDialog({ onClose }: { onClose(): void }) {
+function RepositoryBuildDialog({
+  sandbox,
+  onClose,
+}: {
+  sandbox: SandboxReadiness;
+  onClose(): void;
+}) {
   const jobStarted = useJobStarted();
   const formId = useId();
   const [repository, setRepository] = useState("");
@@ -45,7 +55,11 @@ function RepositoryBuildDialog({ onClose }: { onClose(): void }) {
   const parsed = repository.trim().length === 0 ? null : parseRepositoryInput(repository);
   const repositoryError = parsed !== null && !parsed.ok ? parsed.error : null;
   const ready =
-    parsed?.ok === true && buildCommandError(buildCommand) === null && costConfirmed && !pending;
+    sandbox.missing === null &&
+    parsed?.ok === true &&
+    buildCommandError(buildCommand) === null &&
+    costConfirmed &&
+    !pending;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,12 +129,20 @@ function RepositoryBuildDialog({ onClose }: { onClose(): void }) {
               disabled={pending}
               detectDescription="Runs its package.json build script, if it has one, with the package manager its lockfile names."
             />
-            <SourceBuildCostConfirmation
-              checked={costConfirmed}
-              onChange={setCostConfirmed}
-              disabled={pending}
-              what="the repository"
-            />
+            {sandbox.missing !== null ? (
+              <SandboxMissingBanner
+                title="Sandbox builds are off, and Appflare cannot turn them on"
+                missing={sandbox.missing}
+              />
+            ) : (
+              <SourceBuildCostConfirmation
+                checked={costConfirmed}
+                onChange={setCostConfirmed}
+                disabled={pending}
+                what="the repository"
+                sandboxFirst={sandbox.state === "ready-auto"}
+              />
+            )}
             <Text variant="secondary" size="sm">
               The build log opens once the build starts; its review opens from there when it
               finishes.

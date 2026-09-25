@@ -11,6 +11,7 @@ import {
   estimateBuild,
   formatUsd,
 } from "../sandbox/cost";
+import { SandboxFirstNote } from "./sandbox-first";
 
 /**
  * Fields shared by "From a repository" on the Catalog page and "Build from
@@ -106,12 +107,15 @@ export function SourceBuildCostConfirmation({
   onChange,
   disabled,
   what,
+  sandboxFirst = false,
 }: {
   checked: boolean;
   onChange(checked: boolean): void;
   disabled?: boolean;
   /** "the repository" or "Cut at that commit". */
   what: string;
+  /** Sandbox builds are off and the build turns them on first. */
+  sandboxFirst?: boolean;
 }) {
   const estimate = estimateBuild(undefined, DEFAULT_EXPECTED_BUILD_MINUTES);
   return (
@@ -134,6 +138,7 @@ export function SourceBuildCostConfirmation({
               beyond the container usage Workers Paid includes each month; a build is billed for as
               long as it actually runs.
             </span>
+            {sandboxFirst && <SandboxFirstNote />}
             <Link href={CONTAINERS_PRICING_URL} target="_blank" rel="noopener noreferrer">
               Containers pricing
               <Link.ExternalIcon />

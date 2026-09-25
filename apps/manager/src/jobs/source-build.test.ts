@@ -1,5 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { createClient } from "@appflare/cf-api";
 import type { CatalogManifest, SandboxInfo } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { planAppUpdates } from "../auto-update/auto-update";
@@ -18,10 +19,12 @@ import {
   updateFromSourceBuildCore,
 } from "../installs/source-builds.server";
 import { sandboxInfo } from "../sandbox/binding";
+import { PINNED_SANDBOX_VERSION, sandboxReleaseProblem } from "../sandbox/release";
 import { jobProperties } from "../telemetry/events";
 import { type ArtifactFixture, baseCatalog, buildArtifactFixture } from "../test/artifact-fixture";
 import { ACC, fakeAccount, SUBDOMAIN, TOKEN } from "../test/fake-account";
 import { type FakeSandbox, type FakeSandboxOptions, fakeSandbox } from "../test/fake-sandbox";
+import { fakeSandboxAccount, sandboxRelease } from "../test/fake-sandbox-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { type InstallJobParams, runInstall } from "./install";
@@ -295,6 +298,131 @@ describe("building a repository for review", () => {
         request: { kind: "repository", repository: "MendyLanda/cut", costConfirmed: false },
       }),
     ).rejects.toThrow(/Confirm its cost/);
+  });
+
+  it("turns sandbox builds on first when they are off, then builds once they are on", async () => {
+    const fixture = await repositoryBuild(COMMIT, VERSION);
+    const world = fakeSandboxAccount(await sandboxRelease(PINNED_SANDBOX_VERSION));
+    const created: Array<{ id: string; params: unknown }> = [];
+    let n = 0;
+    const deps: SourceBuildDeps = {
+      ...buildDeps(
+        undefined,
+        refsAt(COMMIT),
+        () => {},
+        () => `s${++n}`,
+      ),
+      createJob: async (id, params) => {
+        created.push({ id, params });
+        return { id };
+      },
+      autoEnable: {
+        client: async () => createClient({ accountId: ACC, token: TOKEN, fetch: world.fetch }),
+        releaseProblem: (version) =>
+          sandboxReleaseProblem(world.fetch, {}, version, { viaApi: false }),
+        createJob: async (id, params) => {
+          created.push({ id, params });
+          return { id };
+        },
+        currentVersion: "0.5.0",
+      },
+    };
+    const request = {
+      kind: "repository",
+      repository: "MendyLanda/cut",
+      costConfirmed: true,
+    } as const;
+    const { jobId } = await startSourceBuildCore(deps, request);
+    expect(jobId).toBe("s2");
+    // The enable job (s3; s1 is the install id the build is for) first, then the build.
+    expect(created.map((c) => c.id)).toEqual(["s3", "s2"]);
+    const params = created[1]?.params as SourceBuildJobParams;
+    expect(params.sandboxEnableJob).toBe("s3");
+    const enable = await env.DB.prepare("SELECT * FROM jobs WHERE id = 's3'").first<
+      Record<string, unknown>
+    >();
+    expect(enable).toMatchObject({ kind: "sandbox_enable", status: "queued" });
+
+    // A second build while that enable job runs waits for the same one.
+    const second = await startSourceBuildCore(deps, request);
+    expect(created.at(-1)?.params).toMatchObject({ sandboxEnableJob: "s3" });
+    expect(created.filter((c) => c.id === "s3")).toHaveLength(1);
+    expect(second.jobId).not.toBe("s3");
+
+    // The enable job finishes; the build (now with its binding) waits, then builds.
+    await env.DB.prepare("UPDATE jobs SET status = 'succeeded' WHERE id = 's3'").run();
+    const sandbox = fakeSandbox(fixture);
+    const account = fakeAccount(fixture);
+    const fetch = accountFetch(account);
+    const baseEnv: JobEnv = { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN, SANDBOX: sandbox };
+    const step = fakeStep();
+    await runSourceBuild({
+      params,
+      step,
+      env: { ...baseEnv, SELF: fakeSelf(baseEnv, { fetch, now: () => NOW }) },
+      deps: { fetch, now: () => NOW },
+    });
+    expect(step.names.slice(0, 4)).toEqual([
+      "start",
+      "wait for sandbox builds (1)",
+      "check sandbox Worker",
+      "wait for the sandbox Worker to settle",
+    ]);
+    const job = await env.DB.prepare("SELECT status FROM jobs WHERE id = 's2'").first();
+    expect(job).toMatchObject({ status: "succeeded" });
+
+    // Usage data counts the enable as one Appflare started by itself.
+    const props = jobProperties(
+      {
+        id: "s3",
+        kind: "sandbox_enable",
+        status: "succeeded",
+        inputJson: enable?.input_json as string,
+        error: null,
+        startedAt: null,
+        finishedAt: null,
+        appSlug: null,
+        installVersion: null,
+        buildKind: null,
+        snapshotTargetVersion: null,
+        startedBy: "admin",
+      },
+      true,
+      null,
+    );
+    expect(props).toMatchObject({ kind: "sandbox_enable", trigger: "auto" });
+  });
+
+  it("refuses to turn sandbox builds on when the account lacks something, naming it", async () => {
+    const world = fakeSandboxAccount(await sandboxRelease(PINNED_SANDBOX_VERSION), {
+      r2Enabled: false,
+    });
+    const deps: SourceBuildDeps = {
+      ...buildDeps(
+        undefined,
+        refsAt(COMMIT),
+        () => {},
+        () => "r",
+      ),
+      autoEnable: {
+        client: async () => createClient({ accountId: ACC, token: TOKEN, fetch: world.fetch }),
+        releaseProblem: async () => null,
+        createJob: async () => {
+          throw new Error("not reached");
+        },
+        currentVersion: "0.5.0",
+      },
+    };
+    await expect(
+      startSourceBuildCore(deps, {
+        kind: "repository",
+        repository: "MendyLanda/cut",
+        costConfirmed: true,
+      }),
+    ).rejects.toThrow(
+      /Sandbox builds are off, and Appflare cannot turn them on: R2 is not enabled on this account.*\/settings\/account#checklist-sandbox/,
+    );
+    expect(await env.DB.prepare("SELECT id FROM jobs").all()).toMatchObject({ results: [] });
   });
 
   it("refuses a branch the repository does not have before any container starts", async () => {

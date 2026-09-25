@@ -8,6 +8,7 @@ import {
   formatUsd,
   installerCostSentence,
 } from "../sandbox/cost";
+import { SandboxFirstNote } from "./sandbox-first";
 
 /**
  * The cost confirmation of a sandbox tier install or update: the app has no
@@ -15,7 +16,8 @@ import {
  * in a container on Workers Paid. The Install (or Update) button stays off
  * until the admin ticks the box. For a self-deploying app (`kind:
  * "installer"`) the container runs the app's own installer instead, with the
- * app's token; it costs the same way.
+ * app's token; it costs the same way. With `sandboxFirst` the install
+ * also turns sandbox builds on first, and says so.
  */
 export function SandboxBuildConfirmation({
   build,
@@ -24,6 +26,7 @@ export function SandboxBuildConfirmation({
   disabled,
   action,
   kind = "build",
+  sandboxFirst = false,
 }: {
   build: Pick<IndexBuild, "instanceType" | "expectedMinutes" | "pin">;
   checked: boolean;
@@ -33,6 +36,8 @@ export function SandboxBuildConfirmation({
   action: "install" | "update" | "settings change";
   /** A build of the app, or a run of its own installer (self-deploying tier). */
   kind?: "build" | "installer";
+  /** Sandbox builds are off and this turns them on first. */
+  sandboxFirst?: boolean;
 }) {
   const estimate = estimateIndexBuild(build);
   if (kind === "installer") {
@@ -52,6 +57,7 @@ export function SandboxBuildConfirmation({
                 installer deletes them.
               </span>
               <span>{installerCostSentence(estimate)}</span>
+              {sandboxFirst && <SandboxFirstNote />}
               <Link href={CONTAINERS_PRICING_URL} target="_blank" rel="noopener noreferrer">
                 Containers pricing
                 <Link.ExternalIcon />
@@ -83,6 +89,7 @@ export function SandboxBuildConfirmation({
               from that commit.
             </span>
             <span>{buildCostSentence(estimate)}</span>
+            {sandboxFirst && <SandboxFirstNote />}
             <Link href={CONTAINERS_PRICING_URL} target="_blank" rel="noopener noreferrer">
               Containers pricing
               <Link.ExternalIcon />

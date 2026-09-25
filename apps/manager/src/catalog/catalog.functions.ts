@@ -21,6 +21,7 @@ import { type InstallVarField, installVarFields } from "../installs/install-vars
 import { suggestWorkerName } from "../installs/instance-names";
 import { planBindings } from "../jobs/install/bindings";
 import { sandboxBinding } from "../sandbox/binding";
+import { type SandboxReadiness, sandboxReadinessOf } from "../sandbox/readiness";
 import { requireRole, requireSession } from "../server/auth.server";
 import { appFacts } from "./app-facts";
 import { listAppFacts } from "./app-facts.server";
@@ -78,15 +79,21 @@ export interface CatalogList {
   /** What the account is known to offer, to mark each app's requirements met or not. */
   capabilities: CapabilitiesView | null;
   /**
-   * "From a repository" is offered: the viewer is an admin, sandbox builds
-   * are on, and the account is on Workers Paid.
+   * "From a repository" is offered: the viewer is an admin and the account
+   * is on Workers Paid (sandbox builds on, or turned on by the first build).
    */
   repositoryBuilds: boolean;
+  /** Sandbox builds: on, turned on by the first build that needs them, or what is missing. */
+  sandbox: SandboxReadiness;
 }
 
-/** Whether builds from a repository (and from source) are offered to this viewer. */
-function sourceBuildsOffered(role: string | null | undefined, plan: string): boolean {
-  return hasRole(role, "admin") && sandboxBinding(env) !== undefined && plan === "paid";
+/**
+ * Whether builds from a repository (and from source) are offered to this
+ * viewer: admins on Workers Paid. With sandbox builds off the first build
+ * turns them on, or its dialog says what is missing.
+ */
+function sourceBuildsOffered(role: string | null | undefined, sandbox: SandboxReadiness): boolean {
+  return hasRole(role, "admin") && sandbox.state !== "needs-plan";
 }
 
 /** Popularity for the index's apps, when the index names a stats file and it is recent. */
@@ -134,6 +141,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
     const [read, active] = await Promise.all([getCatalogIndex(env), activeInstalls()]);
     if (!read.ok) {
       const capabilities = await readCapabilitiesView(createDb(env.DB));
+      const sandbox = sandboxReadinessOf(capabilities, sandboxBinding(env) !== undefined);
       return {
         apps: [],
         updatedAt: read.updatedAt,
@@ -142,7 +150,8 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
         featured: null,
         statsGeneratedAt: null,
         capabilities: null,
-        repositoryBuilds: sourceBuildsOffered(session.user.role, capabilities.plan.plan),
+        repositoryBuilds: sourceBuildsOffered(session.user.role, sandbox),
+        sandbox,
       };
     }
     const indexUrl = catalogIndexUrl(env);
@@ -157,6 +166,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
       listAppFacts(env, apps, waitUntil),
     ]);
     const item = pickFeatured(read.index.featured, dismissed, new Date());
+    const sandbox = sandboxReadinessOf(capabilities, sandboxBinding(env) !== undefined);
     return {
       apps: apps.map((app) => ({
         ...app,
@@ -174,7 +184,8 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
           : featuredCard(item, indexUrl, (slug) => apps.find((a) => a.slug === slug)?.name ?? null),
       statsGeneratedAt: stats?.generatedAt ?? null,
       capabilities,
-      repositoryBuilds: sourceBuildsOffered(session.user.role, capabilities.plan.plan),
+      repositoryBuilds: sourceBuildsOffered(session.user.role, sandbox),
+      sandbox,
     };
   },
 );
@@ -244,6 +255,11 @@ export interface CatalogDetail {
   /** This manager has its `SANDBOX` binding (sandbox tier apps need it). */
   sandboxConnected: boolean;
   /**
+   * Sandbox builds: on, turned on first by an install that needs them, or
+   * what is missing.
+   */
+  sandbox: SandboxReadiness;
+  /**
    * Distinct cron triggers the artifact declares; 0 when none, or for a
    * sandbox tier app, whose wrangler config is read only when it is built.
    */
@@ -257,9 +273,8 @@ export interface CatalogDetail {
   /** The catalog manifest's categories; empty when it could not be loaded. */
   categories: string[];
   /**
-   * "Build from source at a commit" is offered: the viewer is an admin,
-   * sandbox builds are on, the account is on Workers Paid, and the app does
-   * not deploy itself.
+   * "Build from source at a commit" is offered: the viewer is an admin, the
+   * account is on Workers Paid, and the app does not deploy itself.
    */
   sourceBuilds: boolean;
 }
@@ -303,6 +318,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
     const session = await requireSession();
     const capabilities = await readCapabilitiesView(createDb(env.DB));
     const accountPlan = capabilities.plan.plan;
+    const sandbox = sandboxReadinessOf(capabilities, sandboxBinding(env) !== undefined);
     const empty = {
       catalog: null,
       authors: [],
@@ -315,6 +331,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       subdomain: null,
       createsKnown: true,
       sandboxConnected: sandboxBinding(env) !== undefined,
+      sandbox,
       cronTriggers: 0,
       accountPlan,
       capabilities,
@@ -363,7 +380,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       app,
       catalog: manifest.catalog,
       sourceBuilds:
-        app.tier !== "self-deploying" && sourceBuildsOffered(session.user.role, accountPlan),
+        app.tier !== "self-deploying" && sourceBuildsOffered(session.user.role, sandbox),
       authors: appAuthors(app, manifest.catalog),
       createsKnown: plan !== null,
       creates: plan?.resources.map((r) => ({ kind: r.kind, binding: r.binding })) ?? [],

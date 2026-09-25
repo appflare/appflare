@@ -63,6 +63,7 @@ import {
   estimateIndexBuild,
   formatUsd,
 } from "../../../sandbox/cost";
+import { SANDBOX_CHECKLIST_HREF } from "../../../sandbox/readiness";
 
 /**
  * `/catalog/$slug`: app detail, prerequisites, the Cloudflare token the app
@@ -114,14 +115,16 @@ function CatalogEntryPage() {
   const canInstall = viewer.role === "admin";
   const sandboxBuild = app.tier === "sandbox" ? (app.build ?? null) : null;
   const installer = app.tier === "self-deploying" ? (app.build ?? null) : null;
+  // Sandbox builds off: the install turns them on first when the account
+  // has what they need, and says what is missing otherwise.
+  const needsSandbox = sandboxBuild !== null || installer !== null;
+  const sandboxMissing = needsSandbox ? detail.sandbox.missing : null;
   const blockedReason =
     detail.fixedWorkerName && detail.instances[0] !== undefined
       ? `${app.name} is already installed as "${detail.instances[0].workerName}". It only works under one Worker name, so it installs once per account.`
-      : sandboxBuild !== null && !detail.sandboxConnected
-        ? `${app.name} is built in your account by the sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`
-        : installer !== null && !detail.sandboxConnected
-          ? `${app.name} is deployed by its own installer in your sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`
-          : null;
+      : sandboxMissing !== null
+        ? `${app.name} ${installer !== null ? "is deployed by its own installer in" : "is built in"} your account's sandbox Worker. Sandbox builds are off, and Appflare cannot turn them on: ${sandboxMissing}`
+        : null;
   const installable = catalog !== null && detail.suggestedWorkerName !== null;
   const checks = requirementChecks(
     { plan: app.plan, requires: [...new Set([...app.requires, ...(catalog?.requires ?? [])])] },
@@ -198,8 +201,12 @@ function CatalogEntryPage() {
           defaultWorkerName={detail.suggestedWorkerName}
           fixedWorkerName={detail.fixedWorkerName}
           blockedReason={blockedReason}
+          blockedLink={
+            blockedReason !== null && sandboxMissing !== null ? SANDBOX_CHECKLIST_HREF : null
+          }
           requirementsConfirmed={confirmed}
           sandboxBuild={sandboxBuild}
+          sandboxFirst={needsSandbox && detail.sandbox.state === "ready-auto"}
           installer={installer}
           cronTriggers={detail.cronTriggers}
           accountPlan={detail.accountPlan}
@@ -212,6 +219,7 @@ function CatalogEntryPage() {
           appName={app.name}
           repo={catalog.repo}
           pinnedRef={catalog.source.ref}
+          sandbox={detail.sandbox}
         />
       )}
     </>

@@ -21,6 +21,7 @@ import {
   lookupSubdomainPhase,
 } from "../install/phases";
 import type { JobContext } from "../run-job";
+import { awaitSandboxEnabledPhase } from "../sandbox-enable-wait";
 import { awaitSandboxSettledPhase } from "../sandbox-settle";
 import { StepLog } from "../step-log";
 import { createJobSteps, errorMessage, JobError, type JobSteps } from "../steps";
@@ -125,6 +126,9 @@ export async function runSelfDeployingInstall(
       );
       return {};
     });
+    if (params.sandboxEnableJob !== undefined) {
+      await awaitSandboxEnabledPhase(steps, step, env, params.sandboxEnableJob);
+    }
 
     await checkSandboxForInstallerPhase(steps, env, {
       costConfirmed: input.costConfirmed,

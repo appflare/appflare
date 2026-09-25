@@ -125,7 +125,7 @@ function CatalogPage() {
         actions={
           viewer.role === "admin" ? (
             <div className="flex flex-wrap items-center gap-2">
-              {catalog.repositoryBuilds && <RepositoryBuildButton />}
+              {catalog.repositoryBuilds && <RepositoryBuildButton sandbox={catalog.sandbox} />}
               <RefreshButton />
             </div>
           ) : undefined

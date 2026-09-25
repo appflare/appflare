@@ -30,6 +30,7 @@ import {
 import { readSettings, SETTING } from "../db/settings";
 import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { recordedCatalog } from "../jobs/self-deploying/phases";
+import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { displayNameInput, installLabel } from "./display-name";
@@ -71,6 +72,7 @@ export const startInstall = createServerFn({ method: "POST" })
           },
           createJob: (id, params) => env.JOBS.create({ id, params }),
           sandboxConnected: sandboxBinding(env) !== undefined,
+          sandboxAutoEnable: sandboxAutoEnableDeps(env),
           async listAccountWorkers() {
             const api = await getCfClient(env);
             return (await api.workers.listScripts()).map((s) => s.id);

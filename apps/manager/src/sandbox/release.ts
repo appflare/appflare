@@ -133,6 +133,42 @@ export async function findSandboxRelease(
 }
 
 /**
+ * Why the release `version` cannot be read, for a start that turns sandbox
+ * builds on before an install or build: one GitHub call, the same one the
+ * enable job makes first. Null when the release and its three assets are
+ * there, and also when GitHub could not tell (a rate limit, an outage, a
+ * network error), since the job's own step retries those.
+ */
+export async function sandboxReleaseProblem(
+  fetchImpl: FetchLike,
+  env: { MANAGER_RELEASES_URL?: string },
+  version: string,
+  opts: { viaApi: boolean },
+): Promise<string | null> {
+  let response: Response;
+  try {
+    response = await fetchImpl(sandboxReleaseUrl(env, version), {
+      headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    return null;
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    if (response.status !== 404) return null;
+    return `GitHub has no sandbox Worker release ${SANDBOX_RELEASE_TAG_PREFIX}${version}.${opts.viaApi ? "" : " While the appflare/appflare repository is private, Appflare needs a GITHUB_TOKEN secret to read it."}`;
+  }
+  try {
+    sandboxReleaseAssets(await response.json(), version, opts);
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `The sandbox Worker release cannot be used: ${message}.`;
+  }
+}
+
+/**
  * The bindings a sandbox Worker release must declare, exactly: the two
  * container classes, the build bucket, and its version var, plus the version
  * metadata binding releases carry since it existed. Anything else means a

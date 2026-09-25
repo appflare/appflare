@@ -306,8 +306,15 @@ export function jobProperties(
     from_version: custom ? null : from,
     tier: jobTier(row, input),
     origin,
-    // `auto`: the cron started it (automatic updates); `manual`: an admin did.
-    trigger: row.startedBy === "schedule" ? "auto" : "manual",
+    // `auto`: the cron started it (automatic updates), or it turned sandbox
+    // builds on for an install or build that needed them; `manual`: an admin did.
+    trigger:
+      row.startedBy === "schedule" ||
+      (row.kind === "sandbox_enable" &&
+        typeof input.neededBy === "object" &&
+        input.neededBy !== null)
+        ? "auto"
+        : "manual",
   };
 }
 
