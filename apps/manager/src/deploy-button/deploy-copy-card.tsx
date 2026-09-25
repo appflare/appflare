@@ -1,4 +1,4 @@
-import { Banner, Button, LayerCard, LinkButton, Text } from "@cloudflare/kumo";
+import { Banner, Button, LayerCard, Link, LinkButton, Text } from "@cloudflare/kumo";
 import {
   ArrowSquareOutIcon,
   GitBranchIcon,
@@ -6,10 +6,10 @@ import {
   WarningIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { DocsLink } from "../components/docs-link";
 import { MANAGER_UPDATES_HREF } from "../installs/pending-updates";
-import type { DeployCopyCleanup } from "./deploy-copy";
+import { type DeployCopyCleanup, USER_API_TOKENS_URL } from "./deploy-copy";
 
 const mono = "font-mono text-[0.9em]";
 
@@ -17,7 +17,8 @@ const mono = "font-mono text-[0.9em]";
  * "Clean up the deploy copy", on the home page of a manager the "Deploy to
  * Cloudflare" button deployed, for admins, until one of them dismisses it:
  * disconnect Workers Builds from the Worker, then delete the repository the
- * button copied. Appflare cannot do either with its account token.
+ * button copied, each step one line with its link. Appflare cannot do either
+ * with its account token.
  */
 export function DeployCopyCard({
   cleanup,
@@ -58,66 +59,101 @@ export function DeployCopyCard({
           onClick={() => void dismiss()}
         />
       </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
-        <Text>
-          The Deploy to Cloudflare button copied Appflare's deploy repository into your GitHub or
-          GitLab account and connected that copy to this Worker with Workers Builds. Appflare
-          updates itself from signed releases and needs neither.
-        </Text>
+      <LayerCard.Primary className="grid gap-3 px-5 py-4">
         <Banner
+          size="sm"
           variant="alert"
           icon={<WarningIcon weight="fill" />}
-          title="While the copy stays connected, any push to it deploys the old version it holds over this one."
+          title="While the copy stays connected, a push to it redeploys the older Appflare it holds."
         />
-        <ol className="grid list-decimal gap-3 pl-5">
-          <li className="grid gap-1.5">
-            <Text>
-              Disconnect Workers Builds: open the Worker's settings
-              {cleanup.workerName !== null && (
+        <ol className="grid gap-2">
+          <CleanupStep
+            step={1}
+            title="Disconnect Workers Builds"
+            hint={
+              cleanup.workerName === null ? (
+                "Your Worker › Settings › Builds › Disconnect"
+              ) : (
                 <>
-                  {" "}
-                  (<span className={mono}>{cleanup.workerName}</span>)
+                  <span className={mono}>{cleanup.workerName}</span> › Builds › Disconnect
                 </>
-              )}
-              , and under <strong>Builds</strong> select <strong>Disconnect</strong>.
-            </Text>
-            <span>
+              )
+            }
+            action={
               <LinkButton
                 href={cleanup.workerSettingsUrl}
                 external
+                size="sm"
                 variant="secondary"
                 icon={<ArrowSquareOutIcon />}
               >
-                Open the Worker's settings
+                Open Builds
               </LinkButton>
-            </span>
-          </li>
-          <li className="grid gap-1.5">
-            <Text>
-              Delete the copy: open the repository, then Settings, and at the bottom select{" "}
-              <strong>Delete this repository</strong>. On GitLab, it is in your projects list.
-            </Text>
-            <span>
+            }
+          />
+          <CleanupStep
+            step={2}
+            title="Delete the repository copy"
+            hint="Settings › Delete this repository"
+            action={
               <LinkButton
                 href={cleanup.repositorySearchUrl}
                 external
+                size="sm"
                 variant="secondary"
                 icon={<ArrowSquareOutIcon />}
               >
-                Find the copy on GitHub
+                Find on GitHub
               </LinkButton>
-            </span>
-          </li>
+            }
+          />
         </ol>
         <Text variant="secondary" size="sm">
-          Workers Builds may also have created an API token for its builds (dashboard, My Profile,
-          API Tokens); delete it too. Dismiss this card once you are done.
+          Also delete the API token Workers Builds created, if any, from{" "}
+          <Link href={USER_API_TOKENS_URL} target="_blank" rel="noopener noreferrer">
+            your API tokens
+            <Link.ExternalIcon />
+          </Link>
+          .
         </Text>
         {error !== null && (
           <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
         )}
       </LayerCard.Primary>
     </LayerCard>
+  );
+}
+
+/** One numbered step: what to do, where, and the button that goes there, on one line. */
+function CleanupStep({
+  step,
+  title,
+  hint,
+  action,
+}: {
+  step: number;
+  title: string;
+  hint: ReactNode;
+  action: ReactNode;
+}) {
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <span
+        aria-hidden
+        className="flex size-6 shrink-0 items-center justify-center rounded-full bg-kumo-recessed font-medium text-kumo-strong text-xs"
+      >
+        {step}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+        <Text as="span" bold>
+          {title}
+        </Text>
+        <Text as="span" variant="secondary" size="sm">
+          {hint}
+        </Text>
+      </span>
+      {action}
+    </li>
   );
 }
 

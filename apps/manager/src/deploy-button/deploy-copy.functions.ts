@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { hasRole } from "../auth/roles";
 import { ensureMigrated, type SchemaDowngrade, schemaDowngrade } from "../db/migrate";
 import { requireRole, requireSession } from "../server/auth.server";
+import { runningVersion } from "../server/build-version";
 import { type DeployCopyCleanup, deployButtonInstalled } from "./deploy-copy";
 import { dismissDeployCopyCleanup, readDeployCopyCleanup } from "./deploy-copy.server";
 
@@ -37,6 +38,6 @@ export const getSchemaDowngrade = createServerFn({ method: "GET" }).handler(
     const downgrade = schemaDowngrade(schemaVersion);
     return downgrade === null
       ? null
-      : { ...downgrade, version: env.APPFLARE_VERSION, deployButton: deployButtonInstalled(env) };
+      : { ...downgrade, version: runningVersion(env), deployButton: deployButtonInstalled(env) };
   },
 );

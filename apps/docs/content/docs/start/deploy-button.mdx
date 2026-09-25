@@ -30,20 +30,28 @@ which holds the latest Appflare release, prebuilt. Nothing is built during the d
 
 1. Open **[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy)**,
    sign in, and pick the account.
-2. Under **Git account**, choose your GitHub or GitLab account or organization. The
-   first time, select **Connect GitHub** (or GitLab) and install the Cloudflare Workers
-   and Pages app. Giving it access to only selected repositories is enough.
+2. The **Git account** picker lists every GitHub or GitLab account and organization
+   you have connected. Choose one: the copy is created there. The first time, select
+   **Connect GitHub** (or GitLab) and install the Cloudflare Workers and Pages app.
+   Giving it access to only selected repositories is enough.
 3. Check the form:
-   - Leave **Create private Git repository** ticked.
-   - **Project name** becomes the Worker's name and its address. It defaults to
-     `appflare`.
+   - Tick **Create private Git repository**. It may start unticked, and an unticked
+     box makes the copy public.
+   - **Project name** becomes the Worker's name, its address, and the name of the
+     copy. It defaults to `appflare`. If the Git account you chose already has a
+     repository with that name, change the project name: the form gives no error.
    - The D1 database defaults to `appflare`; the KV namespace is named after the
      project. Keep **Create new** for both.
+   - Leave the two variables, `APPFLARE_VERSION` and `APPFLARE_INSTALL_SOURCE`, as
+     they are.
    - The form asks for no secrets. Leave the build command empty and the deploy
      command as `npm run deploy`.
 4. Select **Create and deploy** and wait for the build to finish, usually a minute or
    two.
-5. Open `https://<project name>.<your-subdomain>.workers.dev`.
+5. The deploy page shows no address when the build is done. In the Cloudflare
+   dashboard, open **Workers & Pages** > **appflare** (your project name) and select
+   its address, or go straight to `https://appflare.<your subdomain>.workers.dev`,
+   with your project name in place of `appflare` if you changed it.
 
 ## Set up
 
@@ -63,12 +71,13 @@ connection stays, **any push to the copy deploys the version it holds over the o
 Appflare has updated itself to.** Appflare cannot remove either one: the Workers Builds
 API does not accept the account-owned token Appflare holds.
 
-After setup, admins see a **Clean up the deploy copy** card on the home page with links
-for both steps:
+After setup, admins see a **Clean up the deploy copy** card on the home page with a
+button for each step:
 
-1. **Disconnect Workers Builds.** In the Cloudflare dashboard, open the Worker, then
-   **Settings** > **Builds**, and select **Disconnect**.
-2. **Delete the copy.** On GitHub, open the repository, then **Settings**, and select
+1. **Disconnect Workers Builds.** **Open Builds** opens the Worker's **Settings** at
+   its **Builds** section in the Cloudflare dashboard. Select **Disconnect**.
+2. **Delete the repository copy.** **Find on GitHub** searches your private
+   repositories for the project name. Open the copy, then **Settings**, and select
    **Delete this repository** at the bottom. On GitLab, open the project, then
    **Settings** > **General** > **Advanced** > **Delete project**.
 

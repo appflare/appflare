@@ -13,28 +13,35 @@
  * Worker, so the marker survives them.
  */
 
-/** `APPFLARE_INSTALL_SOURCE` of a manager deployed with the button. */
+/** `APPFLARE_INSTALL_SOURCE` as the deploy repository sets it. */
 export const INSTALL_SOURCE_DEPLOY_BUTTON = "deploy-button";
 
-/** Whether this manager was deployed with the "Deploy to Cloudflare" button. */
+/**
+ * Whether this manager was deployed with the "Deploy to Cloudflare" button.
+ * The button's form shows `APPFLARE_INSTALL_SOURCE` as an editable variable,
+ * so any value starting with "deploy", in any case, counts: a visitor who
+ * retyped it as `Deploy-Button` or `deploy` still gets the cleanup card.
+ */
 export function deployButtonInstalled(env: { APPFLARE_INSTALL_SOURCE?: string }): boolean {
-  return env.APPFLARE_INSTALL_SOURCE?.trim() === INSTALL_SOURCE_DEPLOY_BUTTON;
+  return env.APPFLARE_INSTALL_SOURCE?.trim().toLowerCase().startsWith("deploy") === true;
 }
 
 /**
- * The Worker's settings page in the Cloudflare dashboard, where Settings,
- * Builds, Disconnect removes the Workers Builds connection. Without the
- * account id or the Worker name (before the token step recorded them), the
- * account's Workers & Pages list, where the Worker is one click away.
+ * The Builds section of the Worker's settings page in the Cloudflare
+ * dashboard, where Disconnect removes the Workers Builds connection. Without
+ * the account id or the Worker name (before the token step recorded them),
+ * the account's Workers & Pages list, where the Worker is one click away.
  */
 export function workerSettingsUrl(accountId: string | null, workerName: string | null): string {
   if (accountId === null || workerName === null) {
     return "https://dash.cloudflare.com/?to=/:account/workers-and-pages";
   }
-  // Dashboard URL pattern unverified: taken from public references to the
-  // Worker settings page, not opened with a dashboard session.
-  return `https://dash.cloudflare.com/${encodeURIComponent(accountId)}/workers/services/view/${encodeURIComponent(workerName)}/production/settings`;
+  // `#builds` scrolls the settings page to its Builds section.
+  return `https://dash.cloudflare.com/${encodeURIComponent(accountId)}/workers/services/view/${encodeURIComponent(workerName)}/production/settings#builds`;
 }
+
+/** The dashboard page listing the signed-in user's API tokens, where the Builds token lives. */
+export const USER_API_TOKENS_URL = "https://dash.cloudflare.com/profile/api-tokens";
 
 /**
  * Where to find the copy on GitHub. Its owner and name are not known: the

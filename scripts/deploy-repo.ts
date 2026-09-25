@@ -286,12 +286,37 @@ export function deployRepoPackageJson(options: {
 /** The public documentation site. */
 export const DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/";
 
-export const DEPLOY_BUTTON_URL = `https://deploy.workers.cloudflare.com/?url=https://github.com/${DEPLOY_REPOSITORY}`;
+/** A GitHub repository as `owner/name`, with the characters GitHub allows in each part. */
+const GITHUB_REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 
-export function deployRepoReadme(version: string): string {
+/**
+ * The GitHub repository the README's button deploys from, checked: `owner/name`.
+ * Throws on anything else, so a mistyped `--repo` never reaches a README.
+ */
+export function parseDeployRepository(value: string): string {
+  const repository = value.trim();
+  const name = repository.split("/")[1];
+  if (!GITHUB_REPOSITORY.test(repository) || name === "." || name === "..") {
+    throw new Error(`--repo must be a GitHub repository as owner/name, not "${value}"`);
+  }
+  return repository;
+}
+
+/** The Deploy to Cloudflare button's URL for a GitHub repository. */
+export function deployButtonUrl(repository: string = DEPLOY_REPOSITORY): string {
+  return `https://deploy.workers.cloudflare.com/?url=https://github.com/${repository}`;
+}
+
+export const DEPLOY_BUTTON_URL = deployButtonUrl();
+
+/**
+ * The deploy repository's README. `repository` is where the button points,
+ * `appflare/deploy` unless a trial copy of the repository lives elsewhere.
+ */
+export function deployRepoReadme(version: string, options: { repository?: string } = {}): string {
   return `# Deploy Appflare
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](${DEPLOY_BUTTON_URL})
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](${deployButtonUrl(options.repository)})
 
 [Appflare](https://github.com/appflare/appflare) is a self-hosted app manager for
 Cloudflare: one Worker in your own account that installs, updates, and removes
@@ -301,11 +326,15 @@ ${version} for the Deploy to Cloudflare button. Nothing in it is built on deploy
 ## Three steps
 
 1. **Deploy.** Select the button, sign in to Cloudflare, and pick the account. Connect
-   GitHub or GitLab if you have not yet: the button copies this repository into your
-   Git account (private by default) and deploys it with Workers Builds. Keep the
-   default names and select **Create and deploy**.
-2. **Set up.** Open \`https://<project name>.<your subdomain>.workers.dev\`. The setup
-   wizard asks for a Cloudflare API token first, then creates your admin account.
+   GitHub or GitLab if you have not yet, and choose a Git account: the button copies
+   this repository into it, named after the project, and deploys it with Workers
+   Builds. Tick **Create private Git repository**. No repository in that Git account
+   may already have the project's name (the form does not warn you). Leave the two
+   variables as they are and select **Create and deploy**.
+2. **Set up.** When the build finishes, the deploy page shows no address: open
+   \`https://<project name>.<your subdomain>.workers.dev\`, or find the Worker under
+   Workers & Pages. The setup wizard asks for a Cloudflare API token first, then
+   creates your admin account.
 3. **Clean up.** Appflare updates itself and needs neither the copy nor Workers
    Builds. Its home page shows a card with links to disconnect Workers Builds from the
    Worker and to delete the copy. Do it: while the copy stays connected, any push to it
@@ -464,6 +493,12 @@ export interface BuildDeployRepoOptions {
   expectedVersion?: string;
   /** Run `npm install --package-lock-only` to write package-lock.json (needs the npm registry). */
   lockfile?: boolean;
+  /**
+   * The GitHub repository (`owner/name`) the README's button deploys from,
+   * when the contents are pushed somewhere other than `appflare/deploy` for a
+   * trial run. Checked with `parseDeployRepository`.
+   */
+  repository?: string;
 }
 
 /** Verifies and unpacks the release, writes the repository, and checks it. */
@@ -471,6 +506,10 @@ export async function buildDeployRepo(
   options: BuildDeployRepoOptions,
 ): Promise<{ version: string; problems: string[] }> {
   const outDir = path.resolve(options.outDir);
+  const repository =
+    options.repository === undefined
+      ? DEPLOY_REPOSITORY
+      : parseDeployRepository(options.repository);
   if (existsSync(outDir) && readdirSync(outDir).length > 0) {
     throw new Error(`${outDir} exists and is not empty`);
   }
@@ -499,7 +538,7 @@ export async function buildDeployRepo(
     path.join(outDir, "package.json"),
     `${JSON.stringify(deployRepoPackageJson({ version: manifest.version, wranglerVersion: repoWranglerVersion() }), null, 2)}\n`,
   );
-  writeFileSync(path.join(outDir, "README.md"), deployRepoReadme(manifest.version));
+  writeFileSync(path.join(outDir, "README.md"), deployRepoReadme(manifest.version, { repository }));
   writeFileSync(path.join(outDir, ".gitignore"), GITIGNORE);
   copyFileSync(path.join(REPO_ROOT, "LICENSE"), path.join(outDir, "LICENSE"));
 

@@ -8,10 +8,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildDeployRepo,
   DEPLOY_BUTTON_URL,
+  deployButtonUrl,
   deployRepoPackageJson,
   deployRepoProblems,
   deployRepoReadme,
   deployRepoWranglerConfig,
+  parseDeployRepository,
   renderWranglerJsonc,
   repoWranglerVersion,
 } from "./deploy-repo.ts";
@@ -156,6 +158,47 @@ describe("the deploy repository's npm project", () => {
     );
     expect(readme).toContain("manager@1.2.3");
   });
+
+  it("points the README's button at another repository when asked", () => {
+    expect(DEPLOY_BUTTON_URL).toBe(
+      "https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy",
+    );
+    const readme = deployRepoReadme("1.2.3", { repository: "someone/appflare-deploy-trial" });
+    expect(readme).toContain(
+      "(https://deploy.workers.cloudflare.com/?url=https://github.com/someone/appflare-deploy-trial)",
+    );
+    expect(readme).not.toContain(`(${DEPLOY_BUTTON_URL})`);
+    expect(deployButtonUrl("a/b")).toBe(
+      "https://deploy.workers.cloudflare.com/?url=https://github.com/a/b",
+    );
+  });
+
+  it("accepts only owner/name for --repo", () => {
+    expect(parseDeployRepository(" MendyLanda/deploy-trial.v2 ")).toBe(
+      "MendyLanda/deploy-trial.v2",
+    );
+    for (const bad of [
+      "",
+      "deploy",
+      "a/b/c",
+      "https://github.com/a/b",
+      "-owner/name",
+      "owner/",
+      "owner/..",
+      "owner/na me",
+      "owner/name?x=1",
+    ]) {
+      expect(() => parseDeployRepository(bad), bad).toThrow(/owner\/name/);
+    }
+  });
+
+  it("refuses a bad repository before reading the release or writing anything", async () => {
+    const out = path.join(tmpdir(), `deploy-repo-never-${process.pid}`);
+    await expect(
+      buildDeployRepo({ artifactDir: "/nonexistent", outDir: out, repository: "not a repo" }),
+    ).rejects.toThrow(/owner\/name/);
+    expect(existsSync(out)).toBe(false);
+  });
 });
 
 describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))(
@@ -192,6 +235,7 @@ describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))(
         allowLegacy: legacy,
         expectedVersion: version,
         lockfile: false,
+        repository: "someone/appflare-deploy-trial",
       });
       expect(result.problems).toEqual([]);
     });
@@ -209,6 +253,11 @@ describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))(
       );
       expect(existsSync(path.join(outDir, "assets", ".dev.vars"))).toBe(false);
       expect(existsSync(path.join(outDir, ".dev.vars.example"))).toBe(false);
+    });
+
+    it("points the README's button at the repository it was built for", () => {
+      const readme = readFileSync(path.join(outDir, "README.md"), "utf8");
+      expect(readme).toContain(deployButtonUrl("someone/appflare-deploy-trial"));
     });
 
     it("names the release's version in the config and package.json", () => {

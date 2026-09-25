@@ -10,6 +10,21 @@ beforeEach(async () => {
   await reset();
 });
 
+/** A release as the cron caches it in KV. */
+function release(version: string) {
+  return {
+    version,
+    tag: `manager@${version}`,
+    assets: {
+      zip: `https://example.test/appflare-${version}.zip`,
+      manifest: "https://example.test/manifest.json",
+      sig: "https://example.test/manifest.sig",
+    },
+    publishedAt: "2026-09-20T00:00:00Z",
+    checkedAt: "2026-09-23T00:00:00.000Z",
+  };
+}
+
 describe("GET /api/health", () => {
   it("reports the version, a working D1, and the schema version", async () => {
     await createMigrator(migrations).ensure(env.DB);
@@ -25,6 +40,17 @@ describe("GET /api/health", () => {
       updateAvailable: false,
       authReady: false,
     });
+  });
+
+  it("reports the version built into the code over an edited APPFLARE_VERSION var", async () => {
+    await createMigrator(migrations).ensure(env.DB);
+    await env.KV.put(MANAGER_LATEST_KEY, JSON.stringify(release("1.3.0")));
+    const edited = { DB: env.DB, KV: env.KV, APPFLARE_VERSION: "9.9.9" };
+    const body = await (await healthResponse(edited, "1.2.0")).json<HealthBody>();
+    expect(body.version).toBe("1.2.0");
+    expect(body.updateAvailable).toBe(true);
+    // Without a built-in version (the unbuilt source in these tests), the var.
+    expect((await (await healthResponse(edited, null)).json<HealthBody>()).version).toBe("9.9.9");
   });
 
   it("reports schema version 0 before the first migration", async () => {

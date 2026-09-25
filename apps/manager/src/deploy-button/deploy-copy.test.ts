@@ -9,25 +9,37 @@ import {
   deployButtonInstalled,
   deployCopyCleanup,
   deployCopySearchUrl,
+  INSTALL_SOURCE_DEPLOY_BUTTON,
   workerSettingsUrl,
 } from "./deploy-copy";
 import { dismissDeployCopyCleanup, readDeployCopyCleanup } from "./deploy-copy.server";
 
 describe("deployButtonInstalled", () => {
-  it("is true only for the deploy repository's marker", () => {
-    expect(deployButtonInstalled({ APPFLARE_INSTALL_SOURCE: "deploy-button" })).toBe(true);
+  it("is true for the deploy repository's marker", () => {
+    expect(deployButtonInstalled({ APPFLARE_INSTALL_SOURCE: INSTALL_SOURCE_DEPLOY_BUTTON })).toBe(
+      true,
+    );
     expect(deployButtonInstalled({ APPFLARE_INSTALL_SOURCE: " deploy-button\n" })).toBe(true);
+  });
+
+  it("tolerates the marker as edited on the button's form: any case, any value starting with deploy", () => {
+    for (const edited of ["Deploy-Button", "DEPLOY", "deploy", "deploy_button", "Deploybutton"]) {
+      expect(deployButtonInstalled({ APPFLARE_INSTALL_SOURCE: edited }), edited).toBe(true);
+    }
+  });
+
+  it("is false without the marker or for another source", () => {
     expect(deployButtonInstalled({})).toBe(false);
     expect(deployButtonInstalled({ APPFLARE_INSTALL_SOURCE: "" })).toBe(false);
     expect(deployButtonInstalled({ APPFLARE_INSTALL_SOURCE: "cli" })).toBe(false);
-    expect(deployButtonInstalled({ APPFLARE_INSTALL_SOURCE: "Deploy-Button" })).toBe(false);
+    expect(deployButtonInstalled({ APPFLARE_INSTALL_SOURCE: "button-deploy" })).toBe(false);
   });
 });
 
 describe("the cleanup links", () => {
-  it("open the Worker's settings page, where Builds can be disconnected", () => {
+  it("open the Builds section of the Worker's settings, where Builds can be disconnected", () => {
     expect(workerSettingsUrl("0123abc", "appflare")).toBe(
-      "https://dash.cloudflare.com/0123abc/workers/services/view/appflare/production/settings",
+      "https://dash.cloudflare.com/0123abc/workers/services/view/appflare/production/settings#builds",
     );
     expect(workerSettingsUrl(null, "appflare")).toBe(
       "https://dash.cloudflare.com/?to=/:account/workers-and-pages",
@@ -67,6 +79,7 @@ describe("deployCopyCleanup", () => {
 
   it("is not shown on other managers, to members, or once dismissed", () => {
     expect(deployCopyCleanup({ ...base, installSource: undefined })).toBeNull();
+    expect(deployCopyCleanup({ ...base, installSource: "cli" })).toBeNull();
     expect(deployCopyCleanup({ ...base, isAdmin: false })).toBeNull();
     expect(deployCopyCleanup({ ...base, dismissedAt: "2026-09-24T00:00:00.000Z" })).toBeNull();
   });
@@ -99,6 +112,14 @@ describe("the card's state in D1", () => {
       .bind(SETTING.deployCopyDismissedAt)
       .first<{ value: string }>();
     expect(row?.value).toBe("2026-09-24T10:00:00.000Z");
+  });
+
+  it("is shown when the marker was retyped on the button's form", async () => {
+    const card = await readDeployCopyCleanup(
+      { DB: env.DB, APPFLARE_INSTALL_SOURCE: "Deploy-Button" },
+      true,
+    );
+    expect(card).not.toBeNull();
   });
 
   it("is never read for managers the button did not deploy", async () => {

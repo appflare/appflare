@@ -1,12 +1,13 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
+import { runningVersion } from "./build-version";
 
 /**
  * The running Appflare version, for the footer of the sign-in and setup
  * screens. No session needed: `/api/health` already answers it to anyone.
  */
 export const getAppflareVersion = createServerFn({ method: "GET" }).handler(
-  async (): Promise<string> => env.APPFLARE_VERSION,
+  async (): Promise<string> => runningVersion(env),
 );
 
 /**

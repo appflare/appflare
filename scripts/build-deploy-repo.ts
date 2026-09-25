@@ -1,6 +1,6 @@
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { buildDeployRepo } from "./deploy-repo.ts";
+import { buildDeployRepo, parseDeployRepository } from "./deploy-repo.ts";
 
 /**
  * Writes the contents of the public deploy repository (appflare/deploy) that
@@ -8,7 +8,8 @@ import { buildDeployRepo } from "./deploy-repo.ts";
  * (scripts/deploy-repo.ts explains every choice):
  *
  *   node scripts/build-deploy-repo.ts --artifact-dir <release dir> --out <dir>
- *     [--version <x.y.z>] [--allow-unsigned] [--allow-legacy] [--no-lockfile]
+ *     [--version <x.y.z>] [--repo <owner/name>] [--allow-unsigned] [--allow-legacy]
+ *     [--no-lockfile]
  *
  * <release dir> holds manifest.json, manifest.sig, and appflare-<version>.zip,
  * as published on a manager@<version> GitHub Release or written by
@@ -17,6 +18,8 @@ import { buildDeployRepo } from "./deploy-repo.ts";
  * A release without a `version_metadata` binding predates token-first setup
  * and is refused; `--allow-legacy` (local experiments only) adds the binding.
  * `--no-lockfile` skips package-lock.json, which needs the npm registry.
+ * `--repo` points the README's Deploy to Cloudflare button at another GitHub
+ * repository than appflare/deploy, to try the button from a copy pushed there.
  *
  * Needs @appflare/cli and @appflare/pack built (`pnpm exec turbo run build
  * --filter=@appflare/cli...`), since Node runs this file without the
@@ -24,7 +27,7 @@ import { buildDeployRepo } from "./deploy-repo.ts";
  */
 
 const USAGE =
-  "usage: node scripts/build-deploy-repo.ts --artifact-dir <dir> --out <dir> [--version <x.y.z>] [--allow-unsigned] [--allow-legacy] [--no-lockfile]\n";
+  "usage: node scripts/build-deploy-repo.ts --artifact-dir <dir> --out <dir> [--version <x.y.z>] [--repo <owner/name>] [--allow-unsigned] [--allow-legacy] [--no-lockfile]\n";
 
 async function main(argv: string[]): Promise<number> {
   const { values } = parseArgs({
@@ -33,6 +36,7 @@ async function main(argv: string[]): Promise<number> {
       "artifact-dir": { type: "string" },
       out: { type: "string" },
       version: { type: "string" },
+      repo: { type: "string" },
       "allow-unsigned": { type: "boolean", default: false },
       "allow-legacy": { type: "boolean", default: false },
       "no-lockfile": { type: "boolean", default: false },
@@ -55,6 +59,7 @@ async function main(argv: string[]): Promise<number> {
     allowUnsigned: values["allow-unsigned"],
     allowLegacy: values["allow-legacy"],
     ...(values.version ? { expectedVersion: values.version } : {}),
+    ...(values.repo !== undefined ? { repository: parseDeployRepository(values.repo) } : {}),
     lockfile: !values["no-lockfile"],
   });
   if (problems.length > 0) {

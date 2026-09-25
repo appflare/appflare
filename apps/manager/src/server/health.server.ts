@@ -1,5 +1,6 @@
 import { isManagerUpdateAvailable, readManagerLatest } from "../catalog/manager-releases.server";
 import { KNOWN_SCHEMA_VERSION, readSchemaVersion } from "../db/migrate";
+import { BUILD_VERSION, runningVersion } from "./build-version";
 
 export interface HealthBody {
   version: string;
@@ -28,20 +29,26 @@ export interface HealthBody {
  * knows, plus a D1 ping that reads `schema_version`, and the newest release from the cron's KV cache (one
  * KV read, no outbound call). Canary checks compare `version` against the
  * version they just uploaded; `create-appflare` waits for `db` to be ok.
+ * `version` is the one built into the code, not the `APPFLARE_VERSION` var,
+ * which the Deploy to Cloudflare button's form lets anyone edit.
  */
-export async function healthResponse(env: {
-  DB: D1Database;
-  APPFLARE_VERSION: string;
-  KV?: KVNamespace;
-  BETTER_AUTH_SECRET?: string;
-}): Promise<Response> {
+export async function healthResponse(
+  env: {
+    DB: D1Database;
+    APPFLARE_VERSION: string;
+    KV?: KVNamespace;
+    BETTER_AUTH_SECRET?: string;
+  },
+  build: string | null = BUILD_VERSION,
+): Promise<Response> {
   const headers = { "cache-control": "no-store" };
-  const release = await latestRelease(env);
+  const version = runningVersion(env, build);
+  const release = await latestRelease(env.KV, version);
   const authReady = typeof env.BETTER_AUTH_SECRET === "string" && env.BETTER_AUTH_SECRET.length > 0;
   try {
     const schemaVersion = await readSchemaVersion(env.DB);
     const body: HealthBody = {
-      version: env.APPFLARE_VERSION,
+      version,
       db: "ok",
       schemaVersion,
       knownSchemaVersion: KNOWN_SCHEMA_VERSION,
@@ -54,7 +61,7 @@ export async function healthResponse(env: {
       error: error instanceof Error ? error.message : String(error),
     });
     const body: HealthBody = {
-      version: env.APPFLARE_VERSION,
+      version,
       db: "error",
       knownSchemaVersion: KNOWN_SCHEMA_VERSION,
       ...release,
@@ -65,15 +72,15 @@ export async function healthResponse(env: {
 }
 
 /** Never fails the health check: an unreadable cache reports no release. */
-async function latestRelease(env: {
-  APPFLARE_VERSION: string;
-  KV?: KVNamespace;
-}): Promise<Pick<HealthBody, "latestVersion" | "updateAvailable">> {
+async function latestRelease(
+  kv: KVNamespace | undefined,
+  version: string,
+): Promise<Pick<HealthBody, "latestVersion" | "updateAvailable">> {
   try {
-    const latest = await readManagerLatest(env.KV);
+    const latest = await readManagerLatest(kv);
     return {
       latestVersion: latest?.version ?? null,
-      updateAvailable: isManagerUpdateAvailable(env.APPFLARE_VERSION, latest?.version),
+      updateAvailable: isManagerUpdateAvailable(version, latest?.version),
     };
   } catch {
     return { latestVersion: null, updateAvailable: false };

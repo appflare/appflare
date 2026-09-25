@@ -20,10 +20,13 @@ const SOURCE_CONDITION = "@appflare/source";
  * (`APPFLARE_VERSION=<version> pnpm release:pack`); local builds and dev fall back
  * to `0.0.0-dev`, the value in wrangler.jsonc. The plugin's `config` object is
  * merged over wrangler.jsonc, so this wins in the generated dist/server/wrangler.json.
+ * It is also written into the code as `__APPFLARE_BUILD_VERSION__`
+ * (src/server/build-version.ts): a var can be edited on deploy, the code cannot.
  */
 const APPFLARE_VERSION = process.env.APPFLARE_VERSION?.trim() || "0.0.0-dev";
 
 export default defineConfig({
+  define: { __APPFLARE_BUILD_VERSION__: JSON.stringify(APPFLARE_VERSION) },
   resolve: {
     conditions: [SOURCE_CONDITION, ...defaultClientConditions],
   },
