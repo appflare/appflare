@@ -2,6 +2,7 @@ import { RootProvider } from "@fumadocs/base-ui/provider/tanstack";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { DocsLink } from "../components/link.tsx";
 import StaticSearchDialog from "../components/search.tsx";
+import { faviconLinks, faviconMeta } from "../lib/favicons.ts";
 import { siteName } from "../lib/shared.ts";
 import appCss from "../styles/app.css?url";
 
@@ -11,11 +12,9 @@ export const Route = createRootRoute({
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: siteName },
+      ...faviconMeta,
     ],
-    links: [
-      { rel: "stylesheet", href: appCss },
-      { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
-    ],
+    links: [{ rel: "stylesheet", href: appCss }, ...faviconLinks],
   }),
   component: RootComponent,
 });

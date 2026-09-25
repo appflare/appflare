@@ -2,6 +2,7 @@ import { LinkProvider, Toasty } from "@cloudflare/kumo";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { COLOR_MODE_SCRIPT } from "../components/color-mode";
+import { FAVICON_LINKS, FAVICON_META } from "../components/favicons";
 import { RouterAnchor } from "../components/router-anchor";
 import appCss from "../styles.css?url";
 
@@ -27,16 +28,9 @@ export const Route = createRootRoute({
         { name: "viewport", content: "width=device-width, initial-scale=1" },
         { name: "robots", content: "noindex" },
         { title: page === undefined ? "Appflare" : `${page} · Appflare` },
+        ...FAVICON_META,
       ],
-      links: [
-        { rel: "stylesheet", href: appCss },
-        // The SVG favicon switches between a dark and a white mark with the
-        // browser's colour scheme; the PNG is for browsers without SVG favicons.
-        { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
-        { rel: "icon", href: "/favicon-32.png", type: "image/png", sizes: "32x32" },
-        { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
-        { rel: "manifest", href: "/site.webmanifest" },
-      ],
+      links: [{ rel: "stylesheet", href: appCss }, ...FAVICON_LINKS],
       // Light unless the account menu's Appearance says otherwise; set before the first
       // paint. The script also writes the `theme-color` meta, which React must not own:
       // one it rendered would be duplicated on hydration once the script changed it.

@@ -3,6 +3,7 @@ import { LockKeyIcon } from "@phosphor-icons/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { COLOR_MODE_SCRIPT } from "../components/color-mode";
+import { FAVICON_LINKS, FAVICON_META } from "../components/favicons";
 import appCss from "../styles.css?url";
 import { ACCESS_RECOVERY_COMMAND } from "./recovery";
 
@@ -67,8 +68,13 @@ export function renderAccessDeniedPage(props: AccessDeniedPageProps): string {
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <meta name="robots" content="noindex" />
       <title>{`${props.title} · Appflare`}</title>
+      {FAVICON_META.map((meta) => (
+        <meta key={meta.name} {...meta} />
+      ))}
       <link rel="stylesheet" href={appCss} />
-      <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      {FAVICON_LINKS.map((link) => (
+        <link key={link.href} {...link} />
+      ))}
     </>,
   );
   const body = renderToStaticMarkup(

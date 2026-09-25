@@ -17,7 +17,6 @@
     "check": "turbo run typecheck lint test",
     "wrangler": "dotenv -e .env -o -- wrangler",
     "release:pack": "node scripts/release-pack.ts",
-    "icons": "node scripts/render-icons.ts",
     "deploy-repo": "node scripts/build-deploy-repo.ts"
   },
   "pnpm": {
