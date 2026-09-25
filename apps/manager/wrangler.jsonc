@@ -23,7 +23,7 @@
     {
       "binding": "DB",
       "database_name": "appflare",
-      "database_id": "d9070177-d2f3-45a8-83ed-470f1136f198",
+      "database_id": "98fa1231-a7df-4bf1-976f-4f02bf4023c9",
       // Drizzle migrations; applied by the manager itself at boot,
       // never by `wrangler d1 migrations apply`.
       "migrations_dir": "src/db/migrations"
@@ -32,7 +32,7 @@
   "kv_namespaces": [
     {
       "binding": "KV",
-      "id": "ac90dc00395949ca8b07d805bab5d0b4"
+      "id": "ce487a038e334e469f7f6bdac3713760"
     }
   ],
   "workflows": [
