@@ -19,6 +19,7 @@
     "guides/notifications",
     "guides/uninstall",
     "guides/builds",
+    "guides/install-from-a-repository",
     "guides/update-appflare",
     "guides/users",
     "guides/danger-zone",

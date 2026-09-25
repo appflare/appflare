@@ -18,6 +18,7 @@ import {
 import { createFileRoute, getRouteApi, useRouter } from "@tanstack/react-router";
 import { AppIcon } from "../../components/catalog-media";
 import { HealthIcon } from "../../components/install-health";
+import { OriginBadge } from "../../components/origin-badge";
 import { PageHeader } from "../../components/page-header";
 import { PendingUpdatesBanner } from "../../components/pending-updates-banner";
 import { StatusBadge } from "../../components/status-badge";
@@ -167,13 +168,14 @@ function InstalledTable({
               <Table.Cell>
                 <div className="flex min-w-0 items-center gap-3">
                   <AppIcon src={row.icon} name={row.name} size={28} />
-                  <div className="grid min-w-0">
+                  <div className="grid min-w-0 justify-items-start gap-0.5">
                     <Link href={`/apps/${row.id}`}>{row.label}</Link>
                     {row.name !== row.label && (
                       <Text as="span" variant="secondary" size="sm" truncate>
                         {row.name}
                       </Text>
                     )}
+                    <OriginBadge origin={row.origin} />
                   </div>
                 </div>
               </Table.Cell>

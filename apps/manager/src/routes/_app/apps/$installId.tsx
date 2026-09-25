@@ -33,10 +33,12 @@ import { ExternalDomainsSection } from "../../../components/external-domains-sec
 import { jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
+import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
 import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
 import { RenameInstallDialog } from "../../../components/rename-install-dialog";
 import { Section } from "../../../components/section";
+import { SourceChangesCard } from "../../../components/source-changes-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
 import { UninstallDialog } from "../../../components/uninstall-dialog";
@@ -191,6 +193,7 @@ function OverviewTab({ install, isAdmin }: { install: InstallDetail; isAdmin: bo
   return (
     <>
       <Details install={install} isAdmin={isAdmin} />
+      {!gone && <SourceChangesCard install={install} isAdmin={isAdmin} />}
       {!gone && install.postInstall.length > 0 && (
         <Section title="Next steps">
           <LayerCard>
@@ -261,7 +264,17 @@ function SettingsTab({
           )}
         </Section>
       )}
-      <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />
+      {install.origin === "catalog" ? (
+        <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />
+      ) : (
+        <Section title="Automatic updates">
+          <Text variant="secondary">
+            {install.origin === "repository"
+              ? "Never: this app is not from the catalog. Check for changes on the Overview tab, then rebuild and review the update."
+              : "Never: this app was built from source at a commit you chose. Update it from the catalog, or rebuild it from the Overview tab."}
+          </Text>
+        </Section>
+      )}
     </>
   );
 }
@@ -583,6 +596,7 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
         <span>Details</span>
         <div className="flex items-center gap-2">
+          <OriginBadge origin={install.origin} />
           {install.updateAvailable && <Badge variant="info">Update available</Badge>}
           <StatusBadge status={install.status} of="install" />
         </div>
@@ -590,7 +604,11 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
       <LayerCard.Primary className="px-5 py-4">
         <DescriptionList>
           <DescriptionItem label="App">
-            <Link href={`/catalog/${install.slug}`}>{install.name}</Link>
+            {install.origin === "repository" ? (
+              install.name
+            ) : (
+              <Link href={`/catalog/${install.slug}`}>{install.name}</Link>
+            )}
           </DescriptionItem>
           <DescriptionItem label="Name">
             {install.displayName ?? (
@@ -684,7 +702,15 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
             <DescriptionItem label="Built">
               <span className="grid gap-1">
                 <span>
-                  Built in your account from{" "}
+                  {install.source !== null ? (
+                    <>
+                      Built in your account from{" "}
+                      {install.source.url.replace("https://github.com/", "")} at{" "}
+                      <span className={mono}>{install.source.ref}</span>,{" "}
+                    </>
+                  ) : (
+                    "Built in your account from "
+                  )}
                   <span className={mono}>
                     {install.pinSha?.slice(0, 12) ?? "an unknown commit"}
                   </span>{" "}

@@ -258,12 +258,14 @@ export type BuildRequest = z.infer<typeof buildRequestSchema>;
 /**
  * The steps of a build, in order. A failure names the step it happened in.
  * `request` is a request the sandbox Worker refused before starting a
- * container; `build` is the entry's `install.buildCommand`, which runs inside
+ * container; `detect` (builds from a repository only) reads the checkout to
+ * work out how to build it; `build` is the build command, which runs inside
  * the packer, reported separately when it is what failed.
  */
 export const buildStageSchema = z.enum([
   "request",
   "checkout",
+  "detect",
   "install",
   "build",
   "pack",
@@ -305,6 +307,9 @@ const outcomeBase = {
   /** The end of the build output (at most {@link BUILD_LOG_TAIL_CHARS} characters). */
   log: z.string(),
 };
+
+/** The fields every build outcome carries, a build from a repository's too. */
+export const buildOutcomeFields = outcomeBase;
 
 /** A finished build. */
 export const buildResultSchema = z.object({

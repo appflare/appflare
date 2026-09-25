@@ -491,7 +491,7 @@ describe("custody and status", () => {
 
   it("is served over RPC by the SandboxBuilds entrypoint, which advertises the feature", async () => {
     const builds = exports.default;
-    expect((await builds.info()).features).toEqual([SANDBOX_FEATURE_SELF_DEPLOYING]);
+    expect((await builds.info()).features).toContain(SANDBOX_FEATURE_SELF_DEPLOYING);
     // No token is held in the test Worker's environment.
     const failure = asFailure(await builds.deploySelfManaged(request()));
     expect(failure).toMatchObject({ step: "token", action: "deploy" });

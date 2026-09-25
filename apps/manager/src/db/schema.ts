@@ -65,6 +65,19 @@ export const BUILD_KINDS = ["artifact", "sandbox", "self-deploying"] as const;
 export type BuildKind = (typeof BUILD_KINDS)[number];
 
 /**
+ * Where an install's code comes from: `catalog`, the catalog's own release
+ * or pinned build; `repository`, a public GitHub repository an admin named,
+ * built in this account and never reviewed by the catalog (it is shown as
+ * "Not from the catalog, not checked" and never updated on its own); or
+ * `source`, a catalog app an admin built from source at another commit, with
+ * the catalog manifest but code the catalog did not check. For the last two,
+ * `source_url` is the repository, `source_ref` the branch, tag or commit it
+ * was built from, and `pin_sha` the commit.
+ */
+export const INSTALL_ORIGINS = ["catalog", "repository", "source"] as const;
+export type InstallOrigin = (typeof INSTALL_ORIGINS)[number];
+
+/**
  * Who owns a resource's lifecycle: `appflare`, which created it and deletes
  * it on uninstall, or `app`, the app's own installer, which the manager only
  * records and never deletes.
@@ -79,7 +92,9 @@ export const RESOURCE_MANAGERS = ["appflare", "app"] as const;
  * `sandbox_disable` removes all of that again. None of the three has an
  * install. `self_rollback` redeploys an earlier version of the manager's own
  * Worker; it runs inside the request that asks for it, so it has no Workflow
- * instance (like a database restore).
+ * instance (like a database restore). `source_build` builds a repository (or
+ * a catalog app at another commit) in the sandbox Worker for an admin to
+ * review; installing or updating from the build is a job of its own.
  */
 export const JOB_KINDS = [
   "install",
@@ -92,6 +107,7 @@ export const JOB_KINDS = [
   "sandbox_update",
   "sandbox_disable",
   "self_rollback",
+  "source_build",
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -157,6 +173,12 @@ export const installs = sqliteTable("installs", {
   sandbox_image: text("sandbox_image"),
   /** For a sandbox build: when the build finished. */
   built_at: timestamp("built_at"),
+  /** Where the code comes from (see `INSTALL_ORIGINS`). */
+  origin: text("origin", { enum: INSTALL_ORIGINS }).notNull().default("catalog"),
+  /** Not from the catalog: the repository, `https://github.com/<owner>/<repo>`. */
+  source_url: text("source_url"),
+  /** Not from the catalog: the branch, tag or commit it was built from. */
+  source_ref: text("source_ref"),
   /** The last health check's result; null until one ran. Never fails a job. */
   health_status: text("health_status", { enum: HEALTH_STATUSES }),
   /** When the last health check probed the Worker. */
@@ -295,6 +317,10 @@ export const snapshots = sqliteTable(
     build_kind: text("build_kind", { enum: BUILD_KINDS }).notNull().default("artifact"),
     sandbox_image: text("sandbox_image"),
     built_at: timestamp("built_at"),
+    /** The install's origin before the update, restored by a rollback. */
+    origin: text("origin", { enum: INSTALL_ORIGINS }).notNull().default("catalog"),
+    source_url: text("source_url"),
+    source_ref: text("source_ref"),
     /** The catalog version the update moved to. */
     target_catalog_version: text("target_catalog_version"),
     /**
@@ -322,4 +348,57 @@ export const featured_dismissals = sqliteTable(
     dismissed_at: timestamp("dismissed_at").notNull(),
   },
   (t) => [primaryKey({ columns: [t.user_id, t.item_id] })],
+);
+
+export const SOURCE_BUILD_STATUSES = ["building", "built", "failed", "used", "discarded"] as const;
+export type SourceBuildStatus = (typeof SOURCE_BUILD_STATUSES)[number];
+
+/** What a source build is for: a new install, or an update of an existing one. */
+export const SOURCE_BUILD_PURPOSES = ["install", "update"] as const;
+export type SourceBuildPurpose = (typeof SOURCE_BUILD_PURPOSES)[number];
+
+/**
+ * A build of a repository (or of a catalog app at another commit) in the
+ * sandbox Worker, waiting for an admin's review. Its id is its
+ * `source_build` job's. `status`: `building` while the job runs, `built`
+ * once the artifact is stored and verified, `failed`, `used` once an install
+ * or update job took it, `discarded` when the admin threw it away. The
+ * artifact lives in the sandbox Worker's bucket under
+ * `builds/<install_id>/<version>/`; `install_id` is the install it is for,
+ * which for a new install does not exist until the admin installs.
+ */
+export const source_builds = sqliteTable(
+  "source_builds",
+  {
+    id: text("id").primaryKey(),
+    install_id: text("install_id").notNull(),
+    purpose: text("purpose", { enum: SOURCE_BUILD_PURPOSES }).notNull(),
+    /** `repository`, or `source` for a catalog app built at another commit. */
+    origin: text("origin", { enum: INSTALL_ORIGINS }).notNull(),
+    /** The catalog app, for a build from source; null for a repository. */
+    app_slug: text("app_slug"),
+    /** `owner/repo` on GitHub. */
+    repo: text("repo").notNull(),
+    /** The branch, tag or commit asked for; null for the default branch. */
+    requested_ref: text("requested_ref"),
+    /** The build command choice (`buildCommandChoiceSchema`), as JSON. */
+    build_command_json: text("build_command_json"),
+    status: text("status", { enum: SOURCE_BUILD_STATUSES }).notNull(),
+    /** Set once built: what was built, and where it is. */
+    commit_sha: text("commit_sha"),
+    ref: text("ref"),
+    version: text("version"),
+    digest: text("digest"),
+    manifest_key: text("manifest_key"),
+    artifact_key: text("artifact_key"),
+    image: text("image"),
+    /** The verified artifact manifest, exactly as stored (its sha256 is `digest`). */
+    manifest_json: text("manifest_json"),
+    /** What the sandbox Worker worked out (`repositoryDetectionSchema`), as JSON. */
+    detected_json: text("detected_json"),
+    built_at: timestamp("built_at"),
+    created_at: timestamp("created_at").notNull(),
+    updated_at: timestamp("updated_at").notNull(),
+  },
+  (t) => [index("source_builds_install_id_idx").on(t.install_id)],
 );

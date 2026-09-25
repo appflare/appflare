@@ -1,3 +1,4 @@
+import { INSPECT_OUTPUT_PREFIX, type WranglerFacts } from "@appflare/schema";
 import type { BuildSandbox, ExecOptions, ExecOutcome } from "../sandbox";
 
 /**
@@ -24,13 +25,33 @@ export interface FakeSandboxOptions {
   /** The commit a fetch by SHA checks out. */
   fetchHead?: string;
   cloneFails?: boolean;
-  /** What `appflare-pack` writes to the output directory: file name to bytes. */
-  packOutput: Record<string, Uint8Array>;
+  /**
+   * What `appflare-pack` writes to the output directory: file name to bytes,
+   * or worked out from the catalog manifest the build wrote for the packer.
+   */
+  packOutput:
+    | Record<string, Uint8Array>
+    | ((catalogManifest: unknown) => Record<string, Uint8Array>);
   failures?: FakeFailure[];
   /** Output a succeeding command prints, for the first pattern its command line matches. */
   outputs?: Array<{ match: RegExp; output: string }>;
   /** `destroy()` throws this (a container a new version of the Worker reset). */
   destroyThrows?: string;
+  /**
+   * A fake git host: the commit each branch or tag points at. A clone of a
+   * name it does not list fails; a clone without a name takes
+   * `defaultBranch`. Without it, every clone lands on `refHead`.
+   */
+  refs?: Record<string, string>;
+  defaultBranch?: string;
+  /** Commits a fetch by SHA can find (with `refs`); others fail as git would. */
+  commits?: string[];
+  /** What `git log -1 --format=%cI` prints. */
+  committedAt?: string;
+  /** The checkout's files at its root: name to contents (a fixture repository). */
+  files?: Record<string, string>;
+  /** What `appflare-pack inspect` answers (wrangler's reading of the config). */
+  inspect?: WranglerFacts;
 }
 
 export class FakeSandbox implements BuildSandbox {
@@ -40,6 +61,8 @@ export class FakeSandbox implements BuildSandbox {
   mount: { binding: string; path: string; prefix: string } | null = null;
   destroyed = false;
   #head = "";
+  /** The branch a clone without a name checked out (what `--abbrev-ref HEAD` prints). */
+  #branch: string | null = null;
   #out = new Map<string, Uint8Array>();
   readonly #failures: FakeFailure[];
 
@@ -47,10 +70,19 @@ export class FakeSandbox implements BuildSandbox {
     this.#failures = [...(options.failures ?? [])];
   }
 
-  async gitCheckout(repoUrl: string, options: { branch: string }): Promise<void> {
-    this.commands.push(`<gitCheckout ${repoUrl} ${options.branch}>`);
+  async gitCheckout(repoUrl: string, options: { branch?: string }): Promise<void> {
+    this.commands.push(`<gitCheckout ${repoUrl} ${options.branch ?? "(default branch)"}>`);
     if (this.options.cloneFails) throw new Error("Remote branch not found");
-    this.#head = this.options.refHead;
+    const { refs } = this.options;
+    if (refs === undefined) {
+      this.#head = this.options.refHead;
+      return;
+    }
+    const name = options.branch ?? this.options.defaultBranch ?? "main";
+    const head = refs[name];
+    if (head === undefined) throw new Error(`Remote branch ${name} not found in upstream origin`);
+    this.#head = head;
+    this.#branch = options.branch === undefined ? name : null;
   }
 
   async exec(command: string, options: ExecOptions): Promise<ExecOutcome> {
@@ -70,13 +102,52 @@ export class FakeSandbox implements BuildSandbox {
     };
     const printed = this.options.outputs?.find((o) => o.match.test(command));
     if (printed !== undefined) return ok(printed.output);
+    if (command.includes("rev-parse --abbrev-ref HEAD")) {
+      return ok(`${this.#branch ?? "HEAD"}\n`);
+    }
     if (command.includes("rev-parse HEAD")) return ok(this.#head ? `${this.#head}\n` : "");
+    if (command.includes("log -1 --format=%cI")) {
+      return ok(this.options.committedAt === undefined ? "" : `${this.options.committedAt}\n`);
+    }
     if (command.includes(" fetch -q --depth 1 origin ")) {
-      this.#head = this.options.fetchHead ?? /origin ([0-9a-f]{40})/.exec(command)?.[1] ?? "";
+      const wanted = /origin ([0-9a-f]{40})/.exec(command)?.[1] ?? "";
+      const known = this.options.commits ?? Object.values(this.options.refs ?? {});
+      if (this.options.refs !== undefined && !known.includes(wanted)) {
+        return {
+          exitCode: 128,
+          stdout: "",
+          stderr: `fatal: remote error: upload-pack: not our ref ${wanted}`,
+        };
+      }
+      this.#head = this.options.fetchHead ?? wanted;
+      this.#branch = null;
       return ok();
     }
+    if (command.startsWith("ls -1A -- ")) {
+      return ok(Object.keys(this.options.files ?? {}).join("\n"));
+    }
+    if (command.startsWith("head -c ")) {
+      const name = /\/([^/']+)'?$/.exec(command)?.[1] ?? "";
+      const text = this.options.files?.[name];
+      if (text === undefined) {
+        return { exitCode: 1, stdout: "", stderr: `head: cannot open '${name}' for reading` };
+      }
+      return ok(text);
+    }
+    if (command.startsWith("appflare-pack inspect ")) {
+      const facts = this.options.inspect ?? { name: null, vars: [], unsupported: [] };
+      return ok(`${INSPECT_OUTPUT_PREFIX}${JSON.stringify(facts)}\n`);
+    }
     if (command.startsWith("appflare-pack ")) {
-      this.#out = new Map(Object.entries(this.options.packOutput));
+      const { packOutput } = this.options;
+      const input = /--manifest (\S+)/.exec(command)?.[1] ?? "";
+      this.#out = new Map(
+        Object.entries(
+          typeof packOutput === "function"
+            ? packOutput(JSON.parse(this.written.get(input) ?? "null"))
+            : packOutput,
+        ),
+      );
       return ok("widget@1.2.3\n");
     }
     if (command.includes("stat -c")) {

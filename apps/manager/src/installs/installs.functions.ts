@@ -20,6 +20,7 @@ import { createDb } from "../db/client";
 import {
   type BuildKind,
   type HealthStatus,
+  type InstallOrigin,
   installs,
   type JobStarter,
   jobs,
@@ -42,6 +43,7 @@ import {
   CUSTOM_HOSTNAME_KIND,
   EMAIL_ROUTE_KIND,
 } from "./resource-kinds";
+import { REPOSITORY_SLUG_PREFIX } from "./source-review";
 import { catalogOnlyManifest, StartInstallError, startInstallCore } from "./start-install.server";
 import { domainHostnames, primaryDomain } from "./workers-dev";
 
@@ -100,6 +102,11 @@ export const renameInstall = createServerFn({ method: "POST" })
 export interface InstallRow {
   id: string;
   slug: string;
+  /**
+   * Where the code comes from: the catalog, a repository (not from the
+   * catalog, not checked), or a catalog app built from source.
+   */
+  origin: InstallOrigin;
   /** The app's name from the catalog. */
   name: string;
   /** The app's icon from the catalog, as a manager path; null when it has none. */
@@ -123,6 +130,23 @@ export interface InstallRow {
   healthStatus: HealthStatus | null;
   /** ISO 8601; when that check ran. */
   healthCheckedAt: string | null;
+}
+
+/**
+ * The app's name when the catalog does not list it: an install from a
+ * repository (or an app that left the catalog) carries its name in its
+ * recorded artifact manifest.
+ */
+function recordedName(row: typeof installs.$inferSelect): string {
+  if (row.manifest_json !== null) {
+    try {
+      const parsed = artifactManifestSchema.safeParse(JSON.parse(row.manifest_json));
+      if (parsed.success) return parsed.data.catalog.name;
+    } catch {
+      // Not an artifact manifest; the slug below names it.
+    }
+  }
+  return row.app_slug.replace(REPOSITORY_SLUG_PREFIX, "");
 }
 
 /** The name fields of an install row, for the list and the detail page. */
@@ -182,11 +206,13 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
       return domain === null ? workersDevUrl(row.worker_name, sub) : `https://${domain}`;
     };
     return rows.map((row) => {
-      const listed = catalog.get(row.app_slug);
+      // An install from a repository is never the catalog's app of the same name.
+      const listed = row.origin === "repository" ? undefined : catalog.get(row.app_slug);
       return {
         id: row.id,
         slug: row.app_slug,
-        name: listed?.name ?? row.app_slug,
+        origin: row.origin,
+        name: listed?.name ?? recordedName(row),
         icon: mediaSrc(listed?.media?.icon, catalogIndexUrl(env)),
         ...namesOf(row),
         status: row.status,
@@ -225,6 +251,11 @@ export interface CustomDomainView {
 export interface InstallDetail extends InstallRow {
   currentVersionId: string | null;
   pinSha: string | null;
+  /**
+   * Not from the catalog (a repository, or a catalog app built from source):
+   * the repository and the branch, tag or commit it follows. Null for the catalog.
+   */
+  source: { url: string; ref: string } | null;
   /**
    * How the running code was built: a signed release, a sandbox build in this
    * account, or a deploy by the app's own installer (`installer` names it,
@@ -327,7 +358,10 @@ export const getInstall = createServerFn({ method: "GET" })
       subdomain(),
       readAutoUpdateDefaults(db),
     ]);
-    const listed = read.ok ? read.index.apps.find((a) => a.slug === row.app_slug) : undefined;
+    const listed =
+      read.ok && row.origin !== "repository"
+        ? read.index.apps.find((a) => a.slug === row.app_slug)
+        : undefined;
     const workerUrl = workersDevUrl(row.worker_name, sub);
     // Where the app is reached: its primary custom domain while workers.dev is off.
     const domain = row.workers_dev_enabled
@@ -380,6 +414,11 @@ export const getInstall = createServerFn({ method: "GET" })
     return {
       id: row.id,
       slug: row.app_slug,
+      origin: row.origin,
+      source:
+        row.origin === "catalog" || row.source_url === null || row.source_ref === null
+          ? null
+          : { url: row.source_url, ref: row.source_ref },
       name,
       icon: mediaSrc(listed?.media?.icon, catalogIndexUrl(env)),
       ...namesOf(row),

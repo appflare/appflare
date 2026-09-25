@@ -5,6 +5,7 @@ import {
   type BuildFailure,
   type BuildResult,
   buildOutcomeSchema,
+  SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
 } from "@appflare/schema";
@@ -421,7 +422,7 @@ describe("cleanup and progress", () => {
       protocol: SANDBOX_PROTOCOL_VERSION,
       sandboxVersion: "0.1.0",
       image: "docker.io/mendylanda/appflare-sandbox:0.1.0",
-      features: [SANDBOX_FEATURE_SELF_DEPLOYING],
+      features: [SANDBOX_FEATURE_SELF_DEPLOYING, SANDBOX_FEATURE_REPOSITORY],
       // The version metadata binding's id (vitest.config.ts).
       versionId: "version-under-test",
     });

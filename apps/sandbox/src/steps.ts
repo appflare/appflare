@@ -61,23 +61,19 @@ export interface RunOptions {
   shownAs?: string;
 }
 
-export class ContainerSteps<S extends RunStep> {
+/**
+ * Runs commands in a run's container, one at a time; their output streams
+ * into the run's log.
+ */
+export class CommandRunner<S extends RunStep> {
   constructor(
-    private readonly sandbox: BuildSandbox,
-    private readonly log: BuildLog,
-    private readonly source: RunSource,
-    /** The step names this run reports its checkout and install as. */
-    private readonly steps: { checkout: S; install: S },
+    protected readonly sandbox: BuildSandbox,
+    protected readonly log: BuildLog,
   ) {}
 
   /** Adds one line of narration to the run's log. */
   note(message: string): void {
     this.log.line(message);
-  }
-
-  /** The project inside the checkout. */
-  get project(): string {
-    return this.source.subdirectory ? `${SOURCE_DIR}/${this.source.subdirectory}` : SOURCE_DIR;
   }
 
   /**
@@ -117,6 +113,23 @@ export class ContainerSteps<S extends RunStep> {
       );
     }
     return result;
+  }
+}
+
+export class ContainerSteps<S extends RunStep> extends CommandRunner<S> {
+  constructor(
+    sandbox: BuildSandbox,
+    log: BuildLog,
+    private readonly source: RunSource,
+    /** The step names this run reports its checkout and install as. */
+    private readonly steps: { checkout: S; install: S },
+  ) {
+    super(sandbox, log);
+  }
+
+  /** The project inside the checkout. */
+  get project(): string {
+    return this.source.subdirectory ? `${SOURCE_DIR}/${this.source.subdirectory}` : SOURCE_DIR;
   }
 
   private async head(): Promise<string> {

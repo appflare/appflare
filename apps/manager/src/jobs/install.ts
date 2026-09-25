@@ -20,9 +20,11 @@ import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { installDomainInput, workerNameSchema } from "../installs/install-input";
+import { appSlugLabel } from "../installs/source-review";
 import { workersDevSubdomain } from "../installs/workers-dev";
 import {
   type ArtifactOrigin,
+  prebuiltBuildParams,
   resolveArtifactPhase,
   sandboxBuildParams,
 } from "./install/artifact-source";
@@ -86,6 +88,11 @@ export const installJobParams = z.object({
   /** A sandbox tier app: what the sandbox Worker builds, and the admin's cost confirmation. */
   build: sandboxBuildParams.optional(),
   /**
+   * A build the admin reviewed: a repository, or a catalog app built from
+   * source at another commit. Already built; the job installs it as it is.
+   */
+  prebuilt: prebuiltBuildParams.optional(),
+  /**
    * A self-deploying tier app: the catalog manifest its installer comes from,
    * the admin's cost confirmation, and the app's own token (which the job
    * stores on the sandbox Worker; never in D1).
@@ -130,11 +137,13 @@ export async function runInstall(ctx: JobContext): Promise<void> {
   }
 
   const origin: ArtifactOrigin | null =
-    params.build !== undefined
-      ? { kind: "sandbox", build: params.build }
-      : params.artifacts !== undefined && params.digest !== undefined
-        ? { kind: "release", artifacts: params.artifacts, digest: params.digest }
-        : null;
+    params.prebuilt !== undefined
+      ? { kind: "prebuilt", build: params.prebuilt }
+      : params.build !== undefined
+        ? { kind: "sandbox", build: params.build }
+        : params.artifacts !== undefined && params.digest !== undefined
+          ? { kind: "release", artifacts: params.artifacts, digest: params.digest }
+          : null;
   if (origin === null) throw new NonRetryableError("invalid install job payload: no artifact");
 
   try {
@@ -143,7 +152,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         .update(jobs)
         .set({ status: "running", started_at: new Date(now()) })
         .where(eq(jobs.id, params.jobId));
-      log.info(`Installing ${params.slug} ${params.version} as Worker "${params.workerName}".`);
+      log.info(
+        `Installing ${appSlugLabel(params.slug)} ${params.version} as Worker "${params.workerName}".`,
+      );
       return {};
     });
 
@@ -588,7 +599,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           .where(eq(jobs.id, params.jobId)),
       ]);
       log.info(
-        `Installed ${params.slug} ${params.version} at ${url} (health: ${healthLabel(health)}).`,
+        `Installed ${appSlugLabel(params.slug)} ${params.version} at ${url} (health: ${healthLabel(health)}).`,
       );
       return {};
     });

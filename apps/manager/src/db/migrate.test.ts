@@ -27,6 +27,7 @@ const EXPECTED_TABLES = [
   "session",
   "settings",
   "snapshots",
+  "source_builds",
   "user",
   "verification",
 ];

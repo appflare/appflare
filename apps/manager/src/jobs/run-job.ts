@@ -10,6 +10,7 @@ import { runInstall } from "./install";
 import { runReconfigure } from "./reconfigure";
 import { runRollback } from "./rollback";
 import { runSelfUpdate } from "./self-update";
+import { runSourceBuild } from "./source-build";
 import { runUninstall } from "./uninstall";
 import type { JobUnitsApi } from "./units/units";
 import { runUpdate } from "./update";
@@ -115,6 +116,7 @@ export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   sandbox_enable: runSandboxEnable,
   sandbox_update: runSandboxEnable,
   sandbox_disable: runSandboxDisable,
+  source_build: runSourceBuild,
   // Runs inside the admin's request (./self-update/rollback.server.ts), never as a Workflow.
   self_rollback: async () => {
     throw new NonRetryableError("a rollback of Appflare is never run as a Workflow job");

@@ -271,6 +271,9 @@ describe("snapshot shape", () => {
       build_kind: "artifact",
       sandbox_image: null,
       built_at: null,
+      origin: "catalog",
+      source_url: null,
+      source_ref: null,
       target_catalog_version: "1.1.0",
       config_json: '{"HOME_PAGE":"admin"}',
     });

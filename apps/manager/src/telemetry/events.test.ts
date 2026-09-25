@@ -190,6 +190,7 @@ describe("jobEvents", () => {
       catalog_version: "1.1.0",
       from_version: null,
       tier: "artifact",
+      origin: "catalog",
       trigger: "manual",
       outcome: "succeeded",
       duration_s: 60,

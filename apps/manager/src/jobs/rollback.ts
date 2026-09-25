@@ -189,6 +189,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
               build_kind: snapshot.build_kind,
               sandbox_image: snapshot.sandbox_image,
               built_at: snapshot.built_at,
+              origin: snapshot.origin,
+              source_url: snapshot.source_url,
+              source_ref: snapshot.source_ref,
               ...settingsOf(snapshot),
               updated_at: at,
             }

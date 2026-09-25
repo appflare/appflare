@@ -2,6 +2,7 @@ import { Badge, Banner, Empty, LayerCard, LinkButton, Loader, Table, Text } from
 import {
   ArrowRightIcon,
   ArrowsClockwiseIcon,
+  GitBranchIcon,
   ListChecksIcon,
   ShippingContainerIcon,
   WarningCircleIcon,
@@ -129,6 +130,27 @@ function JobPage() {
           description={job.error}
           action={
             failureTopic === null ? undefined : <DocsLink topic={failureTopic} variant="inline" />
+          }
+        />
+      )}
+      {job.sourceBuild !== null && job.status === "succeeded" && (
+        <Banner
+          variant="default"
+          icon={<GitBranchIcon weight="fill" />}
+          title="Built. Review it next"
+          description={
+            job.sourceBuild.purpose === "update"
+              ? "Nothing changed yet. The review shows what the new build declares; update from there."
+              : "Nothing is installed yet. The review shows what the build declares; install it from there."
+          }
+          action={
+            <LinkButton
+              href={`/catalog/source/${job.id}`}
+              variant="primary"
+              icon={<ArrowRightIcon />}
+            >
+              Review
+            </LinkButton>
           }
         />
       )}

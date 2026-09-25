@@ -77,6 +77,16 @@ export interface CatalogList {
   statsGeneratedAt: string | null;
   /** What the account is known to offer, to mark each app's requirements met or not. */
   capabilities: CapabilitiesView | null;
+  /**
+   * "From a repository" is offered: the viewer is an admin, sandbox builds
+   * are on, and the account is on Workers Paid.
+   */
+  repositoryBuilds: boolean;
+}
+
+/** Whether builds from a repository (and from source) are offered to this viewer. */
+function sourceBuildsOffered(role: string | null | undefined, plan: string): boolean {
+  return hasRole(role, "admin") && sandboxBinding(env) !== undefined && plan === "paid";
 }
 
 /** Popularity for the index's apps, when the index names a stats file and it is recent. */
@@ -123,6 +133,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
     const session = await requireSession();
     const [read, active] = await Promise.all([getCatalogIndex(env), activeInstalls()]);
     if (!read.ok) {
+      const capabilities = await readCapabilitiesView(createDb(env.DB));
       return {
         apps: [],
         updatedAt: read.updatedAt,
@@ -131,6 +142,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
         featured: null,
         statsGeneratedAt: null,
         capabilities: null,
+        repositoryBuilds: sourceBuildsOffered(session.user.role, capabilities.plan.plan),
       };
     }
     const indexUrl = catalogIndexUrl(env);
@@ -162,6 +174,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
           : featuredCard(item, indexUrl, (slug) => apps.find((a) => a.slug === slug)?.name ?? null),
       statsGeneratedAt: stats?.generatedAt ?? null,
       capabilities,
+      repositoryBuilds: sourceBuildsOffered(session.user.role, capabilities.plan.plan),
     };
   },
 );
@@ -243,6 +256,12 @@ export interface CatalogDetail {
   primitives: AppPrimitives;
   /** The catalog manifest's categories; empty when it could not be loaded. */
   categories: string[];
+  /**
+   * "Build from source at a commit" is offered: the viewer is an admin,
+   * sandbox builds are on, the account is on Workers Paid, and the app does
+   * not deploy itself.
+   */
+  sourceBuilds: boolean;
 }
 
 /**
@@ -301,6 +320,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       capabilities,
       images: appMediaView(undefined, ""),
       popularity: null,
+      sourceBuilds: false,
       ...appFacts({ tier: "artifact", requires: [] }, null),
     };
     const read = await getCatalogIndex(env);
@@ -342,6 +362,8 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       ...appFacts(app, manifest),
       app,
       catalog: manifest.catalog,
+      sourceBuilds:
+        app.tier !== "self-deploying" && sourceBuildsOffered(session.user.role, accountPlan),
       authors: appAuthors(app, manifest.catalog),
       createsKnown: plan !== null,
       creates: plan?.resources.map((r) => ({ kind: r.kind, binding: r.binding })) ?? [],

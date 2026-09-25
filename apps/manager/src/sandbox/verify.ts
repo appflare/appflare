@@ -157,3 +157,110 @@ export async function verifyBuiltManifest(
   }
   return manifest;
 }
+
+/** What a build from a repository (or from source) is expected to be. */
+export interface ExpectedSourceBuild {
+  /** `owner/repo` the build was asked for. */
+  repo: string;
+  /** The commit the sandbox Worker reported building. */
+  commit: string;
+  /** The version the sandbox Worker reported. */
+  version: string;
+  /** The sha256 of `manifest.json` the build reported. */
+  digest: string;
+  /** For a catalog app built from source: its catalog slug, which the build must keep. */
+  slug?: string;
+  /**
+   * For a catalog app built from source: the catalog manifest the build was
+   * asked to keep. What decides what the install sets up and asks for (see
+   * {@link catalogTerms}) must be the catalog's, whatever the commit's own
+   * build did to the packer's output.
+   */
+  baseline?: CatalogManifest;
+}
+
+/**
+ * The parts of a catalog manifest that decide what an install sets up and
+ * what it asks the admin for: the secrets (by name), the Worker name rules,
+ * Email Routing, the health check, the app's own token permissions, the
+ * post-install notes, the plan and requirements, and resource shapes. A
+ * build from source replaces only the source, the tier, the version and
+ * the build command.
+ */
+export function catalogTerms(catalog: CatalogManifest): string {
+  return canonical({
+    slug: catalog.slug,
+    repo: catalog.repo,
+    secrets: catalog.secrets.map((s) => [s.name, s.generate]),
+    workerName: catalog.install.workerName,
+    fixedWorkerName: catalog.install.fixedWorkerName ?? false,
+    emailRouting: catalog.install.emailRouting ?? null,
+    healthPath: catalog.install.healthPath ?? null,
+    healthMode: catalog.install.healthMode ?? null,
+    tokenPermissions: catalog.tokenPermissions,
+    postInstall: catalog.postInstall,
+    plan: catalog.plan,
+    requires: catalog.requires,
+    resources: catalog.resources ?? null,
+  });
+}
+
+/**
+ * Verifies the `manifest.json` of a build from a repository, read through
+ * the `SANDBOX` binding: its sha256 is the digest the build reported, it is
+ * unsigned and valid, it is a sandbox tier build of the repository and
+ * commit that were built, under the version reported, and a catalog app
+ * built from source keeps its slug. Its catalog manifest was worked out by
+ * the sandbox Worker, not published by the catalog, so nothing else of it can
+ * be checked; the admin reviews it before installing. Throws `ArtifactError`.
+ */
+export async function verifySourceBuildManifest(
+  bytes: Uint8Array,
+  expected: ExpectedSourceBuild,
+): Promise<ArtifactManifest> {
+  const digest = await sha256Hex(bytes);
+  if (digest !== expected.digest) {
+    throw new ArtifactError(
+      `the built manifest.json's digest ${digest} does not match the one the build reported (${expected.digest})`,
+    );
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new ArtifactError("the built manifest.json is not valid JSON");
+  }
+  const parsed = artifactManifestSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new ArtifactError(
+      `the built manifest.json is not a valid artifact manifest: ${parsed.error.message}`,
+    );
+  }
+  const manifest = parsed.data;
+  const problems = [
+    manifest.keyId === "unsigned" ? null : `it names signing key "${manifest.keyId}"`,
+    manifest.app === manifest.catalog.slug
+      ? null
+      : `its app ${manifest.app} is not its catalog slug`,
+    expected.slug === undefined || manifest.app === expected.slug
+      ? null
+      : `it is "${manifest.app}", not "${expected.slug}"`,
+    manifest.version === expected.version ? null : `it is version ${manifest.version}`,
+    manifest.source.repo === expected.repo ? null : `it is from ${manifest.source.repo}`,
+    manifest.source.sha === expected.commit ? null : `it is from ${manifest.source.sha}`,
+    manifest.catalog.repo === expected.repo
+      ? null
+      : `its catalog manifest names ${manifest.catalog.repo}`,
+    manifest.catalog.install.tier === "sandbox" ? null : "it is not a sandbox tier build",
+    expected.baseline === undefined ||
+    catalogTerms(manifest.catalog) === catalogTerms(expected.baseline)
+      ? null
+      : "its catalog manifest is not the catalog's",
+  ].filter((p): p is string => p !== null);
+  if (problems.length > 0) {
+    throw new ArtifactError(
+      `the built manifest.json does not describe this build of ${expected.repo} at ${expected.commit.slice(0, 12)}: ${problems.join("; ")}`,
+    );
+  }
+  return manifest;
+}

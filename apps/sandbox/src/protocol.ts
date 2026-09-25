@@ -85,6 +85,19 @@ export async function selfManagedSandboxId(
 }
 
 /**
+ * The container of a build from a repository: `repo-<first 24 characters of
+ * the install id>-<10 hex of its sha256>`, lower case, at most 44 characters
+ * with an attempt suffix. The commit is known only once it is checked out,
+ * and the manager runs one build of an install at a time.
+ */
+export async function repositorySandboxId(installId: string, attempt: number = 1): Promise<string> {
+  return `repo-${installId.slice(0, 24)}-${await installHash(installId)}${attemptSuffix(attempt)}`.toLowerCase();
+}
+
+/** The most bytes of one file the detection of a repository reads. */
+export const DETECTION_READ_LIMIT = 256 * 1024;
+
+/**
  * The container a run starts over in when a new version of this Worker reset
  * its first one as it started (see restart.ts): `<id>-r`, at most 56
  * characters for the ids above.
@@ -162,6 +175,14 @@ export const BUILD_ENV: Readonly<Record<string, string>> = {
 /** The packer, run on the checkout without a second install; it writes an unsigned artifact. */
 export function packArgv(project: string): string[] {
   return ["appflare-pack", project, "--manifest", MANIFEST_INPUT, "--out", OUT_DIR, "--no-install"];
+}
+
+/**
+ * `appflare-pack inspect`: the name, plain vars and left-out sections of the
+ * project's wrangler config, read with wrangler's own reader.
+ */
+export function inspectArgv(project: string, wranglerConfig: string): string[] {
+  return ["appflare-pack", "inspect", project, "--config", wranglerConfig];
 }
 
 /** Minutes between two timestamps, one decimal. */

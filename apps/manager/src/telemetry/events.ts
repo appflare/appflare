@@ -113,7 +113,9 @@ export function tierName(buildKind: string | null | undefined): string | null {
 
 /**
  * Whether a slug may be sent: only an official catalog's slugs are, and when
- * the cached index is known, only slugs it lists.
+ * the cached index is known, only slugs it lists. Never an install's from a
+ * repository (`repository:<name>`): its name comes from the repository, and
+ * nothing about a repository is ever sent.
  */
 export function officialSlug(
   slug: string,
@@ -121,6 +123,7 @@ export function officialSlug(
   catalogVersions: ReadonlyMap<string, string> | null,
 ): string | null {
   if (!officialCatalog) return null;
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) return null;
   if (catalogVersions !== null && !catalogVersions.has(slug)) return null;
   return slug;
 }
@@ -248,7 +251,7 @@ function jobTier(row: JobRow, input: Record<string, unknown>): string | null {
   if (row.kind === "self_update" || row.kind === "self_rollback") return null;
   if (SANDBOX_WORKER_JOB_KINDS.has(row.kind)) return null;
   if (input.selfDeploying === true) return "self_deploying";
-  if (input.sandboxBuild === true) return "sandbox";
+  if (input.sandboxBuild === true || input.runKind === "build") return "sandbox";
   return tierName(row.buildKind);
 }
 
@@ -290,14 +293,19 @@ export function jobProperties(
     default:
       version = row.installVersion;
   }
-  // Nothing from a custom catalog: its versions stay in the manager too.
-  const custom = slug === "custom";
+  // Where the code comes from: the catalog, a repository, or a catalog app
+  // built from source. Only that kind is sent, never the repository.
+  const origin =
+    input.origin === "repository" || input.origin === "source" ? input.origin : "catalog";
+  // Nothing from a custom catalog or from source: those versions stay in the manager too.
+  const custom = slug === "custom" || origin !== "catalog";
   return {
     kind,
-    slug,
+    slug: origin === "repository" ? "custom" : slug,
     catalog_version: custom ? null : version,
     from_version: custom ? null : from,
     tier: jobTier(row, input),
+    origin,
     // `auto`: the cron started it (automatic updates); `manual`: an admin did.
     trigger: row.startedBy === "schedule" ? "auto" : "manual",
   };

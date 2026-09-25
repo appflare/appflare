@@ -3,12 +3,12 @@ import {
   type BuildFailure,
   type BuildKeys,
   type BuildOutcome,
-  type BuildRequest,
   type BuildStage,
   buildKeys,
   buildRequestSchema,
   buildStageSchema,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
+  type PackageManager,
   SANDBOX_BUCKET_BINDING,
   SANDBOX_PROTOCOL_VERSION,
   type SandboxInstanceType,
@@ -35,7 +35,7 @@ import { ContainerSteps, messageOf, type RunOptions, StepError } from "./steps";
 import { deleteUnder } from "./storage";
 import { checkZipFiles } from "./zip-check";
 
-function isBuildStage(step: string): step is BuildStage {
+export function isBuildStage(step: string): step is BuildStage {
   return buildStageSchema.safeParse(step).success;
 }
 
@@ -85,19 +85,37 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 }
 
 /** What the pack step produced, as the container saw it. */
-interface Packed {
+export interface Packed {
   zipName: string;
   zipSize: number;
   manifestSize: number;
 }
 
-class BuildSteps {
+/**
+ * What a build packs: the commit, the artifact version, and the catalog
+ * manifest handed to the packer (a catalog entry's, or one worked out from a
+ * repository's checkout; see repository.ts).
+ */
+export interface PackTarget {
+  repo: string;
+  sha: string;
+  version: string;
+  subdirectory?: string | undefined;
+  catalogManifest: {
+    slug: string;
+    source: { ref: string };
+    install: { packageManager: PackageManager; buildCommand?: string | undefined };
+  };
+}
+
+/** The steps of one build in its container: checkout and install, pack, upload, verify. */
+export class BuildSteps {
   readonly container: ContainerSteps<BuildStage>;
 
   constructor(
     private readonly sandbox: BuildSandbox,
     private readonly log: BuildLog,
-    private readonly request: BuildRequest,
+    private readonly request: PackTarget,
     private readonly keys: BuildKeys,
     private readonly bucket: R2Bucket,
   ) {

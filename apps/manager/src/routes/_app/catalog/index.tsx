@@ -48,6 +48,7 @@ import {
 import { AppIcon, PopularityLine } from "../../../components/catalog-media";
 import { FeaturedCard } from "../../../components/featured-card";
 import { PageHeader } from "../../../components/page-header";
+import { RepositoryBuildButton } from "../../../components/repository-build-dialog";
 import { Timestamp } from "../../../components/timestamp";
 
 /** A search parameter that is dropped, not an error, when a link carries a value this page does not know. */
@@ -121,7 +122,14 @@ function CatalogPage() {
       <PageHeader
         title="Catalog"
         description="Cloudflare-native apps you can install into this account."
-        actions={viewer.role === "admin" ? <RefreshButton /> : undefined}
+        actions={
+          viewer.role === "admin" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {catalog.repositoryBuilds && <RepositoryBuildButton />}
+              <RefreshButton />
+            </div>
+          ) : undefined
+        }
       />
       {catalog.featured !== null && (
         <FeaturedCard key={catalog.featured.id} item={catalog.featured} />

@@ -9,7 +9,7 @@ import {
   type WorkerBinding,
 } from "@appflare/schema";
 import { isUpdateAvailable } from "../../catalog/versions";
-import type { BuildKind, snapshots } from "../../db/schema";
+import type { BuildKind, InstallOrigin, snapshots } from "../../db/schema";
 import {
   type BindingPlan,
   type DurableObjectPlan,
@@ -406,6 +406,10 @@ export interface InstallState {
   build_kind?: BuildKind;
   sandbox_image?: string | null;
   built_at?: Date | null;
+  /** Where the code came from; absent means the catalog. */
+  origin?: InstallOrigin;
+  source_url?: string | null;
+  source_ref?: string | null;
   /**
    * The settings the admin changed (never secrets), null when none; a
    * rollback puts them back. Absent when the caller does not know them.
@@ -446,6 +450,9 @@ export function snapshotRow(input: SnapshotInput): typeof snapshots.$inferInsert
     build_kind: input.before.build_kind ?? "artifact",
     sandbox_image: input.before.sandbox_image ?? null,
     built_at: input.before.built_at ?? null,
+    origin: input.before.origin ?? "catalog",
+    source_url: input.before.source_url ?? null,
+    source_ref: input.before.source_ref ?? null,
     target_catalog_version: input.targetVersion,
     // "{}" for an install with no changed settings, so a rollback can tell
     // "none" from "not recorded" (null).

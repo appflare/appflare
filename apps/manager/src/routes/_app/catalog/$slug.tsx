@@ -35,6 +35,7 @@ import {
 } from "../../../catalog/requirement-checks";
 import { requirementSentence } from "../../../catalog/requirements";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
+import { BuildFromSourceCard } from "../../../components/build-from-source-card";
 import {
   InstallCheckBadge,
   PlanBadge,
@@ -203,6 +204,14 @@ function CatalogEntryPage() {
           cronTriggers={detail.cronTriggers}
           accountPlan={detail.accountPlan}
           planDetected={detail.capabilities.plan.source === "detected"}
+        />
+      )}
+      {catalog !== null && detail.sourceBuilds && (
+        <BuildFromSourceCard
+          slug={app.slug}
+          appName={app.name}
+          repo={catalog.repo}
+          pinnedRef={catalog.source.ref}
         />
       )}
     </>

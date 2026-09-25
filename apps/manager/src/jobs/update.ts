@@ -13,13 +13,16 @@ import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/cap
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { readCachedCatalogApp } from "../catalog/index.server";
 import { createDb } from "../db/client";
-import { installs, jobs, resources } from "../db/schema";
+import { installs, jobs, resources, source_builds } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
+import { appSlugLabel } from "../installs/source-review";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
 import {
+  type ArtifactOrigin,
   artifactOriginOf,
   cleanupSandboxBuildsPhase,
+  prebuiltBuildParams,
   resolveArtifactPhase,
 } from "./install/artifact-source";
 import { checkCronLimitPhase } from "./install/cron-limit";
@@ -123,6 +126,12 @@ export const updateJobParams = z.object({
   /** For a sandbox tier app: the admin confirmed the build's cost on Workers Paid. */
   buildConfirmed: z.boolean().optional(),
   /**
+   * An install from a repository (or a catalog app built from source): the
+   * rebuild the admin reviewed, which replaces the catalog as the source of
+   * the new version. `version` is its version.
+   */
+  prebuilt: prebuiltBuildParams.optional(),
+  /**
    * For a sandbox tier app, whose new version is known only once it is built:
    * the admin accepted that the update may deploy it without a preview check.
    * Without it the job refuses such a version before anything changes.
@@ -221,15 +230,26 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       if (install.status !== "updating") {
         throw new JobError(`the install is ${install.status}, not updating`);
       }
-      if (env.KV === undefined) throw new JobError("the catalog cache is not available");
-      const app = await readCachedCatalogApp(env.KV, install.app_slug);
-      const refusal = updateRefusal({
-        installedVersion: install.catalog_version,
-        targetVersion: params.version,
-        indexVersion: app?.version,
-      });
-      if (refusal !== null || app === null) {
-        throw new JobError(refusal ?? "the app is no longer in the catalog");
+      let origin: ArtifactOrigin;
+      if (params.prebuilt !== undefined) {
+        // A reviewed rebuild: the catalog has no say, and its version need
+        // not sort after the installed one (a commit's version need not).
+        if (install.origin === "catalog" && params.prebuilt.origin === "repository") {
+          throw new JobError("a catalog install cannot be replaced by a repository build");
+        }
+        origin = { kind: "prebuilt", build: params.prebuilt };
+      } else {
+        if (env.KV === undefined) throw new JobError("the catalog cache is not available");
+        const app = await readCachedCatalogApp(env.KV, install.app_slug);
+        const refusal = updateRefusal({
+          installedVersion: install.catalog_version,
+          targetVersion: params.version,
+          indexVersion: app?.version,
+        });
+        if (refusal !== null || app === null) {
+          throw new JobError(refusal ?? "the app is no longer in the catalog");
+        }
+        origin = artifactOriginOf(app, params.buildConfirmed === true);
       }
       const rows = await orm
         .select()
@@ -251,7 +271,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         throw new JobError("the Cloudflare API token is not configured; finish setup first");
       }
       log.info(
-        `Updating ${install.app_slug} from ${install.catalog_version} to ${params.version} on Worker "${install.worker_name}".`,
+        `Updating ${appSlugLabel(install.app_slug)} from ${install.catalog_version} to ${params.version} on Worker "${install.worker_name}".`,
       );
       const recorded: RecordedResource[] = rows.map((r) => ({
         id: r.id,
@@ -283,7 +303,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         userVars: parseVars(install.config_json),
         workersDev: install.workers_dev_enabled,
         servedDomain: install.served_domain,
-        origin: artifactOriginOf(app, params.buildConfirmed === true),
+        origin,
         resources: recorded,
       };
     });
@@ -326,7 +346,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       // A prebuilt version's preview question was asked when the update
       // started; a sandbox build answers it only now.
       if (
-        started.origin.kind === "sandbox" &&
+        started.origin.kind !== "release" &&
         path.skipPreview !== null &&
         params.confirmNoPreview !== true
       ) {
@@ -718,9 +738,16 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           .update(jobs)
           .set({ status: "succeeded", finished_at: at, error: null })
           .where(eq(jobs.id, params.jobId)),
+        // Builds waiting for review lost their objects to the clean-up above.
+        orm
+          .update(source_builds)
+          .set({ status: "discarded", updated_at: at })
+          .where(
+            and(eq(source_builds.install_id, params.installId), eq(source_builds.status, "built")),
+          ),
       ]);
       log.info(
-        `Updated ${started.slug} from ${started.fromVersion} to ${params.version} at ${url} (health: ${healthLabel(health)}).`,
+        `Updated ${appSlugLabel(started.slug)} from ${started.fromVersion} to ${params.version} at ${url} (health: ${healthLabel(health)}).`,
       );
       return {};
     });

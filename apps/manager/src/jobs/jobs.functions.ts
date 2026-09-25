@@ -67,6 +67,11 @@ export interface JobView {
   } | null;
   logs: JobLogRow[];
   /**
+   * A build from a repository or from source: what it is for (its review
+   * is at `/catalog/source/<job id>`). Null for other jobs.
+   */
+  sourceBuild: { purpose: string; origin: string } | null;
+  /**
    * The sandbox build the job is waiting on, read live from the sandbox
    * Worker while it runs (the job log gets its output when it ends); null
    * otherwise.
@@ -97,6 +102,19 @@ function splitData(json: string | null): { requests: string[]; detail: string | 
     };
   } catch {
     return { requests: [], detail: json };
+  }
+}
+
+/** What a `source_build` job's input says it builds for. */
+function sourceBuildOfInput(inputJson: string | null): { purpose: string; origin: string } {
+  try {
+    const input = JSON.parse(inputJson ?? "{}") as { purpose?: unknown; origin?: unknown };
+    return {
+      purpose: typeof input.purpose === "string" ? input.purpose : "install",
+      origin: typeof input.origin === "string" ? input.origin : "repository",
+    };
+  } catch {
+    return { purpose: "install", origin: "repository" };
   }
 }
 
@@ -131,14 +149,16 @@ export const getJob = createServerFn({ method: "GET" })
       db.select().from(job_logs).where(eq(job_logs.job_id, job.id)).orderBy(asc(job_logs.id)),
     ]);
     const building =
-      (job.status === "queued" || job.status === "running") && job.install_id !== null
+      job.status === "queued" || job.status === "running"
         ? sandboxBuildOfInput(job.input_json)
         : null;
+    // A build from a repository for a new install has no install row yet.
+    const buildInstallId = building?.installId ?? job.install_id;
     const build =
-      building === null || job.install_id === null
+      building === null || buildInstallId === null
         ? null
         : await readBuildProgress(sandboxBinding(env), {
-            installId: job.install_id,
+            installId: buildInstallId,
             version: building.version,
             kind: building.kind,
           });
@@ -146,6 +166,7 @@ export const getJob = createServerFn({ method: "GET" })
       id: job.id,
       kind: job.kind,
       build,
+      sourceBuild: job.kind === "source_build" ? sourceBuildOfInput(job.input_json) : null,
       restore: isRestoreJob(job),
       deleteRetained: isDeleteRetainedJob(job),
       status: job.status,

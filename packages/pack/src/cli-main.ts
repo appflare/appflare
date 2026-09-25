@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
-import { MAX_WORKER_MODULES } from "@appflare/schema";
+import { INSPECT_OUTPUT_PREFIX, MAX_WORKER_MODULES } from "@appflare/schema";
+import { inspectWranglerConfig } from "./inspect.ts";
 import { describeVersionOrigin, pack } from "./pack.ts";
 import { sign } from "./sign.ts";
 import { verify } from "./verify.ts";
@@ -10,6 +11,7 @@ Usage:
   appflare-pack <checkoutDir> --manifest <appflare.jsonc> --out <dir> [--key-id ID [--sign-key-env NAME]] [--no-install]
   appflare-pack sign <dir> --sign-key-env NAME [--key-id ID] [--force]
   appflare-pack verify <dir> [--public-key <base64>] [--require-signed | --hashes-only] [--max-modules <n>]
+  appflare-pack inspect <checkoutDir> --config <wrangler config>
 
 Pack options:
   --manifest <path>       catalog manifest (appflare.jsonc)      (required)
@@ -24,6 +26,10 @@ Sign options (signs <dir>/manifest.json as-is, writes manifest.sig, self-verifie
   --sign-key-env <NAME>   env var holding the private key            (required)
   --key-id <id>           must equal manifest.keyId
   --force                 overwrite an existing manifest.sig
+
+Inspect options (prints the config's name, plain vars and the sections the
+packer leaves out, as JSON after "${INSPECT_OUTPUT_PREFIX.trim()}"):
+  --config <path>         the wrangler config, relative to <checkoutDir> (required)
 
 Verify options:
   --public-key <base64>   raw Ed25519 public key to verify against
@@ -183,6 +189,29 @@ async function runSign(argv: string[]): Promise<number> {
   return 0;
 }
 
+async function runInspect(argv: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      config: { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  if (values.help) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+  const checkoutDir = positionals[0];
+  if (!checkoutDir || !values.config) {
+    process.stderr.write(`error: <checkoutDir> and --config are required\n\n${USAGE}`);
+    return 1;
+  }
+  const facts = inspectWranglerConfig(checkoutDir, values.config);
+  process.stdout.write(`${INSPECT_OUTPUT_PREFIX}${JSON.stringify(facts)}\n`);
+  return 0;
+}
+
 /** CLI entrypoint. Returns the process exit code. */
 export async function main(argv: string[]): Promise<number> {
   if (argv.length === 0) {
@@ -194,6 +223,9 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (argv[0] === "sign") {
     return runSign(argv.slice(1));
+  }
+  if (argv[0] === "inspect") {
+    return runInspect(argv.slice(1));
   }
   if (argv[0] === "-h" || argv[0] === "--help") {
     process.stdout.write(USAGE);

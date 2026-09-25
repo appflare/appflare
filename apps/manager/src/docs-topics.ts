@@ -31,6 +31,10 @@ export const DOCS_TOPICS = {
   appflareUpdateJob: "guides/update-appflare#update-from-settings",
   appflareRollback: "guides/update-appflare#roll-back",
   deployCopyCleanup: "start/deploy-button#clean-up-the-deploy-copy",
+  installFromRepository: "guides/install-from-a-repository",
+  sourceBuildReview: "guides/install-from-a-repository#review-the-build",
+  sourceBuildJob: "guides/install-from-a-repository#if-the-build-fails",
+  repositoryUpdates: "guides/install-from-a-repository#check-for-changes",
 } as const satisfies Record<string, string>;
 
 export type DocsTopic = keyof typeof DOCS_TOPICS;
@@ -73,6 +77,8 @@ export function jobFailureTopic(job: {
     case "sandbox_update":
     case "sandbox_disable":
       return "sandboxBuilds";
+    case "source_build":
+      return "sourceBuildJob";
     default:
       return null;
   }

@@ -27,21 +27,29 @@ export type RunKind = "build" | "installer";
 
 /**
  * The run a job waits on, from its recorded input: a build (`sandboxBuild:
- * true`, logged under the version) or an installer run (`sandboxRun`, the
- * run id it is logged under); null for others.
+ * true`, logged under the version), an installer run (`sandboxRun`, the run
+ * id it is logged under), or a build from a repository (`sandboxRun` with
+ * `runKind: "build"`, whose install may not exist yet: `buildInstallId`);
+ * null for others.
  */
 export function sandboxBuildOfInput(
   inputJson: string | null,
-): { version: string; kind: RunKind } | null {
+): { version: string; kind: RunKind; installId?: string } | null {
   if (inputJson === null) return null;
   try {
     const input = JSON.parse(inputJson) as {
       sandboxBuild?: unknown;
       sandboxRun?: unknown;
+      runKind?: unknown;
+      buildInstallId?: unknown;
       version?: unknown;
     };
     if (typeof input.sandboxRun === "string") {
-      return { version: input.sandboxRun, kind: "installer" };
+      return {
+        version: input.sandboxRun,
+        kind: input.runKind === "build" ? "build" : "installer",
+        ...(typeof input.buildInstallId === "string" ? { installId: input.buildInstallId } : {}),
+      };
     }
     return input.sandboxBuild === true && typeof input.version === "string"
       ? { version: input.version, kind: "build" }

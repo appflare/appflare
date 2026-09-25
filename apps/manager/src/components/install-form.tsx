@@ -33,6 +33,7 @@ import {
 } from "../installs/install-vars";
 import { startInstall } from "../installs/installs.functions";
 import { workersDevUrl } from "../installs/post-install";
+import { installSourceBuild } from "../installs/source-builds.functions";
 import { CronTriggersField } from "./cron-triggers-field";
 import { EmailRoutingFields } from "./email-routing-fields";
 import { InstallDomainFields } from "./install-domain-fields";
@@ -92,6 +93,7 @@ export function InstallForm({
   cronTriggers = 0,
   accountPlan = "free",
   planDetected = false,
+  reviewedBuildId = null,
 }: {
   catalog: CatalogManifest;
   /** One per catalog var (`installVarFields`). */
@@ -121,6 +123,12 @@ export function InstallForm({
   accountPlan?: AccountPlan;
   /** The plan was detected, so remembering one for the account would not apply. */
   planDetected?: boolean;
+  /**
+   * The review of a build from a repository (or from source): the form
+   * installs that build, whose manifest `catalog` is, instead of the catalog's
+   * release; null for a catalog install.
+   */
+  reviewedBuildId?: string | null;
 }) {
   const jobStarted = useJobStarted();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
@@ -201,24 +209,28 @@ export function InstallForm({
     setPending(true);
     setError(null);
     try {
-      const { jobId } = await startInstall({
-        data: {
-          slug: catalog.slug,
-          workerName,
-          ...(displayName.trim() === "" ? {} : { displayName }),
-          secrets,
-          vars: submittedVars(),
-          paidConfirmed,
-          ...(!accountPaid && paidTicked && rememberPaid ? { rememberPaidPlan: true } : {}),
-          requirementsConfirmed,
-          ...(confirmsCost === null ? {} : { buildConfirmed }),
-          ...(installer === null ? {} : { appToken: appToken.trim() }),
-          ...(receivesEmail && emailZoneId !== null
-            ? { emailRouting: { zoneId: emailZoneId } }
-            : {}),
-          ...(installer === null && domain.value !== null ? { domain: domain.value } : {}),
-        },
-      });
+      const fields = {
+        workerName,
+        ...(displayName.trim() === "" ? {} : { displayName }),
+        secrets,
+        vars: submittedVars(),
+        paidConfirmed,
+        ...(!accountPaid && paidTicked && rememberPaid ? { rememberPaidPlan: true } : {}),
+        requirementsConfirmed,
+        ...(receivesEmail && emailZoneId !== null ? { emailRouting: { zoneId: emailZoneId } } : {}),
+        ...(installer === null && domain.value !== null ? { domain: domain.value } : {}),
+      };
+      const { jobId } =
+        reviewedBuildId !== null
+          ? await installSourceBuild({ data: { ...fields, buildId: reviewedBuildId } })
+          : await startInstall({
+              data: {
+                ...fields,
+                slug: catalog.slug,
+                ...(confirmsCost === null ? {} : { buildConfirmed }),
+                ...(installer === null ? {} : { appToken: appToken.trim() }),
+              },
+            });
       await jobStarted(jobId, "Install started");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start the install.");

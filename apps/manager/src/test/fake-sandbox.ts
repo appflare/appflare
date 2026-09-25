@@ -7,6 +7,10 @@ import {
   buildRequestSchema,
   type CatalogManifest,
   type IndexApp,
+  type RepositoryBuildOutcome,
+  type RepositoryBuildRequest,
+  repositoryBuildRequestSchema,
+  SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
   type SandboxInfo,
@@ -44,6 +48,11 @@ export interface FakeSandboxOptions {
   outcome?: (request: { installId: string; version: string }) => BuildOutcome;
   /** Retryable failures (the container went away) before a build succeeds. */
   retryableFailures?: number;
+  /**
+   * Replaces the answer of a build from a repository (the default stores
+   * the fixture as that build, from the fixture's commit).
+   */
+  repositoryOutcome?: (request: RepositoryBuildRequest) => RepositoryBuildOutcome;
   /** Bytes served as manifest.json instead of the fixture's (a tampered bucket). */
   manifestBytes?: Uint8Array;
   info?: SandboxInfo;
@@ -190,7 +199,7 @@ export function fakeSandbox(
           protocol: SANDBOX_PROTOCOL_VERSION,
           sandboxVersion: "0.4.0",
           image: SANDBOX_IMAGE,
-          features: [SANDBOX_FEATURE_SELF_DEPLOYING],
+          features: [SANDBOX_FEATURE_SELF_DEPLOYING, SANDBOX_FEATURE_REPOSITORY],
         }),
         ...(versionId === undefined ? {} : { versionId }),
       });
@@ -249,6 +258,52 @@ export function fakeSandbox(
         manifestKey: keys.manifest,
         artifactKey: keys.artifact,
       } satisfies BuildOutcome;
+    },
+    async buildRepository(input) {
+      requests.push(structuredClone(input));
+      const request = repositoryBuildRequestSchema.parse(structuredClone(input));
+      if (failuresLeft > 0) {
+        failuresLeft -= 1;
+        return {
+          ok: false,
+          ...base,
+          stage: "checkout",
+          message: "the container could not start",
+          retryable: true,
+          exitCode: null,
+        } satisfies RepositoryBuildOutcome;
+      }
+      if (opts.repositoryOutcome !== undefined) {
+        return structuredClone(opts.repositoryOutcome(request));
+      }
+      if (fixture === null) throw new Error("this fake sandbox Worker has nothing to build");
+      const { version, app } = fixture.manifest;
+      const keys = buildKeys(request.installId, version, app);
+      objects.set(keys.manifest, opts.manifestBytes ?? fixture.manifestBytes);
+      objects.set(keys.artifact, fixture.zip);
+      return {
+        ok: true,
+        ...base,
+        logKey: `builds/${request.installId}/${request.runId}/log.txt`,
+        image: SANDBOX_IMAGE,
+        installId: request.installId,
+        version,
+        digest: fixture.digest,
+        size: fixture.zip.byteLength,
+        manifestKey: keys.manifest,
+        artifactKey: keys.artifact,
+        commit: fixture.manifest.source.sha,
+        ref: request.ref ?? "main",
+        committedAt: "2026-09-20T10:00:00+00:00",
+        detected: {
+          packageManager: fixture.manifest.catalog.install.packageManager,
+          wranglerConfig: fixture.manifest.catalog.install.wranglerConfig,
+          buildCommand: fixture.manifest.catalog.install.buildCommand ?? null,
+          buildCommandFrom: "package.json",
+          secretsFrom: ".dev.vars.example",
+          unsupported: [],
+        },
+      } satisfies RepositoryBuildOutcome;
     },
     async progress(input) {
       progressCalls.push(structuredClone(input));

@@ -30,6 +30,7 @@ import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/use
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiDangerRemoveAppflareRouteImport } from './routes/api/danger/remove-appflare'
 import { Route as ApiDangerRotateAuthSecretRouteImport } from './routes/api/danger/rotate-auth-secret'
+import { Route as AppCatalogSourceBuildIdRouteImport } from './routes/_app/catalog/source.$buildId'
 import { Route as ApiCatalogAvatarHandleRouteImport } from './routes/api/catalog/avatar/$handle'
 import { Route as ApiCatalogMediaDigestRouteImport } from './routes/api/catalog/media/$digest'
 
@@ -140,6 +141,11 @@ const ApiDangerRotateAuthSecretRoute =
     path: '/api/danger/rotate-auth-secret',
     getParentRoute: () => rootRouteImport,
   } as any)
+const AppCatalogSourceBuildIdRoute = AppCatalogSourceBuildIdRouteImport.update({
+  id: '/catalog/source/$buildId',
+  path: '/catalog/source/$buildId',
+  getParentRoute: () => AppRoute,
+} as any)
 const ApiCatalogAvatarHandleRoute = ApiCatalogAvatarHandleRouteImport.update({
   id: '/api/catalog/avatar/$handle',
   path: '/api/catalog/avatar/$handle',
@@ -172,6 +178,7 @@ export interface FileRoutesByFullPath {
   '/catalog/': typeof AppCatalogIndexRoute
   '/jobs/': typeof AppJobsIndexRoute
   '/settings/': typeof AppSettingsIndexRoute
+  '/catalog/source/$buildId': typeof AppCatalogSourceBuildIdRoute
   '/api/catalog/avatar/$handle': typeof ApiCatalogAvatarHandleRoute
   '/api/catalog/media/$digest': typeof ApiCatalogMediaDigestRoute
 }
@@ -196,6 +203,7 @@ export interface FileRoutesByTo {
   '/catalog': typeof AppCatalogIndexRoute
   '/jobs': typeof AppJobsIndexRoute
   '/settings': typeof AppSettingsIndexRoute
+  '/catalog/source/$buildId': typeof AppCatalogSourceBuildIdRoute
   '/api/catalog/avatar/$handle': typeof ApiCatalogAvatarHandleRoute
   '/api/catalog/media/$digest': typeof ApiCatalogMediaDigestRoute
 }
@@ -222,6 +230,7 @@ export interface FileRoutesById {
   '/_app/catalog/': typeof AppCatalogIndexRoute
   '/_app/jobs/': typeof AppJobsIndexRoute
   '/_app/settings/': typeof AppSettingsIndexRoute
+  '/_app/catalog/source/$buildId': typeof AppCatalogSourceBuildIdRoute
   '/api/catalog/avatar/$handle': typeof ApiCatalogAvatarHandleRoute
   '/api/catalog/media/$digest': typeof ApiCatalogMediaDigestRoute
 }
@@ -248,6 +257,7 @@ export interface FileRouteTypes {
     | '/catalog/'
     | '/jobs/'
     | '/settings/'
+    | '/catalog/source/$buildId'
     | '/api/catalog/avatar/$handle'
     | '/api/catalog/media/$digest'
   fileRoutesByTo: FileRoutesByTo
@@ -272,6 +282,7 @@ export interface FileRouteTypes {
     | '/catalog'
     | '/jobs'
     | '/settings'
+    | '/catalog/source/$buildId'
     | '/api/catalog/avatar/$handle'
     | '/api/catalog/media/$digest'
   id:
@@ -297,6 +308,7 @@ export interface FileRouteTypes {
     | '/_app/catalog/'
     | '/_app/jobs/'
     | '/_app/settings/'
+    | '/_app/catalog/source/$buildId'
     | '/api/catalog/avatar/$handle'
     | '/api/catalog/media/$digest'
   fileRoutesById: FileRoutesById
@@ -462,6 +474,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDangerRotateAuthSecretRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/catalog/source/$buildId': {
+      id: '/_app/catalog/source/$buildId'
+      path: '/catalog/source/$buildId'
+      fullPath: '/catalog/source/$buildId'
+      preLoaderRoute: typeof AppCatalogSourceBuildIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/api/catalog/avatar/$handle': {
       id: '/api/catalog/avatar/$handle'
       path: '/api/catalog/avatar/$handle'
@@ -494,6 +513,7 @@ interface AppRouteChildren {
   AppCatalogIndexRoute: typeof AppCatalogIndexRoute
   AppJobsIndexRoute: typeof AppJobsIndexRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
+  AppCatalogSourceBuildIdRoute: typeof AppCatalogSourceBuildIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -511,6 +531,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppCatalogIndexRoute: AppCatalogIndexRoute,
   AppJobsIndexRoute: AppJobsIndexRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,
+  AppCatalogSourceBuildIdRoute: AppCatalogSourceBuildIdRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

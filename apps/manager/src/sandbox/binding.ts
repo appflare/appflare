@@ -4,6 +4,9 @@ import {
   type BuildProgress,
   buildOutcomeSchema,
   buildProgressSchema,
+  type RepositoryBuildOutcome,
+  repositoryBuildOutcomeSchema,
+  SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
   SANDBOX_URL_ORIGIN,
@@ -38,6 +41,8 @@ export interface SandboxBuildsBinding {
   fetch(input: string, init?: RequestInit): Promise<Response>;
   info(): Promise<unknown>;
   build(request: unknown): Promise<unknown>;
+  /** Builds from a repository (sandbox Workers whose `info().features` lists it). */
+  buildRepository(request: unknown): Promise<unknown>;
   progress(input: unknown): Promise<unknown>;
   cleanup(input: unknown): Promise<unknown>;
   /** Self-deploying tier (sandbox Workers whose `info().features` lists it). */
@@ -100,6 +105,22 @@ export function parseBuildOutcome(value: unknown): BuildOutcome {
   if (!parsed.success) {
     throw new SandboxProtocolError(
       `the sandbox Worker answered build() with an unexpected shape (${z.prettifyError(parsed.error).replace(/\s+/g, " ")})`,
+    );
+  }
+  return parsed.data;
+}
+
+/** Whether the sandbox Worker builds from a repository (`buildRepository`). */
+export function buildsFromRepository(info: SandboxInfo): boolean {
+  return info.features?.includes(SANDBOX_FEATURE_REPOSITORY) === true;
+}
+
+/** `buildRepository()`'s answer, checked. */
+export function parseRepositoryBuildOutcome(value: unknown): RepositoryBuildOutcome {
+  const parsed = repositoryBuildOutcomeSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new SandboxProtocolError(
+      `the sandbox Worker answered buildRepository() with an unexpected shape (${z.prettifyError(parsed.error).replace(/\s+/g, " ")})`,
     );
   }
   return parsed.data;

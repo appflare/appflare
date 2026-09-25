@@ -18,6 +18,7 @@ export {
   resolveWranglerConfig,
   type WranglerConfigTarget,
 } from "./config-redirect.ts";
+export { inspectWranglerConfig, wranglerFacts } from "./inspect.ts";
 export { parseJsonc } from "./jsonc.ts";
 export type { PackOptions, PackResult } from "./pack.ts";
 export { describeVersionOrigin, pack, packWarnings } from "./pack.ts";

@@ -44,6 +44,12 @@ export interface AutoUpdateCandidate {
   installId: string;
   status: string;
   buildKind: string;
+  /**
+   * Where the install's code comes from (`installs.origin`); absent means
+   * the catalog. An install from a repository is never in the catalog, and
+   * one built from source at another commit waits for its admin.
+   */
+  origin?: string;
   choice: AutoUpdateChoice;
   /** The installed catalog version. */
   version: string;
@@ -88,11 +94,20 @@ export function unattendedUpdateBlock(
   c: AutoUpdateCandidate,
 ): NoUpdateReason | NeedsAdminReason | null {
   if (c.status !== "installed") return "not-installed";
-  if (c.latest === null) return "not-in-catalog";
+  // Nothing the catalog publishes is an update of a repository's code.
+  if (c.latest === null || c.origin === "repository") return "not-in-catalog";
   if (!isUpdateAvailable(c.version, c.latest.version)) return "up-to-date";
   // Building in the account, or running the app's own installer, costs
-  // money on Workers Paid; the admin approves every run.
-  if (c.buildKind !== "artifact" || c.latest.tier !== "artifact") return "needs-approval";
+  // money on Workers Paid; the admin approves every run. An app built from
+  // source at a commit the admin chose moves back to the catalog's release
+  // only when the admin says so.
+  if (
+    c.buildKind !== "artifact" ||
+    c.latest.tier !== "artifact" ||
+    (c.origin !== undefined && c.origin !== "catalog")
+  ) {
+    return "needs-approval";
+  }
   if (c.triedBefore === "failed") return "failed-before";
   if (c.triedBefore === "rolled-back") return "rolled-back";
   return null;

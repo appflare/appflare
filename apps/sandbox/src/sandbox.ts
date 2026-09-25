@@ -8,10 +8,13 @@ import { getSandbox, Sandbox as SandboxBase } from "@cloudflare/sandbox";
  * itself cannot run outside Cloudflare.
  */
 export interface BuildSandbox {
-  /** Shallow-clones `repoUrl` at `branch` (a branch or tag) into `targetDir`; throws on failure. */
+  /**
+   * Shallow-clones `repoUrl` at `branch` (a branch or tag; the default
+   * branch when absent) into `targetDir`; throws on failure.
+   */
   gitCheckout(
     repoUrl: string,
-    options: { branch: string; targetDir: string; depth: number; cloneTimeoutMs: number },
+    options: { branch?: string; targetDir: string; depth: number; cloneTimeoutMs: number },
   ): Promise<void>;
   /** Runs a command line to completion, streaming its output to `onOutput`. */
   exec(command: string, options: ExecOptions): Promise<ExecOutcome>;
@@ -90,7 +93,9 @@ export function openBuildSandbox(
     async gitCheckout(repoUrl, options) {
       const result = await sandbox.gitCheckout(repoUrl, options);
       if (!result.success) {
-        throw new Error(`git clone of ${repoUrl} at ${options.branch} failed`);
+        throw new Error(
+          `git clone of ${repoUrl} at ${options.branch ?? "its default branch"} failed`,
+        );
       }
     },
     async exec(command, options) {

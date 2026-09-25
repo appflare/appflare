@@ -5,11 +5,14 @@ import {
   buildRequestSchema,
   type CatalogManifest,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
+  githubRepositorySchema,
+  gitRefSchema,
   gitShaSchema,
   type IndexApp,
   type IndexArtifacts,
   type IndexBuild,
   indexAppArtifact,
+  repositoryUrl,
   SANDBOX_PROTOCOL_VERSION,
   type SigningKey,
   sandboxInstanceTypeSchema,
@@ -18,7 +21,7 @@ import {
 } from "@appflare/schema";
 import { z } from "zod";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../../catalog/app-manifest.server";
-import type { BuildKind } from "../../db/schema";
+import type { BuildKind, InstallOrigin } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import {
   parseBuildOutcome,
@@ -27,7 +30,11 @@ import {
   sandboxFetch,
   sandboxInfo,
 } from "../../sandbox/binding";
-import { verifyBuiltManifest, verifyCatalogManifest } from "../../sandbox/verify";
+import {
+  verifyBuiltManifest,
+  verifyCatalogManifest,
+  verifySourceBuildManifest,
+} from "../../sandbox/verify";
 import type { JobEnv, StepConfig } from "../run-job";
 import { awaitSandboxSettledPhase } from "../sandbox-settle";
 import { JobError, type JobSteps } from "../steps";
@@ -53,18 +60,57 @@ export const sandboxBuildParams = z.object({
 });
 export type SandboxBuildParams = z.infer<typeof sandboxBuildParams>;
 
-/** How the running code was built, as `installs` and `snapshots` record it. */
+/**
+ * A build an admin reviewed before installing or updating: a repository, or
+ * a catalog app built from source at another commit, which a `source_build`
+ * job built in the sandbox Worker and recorded in `source_builds`. The job
+ * payload carries what that job verified; the install or update reads the
+ * artifact through the `SANDBOX` binding and checks it again against it.
+ */
+export const prebuiltBuildParams = z.object({
+  /** The `source_builds` row (and its job). */
+  buildId: z.string().min(1).max(64),
+  origin: z.enum(["repository", "source"]),
+  /** `owner/repo` on GitHub. */
+  repo: githubRepositorySchema,
+  /** The branch, tag or commit it was built from. */
+  ref: gitRefSchema,
+  commit: gitShaSchema,
+  /** The artifact's app: its catalog manifest's slug. */
+  app: z.string().min(1).max(64),
+  version: z.string().min(1).max(128),
+  digest: sha256Schema,
+  manifestKey: z.string().min(1),
+  artifactKey: z.string().min(1),
+  image: z.string().min(1),
+  builtAt: z.iso.datetime(),
+});
+export type PrebuiltBuildParams = z.infer<typeof prebuiltBuildParams>;
+
+/**
+ * How the running code was built and where it came from, as `installs` and
+ * `snapshots` record it.
+ */
 export interface Provenance {
   build_kind: BuildKind;
   /** The container image of a sandbox build. */
   sandbox_image: string | null;
   built_at: Date | null;
+  origin: InstallOrigin;
+  /** Not from the catalog: the repository's URL. */
+  source_url: string | null;
+  /** Not from the catalog: the branch, tag or commit it was built from. */
+  source_ref: string | null;
 }
+
+/** From the catalog: none of the fields that describe another source. */
+const CATALOG_ORIGIN = { origin: "catalog", source_url: null, source_ref: null } as const;
 
 export const SIGNED_PROVENANCE: Provenance = {
   build_kind: "artifact",
   sandbox_image: null,
   built_at: null,
+  ...CATALOG_ORIGIN,
 };
 
 export interface ArtifactSource {
@@ -80,7 +126,8 @@ export interface ArtifactSource {
 
 export type ArtifactOrigin =
   | { kind: "release"; artifacts: IndexArtifacts; digest: string }
-  | { kind: "sandbox"; build: SandboxBuildParams };
+  | { kind: "sandbox"; build: SandboxBuildParams }
+  | { kind: "prebuilt"; build: PrebuiltBuildParams };
 
 /** A sandbox build as the job payload carries it, from the index entry's `build`. */
 export function sandboxBuildOf(build: IndexBuild, costConfirmed: boolean): SandboxBuildParams {
@@ -162,7 +209,91 @@ export async function resolveArtifactPhase(
       provenance: SIGNED_PROVENANCE,
     };
   }
+  if (origin.kind === "prebuilt") {
+    return prebuiltArtifactPhase(steps, env, { ...target, build: origin.build });
+  }
   return buildInSandboxPhase(steps, env, { ...target, build: origin.build });
+}
+
+/**
+ * A reviewed build from a repository (or from source): nothing is built
+ * again. Its `manifest.json` is read through the `SANDBOX` binding and must
+ * still be exactly what the build job verified (same sha256), under this
+ * install's object prefix; the units then read the zip the same way.
+ */
+async function prebuiltArtifactPhase(
+  steps: JobSteps,
+  env: JobEnv,
+  target: { installId: string; version: string; build: PrebuiltBuildParams },
+): Promise<ArtifactSource> {
+  const { build } = target;
+  const readThroughSandbox = sandboxFetch(env);
+  const manifestUrl = sandboxObjectUrl(build.manifestKey);
+  await steps.run("verify built manifest", async ({ log }) => {
+    if (sandboxBinding(env) === undefined) {
+      throw new JobError(
+        "this app was built in the account's sandbox Worker, and Appflare is not connected to it any more; enable sandbox builds (Settings, Sandbox builds) and try again",
+      );
+    }
+    if (build.version !== target.version) {
+      throw new JobError(`the build is version ${build.version}, not ${target.version}`);
+    }
+    const expected = buildKeys(target.installId, build.version, build.app);
+    if (build.manifestKey !== expected.manifest || build.artifactKey !== expected.artifact) {
+      throw new JobError("the build is stored under another install's keys");
+    }
+    let file: Awaited<ReturnType<typeof fetchWhole>>;
+    try {
+      file = await fetchWhole(readThroughSandbox, manifestUrl);
+    } catch (error) {
+      throw new JobError(
+        `the build's manifest.json could not be read from the sandbox Worker's bucket (${error instanceof Error ? error.message : String(error)}); build it again`,
+      );
+    }
+    const manifest = await verifySourceBuildManifest(file.bytes, {
+      repo: build.repo,
+      commit: build.commit,
+      version: build.version,
+      digest: build.digest,
+      slug: build.app,
+    });
+    const key = manifestCacheKey(build.digest);
+    if (env.KV !== undefined && (await env.KV.get(key)) === null) {
+      await env.KV.put(key, new TextDecoder().decode(file.bytes), {
+        expirationTtl: MANIFEST_TTL_SECONDS,
+      });
+    }
+    log.info(
+      `Verified the reviewed build of ${manifest.app} ${manifest.version}: unsigned, from ${build.repo} at ${build.commit.slice(0, 12)}, digest unchanged since the build.`,
+    );
+    return {};
+  });
+  steps.current = "load built manifest";
+  const cached = await env.KV?.get(manifestCacheKey(build.digest));
+  let manifestText: string;
+  if (cached != null && (await sha256Hex(new TextEncoder().encode(cached))) === build.digest) {
+    manifestText = cached;
+  } else {
+    const fetched = await fetchWhole(readThroughSandbox, manifestUrl);
+    if ((await sha256Hex(fetched.bytes)) !== build.digest) {
+      throw new JobError("the built manifest.json changed since it was verified");
+    }
+    manifestText = new TextDecoder().decode(fetched.bytes);
+  }
+  return {
+    zipUrl: sandboxObjectUrl(build.artifactKey),
+    host: { kind: "sandbox" },
+    digest: build.digest,
+    manifestText,
+    provenance: {
+      build_kind: "sandbox",
+      sandbox_image: build.image,
+      built_at: new Date(build.builtAt),
+      origin: build.origin,
+      source_url: repositoryUrl(build.repo),
+      source_ref: build.ref,
+    },
+  };
 }
 
 async function buildInSandboxPhase(
@@ -328,6 +459,7 @@ async function buildInSandboxPhase(
       build_kind: "sandbox",
       sandbox_image: built.image,
       built_at: new Date(built.builtAt),
+      ...CATALOG_ORIGIN,
     },
   };
 }
