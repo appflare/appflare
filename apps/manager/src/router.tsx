@@ -1,6 +1,8 @@
 import { Loader } from "@cloudflare/kumo";
 import { createRouter } from "@tanstack/react-router";
+import { NotFound } from "./components/not-found";
 import { RouteError } from "./components/route-error";
+import { NOT_FOUND_MODE } from "./router-not-found";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter() {
@@ -16,6 +18,8 @@ export function getRouter() {
       </div>
     ),
     defaultErrorComponent: RouteError,
+    notFoundMode: NOT_FOUND_MODE,
+    defaultNotFoundComponent: NotFound,
   });
 }
 

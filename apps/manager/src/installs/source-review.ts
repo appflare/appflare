@@ -44,6 +44,9 @@ export function unsupportedSectionProblem(section: string): string {
   return `The wrangler config declares ${label} (${section}), which Appflare cannot install yet.`;
 }
 
+/** The catalog `requires` value a sandbox tier manifest lists for its build. */
+const BUILD_CONTAINER_REQUIREMENT = "containers";
+
 /** Catalog `requires` values that follow from the services an app uses. */
 const SERVICE_REQUIREMENTS: ReadonlyArray<readonly [string, string]> = [
   ["r2", "r2"],
@@ -60,11 +63,12 @@ export interface SourceReview {
   /** Every binding of the Worker, as the manifest records it (vars included). */
   bindings: Array<{ type: string; name: string }>;
   crons: string[];
-  /** The services it uses (the catalog's primitive ids). */
+  /** The services the built Worker uses (the catalog's primitive ids). */
   services: string[];
   /**
-   * What the account must offer: the manifest's own `requires`, and those
-   * its bindings imply (an R2 bucket needs R2, and so on).
+   * What the account must offer to run it: the manifest's own `requires`
+   * but the container it was built in, and those its bindings imply (an R2
+   * bucket needs R2, and so on).
    */
   requires: string[];
   /** Why installing it would be refused; empty when it can be installed. */
@@ -109,10 +113,16 @@ export function reviewBuild(
       );
     }
   }
-  const services = appServices(manifest.catalog, manifest.worker).ids;
+  // A build's manifest is a sandbox tier one, whose `requires: containers`
+  // (always there for a repository's) is the container the build ran in, not
+  // something the built Worker runs: an installed Worker cannot declare
+  // Containers (the packer refuses the section). What it runs on comes from
+  // the built Worker's bindings, and any other requirement the catalog lists.
+  const declared = manifest.catalog.requires.filter((r) => r !== BUILD_CONTAINER_REQUIREMENT);
+  const services = appServices({ ...manifest.catalog, requires: declared }, manifest.worker).ids;
   const requires = [
     ...new Set([
-      ...manifest.catalog.requires,
+      ...declared,
       ...SERVICE_REQUIREMENTS.filter(([service]) => (services as string[]).includes(service)).map(
         ([, requirement]) => requirement,
       ),

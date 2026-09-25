@@ -249,6 +249,12 @@ describe("enable sandbox builds", () => {
       },
     ]);
     expect(r.logs.at(-1)).toMatch(/Sandbox builds are on: the sandbox Worker 0\.1\.2/);
+    // Deploying the manager's own Worker is the last thing the job does: the
+    // step that connects it also records the job, and no step follows it.
+    const managerDeploy = r.world.order.indexOf(`POST /workers/scripts/${MANAGER}/deployments`);
+    expect(managerDeploy).toBeGreaterThan(-1);
+    expect(r.world.order.slice(managerDeploy + 1)).toEqual([]);
+    expect(r.step.names.at(-1)).toBe("connect Appflare to the sandbox Worker");
     // The job's own invocation stays well within the free plan's 50 subrequests.
     expect(r.own).toBeLessThan(30);
   });
@@ -455,14 +461,38 @@ describe("disable sandbox builds", () => {
     expect(world.state.worker).toBeNull();
     expect(world.state.apps).toEqual([]);
     expect(world.state.buckets.size).toBe(0);
-    // The manager was disconnected (its new version deployed) before the Worker was deleted.
+    // Everything else went first, while the manager still bound the Worker
+    // (hence the forced delete); deploying the manager's new version was the
+    // last thing the job did, in its last step, which also recorded the job.
     const managerDeploy = world.order.indexOf(`POST /workers/scripts/${MANAGER}/deployments`);
     const workerDelete = world.order.indexOf("DELETE /workers/scripts/appflare-sandbox");
-    expect(managerDeploy).toBeGreaterThan(-1);
-    expect(workerDelete).toBeGreaterThan(managerDeploy);
+    const bucketDelete = world.order.indexOf("DELETE /r2/buckets/appflare-builds");
+    expect(workerDelete).toBeGreaterThan(-1);
+    expect(bucketDelete).toBeGreaterThan(workerDelete);
+    expect(managerDeploy).toBeGreaterThan(bucketDelete);
+    expect(world.order.slice(managerDeploy + 1)).toEqual([]);
+    expect(r.step.names.at(-1)).toBe("disconnect Appflare from the sandbox Worker");
     expect(r.logs.at(-1)).toBe(
       "Sandbox builds are off, and nothing of them is left in the account.",
     );
+  });
+
+  it("converges when the last step runs again after the manager's deploy cut it off", async () => {
+    const release = await sandboxRelease(VERSION);
+    const world = fakeSandboxAccount(release, enabledAt(VERSION), {
+      previews: [healthy],
+      ...connected,
+    });
+    const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
+    const first = await runJob(world, params, release);
+    expect(first.error).toBeNull();
+    // Running every step again covers the replay, where only the unsaved last
+    // one runs: each finds its work done and changes nothing.
+    const again = await runJob(world, params, release);
+    expect(again.error).toBeNull();
+    expect(again.job?.status).toBe("succeeded");
+    expect(world.manager.state.versionPatches).toHaveLength(1);
+    expect(world.state.deletes).toEqual([{ force: true }]);
   });
 
   it("finishes what an earlier run left, and needs nothing to be there", async () => {

@@ -23,14 +23,24 @@ import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
  * needs the sandbox Worker. Each removal first checks the thing is still
  * there, so a retried or repeated run converges.
  *
- * 1. Disconnect the manager: a new version of its Worker without `SANDBOX`,
- *    checked on its preview, then deployed.
- * 2. Delete the sandbox Worker with `?force=true`: Cloudflare refuses a
- *    plain delete (code 10142) while any version of another Worker, even
- *    one that never served, binds it, and the manager's earlier versions do.
- *    Its Durable Object namespaces go with it.
- * 3. Delete both container applications, which outlive the Worker.
- * 4. Empty the build bucket, a page per job unit, and delete it.
+ * 1. Delete the sandbox Worker with `?force=true`: Cloudflare refuses a
+ *    plain delete (code 10142) while any version of another Worker binds it,
+ *    and the manager's serving version still does. Its Durable Object
+ *    namespaces go with it.
+ * 2. Delete both container applications, which outlive the Worker.
+ * 3. Empty the build bucket, a page per job unit, and delete it.
+ * 4. Disconnect the manager: a new version of its Worker without `SANDBOX`,
+ *    checked on its preview, then deployed; the job is recorded as done in
+ *    the same step.
+ *
+ * The disconnect is last because it deploys the manager's own Worker, which
+ * this Workflow instance runs on: a step run after such a deploy was seen to
+ * hang for about five minutes and fail with an internal Workflows error
+ * before its retry went through. With nothing after it, a cut-off step just
+ * runs again, finds no binding, and records the job once more. Until then
+ * the manager keeps a binding to a Worker that is gone, and a call through
+ * it fails much as it would with no binding; disabling is refused while any
+ * install needs the sandbox Worker, so no app depends on it meanwhile.
  */
 
 export const sandboxDisableJobParams = z.object({
@@ -72,23 +82,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
     });
     steps.setAccountId(started.accountId);
 
-    // 1. The manager first, so it never serves a binding to a missing Worker.
-    const subdomain = await lookupSubdomainPhase(steps);
-    await run("disconnect Appflare from the sandbox Worker", async ({ log }) => {
-      const result = settleUnit(
-        await steps.units.api.setSandboxBinding({
-          accountId: steps.accountId(),
-          workerName: started.workerName,
-          subdomain,
-          currentVersion: env.APPFLARE_VERSION ?? params.managerVersion,
-          connect: false,
-        }),
-        log,
-      );
-      return { versionId: result.versionId };
-    });
-
-    // 2. The Worker.
+    // 1. The Worker, while the manager still binds it (hence `force`).
     await run(`delete Worker ${SANDBOX_WORKER_NAME}`, async ({ log, cf }) => {
       const api = cf();
       if (!(await api.workers.listScripts()).some((s) => s.id === SANDBOX_WORKER_NAME)) {
@@ -110,7 +104,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    // 3. The container applications.
+    // 2. The container applications.
     for (const container of SANDBOX_CONTAINERS) {
       await run(`delete container application ${container.name}`, async ({ log, cf }) => {
         const api = cf();
@@ -148,7 +142,7 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
       });
     }
 
-    // 4. The bucket: emptied a page per unit, then deleted.
+    // 3. The bucket: emptied a page per unit, then deleted.
     const pageLimit = R2_MAX_PAGES_PER_RUN;
     const perPage = R2_OBJECTS_PER_STEP;
     let previousFirst: string | null = null;
@@ -200,7 +194,19 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    await run("record", async ({ log, orm }) => {
+    // 4. The manager's own binding, last: see the module comment.
+    const subdomain = await lookupSubdomainPhase(steps);
+    await run("disconnect Appflare from the sandbox Worker", async ({ log, orm }) => {
+      settleUnit(
+        await steps.units.api.setSandboxBinding({
+          accountId: steps.accountId(),
+          workerName: started.workerName,
+          subdomain,
+          currentVersion: env.APPFLARE_VERSION ?? params.managerVersion,
+          connect: false,
+        }),
+        log,
+      );
       await orm
         .update(jobs)
         .set({ status: "succeeded", finished_at: new Date(now()) })

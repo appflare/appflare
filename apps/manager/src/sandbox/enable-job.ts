@@ -62,7 +62,9 @@ import { SANDBOX_CONTAINER_WAIT } from "./units";
  * 8. Each container application: create it, or patch it and roll it out to
  *    the release's image.
  * 9. Wait until the applications are ready for builds (job units poll them).
- * 10. Connect the manager (its `SANDBOX` binding), unless it already is.
+ * 10. Connect the manager (its `SANDBOX` binding), unless it already is, and
+ *     record the job as done. Always the last step: it may deploy the
+ *     manager's own Worker, which this Workflow instance runs on.
  *
  * A failure leaves what was made in place: enabling again continues, and
  * "Disable sandbox builds" removes it.
@@ -414,13 +416,17 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
       waits = waits.filter((w) => pending.has(w.id));
     }
 
-    // 10. The manager's own binding. Deploying the manager's new version can
-    // cut this instance off before the step's result is saved (seen live: it
-    // resumed on the new version about three minutes later); the step then
-    // runs again, finds the binding on the serving version and changes nothing.
+    // 10. The manager's own binding, with the job recorded as done in the same
+    // step so that no step runs after the manager's own Worker is deployed.
+    // That deploy can cut this instance off before the step's result is saved
+    // (seen live: it resumed on the new version about three minutes later,
+    // and a step run after such a deploy hung for five minutes and failed
+    // with an internal Workflows error before its retry went through). The
+    // step then runs again, finds the binding on the serving version, changes
+    // nothing and records the job once more.
     const subdomain = await lookupSubdomainPhase(steps);
-    await run("connect Appflare to the sandbox Worker", async ({ log }) => {
-      const result = settleUnit(
+    await run("connect Appflare to the sandbox Worker", async ({ log, orm }) => {
+      settleUnit(
         await steps.units.api.setSandboxBinding({
           accountId: steps.accountId(),
           workerName: started.workerName,
@@ -430,10 +436,6 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
         }),
         log,
       );
-      return { versionId: result.versionId };
-    });
-
-    await run("record", async ({ log, orm }) => {
       await orm
         .update(jobs)
         .set({ status: "succeeded", finished_at: new Date(now()) })

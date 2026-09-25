@@ -64,6 +64,31 @@ describe("reviewBuild", () => {
     expect(review.requires).toEqual(["r2", "workers-ai"]);
   });
 
+  it("does not list Containers for the container the build ran in", () => {
+    // A repository's manifest always requires Containers, for its build.
+    const built = manifest([{ type: "kv_namespace", name: "CUT_KV" }]);
+    const review = reviewBuild(
+      { ...built, catalog: { ...built.catalog, plan: "paid", requires: ["containers"] } },
+      null,
+      "cut",
+    );
+    expect(review.services).toEqual(["kv"]);
+    expect(review.requires).toEqual([]);
+  });
+
+  it("keeps the catalog's other requirements for a catalog app built from source", () => {
+    const built = manifest([{ type: "r2_bucket", name: "FILES" }]);
+    const review = reviewBuild(
+      { ...built, catalog: { ...built.catalog, requires: ["containers", "zone"] } },
+      null,
+      "cut",
+      "source",
+    );
+    expect(review.services).toEqual(expect.arrayContaining(["r2", "zone"]));
+    expect(review.services).not.toContain("containers");
+    expect(review.requires).toEqual(["zone", "r2"]);
+  });
+
   it("refuses what the install would refuse, in the install plan's own words", () => {
     const bindings: WorkerBinding[] = [
       { type: "hyperdrive", name: "PG" },
