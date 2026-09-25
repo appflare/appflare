@@ -401,6 +401,10 @@
           "generate": {
             "default": false,
             "type": "boolean"
+          },
+          "optional": {
+            "type": "boolean",
+            "description": "The app works without this secret. The install form leaves it unset unless the admin chooses \"Set now\", updates never ask for it, and the app's settings can remove it. Not allowed on self-deploying entries."
           }
         },
         "required": [
@@ -429,11 +433,47 @@
           },
           "default": {
             "type": "string",
-            "description": "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL (`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and `{{workerName}}` its Worker name, filled in on every install and update. `{{workerUrl}}` is always the workers.dev address, even when a custom domain is attached. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{workerUrl}}\"]`. Without `default`, the form starts with the wrangler config's value."
+            "description": "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL (`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and `{{workerName}}` its Worker name, filled in on every install and update. `{{workerUrl}}` is always the workers.dev address, even when a custom domain is attached. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{workerUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
           },
           "required": {
             "default": false,
             "type": "boolean"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "select"
+            ],
+            "description": "`\"text\"` (the default) takes any value; `\"select\"` takes one of `options`, shown as choices (cards for up to 4, a dropdown beyond)."
+          },
+          "options": {
+            "minItems": 2,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "What the Worker gets. For a var the app reads as JSON, JSON text such as `true` or `404`."
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "description": "What the form shows for this choice."
+                }
+              },
+              "required": [
+                "value",
+                "label"
+              ],
+              "additionalProperties": false
+            },
+            "description": "The values a `type: \"select\"` var can take, in the order the form shows them. Required for, and only allowed with, `select`. Values must be distinct."
           }
         },
         "required": [
@@ -441,7 +481,38 @@
           "label",
           "required"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "type",
+                  "options"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "select"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "options"
+                  ]
+                },
+                "properties": {
+                  "type": {
+                    "not": {
+                      "const": "select"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
       }
     },
     "postInstall": {
@@ -563,5 +634,42 @@
     "postInstall",
     "tokenPermissions"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "anyOf": [
+        {
+          "properties": {
+            "install": {
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "secrets": {
+              "items": {
+                "not": {
+                  "required": [
+                    "optional"
+                  ],
+                  "properties": {
+                    "optional": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
 }

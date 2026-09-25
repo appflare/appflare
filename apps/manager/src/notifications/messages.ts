@@ -49,6 +49,14 @@ export const notificationFactsSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("uninstall_finished"), app: appRef, outcome, jobId: z.string() }),
   z.object({ type: z.literal("health_failing"), app: appRef }),
   z.object({ type: z.literal("manager_update_available"), from: z.string(), to: z.string() }),
+  z.object({ type: z.literal("domain_active"), app: appRef, hostname: z.string() }),
+  z.object({
+    type: z.literal("domain_failed"),
+    app: appRef,
+    hostname: z.string(),
+    /** Appflare's own sentence for the state Cloudflare reports (never Cloudflare's error text). */
+    reason: z.string(),
+  }),
   z.object({ type: z.literal("test") }),
 ]);
 export type NotificationFacts = z.infer<typeof notificationFactsSchema>;
@@ -138,6 +146,22 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
         title: "Appflare update available",
         lines: [`Appflare ${facts.to} is available. This manager runs ${facts.from}.`],
         url: managerLink(managerUrl, "/settings/appflare-updates"),
+      };
+    case "domain_active":
+      return {
+        title: `Domain active: ${facts.hostname}`,
+        lines: [
+          `${facts.hostname} now serves ${worker(facts.app)}. Cloudflare validated it and issued its certificate.`,
+        ],
+        url: managerLink(managerUrl, `/apps/${facts.app.installId}?tab=domains`),
+      };
+    case "domain_failed":
+      return {
+        title: `Domain failed: ${facts.hostname}`,
+        lines: [
+          `${facts.hostname}, an external domain of ${worker(facts.app)}, does not serve the app. ${facts.reason}`,
+        ],
+        url: managerLink(managerUrl, `/apps/${facts.app.installId}?tab=domains`),
       };
     case "test":
       return {

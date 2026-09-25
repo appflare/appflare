@@ -6,12 +6,15 @@ import {
   authorsFromRepo,
   catalogAuthors,
   catalogManifestSchema,
+  catalogVarOptions,
   DEFAULT_EXPECTED_BUILD_MINUTES,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
   EMAIL_ROUTING_MAX_RULES,
   hasFixedWorkerName,
   hasPlaceholder,
   installTierSchema,
+  isOptionalSecret,
+  MAX_VAR_OPTIONS,
   renderJsonPlaceholders,
   renderPlaceholders,
   runsInSandbox,
@@ -545,5 +548,126 @@ describe("authors", () => {
   it("derive no GitHub link from an owner GitHub would not accept", () => {
     expect(authorsFromRepo("not_a.login/repo")).toEqual([{ name: "not_a.login" }]);
     expect(authorsFromRepo("/repo")).toEqual([]);
+  });
+});
+
+describe("secrets[].optional", () => {
+  const selfDeploying = {
+    tier: "self-deploying",
+    selfDeploying: {
+      tool: "alchemy",
+      deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
+      destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
+      stateStore: "cloudflare",
+      workers: ["app-{{stage}}"],
+    },
+  };
+  const withSecret = (secret: Record<string, unknown>, install: Record<string, unknown> = {}) =>
+    catalogManifestSchema.safeParse({
+      ...validManifest,
+      plan: install.tier === "self-deploying" ? "paid" : validManifest.plan,
+      install: { ...validManifest.install, ...install },
+      secrets: [{ name: "SMTP_PASSWORD", label: "SMTP password", ...secret }],
+    });
+
+  it("is optional, so manifests without it keep their parsed shape", () => {
+    const parsed = catalogManifestSchema.parse(validManifest);
+    expect("optional" in (parsed.secrets[0] ?? {})).toBe(false);
+    expect(isOptionalSecret(parsed.secrets[0] ?? {})).toBe(false);
+  });
+
+  it("marks a secret the app works without", () => {
+    const parsed = withSecret({ optional: true });
+    expect(parsed.success).toBe(true);
+    expect(isOptionalSecret(parsed.data?.secrets[0] ?? {})).toBe(true);
+    expect(withSecret({ optional: "yes" }).success).toBe(false);
+  });
+
+  it("is refused on self-deploying entries, whose installer expects every secret", () => {
+    const refused = withSecret({ optional: true }, selfDeploying);
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["secrets", 0, "optional"]);
+    expect(withSecret({ optional: false }, selfDeploying).success).toBe(true);
+    expect(withSecret({}, selfDeploying).success).toBe(true);
+  });
+
+  it("states the self-deploying rule in the JSON Schema", () => {
+    const schema = z.toJSONSchema(catalogManifestSchema);
+    expect(JSON.stringify(schema.allOf)).toContain('"optional":{"const":true}');
+    const secrets = schema.properties?.secrets;
+    const items = typeof secrets === "object" ? secrets.items : undefined;
+    expect(items).toMatchObject({ properties: { optional: { type: "boolean" } } });
+  });
+});
+
+describe("vars[].type select", () => {
+  const withVar = (v: Record<string, unknown>) =>
+    catalogManifestSchema.safeParse({
+      ...validManifest,
+      vars: [{ name: "HOME_PAGE", label: "Home page", ...v }],
+    });
+  const options = [
+    { value: "default", label: "Landing page" },
+    { value: "404", label: "Not found" },
+    { value: "admin", label: "Admin sign-in" },
+  ];
+
+  it("is optional, so vars without it keep their parsed shape", () => {
+    const parsed = withVar({});
+    expect(parsed.success).toBe(true);
+    const v = parsed.data?.vars[0] ?? {};
+    expect("type" in v || "options" in v).toBe(false);
+    expect(catalogVarOptions(parsed.data?.vars[0] ?? {})).toBeNull();
+  });
+
+  it("takes options and a default that is one of them", () => {
+    const parsed = withVar({ type: "select", options, default: "404" });
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+    expect(catalogVarOptions(parsed.data?.vars[0] ?? {})).toEqual(options);
+    expect(withVar({ type: "text", default: "anything" }).success).toBe(true);
+  });
+
+  it("needs options for select, and allows them only there", () => {
+    expect(withVar({ type: "select" }).error?.issues[0]?.message).toMatch(/needs options/);
+    expect(withVar({ options }).error?.issues[0]?.message).toMatch(/only allowed with/);
+    expect(withVar({ type: "text", options }).success).toBe(false);
+  });
+
+  it("refuses a default outside the options, repeated values, and too few or too many", () => {
+    const outside = withVar({ type: "select", options, default: "home" });
+    expect(outside.error?.issues[0]?.path).toEqual(["vars", 0, "default"]);
+    const repeated = withVar({
+      type: "select",
+      options: [...options, { value: "404", label: "Again" }],
+    });
+    expect(repeated.error?.issues[0]?.path).toEqual(["vars", 0, "options", 3, "value"]);
+    expect(withVar({ type: "select", options: options.slice(0, 1) }).success).toBe(false);
+    const many = Array.from({ length: MAX_VAR_OPTIONS + 1 }, (_, i) => ({
+      value: `v${i}`,
+      label: `V ${i}`,
+    }));
+    expect(withVar({ type: "select", options: many }).success).toBe(false);
+    expect(withVar({ type: "select", options: many.slice(1) }).success).toBe(true);
+    const empty = [...options, { value: "", label: "Empty" }];
+    expect(withVar({ type: "select", options: empty }).success).toBe(false);
+  });
+
+  it("states the pairing of select and options in the JSON Schema", () => {
+    const vars = z.toJSONSchema(catalogManifestSchema).properties?.vars;
+    const items = typeof vars === "object" ? vars.items : undefined;
+    expect(items).toMatchObject({
+      allOf: [
+        {
+          anyOf: [
+            { required: ["type", "options"], properties: { type: { const: "select" } } },
+            { not: { required: ["options"] } },
+          ],
+        },
+      ],
+      properties: {
+        type: { enum: ["text", "select"] },
+        options: { minItems: 2, maxItems: MAX_VAR_OPTIONS },
+      },
+    });
   });
 });

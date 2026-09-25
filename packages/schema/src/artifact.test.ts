@@ -265,6 +265,29 @@ describe("json var bindings", () => {
       expect.stringMatching(/^The default of the var EMAIL_ADDRESSES is not valid JSON/),
     ]);
   });
+
+  it("needs each option of a JSON select var to be JSON text", () => {
+    const bindings = [
+      { type: "json", name: "EMAIL_ADDRESSES", json: [] },
+      { type: "plain_text", name: "GREETING", text: "Hi" },
+    ];
+    const select = (name: string, values: string[]) => ({
+      name,
+      label: name,
+      required: false,
+      type: "select" as const,
+      options: values.map((value) => ({ value, label: value })),
+    });
+    expect(
+      catalogVarProblems(bindings, [
+        select("EMAIL_ADDRESSES", ['["a@example.com"]', "[]"]),
+        select("GREETING", ["Hi", "Hello"]),
+      ]),
+    ).toEqual([]);
+    expect(catalogVarProblems(bindings, [select("EMAIL_ADDRESSES", ["[]", "inbox"])])).toEqual([
+      expect.stringMatching(/^The option "inbox" of the var EMAIL_ADDRESSES is not valid JSON/),
+    ]);
+  });
 });
 
 describe("service bindings", () => {

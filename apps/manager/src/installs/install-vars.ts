@@ -1,5 +1,8 @@
 import {
   type ArtifactManifest,
+  type CatalogVar,
+  type CatalogVarOption,
+  catalogVarOptions,
   isJsonVarBinding,
   type JsonValue,
   jsonTextProblem,
@@ -30,9 +33,21 @@ export interface InstallVarField {
   /**
    * What the field starts with, placeholders not filled in yet: the catalog
    * default, else the wrangler config's value (as JSON text for a JSON var),
-   * else nothing.
+   * else nothing. For a choice, the wrangler config's value counts only when
+   * it is one of the choices.
    */
   shownDefault: string;
+  /** The values it can take (a catalog `type: "select"` var); null for any value. */
+  options: CatalogVarOption[] | null;
+}
+
+/** A choice with at most this many options is shown as cards; one with more as a dropdown. */
+export const MAX_CARD_OPTIONS = 4;
+
+/** Whether `value` is one of the choices of a `type: "select"` var (always true for other vars). */
+export function isVarOption(v: Pick<CatalogVar, "type" | "options">, value: string): boolean {
+  const options = catalogVarOptions(v);
+  return options === null || options.some((o) => o.value === value);
 }
 
 /** A var as the Worker upload sends it. */
@@ -76,13 +91,15 @@ export function installVarFields(manifest: VarManifest): InstallVarField[] {
     const kind: VarKind = own?.type === "json" ? "json" : "text";
     const ownText =
       own === undefined ? "" : own.type === "json" ? JSON.stringify(own.json) : own.text;
+    const options = catalogVarOptions(v);
     return {
       name: v.name,
       label: v.label,
       ...(v.help === undefined ? {} : { help: v.help }),
       required: v.required,
       kind,
-      shownDefault: v.default ?? ownText,
+      shownDefault: v.default ?? (isVarOption(v, ownText) ? ownText : ""),
+      options: options === null ? null : [...options],
     };
   });
 }
@@ -92,8 +109,15 @@ export function installVarFields(manifest: VarManifest): InstallVarField[] {
  * when it can. Empty means "use the default" and is judged by
  * {@link missingRequiredVar}.
  */
-export function varValueProblem(field: InstallVarField, value: string): string | null {
-  if (field.kind !== "json" || value.trim().length === 0) return null;
+export function varValueProblem(
+  field: Pick<InstallVarField, "name" | "label" | "kind" | "options">,
+  value: string,
+): string | null {
+  if (value.trim().length === 0) return null;
+  if (field.options !== null && !field.options.some((o) => o.value === value)) {
+    return `${field.label} (${field.name}) must be one of: ${field.options.map((o) => o.label).join(", ")}.`;
+  }
+  if (field.kind !== "json") return null;
   const problem = jsonTextProblem(value);
   return problem === null ? null : `${field.label} (${field.name}) ${problem}.`;
 }
@@ -127,7 +151,16 @@ export function resolveVars(
   const warnings: string[] = [];
   const jsonNames = new Set([...vars.values()].filter((v) => v.type === "json").map((v) => v.name));
   for (const v of manifest.catalog.vars) {
-    const entered = userVars[v.name];
+    let entered = userVars[v.name];
+    if (entered !== undefined && entered.length > 0 && !isVarOption(v, entered)) {
+      // A choice stored for another version, which offered other choices.
+      const instead =
+        v.default !== undefined ? "the catalog default" : "the wrangler config's value";
+      warnings.push(
+        `The stored value of ${v.name} is not one of the choices this version of the app offers; the Worker gets ${instead} instead.`,
+      );
+      entered = undefined;
+    }
     const candidates = [
       ...(entered !== undefined && entered.length > 0 ? [{ text: entered, entered: true }] : []),
       ...(v.default !== undefined ? [{ text: v.default, entered: false }] : []),

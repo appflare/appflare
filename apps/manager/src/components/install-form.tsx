@@ -4,7 +4,17 @@ import {
   type IndexBuild,
   renderPlaceholders,
 } from "@appflare/schema";
-import { Banner, Button, Input, InputArea, InputGroup, LayerCard, Text } from "@cloudflare/kumo";
+import {
+  Banner,
+  Button,
+  Input,
+  InputArea,
+  InputGroup,
+  LayerCard,
+  Radio,
+  Select,
+  Text,
+} from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useState } from "react";
 import type { AccountPlan } from "../account/plan";
@@ -17,6 +27,7 @@ import {
 } from "../installs/install-input";
 import {
   type InstallVarField,
+  MAX_CARD_OPTIONS,
   missingRequiredVar,
   varValueProblem,
 } from "../installs/install-vars";
@@ -27,7 +38,12 @@ import { EmailRoutingFields } from "./email-routing-fields";
 import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
-import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
+import {
+  initialSecretValues,
+  SecretFields,
+  secretsComplete,
+  withSecretValue,
+} from "./secret-fields";
 import { tooltipContent } from "./tooltip";
 import {
   WorkersPaidConfirmation,
@@ -42,7 +58,8 @@ import {
  * the app's account requirements is a checkbox in the page's prerequisites
  * callout; it arrives here as `requirementsConfirmed`. `generate: true`
  * secrets are prefilled with a random value the admin can copy now; it is
- * shown only here. An app that receives email (`install.emailRouting`) also
+ * shown only here. Optional secrets stay unset unless the admin turns on
+ * "Set now". An app that receives email (`install.emailRouting`) also
  * asks for a zone and previews what the install sets up there. An app with
  * cron triggers says how many it uses against the free plan's 5 per account;
  * if it does not need Workers Paid itself, the Workers Paid confirmation is
@@ -308,7 +325,7 @@ export function InstallForm({
                 <SecretFields
                   secrets={catalog.secrets}
                   values={secrets}
-                  onChange={(name, value) => setSecrets((s) => ({ ...s, [name]: value }))}
+                  onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
                   after="the install"
                 />
               </div>
@@ -394,8 +411,10 @@ export function InstallForm({
 }
 
 /**
- * One setting: a text field, or a JSON field checked as the admin types.
- * Shared with the Settings section of the app page.
+ * One setting: a text field, a JSON field checked as the admin types, or for
+ * a catalog `type: "select"` var its choices (cards for up to
+ * {@link MAX_CARD_OPTIONS}, a dropdown beyond). Shared with the Settings
+ * section of the app page.
  */
 export function VarField({
   field,
@@ -416,6 +435,38 @@ export function VarField({
       : undefined,
   ].filter((note) => note !== undefined);
   const description = notes.length > 0 ? notes.join(" ") : undefined;
+  const problem = varValueProblem(field, value) ?? undefined;
+  if (field.options !== null && field.options.length <= MAX_CARD_OPTIONS) {
+    return (
+      <Radio.Group
+        legend={`${field.label} (${field.name})`}
+        description={description}
+        value={value}
+        onValueChange={(next: string) => onChange(next)}
+        orientation="horizontal"
+        appearance="card"
+        error={problem}
+      >
+        {field.options.map((option) => (
+          <Radio.Item key={option.value} value={option.value} label={option.label} />
+        ))}
+      </Radio.Group>
+    );
+  }
+  if (field.options !== null) {
+    return (
+      <Select
+        label={`${field.label} (${field.name})`}
+        placeholder="Choose one"
+        value={value === "" ? null : value}
+        onValueChange={(next) => onChange(typeof next === "string" ? next : "")}
+        items={field.options.map((option) => ({ value: option.value, label: option.label }))}
+        required={field.required}
+        description={description}
+        error={problem}
+      />
+    );
+  }
   if (field.kind === "json") {
     return (
       <InputArea
@@ -430,7 +481,7 @@ export function VarField({
         className="font-mono"
         onChange={(e) => onChange(e.currentTarget.value)}
         description={description}
-        error={varValueProblem(field, value) ?? undefined}
+        error={problem}
       />
     );
   }

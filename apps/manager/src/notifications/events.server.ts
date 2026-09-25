@@ -23,6 +23,8 @@ import type { NotificationEvent } from "./schema";
  *   health check answers with a server error (once per episode: it opens
  *   when the scheduled check gets two server errors in a row, and ends only
  *   when a check finds the app serving or the app is gone).
+ * - The cron's check of external domains (installs/external-domains-poll.server.ts):
+ *   a domain went active, or failed. Once per change of the domain's state.
  *
  * A condition is emitted on every run while it holds; the dedupe key keeps
  * it one event, and a channel added later still hears about it once.

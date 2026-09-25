@@ -181,7 +181,10 @@ the install: the log says why, and you add the domain later on the app's page.
 ### Pending states
 
 The domain's card shows Cloudflare's state, read again every 10 seconds while the
-page is open. **Check now** reads it at once.
+page is open. **Check now** reads it at once. While the page is closed, the scheduled
+run reads every external domain every 30 minutes, and a
+[notification channel](/guides/notifications/#domain-active-and-domain-failed) can
+tell you when one goes active or fails.
 
 | Badge | Meaning |
 | --- | --- |
@@ -190,6 +193,7 @@ page is open. **Check now** reads it at once.
 | **Active** | Hostname and certificate are active. Appflare sends one request to the app through the domain and shows the answer. |
 | **Missing at Cloudflare** | Cloudflare has no custom hostname for it any more, for example after it was deleted in the dashboard. Remove it and add it again. |
 | **blocked**, **moved**, **deleted**, **pending deletion** | Cloudflare's own state for a hostname that will not serve. |
+| **certificate validation timed out**, **certificate issuance timed out**, **certificate expired**, ... | Cloudflare gave up on the domain's certificate, usually because the records were not in place in time. Remove the domain and add it again once they are. |
 
 ### What visitors see meanwhile
 

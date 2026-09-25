@@ -1,5 +1,5 @@
 import type { EnvBinding } from "@appflare/cf-api";
-import type { CatalogSecret } from "@appflare/schema";
+import { type CatalogSecret, isOptionalSecret } from "@appflare/schema";
 import { z } from "zod";
 import { parseEmailRouteCfId } from "../../installs/email-routing";
 
@@ -36,8 +36,14 @@ export interface SecretSlot {
   help?: string;
   /** A fresh value is generated in the form (the catalog's `generate: true`). */
   generate: boolean;
-  /** The installed version declares it: it can be replaced, never removed. */
+  /** The installed version declares it. */
   declared: boolean;
+  /**
+   * The app works without it: the version declares it `optional: true`, or
+   * does not declare it at all. Only such a secret can be removed; one the
+   * version needs can be replaced, never removed.
+   */
+  optional: boolean;
   /** The Worker has it (Appflare recorded setting it). */
   present: boolean;
 }
@@ -45,8 +51,8 @@ export interface SecretSlot {
 /**
  * The install's secrets: every one the installed version declares, in the
  * catalog's order, then those the Worker still has that the version no longer
- * declares (left from an earlier version). Only the latter are optional, so
- * only they can be removed.
+ * declares (left from an earlier version). The latter, and those the version
+ * declares optional, can be removed.
  */
 export function secretSlots(
   declared: readonly CatalogSecret[],
@@ -59,13 +65,21 @@ export function secretSlots(
     ...(s.help === undefined ? {} : { help: s.help }),
     generate: s.generate,
     declared: true,
+    optional: isOptionalSecret(s),
     present: recorded.has(s.name),
   }));
   const names = new Set(declared.map((s) => s.name));
   for (const name of recordedNames) {
     if (names.has(name)) continue;
     names.add(name);
-    slots.push({ name, label: name, generate: false, declared: false, present: true });
+    slots.push({
+      name,
+      label: name,
+      generate: false,
+      declared: false,
+      optional: true,
+      present: true,
+    });
   }
   return slots;
 }
@@ -74,7 +88,8 @@ export function secretSlots(
  * Why these secret changes cannot be made, one sentence each; empty when they
  * can. A secret may get a new value when the version declares it or the
  * Worker has it; it may be removed only when the Worker has it and the
- * version does not declare it; a value may not be empty.
+ * version does not need it (declares it optional, or not at all); a value may
+ * not be empty.
  */
 export function secretChangeProblems(
   changes: SecretChanges,
@@ -97,7 +112,7 @@ export function secretChangeProblems(
       problems.push(`${name} cannot be replaced and removed at once.`);
     } else if (slot === undefined || !slot.present) {
       problems.push(`The app has no secret ${name} to remove.`);
-    } else if (slot.declared) {
+    } else if (!slot.optional) {
       problems.push(
         `${slot.label} (${name}) is required by the installed version; it can be replaced, not removed.`,
       );

@@ -61,6 +61,23 @@ describe("renderMessage", () => {
       "Appflare 0.6.0 is available. This manager runs 0.5.0.",
       `${M}/settings/appflare-updates`,
     ],
+    [
+      { type: "domain_active", app, hostname: "go.customer.test" },
+      "Domain active: go.customer.test",
+      "go.customer.test now serves Links for Ada (Worker my-links). Cloudflare validated it and issued its certificate.",
+      `${M}/apps/i1?tab=domains`,
+    ],
+    [
+      {
+        type: "domain_failed",
+        app,
+        hostname: "go.customer.test",
+        reason: "Cloudflare reports the hostname as blocked.",
+      },
+      "Domain failed: go.customer.test",
+      "go.customer.test, an external domain of Links for Ada (Worker my-links), does not serve the app. Cloudflare reports the hostname as blocked.",
+      `${M}/apps/i1?tab=domains`,
+    ],
   ];
 
   it.each(cases)("renders %j", (facts, title, line, url) => {

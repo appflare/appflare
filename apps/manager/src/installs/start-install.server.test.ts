@@ -289,6 +289,53 @@ describe("startInstallCore", () => {
     expect(resolved.secrets).toEqual({ ADMIN_PASSWORD: "p", API_KEY: "k" });
   });
 
+  it("leaves an optional secret unset when it has no value", async () => {
+    const f = await buildArtifactFixture({
+      catalog: {
+        secrets: [
+          { name: "API_KEY", label: "API key", generate: false },
+          { name: "SMTP_PASSWORD", label: "SMTP password", generate: false, optional: true },
+        ],
+      },
+    });
+    expect(
+      resolveInstallInput(f.manifest, input({ secrets: { API_KEY: "k", SMTP_PASSWORD: "" } }))
+        .secrets,
+    ).toEqual({ API_KEY: "k" });
+    expect(
+      resolveInstallInput(f.manifest, input({ secrets: { API_KEY: "k", SMTP_PASSWORD: "s" } }))
+        .secrets,
+    ).toEqual({ API_KEY: "k", SMTP_PASSWORD: "s" });
+    expect(() =>
+      resolveInstallInput(f.manifest, input({ secrets: { SMTP_PASSWORD: "s" } })),
+    ).toThrow("API key (API_KEY) is required.");
+  });
+
+  it("takes only one of a select var's choices", async () => {
+    const f = await buildArtifactFixture({
+      catalog: {
+        vars: [
+          {
+            name: "HOME_PAGE",
+            label: "Home page",
+            required: false,
+            type: "select",
+            options: [
+              { value: "default", label: "Landing page" },
+              { value: "404", label: "Not found" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(resolveInstallInput(f.manifest, input({ vars: { HOME_PAGE: "404" } })).vars).toEqual({
+      HOME_PAGE: "404",
+    });
+    expect(() => resolveInstallInput(f.manifest, input({ vars: { HOME_PAGE: "admin" } }))).toThrow(
+      "Home page (HOME_PAGE) must be one of: Landing page, Not found.",
+    );
+  });
+
   it("rejects undeclared names and enforces required vars and the paid confirmation", async () => {
     const f = await buildArtifactFixture({
       catalog: {

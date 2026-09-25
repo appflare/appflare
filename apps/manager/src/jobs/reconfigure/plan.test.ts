@@ -15,6 +15,7 @@ import {
 const DECLARED = [
   { name: "ADMIN_PASSWORD", label: "Admin password", help: "Sign in.", generate: true },
   { name: "API_KEY", label: "API key", generate: false },
+  { name: "SMTP_PASSWORD", label: "SMTP password", generate: false, optional: true },
 ];
 
 describe("secret slots", () => {
@@ -26,22 +27,54 @@ describe("secret slots", () => {
         help: "Sign in.",
         generate: true,
         declared: true,
+        optional: false,
         present: true,
       },
-      { name: "API_KEY", label: "API key", generate: false, declared: true, present: false },
-      { name: "OLD_TOKEN", label: "OLD_TOKEN", generate: false, declared: false, present: true },
+      {
+        name: "API_KEY",
+        label: "API key",
+        generate: false,
+        declared: true,
+        optional: false,
+        present: false,
+      },
+      {
+        name: "SMTP_PASSWORD",
+        label: "SMTP password",
+        generate: false,
+        declared: true,
+        optional: true,
+        present: false,
+      },
+      {
+        name: "OLD_TOKEN",
+        label: "OLD_TOKEN",
+        generate: false,
+        declared: false,
+        optional: true,
+        present: true,
+      },
     ]);
   });
 });
 
 describe("secret change problems", () => {
-  const slots = secretSlots(DECLARED, ["ADMIN_PASSWORD", "API_KEY", "OLD_TOKEN"]);
+  const slots = secretSlots(DECLARED, ["ADMIN_PASSWORD", "API_KEY", "SMTP_PASSWORD", "OLD_TOKEN"]);
 
-  it("allows replacing any secret and removing one the version no longer declares", () => {
+  it("allows replacing any secret and removing one the version does not need", () => {
     expect(
       secretChangeProblems({ set: { ADMIN_PASSWORD: "x", OLD_TOKEN: "y" }, unset: [] }, slots),
     ).toEqual([]);
     expect(secretChangeProblems({ set: {}, unset: ["OLD_TOKEN"] }, slots)).toEqual([]);
+    expect(secretChangeProblems({ set: {}, unset: ["SMTP_PASSWORD"] }, slots)).toEqual([]);
+  });
+
+  it("sets an optional secret the Worker does not have yet, and removes it only once set", () => {
+    const unset = secretSlots(DECLARED, ["ADMIN_PASSWORD", "API_KEY"]);
+    expect(secretChangeProblems({ set: { SMTP_PASSWORD: "s" }, unset: [] }, unset)).toEqual([]);
+    expect(secretChangeProblems({ set: {}, unset: ["SMTP_PASSWORD"] }, unset)).toEqual([
+      "The app has no secret SMTP_PASSWORD to remove.",
+    ]);
   });
 
   it("refuses unknown names, empty values, removing a declared secret, and both at once", () => {

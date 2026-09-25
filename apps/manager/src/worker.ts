@@ -8,7 +8,7 @@ import { ManagerReleasesError, refreshManagerReleases } from "./catalog/manager-
 import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
-import { scheduledNotifications } from "./notifications/cron.server";
+import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
 import { reportTelemetry } from "./telemetry/report.server";
 
 /**
@@ -142,6 +142,9 @@ export default {
     else if (usage.status === "sent" && usage.events > 0) {
       console.log(`usage data sent: ${usage.events} event(s)`);
     }
+    // External domains: record their state and emit "Domain active" or
+    // "Domain failed" for the delivery below; never fails the run.
+    await scheduledExternalDomainCheck(env);
     // Notification channels: conditions, missed job ends, deliveries; never fails the run.
     await scheduledNotifications(env);
   },

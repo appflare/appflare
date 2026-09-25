@@ -84,8 +84,14 @@ example:
     {
       "name": "HOME_PAGE",
       "label": "Home page",
-      "help": "default, 404, or admin",
-      "required": false
+      "help": "What / shows. Short links and /admin work the same either way.",
+      "type": "select",
+      "options": [
+        { "value": "default", "label": "Landing page" },
+        { "value": "404", "label": "Empty 404" },
+        { "value": "admin", "label": "Redirect to /admin" }
+      ],
+      "default": "default"
     }
   ],
   "postInstall": [
@@ -129,6 +135,18 @@ Points that need care:
   signing keys the user does not need to choose. List a var from the wrangler config
   too when admins should be able to change it; without a `default`, the form starts
   with the wrangler config's value.
+- **Optional secrets.** Add `"optional": true` to a secret the app works without,
+  such as an SMTP password for a feature that stays off until it is set. The install
+  form leaves it unset unless the admin chooses **Set now**, updates never ask for it,
+  and admins can set or remove it later in the app's settings. Self-deploying entries
+  cannot have optional secrets: their installer runs with every secret the manifest
+  lists.
+- **Choices.** A var that takes one of a few fixed values can say so with
+  `"type": "select"` and `"options"`, a list of `{ "value", "label" }` in the order
+  the form shows them (2 to 20, with distinct values). The form shows cards for up to
+  four options and a dropdown for more. `default`, when given, must be one of the
+  values. For a var the app reads as JSON, each value is JSON text, such as `"true"`.
+  `HOME_PAGE` in the example above is one.
 - **Placeholders.** The manager replaces `{{workerUrl}}` (the install's workers.dev
   URL, without a trailing slash) and `{{workerName}}` (its Worker name) in
   `postInstall` text, in `vars[].default`, and in the values of the wrangler config's

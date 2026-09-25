@@ -1,3 +1,4 @@
+import { type DomainCheckReport, planDomainCheck } from "../installs/external-domains-poll.server";
 import { DELIVERIES_PER_CALL } from "./deliver.server";
 import { detectConditions, sweepFinishedJobs } from "./events.server";
 import { HEALTH_CHECKS_PER_CALL, installsToCheck } from "./health-sweep.server";
@@ -97,6 +98,52 @@ export async function runNotifications(
     return out;
   } catch (error) {
     return { status: "failed", reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export type DomainCheckOutcome =
+  | { status: "idle" }
+  | { status: "ran"; report: DomainCheckReport }
+  | { status: "failed"; reason: string };
+
+/**
+ * The scheduled check of external domains (installs/external-domains-poll.server.ts),
+ * whether or not any channel listens: it records each domain's state, so a
+ * channel added later is not told about old changes. Idle, after one read,
+ * while there is no external domain. The check itself runs through
+ * the `checkExternalDomains` unit, over `SELF` when the manager has it, since
+ * listing a zone's custom hostnames can take a request per page. Run it
+ * before {@link runNotifications}, which then delivers what it emitted.
+ */
+export async function runExternalDomainCheck(
+  env: NotificationsCronEnv & { CF_API_TOKEN?: string; CF_API_BASE_URL?: string },
+  deps: NotificationUnitsDeps = {},
+): Promise<DomainCheckOutcome> {
+  try {
+    if (!(await planDomainCheck(env.DB)).needed) return { status: "idle" };
+    const units = selfNotificationUnits(env) ?? createNotificationUnits(env, deps);
+    const result = await units.checkExternalDomains({});
+    return result.ok
+      ? { status: "ran", report: result.value }
+      : { status: "failed", reason: result.error };
+  } catch (error) {
+    return { status: "failed", reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** The scheduled handler's call for the domain check: logs one line when something happened. Never throws. */
+export async function scheduledExternalDomainCheck(
+  env: NotificationsCronEnv & { CF_API_TOKEN?: string; CF_API_BASE_URL?: string },
+): Promise<void> {
+  const outcome = await runExternalDomainCheck(env);
+  if (outcome.status === "failed") {
+    console.error("external domain check failed", { reason: outcome.reason });
+  } else if (outcome.status === "ran") {
+    const r = outcome.report;
+    console.log(
+      `external domains: ${r.checked} checked, ${r.activated} went active, ${r.failed} failed` +
+        (r.unreadZones > 0 ? `, ${r.unreadZones} zone(s) could not be listed` : ""),
+    );
   }
 }
 

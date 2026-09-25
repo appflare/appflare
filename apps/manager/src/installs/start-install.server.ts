@@ -4,6 +4,7 @@ import {
   hasFixedWorkerName,
   type IndexApp,
   indexAppArtifact,
+  isOptionalSecret,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { ulid } from "ulidx";
@@ -106,8 +107,9 @@ export interface ResolvedInstallInput {
 
 /**
  * Checks the form against the signed catalog manifest. Names the manifest does
- * not declare are rejected, not dropped. Every secret needs a value: the form
- * prefills `generate: true` secrets, so an empty one means a broken client.
+ * not declare are rejected, not dropped. Every secret but an optional one
+ * needs a value: the form prefills `generate: true` secrets, so an empty one
+ * means a broken client. An optional secret without a value is left unset.
  */
 export function resolveInstallInput(
   manifest: Pick<EntryManifest, "catalog" | "worker">,
@@ -137,6 +139,8 @@ export function resolveInstallInput(
   for (const secret of catalog.secrets) {
     const value = input.secrets[secret.name] ?? "";
     if (value.length === 0) {
+      // An optional secret left out is not set at all.
+      if (isOptionalSecret(secret)) continue;
       throw new StartInstallError(`${secret.label} (${secret.name}) is required.`);
     }
     secrets[secret.name] = value;

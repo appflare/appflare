@@ -18,14 +18,18 @@ never takes over a Worker it did not create.
 **Secrets.** Stored as encrypted secrets on the app's Worker. Appflare keeps only
 their names. Some secrets are generated for you: the field is filled with a random
 32-character value that you can copy, replace, or regenerate. Copy it before you
-install. It is shown only on this form and cannot be read back afterwards.
+install. It is shown only on this form and cannot be read back afterwards. A secret
+marked optional is one the app works without: it is left unset unless you turn on
+**Set now**, and you can set or remove it later in the app's
+[settings](/guides/settings/#remove-a-secret).
 
 **Settings.** Variables on the app's Worker, for example a home page URL. A setting
 starts with the app's default. When the default names the app's own address, the
 form shows it filled in for the Worker name you typed, and the install fills in the
 real workers.dev address (also when you attach a custom domain later). Only settings
 you change are stored; the others follow the app's default on each update. Settings marked JSON take a JSON value, such as `["inbox@example.com"]`,
-and the form checks it before you can install.
+and the form checks it before you can install. A setting with a fixed set of values
+shows them as choices: cards for up to four, a dropdown for more.
 
 **Address.** Where the app answers besides its `workers.dev` URL: **workers.dev
 only** (the default), a [custom domain](/guides/custom-domains/) in one of this

@@ -38,7 +38,7 @@ import { generatedSecret } from "./secret-fields";
  * The "Settings" section of `/apps/$installId`: the app's settings (vars),
  * with labels and help from its catalog manifest; its secrets, whose values
  * are never shown, each with "Set new value" (and "Remove" for one the
- * installed version no longer declares); for an app that receives email, the
+ * installed version declares optional or no longer declares); for an app that receives email, the
  * zone it receives for. "Save and redeploy" starts the settings change job
  * and opens its log. Members see it read-only; while a job of the app runs,
  * nothing can be saved.
@@ -245,7 +245,7 @@ export function AppSettingsSection({
                         slot={slot}
                         value={newSecrets[slot.name]}
                         removed={removed.has(slot.name)}
-                        canRemove={settings.canRemoveSecrets && !slot.declared}
+                        canRemove={settings.canRemoveSecrets && slot.optional && slot.present}
                         disabled={!canEdit || pending}
                         onValueChange={(value) =>
                           setNewSecrets((s) => {
@@ -437,8 +437,9 @@ function Group({
 /**
  * One secret: its label and whether the Worker has it, "Set new value"
  * (which opens a field; a generated secret starts with a fresh random value
- * shown only here), and for a secret the version no longer declares,
- * "Remove". The current value is never read or shown.
+ * shown only here), and for a secret the version does not need (declared
+ * optional, or no longer declared), "Remove". The current value is never read
+ * or shown.
  */
 function SecretRow({
   slot,
@@ -464,7 +465,8 @@ function SecretRow({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Text bold>{label}</Text>
-          {!slot.present && <Badge variant="warning">Not set</Badge>}
+          {slot.declared && slot.optional && <Badge variant="outline">Optional</Badge>}
+          {!slot.present && <Badge variant={slot.optional ? "outline" : "warning"}>Not set</Badge>}
           {!slot.declared && <Badge variant="outline">Not used by this version</Badge>}
           {removed && <Badge variant="red">Will be removed</Badge>}
         </div>

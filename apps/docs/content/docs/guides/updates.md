@@ -15,7 +15,9 @@ catalog it refreshes every 30 minutes. It only offers the catalog's current vers
 Admins select **Update**. A dialog opens first when:
 
 - the new version needs secrets the install does not have yet. Fill them in; the job
-  sets them before the new version serves traffic.
+  sets them before the new version serves traffic. An optional secret the new version
+  adds is never asked for; set it in the app's [settings](/guides/settings/) if you
+  want it.
 - the app defines Durable Objects, so the new version cannot be checked before it
   goes live. This covers every update of such an app, and it matters most when the
   new version changes its Durable Object classes (see

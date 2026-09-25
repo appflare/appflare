@@ -24,6 +24,9 @@ Settings are variables on the app's Worker. They work as on the
 - A setting left at its default follows the default of each version, also after
   later updates. Only settings you change are stored.
 - Settings marked JSON take a JSON value, which the form checks before you can save.
+- A setting with a fixed set of values shows them as choices. If a newer version no
+  longer offers the value you chose, the app gets the version's default instead, the
+  job log says so, and the Settings tab asks you to choose again before saving.
 - A default that names the app's own address (`{{workerUrl}}`) is filled in with the
   address the app is reached at: its `workers.dev` URL, or its custom domain while
   [workers.dev is off](/guides/custom-domains/#turn-off-the-workersdev-url).
@@ -46,15 +49,19 @@ Rolling back to a snapshot from before the change brings the old value back (see
 [What a rollback puts back](#what-a-rollback-puts-back)). If you revoked it, the
 rolled-back app gets a value that no longer works.
 
-## Remove a secret the app no longer uses
+## Remove a secret
 
-Updates never delete secrets, so a secret an earlier version needed stays on the
-Worker after a newer version stops declaring it. The Settings tab lists it with
-**Not used by this version**. Select **Remove** next to it (it then shows **Will be
-removed**) and **Save and redeploy**.
+Two kinds of secret can be removed:
 
-Only such secrets can be removed. A secret the installed version declares can be
-replaced, never removed.
+- **Optional** secrets, which the app works without. They are left unset at install
+  unless you choose **Set now**, and updates never ask for them. One that is not set
+  shows **Not set**; give it a value with **Set new value**.
+- Secrets the app no longer uses. Updates never delete secrets, so a secret an
+  earlier version needed stays on the Worker after a newer version stops declaring
+  it. The Settings tab lists it with **Not used by this version**.
+
+Select **Remove** next to the secret (it then shows **Will be removed**) and **Save
+and redeploy**. A secret the installed version needs can be replaced, never removed.
 
 ## Move email to another zone
 

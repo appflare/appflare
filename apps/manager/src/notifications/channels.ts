@@ -37,6 +37,8 @@ export const EVENT_LABELS: Record<NotificationEvent, string> = {
   uninstall_finished: "Uninstall finished",
   health_failing: "Health check failing",
   manager_update_available: "Appflare update available",
+  domain_active: "Domain active",
+  domain_failed: "Domain failed",
 };
 
 export const EVENT_DESCRIPTIONS: Record<NotificationEvent, string> = {
@@ -48,6 +50,10 @@ export const EVENT_DESCRIPTIONS: Record<NotificationEvent, string> = {
   health_failing:
     "Once each time an installed app starts answering its health check with a server error. Turning this on makes the scheduled check probe every installed app every 30 minutes.",
   manager_update_available: "Once per release, when a newer Appflare release is published.",
+  domain_active:
+    "When an external domain starts serving its app: Cloudflare validated it and issued its certificate.",
+  domain_failed:
+    "When an external domain stops serving or cannot be validated, for example its custom hostname was deleted in the dashboard or its certificate timed out or expired.",
 };
 
 /** Events a new channel starts with. */

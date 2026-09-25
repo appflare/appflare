@@ -34,6 +34,13 @@ describe("notification units over SELF", () => {
     });
   });
 
+  it("check no external domains when there are none, without asking Cloudflare", async () => {
+    expect(await self?.checkExternalDomains({})).toEqual({
+      ok: true,
+      value: { checked: 0, zones: 0, unreadZones: 0, activated: 0, failed: 0, queued: 0 },
+    });
+  });
+
   it("validate their input on arrival", async () => {
     expect(await self?.deliverNotifications({ eventId: 5 })).toMatchObject({ ok: false });
     expect(

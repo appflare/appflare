@@ -7,6 +7,7 @@ import {
   artifactManifestSchema,
   hasFixedWorkerName,
   indexArtifactsSchema,
+  isOptionalSecret,
   sha256Schema,
   tooManyModulesMessage,
 } from "@appflare/schema";
@@ -451,8 +452,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       await applyD1MigrationsPhase(steps, source.zipUrl, target, undefined, source.host);
     }
 
-    // 7. Secrets.
+    // 7. Secrets. An optional secret the admin left unset gets no step.
     for (const secret of manifest.catalog.secrets) {
+      if (isOptionalSecret(secret) && (params.secrets[secret.name] ?? "").length === 0) continue;
       await run(`set secret ${secret.name}`, async ({ log, cf, orm }) => {
         const value = params.secrets[secret.name];
         if (value === undefined || value.length === 0) {

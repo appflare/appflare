@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
+import type { DomainCheckReport } from "../../installs/external-domains-poll.server";
 import type { DeliveryReport } from "../../notifications/deliver.server";
 import type { HealthSweepReport } from "../../notifications/health-sweep.server";
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
@@ -69,12 +70,17 @@ export class JobUnits extends WorkerEntrypoint<Env> {
     return createJobUnits(this.env).setSandboxBinding(input);
   }
 
-  // Notification units (src/notifications/units.ts): delivery and the scheduled health check.
+  // Notification units (src/notifications/units.ts): delivery, the scheduled health check,
+  // and the scheduled check of external domains.
   deliverNotifications(input: unknown): Promise<NotificationUnitResult<DeliveryReport>> {
     return createNotificationUnits(this.env).deliverNotifications(input);
   }
 
   checkInstallsHealth(input: unknown): Promise<NotificationUnitResult<HealthSweepReport>> {
     return createNotificationUnits(this.env).checkInstallsHealth(input);
+  }
+
+  checkExternalDomains(input: unknown): Promise<NotificationUnitResult<DomainCheckReport>> {
+    return createNotificationUnits(this.env).checkExternalDomains(input);
   }
 }

@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   type CatalogVar,
   catalogManifestSchema,
+  catalogVarOptions,
   gitShaSchema,
   ownerRepoSchema,
   vectorizeIndexConfigSchema,
@@ -360,7 +361,8 @@ export function jsonTextProblem(text: string): string | null {
 /**
  * What is wrong with the catalog's vars for this Worker, as sentences; empty
  * when nothing is. A var the wrangler config gives a non-string value is a
- * `json` binding, so its catalog `default` must be JSON text.
+ * `json` binding, so its catalog `default`, and each value of a `select`
+ * var's `options`, must be JSON text.
  */
 export function catalogVarProblems(
   bindings: readonly WorkerBinding[],
@@ -368,13 +370,23 @@ export function catalogVarProblems(
 ): string[] {
   const json = new Set(bindings.filter(isJsonVarBinding).map((b) => b.name));
   const problems: string[] = [];
+  const why = (name: string) =>
+    `the wrangler config gives ${name} a value that is not a string, so the Worker receives it as JSON.`;
   for (const v of vars) {
-    if (!json.has(v.name) || v.default === undefined) continue;
-    const problem = jsonTextProblem(v.default);
-    if (problem !== null) {
-      problems.push(
-        `The default of the var ${v.name} ${problem}; the wrangler config gives ${v.name} a value that is not a string, so the Worker receives it as JSON.`,
-      );
+    if (!json.has(v.name)) continue;
+    if (v.default !== undefined) {
+      const problem = jsonTextProblem(v.default);
+      if (problem !== null) {
+        problems.push(`The default of the var ${v.name} ${problem}; ${why(v.name)}`);
+      }
+    }
+    for (const option of catalogVarOptions(v) ?? []) {
+      const problem = jsonTextProblem(option.value);
+      if (problem !== null) {
+        problems.push(
+          `The option "${option.value}" of the var ${v.name} ${problem}; ${why(v.name)}`,
+        );
+      }
     }
   }
   return problems;

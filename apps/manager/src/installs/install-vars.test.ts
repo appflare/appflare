@@ -50,6 +50,7 @@ describe("installVarFields", () => {
         required: false,
         kind: "text",
         shownDefault: "eu",
+        options: null,
       },
       {
         name: "ADDRESSES",
@@ -57,6 +58,7 @@ describe("installVarFields", () => {
         required: false,
         kind: "json",
         shownDefault: '["a@example.com"]',
+        options: null,
       },
       {
         name: "LIMITS",
@@ -64,6 +66,7 @@ describe("installVarFields", () => {
         required: false,
         kind: "json",
         shownDefault: '{"max":5}',
+        options: null,
       },
       {
         name: "PUBLIC_URL",
@@ -71,6 +74,7 @@ describe("installVarFields", () => {
         required: true,
         kind: "text",
         shownDefault: "{{workerUrl}}",
+        options: null,
       },
     ]);
   });
@@ -83,6 +87,7 @@ describe("varValueProblem and missingRequiredVar", () => {
     required: true,
     kind: "json",
     shownDefault: "",
+    options: null,
   };
 
   it("checks JSON only for JSON settings and leaves empty values to the required check", () => {
@@ -103,6 +108,79 @@ describe("resolveVars", () => {
     const m = manifest([{ type: "plain_text", name: "URL", text: "{{workerUrl}}/x" }], []);
     expect(resolveVars(m, {}, { workerUrl: null, workerName: "app" }).vars).toEqual([
       { type: "plain_text", name: "URL", text: "{{workerUrl}}/x" },
+    ]);
+  });
+});
+
+describe("select vars", () => {
+  const options = [
+    { value: "default", label: "Landing page" },
+    { value: "404", label: "Not found" },
+    { value: "admin", label: "Admin sign-in" },
+  ];
+  const home = (extra: Partial<CatalogVar> = {}) =>
+    v("HOME_PAGE", { type: "select", options, ...extra });
+  const placeholders = { workerUrl: null, workerName: "cut" };
+
+  it("carry their choices, and start with the wrangler config's value only when it is one", () => {
+    const fields = installVarFields(
+      manifest(
+        [
+          { type: "plain_text", name: "HOME_PAGE", text: "admin" },
+          { type: "plain_text", name: "OTHER", text: "home" },
+        ],
+        [home(), v("OTHER", { type: "select", options })],
+      ),
+    );
+    expect(fields.map((f) => [f.shownDefault, f.options])).toEqual([
+      ["admin", options],
+      ["", options],
+    ]);
+    expect(installVarFields(manifest([], [home({ default: "404" })]))[0]?.shownDefault).toBe("404");
+  });
+
+  it("refuse a value that is not one of the choices", () => {
+    const [field] = installVarFields(manifest([], [home({ required: true })]));
+    if (field === undefined) throw new Error("no field");
+    expect(varValueProblem(field, "404")).toBeNull();
+    expect(varValueProblem(field, "home")).toBe(
+      "home_page (HOME_PAGE) must be one of: Landing page, Not found, Admin sign-in.",
+    );
+    expect(varValueProblem(field, "")).toBeNull();
+    expect(missingRequiredVar(field, "")).toBe(true);
+  });
+
+  it("send the stored choice, or the default when this version no longer offers it", () => {
+    const m = manifest(
+      [{ type: "plain_text", name: "HOME_PAGE", text: "default" }],
+      [home({ default: "404" })],
+    );
+    expect(resolveVars(m, { HOME_PAGE: "admin" }, placeholders)).toEqual({
+      vars: [{ type: "plain_text", name: "HOME_PAGE", text: "admin" }],
+      warnings: [],
+    });
+    const gone = resolveVars(m, { HOME_PAGE: "home" }, placeholders);
+    expect(gone.vars).toEqual([{ type: "plain_text", name: "HOME_PAGE", text: "404" }]);
+    expect(gone.warnings).toEqual([
+      "The stored value of HOME_PAGE is not one of the choices this version of the app offers; the Worker gets the catalog default instead.",
+    ]);
+  });
+
+  it("send JSON choices as JSON", () => {
+    const m = manifest(
+      [{ type: "json", name: "OPEN", json: false }],
+      [
+        v("OPEN", {
+          type: "select",
+          options: [
+            { value: "true", label: "Open" },
+            { value: "false", label: "Closed" },
+          ],
+        }),
+      ],
+    );
+    expect(resolveVars(m, { OPEN: "true" }, placeholders).vars).toEqual([
+      { type: "json", name: "OPEN", json: true },
     ]);
   });
 });

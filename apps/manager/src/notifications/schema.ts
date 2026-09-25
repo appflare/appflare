@@ -10,7 +10,8 @@ import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlit
  *   row is secret.
  * - `notification_events`: one row per thing worth telling (an update
  *   became available, a job ended, ...). `dedupe_key` makes each one happen
- *   once: per install and version, per health episode, per job.
+ *   once: per install and version, per health episode, per job, per change
+ *   of an external domain's state.
  * - `notification_deliveries`: one row per event and channel, the outbox the
  *   delivery unit works through, with retries. A channel hears about each
  *   event at most once.
@@ -29,6 +30,8 @@ export const NOTIFICATION_EVENTS = [
   "uninstall_finished",
   "health_failing",
   "manager_update_available",
+  "domain_active",
+  "domain_failed",
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 

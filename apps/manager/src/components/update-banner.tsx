@@ -13,7 +13,12 @@ import type { UpdateNeeds } from "../installs/versions.server";
 import { CronTriggersField } from "./cron-triggers-field";
 import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
-import { initialSecretValues, SecretFields, secretsComplete } from "./secret-fields";
+import {
+  initialSecretValues,
+  SecretFields,
+  secretsComplete,
+  withSecretValue,
+} from "./secret-fields";
 
 /**
  * The update state of `/apps/$installId`: an update or rollback running
@@ -285,7 +290,7 @@ function UpdateDialog({
                 <SecretFields
                   secrets={needs.needsSecrets}
                   values={secrets}
-                  onChange={(name, value) => setSecrets((s) => ({ ...s, [name]: value }))}
+                  onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
                   after="the update"
                 />
               </div>

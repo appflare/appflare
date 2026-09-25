@@ -57,6 +57,23 @@ export interface ExternalDomainStatus {
   checkedAt: string;
 }
 
+/** Custom hostname states in which it will not serve without someone acting. */
+const FAILED_HOSTNAME_STATUSES = ["blocked", "moved", "deleted", "pending_deletion"];
+
+/**
+ * Certificate states in which Cloudflare has stopped trying: validation or
+ * issuance timed out (it is retried only when someone asks), or the
+ * certificate expired or was deleted.
+ */
+const FAILED_SSL_STATUSES = [
+  "initializing_timed_out",
+  "validation_timed_out",
+  "issuance_timed_out",
+  "deployment_timed_out",
+  "expired",
+  "deleted",
+];
+
 /** A short phrase for the domain's state, for its badge. */
 export function externalDomainPhase(
   status: Pick<ExternalDomainStatus, "status" | "sslStatus" | "active">,
@@ -66,9 +83,33 @@ export function externalDomainPhase(
 } {
   if (status.active) return { label: "Active", tone: "success" };
   if (status.status === "missing") return { label: "Missing at Cloudflare", tone: "problem" };
-  if (["blocked", "moved", "deleted", "pending_deletion"].includes(status.status)) {
+  if (FAILED_HOSTNAME_STATUSES.includes(status.status)) {
     return { label: status.status.replace(/_/g, " "), tone: "problem" };
+  }
+  if (status.sslStatus !== null && FAILED_SSL_STATUSES.includes(status.sslStatus)) {
+    return { label: `certificate ${status.sslStatus.replace(/_/g, " ")}`, tone: "problem" };
   }
   if (status.status === "active") return { label: "Issuing certificate", tone: "pending" };
   return { label: "Waiting for DNS records", tone: "pending" };
+}
+
+/**
+ * Why a domain whose phase is a problem does not serve, as one sentence of
+ * Appflare's own (Cloudflare's error text is not repeated: it can be long,
+ * and it goes into notifications). Null when the phase is not a problem.
+ */
+export function externalDomainProblem(
+  status: Pick<ExternalDomainStatus, "status" | "sslStatus" | "active">,
+): string | null {
+  if (externalDomainPhase(status).tone !== "problem") return null;
+  if (status.status === "missing") {
+    return "Cloudflare no longer has a custom hostname for it; remove the domain on the app's page and add it again.";
+  }
+  if (FAILED_HOSTNAME_STATUSES.includes(status.status)) {
+    return `Cloudflare reports the hostname as ${status.status.replace(/_/g, " ")}.`;
+  }
+  if (status.sslStatus === "expired") {
+    return "Its certificate expired and was not renewed. Check that its DNS records are still in place, then remove the domain and add it again.";
+  }
+  return `Its certificate was not issued: Cloudflare reports it as ${(status.sslStatus ?? "").replace(/_/g, " ")}. Remove the domain and add it again once its DNS records are in place.`;
 }

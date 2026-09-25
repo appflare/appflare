@@ -3,6 +3,7 @@ import {
   type ArtifactManifest,
   type CatalogSecret,
   type DoMigration,
+  isOptionalSecret,
   type VectorizeIndexConfig,
   vectorizeBindingSchema,
   type WorkerBinding,
@@ -336,13 +337,16 @@ export function updatePath(
   };
 }
 
-/** Secrets the new version declares that the Worker does not have yet. */
+/**
+ * Secrets the new version needs that the Worker does not have yet. An
+ * optional secret is never asked for here; the app's settings can set it.
+ */
 export function missingSecrets(
   declared: readonly CatalogSecret[],
   recordedNames: Iterable<string>,
 ): CatalogSecret[] {
   const have = new Set(recordedNames);
-  return declared.filter((s) => !have.has(s.name));
+  return declared.filter((s) => !isOptionalSecret(s) && !have.has(s.name));
 }
 
 /**

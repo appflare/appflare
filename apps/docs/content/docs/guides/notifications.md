@@ -1,10 +1,11 @@
 ---
 title: Notifications
-description: Send messages about updates, jobs and failing health checks to Telegram, Slack, Discord or your own webhook, and verify a webhook's signature.
+description: Send messages about updates, jobs, failing health checks and external domains to Telegram, Slack, Discord or your own webhook, and verify a webhook's signature.
 ---
 
 Appflare can tell you when something needs attention: an update is available, an
-update or install finished, an app's health check started failing. Messages go to
+update or install finished, an app's health check started failing, an external domain
+went active or failed. Messages go to
 **notification channels**, which admins manage under **Settings**,
 **Notifications**. Members cannot view or change them.
 
@@ -36,6 +37,8 @@ A new channel receives every event. Untick the ones you do not want.
 | **Uninstall finished** | When an uninstall job succeeds or fails. | `uninstall_finished` |
 | **Health check failing** | Once each time an installed app starts answering its health check with a server error. | `health_failing` |
 | **Appflare update available** | Once per release, when a newer Appflare release is published. | `manager_update_available` |
+| **Domain active** | When an external domain starts serving its app. | `domain_active` |
+| **Domain failed** | When an external domain stops serving or cannot be validated, for example its custom hostname was deleted or its certificate expired. | `domain_failed` |
 
 The end of a job is usually sent right away (without the manager's own service binding it waits for the next scheduled run). Everything else is noticed by the scheduled run
 every 30 minutes. Rollbacks, database restores, settings changes, deleting a removed
@@ -53,6 +56,21 @@ longest ago first. A failing episode starts only when the check gets a server er
 twice in a row, and ends only when a check finds the app serving again. No answer at
 all, such as a timeout, neither starts nor ends one. One message is sent per episode.
 See [Health checks](/guides/health/).
+
+### Domain active and Domain failed
+
+Each scheduled run reads the state of every
+[external domain](/guides/external-domains/), active or not: one request to
+Cloudflare per 50 custom hostnames on the gateway domain, whether or not a channel
+wants these events. Without external domains, the run asks Cloudflare nothing.
+
+- **Domain active** is sent once when a domain starts serving: Cloudflare validated
+  it and issued its certificate. A domain added more than a day before the first run
+  that saw it active is not announced.
+- **Domain failed** is sent once when a domain will not serve without someone acting:
+  its custom hostname was deleted (for example in the Cloudflare dashboard),
+  Cloudflare reports it as blocked or moved, or its certificate timed out or expired.
+  The message says which. If the domain recovers and fails again, it is sent again.
 
 ## Add a channel
 
@@ -150,7 +168,8 @@ The body:
 into the manager and is `null` when Appflare does not know its own address yet.
 `data` holds the event's facts: `app` for every event about an app; `from` and `to`
 for updates and Appflare releases; `version` for an install; `outcome`
-(`succeeded` or `failed`) for installs and uninstalls; `jobId` for a finished job. A
+(`succeeded` or `failed`) for installs and uninstalls; `jobId` for a finished job;
+`hostname` for the domain events, and `reason` for a failed domain. A
 test message has `"event": "test"`, `"test": true` and an empty `data`.
 
 ### Verify the signature

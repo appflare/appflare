@@ -8,6 +8,7 @@ import {
   diffBindings,
   durableObjectMigrationsSince,
   lastDurableObjectTagOf,
+  missingSecrets,
   parseBookmarks,
   previewUrl,
   type RecordedResource,
@@ -319,5 +320,20 @@ describe("cronChanges", () => {
       removed: ["a"],
     });
     expect(cronChanges(["a"], ["a"]).changed).toBe(false);
+  });
+});
+
+describe("missingSecrets", () => {
+  const secret = (name: string, optional?: boolean) => ({
+    name,
+    label: name,
+    generate: false,
+    ...(optional === undefined ? {} : { optional }),
+  });
+
+  it("asks only for required secrets the Worker does not have", () => {
+    const declared = [secret("A"), secret("B"), secret("SMTP", true), secret("C", false)];
+    expect(missingSecrets(declared, ["A"]).map((s) => s.name)).toEqual(["B", "C"]);
+    expect(missingSecrets(declared, ["A", "B", "C"])).toEqual([]);
   });
 });

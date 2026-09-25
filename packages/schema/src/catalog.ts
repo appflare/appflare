@@ -116,14 +116,35 @@ export type Requirement = z.infer<typeof requirementSchema>;
  * A secret the installer prompts for. `generate: true` means the manager mints a
  * random value instead of asking the user. Defaults are seeded by catalog CI from
  * `.dev.vars.example` when the manifest omits them.
+ *
+ * `optional: true` marks a secret the app works without: the install form
+ * leaves it unset unless the admin chooses to set it, updates never ask for
+ * it, and the app's settings can remove it. Optional rather than defaulted so
+ * manifests and artifacts written before the field existed keep the same
+ * parsed shape (catalog CI compares a published release's manifest with the
+ * current one field by field). Refused on `self-deploying` entries, whose
+ * installer run expects every declared secret ({@link catalogManifestSchema}).
  */
 export const catalogSecretSchema = z.object({
   name: z.string().min(1),
   label: z.string().min(1),
   help: z.string().optional(),
   generate: z.boolean().default(false),
+  optional: z
+    .boolean()
+    .describe(
+      "The app works without this secret. The install form leaves it unset unless the admin " +
+        'chooses "Set now", updates never ask for it, and the app\'s settings can remove it. ' +
+        "Not allowed on self-deploying entries.",
+    )
+    .optional(),
 });
 export type CatalogSecret = z.infer<typeof catalogSecretSchema>;
+
+/** Whether the app works without the secret (`optional: true`). */
+export function isOptionalSecret(secret: Pick<CatalogSecret, "optional">): boolean {
+  return secret.optional === true;
+}
 
 /**
  * Placeholders the manager fills in with the install's own values: in
@@ -205,26 +226,138 @@ export function renderJsonPlaceholders(value: JsonValue, values: PlaceholderValu
  * number, or boolean): the form then takes JSON and `default` must be JSON
  * text. `default` may hold `{{workerUrl}}` and `{{workerName}}`
  * ({@link INSTALL_PLACEHOLDERS}).
+ *
+ * `type: "select"` with `options` limits the var to a fixed set of values,
+ * shown as choices instead of a text field; `default`, when given, must be one
+ * of them. `type` and `options` are optional rather than defaulted so
+ * manifests and artifacts written before they existed keep the same parsed
+ * shape.
  */
-export const catalogVarSchema = z.object({
-  name: z.string().min(1),
-  label: z.string().min(1),
-  help: z.string().optional(),
-  default: z
+export const CATALOG_VAR_TYPES = ["text", "select"] as const;
+export type CatalogVarType = (typeof CATALOG_VAR_TYPES)[number];
+
+/** Most choices a `select` var may offer. */
+export const MAX_VAR_OPTIONS = 20;
+
+/** One choice of a `select` var: the value the Worker gets, and what the form shows. */
+export const catalogVarOptionSchema = z.object({
+  value: z
     .string()
+    .min(1)
+    .max(200)
     .describe(
-      "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL " +
-        "(`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and " +
-        "`{{workerName}}` its Worker name, filled in on every install and update. `{{workerUrl}}` is " +
-        "always the workers.dev address, even when a custom domain is attached. When the app's " +
-        "wrangler config gives this var a value that is not a string (an array, object, number, or " +
-        "boolean), the var reaches the Worker as JSON and `default` must be JSON text, for " +
-        'example `["{{workerUrl}}"]`. Without `default`, the form starts with the wrangler config\'s value.',
-    )
-    .optional(),
-  required: z.boolean().default(false),
+      "What the Worker gets. For a var the app reads as JSON, JSON text such as `true` or `404`.",
+    ),
+  label: z.string().min(1).max(80).describe("What the form shows for this choice."),
 });
+export type CatalogVarOption = z.infer<typeof catalogVarOptionSchema>;
+
+/**
+ * What is wrong with a var's `type`, `options` and `default` together, one
+ * issue each (the Zod refinement and catalog tooling share it).
+ */
+export function selectVarProblems(v: {
+  type?: CatalogVarType | undefined;
+  options?: readonly CatalogVarOption[] | undefined;
+  default?: string | undefined;
+}): Array<{ path: Array<string | number>; message: string }> {
+  const problems: Array<{ path: Array<string | number>; message: string }> = [];
+  if (v.type !== "select") {
+    if (v.options !== undefined) {
+      problems.push({
+        path: ["options"],
+        message: 'options are only allowed with type: "select"',
+      });
+    }
+    return problems;
+  }
+  if (v.options === undefined) {
+    problems.push({ path: ["options"], message: 'a type: "select" var needs options' });
+    return problems;
+  }
+  const seen = new Set<string>();
+  v.options.forEach((option, i) => {
+    if (seen.has(option.value)) {
+      problems.push({
+        path: ["options", i, "value"],
+        message: `option values must be distinct; "${option.value}" is listed twice`,
+      });
+    }
+    seen.add(option.value);
+  });
+  if (v.default !== undefined && !seen.has(v.default)) {
+    problems.push({
+      path: ["default"],
+      message: `default must be one of the options (${[...seen].map((s) => `"${s}"`).join(", ")})`,
+    });
+  }
+  return problems;
+}
+
+export const catalogVarSchema = z
+  .object({
+    name: z.string().min(1),
+    label: z.string().min(1),
+    help: z.string().optional(),
+    default: z
+      .string()
+      .describe(
+        "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL " +
+          "(`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and " +
+          "`{{workerName}}` its Worker name, filled in on every install and update. `{{workerUrl}}` is " +
+          "always the workers.dev address, even when a custom domain is attached. When the app's " +
+          "wrangler config gives this var a value that is not a string (an array, object, number, or " +
+          "boolean), the var reaches the Worker as JSON and `default` must be JSON text, for " +
+          'example `["{{workerUrl}}"]`. Without `default`, the form starts with the wrangler config\'s value. ' +
+          'For a `type: "select"` var, `default` must be one of the `options` values.',
+      )
+      .optional(),
+    required: z.boolean().default(false),
+    type: z
+      .enum(CATALOG_VAR_TYPES)
+      .describe(
+        '`"text"` (the default) takes any value; `"select"` takes one of `options`, shown as ' +
+          "choices (cards for up to 4, a dropdown beyond).",
+      )
+      .optional(),
+    options: z
+      .array(catalogVarOptionSchema)
+      .min(2)
+      .max(MAX_VAR_OPTIONS)
+      .describe(
+        'The values a `type: "select"` var can take, in the order the form shows them. Required ' +
+          "for, and only allowed with, `select`. Values must be distinct.",
+      )
+      .optional(),
+  })
+  .superRefine((v, ctx) => {
+    for (const problem of selectVarProblems(v)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
+  })
+  // The refinements do not reach the JSON Schema; `allOf` states the pairing
+  // of `type: "select"` and `options` there, so editors refuse the same vars.
+  .meta({
+    allOf: [
+      {
+        anyOf: [
+          { required: ["type", "options"], properties: { type: { const: "select" } } },
+          {
+            not: { required: ["options"] },
+            properties: { type: { not: { const: "select" } } },
+          },
+        ],
+      },
+    ],
+  });
 export type CatalogVar = z.infer<typeof catalogVarSchema>;
+
+/** The choices of a `type: "select"` var; null for any other var. */
+export function catalogVarOptions(
+  v: Pick<CatalogVar, "type" | "options">,
+): CatalogVarOption[] | null {
+  return v.type === "select" && v.options !== undefined ? v.options : null;
+}
 
 /**
  * A post-install instruction rendered after a successful install, with
@@ -713,53 +846,88 @@ export function catalogAuthors(
 }
 
 /** The full catalog manifest, `appflare.jsonc`. */
-export const catalogManifestSchema = z.object({
-  $schema: z.url().optional(),
-  slug: z.string().min(1),
-  name: z.string().min(1),
-  summary: z.string().min(1),
-  /** Shown as a link in the manager; https only (the regex also lands in the JSON Schema). */
-  homepage: z
-    .url({ protocol: /^https$/, error: "must be an https:// URL" })
-    .regex(/^https:\/\//, "must be an https:// URL"),
-  repo: ownerRepoSchema,
-  license: z.string().min(1),
-  categories: z.array(z.string().min(1)),
-  /**
-   * Who wrote the app upstream, as the catalog shows them. Optional rather
-   * than defaulted so manifests and artifacts written before the field existed
-   * keep the same parsed shape; the catalog index lists the owner of `repo`
-   * when it is omitted ({@link catalogAuthors}).
-   */
-  authors: z
-    .array(catalogAuthorSchema)
-    .min(1)
-    .describe(
-      "Who wrote the app upstream: one or more people or organizations, shown on the catalog " +
-        "card and the app's page. Not the people who package it for the catalog (those are " +
-        "`maintainers`). When omitted, the catalog lists the owner of `repo`.",
-    )
-    .optional(),
-  /** GitHub users who package the app for the catalog; shown as "Packaged by". */
-  maintainers: z.array(z.string().min(1)),
-  source: catalogSourceSchema,
-  install: catalogInstallSchema,
-  plan: planSchema,
-  requires: z.array(requirementSchema),
-  secrets: z.array(catalogSecretSchema),
-  vars: z.array(catalogVarSchema),
-  postInstall: z.array(postInstallStepSchema),
-  tokenPermissions: z.array(tokenPermissionSchema),
-  /**
-   * Resource settings the wrangler config cannot express, such as a Vectorize
-   * index's dimensions and metric. Optional so manifests and artifacts written
-   * before the field existed keep the same parsed shape.
-   */
-  resources: catalogResourcesSchema.optional(),
-  /**
-   * How the catalog's bump bot treats this entry. Optional for the same reason
-   * as `resources`; omitted means a maintainer merges every bump.
-   */
-  bump: catalogBumpSchema.optional(),
-});
+export const catalogManifestSchema = z
+  .object({
+    $schema: z.url().optional(),
+    slug: z.string().min(1),
+    name: z.string().min(1),
+    summary: z.string().min(1),
+    /** Shown as a link in the manager; https only (the regex also lands in the JSON Schema). */
+    homepage: z
+      .url({ protocol: /^https$/, error: "must be an https:// URL" })
+      .regex(/^https:\/\//, "must be an https:// URL"),
+    repo: ownerRepoSchema,
+    license: z.string().min(1),
+    categories: z.array(z.string().min(1)),
+    /**
+     * Who wrote the app upstream, as the catalog shows them. Optional rather
+     * than defaulted so manifests and artifacts written before the field existed
+     * keep the same parsed shape; the catalog index lists the owner of `repo`
+     * when it is omitted ({@link catalogAuthors}).
+     */
+    authors: z
+      .array(catalogAuthorSchema)
+      .min(1)
+      .describe(
+        "Who wrote the app upstream: one or more people or organizations, shown on the catalog " +
+          "card and the app's page. Not the people who package it for the catalog (those are " +
+          "`maintainers`). When omitted, the catalog lists the owner of `repo`.",
+      )
+      .optional(),
+    /** GitHub users who package the app for the catalog; shown as "Packaged by". */
+    maintainers: z.array(z.string().min(1)),
+    source: catalogSourceSchema,
+    install: catalogInstallSchema,
+    plan: planSchema,
+    requires: z.array(requirementSchema),
+    secrets: z.array(catalogSecretSchema),
+    vars: z.array(catalogVarSchema),
+    postInstall: z.array(postInstallStepSchema),
+    tokenPermissions: z.array(tokenPermissionSchema),
+    /**
+     * Resource settings the wrangler config cannot express, such as a Vectorize
+     * index's dimensions and metric. Optional so manifests and artifacts written
+     * before the field existed keep the same parsed shape.
+     */
+    resources: catalogResourcesSchema.optional(),
+    /**
+     * How the catalog's bump bot treats this entry. Optional for the same reason
+     * as `resources`; omitted means a maintainer merges every bump.
+     */
+    bump: catalogBumpSchema.optional(),
+  })
+  .superRefine((manifest, ctx) => {
+    if (manifest.install.tier !== "self-deploying") return;
+    manifest.secrets.forEach((secret, i) => {
+      if (isOptionalSecret(secret)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["secrets", i, "optional"],
+          message:
+            "optional secrets are not allowed for the self-deploying tier: the app's own installer runs with every secret the manifest declares",
+        });
+      }
+    });
+  })
+  // The refinement does not reach the JSON Schema; `allOf` states it there.
+  .meta({
+    allOf: [
+      {
+        anyOf: [
+          {
+            properties: { install: { properties: { tier: { not: { const: "self-deploying" } } } } },
+          },
+          {
+            properties: {
+              secrets: {
+                items: {
+                  not: { required: ["optional"], properties: { optional: { const: true } } },
+                },
+              },
+            },
+          },
+        ],
+      },
+    ],
+  });
 export type CatalogManifest = z.infer<typeof catalogManifestSchema>;

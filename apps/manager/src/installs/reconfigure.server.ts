@@ -68,7 +68,7 @@ export interface InstallSettings {
   placeholders: { workerName: string; workerUrl: string | null };
   /** Names and labels only; values are never read back. */
   secrets: SecretSlot[];
-  /** Whether secrets the version no longer declares can be removed (not for a self-deploying app). */
+  /** Whether secrets the version does not need can be removed (not for a self-deploying app). */
   canRemoveSecrets: boolean;
   /**
    * For an app that receives email: the zone it receives for (null if none is

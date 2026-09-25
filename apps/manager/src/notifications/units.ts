@@ -1,5 +1,10 @@
-import type { FetchLike } from "@appflare/cf-api";
+import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { z } from "zod";
+import { type CfClientEnv, getCfClient } from "../cloudflare/client.server";
+import {
+  checkExternalDomains,
+  type DomainCheckReport,
+} from "../installs/external-domains-poll.server";
 import { type DeliveryReport, deliverDue } from "./deliver.server";
 import {
   checkInstallsHealth,
@@ -22,9 +27,11 @@ export type NotificationUnitResult<T> = { ok: true; value: T } | { ok: false; er
 export interface NotificationUnitsApi {
   deliverNotifications(input: unknown): Promise<NotificationUnitResult<DeliveryReport>>;
   checkInstallsHealth(input: unknown): Promise<NotificationUnitResult<HealthSweepReport>>;
+  /** The scheduled check of external domains (installs/external-domains-poll.server.ts). */
+  checkExternalDomains(input: unknown): Promise<NotificationUnitResult<DomainCheckReport>>;
 }
 
-export interface NotificationUnitsEnv {
+export interface NotificationUnitsEnv extends CfClientEnv {
   DB: D1Database;
   BETTER_AUTH_SECRET?: string;
 }
@@ -33,12 +40,15 @@ export interface NotificationUnitsDeps {
   fetch?: FetchLike;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** The Cloudflare client of the domain check; built from the Worker's own token by default. */
+  api?: CloudflareClient;
 }
 
 const deliverInput = z.object({ eventId: z.string().min(1).max(64).optional() });
 const healthInput = z.object({
   installIds: z.array(z.string().min(1).max(64)).max(HEALTH_CHECKS_PER_CALL),
 });
+const domainsInput = z.object({});
 
 async function settle<T>(run: () => Promise<T>): Promise<NotificationUnitResult<T>> {
   try {
@@ -60,6 +70,17 @@ export function createNotificationUnits(
       }),
     checkInstallsHealth: (input) =>
       settle(() => checkInstallsHealth(env.DB, healthInput.parse(input).installIds, deps)),
+    checkExternalDomains: (input) =>
+      settle(async () => {
+        domainsInput.parse(input);
+        return checkExternalDomains({
+          db: env.DB,
+          api:
+            deps.api ??
+            (() => getCfClient(env, deps.fetch === undefined ? {} : { fetch: deps.fetch })),
+          ...(deps.now === undefined ? {} : { now: deps.now }),
+        });
+      }),
   };
 }
 

@@ -28,6 +28,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../../db/client";
 import { job_logs, resources } from "../../db/schema";
+import { isVarOption } from "../../installs/install-vars";
 import {
   parseSelfManagedOutcome,
   parseSelfManagedStatus,
@@ -164,7 +165,8 @@ export function settingsRunId(jobId: string): string {
 /**
  * The app's settings as the installer gets them: each catalog var's default
  * (placeholders filled in for the Worker that serves the app), replaced by
- * what the admin entered. Empty values are left out.
+ * what the admin entered. Empty values are left out, and so is a stored
+ * choice this version no longer offers (the default applies instead).
  */
 export function installerVars(
   catalog: CatalogManifest,
@@ -173,7 +175,8 @@ export function installerVars(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const v of catalog.vars) {
-    const raw = entered[v.name] ?? v.default;
+    const stored = entered[v.name];
+    const raw = (stored !== undefined && isVarOption(v, stored) ? stored : undefined) ?? v.default;
     if (raw === undefined) continue;
     const value = renderPlaceholders(raw, placeholders).trim();
     if (value.length > 0) out[v.name] = value;
