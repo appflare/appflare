@@ -76,5 +76,14 @@ RUN node --version | grep -q '^v22\.' \
   && s3fs --version | head -n 1 \
   && wrangler --version && appflare-pack --help > /dev/null
 
+# Repository builds read a checkout's wrangler config with `appflare-pack
+# inspect` (wrangler's own reader, so TOML too); an image whose packer lacks it
+# could never build a repository.
+RUN mkdir /tmp/inspect-check \
+  && printf 'name = "inspect-check"\n\n[vars]\nGREETING = "hello"\n' > /tmp/inspect-check/wrangler.toml \
+  && appflare-pack inspect /tmp/inspect-check --config wrangler.toml \
+    | grep -qF '"name":"inspect-check","vars":["GREETING"]' \
+  && rm -rf /tmp/inspect-check
+
 WORKDIR /workspace
 # The base image's ENTRYPOINT (the sandbox control server) stays as it is.
