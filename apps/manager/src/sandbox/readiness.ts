@@ -23,9 +23,17 @@ import {
  * - `needs-plan`: the account is not on Workers Paid (Containers exist only there).
  * - `needs-permission`: the token lacks Containers: Edit (or R2 access).
  * - `needs-r2`: R2 has not been enabled on the account.
+ * - `enabling`: a `sandbox_enable` job is queued or running (see
+ *   {@link withSandboxJobs}); its id is `jobId`.
  */
 
-export type SandboxRowState = "on" | "ready-auto" | "needs-plan" | "needs-permission" | "needs-r2";
+export type SandboxRowState =
+  | "on"
+  | "ready-auto"
+  | "needs-plan"
+  | "needs-permission"
+  | "needs-r2"
+  | "enabling";
 
 export interface SandboxReadiness {
   state: SandboxRowState;
@@ -36,6 +44,44 @@ export interface SandboxReadiness {
    * when one has not run yet or could not tell; the start asks again.
    */
   confirmed: boolean;
+  /** For `enabling`: the job turning sandbox builds on, for a link to its log. */
+  jobId?: string;
+  /**
+   * The last enable that failed (and none has succeeded since), when
+   * sandbox builds are not on and nothing is enabling them now.
+   */
+  failure?: SandboxEnableFailure;
+}
+
+/** A failed `sandbox_enable` job: its id and the first line that says why. */
+export interface SandboxEnableFailure {
+  id: string;
+  message: string;
+}
+
+/** The sandbox jobs that change what the row says, read next to the probes. */
+export interface SandboxJobState {
+  /** A `sandbox_enable` job that is queued or running. */
+  activeEnable: { id: string } | null;
+  /** The most recent failed sandbox job, unless a newer one succeeded. */
+  lastFailure: { id: string; kind: string; message: string } | null;
+}
+
+export const NO_SANDBOX_JOBS: SandboxJobState = { activeEnable: null, lastFailure: null };
+
+/**
+ * The probes' reading adjusted by the jobs: on stays on (the enable
+ * succeeded); a queued or running enable is `enabling`; otherwise the
+ * probes' state, with the last failed enable attached so the row can say so.
+ */
+export function withSandboxJobs(base: SandboxReadiness, jobs: SandboxJobState): SandboxReadiness {
+  if (base.state === "on") return base;
+  if (jobs.activeEnable !== null) {
+    return { state: "enabling", missing: null, confirmed: true, jobId: jobs.activeEnable.id };
+  }
+  const failed = jobs.lastFailure;
+  if (failed === null || failed.kind !== "sandbox_enable") return base;
+  return { ...base, failure: { id: failed.id, message: failed.message } };
 }
 
 /** The id of the sandbox builds row in the account checklist, for links to it. */

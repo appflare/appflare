@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { capabilitiesView } from "../capabilities/capabilities";
+import { NO_SANDBOX_JOBS } from "../sandbox/readiness";
 import type { ChecklistData } from "./checklist.server";
 import {
   initialWizardState,
@@ -17,6 +18,7 @@ const CHECKLIST: ChecklistData = {
   sandbox: "off",
   needs: null,
   accountId: "acc0000000000000000000000000000a",
+  sandboxJobs: NO_SANDBOX_JOBS,
 };
 const LATER: ChecklistData = { ...CHECKLIST, sandbox: "enabled" };
 

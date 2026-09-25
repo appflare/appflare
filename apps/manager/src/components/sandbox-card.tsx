@@ -151,6 +151,35 @@ function SandboxUsageNote() {
   );
 }
 
+/** Short labels for the dashboard addresses the refusal reasons carry. */
+const DASHBOARD_LABELS: ReadonlyArray<[RegExp, string]> = [
+  [/\/workers\/plans$/, "Workers plans"],
+  [/\/r2\/overview$/, "R2 in the dashboard"],
+];
+
+/**
+ * A refusal reason with each dashboard address shown as a short link instead
+ * of the address itself. The reasons stay plain text for server errors.
+ */
+function ReasonText({ text }: { text: string }) {
+  const parts = text.split(/(https:\/\/[^\s)]+?)(?=[.)]*(?:\s|$))/);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (!part.startsWith("https://")) return part;
+        const label = DASHBOARD_LABELS.find(([re]) => re.test(part))?.[1] ?? "the dashboard";
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: parts of one fixed string
+          <Link key={i} href={part} target="_blank" rel="noopener noreferrer">
+            {label}
+            <Link.ExternalIcon />
+          </Link>
+        );
+      })}
+    </>
+  );
+}
+
 function EnableDialog({ status, disabled }: { status: SandboxCardState; disabled: boolean }) {
   const start = useStartSandboxJob();
   return (
@@ -336,7 +365,9 @@ function NotConnected({
           description={
             <span className="grid gap-1">
               {problems.map((p) => (
-                <span key={p}>{p}</span>
+                <span key={p}>
+                  <ReasonText text={p} />
+                </span>
               ))}
             </span>
           }

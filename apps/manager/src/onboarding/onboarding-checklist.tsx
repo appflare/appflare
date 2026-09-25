@@ -9,7 +9,7 @@ import { buildCostLine, CONTAINERS_PRICING_URL, estimateBuild } from "../sandbox
 import { startSandboxJob } from "../server/sandbox.functions";
 import { recheckChecklist } from "./checklist.functions";
 import type { ChecklistData } from "./checklist.server";
-import { ChecklistBody } from "./checklist-view";
+import { ChecklistBody, EnablingStatus } from "./checklist-view";
 
 /**
  * The onboarding checklist's two places, the last setup step and Settings ›
@@ -24,17 +24,8 @@ import { ChecklistBody } from "./checklist-view";
  */
 function EnableSandboxNow({ stayInPlace }: { stayInPlace: boolean }) {
   const jobStarted = useJobStarted();
-  const [started, setStarted] = useState(false);
-  if (started) {
-    return (
-      <Text variant="secondary" size="sm" as="span">
-        <span role="status">
-          Enabling… you can finish setup; progress is under{" "}
-          <Link href="/settings/account">Settings</Link>.
-        </span>
-      </Text>
-    );
-  }
+  const [startedJob, setStartedJob] = useState<string | null>(null);
+  if (startedJob !== null) return <EnablingStatus jobId={startedJob} />;
   return (
     <ConfirmDialog
       trigger={(p) => (
@@ -48,7 +39,7 @@ function EnableSandboxNow({ stayInPlace }: { stayInPlace: boolean }) {
       destructive={false}
       onConfirm={async () => {
         const { jobId } = await startSandboxJob({ data: { action: "enable" } });
-        if (stayInPlace) setStarted(true);
+        if (stayInPlace) setStartedJob(jobId);
         else await jobStarted(jobId, "Enabling sandbox builds");
       }}
     >
@@ -132,7 +123,7 @@ export function SetupChecklist({
 }) {
   const { checking, error, recheck } = useRecheck(onRechecked);
   return (
-    <div className="grid gap-3">
+    <div className="grid min-w-0 gap-3">
       <ChecklistBody data={data} enableNow={<EnableSandboxNow stayInPlace />} />
       {error !== null && <ErrorBanner message={error} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -163,7 +154,7 @@ export function OnboardingChecklistCard({
         <span>Onboarding checklist</span>
         {isAdmin && <RecheckButton checking={checking} onClick={() => void recheck()} />}
       </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-3 px-5 py-4">
+      <LayerCard.Primary className="grid min-w-0 gap-3 px-5 py-4">
         <ChecklistBody
           data={data}
           enableNow={isAdmin ? <EnableSandboxNow stayInPlace={false} /> : null}

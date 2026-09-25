@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type CapabilitiesView, capabilitiesView } from "../capabilities/capabilities";
-import { NEEDS_WORKERS_PAID_REASON, NO_CONTAINERS_PERMISSION_REASON } from "../sandbox/preflight";
+import { NO_CONTAINERS_PERMISSION_REASON } from "../sandbox/preflight";
 import {
   buildChecklist,
   type CatalogNeeds,
@@ -11,8 +11,9 @@ import {
   checklistProgress,
   DASHBOARD_LINKS,
   groupChecklist,
+  MAX_ROW_VALUE_LENGTH,
   needsYouCount,
-  rowLine,
+  rowHelp,
 } from "./checklist";
 
 const ACC = "acc0000000000000000000000000000a";
@@ -133,24 +134,23 @@ describe("buildChecklist", () => {
   it("shows sandbox builds as ready on Workers Paid with the Containers permission, with Enable now", () => {
     expect(rows({ view: paidView() }).sandbox).toMatchObject({
       status: "optional",
-      value: "Ready, enabled automatically when an app needs it",
+      value: "Ready, turns on when an app needs it",
       link: null,
       action: "enable-sandbox",
     });
   });
 
-  it("says what sandbox builds still need otherwise, in the refusal's words, with the fix", () => {
+  it("says what sandbox builds still need otherwise, with the fix as the action", () => {
     expect(rows().sandbox).toMatchObject({
       status: "optional",
       value: "Needs Workers Paid",
-      note: NEEDS_WORKERS_PAID_REASON,
-      link: { href: DASHBOARD_LINKS.workersPlans },
+      link: { href: DASHBOARD_LINKS.workersPlans, label: "Upgrade" },
       action: null,
     });
-    // Paid, but the token cannot read Containers.
+    // Paid, but the token cannot read Containers: the reason goes to the tooltip.
     expect(rows({ view: { ...paidView(), containers: NO_PERMISSION } }).sandbox).toMatchObject({
       value: "Needs a token permission",
-      note: NO_CONTAINERS_PERMISSION_REASON,
+      detail: NO_CONTAINERS_PERMISSION_REASON,
       link: { href: DASHBOARD_LINKS.accountApiTokens, external: true },
       action: null,
     });
@@ -164,13 +164,47 @@ describe("buildChecklist", () => {
     }
   });
 
+  it("shows an enable in progress with a link to its job, and the last failed one", () => {
+    const enabling = rows({
+      view: paidView(),
+      sandboxJobs: { activeEnable: { id: "job-1" }, lastFailure: null },
+    }).sandbox;
+    expect(enabling).toMatchObject({
+      status: "optional",
+      value: "Being turned on",
+      action: "enabling",
+      link: { href: "/jobs/job-1", external: false },
+    });
+    const failed = rows({
+      view: paidView(),
+      sandboxJobs: {
+        activeEnable: null,
+        lastFailure: { id: "job-0", kind: "sandbox_enable", message: "deploy failed: 500" },
+      },
+    }).sandbox;
+    expect(failed).toMatchObject({
+      value: "Last try failed",
+      link: { href: "/jobs/job-0", label: "View log" },
+      action: null,
+    });
+    expect(rowHelp(failed)).toContain("deploy failed: 500");
+    // Succeeded: the binding serves, so the row is done whatever the jobs say.
+    expect(
+      rows({
+        view: paidView(),
+        sandbox: "enabled",
+        sandboxJobs: { activeEnable: { id: "job-1" }, lastFailure: null },
+      }).sandbox.status,
+    ).toBe("done");
+  });
+
   it("offers Enable now only once the probes confirmed it, else asks for a Re-check", () => {
     const manualPaid = view({
       containers: null,
       plan: { plan: "paid", source: "set-by-you" },
     });
     expect(rows({ view: manualPaid }).sandbox).toMatchObject({
-      value: "Ready, enabled automatically when an app needs it",
+      value: "Ready, turns on when an app needs it",
       action: null,
     });
     expect(rows({ view: manualPaid }).sandbox.note).toContain("Re-check");
@@ -267,9 +301,48 @@ describe("checklist display rules", () => {
     expect(grouped.optional.map((r) => r.id)).toEqual(["workers-plan", "zero-trust", "sandbox"]);
   });
 
-  it("gives each row one line: the probe's note when it could not tell, else why it matters", () => {
+  it("puts the explanation in the help tooltip: detail, the probe's note, then why it matters", () => {
     const r = rows({ view: view({ zeroTrust: NO_PERMISSION }) });
-    expect(rowLine(r["zero-trust"])).toBe(r["zero-trust"].note);
-    expect(rowLine(r.r2)).toBe(r.r2.why);
+    expect(rowHelp(r["zero-trust"])).toBe(`${r["zero-trust"].note} ${r["zero-trust"].why}`);
+    expect(rowHelp(r.r2)).toBe(r.r2.why);
+  });
+
+  it("shows Configured for a Zero Trust organization, its team domain only in the tooltip", () => {
+    const r = rows({
+      view: view({
+        zeroTrust: { state: "exists", teamDomain: "orange-mode.cloudflareaccess.com" },
+      }),
+    });
+    expect(r["zero-trust"]).toMatchObject({ status: "done", value: "Configured" });
+    expect(rowHelp(r["zero-trust"])).toContain("orange-mode.cloudflareaccess.com");
+  });
+
+  it("keeps every value short and free of addresses, in every state", () => {
+    const views: CapabilitiesView[] = [
+      view(),
+      paidView(),
+      capabilitiesView(undefined, null),
+      view({ workersDev: { state: "not-registered" }, r2: { state: "not-enabled" } }),
+      view({ zeroTrust: NO_PERMISSION, workersDev: NO_PERMISSION, zone: NO_PERMISSION }),
+      { ...paidView(), containers: NO_PERMISSION },
+      { ...paidView(), r2: { state: "not-enabled" } },
+      view({ zone: { state: "none" }, emailRouting: { state: "no-zone" } }),
+      view({ plan: { plan: "paid", source: "set-by-you" }, containers: null }),
+    ];
+    for (const v of views) {
+      for (const sandbox of ["off", "enabled"] as const) {
+        for (const row of buildChecklist({ view: v, sandbox, needs: NEEDS, accountId: ACC })) {
+          // The workers.dev hostname is the account's own value, shown as is.
+          if (row.id !== "workers-dev" || row.status !== "done") {
+            expect(row.value.length, `${row.id}: ${row.value}`).toBeLessThanOrEqual(
+              MAX_ROW_VALUE_LENGTH,
+            );
+          }
+          expect(row.value).not.toMatch(/https?:\/\//);
+          if (row.link !== null) expect(rowHelp(row)).not.toContain(row.link.href);
+          expect(rowHelp(row)).not.toMatch(/https?:\/\//);
+        }
+      }
+    }
   });
 });

@@ -1,9 +1,12 @@
 import { type IndexApp, isServiceId, requirementService, type ServiceId } from "@appflare/schema";
 import { type CapabilitiesView, PLAN_LABELS, unknownSentence } from "../capabilities/capabilities";
 import {
+  NO_SANDBOX_JOBS,
   SANDBOX_CHECKLIST_ROW_ID,
+  type SandboxJobState,
   type SandboxRowState,
   sandboxReadinessOf,
+  withSandboxJobs,
 } from "../sandbox/readiness";
 
 /**
@@ -32,15 +35,23 @@ export interface ChecklistLink {
   external: boolean;
 }
 
-/** An action the row offers in the app itself, rather than a link. */
-export type ChecklistAction = "enable-sandbox";
+/**
+ * What the row offers in the app itself, rather than a link: "Enable now",
+ * or the spinner of an enable in progress (its link goes to the job's log).
+ */
+export type ChecklistAction = "enable-sandbox" | "enabling";
 
 export interface ChecklistRow {
   id: ChecklistRowId;
   label: string;
   status: ChecklistStatus;
-  /** What the probe found, in a few words. */
+  /** What the probe found, in a few words (at most about 40 characters, one line). */
   value: string;
+  /**
+   * More about the value for the row's help tooltip, such as the Zero Trust
+   * team domain behind "Configured"; never shown in the row itself.
+   */
+  detail: string | null;
   /** Why it matters, with the number of catalog apps that need it when known. */
   why: string;
   /** Why the probe could not tell, when it could not. */
@@ -51,7 +62,7 @@ export interface ChecklistRow {
 }
 
 /** A row whose only way forward is a link (every row but sandbox builds). */
-type LinkRow = Omit<ChecklistRow, "action">;
+type LinkRow = Omit<ChecklistRow, "action" | "detail"> & { detail?: string | null };
 
 /** Sandbox builds as the checklist shows them: state only. */
 export type SandboxBuildsState = "enabled" | "off";
@@ -141,6 +152,8 @@ export interface ChecklistInput {
   needs: CatalogNeeds | null;
   /** The account Appflare runs in, once known. */
   accountId: string | null;
+  /** An enable in progress and the last failed one; none when left out. */
+  sandboxJobs?: SandboxJobState;
 }
 
 const NOT_CHECKED = "Not checked yet";
@@ -168,7 +181,7 @@ function workersDevRow({ view, needs, accountId }: ChecklistInput): LinkRow {
       accountId === null
         ? DASHBOARD_LINKS.workersAndPages
         : DASHBOARD_LINKS.workersOnboarding(accountId),
-    label: "Register a subdomain",
+    label: "Register",
     external: true,
   };
   if (probe === null) {
@@ -190,7 +203,7 @@ function planRow({ view, needs }: ChecklistInput): LinkRow {
   const { plan, source } = view.plan;
   const link: ChecklistLink = {
     href: DASHBOARD_LINKS.workersPlans,
-    label: "Workers plans",
+    label: "Upgrade",
     external: true,
   };
   const row = {
@@ -225,7 +238,7 @@ function planRow({ view, needs }: ChecklistInput): LinkRow {
 
 function r2Row({ view, needs }: ChecklistInput): LinkRow {
   const probe = view.r2;
-  const link: ChecklistLink = { href: DASHBOARD_LINKS.r2, label: "R2", external: true };
+  const link: ChecklistLink = { href: DASHBOARD_LINKS.r2, label: "Open R2", external: true };
   const row = {
     id: "r2" as const,
     label: "R2",
@@ -309,7 +322,14 @@ function zeroTrustRow({ view, needs }: ChecklistInput): LinkRow {
     link: { href: DASHBOARD_LINKS.zeroTrust, label: "Zero Trust", external: true },
   };
   if (probe?.state === "exists") {
-    return { ...row, status: "done", value: probe.teamDomain, note: null };
+    // The team domain goes to the tooltip: the row links to Zero Trust already.
+    return {
+      ...row,
+      status: "done",
+      value: "Configured",
+      detail: `Team domain ${probe.teamDomain}.`,
+      note: null,
+    };
   }
   if (probe?.state === "none") {
     return { ...row, status: "optional", value: "None yet", note: null };
@@ -325,22 +345,23 @@ function zeroTrustRow({ view, needs }: ChecklistInput): LinkRow {
   };
 }
 
-/** The sandbox row's short value and where to fix it, per readiness state. */
+/**
+ * The sandbox row's short value, what the tooltip adds, and where to fix it,
+ * per readiness state. The tooltip words carry no address: the link is there.
+ */
 const SANDBOX_NEEDS: Record<
-  Exclude<SandboxRowState, "on" | "ready-auto">,
-  { value: string; link: ChecklistLink }
+  Exclude<SandboxRowState, "on" | "ready-auto" | "needs-permission" | "enabling">,
+  { value: string; detail: string; link: ChecklistLink }
 > = {
   "needs-plan": {
     value: "Needs Workers Paid",
-    link: { href: DASHBOARD_LINKS.workersPlans, label: "Workers plans", external: true },
-  },
-  "needs-permission": {
-    value: "Needs a token permission",
-    link: { href: DASHBOARD_LINKS.accountApiTokens, label: "API tokens", external: true },
+    detail: "Builds run in Cloudflare Containers, which only Workers Paid includes.",
+    link: { href: DASHBOARD_LINKS.workersPlans, label: "Upgrade", external: true },
   },
   "needs-r2": {
     value: "Needs R2 turned on",
-    link: { href: DASHBOARD_LINKS.r2, label: "R2", external: true },
+    detail: "The sandbox keeps build outputs in R2. Open R2 in the dashboard once to turn it on.",
+    link: { href: DASHBOARD_LINKS.r2, label: "Open R2", external: true },
   },
 };
 
@@ -351,7 +372,7 @@ const SANDBOX_NEEDS: Record<
  * "Enable now" for a faster first build once the probes confirmed Workers
  * Paid, Containers and R2); or what is missing, with where to fix it.
  */
-function sandboxRow({ view, needs, sandbox }: ChecklistInput): ChecklistRow {
+function sandboxRow({ view, needs, sandbox, sandboxJobs }: ChecklistInput): ChecklistRow {
   const row = {
     id: "sandbox" as const,
     label: "Sandbox builds",
@@ -360,24 +381,62 @@ function sandboxRow({ view, needs, sandbox }: ChecklistInput): ChecklistRow {
       needs === null ? null : counted(needs.sandbox, "is built this way", "are built this way"),
     ),
     action: null,
+    detail: null,
   };
-  const readiness = sandboxReadinessOf(view, sandbox === "enabled");
+  const readiness = withSandboxJobs(
+    sandboxReadinessOf(view, sandbox === "enabled"),
+    sandboxJobs ?? NO_SANDBOX_JOBS,
+  );
+  const failure = readiness.failure;
   switch (readiness.state) {
     case "on":
       return { ...row, status: "done", value: "Enabled", note: null, link: null };
-    case "ready-auto":
+    case "enabling":
       return {
         ...row,
         status: "optional",
-        value: "Ready, enabled automatically when an app needs it",
+        value: "Being turned on",
+        detail: "This takes about two minutes; you can go on meanwhile.",
+        note: null,
+        link: { href: `/jobs/${readiness.jobId}`, label: "Enabling…", external: false },
+        action: "enabling",
+      };
+    case "ready-auto":
+      if (failure !== undefined) {
+        // Ready again, but the last try failed: its log says why. The next
+        // install that needs it tries again.
+        return {
+          ...row,
+          status: "optional",
+          value: "Last try failed",
+          detail: `${failure.message} The next app that needs it tries again.`,
+          note: null,
+          link: { href: `/jobs/${failure.id}`, label: "View log", external: false },
+        };
+      }
+      return {
+        ...row,
+        status: "optional",
+        value: "Ready, turns on when an app needs it",
+        detail: "Enabled automatically the first time an install or build needs it.",
         // Not confirmed: a probe has not run or could not tell; the start asks again.
         note: readiness.confirmed ? null : RECHECK_NOTE,
         link: null,
         action: readiness.confirmed ? "enable-sandbox" : null,
       };
+    case "needs-permission":
+      // The token lacks Containers: Edit or R2 access; the reason names which (no address).
+      return {
+        ...row,
+        status: "optional",
+        value: "Needs a token permission",
+        detail: readiness.missing,
+        note: null,
+        link: { href: DASHBOARD_LINKS.accountApiTokens, label: "Edit token", external: true },
+      };
     default: {
-      const { value, link } = SANDBOX_NEEDS[readiness.state];
-      return { ...row, status: "optional", value, note: readiness.missing, link };
+      const { value, detail, link } = SANDBOX_NEEDS[readiness.state];
+      return { ...row, status: "optional", value, detail, note: null, link };
     }
   }
 }
@@ -393,7 +452,7 @@ export function buildChecklist(input: ChecklistInput): ChecklistRow[] {
     zeroTrustRow(input),
     sandboxRow(input),
   ];
-  return rows.map((row) => ({ ...row, action: row.action ?? null }));
+  return rows.map((row) => ({ ...row, action: row.action ?? null, detail: row.detail ?? null }));
 }
 
 export const STATUS_LABELS: Record<ChecklistStatus, string> = {
@@ -442,7 +501,13 @@ export function checklistRowAnchor(row: Pick<ChecklistRow, "id">): string {
   return row.id === "sandbox" ? SANDBOX_CHECKLIST_ROW_ID : `checklist-${row.id}`;
 }
 
-/** The one line under a row's title: why the probe could not tell, else why it matters. */
-export function rowLine(row: ChecklistRow): string {
-  return row.note ?? row.why;
+/**
+ * The row's help tooltip, after its value: what the value stands for, why the
+ * probe could not tell (when it could not), and why the row matters.
+ */
+export function rowHelp(row: ChecklistRow): string {
+  return [row.detail, row.note, row.why].filter((part) => part !== null).join(" ");
 }
+
+/** The longest value a row shows; longer ones would wrap or hide behind an ellipsis. */
+export const MAX_ROW_VALUE_LENGTH = 40;

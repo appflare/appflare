@@ -1,42 +1,48 @@
-import { Link, LinkButton, Meter, Text } from "@cloudflare/kumo";
-import { CheckCircleIcon, CircleDashedIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Button, cn, Link, LinkButton, Loader, Meter, Text } from "@cloudflare/kumo";
+import {
+  CheckCircleIcon,
+  CircleDashedIcon,
+  InfoIcon,
+  WarningCircleIcon,
+} from "@phosphor-icons/react";
 import type { ReactNode } from "react";
+import { Tooltip } from "../components/tooltip";
 import {
   buildChecklist,
   type ChecklistLink,
   type ChecklistRow,
+  type ChecklistStatus,
   checklistProgress,
   checklistRowAnchor,
   groupChecklist,
   needsYouCount,
-  rowLine,
+  rowHelp,
 } from "./checklist";
 import type { ChecklistData } from "./checklist.server";
 
 /**
  * How the onboarding checklist looks, the same in the last setup step and on
  * Settings › Account and capabilities: progress (rows done out of the rows
- * that count), then the rows that need the admin, expanded, with their one
- * action; the done rows on one line each with a tick; the optional ones last
- * and quieter. Presentational only; `onboarding-checklist.tsx` wires
- * Re-check and "Enable now".
+ * that count), then every row as one line of the same height (status icon,
+ * title with a help tooltip, a short value, the action on the right). Rows
+ * that need the admin come first, then the done ones, then the optional
+ * ones, quieter, under their own heading. Presentational only;
+ * `onboarding-checklist.tsx` wires Re-check and "Enable now".
  */
 
-/** The status icon column: aligned with the title's first line. */
-function StatusIcon({ children }: { children: ReactNode }) {
-  return <span className="flex h-lh shrink-0 items-center">{children}</span>;
-}
+const STATUS_ICONS: Record<ChecklistStatus, ReactNode> = {
+  "needs-you": (
+    <WarningCircleIcon weight="fill" className="text-kumo-warning" aria-label="Needs you" />
+  ),
+  done: <CheckCircleIcon weight="fill" className="text-kumo-success" aria-label="Done" />,
+  optional: <CircleDashedIcon className="text-kumo-inactive" aria-label="Optional" />,
+};
 
+/** The row's action as a link: a small button when the row needs the admin, else a text link. */
 function RowLink({ link, prominent }: { link: ChecklistLink; prominent: boolean }) {
   if (prominent) {
     return (
-      <LinkButton
-        href={link.href}
-        external={link.external}
-        variant="secondary"
-        size="sm"
-        className="shrink-0"
-      >
+      <LinkButton href={link.href} external={link.external} variant="secondary" size="sm">
         {link.label}
       </LinkButton>
     );
@@ -55,79 +61,111 @@ function RowLink({ link, prominent }: { link: ChecklistLink; prominent: boolean 
   );
 }
 
+/** The help icon beside a title: the value in full, then what it means and why it matters. */
+function RowHelp({ row }: { row: ChecklistRow }) {
+  return (
+    <Tooltip
+      content={
+        <>
+          <strong className="font-medium">{row.value}.</strong> {rowHelp(row)}
+        </>
+      }
+      render={
+        <Button
+          variant="ghost"
+          size="xs"
+          shape="square"
+          icon={<InfoIcon />}
+          aria-label={`About ${row.label}`}
+          className="shrink-0 text-kumo-subtle"
+        />
+      }
+    />
+  );
+}
+
 /**
- * A row's text with its action: beside it from the `sm` breakpoint, under it
- * on a phone, so the text keeps its width.
+ * One row, one line, the same height whatever it holds. The title keeps its
+ * width; the value gives way first (ellipsis; the help tooltip starts with
+ * it in full).
  */
-function RowBody({ action, children }: { action: ReactNode; children: ReactNode }) {
+function Row({ row, action }: { row: ChecklistRow; action: ReactNode }) {
+  const secondary = row.status === "optional";
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
-      <div className="grid min-w-0 flex-1 gap-0.5">{children}</div>
-      {action !== null && <div className="shrink-0">{action}</div>}
-    </div>
-  );
-}
-
-/** A row that needs the admin: expanded, with its action beside it. */
-function NeedsYouRow({ row }: { row: ChecklistRow }) {
-  return (
-    <li id={checklistRowAnchor(row)} className="flex items-start gap-3 py-3">
-      <StatusIcon>
-        <WarningCircleIcon weight="fill" className="text-kumo-warning" aria-label="Needs you" />
-      </StatusIcon>
-      <RowBody action={row.link === null ? null : <RowLink link={row.link} prominent />}>
-        <Text bold>
-          {row.label}
-          <span className="font-normal text-kumo-subtle"> · {row.value}</span>
-        </Text>
-        <Text variant="secondary" size="sm">
-          {rowLine(row)}
-        </Text>
-      </RowBody>
-    </li>
-  );
-}
-
-/** A done row: one line, a tick, what was found. */
-function DoneRow({ row }: { row: ChecklistRow }) {
-  return (
-    <li id={checklistRowAnchor(row)} className="flex items-center gap-3 py-2">
-      <StatusIcon>
-        <CheckCircleIcon weight="fill" className="text-kumo-success" aria-label="Done" />
-      </StatusIcon>
-      <Text as="span">{row.label}</Text>
-      <span className="ml-auto min-w-0 truncate text-right">
-        <Text variant="secondary" size="sm" as="span">
-          {row.value}
-        </Text>
+    <li id={checklistRowAnchor(row)} className="flex h-11 min-w-0 items-center gap-3">
+      <span className="flex shrink-0 items-center">{STATUS_ICONS[row.status]}</span>
+      <span className="flex min-w-0 flex-1 items-center gap-1">
+        <span className="min-w-0 shrink-0 truncate">
+          <Text
+            as="span"
+            truncate
+            bold={row.status === "needs-you"}
+            variant={secondary ? "secondary" : "body"}
+          >
+            {row.label}
+          </Text>
+        </span>
+        <RowHelp row={row} />
+        <span
+          className={cn(
+            // The value gives way long before the title does.
+            "ml-auto min-w-0 shrink-[1000] truncate pl-2 text-right",
+            // On a phone a row with an action says it with the action; the
+            // value stays in the help tooltip.
+            action !== null && "hidden sm:block",
+          )}
+        >
+          <Text variant="secondary" size="sm" as="span">
+            {row.value}
+          </Text>
+        </span>
       </span>
+      {action !== null && <span className="flex shrink-0 items-center">{action}</span>}
     </li>
   );
 }
 
-/** An optional row: quieter, its action a text link or a small button. */
-function OptionalRow({ row, enableNow }: { row: ChecklistRow; enableNow: ReactNode }) {
+/** What the short "Enabling…" status stands for. */
+const ENABLING_MORE =
+  "Turning sandbox builds on takes about two minutes. You can go on meanwhile; the link opens the job's log.";
+
+/**
+ * An enable in progress: a spinner and "Enabling…", linked to the job's log,
+ * with the rest in a tooltip. The same after "Enable now" and after a reload.
+ */
+export function EnablingStatus({ jobId }: { jobId: string }) {
   return (
-    <li id={checklistRowAnchor(row)} className="flex items-start gap-3 py-2.5">
-      <StatusIcon>
-        <CircleDashedIcon className="text-kumo-inactive" aria-label="Optional" />
-      </StatusIcon>
-      <RowBody action={row.action === "enable-sandbox" ? enableNow : null}>
-        <Text as="span">
-          {row.label}
-          <span className="text-kumo-subtle"> · {row.value}</span>
-        </Text>
-        <Text variant="secondary" size="sm">
-          {rowLine(row)}
-        </Text>
-        {row.link !== null && (
-          <span>
-            <RowLink link={row.link} prominent={false} />
-          </span>
-        )}
-      </RowBody>
-    </li>
+    <Tooltip
+      content={ENABLING_MORE}
+      render={
+        <span role="status" className="flex items-center gap-1.5">
+          <Loader size="sm" />
+          <Text size="sm" as="span">
+            <Link href={`/jobs/${jobId}`}>Enabling…</Link>
+          </Text>
+          <span className="sr-only">{ENABLING_MORE}</span>
+        </span>
+      }
+    />
   );
+}
+
+/** The job id in a row's link to `/jobs/<id>`. */
+function jobIdOf(link: ChecklistLink | null): string | null {
+  const match = link?.href.match(/^\/jobs\/([^/?#]+)$/);
+  return match?.[1] ?? null;
+}
+
+/** The action a row shows: its link, or "Enable now" (admins only) on the sandbox row. */
+function actionOf(row: ChecklistRow, enableNow: ReactNode): ReactNode {
+  if (row.action === "enable-sandbox") return enableNow;
+  if (row.action === "enabling") {
+    const jobId = jobIdOf(row.link);
+    return jobId === null ? null : <EnablingStatus jobId={jobId} />;
+  }
+  // Done rows need nothing; their dashboard link would only repeat the tick.
+  if (row.link === null || row.status === "done") return null;
+  return <RowLink link={row.link} prominent={row.status === "needs-you"} />;
 }
 
 function Progress({ rows }: { rows: ChecklistRow[] }) {
@@ -152,6 +190,17 @@ function Progress({ rows }: { rows: ChecklistRow[] }) {
   );
 }
 
+function RowList({ rows, enableNow }: { rows: ChecklistRow[]; enableNow: ReactNode }) {
+  return (
+    // Rows never wrap, so the grid must let them shrink below their text width.
+    <ul className="grid min-w-0 grid-cols-[minmax(0,1fr)] divide-y divide-kumo-hairline">
+      {rows.map((row) => (
+        <Row key={row.id} row={row} action={actionOf(row, enableNow)} />
+      ))}
+    </ul>
+  );
+}
+
 export function ChecklistBody({
   data,
   enableNow,
@@ -163,29 +212,18 @@ export function ChecklistBody({
   const rows = buildChecklist(data);
   const { needsYou, done, optional } = groupChecklist(rows);
   return (
-    <div className="grid gap-4">
+    <div className="grid min-w-0 gap-4">
       <Progress rows={rows} />
-      <div className="grid gap-3">
+      <div className="grid min-w-0 gap-3">
         {needsYou.length + done.length > 0 && (
-          <ul className="grid divide-y divide-kumo-hairline">
-            {needsYou.map((row) => (
-              <NeedsYouRow key={row.id} row={row} />
-            ))}
-            {done.map((row) => (
-              <DoneRow key={row.id} row={row} />
-            ))}
-          </ul>
+          <RowList rows={[...needsYou, ...done]} enableNow={enableNow} />
         )}
         {optional.length > 0 && (
-          <section className="grid gap-1" aria-label="Optional">
+          <section className="grid min-w-0 gap-0.5" aria-label="Optional">
             <Text variant="secondary" size="sm" as="h2">
               Optional, for more apps
             </Text>
-            <ul className="grid divide-y divide-kumo-hairline">
-              {optional.map((row) => (
-                <OptionalRow key={row.id} row={row} enableNow={enableNow} />
-              ))}
-            </ul>
+            <RowList rows={optional} enableNow={enableNow} />
           </section>
         )}
       </div>
