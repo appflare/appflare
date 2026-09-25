@@ -15,7 +15,7 @@ import { installs, jobs, resources } from "../db/schema";
 import { checkExternalHostname } from "../gateway/gateway";
 import { isGatewayReady, readGateway } from "../gateway/gateway.server";
 import type { InstallJobParams } from "../jobs/install";
-import { sandboxBuildOf } from "../jobs/install/artifact-source";
+import { revisedCatalogOf, sandboxBuildOf } from "../jobs/install/artifact-source";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import {
   expectedWorkers,
@@ -205,6 +205,7 @@ export async function startInstallCore(
   // A self-deploying app has no artifact at all: its own installer runs in
   // the sandbox Worker with a token the admin creates for the app.
   const release = indexAppArtifact(app);
+  const revised = revisedCatalogOf(app);
   const build = app.tier === "sandbox" ? (app.build ?? null) : null;
   const installer = app.tier === "self-deploying" ? (app.build ?? null) : null;
   if (build === null && installer === null && (app.tier !== "artifact" || release === null)) {
@@ -428,7 +429,12 @@ export async function startInstallCore(
       : build !== null
         ? { build: sandboxBuildOf(build, true) }
         : release !== null
-          ? { artifacts: release.artifacts, digest: release.digest }
+          ? {
+              artifacts: release.artifacts,
+              digest: release.digest,
+              // The form above came from this revision; the job installs with it.
+              ...(revised === null ? {} : { revisedCatalog: revised }),
+            }
           : {}),
     secrets: resolved.secrets,
     vars: resolved.vars,

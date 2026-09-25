@@ -4,7 +4,6 @@ import {
   type ArtifactManifest,
   appHealthMode,
   appHealthPath,
-  artifactManifestSchema,
   tooManyModulesMessage,
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
@@ -24,6 +23,7 @@ import {
   cleanupSandboxBuildsPhase,
   prebuiltBuildParams,
   resolveArtifactPhase,
+  sourceManifest,
 } from "./install/artifact-source";
 import { checkCronLimitPhase } from "./install/cron-limit";
 import { healthLabel } from "./install/health";
@@ -318,7 +318,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       origin: started.origin,
     });
     const manifestText = source.manifestText;
-    const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
+    // The signed Worker; the form's secrets and vars from a revision when the catalog lists one.
+    const manifest: ArtifactManifest = sourceManifest(source);
     const diff = diffBindings(
       workerName,
       manifest.worker.bindings,

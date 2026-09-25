@@ -1,7 +1,13 @@
 import { webcrypto } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { generateSigningKeypair } from "../scripts/signing-keypair.ts";
-import { decodePublicKey, type SigningKey, signingKeys, verifyManifestSignature } from "./keys";
+import {
+  decodePublicKey,
+  type SigningKey,
+  signingKeys,
+  verifyManifestSignature,
+  verifySignature,
+} from "./keys";
 
 async function signWith(privateKeyPkcs8Base64: string, bytes: Uint8Array): Promise<string> {
   const key = await webcrypto.subtle.importKey(
@@ -81,6 +87,29 @@ describe("verifyManifestSignature", () => {
   it("rejects a public key that is not 32 bytes", () => {
     expect(() => decodePublicKey({ keyId: "short", publicKeyBase64: "AAAA" })).toThrow(
       "signing key short is 3 bytes, expected 32",
+    );
+  });
+});
+
+describe("verifySignature", () => {
+  it("checks a signature over any bytes with the key id given", async () => {
+    const pair = await generateSigningKeypair();
+    const keys: SigningKey[] = [{ keyId: "catalog-test", publicKeyBase64: pair.publicKeyBase64 }];
+    const bytes = new TextEncoder().encode('{"slug":"cut","revision":2}\n');
+    const sig = await signWith(pair.privateKeyPkcs8Base64, bytes);
+    const labels = { signature: "manifest.json.sig", subject: "revised catalog manifest" };
+    await expect(
+      verifySignature(bytes, sig, "catalog-test", keys, labels),
+    ).resolves.toBeUndefined();
+    const tampered = new TextEncoder().encode('{"slug":"cut","revision":3}\n');
+    await expect(verifySignature(tampered, sig, "catalog-test", keys, labels)).rejects.toThrow(
+      'revised catalog manifest signature does not verify with keyId "catalog-test"',
+    );
+    await expect(verifySignature(bytes, sig, "unsigned", keys, labels)).rejects.toThrow(
+      'no trusted signing key matches keyId "unsigned"',
+    );
+    await expect(verifySignature(bytes, "%%%", "catalog-test", keys, labels)).rejects.toThrow(
+      "manifest.json.sig is not valid base64",
     );
   });
 });

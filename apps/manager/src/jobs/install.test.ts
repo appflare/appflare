@@ -1,7 +1,8 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { MAX_WORKER_MODULES } from "@appflare/schema";
+import { MAX_WORKER_MODULES, withRevisedCatalog } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
+import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -12,6 +13,7 @@ import {
   type ArtifactFixture,
   type ArtifactFixtureOptions,
   buildArtifactFixture,
+  REVISED_URL,
   ZIP_URL,
 } from "../test/artifact-fixture";
 import { fakeSelf } from "../test/fake-self";
@@ -379,7 +381,14 @@ async function start(fixture: ArtifactFixture, over: Partial<StartInstallInput> 
   const ids = await startInstallCore(
     {
       db: env.DB,
-      loadApp: async () => ({ app: fixture.index, manifest: fixture.manifest }),
+      // As getCatalogManifest reads it: the form of the revision, when listed.
+      loadApp: async () => ({
+        app: fixture.index,
+        manifest:
+          fixture.revised === null
+            ? fixture.manifest
+            : withRevisedCatalog(fixture.manifest, fixture.revised.catalog),
+      }),
       createJob: async (id, p) => {
         params = p;
         return { id };
@@ -705,6 +714,87 @@ describe("install job", () => {
         text: "https://cut.appflare-dev.workers.dev/admin",
       },
     ]);
+  });
+
+  it("installs the signed Worker with the form of a revision the catalog lists, and records it", async () => {
+    const homePage = {
+      name: "HOME_PAGE",
+      label: "Home page",
+      required: false,
+      type: "select" as const,
+      options: [
+        { value: "default", label: "Show the landing page" },
+        { value: "404", label: "Return an empty 404 response" },
+      ],
+      default: "404",
+    };
+    const greeting = { name: "GREETING", label: "Greeting", default: "hi", required: false };
+    const r = await install({ revision: { vars: [homePage, greeting] } }, {}, { vars: {} });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names).toContain("verify revised catalog manifest");
+    // The revision's defaults, including a var only the revision declares.
+    expect(r.fake.state.metadata?.bindings).toEqual(
+      expect.arrayContaining([
+        { type: "plain_text", name: "HOME_PAGE", text: "404" },
+        { type: "plain_text", name: "GREETING", text: "hi" },
+      ]),
+    );
+    // The install keeps the signed manifest; the revision is recorded for the release.
+    expect(r.installRow?.manifest_json).toBe(new TextDecoder().decode(r.fixture.manifestBytes));
+    const recorded = await readCatalogRevision(createDb(env.DB), r.fixture.digest);
+    expect(recorded?.revision).toBe(2);
+    expect(recorded?.catalog.vars).toEqual(r.fixture.revised?.catalog.vars);
+    expect(recorded?.sha256).toBe(r.fixture.index.catalogManifest?.sha256);
+    expect(recorded?.signature).toBe(r.fixture.index.catalogManifest?.signature);
+  });
+
+  it("refuses a revision whose bytes are not the ones the index lists, before creating anything", async () => {
+    const r = await install(
+      { revision: { summary: "Revised." } },
+      {},
+      {},
+      {
+        revisedCatalog: {
+          url: REVISED_URL,
+          sha256: "0".repeat(64),
+          keyId: "test-key",
+          signature: "x",
+          revision: 2,
+        },
+      },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(
+      /verify revised catalog manifest: .*digest .* does not match the catalog index/,
+    );
+    expect(r.resources).toEqual([]);
+  });
+
+  it("refuses an unsigned revision, before creating anything", async () => {
+    // The same revised bytes (the fixture is deterministic), listed without a signature.
+    const listed = (await buildArtifactFixture({ revision: { summary: "Revised." } })).index
+      .catalogManifest;
+    if (listed === undefined) throw new Error("no revision");
+    const r = await install(
+      { revision: { summary: "Revised." } },
+      {},
+      {},
+      { revisedCatalog: { ...listed, signature: "AAAA", revision: 2 } },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/verify revised catalog manifest: .*signature does not verify/);
+    expect(r.resources).toEqual([]);
+  });
+
+  it("refuses a revision that changes what only a new build can change", async () => {
+    const r = await install(
+      { revision: { requires: ["r2"] } },
+      {},
+      { requirementsConfirmed: true },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/it changes requires, which only a new build can change/);
   });
 
   it("renames Workflows per install and refuses a name that is taken", async () => {

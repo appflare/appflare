@@ -6,6 +6,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { effectiveManifest } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { type BuildKind, installs, resources } from "../db/schema";
 import type { ReconfigureJobParams } from "../jobs/reconfigure";
@@ -155,8 +156,10 @@ async function settingsContext(
         : "This app is deployed by its own installer in the account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in Settings to change its settings.",
     };
   }
-  const manifest = parseManifest(install.manifest_json);
-  if (manifest === null) return null;
+  const signed = parseManifest(install.manifest_json);
+  if (signed === null) return null;
+  // The form of the newest revision recorded for the release, if any.
+  const manifest = await effectiveManifest(createDb(db), signed, install.artifact_digest);
   const path = updatePath(
     manifest,
     install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),

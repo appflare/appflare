@@ -4,7 +4,6 @@ import {
   type ArtifactManifest,
   appHealthMode,
   appHealthPath,
-  artifactManifestSchema,
   hasFixedWorkerName,
   indexArtifactsSchema,
   isOptionalSecret,
@@ -26,7 +25,9 @@ import {
   type ArtifactOrigin,
   prebuiltBuildParams,
   resolveArtifactPhase,
+  revisedCatalogRef,
   sandboxBuildParams,
+  sourceManifest,
 } from "./install/artifact-source";
 import { planBindings } from "./install/bindings";
 import { checkCronLimitPhase, putSchedulesChecked } from "./install/cron-limit";
@@ -85,6 +86,12 @@ export const installJobParams = z.object({
   /** The signed release; absent for a sandbox tier app, which is built instead. */
   artifacts: indexArtifactsSchema.optional(),
   digest: sha256Schema.optional(),
+  /**
+   * With the release: the revised catalog manifest the index lists for it,
+   * whose form the admin filled in. Optional; a job started by an earlier
+   * manager version does not carry it.
+   */
+  revisedCatalog: revisedCatalogRef.optional(),
   /** A sandbox tier app: what the sandbox Worker builds, and the admin's cost confirmation. */
   build: sandboxBuildParams.optional(),
   /**
@@ -142,7 +149,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       : params.build !== undefined
         ? { kind: "sandbox", build: params.build }
         : params.artifacts !== undefined && params.digest !== undefined
-          ? { kind: "release", artifacts: params.artifacts, digest: params.digest }
+          ? {
+              kind: "release",
+              artifacts: params.artifacts,
+              digest: params.digest,
+              ...(params.revisedCatalog === undefined ? {} : { revised: params.revisedCatalog }),
+            }
           : null;
   if (origin === null) throw new NonRetryableError("invalid install job payload: no artifact");
 
@@ -167,7 +179,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       origin,
     });
     const manifestText = source.manifestText;
-    const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
+    // The signed Worker; the form's secrets and vars from a revision when the catalog lists one.
+    const manifest: ArtifactManifest = sourceManifest(source);
     const plan = planBindings(params.workerName, manifest.worker.bindings);
     const queuePlan = planQueueConsumers(params.workerName, manifest.worker);
     const toCreate = [...plan.resources, ...queuePlan.queues];

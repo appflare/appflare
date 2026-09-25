@@ -29,7 +29,16 @@ export interface ArtifactFixtureOptions {
   migrations?: ArtifactManifest["worker"]["migrations"];
   /** Mutate the manifest object after it is built (before signing). */
   tweak?: (manifest: ArtifactManifest) => void;
+  /**
+   * A revision the catalog lists for the release: these fields over the
+   * signed catalog manifest, `revision` 2 unless given. The index row points
+   * at it and `serve` answers {@link REVISED_URL} with it.
+   */
+  revision?: Partial<CatalogManifest>;
 }
+
+/** Where a fixture's revised catalog manifest is served. */
+export const REVISED_URL = "https://catalog.test/apps/cut/manifest.json";
 
 export interface ArtifactFixture {
   manifest: ArtifactManifest;
@@ -40,7 +49,11 @@ export interface ArtifactFixture {
   zip: Uint8Array;
   /** An artifact tier entry: it always has its release artifacts. */
   index: IndexApp & Required<Pick<IndexApp, "artifacts" | "digest">>;
-  /** Serves the zip (Range), manifest, and signature; `null` for other URLs. */
+  /** The revised catalog manifest the index lists, and its exact bytes; null without one. */
+  revised: { catalog: CatalogManifest; bytes: Uint8Array<ArrayBuffer> } | null;
+  /** Signs any bytes with the fixture's key (base64), as catalog CI signs a revision. */
+  signBytes(bytes: Uint8Array): Promise<string>;
+  /** Serves the zip (Range), manifest, signature and revision; `null` for other URLs. */
   serve(url: string, init?: RequestInit): Response | null;
 }
 
@@ -175,6 +188,26 @@ export async function buildArtifactFixture(
     lastVerified: null,
     maintainers: ["MendyLanda"],
   };
+  const signBytes = async (bytes: Uint8Array): Promise<string> =>
+    toBase64(
+      new Uint8Array(
+        await crypto.subtle.sign({ name: "Ed25519" }, pair.privateKey, new Uint8Array(bytes)),
+      ),
+    );
+  let revised: ArtifactFixture["revised"] = null;
+  if (opts.revision !== undefined) {
+    const catalog: CatalogManifest = { ...manifest.catalog, revision: 2, ...opts.revision };
+    const bytes = enc.encode(`${JSON.stringify(catalog, null, 2)}\n`);
+    revised = { catalog, bytes };
+    index.revision = catalog.revision ?? 1;
+    // Signed like the release: same key, same key id.
+    index.catalogManifest = {
+      url: REVISED_URL,
+      sha256: await sha256Hex(bytes),
+      keyId: manifest.keyId,
+      signature: await signBytes(bytes),
+    };
+  }
 
   return {
     manifest,
@@ -184,8 +217,11 @@ export async function buildArtifactFixture(
     keys: [{ keyId: opts.keyId ?? "test-key", publicKeyBase64: toBase64(raw) }],
     zip,
     index,
+    revised,
+    signBytes,
     serve(url, init) {
       if (url === MANIFEST_URL) return new Response(manifestBytes);
+      if (url === REVISED_URL && revised !== null) return new Response(revised.bytes);
       if (url === SIG_URL) return new Response(`${signature}\n`);
       if (url !== ZIP_URL) return null;
       const range = new Headers(init?.headers).get("range");

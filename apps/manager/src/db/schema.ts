@@ -350,6 +350,31 @@ export const featured_dismissals = sqliteTable(
   (t) => [primaryKey({ columns: [t.user_id, t.item_id] })],
 );
 
+/**
+ * Revised catalog manifests, one per signed release: the form and copy the
+ * catalog published for a release after it was built (a higher `revision`
+ * under the same pin; see `@appflare/schema` `revision.ts`). Keyed by the
+ * release's `manifest.json` sha256, which is what `installs.artifact_digest`
+ * and `snapshots.artifact_digest` record, so every install of that release,
+ * and a rollback to it, reads the newest revision this manager has verified.
+ * A row only moves to a higher (or equal) revision. Only verified manifests
+ * are written (`catalog/revisions.server.ts`); the signed `manifest.json` in
+ * `installs.manifest_json` is never changed.
+ */
+export const catalog_revisions = sqliteTable("catalog_revisions", {
+  artifact_digest: text("artifact_digest").primaryKey(),
+  revision: integer("revision").notNull(),
+  /** sha256 of `catalog_json`, as the catalog index listed it. */
+  sha256: text("sha256").notNull(),
+  /** The catalog's signing key that signed `catalog_json` (the release's own key id). */
+  key_id: text("key_id").notNull(),
+  /** Base64 Ed25519 signature over `catalog_json`, verified before the row was written. */
+  signature: text("signature").notNull(),
+  /** The revised catalog manifest, exactly as published. */
+  catalog_json: text("catalog_json").notNull(),
+  recorded_at: timestamp("recorded_at").notNull(),
+});
+
 export const SOURCE_BUILD_STATUSES = ["building", "built", "failed", "used", "discarded"] as const;
 export type SourceBuildStatus = (typeof SOURCE_BUILD_STATUSES)[number];
 

@@ -614,6 +614,12 @@
       ],
       "additionalProperties": false,
       "description": "How the catalog's bump bot treats this entry when its upstream moves."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000,
+      "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `homepage`, `license`, `categories`, `authors`, `maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving `source`: the released artifact stays as it is, and managers show the new form without an update. Anything else needs a new build, so move `source` instead."
     }
   },
   "required": [

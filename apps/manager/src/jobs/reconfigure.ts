@@ -6,9 +6,11 @@ import {
   appHealthPath,
   artifactManifestSchema,
   tooManyModulesMessage,
+  withRevisedCatalog,
 } from "@appflare/schema";
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import { effectiveManifest } from "../catalog/revisions.server";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -258,6 +260,14 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           "the recorded artifact manifest does not match its recorded digest; update or reinstall the app instead",
         );
       }
+      // The newest revision of the release's form this manager verified, read
+      // once here so every replay of the job uses the same one.
+      const signed = artifactManifestSchema.safeParse(JSON.parse(install.manifest_json));
+      const effective = signed.success ? await effectiveManifest(orm, signed.data, digest) : null;
+      const revisedCatalog =
+        signed.success && effective !== null && effective.catalog !== signed.data.catalog
+          ? effective.catalog
+          : null;
       const rows = await orm
         .select()
         .from(resources)
@@ -287,6 +297,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         appliedDoTag: install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
         vectorizeShapes: vectorizeShapesOf(install.manifest_json),
         digest,
+        revisedCatalog,
         zipUrl: install.artifact_url,
         sandboxBuild: install.build_kind === "sandbox",
         storedVars: parseStoredVars(install.config_json),
@@ -331,7 +342,10 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     ) {
       throw new JobError("the recorded artifact manifest changed while the job ran");
     }
-    const manifest: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
+    const signed: ArtifactManifest = artifactManifestSchema.parse(JSON.parse(manifestText));
+    // The signed Worker, with the form of the revision the start step read.
+    const manifest =
+      started.revisedCatalog === null ? signed : withRevisedCatalog(signed, started.revisedCatalog);
     const host: ArtifactHost = started.sandboxBuild ? { kind: "sandbox" } : { kind: "catalog" };
     const diff = diffBindings(
       workerName,

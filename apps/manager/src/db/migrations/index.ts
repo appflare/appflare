@@ -17,6 +17,7 @@ import m0013 from "./0013_update_control.sql?raw";
 import m0014 from "./0014_owner.sql?raw";
 import m0015 from "./0015_install_display_name.sql?raw";
 import m0016 from "./0016_repository_installs.sql?raw";
+import m0017 from "./0017_catalog_revisions.sql?raw";
 
 /** Every migration in apply order. `schema_version` counts how many have been applied. */
 export const migrations: readonly { tag: string; sql: string }[] = [
@@ -37,4 +38,5 @@ export const migrations: readonly { tag: string; sql: string }[] = [
   { tag: "0014_owner", sql: m0014 },
   { tag: "0015_install_display_name", sql: m0015 },
   { tag: "0016_repository_installs", sql: m0016 },
+  { tag: "0017_catalog_revisions", sql: m0017 },
 ];

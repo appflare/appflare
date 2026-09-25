@@ -80,4 +80,5 @@ publish.
 
 Adding `bump` changes the app's `appflare.jsonc`, and a change to a released version
 without a new pin fails to publish. Add it in the same pull request as a move of
-`source`, for example on a bump pull request.
+`source`, for example on a bump pull request, or raise `revision` by one with it (see
+[After merge](/catalog/submit/#after-merge)).

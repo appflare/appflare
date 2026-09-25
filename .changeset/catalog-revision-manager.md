@@ -1,0 +1,5 @@
+---
+"@appflare/manager": patch
+---
+
+When the catalog publishes a signed revision of a released version's form or copy (a higher `revision` with the same version), the manager uses the revised catalog manifest for the install form, the app's Settings, and the install, update and settings jobs. It first checks the file's sha256 against the index, its signature with the embedded keys under the release's own key id, and its fields against the signed `manifest.json`: same app, only the form and copy changed, vars that suit the signed Worker. An unsigned or badly signed revision is refused and logged, and installs of that release fail rather than use an older form. The Worker always comes from the signed release. A revision offers no update and starts no job. Each verified revision is recorded per release, with its digest and signature, in the new `catalog_revisions` table (migration 0017), so apps already installed from that release show the new Settings form and a rollback to the release reads it too. The manager uses the higher of the recorded and the listed revision, and refuses different bytes under a revision it already holds.

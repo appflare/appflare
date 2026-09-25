@@ -1,6 +1,10 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
+import { eq } from "drizzle-orm";
+import { refreshInstalledRevision } from "../catalog/app-manifest.server";
+import { readCachedCatalogApp } from "../catalog/index.server";
 import { createDb } from "../db/client";
+import { installs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
@@ -23,7 +27,27 @@ export const getInstallSettings = createServerFn({ method: "GET" })
   .validator(installIdInput)
   .handler(async ({ data }): Promise<InstallSettings | null> => {
     await requireSession();
-    const s = await readSettings(createDb(env.DB), [SETTING.accountSubdomain]);
+    const orm = createDb(env.DB);
+    const [install] = await orm
+      .select({
+        slug: installs.app_slug,
+        origin: installs.origin,
+        catalog_version: installs.catalog_version,
+        artifact_digest: installs.artifact_digest,
+      })
+      .from(installs)
+      .where(eq(installs.id, data.installId))
+      .limit(1);
+    // A revision of the installed release's form, listed since it was
+    // installed, replaces the form below; it starts no job.
+    if (install?.origin === "catalog") {
+      await refreshInstalledRevision(
+        env,
+        install,
+        await readCachedCatalogApp(env.KV, install.slug),
+      );
+    }
+    const s = await readSettings(orm, [SETTING.accountSubdomain]);
     return readInstallSettingsCore(
       {
         db: env.DB,

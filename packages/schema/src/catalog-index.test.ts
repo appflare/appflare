@@ -80,6 +80,46 @@ describe("indexJsonSchema", () => {
     expect(indexAppSchema.safeParse({ ...row, services: [""] }).success).toBe(false);
     expect(indexAppSchema.safeParse({ ...row, categories: "utilities" }).success).toBe(false);
   });
+
+  it("accepts a revision and a revised catalog manifest on a release row", () => {
+    const row = validIndex.apps[0];
+    const catalogManifest = {
+      url: "https://appflare.github.io/catalog/apps/cut/manifest.json",
+      sha256: "d".repeat(64),
+      keyId: "catalog-2026-09",
+      signature: "c2lnbmF0dXJl",
+    };
+    expect(indexAppSchema.parse({ ...row, revision: 2, catalogManifest })).toMatchObject({
+      revision: 2,
+      catalogManifest,
+    });
+    // A revised manifest is never listed unsigned.
+    const { signature: _s, ...unsigned } = catalogManifest;
+    expect(indexAppSchema.safeParse({ ...row, catalogManifest: unsigned }).success).toBe(false);
+    expect(indexAppSchema.parse(row).revision).toBeUndefined();
+    expect(indexAppSchema.safeParse({ ...row, revision: 0 }).success).toBe(false);
+    expect(indexAppSchema.safeParse({ ...row, revision: 1.5 }).success).toBe(false);
+    expect(
+      indexAppSchema.safeParse({
+        ...row,
+        catalogManifest: { ...catalogManifest, url: "http://appflare.github.io/x.json" },
+      }).success,
+    ).toBe(false);
+    // Only a release has a signed catalog manifest to revise.
+    const { artifacts: _a, digest: _d, ...noRelease } = row ?? {};
+    expect(
+      indexAppSchema.safeParse({
+        ...noRelease,
+        tier: "sandbox",
+        build: {
+          pin: "a".repeat(40),
+          manifest: "https://appflare.github.io/catalog/apps/cut/manifest.json",
+          manifestDigest: "e".repeat(64),
+        },
+        catalogManifest,
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("indexAppSchema for sandbox tier entries", () => {

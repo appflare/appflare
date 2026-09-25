@@ -171,6 +171,9 @@ Points that need care:
   [CODEOWNERS](#codeowners).
 - **`bump`.** Optional. `"bump": { "autoMerge": true }` lets version bumps merge
   themselves once their checks pass. See [Version bumps](/catalog/bumps/#auto-merge).
+- **`revision`.** Optional; leave it out for a new app. Raise it to publish a change
+  to the form or copy of a version that is already released. See
+  [After merge](#after-merge).
 
 Every field is described in the [manifest reference](/catalog/manifest-reference/).
 Add an optional `apps/<slug>/README.md` for notes.
@@ -209,5 +212,15 @@ release `<slug>@<version>`, and adds it to `index.json`. Managers pick it up at 
 next catalog refresh, within 30 minutes.
 
 To change a published app's manifest, re-pin `source` in the same pull request.
-A metadata-only change to a released version fails to publish, except a change to
-`authors` alone, which `index.json` reads from the manifest.
+A change to a released version without a new pin fails to publish, with two
+exceptions:
+
+- a change to `authors` alone, which `index.json` reads from the manifest;
+- a change to the form or copy only (`name`, `summary`, `homepage`, `license`,
+  `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump`) together
+  with `revision` raised by one (it starts at 1 when omitted). CI signs and
+  publishes the revised manifest without building anything; managers switch to the
+  new form without an update. Anything else, such as `install`, `requires`, `plan`
+  or `tokenPermissions`, changes what gets built or provisioned and needs a new pin.
+  Once a revision is published, any further change to the manifest, `authors`
+  included, needs the next revision.

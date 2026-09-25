@@ -1,9 +1,14 @@
 import {
+  type ArtifactManifest,
+  artifactManifestSchema,
   type BuildRequest,
   buildCommandArgv,
   buildKeys,
   buildRequestSchema,
   type CatalogManifest,
+  catalogManifestSchema,
+  catalogRevision,
+  catalogRevisionSchema,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
   githubRepositorySchema,
   gitRefSchema,
@@ -12,15 +17,22 @@ import {
   type IndexArtifacts,
   type IndexBuild,
   indexAppArtifact,
+  indexCatalogManifestSchema,
   repositoryUrl,
   SANDBOX_PROTOCOL_VERSION,
   type SigningKey,
   sandboxInstanceTypeSchema,
   sandboxObjectUrl,
   sha256Schema,
+  withRevisedCatalog,
 } from "@appflare/schema";
 import { z } from "zod";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../../catalog/app-manifest.server";
+import {
+  recordCatalogRevision,
+  recordedRevisionFor,
+  verifyRevisedCatalog,
+} from "../../catalog/revisions.server";
 import type { BuildKind, InstallOrigin } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import {
@@ -121,11 +133,55 @@ export interface ArtifactSource {
   digest: string;
   /** The verified `manifest.json`, exactly as read. */
   manifestText: string;
+  /**
+   * The verified revised catalog manifest of a signed release, exactly as
+   * published; null when the release's own copy is current. See
+   * {@link sourceManifest}.
+   */
+  revisedCatalogText: string | null;
   provenance: Provenance;
 }
 
+/**
+ * The revised catalog manifest the index lists for a release (its URL and
+ * sha256, and the row's revision), as a job payload carries it.
+ */
+export const revisedCatalogRef = indexCatalogManifestSchema.extend({
+  revision: catalogRevisionSchema,
+});
+export type RevisedCatalogRef = z.infer<typeof revisedCatalogRef>;
+
+/** The revision an index row lists for its release, or null when the release's copy is current. */
+export function revisedCatalogOf(app: IndexApp): RevisedCatalogRef | null {
+  return app.catalogManifest === undefined
+    ? null
+    : { ...app.catalogManifest, revision: catalogRevision(app) };
+}
+
+/**
+ * The artifact manifest a job installs: the verified `manifest.json`, with
+ * the verified revised catalog manifest in place of its own when there is one
+ * (the forms, secrets and vars come from the revision; the Worker never does).
+ */
+export function sourceManifest(
+  source: Pick<ArtifactSource, "manifestText" | "revisedCatalogText">,
+): ArtifactManifest {
+  const manifest = artifactManifestSchema.parse(JSON.parse(source.manifestText));
+  if (source.revisedCatalogText === null) return manifest;
+  return withRevisedCatalog(
+    manifest,
+    catalogManifestSchema.parse(JSON.parse(source.revisedCatalogText)),
+  );
+}
+
 export type ArtifactOrigin =
-  | { kind: "release"; artifacts: IndexArtifacts; digest: string }
+  | {
+      kind: "release";
+      artifacts: IndexArtifacts;
+      digest: string;
+      /** A revision of the release's catalog manifest to install with it. */
+      revised?: RevisedCatalogRef;
+    }
   | { kind: "sandbox"; build: SandboxBuildParams }
   | { kind: "prebuilt"; build: PrebuiltBuildParams };
 
@@ -153,7 +209,8 @@ export function artifactOriginOf(app: IndexApp, costConfirmed: boolean): Artifac
   if (app.tier !== "artifact" || release === null) {
     throw new JobError(`Appflare cannot install ${app.tier} tier apps yet`);
   }
-  return { kind: "release", ...release };
+  const revised = revisedCatalogOf(app);
+  return { kind: "release", ...release, ...(revised === null ? {} : { revised }) };
 }
 
 /**
@@ -201,11 +258,19 @@ export async function resolveArtifactPhase(
     };
     await verifyManifestPhase(steps, env.KV, ref, keys);
     steps.current = "load artifact manifest";
+    const manifestText = await loadVerifiedManifest(env.KV, steps.baseFetch, ref);
     return {
       zipUrl: origin.artifacts.zip,
       host: { kind: "catalog" },
       digest: origin.digest,
-      manifestText: await loadVerifiedManifest(env.KV, steps.baseFetch, ref),
+      manifestText,
+      revisedCatalogText:
+        origin.revised === undefined
+          ? null
+          : await revisedCatalogPhase(steps, keys, origin.revised, {
+              digest: origin.digest,
+              manifestText,
+            }),
       provenance: SIGNED_PROVENANCE,
     };
   }
@@ -213,6 +278,56 @@ export async function resolveArtifactPhase(
     return prebuiltArtifactPhase(steps, env, { ...target, build: origin.build });
   }
   return buildInSandboxPhase(steps, env, { ...target, build: origin.build });
+}
+
+/**
+ * Step "verify revised catalog manifest": the revision the index lists for a
+ * signed release, or the higher one this manager already recorded for it.
+ * A listed revision is fetched and verified against the index (sha256,
+ * revision, the signature with the release's key id) and against the
+ * verified `manifest.json` (same app, only the form and copy changed), then
+ * recorded for the release so the install's Settings, and later jobs, read the
+ * same form. An unreachable or refused revision fails the job. Returns the
+ * revision's exact text.
+ */
+async function revisedCatalogPhase(
+  steps: JobSteps,
+  keys: readonly SigningKey[] | undefined,
+  ref: RevisedCatalogRef,
+  release: { digest: string; manifestText: string },
+): Promise<string> {
+  const { catalogText } = await steps.run(
+    "verify revised catalog manifest",
+    async ({ log, fetch, orm }) => {
+      const artifact = artifactManifestSchema.parse(JSON.parse(release.manifestText));
+      const recorded = await recordedRevisionFor(orm, artifact, release.digest);
+      if (recorded !== null && recorded.revision >= ref.revision) {
+        log.info(
+          `Using revision ${recorded.revision} of the catalog manifest for ${artifact.app} ${artifact.version}, verified earlier; the Worker comes from the signed release.`,
+        );
+        return { catalogText: recorded.text };
+      }
+      const file = await fetchWhole(fetch, ref.url);
+      const catalog = await verifyRevisedCatalog(file.bytes, {
+        file: ref,
+        artifact,
+        revision: ref.revision,
+        ...(keys === undefined ? {} : { keys }),
+      });
+      const text = new TextDecoder().decode(file.bytes);
+      await recordCatalogRevision(
+        orm,
+        release.digest,
+        { text, file: ref, catalog },
+        new Date(steps.now()),
+      );
+      log.info(
+        `Verified revision ${ref.revision} of the catalog manifest for ${artifact.app} ${artifact.version} (signed with key "${ref.keyId}"): the settings form comes from it, the Worker from the signed release.`,
+      );
+      return { catalogText: text };
+    },
+  );
+  return catalogText;
 }
 
 /**
@@ -285,6 +400,7 @@ async function prebuiltArtifactPhase(
     host: { kind: "sandbox" },
     digest: build.digest,
     manifestText,
+    revisedCatalogText: null,
     provenance: {
       build_kind: "sandbox",
       sandbox_image: build.image,
@@ -455,6 +571,7 @@ async function buildInSandboxPhase(
     host: { kind: "sandbox" },
     digest: built.digest,
     manifestText,
+    revisedCatalogText: null,
     provenance: {
       build_kind: "sandbox",
       sandbox_image: built.image,

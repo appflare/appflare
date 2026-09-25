@@ -90,7 +90,34 @@ export async function verifyManifestSignature(
   if (keyId === UNSIGNED_KEY_ID) {
     throw new Error('artifact is unsigned (keyId "unsigned")');
   }
-  const key = keys.find((k) => k.keyId === keyId);
+  await verifySignature(manifestBytes, signatureBase64, keyId, keys);
+  return { keyId };
+}
+
+/** How {@link verifySignature} names what it checks in its errors. */
+export interface SignatureLabels {
+  /** The signature, e.g. `manifest.sig`. */
+  signature: string;
+  /** The signed document, e.g. `manifest`. */
+  subject: string;
+}
+
+/**
+ * Verifies a base64 Ed25519 signature over the exact `bytes` with the trusted
+ * key `keyId`, with WebCrypto. {@link verifyManifestSignature} uses it with the
+ * key id read from the signed manifest; a revised catalog manifest (whose
+ * signature and key id the catalog index carries) uses it with the key id of
+ * the release it revises. Rejects `"unsigned"`, unknown key ids, malformed
+ * signatures, and signatures that do not verify.
+ */
+export async function verifySignature(
+  bytes: Uint8Array,
+  signatureBase64: string,
+  keyId: string,
+  keys: readonly SigningKey[] = signingKeys,
+  labels: SignatureLabels = { signature: "manifest.sig", subject: "manifest" },
+): Promise<void> {
+  const key = keyId === UNSIGNED_KEY_ID ? undefined : keys.find((k) => k.keyId === keyId);
   if (!key) {
     throw new Error(`no trusted signing key matches keyId "${keyId}"`);
   }
@@ -98,7 +125,7 @@ export async function verifyManifestSignature(
   try {
     signature = base64ToBytes(signatureBase64);
   } catch {
-    throw new Error("manifest.sig is not valid base64");
+    throw new Error(`${labels.signature} is not valid base64`);
   }
   const publicKey = await crypto.subtle.importKey(
     "raw",
@@ -108,10 +135,12 @@ export async function verifyManifestSignature(
     ["verify"],
   );
   // Copied into a fresh ArrayBuffer-backed view (WebCrypto's BufferSource type).
-  const data = new Uint8Array(manifestBytes);
-  const ok = await crypto.subtle.verify({ name: "Ed25519" }, publicKey, signature, data);
+  const data = new Uint8Array(bytes);
+  // WebCrypto throws on a signature of the wrong length; that is a bad signature too.
+  const ok = await crypto.subtle
+    .verify({ name: "Ed25519" }, publicKey, signature, data)
+    .catch(() => false);
   if (!ok) {
-    throw new Error(`manifest signature does not verify with keyId "${keyId}"`);
+    throw new Error(`${labels.subject} signature does not verify with keyId "${keyId}"`);
   }
-  return { keyId };
 }

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { sha256Schema } from "./artifact";
 import {
   catalogAuthorSchema,
+  catalogRevisionSchema,
   expectedBuildMinutesSchema,
   gitShaSchema,
   installTierSchema,
@@ -87,6 +88,27 @@ export const indexBuildSchema = z.object({
 export type IndexBuild = z.infer<typeof indexBuildSchema>;
 
 /**
+ * The revised catalog manifest of an `artifact` tier entry (see
+ * `revision.ts`): the catalog publishes it next to the index when the entry's
+ * `revision` is above the one its release was built with, signed by the key
+ * that signs its releases. The manager uses it for the forms and copy of that
+ * release only after checking its bytes against `sha256`, the signature with
+ * the embedded keys (`keyId` must be the release's), and its fields against
+ * the signed artifact manifest.
+ */
+export const indexCatalogManifestSchema = z.object({
+  /** URL of the revised catalog manifest as JSON. */
+  url: httpsUrlSchema,
+  /** sha256 of the exact bytes at `url`. */
+  sha256: sha256Schema,
+  /** The signing key, as in `manifest.json`'s `keyId`: the key that signed the release. */
+  keyId: z.string().min(1),
+  /** Base64 Ed25519 signature over the exact bytes at `url` (also served at `<url>.sig`). */
+  signature: z.string().min(1),
+});
+export type IndexCatalogManifest = z.infer<typeof indexCatalogManifestSchema>;
+
+/**
  * One app entry in the published catalog index. `artifact` tier entries
  * carry the release URLs and the manifest digest; `sandbox` and
  * `self-deploying` tier entries carry `build` instead and may omit both (a
@@ -134,6 +156,19 @@ export const indexAppSchema = z
     keyValueDurableObjects: z.boolean().optional(),
     /** The catalog manifest's `categories`; optional for the same reason as `services`. */
     categories: z.array(z.string().min(1)).optional(),
+    /**
+     * The catalog manifest's `revision`: with `version`, which edit of the
+     * entry this row describes. Optional so an index published before the
+     * field existed still parses; omitted means 1.
+     */
+    revision: catalogRevisionSchema.optional(),
+    /**
+     * For an `artifact` tier entry whose `revision` is above the one its
+     * release was built with: the revised catalog manifest, which replaces the
+     * release's copy for the forms and copy. Absent when the release's own
+     * copy is current.
+     */
+    catalogManifest: indexCatalogManifestSchema.optional(),
   })
   .superRefine((app, ctx) => {
     if ((app.artifacts === undefined) !== (app.digest === undefined)) {
@@ -155,6 +190,18 @@ export const indexAppSchema = z
         code: "custom",
         path: ["build"],
         message: "a sandbox tier entry needs a build block",
+      });
+    }
+    // Only a release has a catalog manifest to revise; the other tiers
+    // publish their current catalog manifest in `build` on every edit.
+    if (
+      app.catalogManifest !== undefined &&
+      (app.tier !== "artifact" || app.digest === undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["catalogManifest"],
+        message: "a revised catalog manifest belongs to an artifact tier entry with its release",
       });
     }
     // A self-deploying entry has no artifact either: the manager reads its

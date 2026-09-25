@@ -2,6 +2,8 @@ import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { buildKeys, sandboxObjectUrl } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
+import { recordCatalogRevision } from "../catalog/revisions.server";
+import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { readInstallSettingsCore, startReconfigureCore } from "../installs/reconfigure.server";
@@ -66,6 +68,25 @@ const APP: ArtifactFixtureOptions = {
   },
 };
 
+/** HOME_PAGE as a later revision of the catalog manifest declares it: a choice. */
+const HOME_PAGE_SELECT = {
+  name: "HOME_PAGE",
+  label: "Home page",
+  required: false,
+  type: "select" as const,
+  options: [
+    { value: "default", label: "Show the landing page" },
+    { value: "404", label: "Return an empty 404 response" },
+    { value: "admin", label: "Redirect to /admin" },
+  ],
+};
+const TITLE_VAR = {
+  name: "TITLE",
+  label: "Title",
+  default: "Cut on {{workerName}}",
+  required: true,
+};
+
 /** The fake Workflow engine, except that steps named `name` run a second time after they finished. */
 function replayingStep(name: string): FakeStep {
   const step = fakeStep();
@@ -95,6 +116,21 @@ async function seed(
   )
     .bind(INSTALL_ID, zip, fixture.digest, opts.buildKind ?? "artifact")
     .run();
+}
+
+/** Records the fixture's revised catalog manifest for its release. */
+async function recordRevision(fixture: ArtifactFixture): Promise<void> {
+  if (fixture.revised === null || fixture.index.catalogManifest === undefined) return;
+  await recordCatalogRevision(
+    createDb(env.DB),
+    fixture.digest,
+    {
+      text: new TextDecoder().decode(fixture.revised.bytes),
+      file: fixture.index.catalogManifest,
+      catalog: fixture.revised.catalog,
+    },
+    new Date(),
+  );
 }
 
 interface RunOptions {
@@ -134,6 +170,9 @@ async function reconfigure(opts: RunOptions = {}) {
     buildKind: opts.buildKind ?? "artifact",
     ...(opts.resources === undefined ? {} : { resources: opts.resources }),
   });
+  // A revision the catalog listed for the installed release, as the Settings
+  // section records it before the admin sees the form.
+  if (fixture.revised !== null) await recordRevision(fixture);
   if (opts.workersDev === false) {
     await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0 WHERE id = ?1")
       .bind(INSTALL_ID)
@@ -378,6 +417,19 @@ describe("settings change job", () => {
     ]);
     expect(r.install).toMatchObject({ current_version_id: NEW_VERSION });
     expect(r.secrets.every((s) => s.deleted_at === null)).toBe(true);
+  });
+
+  it("saves settings with the form of a revision recorded for the installed release", async () => {
+    const r = await reconfigure({
+      app: { ...APP, revision: { vars: [HOME_PAGE_SELECT, TITLE_VAR] } },
+      request: { vars: { HOME_PAGE: "404", TITLE: "My links" } },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const bindings = (r.fake.state.versions[0]?.metadata.bindings ?? []) as unknown[];
+    expect(bindings).toContainEqual({ type: "plain_text", name: "HOME_PAGE", text: "404" });
+    // The Worker stays the signed one: the recorded manifest is untouched.
+    expect(r.install?.manifest_json).toBe(new TextDecoder().decode(r.fixture.manifestBytes));
   });
 
   it("stores a setting back at its default as no setting at all", async () => {
@@ -639,6 +691,33 @@ describe("the Settings section", () => {
       ["ADMIN_PASSWORD", true, true],
       ["OLD_TOKEN", false, true],
     ]);
+  });
+
+  it("shows the form of a revision once it is recorded, and holds new settings to it", async () => {
+    const fixture = await buildArtifactFixture({
+      ...APP,
+      revision: { vars: [HOME_PAGE_SELECT, TITLE_VAR] },
+    });
+    await seed(fixture);
+    const read = () =>
+      readInstallSettingsCore(
+        { db: env.DB, sandboxConnected: false, subdomain: SUBDOMAIN },
+        INSTALL_ID,
+      );
+    expect((await read())?.fields[0]?.options).toBeNull();
+    await recordRevision(fixture);
+    expect((await read())?.fields[0]?.options?.map((o) => o.value)).toEqual([
+      "default",
+      "404",
+      "admin",
+    ]);
+    const start = (vars: Record<string, string>) =>
+      startReconfigureCore(
+        { db: env.DB, createJob: async (id) => ({ id }), newId: () => "job7" },
+        { installId: INSTALL_ID, vars },
+      );
+    await expect(start({ HOME_PAGE: "links", TITLE: "x" })).rejects.toThrow(/Home page/);
+    await expect(start({ HOME_PAGE: "404", TITLE: "x" })).resolves.toEqual({ jobId: "job7" });
   });
 
   it("says why a sandbox tier app's settings cannot change without the sandbox Worker", async () => {

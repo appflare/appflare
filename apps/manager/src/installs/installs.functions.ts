@@ -11,9 +11,10 @@ import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AutoUpdateChoice } from "../auto-update/auto-update";
 import { readAutoUpdateDefaults } from "../auto-update/auto-update.server";
-import { getCatalogManifest } from "../catalog/app-manifest.server";
+import { getCatalogManifest, refreshInstalledRevision } from "../catalog/app-manifest.server";
 import { catalogIndexUrl, getCatalogIndex } from "../catalog/index.server";
 import { mediaSrc } from "../catalog/media";
+import { effectiveManifest } from "../catalog/revisions.server";
 import { isUpdateAvailable } from "../catalog/versions";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
@@ -384,14 +385,18 @@ export const getInstall = createServerFn({ method: "GET" })
       );
       tokenPermissions = installerCatalog.tokenPermissions;
     } else if (row.manifest_json !== null) {
-      const manifest = artifactManifestSchema.safeParse(JSON.parse(row.manifest_json));
-      if (manifest.success) {
-        name = manifest.data.catalog.name;
-        postInstall = manifest.data.catalog.postInstall.map((p) =>
+      const parsed = artifactManifestSchema.safeParse(JSON.parse(row.manifest_json));
+      if (parsed.success) {
+        // A revision of the installed release's form and copy: recorded once,
+        // then read like the signed copy. No job, no update.
+        if (row.origin === "catalog") await refreshInstalledRevision(env, row, listed);
+        const manifest = await effectiveManifest(db, parsed.data, row.artifact_digest);
+        name = manifest.catalog.name;
+        postInstall = manifest.catalog.postInstall.map((p) =>
           renderPostInstall(p.content, { workerUrl: primaryUrl, workerName: row.worker_name }),
         );
-        if (sendsEmail(manifest.data.worker.bindings)) postInstall.push(SEND_EMAIL_NOTE);
-        tokenPermissions = manifest.data.catalog.tokenPermissions;
+        if (sendsEmail(manifest.worker.bindings)) postInstall.push(SEND_EMAIL_NOTE);
+        tokenPermissions = manifest.catalog.tokenPermissions;
       }
     }
     const view = (r: (typeof resourceRows)[number]): ResourceView => ({

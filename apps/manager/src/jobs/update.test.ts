@@ -1,8 +1,10 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
-import { type ArtifactManifest, MAX_WORKER_MODULES } from "@appflare/schema";
+import { type ArtifactManifest, MAX_WORKER_MODULES, withRevisedCatalog } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
+import { readCatalogRevision } from "../catalog/revisions.server";
+import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { startUpdateCore } from "../installs/versions.server";
@@ -88,7 +90,11 @@ async function update(
     {
       db: env.DB,
       loadApp: async () => fixture.index,
-      loadManifest: async () => fixture.manifest,
+      // As getAppManifest reads it: the form of the revision, when listed.
+      loadManifest: async () =>
+        fixture.revised === null
+          ? fixture.manifest
+          : withRevisedCatalog(fixture.manifest, fixture.revised.catalog),
       createJob: async (id, p) => {
         params = p;
         return { id };
@@ -480,6 +486,48 @@ describe("update job", () => {
     expect(r.logs.some((l) => l.message === "New secret API_KEY: set with the new version.")).toBe(
       true,
     );
+  });
+
+  it("updates to a release with the form of the revision the catalog lists for it", async () => {
+    const SECRET = "revised-secret-value-DO-NOT-LEAK";
+    const r = await update(
+      {
+        ...NEW_APP,
+        revision: {
+          secrets: [
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+            { name: "API_KEY", label: "API key", generate: false },
+          ],
+        },
+      },
+      {},
+      {},
+      { secrets: { API_KEY: SECRET } },
+    );
+    expect(r.error).toBeNull();
+    expect(r.step.names).toContain("verify revised catalog manifest");
+    const bindings = r.fake.state.versions[0]?.metadata.bindings as Array<Record<string, unknown>>;
+    expect(bindings).toContainEqual({ type: "secret_text", name: "API_KEY", text: SECRET });
+    expect(r.install?.manifest_json).toBe(new TextDecoder().decode(r.fixture.manifestBytes));
+    expect((await readCatalogRevision(createDb(env.DB), r.fixture.digest))?.revision).toBe(2);
+  });
+
+  it("offers no update when only the revision of the installed version changed", async () => {
+    const revised = await buildArtifactFixture({ revision: { summary: "Revised." } });
+    await seedInstall({ resources: RESOURCES });
+    await expect(
+      startUpdateCore(
+        {
+          db: env.DB,
+          loadApp: async () => revised.index,
+          loadManifest: async () => revised.manifest,
+          createJob: async () => {
+            throw new Error("no job may start");
+          },
+        },
+        { installId: INSTALL_ID },
+      ),
+    ).rejects.toThrow(/There is no newer version to update to/);
   });
 
   it("takes the secrets it introduced off the newest version when it fails before promotion", async () => {

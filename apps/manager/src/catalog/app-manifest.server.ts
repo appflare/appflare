@@ -4,12 +4,23 @@ import {
   artifactManifestSchema,
   type CatalogManifest,
   catalogManifestSchema,
+  catalogRevision,
   type IndexApp,
+  type IndexCatalogManifest,
   indexAppArtifact,
+  revisedArtifactProblem,
   type SigningKey,
+  withRevisedCatalog,
 } from "@appflare/schema";
+import { createDb } from "../db/client";
 import { fetchWhole, verifyArtifactManifest } from "../jobs/install/artifact";
 import { verifyCatalogManifest } from "../sandbox/verify";
+import {
+  readCatalogRevision,
+  recordCatalogRevision,
+  recordedRevisionFor,
+  verifyRevisedCatalog,
+} from "./revisions.server";
 
 /**
  * The verified artifact manifest behind a catalog entry. `index.json` carries only
@@ -17,7 +28,10 @@ import { verifyCatalogManifest } from "../sandbox/verify";
  * in the signed `manifest.json`. It is fetched and verified (signature by keyId,
  * digest from the index) the first time an app version is viewed and cached in
  * KV by digest, so KV sees one write per published version, not per view. The
- * install job verifies again before it uploads anything.
+ * install job verifies again before it uploads anything. When the index lists
+ * a revised catalog manifest for the release, the form comes from that
+ * revision instead (see `revisions.server.ts`), cached the same way by its own
+ * digest.
  */
 
 const MANIFEST_KEY_PREFIX = "catalog:manifest:";
@@ -31,6 +45,11 @@ export const MANIFEST_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 export interface AppManifestEnv {
   KV: KVNamespace;
+  /**
+   * Where a verified revised catalog manifest is recorded for installs of its
+   * release (`catalog_revisions`); nothing is recorded without it.
+   */
+  DB?: D1Database;
 }
 
 export interface AppManifestOptions {
@@ -51,10 +70,109 @@ function parse(text: string): ArtifactManifest | null {
   }
 }
 
+/**
+ * The verified artifact manifest behind a catalog entry, as installs use it:
+ * its `catalog` is the newest signed revision of the release's catalog
+ * manifest (see `revisions.server.ts`), the higher of the one recorded in
+ * `catalog_revisions` (when `env.DB` is given) and the one the index lists.
+ * A listed revision is verified (digest, signature, fields), cached in KV by
+ * its sha256 and recorded; one that cannot be read or does not verify fails
+ * the read rather than fall back to an older form. The Worker is always the
+ * signed one.
+ */
 export async function getAppManifest(
   env: AppManifestEnv,
   app: IndexApp,
   opts: AppManifestOptions = {},
+): Promise<AppManifestRead> {
+  const signed = await getSignedAppManifest(env, app, opts);
+  const release = indexAppArtifact(app);
+  if (!signed.ok || release === null) return signed;
+  const recorded =
+    env.DB === undefined
+      ? null
+      : await recordedRevisionFor(createDb(env.DB), signed.manifest, release.digest);
+  const listed = app.catalogManifest;
+  if (listed === undefined || (recorded !== null && recorded.revision >= catalogRevision(app))) {
+    return recorded === null
+      ? signed
+      : { ok: true, manifest: withRevisedCatalog(signed.manifest, recorded.catalog) };
+  }
+  try {
+    const catalog = await loadRevisedCatalog(env, app, listed, {
+      artifact: signed.manifest,
+      artifactDigest: release.digest,
+      fetch: opts.fetch,
+      signingKeys: opts.signingKeys,
+    });
+    return { ok: true, manifest: withRevisedCatalog(signed.manifest, catalog) };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn("revised catalog manifest refused", {
+      slug: app.slug,
+      version: app.version,
+      revision: catalogRevision(app),
+      error: reason,
+    });
+    return {
+      ok: false,
+      error: `Could not load revision ${catalogRevision(app)} of the catalog manifest for ${app.slug} ${app.version}: ${reason}`,
+    };
+  }
+}
+
+/**
+ * A verified revised catalog manifest: from the KV cache (by its sha256) or
+ * fetched, verified either way against the index (digest and signature) and
+ * the signed release, then recorded for the release when `env.DB` is given.
+ */
+async function loadRevisedCatalog(
+  env: AppManifestEnv,
+  app: IndexApp,
+  file: IndexCatalogManifest,
+  release: {
+    artifact: ArtifactManifest;
+    artifactDigest: string;
+    fetch: FetchLike | undefined;
+    signingKeys: readonly SigningKey[] | undefined;
+  },
+): Promise<CatalogManifest> {
+  const key = catalogManifestCacheKey(file.sha256);
+  const expected = {
+    file,
+    artifact: release.artifact,
+    ...(app.revision === undefined ? {} : { revision: app.revision }),
+    ...(release.signingKeys === undefined ? {} : { keys: release.signingKeys }),
+  };
+  const cached = await env.KV.get(key);
+  let text: string;
+  let catalog: CatalogManifest;
+  if (cached !== null) {
+    text = cached;
+    catalog = await verifyRevisedCatalog(new TextEncoder().encode(cached), expected);
+  } else {
+    const fetchImpl: FetchLike = release.fetch ?? ((input, init) => fetch(input, init));
+    const fetched = await fetchWhole(fetchImpl, file.url);
+    catalog = await verifyRevisedCatalog(fetched.bytes, expected);
+    text = new TextDecoder().decode(fetched.bytes);
+    await env.KV.put(key, text, { expirationTtl: MANIFEST_TTL_SECONDS });
+  }
+  if (env.DB !== undefined) {
+    await recordCatalogRevision(
+      createDb(env.DB),
+      release.artifactDigest,
+      { text, file, catalog },
+      new Date(),
+    );
+  }
+  return catalog;
+}
+
+/** The verified signed `manifest.json` of an entry's release, exactly as built. */
+async function getSignedAppManifest(
+  env: AppManifestEnv,
+  app: IndexApp,
+  opts: AppManifestOptions,
 ): Promise<AppManifestRead> {
   const release = indexAppArtifact(app);
   if (release === null) {
@@ -130,7 +248,23 @@ export async function readCachedCatalogManifest(
   if (release !== null && app.tier === "artifact") {
     const cached = await env.KV.get(manifestCacheKey(release.digest));
     const manifest = cached === null ? null : parse(cached);
-    return manifest === null ? null : { ok: true, catalog: manifest.catalog, manifest };
+    if (manifest === null) return null;
+    if (app.catalogManifest === undefined) {
+      return { ok: true, catalog: manifest.catalog, manifest };
+    }
+    // A revision of the release: only once it is cached too (verified before
+    // it was stored; the cheap check keeps it to this release).
+    const revisedText = await env.KV.get(catalogManifestCacheKey(app.catalogManifest.sha256));
+    const revised = revisedText === null ? null : parseCatalog(revisedText);
+    if (
+      revised === null ||
+      app.catalogManifest.keyId !== manifest.keyId ||
+      revisedArtifactProblem(manifest, revised) !== null
+    ) {
+      return null;
+    }
+    const effective = withRevisedCatalog(manifest, revised);
+    return { ok: true, catalog: effective.catalog, manifest: effective };
   }
   if (app.tier === "artifact" || app.build === undefined) return null;
   const cached = await env.KV.get(catalogManifestCacheKey(app.build.manifestDigest));
@@ -187,4 +321,42 @@ export async function getCatalogManifest(
       }`,
     };
   }
+}
+
+/** What {@link refreshInstalledRevision} reads of an install. */
+export interface InstalledRelease {
+  catalog_version: string;
+  /** sha256 of the installed `manifest.json`; null for installs that predate it. */
+  artifact_digest: string | null;
+}
+
+/**
+ * Records the revision the index lists for an install's release when this
+ * manager does not hold it yet, so the install's Settings (and the next
+ * reconfigure) show that form. A revision changes neither the version nor
+ * the Worker, so it starts no job and offers no update. Does nothing unless
+ * `listed` is the installed release (same version and digest) and lists a
+ * newer revision than the recorded one; a failure leaves the recorded form in
+ * place until the next read.
+ */
+export async function refreshInstalledRevision(
+  env: AppManifestEnv & { DB: D1Database },
+  install: InstalledRelease,
+  listed: IndexApp | null | undefined,
+  opts: AppManifestOptions = {},
+): Promise<void> {
+  const file = listed?.catalogManifest;
+  if (
+    listed == null ||
+    file === undefined ||
+    install.artifact_digest === null ||
+    listed.version !== install.catalog_version ||
+    listed.digest !== install.artifact_digest
+  ) {
+    return;
+  }
+  const recorded = await readCatalogRevision(createDb(env.DB), install.artifact_digest);
+  if (recorded !== null && recorded.revision >= catalogRevision(listed)) return;
+  // Verifies and records it; a refusal is logged there and leaves the recorded form.
+  await getAppManifest(env, listed, opts);
 }

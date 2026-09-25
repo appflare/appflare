@@ -845,6 +845,27 @@ export function catalogAuthors(
   return manifest.authors ?? authorsFromRepo(manifest.repo);
 }
 
+/** What an omitted catalog manifest `revision` means. */
+export const FIRST_CATALOG_REVISION = 1;
+
+/**
+ * A catalog manifest's `revision`: a whole number from 1. Raising it publishes
+ * an edit of the entry's form or copy for the build its pin already released,
+ * without a new build (see `revision.ts`).
+ */
+export const catalogRevisionSchema = z
+  .int()
+  .min(FIRST_CATALOG_REVISION)
+  .max(1_000_000)
+  .describe(
+    "Which edit of this entry's form and copy the catalog publishes for the build its `source` " +
+      "already released, starting at 1 (the default when omitted). Raise it by one to publish a " +
+      "change to `name`, `summary`, `homepage`, `license`, `categories`, `authors`, " +
+      "`maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving `source`: the " +
+      "released artifact stays as it is, and managers show the new form without an update. " +
+      "Anything else needs a new build, so move `source` instead.",
+  );
+
 /** The full catalog manifest, `appflare.jsonc`. */
 export const catalogManifestSchema = z
   .object({
@@ -895,6 +916,14 @@ export const catalogManifestSchema = z
      * as `resources`; omitted means a maintainer merges every bump.
      */
     bump: catalogBumpSchema.optional(),
+    /**
+     * Which edit of the entry's form and copy this is, for one build. Optional
+     * rather than defaulted for the same reason as `resources`: a default would
+     * change the parsed shape, and so the published bytes and digest, of every
+     * manifest and artifact written before the field existed. Omitted means
+     * {@link FIRST_CATALOG_REVISION}; read it with `catalogRevision()`.
+     */
+    revision: catalogRevisionSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     if (manifest.install.tier !== "self-deploying") return;
