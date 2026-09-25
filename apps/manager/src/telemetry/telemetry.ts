@@ -2,14 +2,13 @@ import type { TelemetryLock } from "@appflare/schema";
 import { z } from "zod";
 
 /**
- * Anonymous usage data: what the setup screen, the home page notice and
- * Settings show. Client-safe (no bindings).
+ * Anonymous usage data: what the home page notice and Settings show. Client-safe (no bindings).
  *
  * On by default: the scheduled report starts with the first run after setup
  * (and, on a manager updated from a version without usage data, the first
  * run after the update). The notice only informs; it never waits for an
- * answer. It is shown once per manager: on the last setup screen, or on the
- * home page until an admin dismisses it. Settings turns it off; a Worker
+ * answer. It is shown once per manager, on the home page, until an admin
+ * dismisses it; setup never shows it. Settings turns it off; a Worker
  * variable (`APPFLARE_TELEMETRY=off`, or `DO_NOT_TRACK=1`) turns it off for
  * good, whatever is stored.
  */

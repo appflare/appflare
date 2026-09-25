@@ -57,23 +57,19 @@ export function newInstallId(env: Pick<TelemetryEnv, "APPFLARE_INSTALL_ID">): st
 }
 
 /**
- * Setup just finished, and its last screen shows the usage-data notice.
- * Records that the notice was shown (so the home page does not show it
- * again), the install id, and the job cursor at now, so jobs from before
- * setup finished are never reported. "Setup completed" stays due: the first
- * scheduled report sends it. Rows already there are kept.
+ * Setup just finished. Records the install id and the job cursor at now, so
+ * jobs from before setup finished are never reported. "Setup completed"
+ * stays due: the first scheduled report sends it. The usage-data notice is
+ * not shown during setup, so it stays due for the home page. Rows already
+ * there are kept.
  */
-export async function recordSetupNotice(env: TelemetryEnv, now: Date = new Date()): Promise<void> {
+export async function recordSetupFinished(
+  env: TelemetryEnv,
+  now: Date = new Date(),
+): Promise<void> {
   const db = createDb(env.DB);
-  const current = await readSettings(db, [
-    SETTING.telemetryNoticeAt,
-    SETTING.telemetryInstallId,
-    SETTING.telemetryCursor,
-  ]);
+  const current = await readSettings(db, [SETTING.telemetryInstallId, SETTING.telemetryCursor]);
   const rows: Partial<Record<SettingKey, string>> = {};
-  if (current.telemetry_notice_at === undefined) {
-    rows[SETTING.telemetryNoticeAt] = now.toISOString();
-  }
   if (!isInstallId(current.telemetry_install_id)) {
     rows[SETTING.telemetryInstallId] = newInstallId(env);
   }
@@ -85,10 +81,9 @@ export async function recordSetupNotice(env: TelemetryEnv, now: Date = new Date(
 
 /**
  * Whether the home page shows the usage-data notice: once per manager, until
- * an admin dismisses it (or changes the switch in Settings). A new manager
- * showed it on the last setup screen, so only a manager updated from a
- * version without usage data, or one whose admins never answered the older
- * notice, shows it. Never while a Worker variable turns usage data off.
+ * an admin dismisses it (or changes the switch in Settings), for a new
+ * manager right after setup as for one updated from a version without usage
+ * data. Never while a Worker variable turns usage data off.
  */
 export async function isNoticeDue(env: TelemetryEnv): Promise<boolean> {
   if (lockOf(env) !== null) return false;

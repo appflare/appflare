@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { type CapabilitiesView, capabilitiesView } from "../capabilities/capabilities";
+import { NEEDS_WORKERS_PAID_REASON, NO_CONTAINERS_PERMISSION_REASON } from "../sandbox/preflight";
 import {
-  ACCOUNT_SETTINGS_PATH,
   buildChecklist,
   type CatalogNeeds,
   type ChecklistInput,
   type ChecklistRow,
   type ChecklistRowId,
   catalogNeeds,
+  checklistProgress,
   DASHBOARD_LINKS,
+  groupChecklist,
   needsYouCount,
+  rowLine,
 } from "./checklist";
 
 const ACC = "acc0000000000000000000000000000a";
@@ -83,7 +86,7 @@ describe("buildChecklist", () => {
     expect(r.r2.status).toBe("done");
     expect(r.zone.status).toBe("done");
     expect(r["email-routing"].status).toBe("done");
-    expect(r.sandbox).toMatchObject({ status: "done", value: "Enabled", link: null });
+    expect(r.sandbox).toMatchObject({ status: "done", value: "Enabled", link: null, action: null });
   });
 
   it("needs the admin for a missing workers.dev subdomain, linking to registration", () => {
@@ -127,20 +130,50 @@ describe("buildChecklist", () => {
     expect(needsYouCount(Object.values(r))).toBe(0);
   });
 
-  it("shows sandbox builds as needing Workers Paid on a free plan, or off on a paid one", () => {
+  it("shows sandbox builds as ready on Workers Paid with the Containers permission, with Enable now", () => {
+    expect(rows({ view: paidView() }).sandbox).toMatchObject({
+      status: "optional",
+      value: "Ready, enabled automatically when an app needs it",
+      link: null,
+      action: "enable-sandbox",
+    });
+  });
+
+  it("says what sandbox builds still need otherwise, in the refusal's words, with the fix", () => {
     expect(rows().sandbox).toMatchObject({
       status: "optional",
       value: "Needs Workers Paid",
+      note: NEEDS_WORKERS_PAID_REASON,
       link: { href: DASHBOARD_LINKS.workersPlans },
+      action: null,
     });
-    const paid = rows({ view: paidView() });
-    expect(paid.sandbox).toMatchObject({
-      status: "optional",
-      value: "Off",
-      link: { href: ACCOUNT_SETTINGS_PATH, external: false },
+    // Paid, but the token cannot read Containers.
+    expect(rows({ view: { ...paidView(), containers: NO_PERMISSION } }).sandbox).toMatchObject({
+      value: "Needs a token permission",
+      note: NO_CONTAINERS_PERMISSION_REASON,
+      link: { href: DASHBOARD_LINKS.accountApiTokens, external: true },
+      action: null,
     });
-    // On the settings page itself there is nothing to link to.
-    expect(rows({ view: paidView(), onAccountSettings: true }).sandbox.link).toBeNull();
+    expect(rows({ view: { ...paidView(), r2: { state: "not-enabled" } } }).sandbox).toMatchObject({
+      value: "Needs R2 turned on",
+      link: { href: DASHBOARD_LINKS.r2 },
+    });
+    // Never asks the admin to act now: it is turned on at first need.
+    for (const v of [view(), paidView(), { ...paidView(), containers: NO_PERMISSION }]) {
+      expect(rows({ view: v }).sandbox.status).not.toBe("needs-you");
+    }
+  });
+
+  it("offers Enable now only once the probes confirmed it, else asks for a Re-check", () => {
+    const manualPaid = view({
+      containers: null,
+      plan: { plan: "paid", source: "set-by-you" },
+    });
+    expect(rows({ view: manualPaid }).sandbox).toMatchObject({
+      value: "Ready, enabled automatically when an app needs it",
+      action: null,
+    });
+    expect(rows({ view: manualPaid }).sandbox.note).toContain("Re-check");
   });
 
   it("explains a probe that could not tell", () => {
@@ -203,5 +236,40 @@ describe("catalogNeeds", () => {
       access: 1,
       sandbox: 2,
     });
+  });
+});
+
+describe("checklist display rules", () => {
+  function list(input: Partial<ChecklistInput> = {}): ChecklistRow[] {
+    return buildChecklist({ view: view(), sandbox: "off", needs: NEEDS, accountId: ACC, ...input });
+  }
+
+  it("counts progress over the rows that are done or need the admin, not optional ones", () => {
+    // Free account: workers.dev, R2, zone, Email Routing done; plan, Zero Trust, sandbox optional.
+    expect(checklistProgress(list())).toEqual({ done: 4, total: 4 });
+    const missing = list({ view: view({ workersDev: { state: "not-registered" } }) });
+    expect(checklistProgress(missing)).toEqual({ done: 3, total: 4 });
+    // Nothing checked yet: nothing done, and only what needs the admin counts.
+    expect(checklistProgress(list({ view: capabilitiesView(undefined, null) }))).toEqual({
+      done: 0,
+      total: 1,
+    });
+  });
+
+  it("puts rows that need the admin first, then done rows, then optional ones", () => {
+    const grouped = groupChecklist(
+      list({
+        view: view({ workersDev: { state: "not-registered" }, r2: { state: "not-enabled" } }),
+      }),
+    );
+    expect(grouped.needsYou.map((r) => r.id)).toEqual(["workers-dev", "r2"]);
+    expect(grouped.done.map((r) => r.id)).toEqual(["zone", "email-routing"]);
+    expect(grouped.optional.map((r) => r.id)).toEqual(["workers-plan", "zero-trust", "sandbox"]);
+  });
+
+  it("gives each row one line: the probe's note when it could not tell, else why it matters", () => {
+    const r = rows({ view: view({ zeroTrust: NO_PERMISSION }) });
+    expect(rowLine(r["zero-trust"])).toBe(r["zero-trust"].note);
+    expect(rowLine(r.r2)).toBe(r.r2.why);
   });
 });

@@ -11,10 +11,9 @@ import {
 import { refreshCapabilitiesForNewToken } from "../capabilities/capabilities.server";
 import { apiBaseOption } from "../cloudflare/api-base";
 import { logCfRequest } from "../cloudflare/client.server";
-import type { VerifyTokenResult } from "../cloudflare/verify-token";
 import { createDb } from "../db/client";
 import { selfUnits } from "../jobs/units/client";
-import { recordSetupNotice } from "../telemetry/state.server";
+import { recordSetupFinished } from "../telemetry/state.server";
 import { authSecretBound, currentAuth } from "./auth.server";
 import { cfTokenInput, ownerInput } from "./schemas";
 import {
@@ -23,7 +22,6 @@ import {
   SETUP_CLAIM_COOKIE,
   SETUP_CLAIM_TTL_MS,
   SetupError,
-  verifyFirstRunTokenStep,
 } from "./setup.server";
 import { type TokenFlowDeps, TokenStepError } from "./token.server";
 import { authErrorMessage, hasAnyUser } from "./users.server";
@@ -73,28 +71,26 @@ async function userFacing<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-/** POST so the token travels in the body, never in a logged URL. */
-export const verifySetupToken = createServerFn({ method: "POST" })
-  .validator(cfTokenInput)
-  .handler(async ({ data }): Promise<VerifyTokenResult> => {
-    return userFacing(() =>
-      verifyFirstRunTokenStep({
-        token: tokenDeps(data.token),
-        client: clientAddress(),
-        now: new Date(),
-      }),
-    );
-  });
-
 export interface ConnectedCloudflare {
   accountId: string;
+  accountName: string | null;
   workerName: string;
+  /** Permission groups the save could not confirm. */
+  missing: string[];
   setupTokenRemoved: boolean;
+  /**
+   * What the wizard shows next: the owner form, or a wait while the version
+   * that received a new auth secret with the token rolls out (a manager
+   * deployed without secrets).
+   */
+  next: "create-owner" | "redeploying";
 }
 
 /**
- * Stores the token and gives this browser the setup claim, then reads the
- * account's capabilities for the checklist (best effort; never fails the save).
+ * Step 1's one call: verifies the token for the account this Worker runs in,
+ * stores it and gives this browser the setup claim, then reads the account's
+ * capabilities for the checklist (best effort; never fails the save). POST so
+ * the token travels in the body, never in a logged URL.
  */
 export const connectCloudflare = createServerFn({ method: "POST" })
   .validator(cfTokenInput)
@@ -126,21 +122,26 @@ export const connectCloudflare = createServerFn({ method: "POST" })
     });
     return {
       accountId: connected.accountId,
+      accountName: connected.accountName,
       workerName: connected.workerName,
+      missing: connected.missing,
       setupTokenRemoved: connected.setupTokenRemoved,
+      // This request runs on the version from before the save: without the
+      // auth secret here, the save just wrote one and a new version is rolling out.
+      next: authSecretBound() ? "create-owner" : "redeploying",
     };
   });
 
 /**
- * Records that setup finished for usage data: the checklist shows its
- * notice, and the first scheduled report after this sends "setup completed".
- * Best effort; it never fails setup.
+ * Records that setup finished for usage data: the first scheduled report
+ * after this sends "setup completed". The notice itself is shown on the home
+ * page, never inside setup. Best effort; it never fails setup.
  */
 async function recordSetupForUsageData(): Promise<void> {
   try {
-    await recordSetupNotice(env);
+    await recordSetupFinished(env);
   } catch (error) {
-    console.warn("could not record the usage-data notice at setup", {
+    console.warn("could not record the end of setup for usage data", {
       error: error instanceof Error ? error.message : String(error),
     });
   }

@@ -1,5 +1,10 @@
 import { type IndexApp, isServiceId, requirementService, type ServiceId } from "@appflare/schema";
 import { type CapabilitiesView, PLAN_LABELS, unknownSentence } from "../capabilities/capabilities";
+import {
+  SANDBOX_CHECKLIST_ROW_ID,
+  type SandboxRowState,
+  sandboxReadinessOf,
+} from "../sandbox/readiness";
 
 /**
  * The onboarding checklist: what the account has that apps rely on, read from
@@ -27,6 +32,9 @@ export interface ChecklistLink {
   external: boolean;
 }
 
+/** An action the row offers in the app itself, rather than a link. */
+export type ChecklistAction = "enable-sandbox";
+
 export interface ChecklistRow {
   id: ChecklistRowId;
   label: string;
@@ -38,7 +46,12 @@ export interface ChecklistRow {
   /** Why the probe could not tell, when it could not. */
   note: string | null;
   link: ChecklistLink | null;
+  /** Shown to admins only; a row has a link or an action, never both. */
+  action: ChecklistAction | null;
 }
+
+/** A row whose only way forward is a link (every row but sandbox builds). */
+type LinkRow = Omit<ChecklistRow, "action">;
 
 /** Sandbox builds as the checklist shows them: state only. */
 export type SandboxBuildsState = "enabled" | "off";
@@ -72,10 +85,9 @@ export const DASHBOARD_LINKS = {
   domains: `${DASH}/?to=/:account/domains/overview`,
   emailRouting: `${DASH}/?to=/:account/email-service/routing`,
   zeroTrust: "https://one.dash.cloudflare.com/?to=/:account/home",
+  /** Account-owned tokens; a user token is edited from the profile's API Tokens page. */
+  accountApiTokens: `${DASH}/?to=/:account/api-tokens`,
 } as const;
-
-/** The in-app page that holds the sandbox builds card and this checklist. */
-export const ACCOUNT_SETTINGS_PATH = "/settings/account";
 
 /** The services an index row names, falling back to its `requires` for older rows. */
 function servicesOf(app: Pick<IndexApp, "services" | "requires">): Set<ServiceId> {
@@ -129,14 +141,12 @@ export interface ChecklistInput {
   needs: CatalogNeeds | null;
   /** The account Appflare runs in, once known. */
   accountId: string | null;
-  /** Leave out links to the page the checklist is already on. */
-  onAccountSettings?: boolean;
 }
 
 const NOT_CHECKED = "Not checked yet";
 const RECHECK_NOTE = "Choose Re-check to read it with the Cloudflare token.";
 
-function workersDevRow({ view, needs, accountId }: ChecklistInput): ChecklistRow {
+function workersDevRow({ view, needs, accountId }: ChecklistInput): LinkRow {
   const probe = view.workersDev;
   const base = "Every app answers on its own workers.dev address unless you give it a domain.";
   const row = {
@@ -176,7 +186,7 @@ function workersDevRow({ view, needs, accountId }: ChecklistInput): ChecklistRow
   };
 }
 
-function planRow({ view, needs }: ChecklistInput): ChecklistRow {
+function planRow({ view, needs }: ChecklistInput): LinkRow {
   const { plan, source } = view.plan;
   const link: ChecklistLink = {
     href: DASHBOARD_LINKS.workersPlans,
@@ -213,7 +223,7 @@ function planRow({ view, needs }: ChecklistInput): ChecklistRow {
   };
 }
 
-function r2Row({ view, needs }: ChecklistInput): ChecklistRow {
+function r2Row({ view, needs }: ChecklistInput): LinkRow {
   const probe = view.r2;
   const link: ChecklistLink = { href: DASHBOARD_LINKS.r2, label: "R2", external: true };
   const row = {
@@ -237,7 +247,7 @@ function r2Row({ view, needs }: ChecklistInput): ChecklistRow {
   return { ...row, status: "optional", value: "Unknown", note: unknownSentence(probe, "r2") };
 }
 
-function zoneRow({ view, needs }: ChecklistInput): ChecklistRow {
+function zoneRow({ view, needs }: ChecklistInput): LinkRow {
   const probe = view.zone;
   const row = {
     id: "zone" as const,
@@ -260,7 +270,7 @@ function zoneRow({ view, needs }: ChecklistInput): ChecklistRow {
   return { ...row, status: "optional", value: "Unknown", note: unknownSentence(probe, "zone") };
 }
 
-function emailRoutingRow({ view, needs }: ChecklistInput): ChecklistRow {
+function emailRoutingRow({ view, needs }: ChecklistInput): LinkRow {
   const probe = view.emailRouting;
   const row = {
     id: "email-routing" as const,
@@ -287,7 +297,7 @@ function emailRoutingRow({ view, needs }: ChecklistInput): ChecklistRow {
   return { ...row, status: "optional", value: "Unknown", note };
 }
 
-function zeroTrustRow({ view, needs }: ChecklistInput): ChecklistRow {
+function zeroTrustRow({ view, needs }: ChecklistInput): LinkRow {
   const probe = view.zeroTrust;
   const row = {
     id: "zero-trust" as const,
@@ -315,7 +325,33 @@ function zeroTrustRow({ view, needs }: ChecklistInput): ChecklistRow {
   };
 }
 
-function sandboxRow({ view, needs, sandbox, onAccountSettings }: ChecklistInput): ChecklistRow {
+/** The sandbox row's short value and where to fix it, per readiness state. */
+const SANDBOX_NEEDS: Record<
+  Exclude<SandboxRowState, "on" | "ready-auto">,
+  { value: string; link: ChecklistLink }
+> = {
+  "needs-plan": {
+    value: "Needs Workers Paid",
+    link: { href: DASHBOARD_LINKS.workersPlans, label: "Workers plans", external: true },
+  },
+  "needs-permission": {
+    value: "Needs a token permission",
+    link: { href: DASHBOARD_LINKS.accountApiTokens, label: "API tokens", external: true },
+  },
+  "needs-r2": {
+    value: "Needs R2 turned on",
+    link: { href: DASHBOARD_LINKS.r2, label: "R2", external: true },
+  },
+};
+
+/**
+ * Sandbox builds are turned on by the first install that needs them, so the
+ * row is never "needs you". Its state comes from `sandboxReadinessOf`, the
+ * same reading the app page and the install start use: on; ready (with
+ * "Enable now" for a faster first build once the probes confirmed Workers
+ * Paid, Containers and R2); or what is missing, with where to fix it.
+ */
+function sandboxRow({ view, needs, sandbox }: ChecklistInput): ChecklistRow {
   const row = {
     id: "sandbox" as const,
     label: "Sandbox builds",
@@ -323,34 +359,32 @@ function sandboxRow({ view, needs, sandbox, onAccountSettings }: ChecklistInput)
       "Builds apps that have no prebuilt release inside your account, in a container.",
       needs === null ? null : counted(needs.sandbox, "is built this way", "are built this way"),
     ),
+    action: null,
   };
-  if (sandbox === "enabled") {
-    return { ...row, status: "done", value: "Enabled", note: null, link: null };
+  const readiness = sandboxReadinessOf(view, sandbox === "enabled");
+  switch (readiness.state) {
+    case "on":
+      return { ...row, status: "done", value: "Enabled", note: null, link: null };
+    case "ready-auto":
+      return {
+        ...row,
+        status: "optional",
+        value: "Ready, enabled automatically when an app needs it",
+        // Not confirmed: a probe has not run or could not tell; the start asks again.
+        note: readiness.confirmed ? null : RECHECK_NOTE,
+        link: null,
+        action: readiness.confirmed ? "enable-sandbox" : null,
+      };
+    default: {
+      const { value, link } = SANDBOX_NEEDS[readiness.state];
+      return { ...row, status: "optional", value, note: readiness.missing, link };
+    }
   }
-  if (view.plan.plan !== "paid") {
-    return {
-      ...row,
-      status: "optional",
-      value: "Needs Workers Paid",
-      note: null,
-      link: { href: DASHBOARD_LINKS.workersPlans, label: "Workers plans", external: true },
-    };
-  }
-  return {
-    ...row,
-    status: "optional",
-    value: "Off",
-    note: null,
-    link:
-      onAccountSettings === true
-        ? null
-        : { href: ACCOUNT_SETTINGS_PATH, label: "Sandbox builds settings", external: false },
-  };
 }
 
-/** The rows, in the order the checklist shows them. */
+/** The rows, in a fixed order; {@link groupChecklist} arranges them for display. */
 export function buildChecklist(input: ChecklistInput): ChecklistRow[] {
-  return [
+  const rows: Array<LinkRow & { action?: ChecklistAction | null }> = [
     workersDevRow(input),
     planRow(input),
     r2Row(input),
@@ -359,6 +393,7 @@ export function buildChecklist(input: ChecklistInput): ChecklistRow[] {
     zeroTrustRow(input),
     sandboxRow(input),
   ];
+  return rows.map((row) => ({ ...row, action: row.action ?? null }));
 }
 
 export const STATUS_LABELS: Record<ChecklistStatus, string> = {
@@ -370,4 +405,44 @@ export const STATUS_LABELS: Record<ChecklistStatus, string> = {
 /** How many rows need the admin. */
 export function needsYouCount(rows: readonly ChecklistRow[]): number {
   return rows.filter((r) => r.status === "needs-you").length;
+}
+
+/**
+ * The progress the checklist shows: rows done out of the rows that count.
+ * Optional rows that are not done unlock more apps but never hold setup
+ * back, so they are left out of both numbers.
+ */
+export function checklistProgress(rows: readonly ChecklistRow[]): { done: number; total: number } {
+  const done = rows.filter((r) => r.status === "done").length;
+  return { done, total: done + needsYouCount(rows) };
+}
+
+/**
+ * The display order: rows that need the admin first (expanded), then the
+ * done ones (one line each), then the optional ones (secondary). Each group
+ * keeps the fixed row order.
+ */
+export function groupChecklist(rows: readonly ChecklistRow[]): {
+  needsYou: ChecklistRow[];
+  done: ChecklistRow[];
+  optional: ChecklistRow[];
+} {
+  return {
+    needsYou: rows.filter((r) => r.status === "needs-you"),
+    done: rows.filter((r) => r.status === "done"),
+    optional: rows.filter((r) => r.status === "optional"),
+  };
+}
+
+/**
+ * The element id of a row, so other pages can link to it (the sandbox row is
+ * `checklist-sandbox`, where a refused install points).
+ */
+export function checklistRowAnchor(row: Pick<ChecklistRow, "id">): string {
+  return row.id === "sandbox" ? SANDBOX_CHECKLIST_ROW_ID : `checklist-${row.id}`;
+}
+
+/** The one line under a row's title: why the probe could not tell, else why it matters. */
+export function rowLine(row: ChecklistRow): string {
+  return row.note ?? row.why;
 }

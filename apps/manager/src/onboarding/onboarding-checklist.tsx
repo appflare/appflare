@@ -1,70 +1,83 @@
-import { Badge, Banner, Button, LayerCard, Link, Text } from "@cloudflare/kumo";
+import { Banner, Button, LayerCard, Link, Text } from "@cloudflare/kumo";
 import { ArrowClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import { ConfirmDialog } from "../components/confirm-dialog";
+import { useJobStarted } from "../components/job-started";
 import { Timestamp } from "../components/timestamp";
-import {
-  buildChecklist,
-  type ChecklistRow,
-  type ChecklistStatus,
-  needsYouCount,
-  STATUS_LABELS,
-} from "./checklist";
+import { buildCostLine, CONTAINERS_PRICING_URL, estimateBuild } from "../sandbox/cost";
+import { startSandboxJob } from "../server/sandbox.functions";
 import { recheckChecklist } from "./checklist.functions";
 import type { ChecklistData } from "./checklist.server";
+import { ChecklistBody } from "./checklist-view";
 
-const STATUS_VARIANT: Record<ChecklistStatus, "success" | "warning" | "neutral"> = {
-  done: "success",
-  "needs-you": "warning",
-  optional: "neutral",
-};
+/**
+ * The onboarding checklist's two places, the last setup step and Settings ›
+ * Account and capabilities, with Re-check and the sandbox row's "Enable now"
+ * (admins only). The rows themselves are drawn by `checklist-view.tsx`.
+ */
 
-function Row({ row }: { row: ChecklistRow }) {
-  return (
-    <li className="grid gap-1 py-3 first:pt-0 last:pb-0">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <Text bold>{row.label}</Text>
-        <Badge variant={STATUS_VARIANT[row.status]}>{STATUS_LABELS[row.status]}</Badge>
-      </div>
-      <Text>{row.value}</Text>
-      <Text variant="secondary" size="sm">
-        {row.why}
+/**
+ * "Enable now": starts the sandbox enable job after a confirmation. In
+ * Settings it then opens the job's log; inside the setup wizard (`stayInPlace`)
+ * it stays, and the row says the job is running so setup can be finished.
+ */
+function EnableSandboxNow({ stayInPlace }: { stayInPlace: boolean }) {
+  const jobStarted = useJobStarted();
+  const [started, setStarted] = useState(false);
+  if (started) {
+    return (
+      <Text variant="secondary" size="sm" as="span">
+        <span role="status">
+          Enabling… you can finish setup; progress is under{" "}
+          <Link href="/settings/account">Settings</Link>.
+        </span>
       </Text>
-      {row.note !== null && (
+    );
+  }
+  return (
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button {...p} variant="secondary" size="sm" className="shrink-0">
+          Enable now
+        </Button>
+      )}
+      title="Enable sandbox builds now"
+      description="The first app that needs a build enables sandbox builds by itself. Enabling now makes that first build faster: Appflare creates the sandbox Worker, its R2 bucket and two container applications in this account, then connects to it."
+      actionLabel="Enable"
+      destructive={false}
+      onConfirm={async () => {
+        const { jobId } = await startSandboxJob({ data: { action: "enable" } });
+        if (stayInPlace) setStarted(true);
+        else await jobStarted(jobId, "Enabling sandbox builds");
+      }}
+    >
+      <div className="grid gap-2">
+        <Text>
+          Nothing runs between builds. Each build runs one container, billed as container time
+          beyond what Workers Paid includes each month.
+        </Text>
         <Text variant="secondary" size="sm">
-          {row.note}
+          A typical build: {buildCostLine(estimateBuild())}.
         </Text>
-      )}
-      {row.link !== null && (
-        <Text size="sm">
-          {row.link.external ? (
-            <Link href={row.link.href} target="_blank" rel="noopener noreferrer">
-              {row.link.label}
-              <Link.ExternalIcon />
-            </Link>
-          ) : (
-            <Link href={row.link.href}>{row.link.label}</Link>
-          )}
-        </Text>
-      )}
-    </li>
+        <Link href={CONTAINERS_PRICING_URL} target="_blank" rel="noopener noreferrer">
+          Containers pricing
+          <Link.ExternalIcon />
+        </Link>
+      </div>
+    </ConfirmDialog>
   );
 }
 
-/**
- * Re-check: runs the probes, then reloads the route, so this checklist and
- * every other card that reads the same probes show the new values.
- */
-function useRecheck() {
-  const router = useRouter();
+/** Runs the probes again; `onDone` receives the checklist as it now reads. */
+function useRecheck(onDone: (data: ChecklistData) => Promise<void> | void) {
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function recheck() {
     setChecking(true);
     setError(null);
     try {
-      await recheckChecklist();
-      await router.invalidate();
+      await onDone(await recheckChecklist());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not check the account.");
     }
@@ -76,7 +89,7 @@ function useRecheck() {
 function RecheckButton({ checking, onClick }: { checking: boolean; onClick(): void }) {
   return (
     <Button
-      variant="secondary"
+      variant="ghost"
       size="sm"
       icon={<ArrowClockwiseIcon />}
       loading={checking}
@@ -87,41 +100,17 @@ function RecheckButton({ checking, onClick }: { checking: boolean; onClick(): vo
   );
 }
 
-function Summary({ rows, checkedAt }: { rows: ChecklistRow[]; checkedAt: string | null }) {
-  const pending = needsYouCount(rows);
+function CheckedAt({ iso }: { iso: string | null }) {
   return (
-    <Text variant="secondary">
-      {pending === 0
-        ? "Nothing here needs you. Optional rows unlock more apps."
-        : `${pending} ${pending === 1 ? "item needs" : "items need"} you before some apps can be installed.`}{" "}
-      {checkedAt === null ? (
-        "The account has not been checked yet."
+    <Text variant="secondary" size="sm">
+      {iso === null ? (
+        "Not checked yet."
       ) : (
         <>
-          Checked <Timestamp iso={checkedAt} />.
+          Checked <Timestamp iso={iso} />.
         </>
       )}
     </Text>
-  );
-}
-
-function ChecklistBody({
-  data,
-  onAccountSettings,
-}: {
-  data: ChecklistData;
-  onAccountSettings: boolean;
-}) {
-  const rows = buildChecklist({ ...data, onAccountSettings });
-  return (
-    <div className="grid gap-4">
-      <Summary rows={rows} checkedAt={data.view.checkedAt} />
-      <ul className="grid divide-y divide-kumo-hairline">
-        {rows.map((row) => (
-          <Row key={row.id} row={row} />
-        ))}
-      </ul>
-    </div>
   );
 }
 
@@ -129,21 +118,36 @@ function ErrorBanner({ message }: { message: string }) {
   return <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={message} />;
 }
 
-/** The last setup step's content: the checklist and Re-check (the page adds Finish). */
-export function SetupChecklist({ data }: { data: ChecklistData }) {
-  const { checking, error, recheck } = useRecheck();
+/**
+ * The last setup step's content: the checklist, when it was checked, and a
+ * small Re-check (the wizard adds Finish). Re-check hands the new reading to
+ * `onRechecked`, so the wizard updates in place.
+ */
+export function SetupChecklist({
+  data,
+  onRechecked,
+}: {
+  data: ChecklistData;
+  onRechecked: (data: ChecklistData) => void;
+}) {
+  const { checking, error, recheck } = useRecheck(onRechecked);
   return (
-    <div className="grid gap-4">
-      <ChecklistBody data={data} onAccountSettings={false} />
+    <div className="grid gap-3">
+      <ChecklistBody data={data} enableNow={<EnableSandboxNow stayInPlace />} />
       {error !== null && <ErrorBanner message={error} />}
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <CheckedAt iso={data.view.checkedAt} />
         <RecheckButton checking={checking} onClick={() => void recheck()} />
       </div>
     </div>
   );
 }
 
-/** Settings › Account and capabilities: the same checklist as a card. */
+/**
+ * Settings › Account and capabilities: the same checklist as a card.
+ * Re-check reloads the page, so every card that reads the same probes shows
+ * the new values.
+ */
 export function OnboardingChecklistCard({
   data,
   isAdmin,
@@ -151,16 +155,21 @@ export function OnboardingChecklistCard({
   data: ChecklistData;
   isAdmin: boolean;
 }) {
-  const { checking, error, recheck } = useRecheck();
+  const router = useRouter();
+  const { checking, error, recheck } = useRecheck(() => router.invalidate());
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
         <span>Onboarding checklist</span>
         {isAdmin && <RecheckButton checking={checking} onClick={() => void recheck()} />}
       </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
-        <ChecklistBody data={data} onAccountSettings />
+      <LayerCard.Primary className="grid gap-3 px-5 py-4">
+        <ChecklistBody
+          data={data}
+          enableNow={isAdmin ? <EnableSandboxNow stayInPlace={false} /> : null}
+        />
         {error !== null && <ErrorBanner message={error} />}
+        <CheckedAt iso={data.view.checkedAt} />
       </LayerCard.Primary>
     </LayerCard>
   );

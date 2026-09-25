@@ -12,7 +12,7 @@ import {
   isNoticeDue,
   markOpenedToday,
   readTelemetryStatus,
-  recordSetupNotice,
+  recordSetupFinished,
   resetOpenedMemo,
   setTelemetryEnabled,
   TelemetryLockedError,
@@ -110,7 +110,7 @@ describe("before anything is sent", () => {
   it("a development build sends nothing and reads nothing", async () => {
     const ph = posthog();
     const e = managerEnv({ APPFLARE_VERSION: "0.0.0-dev" });
-    await recordSetupNotice(e);
+    await recordSetupFinished(e);
     expect(await reportTelemetry(e, { fetch: ph.fetch, now: () => NOW })).toEqual({
       status: "skipped",
       reason: "development build",
@@ -120,7 +120,7 @@ describe("before anything is sent", () => {
 
   it("APPFLARE_TELEMETRY=off or DO_NOT_TRACK=1 on the Worker locks it off", async () => {
     const ph = posthog();
-    await recordSetupNotice(managerEnv());
+    await recordSetupFinished(managerEnv());
     for (const vars of [{ APPFLARE_TELEMETRY: "off" }, { DO_NOT_TRACK: "1" }]) {
       const out = await reportTelemetry(managerEnv(vars), { fetch: ph.fetch, now: () => NOW });
       expect(out.status).toBe("skipped");
@@ -156,7 +156,7 @@ describe("before anything is sent", () => {
 
   it("sends and writes nothing once turned off, not even that it is off", async () => {
     const ph = posthog();
-    await recordSetupNotice(managerEnv(), new Date(NOW - 60 * MIN));
+    await recordSetupFinished(managerEnv(), new Date(NOW - 60 * MIN));
     await setTelemetryEnabled(managerEnv(), false, new Date(NOW - 50 * MIN));
     const before = await env.DB.prepare("SELECT key, value FROM settings ORDER BY key").all();
     await markOpenedToday(managerEnv(), "admin", NOW);
@@ -174,7 +174,7 @@ describe("the choice and the notice", () => {
   it("records setup with the CLI's install id, and moves the job cursor when turned back on", async () => {
     const at = new Date(NOW - 60 * MIN);
     const e = managerEnv({ APPFLARE_INSTALL_ID: CLI_ID });
-    await recordSetupNotice(e, at);
+    await recordSetupFinished(e, at);
     const rows = await readSettings(createDb(env.DB), [
       SETTING.telemetry,
       SETTING.telemetryInstallId,
@@ -183,10 +183,10 @@ describe("the choice and the notice", () => {
       SETTING.telemetrySetupSent,
     ]);
     // No choice is stored: on by default, and "setup completed" is still due.
+    // Setup does not show the notice, so it is not recorded as seen.
     expect(rows).toEqual({
       telemetry_install_id: CLI_ID,
       telemetry_cursor: String(at.getTime()),
-      telemetry_notice_at: at.toISOString(),
     });
     expect(await readTelemetryStatus(e)).toMatchObject({ state: "on", lockedBy: null });
     // Off and on again: same id, fresh cursor.
@@ -231,9 +231,9 @@ describe("the choice and the notice", () => {
     expect(rows).toEqual({ telemetry_notice_at: new Date(NOW - 5 * MIN).toISOString() });
   });
 
-  it("does not show the home page notice after setup showed it, or after a choice in Settings", async () => {
-    await recordSetupNotice(managerEnv());
-    expect(await isNoticeDue(managerEnv())).toBe(false);
+  it("shows the home page notice after setup, and not after a choice in Settings", async () => {
+    await recordSetupFinished(managerEnv());
+    expect(await isNoticeDue(managerEnv())).toBe(true);
     await reset();
     await createMigrator(migrations).ensure(env.DB);
     await setTelemetryEnabled(managerEnv(), false);
@@ -243,7 +243,10 @@ describe("the choice and the notice", () => {
 
 describe("the report", () => {
   async function finishSetup() {
-    await recordSetupNotice(managerEnv({ APPFLARE_INSTALL_ID: CLI_ID }), new Date(NOW - 60 * MIN));
+    await recordSetupFinished(
+      managerEnv({ APPFLARE_INSTALL_ID: CLI_ID }),
+      new Date(NOW - 60 * MIN),
+    );
   }
 
   it("sends the heartbeat, job events, the opened day and setup completed in one batch", async () => {
@@ -498,7 +501,7 @@ describe("previewHeartbeat", () => {
     const days = async () =>
       (await previewHeartbeat(managerEnv(), NOW)).properties.days_since_setup;
     // The notice is earlier than the first user (100 minutes ago).
-    await recordSetupNotice(managerEnv(), new Date(NOW - 2 * 86_400_000));
+    await dismissNotice(managerEnv(), new Date(NOW - 2 * 86_400_000));
     expect(await days()).toBe(2);
     await env.DB.prepare("DELETE FROM settings WHERE key = ?1")
       .bind(SETTING.telemetryNoticeAt)

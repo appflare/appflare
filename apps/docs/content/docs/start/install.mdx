@@ -108,7 +108,8 @@ The installer only installs. Once the manager runs, you manage it from its own
 ## The setup wizard
 
 Open the manager's address. Until setup is finished, every page of the manager
-leads to the setup wizard. It has three steps.
+leads to the setup wizard: one page with three steps, each shown in place of the one
+before.
 
 ### 1. Connect Cloudflare
 
@@ -117,19 +118,22 @@ Cloudflare does not let a Worker or wrangler create one, so this step happens in
 dashboard:
 
 1. Select **Create token**. The dashboard opens an account-owned token form named
-   `Appflare`, with the permissions below already selected. Choose your account,
-   create the token, and copy it. If you are not a Super Administrator, use
-   **Create a user token instead**.
-2. Paste the token and select **Verify**. The manager checks that the token is
-   active, can manage Workers, and belongs to the account the manager runs in: it
-   looks for the version of itself that is serving the page in the token's account.
-   It warns about permissions it cannot confirm.
-3. Select **Save and continue**.
+   `Appflare`, with the permissions below already selected; you do not pick any.
+   Choose your account, scroll down, choose **Review token**, then **Create token**,
+   and copy it. If you are not a Super Administrator, use **Create a user token
+   instead**. **What the token can do** on the setup page lists each permission and
+   the feature that uses it.
+2. Paste the token.
+3. Select **Continue**. In one step the manager checks that the token is active,
+   can manage Workers, and belongs to the account the manager runs in (it looks for
+   the version of itself that is serving the page in the token's account), then
+   saves it and shows the account it connected to. It warns about permissions it
+   cannot confirm, and a refused token shows why in place.
 
 The token is the only thing that guards setup. Anyone who can create a token for
 your account already controls it, so there is no separate setup password. A token
 for another account is refused with a message that names the account it belongs to.
-The page allows 10 tries (a Verify and a Save each) per network address in 10 minutes.
+The page allows 20 tries per network address in 10 minutes.
 
 ### 2. Create the owner account
 
@@ -144,9 +148,10 @@ manager again after 30 minutes and paste the token again.
 
 ### 3. Check your account
 
-The manager reads what your Cloudflare account has that apps rely on, and lists each
-item as **Done**, **Needs you**, or **Optional**, with a link to the page of the
-Cloudflare dashboard where you change it and how many catalog apps need it:
+The manager reads what your Cloudflare account has that apps rely on and shows how
+many items are done. Items that need you come first, each with a link to the page
+of the Cloudflare dashboard where you change it and how many catalog apps need it;
+done items take one line each; optional items come last:
 
 | Item | What it is for |
 | --- | --- |
@@ -156,7 +161,7 @@ Cloudflare dashboard where you change it and how many catalog apps need it:
 | Active zone | A domain on Cloudflare, for [custom domains](/guides/custom-domains/) and [apps that receive email](/guides/email-apps/). |
 | Email Routing | Routes a domain's mail to an app. Installing such an app turns it on. |
 | Zero Trust organization | Needed before [Cloudflare Access](/security/#protect-with-cloudflare-access) can put a sign-in in front of the manager or an app. |
-| Sandbox builds | Builds apps that have no prebuilt release inside your account. Needs Workers Paid. |
+| Sandbox builds | Builds apps that have no prebuilt release inside your account. Needs Workers Paid, R2 turned on, and the Containers permission; the first app that needs a build turns it on, or select **Enable now** for a faster first build. |
 
 Select **Re-check** after changing something in the dashboard. Select **Finish** to
 go to the manager. The same list stays in **Settings › Account and capabilities**.

@@ -63,9 +63,9 @@ export const SETTING = {
    */
   telemetry: "telemetry",
   /**
-   * ISO 8601 time the usage-data notice was first shown for this manager:
-   * the last setup screen, the home page notice dismissed, or a choice in
-   * Settings. While absent, admins see the notice on the home page.
+   * ISO 8601 time the usage-data notice was first answered for this manager:
+   * the home page notice dismissed, or a choice in Settings. While absent,
+   * admins see the notice on the home page.
    */
   telemetryNoticeAt: "telemetry_notice_at",
   /** The random id every event is tied to (a UUIDv4). Kept when usage data is turned off. */

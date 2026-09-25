@@ -7,9 +7,9 @@ import { Logo } from "./logo";
 export const DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/";
 
 /**
- * Setup runs in three screens, all on `/setup`: connect Cloudflare (paste an
- * API token for this account), create the owner account, then the onboarding
- * checklist.
+ * Setup runs in three steps on one page, `/setup`: connect Cloudflare (paste
+ * an API token for this account), create the owner account, then the
+ * onboarding checklist.
  */
 export const SETUP_STEP_COUNT = 3;
 export type SetupStep = 1 | 2 | 3;
@@ -28,14 +28,17 @@ export const FULL_WIDTH_ACTION = "w-full justify-center";
  * subtitle, the screen's content), then a footer line with the version.
  *
  * Light, or dark when chosen in the account menu's Appearance, like the rest
- * of the manager (see `color-mode.ts`); the logo turns white in dark mode. `wide` fits the
- * Cloudflare token step's longer copy and two-button rows.
+ * of the manager (see `color-mode.ts`); the logo turns white in dark mode.
+ * `wide` fits the setup wizard and longer notices. `placement="top"` pins the
+ * card near the top instead of centring it, so a frame whose content changes
+ * height (the setup wizard's steps) keeps its logo and step indicator still.
  */
 export function AuthLayout({
   title,
   description,
   step,
   width = "narrow",
+  placement = "center",
   version,
   children,
 }: {
@@ -44,13 +47,19 @@ export function AuthLayout({
   /** The setup step this screen is, shown above the title. */
   step?: SetupStep;
   width?: "narrow" | "wide";
+  placement?: "center" | "top";
   /** The running Appflare version; null when it could not be read. */
   version: string | null;
   children: ReactNode;
 }) {
   return (
     <main className="flex min-h-dvh flex-col bg-kumo-canvas text-kumo-default">
-      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-4 py-12">
+      <div
+        className={cn(
+          "flex flex-1 flex-col items-center px-4",
+          placement === "top" ? "justify-start gap-6 py-6" : "justify-center gap-8 py-12",
+        )}
+      >
         <Logo height={32} />
         <LayerCard
           className={cn(

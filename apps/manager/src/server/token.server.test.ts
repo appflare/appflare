@@ -95,7 +95,9 @@ describe("saveTokenStep", () => {
     expect(result).toEqual({
       ok: true,
       accountId: ACC,
+      accountName: "Appflare Dev",
       workerName: "appflare",
+      missing: [],
       setupTokenRemoved: true,
     });
 

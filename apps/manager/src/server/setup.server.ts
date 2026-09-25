@@ -1,6 +1,5 @@
 import { createClient } from "@appflare/cf-api";
 import { constantTimeEquals } from "../auth/constant-time";
-import type { VerifyTokenResult } from "../cloudflare/verify-token";
 import { createDb } from "../db/client";
 import {
   deleteSettings,
@@ -11,12 +10,7 @@ import {
 } from "../db/settings";
 import { releaseSettingsLock, tryAcquireSettingsLock } from "../db/settings-lock";
 import { ensureSelfBinding, type SelfBindingOutcome } from "./self-binding.server";
-import {
-  type SaveTokenResult,
-  saveTokenStep,
-  type TokenFlowDeps,
-  verifySetupTokenStep,
-} from "./token.server";
+import { type SaveTokenResult, saveTokenStep, type TokenFlowDeps } from "./token.server";
 import { hasAnyUser, makeFirstUserOwner } from "./users.server";
 
 /**
@@ -38,18 +32,16 @@ import { hasAnyUser, makeFirstUserOwner } from "./users.server";
  *    secret (Better Auth never starts without one). Every other browser keeps
  *    seeing step 1; once the owner exists, everyone is sent to sign in.
  *
- * Both token calls are rate limited per client address (20 calls, 10 tries, in 10
- * minutes), so the page is not a free oracle for testing tokens. Every
- * refusal carries a fixed message.
+ * Connecting verifies and saves in one call, rate limited per client address
+ * (20 tries in 10 minutes), so the page is not a free oracle for testing
+ * tokens. There is no separate verify call. Every refusal carries a fixed
+ * message.
  */
 
 export const SETUP_CLAIM_COOKIE = "appflare_setup_claim";
 export const SETUP_CLAIM_TTL_MS = 30 * 60_000;
 
-/**
- * Token calls per client address: Verify and Save each count, so 20 calls
- * are 10 tries of a token.
- */
+/** Connect calls per client address: each one is one try of a token. */
 export const SETUP_RATE_LIMIT = { max: 20, windowMs: 10 * 60_000 } as const;
 
 /**
@@ -187,12 +179,6 @@ async function beforeAnyUser(deps: SetupDeps): Promise<void> {
   }
 }
 
-/** Step 1, "Verify": what the pasted token is and whether it is for this account. Stores nothing. */
-export async function verifyFirstRunTokenStep(deps: SetupDeps): Promise<VerifyTokenResult> {
-  await beforeAnyUser(deps);
-  return verifySetupTokenStep(deps.token);
-}
-
 export interface ConnectResult extends SaveTokenResult {
   claim: { value: string; expiresAt: Date };
   selfBinding: SelfBindingOutcome;
@@ -211,8 +197,8 @@ export interface ConnectDeps extends SetupDeps {
 }
 
 /**
- * Step 1, "Save and continue": stores the token and issues this browser's
- * claim. Refused while another browser holds an unexpired claim. When a
+ * Step 1, "Continue": verifies the token for the account this Worker runs
+ * in, stores it, and issues this browser's claim, in one call. Refused while another browser holds an unexpired claim. When a
  * token is already stored (the browser that stored it went away) the pasted
  * one is verified again and replaces it only if it differs. A manager
  * deployed without secrets or without `SELF` (the "Deploy to Cloudflare"

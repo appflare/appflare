@@ -1,36 +1,46 @@
 import { Banner, Button, Input, Loader, Text } from "@cloudflare/kumo";
 import { CheckCircleIcon, InfoIcon, SignOutIcon, WarningIcon } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useReducer, useState } from "react";
 import { z } from "zod";
 import { authClient } from "../auth/client";
 import { serverErrorMessage } from "../auth/sign-in-errors";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
-import { CloudflareTokenForm, type SavedToken } from "../components/cloudflare-token-form";
+import { SetupTokenForm, type SetupTokenSaved } from "../components/cloudflare-token-form";
 import { PasswordInput } from "../components/password-input";
-import { UsageDataNotice } from "../components/usage-data-notice";
 import { getChecklistData } from "../onboarding/checklist.functions";
 import type { ChecklistData } from "../onboarding/checklist.server";
 import { SetupChecklist } from "../onboarding/onboarding-checklist";
+import {
+  initialWizardState,
+  type SavedTokenSummary,
+  type WizardEvent,
+  type WizardState,
+  wizardCopy,
+  wizardReducer,
+  wizardStepNumber,
+} from "../onboarding/wizard";
 import { enterSetup } from "../server/gate.functions";
 import { MIN_PASSWORD_LENGTH } from "../server/schemas";
 import { createOwner } from "../server/setup.functions";
 import { getTokenStatus } from "../server/token.functions";
 import { loadAppflareVersion } from "../server/version.functions";
-import type { TelemetryStatus } from "../telemetry/telemetry";
-import { getTelemetryStatus } from "../telemetry/telemetry.functions";
 
 /**
- * `/setup`, the first-run wizard. Step 1 (anyone, before any user exists):
- * paste a Cloudflare API token for the account this Appflare runs in; the
- * token is the proof of control, and saving it gives this browser the right
- * to finish setup. Step 2 (only that browser): create the owner, who is
- * signed in at once. Step 3: the onboarding checklist and the usage-data
- * notice, then Finish goes home. Once the owner exists, everyone else is sent
- * to sign in.
+ * `/setup`, the first-run wizard, as one page: one frame, one width and one
+ * step indicator for every step, the step's content swapped in place. The
+ * server decides where a visit starts (`enterSetup`); after that each step's
+ * own call moves the wizard on without a navigation, so nothing remounts.
  *
- * `?token=` from older installers is accepted and ignored; it is removed from
- * the address bar. `?checklist=true` asks for step 3 once signed in.
+ * Step 1 (anyone, before any user exists): paste a Cloudflare API token for
+ * the account this Appflare runs in; one Continue verifies and saves it, and
+ * saving gives this browser the right to finish setup. Step 2 (only that
+ * browser): create the owner, who is signed in at once. Step 3: the
+ * onboarding checklist, then Finish goes home. Once the owner exists,
+ * everyone else is sent to sign in.
+ *
+ * `?checklist=true` marks step 3, so a reload stays there. `?token=` from
+ * older installers is accepted and ignored; it is removed from the address bar.
  */
 export const Route = createFileRoute("/setup")({
   staticData: { title: "Set up" },
@@ -38,19 +48,19 @@ export const Route = createFileRoute("/setup")({
     token: z.string().optional(),
     checklist: z.boolean().optional(),
   }),
-  loaderDeps: ({ search }) => ({ checklist: search.checklist === true }),
-  loader: async ({ deps }) => {
+  // No loaderDeps: moving to step 3 sets `?checklist=true` without a new match
+  // (which would suspend and remount the page). The loader runs once per visit.
+  shouldReload: false,
+  loader: async ({ location }) => {
     stripTokenFromAddressBar();
+    const checklist = (location.search as { checklist?: boolean }).checklist === true;
     // Redirects to /login (users exist, no session) or / (setup complete).
     const [gate, version] = await Promise.all([
-      enterSetup({ data: { checklist: deps.checklist } }),
+      enterSetup({ data: { checklist } }),
       loadAppflareVersion(),
     ]);
-    if (gate.step === "checklist") {
-      const [checklist, telemetry] = await Promise.all([getChecklistData(), getTelemetryStatus()]);
-      return { step: gate.step, version, checklist, telemetry };
-    }
-    return { step: gate.step, version, checklist: null, telemetry: null };
+    const checklistData = gate.step === "checklist" ? await getChecklistData() : null;
+    return { initial: initialWizardState(gate.step, checklistData), version };
   },
   component: SetupPage,
 });
@@ -68,39 +78,93 @@ function stripTokenFromAddressBar() {
 }
 
 function SetupPage() {
-  const { step, version, checklist, telemetry } = Route.useLoaderData();
-  switch (step) {
-    case "connect":
-      return <ConnectStep version={version} />;
-    case "redeploying":
-      return <RedeployingStep version={version} />;
-    case "create-owner":
-      return <CreateOwnerStep version={version} />;
-    case "checklist":
-      return checklist === null ? null : (
-        <ChecklistStep data={checklist} telemetry={telemetry} version={version} />
-      );
-    case "cloudflare-token":
-      return <CloudflareTokenStep version={version} />;
-    case "wait-for-admin":
-      return <WaitForAdminStep version={version} />;
-  }
-}
-
-/** Step 1: the API token, before any user exists. */
-function ConnectStep({ version }: { version: string | null }) {
+  const loaded = Route.useLoaderData();
+  const [state, dispatch] = useReducer(wizardReducer, loaded.initial);
   const router = useRouter();
+
+  // A refusal can mean setup moved on elsewhere: the loader reads where it
+  // stands again, and the wizard follows. The first run only repeats the start.
+  const resync = useCallback(async () => {
+    await router.invalidate();
+  }, [router]);
+  useEffect(() => {
+    dispatch({ type: "sync", state: loaded.initial });
+  }, [loaded.initial]);
+
+  const copy = wizardCopy(state);
+  const step = wizardStepNumber(state);
   return (
     <AuthLayout
       width="wide"
-      step={1}
-      title="Connect Cloudflare"
-      description="Paste an API token for the Cloudflare account this Appflare runs in. Only someone who controls the account can create one, so it is all Appflare needs to let you finish setup."
-      version={version}
+      placement="top"
+      {...(step === null ? {} : { step })}
+      title={copy.title}
+      description={copy.description}
+      version={loaded.version}
     >
-      <CloudflareTokenForm mode="first-run" onSaved={() => void router.invalidate()} />
+      <StepContent state={state} dispatch={dispatch} resync={resync} />
     </AuthLayout>
   );
+}
+
+function StepContent({
+  state,
+  dispatch,
+  resync,
+}: {
+  state: WizardState;
+  dispatch: (event: WizardEvent) => void;
+  resync: () => Promise<void>;
+}) {
+  switch (state.step) {
+    case "connect":
+      return (
+        <SetupTokenForm
+          mode="first-run"
+          onContinue={(saved) =>
+            dispatch({ type: "connected", next: saved.next ?? "create-owner" })
+          }
+        />
+      );
+    case "redeploying":
+      return <RedeployingStep onReady={() => dispatch({ type: "auth-ready" })} />;
+    case "create-owner":
+      return (
+        <CreateOwnerStep
+          onCreated={(checklist) => dispatch({ type: "owner-created", checklist })}
+          resync={resync}
+        />
+      );
+    case "checklist":
+      return (
+        <ChecklistStep
+          data={state.checklist}
+          onRechecked={(checklist) => dispatch({ type: "checklist-loaded", checklist })}
+        />
+      );
+    case "cloudflare-token":
+      return (
+        <SetupTokenForm
+          mode="setup"
+          onContinue={(saved: SetupTokenSaved) => dispatch({ type: "token-saved", saved })}
+        />
+      );
+    case "token-saved":
+      return (
+        <TokenSavedStep
+          saved={state.saved}
+          onChecklist={(checklist) => dispatch({ type: "checklist-loaded", checklist })}
+        />
+      );
+    case "wait-for-admin":
+      return <WaitForAdminStep />;
+  }
+}
+
+/** Moves the address to step 3, so a reload stays there, without a new route match. */
+function useShowChecklistInAddress() {
+  const router = useRouter();
+  return () => router.navigate({ to: "/setup", search: { checklist: true }, replace: true });
 }
 
 /** How often the redeploy wait asks `/api/health` whether the new version serves. */
@@ -109,20 +173,16 @@ const REDEPLOY_POLL_MS = 2000;
 /**
  * A manager deployed without secrets got its auth secret with the token; the
  * owner can be created once a version that has it serves. Polls the cheap,
- * unauthenticated health endpoint and reloads the step once it reports
- * `authReady`.
+ * unauthenticated health endpoint until it reports `authReady`.
  */
-function RedeployingStep({ version }: { version: string | null }) {
-  const router = useRouter();
+function RedeployingStep({ onReady }: { onReady: () => void }) {
   useEffect(() => {
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
         const res = await fetch("/api/health", { cache: "no-store" });
         const body = (await res.json()) as { authReady?: unknown };
-        // The reload may still reach the old version; this step then stays
-        // mounted and keeps polling until the next one moves on.
-        if (!cancelled && body.authReady === true) await router.invalidate();
+        if (!cancelled && body.authReady === true) onReady();
       } catch {
         // The new version is rolling out; keep polling.
       }
@@ -131,25 +191,25 @@ function RedeployingStep({ version }: { version: string | null }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [router]);
+  }, [onReady]);
   return (
-    <AuthLayout
-      step={2}
-      title="Cloudflare connected"
-      description="Appflare is redeploying itself with its new secrets. This takes a few seconds."
-      version={version}
-    >
-      <div className="flex items-center gap-2">
-        <Loader size="sm" />
-        <Text>Waiting for the new version to answer…</Text>
-      </div>
-    </AuthLayout>
+    <div className="flex items-center gap-2">
+      <Loader size="sm" />
+      <Text>Waiting for the new version to answer…</Text>
+    </div>
   );
 }
 
 /** Step 2: the owner account, only in the browser that connected Cloudflare. */
-function CreateOwnerStep({ version }: { version: string | null }) {
+function CreateOwnerStep({
+  onCreated,
+  resync,
+}: {
+  onCreated: (checklist: ChecklistData) => void;
+  resync: () => Promise<void>;
+}) {
   const router = useRouter();
+  const showChecklist = useShowChecklistInAddress();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -166,7 +226,7 @@ function CreateOwnerStep({ version }: { version: string | null }) {
       setError(serverErrorMessage(err, "Could not create the owner account. Try again."));
       setPending(false);
       // The claim expired or someone else finished: the page shows what is next.
-      await router.invalidate();
+      await resync();
       return;
     }
     const { error: signInError } = await authClient.signIn.email({ email, password });
@@ -174,59 +234,43 @@ function CreateOwnerStep({ version }: { version: string | null }) {
       await router.navigate({ to: "/login" });
       return;
     }
-    await router.navigate({ to: "/setup", search: { checklist: true } });
+    const checklist = await getChecklistData();
+    onCreated(checklist);
+    await showChecklist();
   }
 
   return (
-    <AuthLayout
-      step={2}
-      title="Create the owner account"
-      description="The owner installs apps, manages users, and is the only one who can hand ownership over."
-      version={version}
-    >
-      <form className="grid gap-4" onSubmit={onSubmit}>
-        {error !== null && <AuthError message={error} />}
-        <Input label="Name" name="name" autoComplete="name" required maxLength={100} />
-        <Input label="Email" name="email" type="email" autoComplete="email" required />
-        <PasswordInput
-          label="Password"
-          name="password"
-          autoComplete="new-password"
-          minLength={MIN_PASSWORD_LENGTH}
-          maxLength={128}
-          description={`At least ${MIN_PASSWORD_LENGTH} characters.`}
-        />
-        <Button type="submit" variant="primary" className={FULL_WIDTH_ACTION} loading={pending}>
-          Create owner account
-        </Button>
-      </form>
-    </AuthLayout>
+    <form className="grid gap-4" onSubmit={onSubmit}>
+      {error !== null && <AuthError message={error} />}
+      <Input label="Name" name="name" autoComplete="name" required maxLength={100} />
+      <Input label="Email" name="email" type="email" autoComplete="email" required />
+      <PasswordInput
+        label="Password"
+        name="password"
+        autoComplete="new-password"
+        minLength={MIN_PASSWORD_LENGTH}
+        maxLength={128}
+        description={`At least ${MIN_PASSWORD_LENGTH} characters.`}
+      />
+      <Button type="submit" variant="primary" className={FULL_WIDTH_ACTION} loading={pending}>
+        Create owner account
+      </Button>
+    </form>
   );
 }
 
 /** Step 3: what the account has that apps rely on, then Finish. */
 function ChecklistStep({
   data,
-  telemetry,
-  version,
+  onRechecked,
 }: {
   data: ChecklistData;
-  telemetry: TelemetryStatus | null;
-  version: string | null;
+  onRechecked: (data: ChecklistData) => void;
 }) {
   const router = useRouter();
   return (
-    <AuthLayout
-      width="wide"
-      step={3}
-      title="Check your account"
-      description="Appflare read what this Cloudflare account can do. Fix what needs you now or later; this list stays in Settings › Account and capabilities."
-      version={version}
-    >
-      <div className="grid gap-4">
-        <SetupChecklist data={data} />
-        {telemetry !== null && <UsageDataNotice status={telemetry} />}
-      </div>
+    <>
+      <SetupChecklist data={data} onRechecked={onRechecked} />
       <Button
         variant="primary"
         className={FULL_WIDTH_ACTION}
@@ -234,12 +278,12 @@ function ChecklistStep({
       >
         Finish
       </Button>
-    </AuthLayout>
+    </>
   );
 }
 
 /** A member signed in before the token step: nothing to do here but sign out. */
-function WaitForAdminStep({ version }: { version: string | null }) {
+function WaitForAdminStep() {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
 
@@ -250,7 +294,7 @@ function WaitForAdminStep({ version }: { version: string | null }) {
   }
 
   return (
-    <AuthLayout title="Set up Appflare" description="Setup is not finished yet." version={version}>
+    <>
       <Banner
         variant="secondary"
         icon={<InfoIcon weight="fill" />}
@@ -266,40 +310,28 @@ function WaitForAdminStep({ version }: { version: string | null }) {
       >
         Sign out
       </Button>
-    </AuthLayout>
+    </>
   );
 }
 
-/** How often the success card checks whether the redeployed Worker has the token. */
+/** How often the saved-token wait checks whether the redeployed Worker has the token. */
 const SECRET_POLL_MS = 3000;
 
 /**
- * An admin whose manager has users but no token yet (its first admin was
- * created before setup asked for the token first).
+ * An admin whose manager had users but no token: storing `CF_API_TOKEN`
+ * deploys a new version of this Worker. Poll until a request lands on a
+ * version that has the binding, then continue to the checklist.
  */
-function CloudflareTokenStep({ version }: { version: string | null }) {
-  const [saved, setSaved] = useState<SavedToken | null>(null);
-  if (saved !== null) return <TokenSavedCard saved={saved} version={version} />;
-  return (
-    <AuthLayout
-      width="wide"
-      title="Connect Cloudflare"
-      description="Appflare installs and updates apps with an API token you create."
-      version={version}
-    >
-      <CloudflareTokenForm mode="setup" onSaved={setSaved} />
-    </AuthLayout>
-  );
-}
-
-/**
- * Storing `CF_API_TOKEN` deploys a new version of this Worker. Poll until a
- * request lands on a version that has the binding, then continue to the
- * checklist.
- */
-function TokenSavedCard({ saved, version }: { saved: SavedToken; version: string | null }) {
-  const router = useRouter();
+function TokenSavedStep({
+  saved,
+  onChecklist,
+}: {
+  saved: SavedTokenSummary;
+  onChecklist: (checklist: ChecklistData) => void;
+}) {
+  const showChecklist = useShowChecklistInAddress();
   const [hasSecret, setHasSecret] = useState(false);
+  const [continuing, setContinuing] = useState(false);
 
   useEffect(() => {
     if (hasSecret) return;
@@ -318,13 +350,18 @@ function TokenSavedCard({ saved, version }: { saved: SavedToken; version: string
     };
   }, [hasSecret]);
 
+  async function onContinue() {
+    setContinuing(true);
+    try {
+      onChecklist(await getChecklistData());
+      await showChecklist();
+    } finally {
+      setContinuing(false);
+    }
+  }
+
   return (
-    <AuthLayout
-      width="wide"
-      title="Cloudflare connected"
-      description={`The token is saved on the Worker "${saved.workerName}" in account ${saved.accountId}.`}
-      version={version}
-    >
+    <>
       <div className="grid gap-4">
         <div className="flex items-start gap-2">
           <span className="flex h-lh items-center">
@@ -362,10 +399,11 @@ function TokenSavedCard({ saved, version }: { saved: SavedToken; version: string
       <Button
         variant="primary"
         className={FULL_WIDTH_ACTION}
-        onClick={() => void router.navigate({ to: "/setup", search: { checklist: true } })}
+        loading={continuing}
+        onClick={() => void onContinue()}
       >
         Continue
       </Button>
-    </AuthLayout>
+    </>
   );
 }

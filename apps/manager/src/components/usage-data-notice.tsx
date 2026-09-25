@@ -82,9 +82,9 @@ export function UsageDataSwitch({
 /**
  * The usage-data notice: usage data is on (or which Worker variable turns it
  * off), what it is for, and how to turn it off. It only informs; nothing
- * waits for it. The last setup screen shows it as it is; the home page shows
- * it once per manager, to admins of a manager updated from a version without
- * usage data, with `onDismiss`, which hides it for every admin.
+ * waits for it. The home page shows it once per manager, to admins, after
+ * setup or after an update from a version without usage data, with
+ * `onDismiss`, which hides it for every admin. Setup itself never shows it.
  */
 export function UsageDataNotice({
   status,

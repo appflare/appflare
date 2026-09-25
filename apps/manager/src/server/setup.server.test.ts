@@ -15,7 +15,6 @@ import {
   SETUP_RATE_LIMIT,
   setupClaimMatches,
   takeSetupAttempt,
-  verifyFirstRunTokenStep,
 } from "./setup.server";
 
 const TOKEN = "cfat_TEST-token-value-DO-NOT-LEAK";
@@ -156,18 +155,45 @@ describe("the rate limit on the token step", () => {
       await takeSetupAttempt(env.DB, "203.0.113.7", NOW);
     }
     const api = fakeCloudflare(accountToken(ACC, true));
-    expect(await refusal(verifyFirstRunTokenStep(setupDeps(api)))).toBe(SETUP_MESSAGES.rateLimited);
+    expect(await refusal(connect(api))).toBe(SETUP_MESSAGES.rateLimited);
     expect(api.calls).toHaveLength(0);
+  });
+
+  it("counts one attempt per connect: verifying and saving are one call", async () => {
+    await connect(fakeCloudflare(accountToken(ACC, true)));
+    const { results } = await env.DB.prepare("SELECT count FROM rate_limit").all<{
+      count: number;
+    }>();
+    expect(results).toEqual([{ count: 1 }]);
   });
 });
 
 describe("connecting Cloudflare before any user exists", () => {
-  it("verifies without storing anything", async () => {
+  it("verifies and stores the token in one call, naming the account", async () => {
     const api = fakeCloudflare(accountToken(ACC, true));
-    const result = await verifyFirstRunTokenStep(setupDeps(api));
-    expect(result).toMatchObject({ ok: true, accountId: ACC });
-    expect(api.keys().some((k) => k.startsWith("PUT"))).toBe(false);
-    expect(await readSettings(createDb(env.DB), [SETTING.cfTokenConfigured])).toEqual({});
+    const connected = await connect(api);
+    expect(connected).toMatchObject({
+      ok: true,
+      accountId: ACC,
+      accountName: "Team",
+      workerName: "appflare",
+      missing: [],
+    });
+    // Verified first (the token and the running version), then stored.
+    const keys = api.keys();
+    expect(keys.indexOf(`GET ${A}/workers/scripts/appflare/versions/${VERSION}`)).toBeLessThan(
+      keys.indexOf(`PUT ${A}/workers/scripts/appflare/secrets`),
+    );
+  });
+
+  it("names what the token could not confirm, and still saves", async () => {
+    const api = fakeCloudflare({
+      ...accountToken(ACC, true),
+      [`GET ${A}/d1/database`]: { status: 403, errors: [{ code: 10000, message: "denied" }] },
+    });
+    const connected = await connect(api);
+    expect(connected.missing).toEqual(["D1: Edit"]);
+    expect(api.keys()).toContain(`PUT ${A}/workers/scripts/appflare/secrets`);
   });
 
   it("stores the token and gives this browser the claim", async () => {
@@ -263,7 +289,6 @@ describe("connecting Cloudflare before any user exists", () => {
     await createUser(OWNER);
     const api = fakeCloudflare(accountToken(ACC, true));
     expect(await refusal(connect(api))).toBe(SETUP_MESSAGES.alreadyDone);
-    expect(await refusal(verifyFirstRunTokenStep(setupDeps(api)))).toBe(SETUP_MESSAGES.alreadyDone);
     expect(api.calls).toHaveLength(0);
   });
 });

@@ -1,4 +1,4 @@
-import { Banner, Button, Input, Link, LinkButton, Text } from "@cloudflare/kumo";
+import { Banner, Button, Collapsible, Input, Link, LinkButton, Text } from "@cloudflare/kumo";
 import {
   CheckCircleIcon,
   KeyIcon,
@@ -6,7 +6,7 @@ import {
   WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   ACCESS_FEATURE,
   accountTokenTemplateUrl,
@@ -21,7 +21,13 @@ import {
   userTokenTemplateUrl,
 } from "../cloudflare/token-template";
 import type { TokenVerification, VerifyTokenResult } from "../cloudflare/verify-token";
-import { connectCloudflare, verifySetupToken } from "../server/setup.functions";
+import {
+  CONNECTED_PAUSE_MS,
+  type SavedTokenSummary,
+  type TokenOutcome,
+  tokenOutcome,
+} from "../onboarding/wizard";
+import { connectCloudflare } from "../server/setup.functions";
 import { rotateToken, saveToken, verifyToken } from "../server/token.functions";
 import { DocsLink } from "./docs-link";
 import { formatDate } from "./format";
@@ -43,19 +49,15 @@ const FEATURE_PLACES: Readonly<Record<string, string>> = {
     "Enabling, updating and disabling sandbox builds in Settings > Account and capabilities (Workers Paid): Appflare creates, rolls out and deletes the sandbox Worker's container applications",
 };
 
+/** What a rotation saved. */
 export interface SavedToken {
   accountId: string;
   workerName: string;
-  /** Setup only: false when a leftover `SETUP_TOKEN` could not be deleted from the Worker. */
-  setupTokenRemoved?: boolean;
 }
 
 /**
- * Paste, verify, then save a Cloudflare API token: the first setup step before
- * any user exists (mode `first-run`, calls `verifySetupToken` and
- * `connectCloudflare`), `/setup` for an admin whose manager has no token yet
- * (mode `setup`, `saveToken`) and the settings rotation dialog (mode `rotate`,
- * `rotateToken`).
+ * Settings' token rotation: paste, verify, then save a new Cloudflare API
+ * token (`verifyToken`, then `rotateToken`). Setup uses {@link SetupTokenForm}.
  *
  * The token lives only in this component's state. It is sent to the server in a
  * POST body, never rendered back, and cleared after a successful save. The input
@@ -63,10 +65,10 @@ export interface SavedToken {
  * attribute, which would put the token in the page's markup.
  */
 export function CloudflareTokenForm({
-  mode,
   onSaved,
 }: {
-  mode: "first-run" | "setup" | "rotate";
+  /** The only use left; setup has its own form. */
+  mode: "rotate";
   onSaved: (saved: SavedToken) => void;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -89,11 +91,7 @@ export function CloudflareTokenForm({
     setError(null);
     setResult(null);
     try {
-      setResult(
-        mode === "first-run"
-          ? await verifySetupToken({ data: { token } })
-          : await verifyToken({ data: { token } }),
-      );
+      setResult(await verifyToken({ data: { token } }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not verify the token.");
     } finally {
@@ -105,22 +103,11 @@ export function CloudflareTokenForm({
     setSaving(true);
     setError(null);
     try {
-      const saved: SavedToken =
-        mode === "first-run"
-          ? await connectCloudflare({ data: { token } })
-          : mode === "setup"
-            ? await saveToken({ data: { token } })
-            : await rotateToken({ data: { token } });
+      const saved = await rotateToken({ data: { token } });
       formRef.current?.reset();
       setToken("");
       setResult(null);
-      onSaved({
-        accountId: saved.accountId,
-        workerName: saved.workerName,
-        ...(saved.setupTokenRemoved === undefined
-          ? {}
-          : { setupTokenRemoved: saved.setupTokenRemoved }),
-      });
+      onSaved({ accountId: saved.accountId, workerName: saved.workerName });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the token.");
     } finally {
@@ -213,7 +200,7 @@ export function CloudflareTokenForm({
             disabled={!canSave}
             onClick={onSave}
           >
-            {mode === "rotate" ? "Save new token" : "Save and continue"}
+            Save new token
           </Button>
         </div>
       </form>
@@ -264,5 +251,259 @@ function VerifiedSummary({ result }: { result: TokenVerification }) {
         />
       )}
     </div>
+  );
+}
+
+/** The feature each group of the token serves, for the "What the token can do" list. */
+const TOKEN_USES: ReadonlyArray<{ feature: string; permissions: string }> = [
+  { feature: "Install and update apps", permissions: required.map(permissionName).join(", ") },
+  ...optional.map(({ feature, groups }) => ({
+    feature,
+    permissions: groups.map(permissionName).join(", "),
+  })),
+];
+
+/** What each part of the token is for: feature, then its permissions. */
+function TokenUses() {
+  return (
+    <div className="grid gap-2">
+      <dl className="grid gap-x-4 gap-y-1.5 sm:grid-cols-[minmax(0,9.5rem)_1fr]">
+        {TOKEN_USES.map(({ feature, permissions }) => (
+          <div key={feature} className="contents">
+            <dt>
+              <Text size="sm" as="span">
+                {feature}
+              </Text>
+            </dt>
+            <dd className="mb-1 sm:mb-0">
+              <Text variant="secondary" size="sm" as="span">
+                {permissions}
+              </Text>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <Text variant="secondary" size="sm">
+        Only the first line is required. Remove any other line you will not use; add it back later
+        by editing the token.
+      </Text>
+    </div>
+  );
+}
+
+/** One numbered part of the token step: the number, a short title, then its content. */
+function Part({
+  n,
+  title,
+  extra,
+  children,
+}: {
+  n: number;
+  title: string;
+  extra?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <li className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+      <span
+        aria-hidden="true"
+        className="flex size-6 items-center justify-center rounded-full bg-kumo-tint text-sm font-medium text-kumo-default"
+      >
+        {n}
+      </span>
+      <div className="flex min-h-6 flex-wrap items-center gap-x-1 gap-y-0.5">
+        <Text bold as="h2">
+          {title}
+        </Text>
+        {extra}
+      </div>
+      <div className="col-start-2 grid gap-2">{children}</div>
+    </li>
+  );
+}
+
+/** What the setup token step reports once the token is verified and saved. */
+export interface SetupTokenSaved extends SavedTokenSummary {
+  /** First-run setup only: what follows (see `connectCloudflare`). */
+  next?: "create-owner" | "redeploying";
+}
+
+/**
+ * The setup token step, in three short parts: create the token (the button
+ * first, one sentence, the permissions behind a disclosure), paste it, then
+ * one Continue that verifies and saves in a single call (`connectCloudflare`
+ * before any user exists, mode `first-run`; `saveToken` for an admin whose
+ * manager has no token yet, mode `setup`). On success the account name shows
+ * for a moment, then `onContinue` moves the wizard on; when some permission
+ * could not be confirmed the warning stays until Continue. A refusal shows
+ * Cloudflare's or Appflare's plain message under the button.
+ *
+ * The token lives only in the uncontrolled input and this component's state,
+ * is sent in a POST body, and is never rendered back.
+ */
+export function SetupTokenForm({
+  mode,
+  onContinue,
+}: {
+  mode: "first-run" | "setup";
+  onContinue: (saved: SetupTokenSaved) => void;
+}) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const [token, setToken] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [connected, setConnected] = useState<{
+    saved: SetupTokenSaved;
+    outcome: TokenOutcome;
+  } | null>(null);
+
+  // The latest callback, so a parent re-render does not restart the pause.
+  const onContinueRef = useRef(onContinue);
+  onContinueRef.current = onContinue;
+
+  // Moves on by itself after the pause when nothing needs reading.
+  useEffect(() => {
+    if (connected === null || !connected.outcome.autoAdvance) return;
+    const timer = setTimeout(() => onContinueRef.current(connected.saved), CONNECTED_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [connected]);
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (connected !== null) {
+      onContinue(connected.saved);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const saved: SetupTokenSaved =
+        mode === "first-run"
+          ? await connectCloudflare({ data: { token } })
+          : await saveToken({ data: { token } });
+      formRef.current?.reset();
+      setToken("");
+      setConnected({ saved, outcome: tokenOutcome(saved) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the token.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const locked = saving || connected !== null;
+
+  return (
+    <form ref={formRef} onSubmit={onSubmit}>
+      <ol className="grid gap-4">
+        <Part n={1} title="Create a token" extra={<DocsLink topic="tokenPermissions" />}>
+          <div>
+            <LinkButton
+              href={accountTokenTemplateUrl()}
+              external
+              variant="secondary"
+              icon={<KeyIcon />}
+            >
+              Create token
+            </LinkButton>
+          </div>
+          <Text variant="secondary">
+            The link opens Cloudflare with the permissions already selected. Scroll down, choose
+            Review token, then Create token, and copy it.
+          </Text>
+          <Collapsible.Root>
+            <Collapsible.DefaultTrigger>What the token can do</Collapsible.DefaultTrigger>
+            <Collapsible.DefaultPanel>
+              <TokenUses />
+            </Collapsible.DefaultPanel>
+          </Collapsible.Root>
+          <Text variant="secondary" size="sm">
+            Not a Super Administrator?{" "}
+            <Link href={userTokenTemplateUrl()} target="_blank" rel="noopener noreferrer">
+              Create a user token instead <Link.ExternalIcon />
+            </Link>
+          </Text>
+        </Part>
+        <Part n={2} title="Paste it">
+          <Input
+            aria-label="Cloudflare API token"
+            placeholder="Cloudflare API token"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            passwordManagerIgnore
+            required
+            maxLength={512}
+            disabled={locked}
+            onChange={(event) => {
+              setToken(event.currentTarget.value);
+              setError(null);
+            }}
+          />
+          <Text variant="secondary" size="sm">
+            Stored as an encrypted secret on this Worker. Appflare never shows it again.
+          </Text>
+        </Part>
+        <Part
+          n={3}
+          title="Connect"
+          extra={connected === null ? undefined : <ConnectedHeadline outcome={connected.outcome} />}
+        >
+          <Button
+            type="submit"
+            variant="primary"
+            className="w-full justify-center"
+            loading={saving}
+            disabled={connected === null && token.trim().length === 0}
+          >
+            Continue
+          </Button>
+          <div className="grid gap-2 empty:hidden">
+            {connected !== null && connected.outcome.missing.length > 0 && (
+              <MissingPermissions missing={connected.outcome.missing} />
+            )}
+            {error !== null && (
+              <div role="alert">
+                <Banner
+                  variant="error"
+                  icon={<WarningCircleIcon weight="fill" />}
+                  description={error}
+                />
+              </div>
+            )}
+          </div>
+        </Part>
+      </ol>
+    </form>
+  );
+}
+
+/**
+ * The verified account, on the "Connect" line itself so the step does not
+ * grow (and scroll) in the moment before the wizard moves on.
+ */
+function ConnectedHeadline({ outcome }: { outcome: TokenOutcome }) {
+  return (
+    <span role="status" className="ml-auto flex items-start gap-1.5">
+      <span className="flex h-lh items-center">
+        <CheckCircleIcon weight="fill" className="text-kumo-success" />
+      </span>
+      <Text as="span">
+        {outcome.headline}
+        {outcome.autoAdvance && <span className="text-kumo-subtle">. Continuing…</span>}
+      </Text>
+    </span>
+  );
+}
+
+/** What the save could not confirm; the wizard waits for Continue while it shows. */
+function MissingPermissions({ missing }: { missing: string[] }) {
+  return (
+    <Banner
+      variant="alert"
+      icon={<WarningIcon weight="fill" />}
+      title="Some permissions could not be confirmed"
+      description={`Missing or not readable: ${missing.join(", ")}. Apps that need them fail to install until the token has them. Choose Continue to go on.`}
+    />
   );
 }

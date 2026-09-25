@@ -81,20 +81,17 @@ export async function verifyTokenStep(deps: TokenFlowDeps) {
   return result;
 }
 
-/**
- * Setup's verification, before an owner exists: always matched against the
- * account running this Worker, never against a recorded account, since the
- * first visitor's token decides it.
- */
-export async function verifySetupTokenStep(deps: TokenFlowDeps) {
-  const { result } = await verifyCloudflareToken({ ...verifyOptions(deps), knownAccountId: null });
-  return result;
-}
-
 export interface SaveTokenResult {
   ok: true;
   accountId: string;
+  /** The account's display name, when the token can read it. */
+  accountName: string | null;
   workerName: string;
+  /**
+   * Permission groups the save could not confirm (it needs only Workers
+   * Scripts); apps that need them fail to install until the token has them.
+   */
+  missing: string[];
   /** False when `SETUP_TOKEN` could not be deleted (it guards nothing any more). */
   setupTokenRemoved: boolean;
 }
@@ -121,7 +118,11 @@ export interface SaveTokenOptions {
   };
 }
 
-/** First-time save from `/setup`. Refuses once a token is configured, except before the owner exists. */
+/**
+ * First-time save from `/setup`: verifies and stores in one call, so each try
+ * costs one Cloudflare round of checks and one rate-limit attempt. Refuses
+ * once a token is configured, except before the owner exists.
+ */
 export async function saveTokenStep(
   deps: TokenFlowDeps,
   options: SaveTokenOptions = {},
@@ -178,7 +179,14 @@ export async function saveTokenStep(
     );
     const setupTokenRemoved =
       deps.setupTokenBound === true ? await deleteSetupToken(client, workerName) : true;
-    return { ok: true, accountId: verified.accountId, workerName, setupTokenRemoved };
+    return {
+      ok: true,
+      accountId: verified.accountId,
+      accountName: verified.accountName ?? null,
+      workerName,
+      missing: verified.missing,
+      setupTokenRemoved,
+    };
   });
 }
 

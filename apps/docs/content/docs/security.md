@@ -135,8 +135,8 @@ app, never the manager's.
   create such a token already controls the account. Saving it gives that browser
   a short-lived setup claim (an `HttpOnly` cookie, 30 minutes); only that browser
   can create the owner, and every other visitor keeps seeing the token step, or
-  the sign-in page once the owner exists. Token checks are limited to 20 per
-  client address in 10 minutes (a Verify and a Save each count), and refusals
+  the sign-in page once the owner exists. Token checks, each one call that
+  verifies and saves, are limited to 20 per client address in 10 minutes, and refusals
   carry fixed messages. A manager that cannot identify its own version refuses
   every token unless it is opened at its `workers.dev` address.
 - **Better Auth.** Users sign in with email and password, or with a passkey they
@@ -237,7 +237,7 @@ for health checks, and the notification channels you add, the manager sends anon
 the outcome of each job) to PostHog's EU region, from its Worker and never from your
 browser. It holds counts, versions and error categories, never your account, emails,
 domains, secrets or tokens. It is on by
-default and starts with the first scheduled run after setup; the last setup screen
-says so and nothing waits for an answer. One switch in Settings turns it off; see [Usage data](/telemetry/) for
+default and starts with the first scheduled run after setup; a banner on the home
+page says so once after setup, and nothing waits for an answer. One switch in Settings turns it off; see [Usage data](/telemetry/) for
 exactly what is sent and every way to turn it off. The installer keeps wrangler's
 own usage metrics and error reports off for the commands it runs.
