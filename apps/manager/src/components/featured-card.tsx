@@ -1,26 +1,17 @@
-import {
-  Badge,
-  Banner,
-  Button,
-  LayerCard,
-  Link,
-  LinkButton,
-  Popover,
-  Text,
-} from "@cloudflare/kumo";
-import { ArrowRightIcon, InfoIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
-import { useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { Badge, Button, LayerCard, Link, LinkButton, Popover, Text } from "@cloudflare/kumo";
+import { ArrowRightIcon, InfoIcon, XIcon } from "@phosphor-icons/react";
 import { dismissFeatured } from "../catalog/catalog.functions";
 import { type FeaturedCard as FeaturedCardData, safeExternalUrl } from "../catalog/featured";
 import { AppCover } from "./catalog-media";
 import { Tooltip } from "./tooltip";
+import { useOptimisticDismiss } from "./use-optimistic-dismiss";
 
 /**
  * The catalog's sponsored item. The "Sponsored" label and the disclosure
  * text live here, not in the index, so no catalog can remove them. Links
  * carry `noreferrer`, so the sponsor never learns this manager's hostname,
- * and nothing is ever appended to them.
+ * and nothing is ever appended to them. Hide takes it away at once and
+ * saves that for this user in the background.
  */
 
 const DISCLOSURE = "Sponsors pay for this spot, which helps fund Appflare.";
@@ -29,23 +20,12 @@ const DISCLOSURE = "Sponsors pay for this spot, which helps fund Appflare.";
 const SPONSORED_REL = "sponsored noopener noreferrer";
 
 export function FeaturedCard({ item }: { item: FeaturedCardData }) {
-  const router = useRouter();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { hidden, dismiss } = useOptimisticDismiss(() =>
+    dismissFeatured({ data: { itemId: item.id } }),
+  );
+  if (hidden) return null;
   const link = item.link === null ? null : safeExternalUrl(item.link.url);
   const sponsorUrl = safeExternalUrl(item.sponsorUrl);
-
-  async function onHide() {
-    setPending(true);
-    setError(null);
-    try {
-      await dismissFeatured({ data: { itemId: item.id } });
-      await router.invalidate();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not hide this item.");
-      setPending(false);
-    }
-  }
 
   return (
     <LayerCard>
@@ -85,8 +65,7 @@ export function FeaturedCard({ item }: { item: FeaturedCardData }) {
                 variant="ghost"
                 icon={XIcon}
                 aria-label="Hide this sponsored item"
-                loading={pending}
-                onClick={onHide}
+                onClick={dismiss}
               />
             }
           />
@@ -122,9 +101,6 @@ export function FeaturedCard({ item }: { item: FeaturedCardData }) {
               </LinkButton>
             )}
           </div>
-          {error !== null && (
-            <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-          )}
         </div>
         {item.image !== null && <AppCover src={item.image.src} alt={item.image.alt} />}
       </LayerCard.Primary>

@@ -65,10 +65,10 @@ export interface HeartbeatInput {
   /** The catalog index URL is Appflare's own. */
   officialCatalog: boolean;
   /**
-   * When setup happened (ms): the earlier of the first user's creation and
-   * the usage-data notice first shown. Null when neither is known.
+   * When setup happened (ms): the first user's creation, or an earlier
+   * stored setup time. Null when neither is known.
    */
-  noticeAt: number | null;
+  setupAt: number | null;
   users: number;
   admins: number;
   passkeys: number;
@@ -169,9 +169,7 @@ export function heartbeatProperties(input: HeartbeatInput): Record<string, Telem
       input.accountPlan === "free" || input.accountPlan === "paid" ? input.accountPlan : "unset",
     catalog: input.officialCatalog ? "official" : "custom",
     days_since_setup:
-      input.noticeAt === null
-        ? null
-        : Math.max(0, Math.floor((input.now - input.noticeAt) / DAY_MS)),
+      input.setupAt === null ? null : Math.max(0, Math.floor((input.now - input.setupAt) / DAY_MS)),
     users: input.users,
     admins: input.admins,
     passkeys_enabled: input.passkeys > 0,

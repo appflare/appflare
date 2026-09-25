@@ -5,8 +5,7 @@ import { utcDay } from "./events";
 import type { TelemetryStatus } from "./telemetry";
 
 /**
- * The stored usage-data choice, the notice, and the Worker variables that
- * override the choice. Reads and writes `settings` rows only; the cron's
+ * The stored usage-data choice and the Worker variables that override it. Reads and writes `settings` rows only; the cron's
  * report lives in report.server.ts.
  */
 
@@ -59,9 +58,8 @@ export function newInstallId(env: Pick<TelemetryEnv, "APPFLARE_INSTALL_ID">): st
 /**
  * Setup just finished. Records the install id and the job cursor at now, so
  * jobs from before setup finished are never reported. "Setup completed"
- * stays due: the first scheduled report sends it. The usage-data notice is
- * not shown during setup, so it stays due for the home page. Rows already
- * there are kept.
+ * stays due: the first scheduled report sends it. Rows already there are
+ * kept.
  */
 export async function recordSetupFinished(
   env: TelemetryEnv,
@@ -80,29 +78,8 @@ export async function recordSetupFinished(
 }
 
 /**
- * Whether the home page shows the usage-data notice: once per manager, until
- * an admin dismisses it (or changes the switch in Settings), for a new
- * manager right after setup as for one updated from a version without usage
- * data. Never while a Worker variable turns usage data off.
- */
-export async function isNoticeDue(env: TelemetryEnv): Promise<boolean> {
-  if (lockOf(env) !== null) return false;
-  const row = await readSettings(createDb(env.DB), [SETTING.telemetryNoticeAt]);
-  return row.telemetry_notice_at === undefined;
-}
-
-/** The home page notice was dismissed, for every admin of this manager. */
-export async function dismissNotice(env: TelemetryEnv, now: Date = new Date()): Promise<void> {
-  const db = createDb(env.DB);
-  const row = await readSettings(db, [SETTING.telemetryNoticeAt]);
-  if (row.telemetry_notice_at !== undefined) return;
-  await writeSettings(db, { [SETTING.telemetryNoticeAt]: now.toISOString() }, now);
-}
-
-/**
- * The rows a choice in Settings writes: the choice itself; the time the
- * notice was seen, if it was not recorded yet; and the install id when there
- * is none yet. A manager without one was set up before usage data existed,
+ * The rows a choice in Settings writes: the choice itself, and the install
+ * id when there is none yet. A manager without one was set up before usage data existed,
  * so "setup completed" is never sent for it; nor is it once usage data is
  * turned off before the first report. Turning usage data back on moves the
  * job cursor to now, so jobs that ran while it was off are never reported.
@@ -114,16 +91,12 @@ async function choiceRows(
 ): Promise<Partial<Record<SettingKey, string>>> {
   const current = await readSettings(createDb(env.DB), [
     SETTING.telemetry,
-    SETTING.telemetryNoticeAt,
     SETTING.telemetryInstallId,
     SETTING.telemetrySetupSent,
   ]);
   const rows: Partial<Record<SettingKey, string>> = {
     [SETTING.telemetry]: enabled ? "on" : "off",
   };
-  if (current.telemetry_notice_at === undefined) {
-    rows[SETTING.telemetryNoticeAt] = now.toISOString();
-  }
   const hasId = isInstallId(current.telemetry_install_id);
   if (!hasId) rows[SETTING.telemetryInstallId] = newInstallId(env);
   if (enabled && current.telemetry === "off") {

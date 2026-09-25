@@ -39,7 +39,7 @@ function heartbeat(overrides: Partial<HeartbeatInput> = {}): HeartbeatInput {
     schemaVersion: 10,
     accountPlan: undefined,
     officialCatalog: true,
-    noticeAt: NOW - 3.5 * DAY,
+    setupAt: NOW - 3.5 * DAY,
     users: 3,
     admins: 1,
     passkeys: 2,

@@ -8,8 +8,6 @@ import { migrations } from "../db/migrations/index";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { CURSOR_LAG_MS, previewHeartbeat, type ReportEnv, reportTelemetry } from "./report.server";
 import {
-  dismissNotice,
-  isNoticeDue,
   markOpenedToday,
   readTelemetryStatus,
   recordSetupFinished,
@@ -170,7 +168,7 @@ describe("before anything is sent", () => {
   });
 });
 
-describe("the choice and the notice", () => {
+describe("the choice", () => {
   it("records setup with the CLI's install id, and moves the job cursor when turned back on", async () => {
     const at = new Date(NOW - 60 * MIN);
     const e = managerEnv({ APPFLARE_INSTALL_ID: CLI_ID });
@@ -183,7 +181,6 @@ describe("the choice and the notice", () => {
       SETTING.telemetrySetupSent,
     ]);
     // No choice is stored: on by default, and "setup completed" is still due.
-    // Setup does not show the notice, so it is not recorded as seen.
     expect(rows).toEqual({
       telemetry_install_id: CLI_ID,
       telemetry_cursor: String(at.getTime()),
@@ -217,27 +214,24 @@ describe("the choice and the notice", () => {
     expect(rows.telemetry_setup_sent).toBe("skipped");
   });
 
-  it("shows the home page notice once per manager, never while a variable turns it off", async () => {
-    expect(await isNoticeDue(managerEnv())).toBe(true);
-    expect(await isNoticeDue(managerEnv({ APPFLARE_TELEMETRY: "off" }))).toBe(false);
-    await dismissNotice(managerEnv(), new Date(NOW - 5 * MIN));
-    expect(await isNoticeDue(managerEnv())).toBe(false);
-    // Dismissing again keeps the first time.
-    await dismissNotice(managerEnv(), new Date(NOW));
-    const rows = await readSettings(createDb(env.DB), [
-      SETTING.telemetry,
-      SETTING.telemetryNoticeAt,
-    ]);
-    expect(rows).toEqual({ telemetry_notice_at: new Date(NOW - 5 * MIN).toISOString() });
+  it("records no usage-data notice time: there is no notice to answer", async () => {
+    await recordSetupFinished(managerEnv(), new Date(NOW - 60 * MIN));
+    await setTelemetryEnabled(managerEnv(), false, new Date(NOW - 30 * MIN));
+    await setTelemetryEnabled(managerEnv(), true, new Date(NOW));
+    const rows = await readSettings(createDb(env.DB), [SETTING.telemetryNoticeAt]);
+    expect(rows).toEqual({});
   });
 
-  it("shows the home page notice after setup, and not after a choice in Settings", async () => {
-    await recordSetupFinished(managerEnv());
-    expect(await isNoticeDue(managerEnv())).toBe(true);
-    await reset();
-    await createMigrator(migrations).ensure(env.DB);
-    await setTelemetryEnabled(managerEnv(), false);
-    expect(await isNoticeDue(managerEnv())).toBe(false);
+  it("keeps a notice time stored by an earlier version harmless", async () => {
+    await writeSettings(createDb(env.DB), {
+      [SETTING.telemetryNoticeAt]: new Date(NOW - 5 * MIN).toISOString(),
+    });
+    // Still on by default, and the choice still works around it.
+    expect(await readTelemetryStatus(managerEnv())).toMatchObject({ state: "on" });
+    expect(await setTelemetryEnabled(managerEnv(), false)).toMatchObject({ state: "off" });
+    expect(await setTelemetryEnabled(managerEnv(), true)).toMatchObject({ state: "on" });
+    const rows = await readSettings(createDb(env.DB), [SETTING.telemetryNoticeAt]);
+    expect(rows).toEqual({ telemetry_notice_at: new Date(NOW - 5 * MIN).toISOString() });
   });
 });
 
@@ -373,7 +367,7 @@ describe("the report", () => {
   });
 
   it("reports a manager set up before usage data existed from its first run, without setup completed", async () => {
-    // No setup record, no choice, no notice dismissed: on by default all the same.
+    // No setup record and no choice: on by default all the same.
     // Its first admin was created at setup, three days and a bit ago.
     await env.DB.prepare("UPDATE user SET created_at = ?1 WHERE id = 'u1'")
       .bind(NOW - 3 * 86_400_000 - 30 * MIN)
@@ -389,7 +383,7 @@ describe("the report", () => {
     // Jobs from before the first run are not reported.
     expect(body.batch.map((ev) => ev.event)).toEqual(["manager heartbeat", "manager opened"]);
     expect(body.batch.every((ev) => ev.distinct_id === CLI_ID)).toBe(true);
-    // Days since setup count from the first user, as the notice was never shown.
+    // Days since setup count from the first user.
     expect(body.batch[0]?.properties).toMatchObject({ days_since_setup: 3 });
     const rows = await readSettings(createDb(env.DB), [
       SETTING.telemetry,
@@ -403,8 +397,6 @@ describe("the report", () => {
       telemetry_setup_sent: "skipped",
       telemetry_cursor: String(NOW),
     });
-    // The home page notice is still due: nobody has seen it.
-    expect(await isNoticeDue(e)).toBe(true);
   });
 
   it("sends the heartbeat once per UTC day", async () => {
@@ -486,32 +478,37 @@ describe("markOpenedToday", () => {
   });
 });
 
+/** Writes `telemetry_notice_at` as earlier versions did when an admin answered the notice. */
+async function storeOldNoticeTime(at: Date): Promise<void> {
+  await writeSettings(createDb(env.DB), { [SETTING.telemetryNoticeAt]: at.toISOString() }, at);
+}
+
 describe("previewHeartbeat", () => {
   it("builds the heartbeat the cron would send, whatever the stored choice", async () => {
     const preview = await previewHeartbeat(managerEnv(), NOW);
     expect(preview).toMatchObject({
       event: "manager heartbeat",
       distinct_id: null,
-      // No notice shown yet: days since setup count from the first user (100 minutes ago).
+      // Days since setup count from the first user (100 minutes ago).
       properties: { users: 2, installs_total: 1, days_since_setup: 0 },
     });
   });
 
-  it("counts days since setup from the earlier of the first user and the notice", async () => {
+  it("counts days since setup from the earlier of the first user and an old notice time", async () => {
     const days = async () =>
       (await previewHeartbeat(managerEnv(), NOW)).properties.days_since_setup;
-    // The notice is earlier than the first user (100 minutes ago).
-    await dismissNotice(managerEnv(), new Date(NOW - 2 * 86_400_000));
+    // A notice time an earlier version stored, earlier than the first user (100 minutes ago).
+    await storeOldNoticeTime(new Date(NOW - 2 * 86_400_000));
     expect(await days()).toBe(2);
     await env.DB.prepare("DELETE FROM settings WHERE key = ?1")
       .bind(SETTING.telemetryNoticeAt)
       .run();
-    // An upgraded manager: set up three days ago, notice dismissed just now.
-    // The dismissal does not reset the count.
+    // An upgraded manager: set up three days ago, notice answered just now.
+    // The answer does not reset the count.
     await env.DB.prepare("UPDATE user SET created_at = ?1")
       .bind(NOW - 3 * 86_400_000)
       .run();
-    await dismissNotice(managerEnv(), new Date(NOW));
+    await storeOldNoticeTime(new Date(NOW));
     expect(await days()).toBe(3);
     await env.DB.prepare("DELETE FROM settings WHERE key = ?1")
       .bind(SETTING.telemetryNoticeAt)

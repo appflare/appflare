@@ -4,7 +4,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 import { previewTelemetry, setTelemetry } from "../telemetry/telemetry.functions";
-import { UsageDataBenefits, UsageDataSummary, UsageDataSwitch } from "./usage-data-notice";
+import { UsageDataBenefits, UsageDataSummary, UsageDataSwitch } from "./usage-data-parts";
 
 /**
  * Settings, Usage data: what it is for, the switch (admins change it,

@@ -165,22 +165,21 @@ async function heartbeatInput(
   const feature = (kind: string) => num(features?.find((f) => f.kind === kind)?.installs);
   const latest = await readManagerLatest(env.KV);
   // Setup time: the earlier of the first user's creation (the first step of
-  // setup) and the time the usage-data notice was first answered (dismissed
-  // on the home page, or a choice in Settings). Setup does not show the
-  // notice, so the answer always comes after the first user and never moves
-  // setup forward.
+  // setup) and `telemetry_notice_at`, which earlier versions wrote when an
+  // admin answered a usage-data notice. Nothing writes it any more; a stored
+  // one always comes after the first user, so it never moves setup forward.
   const setupTimes = [
     settings.telemetry_notice_at ? Date.parse(settings.telemetry_notice_at) : Number.NaN,
     num(users?.[0]?.first_user_at) || Number.NaN,
   ].filter((t) => !Number.isNaN(t));
-  const noticeAt = setupTimes.length > 0 ? Math.min(...setupTimes) : Number.NaN;
+  const setupAt = setupTimes.length > 0 ? Math.min(...setupTimes) : Number.NaN;
   return {
     now,
     managerVersion: env.APPFLARE_VERSION,
     schemaVersion: num(schema?.[0]?.value),
     accountPlan: reportedAccountPlan(settings),
     officialCatalog: isOfficialCatalog(env),
-    noticeAt: Number.isNaN(noticeAt) ? null : noticeAt,
+    setupAt: Number.isNaN(setupAt) ? null : setupAt,
     users: num(users?.[0]?.users),
     admins: num(users?.[0]?.admins),
     passkeys: num(passkeys?.[0]?.passkeys),

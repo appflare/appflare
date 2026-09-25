@@ -2,15 +2,14 @@ import type { TelemetryLock } from "@appflare/schema";
 import { z } from "zod";
 
 /**
- * Anonymous usage data: what the home page notice and Settings show. Client-safe (no bindings).
+ * Anonymous usage data: what Settings, Usage data shows. Client-safe (no bindings).
  *
  * On by default: the scheduled report starts with the first run after setup
  * (and, on a manager updated from a version without usage data, the first
- * run after the update). The notice only informs; it never waits for an
- * answer. It is shown once per manager, on the home page, until an admin
- * dismisses it; setup never shows it. Settings turns it off; a Worker
- * variable (`APPFLARE_TELEMETRY=off`, or `DO_NOT_TRACK=1`) turns it off for
- * good, whatever is stored.
+ * run after the update). No banner in the app announces it: Settings, the
+ * docs and the installer's console notice disclose it. Settings turns it off;
+ * a Worker variable (`APPFLARE_TELEMETRY=off`, or `DO_NOT_TRACK=1`) turns it
+ * off for good, whatever is stored.
  */
 
 /** The stored choice; with none stored, usage data is on. */
@@ -28,9 +27,7 @@ export const setTelemetryInput = z.object({ enabled: z.boolean() });
 
 /**
  * Settings reads in one order: what leaving it on does for the people who
- * run Appflare, then the switch, then exactly what is and is not sent. The
- * notice (setup and home page) is shorter: that it is on, why, and how to
- * turn it off.
+ * run Appflare, then the switch, then exactly what is and is not sent.
  */
 export const TELEMETRY_COPY = {
   title: "Anonymous usage data",
@@ -47,15 +44,6 @@ export const TELEMETRY_COPY = {
   scope:
     "This switch covers this manager's reports. The installer (create-appflare) has its own: --no-telemetry, APPFLARE_TELEMETRY=off or DO_NOT_TRACK=1.",
   whatIsSent: "What is sent",
-  noticeOn: "Anonymous usage data is on",
-  noticeOff: "Anonymous usage data is off",
-  noticeBody:
-    "Appflare sends a small anonymous report a day, with counts, versions and how installs and updates went, so the maintainers know what to fix and which versions to keep supporting. Nothing personal and nothing from your account is sent.",
-  noticeTurnOff:
-    "Turn it off any time under Settings, Usage data. The installer (create-appflare) has its own: --no-telemetry, APPFLARE_TELEMETRY=off or DO_NOT_TRACK=1.",
-  noticeLocked: (variable: TelemetryLock) =>
-    `The ${variable} variable on this Worker turns it off, so nothing is sent.`,
-  dismiss: "Dismiss",
   lockedBy: (variable: TelemetryLock) =>
     `Turned off by the ${variable} variable on this Worker. Remove the variable to change this here.`,
   devBuild:

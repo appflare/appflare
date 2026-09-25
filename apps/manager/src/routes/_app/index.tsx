@@ -15,7 +15,7 @@ import {
   StorefrontIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
-import { createFileRoute, getRouteApi, useRouter } from "@tanstack/react-router";
+import { createFileRoute, getRouteApi } from "@tanstack/react-router";
 import { AppIcon } from "../../components/catalog-media";
 import { HealthIcon } from "../../components/install-health";
 import { OriginBadge } from "../../components/origin-badge";
@@ -23,7 +23,6 @@ import { PageHeader } from "../../components/page-header";
 import { PendingUpdatesBanner } from "../../components/pending-updates-banner";
 import { StatusBadge } from "../../components/status-badge";
 import { type StartUpdateHandle, useStartUpdate } from "../../components/update-banner";
-import { UsageDataNotice } from "../../components/usage-data-notice";
 import {
   dismissDeployCopy,
   getDeployCopyCleanup,
@@ -31,7 +30,6 @@ import {
 } from "../../deploy-button/deploy-copy.functions";
 import { DeployCopyCard, DowngradeBanner } from "../../deploy-button/deploy-copy-card";
 import { type InstallRow, listInstalls } from "../../installs/installs.functions";
-import { dismissTelemetryNotice, getTelemetryNotice } from "../../telemetry/telemetry.functions";
 
 /**
  * `/` (Home): the pending app updates (read by the layout's loader), with
@@ -43,23 +41,20 @@ import { dismissTelemetryNotice, getTelemetryNotice } from "../../telemetry/tele
  * offered by the sidebar's Appflare card, not here. Several
  * installs of one app are listed one by one. Uninstalled apps that kept data
  * are listed under Settings, Removed apps; the others are not listed
- * anywhere. Admins of a manager updated from a version without usage data
- * see the usage-data notice above the rest, once for the whole manager: when
- * one of them dismisses it, it is gone for all. Before everything, a banner
- * while an older Appflare serves a database a newer one migrated; and for
- * admins of a manager the "Deploy to Cloudflare" button deployed, the
- * "Clean up the deploy copy" card, until one of them dismisses it.
+ * anywhere. Before everything, a banner while an older Appflare serves a
+ * database a newer one migrated; and for admins of a manager the "Deploy to
+ * Cloudflare" button deployed, the "Clean up the deploy copy" card, until one
+ * of them dismisses it (for all of them).
  */
 export const Route = createFileRoute("/_app/")({
   staticData: { title: "Home" },
   loader: async () => {
-    const [rows, notice, deployCopy, downgrade] = await Promise.all([
+    const [rows, deployCopy, downgrade] = await Promise.all([
       listInstalls(),
-      getTelemetryNotice(),
       getDeployCopyCleanup(),
       getSchemaDowngrade(),
     ]);
-    return { rows, notice, deployCopy, downgrade };
+    return { rows, deployCopy, downgrade };
   },
   component: HomePage,
 });
@@ -69,11 +64,10 @@ const layout = getRouteApi("/_app");
 const mono = "font-mono text-[0.9em]";
 
 function HomePage() {
-  const { rows, notice, deployCopy, downgrade } = Route.useLoaderData();
+  const { rows, deployCopy, downgrade } = Route.useLoaderData();
   const pending = layout.useLoaderData();
   const { viewer } = layout.useRouteContext();
   const isAdmin = viewer.role === "admin";
-  const router = useRouter();
   const update = useStartUpdate();
   return (
     <>
@@ -92,22 +86,7 @@ function HomePage() {
         <DowngradeBanner version={downgrade.version} deployButton={downgrade.deployButton} />
       )}
       {deployCopy !== null && (
-        <DeployCopyCard
-          cleanup={deployCopy}
-          onDismiss={async () => {
-            await dismissDeployCopy();
-            await router.invalidate();
-          }}
-        />
-      )}
-      {notice.show && (
-        <UsageDataNotice
-          status={notice.status}
-          onDismiss={async () => {
-            await dismissTelemetryNotice();
-            await router.invalidate();
-          }}
-        />
+        <DeployCopyCard cleanup={deployCopy} onDismiss={() => dismissDeployCopy()} />
       )}
       <PendingUpdatesBanner apps={pending.apps} isAdmin={isAdmin} update={update} />
       {update.error !== null && (

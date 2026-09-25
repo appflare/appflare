@@ -237,7 +237,8 @@ for health checks, and the notification channels you add, the manager sends anon
 the outcome of each job) to PostHog's EU region, from its Worker and never from your
 browser. It holds counts, versions and error categories, never your account, emails,
 domains, secrets or tokens. It is on by
-default and starts with the first scheduled run after setup; a banner on the home
-page says so once after setup, and nothing waits for an answer. One switch in Settings turns it off; see [Usage data](/telemetry/) for
+default and starts with the first scheduled run after setup. No banner in the app
+announces it: Settings, Usage data and these docs disclose it, and nothing waits for
+an answer. One switch in Settings turns it off; see [Usage data](/telemetry/) for
 exactly what is sent and every way to turn it off. The installer keeps wrangler's
 own usage metrics and error reports off for the commands it runs.

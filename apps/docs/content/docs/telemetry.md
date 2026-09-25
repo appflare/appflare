@@ -5,9 +5,11 @@ description: What leaving usage data on does, what Appflare sends and never send
 
 Appflare collects anonymous usage data to decide what to build and fix. It is on by
 default and easy to turn off. The manager's first report goes out with its first
-scheduled run after setup finishes. The home page then says that usage data is on
-and how to turn it off, once, until an admin dismisses it; a manager updated from a
-version without usage data shows the same notice. It never waits for an answer. A development build never sends anything.
+scheduled run after setup finishes (or, on a manager updated from a version without
+usage data, after the update). No banner in the manager announces it: this page,
+**Settings**, **Usage data** in the manager, and the installer's notice when it
+starts are where it is disclosed, and nothing waits for an answer. A development
+build never sends anything.
 
 ## What it does for you
 
@@ -134,8 +136,8 @@ Any one of these stops everything:
   the Worker's **Settings**, **Variables and Secrets**. Either one locks usage data
   off: Settings shows the switch off and disabled, with "Turned off by the
   APPFLARE_TELEMETRY variable on this Worker. Remove the variable to change this
-  here." (naming `DO_NOT_TRACK` when that is the one set), and the home page
-  shows no usage-data banner after setup. Updates of the manager keep the variable.
+  here." (naming `DO_NOT_TRACK` when that is the one set). Updates of the manager
+  keep the variable.
 
 When the installer's usage data is off by the flag or a variable, it deploys the
 manager with `APPFLARE_TELEMETRY=off`, so the manager's is locked off too.

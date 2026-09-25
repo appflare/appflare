@@ -63,9 +63,9 @@ export const SETTING = {
    */
   telemetry: "telemetry",
   /**
-   * ISO 8601 time the usage-data notice was first answered for this manager:
-   * the home page notice dismissed, or a choice in Settings. While absent,
-   * admins see the notice on the home page.
+   * ISO 8601 time an admin first answered the usage-data notice earlier
+   * versions showed. Nothing writes it any more and nothing shows a notice;
+   * a stored one is only read as a fallback setup time for the daily report.
    */
   telemetryNoticeAt: "telemetry_notice_at",
   /** The random id every event is tied to (a UUIDv4). Kept when usage data is turned off. */

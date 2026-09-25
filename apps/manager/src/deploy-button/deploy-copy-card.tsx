@@ -1,13 +1,8 @@
 import { Banner, Button, LayerCard, Link, LinkButton, Text } from "@cloudflare/kumo";
-import {
-  ArrowSquareOutIcon,
-  GitBranchIcon,
-  WarningCircleIcon,
-  WarningIcon,
-  XIcon,
-} from "@phosphor-icons/react";
-import { type ReactNode, useState } from "react";
+import { ArrowSquareOutIcon, GitBranchIcon, WarningIcon, XIcon } from "@phosphor-icons/react";
+import type { ReactNode } from "react";
 import { DocsLink } from "../components/docs-link";
+import { useOptimisticDismiss } from "../components/use-optimistic-dismiss";
 import { MANAGER_UPDATES_HREF } from "../installs/pending-updates";
 import { type DeployCopyCleanup, USER_API_TOKENS_URL } from "./deploy-copy";
 
@@ -18,29 +13,19 @@ const mono = "font-mono text-[0.9em]";
  * Cloudflare" button deployed, for admins, until one of them dismisses it:
  * disconnect Workers Builds from the Worker, then delete the repository the
  * button copied, each step one line with its link. Appflare cannot do either
- * with its account token.
+ * with its account token. Dismiss hides the card at once; `onDismiss` saves
+ * that in the background, and a failed save shows the card again.
  */
 export function DeployCopyCard({
   cleanup,
   onDismiss,
 }: {
   cleanup: DeployCopyCleanup;
+  /** Saves the dismissal for every admin. */
   onDismiss: () => Promise<void>;
 }) {
-  const [dismissing, setDismissing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function dismiss() {
-    setDismissing(true);
-    setError(null);
-    try {
-      await onDismiss();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not dismiss the card.");
-      setDismissing(false);
-    }
-  }
-
+  const { hidden, dismiss } = useOptimisticDismiss(onDismiss);
+  if (hidden) return null;
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
@@ -55,8 +40,7 @@ export function DeployCopyCard({
           icon={<XIcon />}
           aria-label="Dismiss"
           title="Dismiss"
-          loading={dismissing}
-          onClick={() => void dismiss()}
+          onClick={dismiss}
         />
       </LayerCard.Secondary>
       <LayerCard.Primary className="grid gap-3 px-5 py-4">
@@ -116,9 +100,6 @@ export function DeployCopyCard({
           </Link>
           .
         </Text>
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
       </LayerCard.Primary>
     </LayerCard>
   );
