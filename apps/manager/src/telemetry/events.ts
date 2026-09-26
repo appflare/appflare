@@ -95,6 +95,8 @@ export interface HeartbeatInput {
     updatedAt: number;
     /** The install's automatic-update choice (`inherit`, `on`, `off`). */
     autoUpdate: string;
+    /** How many Workers the install has (an app of several Workers has more than one). */
+    workers?: number;
   }[];
   /** Latest version of each app in the cached catalog indexes, by app key; null when nothing is cached. */
   catalogVersions: ReadonlyMap<string, string> | null;
@@ -198,6 +200,7 @@ export function heartbeatProperties(input: HeartbeatInput): Record<string, Telem
     installs_with_domain: input.installsWithDomain,
     installs_with_email_routing: input.installsWithEmailRouting,
     installs_with_crons: input.installsWithCrons,
+    installs_with_several_workers: input.installs.filter((i) => (i.workers ?? 1) > 1).length,
     removed_with_retained: input.removedWithRetained,
     apps: [...apps].sort(),
   };
@@ -220,6 +223,11 @@ export interface JobRow {
   snapshotTargetVersion: string | null;
   /** Who started the job (`admin` or `schedule`). */
   startedBy: string;
+  /**
+   * How many Workers the job's install has had (an app of several Workers
+   * has more than one); null without an install or before one was recorded.
+   */
+  workers?: number | null;
 }
 
 function parseInput(text: string | null): Record<string, unknown> {
@@ -316,6 +324,7 @@ export function jobProperties(
     origin,
     // `auto`: the cron started it (automatic updates), or it turned sandbox
     // builds on for an install or build that needed them; `manual`: an admin did.
+    workers: row.workers ?? null,
     trigger:
       row.startedBy === "schedule" ||
       (row.kind === "sandbox_enable" &&

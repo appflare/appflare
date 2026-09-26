@@ -12,3 +12,4 @@ export * from "./sandbox";
 export * from "./self-deploying";
 export * from "./services";
 export * from "./telemetry";
+export * from "./workers";

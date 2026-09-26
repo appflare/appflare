@@ -56,6 +56,21 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  * job further means a unit that calls further units itself (the callee has
  * `SELF` too), or a sleep of 5 minutes or more, which does start a fresh
  * invocation.
+ *
+ * An app of several Workers (../entry-workers.ts) shares its resources, so
+ * each Worker besides the primary one adds only its own calls: at install
+ * its assets session and parts (2 for assets in one part), the upload unit
+ * (1), its workers.dev route (1) and one per secret it gets (typically 2):
+ * about 6. An update adds its deployment read (1), assets (2), the version
+ * upload (1), previews (1), the canary (1 when the preview answers at once,
+ * up to 6) and the promotion (1): 7 or more. A typical app (three resources,
+ * two secrets, assets in one part, a D1 database) spends about 21 before its
+ * live health check, which takes 1 to 12: 50 - 21 - 12 leaves 17, room for
+ * two other Workers at an update's 7 each (an install's 6 would fit a third,
+ * but the same app must also update). Hence at most 3 Workers per app on
+ * Workers Free (`MAX_FREE_PLAN_WORKERS`);
+ * the install and update plans refuse more there before anything changes.
+ * Workers Paid allows 1,000 subrequests per invocation, and has no cap.
  */
 
 /**

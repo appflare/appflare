@@ -31,6 +31,7 @@ import {
 import { sandboxBuildOfInput } from "../sandbox/progress";
 import { cleanupSandboxBuildsPhase } from "./install/artifact-source";
 import { type EmailRouteRecord, removeEmailRoutesPhase } from "./install/email-routing";
+import { deleteOtherWorkersPhase } from "./install/entry-worker-phases";
 import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
 import { deleteResource, RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
@@ -277,6 +278,10 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       );
       return {
         workerName: install.workerName,
+        // An app of several Workers: its other Workers, deleted before the primary one.
+        otherWorkers: live
+          .filter((r) => r.kind === "worker" && r.name !== install.workerName)
+          .map((r) => ({ id: r.id, name: r.name })),
         accountId: settings.account_id,
         targets,
         domains,
@@ -375,6 +380,9 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
 
     // A run started before consumers were recorded has none to remove.
     await removeQueueConsumersPhase(steps, workerName, started.consumers ?? []);
+
+    // A run started before other Workers were listed has none.
+    await deleteOtherWorkersPhase(steps, started.otherWorkers ?? []);
 
     const workerStep =
       started.worker === "live" ? `delete Worker ${workerName}` : `skip Worker ${workerName}`;

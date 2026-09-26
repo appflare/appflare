@@ -5,9 +5,14 @@ import type {
 } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  type EntryWorkerPlaceholders,
+  entryWorkerRefName,
+  isEntryServiceBinding,
   isSelfServiceBinding,
+  type JsonValue,
   type ModuleType,
   type PlaceholderValues,
+  renderEntryWorkerPlaceholders,
   type WorkerBinding,
 } from "@appflare/schema";
 import { type ResolvedVars, resolveVars, type VarBinding } from "../../installs/install-vars";
@@ -42,14 +47,52 @@ export interface CreatedResource {
 export function installVars(
   manifest: Pick<ArtifactManifest, "catalog" | "worker">,
   userVars: Readonly<Record<string, string>>,
-  worker: { workerName: string; subdomain: string; accountId: string; workerUrl?: string },
+  worker: {
+    workerName: string;
+    subdomain: string;
+    accountId: string;
+    workerUrl?: string;
+    /**
+     * For an app of several Workers: what `{{workerUrl:<name>}}` and
+     * `{{workerName:<name>}}` are filled in with (`entryPlaceholders`).
+     */
+    entryWorkers?: EntryWorkerPlaceholders;
+  },
 ): ResolvedVars {
   const placeholders: PlaceholderValues = {
     workerName: worker.workerName,
     workerUrl: worker.workerUrl ?? workersDevUrl(worker.workerName, worker.subdomain),
     accountId: worker.accountId,
   };
-  return resolveVars(manifest, userVars, placeholders);
+  const resolved = resolveVars(manifest, userVars, placeholders);
+  const entry = worker.entryWorkers;
+  if (entry === undefined) return resolved;
+  return { ...resolved, vars: resolved.vars.map((v) => renderEntryVar(v, entry)) };
+}
+
+/** A var with `{{workerUrl:<name>}}` and `{{workerName:<name>}}` filled in. */
+function renderEntryVar(v: VarBinding, entry: EntryWorkerPlaceholders): VarBinding {
+  const render = (value: JsonValue): JsonValue => {
+    if (typeof value === "string") return renderEntryWorkerPlaceholders(value, entry);
+    if (Array.isArray(value)) return value.map(render);
+    if (value !== null && typeof value === "object") {
+      const out: { [key: string]: JsonValue } = {};
+      for (const [key, item] of Object.entries(value)) {
+        // Plain assignment of `__proto__` would set the prototype instead.
+        Object.defineProperty(out, key, {
+          value: render(item),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      return out;
+    }
+    return value;
+  };
+  return v.type === "json"
+    ? { ...v, json: render(v.json) }
+    : { ...v, text: renderEntryWorkerPlaceholders(v.text, entry) };
 }
 
 function resourceBinding(binding: WorkerBinding, created: CreatedResource): UploadBinding {
@@ -92,13 +135,39 @@ export function durableObjectMigrations(
 export function selfServiceUploadBinding(
   binding: WorkerBinding,
   workerName: string,
+  entryWorkers: Readonly<Record<string, string>> = {},
 ): UploadBinding {
-  if (!isSelfServiceBinding(binding)) {
+  let service: string;
+  if (isSelfServiceBinding(binding)) {
+    service = workerName;
+  } else if (isEntryServiceBinding(binding)) {
+    // Another Worker of the app: the name it was installed under.
+    const target = entryWorkerName(entryWorkers, binding.service, binding.name);
+    service = target;
+  } else {
     throw new Error(`service binding ${binding.name} does not point at the app's own Worker`);
   }
-  const out: UploadBinding = { type: "service", name: binding.name, service: workerName };
+  const out: UploadBinding = { type: "service", name: binding.name, service };
   if (binding.entrypoint !== undefined) out.entrypoint = binding.entrypoint;
   return out;
+}
+
+/**
+ * The installed Worker a `{{workerName:<name>}}` reference names. Throws when
+ * the app has no such Worker (the plans refuse that first).
+ */
+function entryWorkerName(
+  entryWorkers: Readonly<Record<string, string>>,
+  ref: unknown,
+  binding: string,
+): string {
+  const name = entryWorkerRefName(ref);
+  const target =
+    name !== null && Object.hasOwn(entryWorkers, name) ? entryWorkers[name] : undefined;
+  if (target === undefined) {
+    throw new Error(`binding ${binding} names a Worker the app does not have`);
+  }
+  return target;
 }
 
 export interface ScriptMetadataInput {
@@ -114,6 +183,12 @@ export interface ScriptMetadataInput {
   assetsJwt: string | null;
   /** Rate limit binding name -> the install's own namespace id (install/rate-limits.ts). */
   rateLimitIds?: Readonly<Record<string, string>>;
+  /**
+   * For an app of several Workers: each Worker's name within the entry to the
+   * Worker name it is installed under (`entryScriptNames`), for bindings that
+   * name another Worker of the app.
+   */
+  entryWorkers?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -130,6 +205,7 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
     assetsJwt,
     workflowNames = {},
     rateLimitIds = {},
+    entryWorkers = {},
   } = input;
   const byBinding = new Map(resources.map((r) => [r.binding, r]));
   const bindings: UploadBinding[] = [];
@@ -152,7 +228,16 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
       }
       bindings.push({ ...binding, namespace_id: namespaceId });
     } else if (binding.type === "service") {
-      bindings.push(selfServiceUploadBinding(binding, workerName));
+      bindings.push(selfServiceUploadBinding(binding, workerName, entryWorkers));
+    } else if (
+      binding.type === "durable_object_namespace" &&
+      entryWorkerRefName(binding.script_name) !== null
+    ) {
+      // A class in another Worker of the app, which is installed under its own name.
+      bindings.push({
+        ...binding,
+        script_name: entryWorkerName(entryWorkers, binding.script_name, binding.name),
+      });
     } else if (PASSTHROUGH_BINDING_TYPES.has(binding.type)) {
       bindings.push({ ...binding });
     } else {

@@ -51,6 +51,20 @@ An update keeps the app's settings, its secrets, its custom domains and the
 To change settings or secrets without updating, see
 [Change an app's settings](/guides/settings/).
 
+### Apps of several Workers
+
+For an [app of several Workers](/guides/install-apps/#apps-of-several-workers), the
+job works on all of them as one app. The snapshot holds the serving version of every
+Worker, together with the D1 bookmarks. Each Worker's new version is uploaded and
+checked at its own preview URL, D1 migrations run before any Worker switches, and
+then the Workers switch to their new versions one at a time, with the app's own
+Worker last. A rollback returns every Worker to its version in the snapshot.
+
+An update cannot add a Worker to an installed app, because the manager keeps no
+secret values to give the new Worker: the job refuses such a version before anything
+changes, and the app has to be installed again to get it. A Worker a new version no
+longer has stays in place until the app is uninstalled.
+
 ### Apps with Durable Objects
 
 Cloudflare gives no preview URL to a Worker that defines Durable Objects, so updates

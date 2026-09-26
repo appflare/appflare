@@ -1,6 +1,6 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { type ArtifactManifest, artifactManifestSchema } from "@appflare/schema";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { effectiveAutoUpdate, settingOn } from "../auto-update/auto-update";
 import { createDb, type Database } from "../db/client";
@@ -18,6 +18,11 @@ import {
   snapshotHasSameCode,
 } from "../installs/rollback-copy";
 import { appBaseUrl, domainHostnames } from "../installs/workers-dev";
+import { mergedWorkerVersions, parseWorkerVersions, storedOtherWorkers } from "./entry-workers";
+import {
+  deployOtherWorkerVersionPhase,
+  setOtherWorkerCronsPhase,
+} from "./install/entry-worker-phases";
 import { healthCheckOfManifest, healthLabel } from "./install/health";
 import {
   checkLiveHealthPhase,
@@ -26,6 +31,7 @@ import {
   syncCronsPhase,
 } from "./install/phases";
 import {
+  consumerPlans,
   consumerPlansOf,
   recordedQueues,
   syncQueueConsumersPhase,
@@ -72,6 +78,16 @@ function cronsOf(manifestJson: string | null): string[] | null {
  */
 function settingsOf(snapshot: { config_json: string | null }): { config_json?: string } {
   return snapshot.config_json === null ? {} : { config_json: snapshot.config_json };
+}
+
+/** The versions the snapshot kept for the app's other Workers, merged into the install's record. */
+function othersOf(snapshot: { worker_versions_json: string | null }): {
+  worker_versions_json?: SQL;
+} {
+  const versions = parseWorkerVersions(snapshot.worker_versions_json);
+  return Object.keys(versions).length === 0
+    ? {}
+    : { worker_versions_json: mergedWorkerVersions(versions) };
 }
 
 /** The names of a version's `secret_text` bindings, from `GET .../versions/{id}`. */
@@ -193,11 +209,13 @@ export async function runRollback(ctx: JobContext): Promise<void> {
               source_url: snapshot.source_url,
               source_ref: snapshot.source_ref,
               ...settingsOf(snapshot),
+              ...othersOf(snapshot),
               updated_at: at,
             }
           : {
               current_version_id: snapshot.worker_version_id,
               ...settingsOf(snapshot),
+              ...othersOf(snapshot),
               updated_at: at,
             },
       )
@@ -288,10 +306,28 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           sameCode,
         }),
       );
+      // An app of several Workers: the versions the snapshot kept for its
+      // other Workers, and what each has now and had then.
+      const otherNow = storedOtherWorkers(install.manifest_json, install.worker_name);
+      const otherThen = storedOtherWorkers(snapshot.manifest_json, install.worker_name);
+      const otherVersions = parseWorkerVersions(snapshot.worker_versions_json);
       return {
         accountId: settings.account_id,
         workerName: install.worker_name,
         fromVersion: install.catalog_version,
+        otherWorkers: Object.entries(otherVersions).map(([scriptName, versionId]) => {
+          const then = otherThen.find((w) => w.scriptName === scriptName);
+          const now = otherNow.find((w) => w.scriptName === scriptName);
+          return {
+            scriptName,
+            versionId,
+            crons: then?.manifest.worker.crons ?? null,
+            cronsNow: now?.manifest.worker.crons ?? [],
+            consumers:
+              then === undefined ? null : consumerPlans(then.manifest.worker.queueConsumers),
+            consumersNow: consumerPlans(now?.manifest.worker.queueConsumers),
+          };
+        }),
         sameCode,
         versionId: snapshot.worker_version_id,
         toVersion: snapshot.catalog_version,
@@ -318,6 +354,19 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     });
     steps.setAccountId(started.accountId);
     const { workerName } = started;
+
+    // The app's other Workers first, each back on the version the snapshot
+    // kept; the primary Worker last. A snapshot taken before other Workers
+    // were recorded has none.
+    const otherWorkers = started.otherWorkers ?? [];
+    for (const other of otherWorkers) {
+      await deployOtherWorkerVersionPhase(
+        steps,
+        { primary: false, scriptName: other.scriptName },
+        other.versionId,
+        started.toVersion ?? started.versionId,
+      );
+    }
 
     // The API call is a step of its own, so the moment it returns the job
     // knows the snapshot's version serves traffic.
@@ -381,6 +430,18 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     // Null for a job started before consumers were tracked, or a snapshot
     // without a manifest: nothing is known to sync.
     if (started.snapshotConsumers != null) {
+      for (const other of otherWorkers) {
+        if (other.consumers === null) continue;
+        await syncQueueConsumersPhase(steps, {
+          installId: params.installId,
+          workerName: other.scriptName,
+          wanted: other.consumers,
+          previous: other.consumersNow,
+          queues: recordedQueues(params.installId, started.queueRows),
+          recorded: started.queueRows,
+          removeUnwanted: false,
+        });
+      }
       await syncQueueConsumersPhase(steps, {
         installId: params.installId,
         workerName,
@@ -388,6 +449,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         previous: started.currentConsumers,
         queues: recordedQueues(params.installId, started.queueRows),
         recorded: started.queueRows,
+        keepKeys: otherWorkers.flatMap((o) => (o.consumers ?? []).map((c) => c.queueKey)),
       });
     }
 
@@ -400,6 +462,15 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         workerName,
         started.recordedCrons,
         started.snapshotCrons,
+      );
+    }
+    for (const other of otherWorkers) {
+      if (other.crons === null) continue;
+      await setOtherWorkerCronsPhase(
+        steps,
+        { primary: false, scriptName: other.scriptName },
+        other.crons,
+        other.cronsNow,
       );
     }
 

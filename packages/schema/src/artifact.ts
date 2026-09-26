@@ -3,10 +3,12 @@ import {
   type CatalogVar,
   catalogManifestSchema,
   catalogVarOptions,
+  entryWorkerNameSchema,
   gitShaSchema,
   ownerRepoSchema,
   vectorizeIndexConfigSchema,
 } from "./catalog";
+import { bindingEntryRefs, ENTRY_WORKER_REF_PATTERN, entryWorkerProblems } from "./workers";
 
 /**
  * Schemas for the machine-generated artifact manifest `manifest.json`.
@@ -185,19 +187,48 @@ export function isSelfServiceBinding(binding: WorkerBinding): binding is SelfSer
 }
 
 /**
+ * A service binding to another Worker of the app's own catalog entry (an app
+ * of several Workers, `install.workers`): the packer records that Worker as
+ * `{{workerName:<name>}}` in place of its name in the wrangler config, and
+ * the manager points the binding at the Worker it installed for that name.
+ * Nothing but the name and an optional entrypoint, like a self binding.
+ */
+const entryServiceBindingShape = {
+  type: z.literal("service"),
+  name: z.string().min(1),
+  service: z.string().regex(ENTRY_WORKER_REF_PATTERN),
+  entrypoint: z.string().min(1).optional(),
+};
+export const entryServiceBindingSchema = z.looseObject(entryServiceBindingShape);
+export type EntryServiceBinding = z.infer<typeof entryServiceBindingSchema>;
+const exactEntryServiceBindingSchema = z.strictObject(entryServiceBindingShape);
+
+/**
+ * Whether a binding is a service binding to another Worker of the app's
+ * entry (`{{workerName:<name>}}`), with nothing but its name and an optional
+ * entrypoint. Whether the entry has that Worker is the manifest's check.
+ */
+export function isEntryServiceBinding(binding: WorkerBinding): binding is EntryServiceBinding {
+  return binding.type === "service" && exactEntryServiceBindingSchema.safeParse(binding).success;
+}
+
+/**
  * Why a binding is a service binding an app may not have, as a sentence, or
- * null when it is not a service binding or is the app's binding to its own
- * Worker. Any other service binding would let the app call another Worker in
- * the account: another install, or the manager and the job units it serves
- * with its account-wide API token.
+ * null when it is not a service binding, is the app's binding to its own
+ * Worker, or binds another Worker of the app's own entry. Any other service
+ * binding would let the app call another Worker in the account: another
+ * install, or the manager and the job units it serves with its account-wide
+ * API token.
  */
 export function serviceBindingProblem(binding: WorkerBinding): string | null {
   if (binding.type !== "service" || isSelfServiceBinding(binding)) return null;
+  if (isEntryServiceBinding(binding)) return null;
   const target =
     typeof binding.service === "string" ? `the Worker "${binding.service}"` : "no Worker";
   return (
     `Service binding ${binding.name} points at ${target}; an app may bind only to its own Worker ` +
-    `(recorded as service "${SELF_SERVICE}", with nothing but an optional entrypoint), so it can never call another Worker in the account.`
+    `(recorded as service "${SELF_SERVICE}", with nothing but an optional entrypoint) or to another ` +
+    "Worker of its own catalog entry, so it can never call another Worker in the account."
   );
 }
 
@@ -431,17 +462,83 @@ export const artifactSourceSchema = z.object({
 export type ArtifactSource = z.infer<typeof artifactSourceSchema>;
 
 /** The full artifact manifest, `manifest.json`. */
-export const artifactManifestSchema = z.object({
-  format: z.literal(1),
+const artifactManifestFields = {
   app: z.string().min(1),
   version: z.string().min(1),
   source: artifactSourceSchema,
   builtAt: z.iso.datetime(),
   builder: z.string().min(1),
   keyId: z.string().min(1),
+  /** The app's Worker; for an app of several Workers, the primary one. */
   worker: artifactWorkerSchema,
+  /** The static assets of `worker`. */
   assets: artifactAssetsSchema,
+  /** Every D1 migration of the app, by binding (shared by the Workers that bind it). */
   d1Migrations: d1MigrationsSchema,
   catalog: catalogManifestSchema,
+};
+
+/**
+ * One Worker of an app of several (see `workers.ts`) other than the primary
+ * one: its name within the catalog entry (`install.workers[].name`), and its
+ * own Worker section and static assets.
+ */
+export const artifactEntryWorkerSchema = z.object({
+  name: entryWorkerNameSchema,
+  worker: artifactWorkerSchema,
+  assets: artifactAssetsSchema,
 });
+export type ArtifactEntryWorker = z.infer<typeof artifactEntryWorkerSchema>;
+
+/**
+ * An artifact of one Worker. Its catalog manifest has no `install.workers`,
+ * and no binding names another Worker of the entry.
+ */
+export const artifactManifestV1Schema = z
+  .object({ format: z.literal(1), ...artifactManifestFields })
+  .superRefine((manifest, ctx) => {
+    if (manifest.catalog.install.workers !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["format"],
+        message:
+          "the catalog manifest declares several Workers (install.workers), so the artifact must be format 2 with a workers list",
+      });
+    }
+    for (const binding of manifest.worker.bindings) {
+      if (bindingEntryRefs(binding).length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["worker", "bindings"],
+          message: `binding ${binding.name} names another Worker of the entry, but the artifact has one Worker`,
+        });
+      }
+    }
+  });
+
+/**
+ * An artifact of several Workers (format 2): `worker` and `assets` are the
+ * primary Worker's, as in format 1, and `workers` lists every other one in
+ * the catalog entry's order. A manager that reads only format 1 refuses it
+ * rather than installing the primary Worker alone.
+ */
+export const artifactManifestV2Schema = z
+  .object({
+    format: z.literal(2),
+    ...artifactManifestFields,
+    workers: z.array(artifactEntryWorkerSchema).min(1),
+  })
+  .superRefine((manifest, ctx) => {
+    for (const message of entryWorkerProblems(manifest)) {
+      ctx.addIssue({ code: "custom", path: ["workers"], message });
+    }
+  });
+
+/** The full artifact manifest, `manifest.json`: format 1 (one Worker) or 2 (several). */
+export const artifactManifestSchema = z.discriminatedUnion("format", [
+  artifactManifestV1Schema,
+  artifactManifestV2Schema,
+]);
 export type ArtifactManifest = z.infer<typeof artifactManifestSchema>;
+export type ArtifactManifestV1 = z.infer<typeof artifactManifestV1Schema>;
+export type ArtifactManifestV2 = z.infer<typeof artifactManifestV2Schema>;

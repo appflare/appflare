@@ -294,6 +294,60 @@
           ],
           "additionalProperties": false,
           "description": "How the sandbox Worker runs the app's own installer (self-deploying tier only). The admin creates a Cloudflare API token from `tokenPermissions` for it."
+        },
+        "workers": {
+          "minItems": 2,
+          "maxItems": 5,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 24,
+                "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+                "description": "The Worker's name within the entry, for example `api`. The primary Worker installs under the install's Worker name; every other one as `<install Worker name>-<name>`. Placeholders name it too: `{{workerUrl:<name>}}` and `{{workerName:<name>}}`."
+              },
+              "wranglerConfig": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Path of this Worker's wrangler config in the repository."
+              },
+              "buildCommand": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9@%+,./:=_ -]+$"
+                  },
+                  {
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 256,
+                      "pattern": "^[A-Za-z0-9@%+,./:=_ -]+$"
+                    }
+                  }
+                ],
+                "description": "The command, or the commands in order, the packer runs at the root of the checkout for this Worker, after `install.buildCommand` (when set) and before bundling it. Same rules as `install.buildCommand`."
+              },
+              "primary": {
+                "type": "boolean",
+                "const": true,
+                "description": "The Worker that answers the app's address and its health check. Exactly one Worker is primary, and its `wranglerConfig` is `install.wranglerConfig`."
+              }
+            },
+            "required": [
+              "name",
+              "wranglerConfig"
+            ],
+            "additionalProperties": false,
+            "description": "One Worker of an entry that installs as several Workers."
+          },
+          "description": "For an app that installs as several Workers deployed together (for example an API and a web front end): each Worker's name, wrangler config and optional build command. Exactly one is `primary`: it answers the app's address and health check, and its `wranglerConfig` is `install.wranglerConfig`. Service bindings between these Workers, and Durable Object bindings to a class in another of them, are pointed at the installed Workers; bindings of the same name share one resource. Artifact tier only."
         }
       },
       "required": [
@@ -372,6 +426,24 @@
               }
             }
           ]
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "workers"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "tier": {
+                  "const": "artifact"
+                }
+              }
+            }
+          ]
         }
       ]
     },
@@ -443,6 +515,17 @@
             ],
             "additionalProperties": false,
             "description": "Computes this secret from another one instead of asking for it: the install form shows only the source secret, and the manager writes both at install, and again whenever the source secret gets a new value in the app's settings or an update. Neither value is ever logged. Not allowed with `generate` or `optional`, nor on self-deploying entries."
+          },
+          "workers": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 24,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+            },
+            "description": "For an entry that installs several Workers (`install.workers`): the names of the Workers that get this value. Omitted means every Worker for a secret, and for a var the Workers whose wrangler config declares it (every Worker when none does)."
           }
         },
         "required": [
@@ -535,6 +618,17 @@
               "additionalProperties": false
             },
             "description": "The values a `type: \"select\"` var can take, in the order the form shows them. Required for, and only allowed with, `select`. Values must be distinct."
+          },
+          "workers": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 24,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
+            },
+            "description": "For an entry that installs several Workers (`install.workers`): the names of the Workers that get this value. Omitted means every Worker for a secret, and for a var the Workers whose wrangler config declares it (every Worker when none does)."
           }
         },
         "required": [

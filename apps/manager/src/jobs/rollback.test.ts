@@ -1,5 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import type { FetchLike } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -47,7 +48,11 @@ async function seedUpdated(): Promise<void> {
     .run();
 }
 
-async function rollback(world: Partial<FakeAccount> = {}) {
+async function rollback(
+  world: Partial<FakeAccount> = {},
+  /** Wraps the fake's fetch (an app of several Workers routes each to its own fake). */
+  wrapFetch?: (fake: ReturnType<typeof fakeAccount>) => FetchLike,
+) {
   const fake = fakeAccount(null, {
     deployments: [
       { id: "dep-2", versions: [{ version_id: NEW_VERSION, percentage: 100 }] },
@@ -76,7 +81,7 @@ async function rollback(world: Partial<FakeAccount> = {}) {
       params,
       step,
       env: { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN },
-      deps: { fetch: fake.fetch },
+      deps: { fetch: wrapFetch?.(fake) ?? fake.fetch },
     });
   } catch (e) {
     error = e;
@@ -351,5 +356,58 @@ describe("rollback job", () => {
     expect(await env.DB.prepare("SELECT status FROM installs").first()).toEqual({
       status: "installed",
     });
+  });
+});
+
+describe("rollback job, an app of several Workers", () => {
+  const JOBS_OLD = "11111111-2222-4333-8444-555555555555";
+  const JOBS_NEW = "11111111-2222-4333-8444-666666666666";
+
+  it("puts every other Worker back on its snapshot version before the primary one", async () => {
+    const jobsWorker = (crons: string[]) => ({
+      name: "jobs",
+      bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+      crons,
+    });
+    const before = await buildArtifactFixture({ otherWorkers: [jobsWorker(["*/5 * * * *"])] });
+    const after = await buildArtifactFixture({
+      version: "1.1.0",
+      otherWorkers: [jobsWorker(["*/15 * * * *"])],
+    });
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?1 WHERE id = ?2")
+      .bind(JSON.stringify(after.manifest), INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "UPDATE snapshots SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = 'upd1'",
+    )
+      .bind(JSON.stringify(before.manifest), JSON.stringify({ "cut-jobs": JOBS_OLD }))
+      .run();
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [
+        { id: "dep-j2", versions: [{ version_id: JOBS_NEW, percentage: 100 }] },
+        { id: "dep-j1", versions: [{ version_id: JOBS_OLD, percentage: 100 }] },
+      ],
+      schedules: ["*/15 * * * *"],
+    });
+    const r = await rollback(
+      {},
+      (fake) => async (input, init) =>
+        (input.includes("/workers/scripts/cut-jobs") ? jobs : fake).fetch(input, init),
+    );
+    expect(r.error).toBeNull();
+    expect(r.step.names.slice(0, 3)).toEqual([
+      "start",
+      'deploy snapshot version (Worker "cut-jobs")',
+      "deploy snapshot version",
+    ]);
+    expect(jobs.state.deployForced).toEqual([true]);
+    expect(jobs.state.deployments[0]?.versions).toEqual([
+      { version_id: JOBS_OLD, percentage: 100 },
+    ]);
+    expect(jobs.state.schedules).toEqual(["*/5 * * * *"]);
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: OLD_VERSION, percentage: 100 },
+    ]);
   });
 });

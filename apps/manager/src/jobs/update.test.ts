@@ -7,7 +7,7 @@ import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
-import { startUpdateCore } from "../installs/versions.server";
+import { listSnapshotsCore, startRollbackCore, startUpdateCore } from "../installs/versions.server";
 import {
   type ArtifactFixtureOptions,
   buildArtifactFixture,
@@ -24,6 +24,7 @@ import {
   type SeedResource,
   seedInstall,
 } from "../test/seed-install";
+import { type RollbackJobParams, runRollback } from "./rollback";
 import type { JobEnv } from "./run-job";
 import { API_STEP } from "./steps";
 import { runUpdate, type UpdateJobParams } from "./update";
@@ -1239,5 +1240,234 @@ describe("update job", () => {
     });
     expect(r.job?.error).toMatch(/^read current deployment: no single version serves/);
     expect(r.snapshot).toBeNull();
+  });
+});
+
+describe("update job, an app of several Workers", () => {
+  const JOBS_OLD = "11111111-2222-4333-8444-555555555555";
+  const SECRET = "jobs-secret-DO-NOT-LEAK";
+  const jobsWorker = (crons: string[]) => ({
+    name: "jobs",
+    bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+    crons,
+  });
+  const app = (version: string, crons: string[]): ArtifactFixtureOptions => ({
+    ...NEW_APP,
+    version,
+    otherWorkers: [jobsWorker(crons)],
+    catalog: {
+      secrets: [
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+        { name: "JOBS_KEY", label: "Jobs key", generate: false, workers: ["jobs"] },
+      ],
+    },
+  });
+
+  /** Runs the update with a second fake account for `cut-jobs`, serving `JOBS_OLD`. */
+  async function updateBoth(
+    world: Partial<FakeAccount> = {},
+    jobsWorld: Partial<FakeAccount> = {},
+  ) {
+    const old = await buildArtifactFixture({ ...app("1.0.0", ["*/5 * * * *"]), version: "1.0.0" });
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+      ...jobsWorld,
+    });
+    const r = await update(
+      app("1.1.0", ["*/15 * * * *"]),
+      world,
+      {
+        manifestJson: JSON.stringify(old.manifest),
+        resources: [
+          ...RESOURCES,
+          { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
+          { kind: "subdomain", name: "cut-jobs.appflare-dev.workers.dev" },
+        ],
+      },
+      { secrets: { JOBS_KEY: SECRET } },
+      "self",
+      undefined,
+      (fake) => async (input, init) => {
+        const target =
+          input.includes("/workers/scripts/cut-jobs") || input.includes("-cut-jobs.") ? jobs : fake;
+        return target.fetch(input, init);
+      },
+    );
+    return { ...r, jobs };
+  }
+
+  it("snapshots, checks and promotes every Worker, the primary one last", async () => {
+    const r = await updateBoth();
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(JSON.parse(String(r.snapshot?.worker_versions_json))).toEqual({ "cut-jobs": JOBS_OLD });
+    expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual({
+      "cut-jobs": NEW_VERSION,
+    });
+    // The other Worker's version: uploaded, checked on its preview, then promoted.
+    const uploaded = r.jobs.state.versions[0];
+    const bindings = uploaded?.metadata.bindings as Array<Record<string, unknown>>;
+    expect(bindings).toContainEqual({ type: "secret_text", name: "JOBS_KEY", text: SECRET });
+    expect(bindings).toContainEqual({ type: "kv_namespace", name: "CUT_KV", namespace_id: "kv-1" });
+    expect(uploaded?.metadata.keep_bindings).toEqual(["secret_text"]);
+    expect(r.jobs.state.previewHosts.length).toBeGreaterThan(0);
+    expect(r.jobs.state.deployments[0]?.versions[0]?.version_id).toBe(NEW_VERSION);
+    expect(r.jobs.state.schedules).toEqual(["*/15 * * * *"]);
+    // The primary Worker's version never carries the secret meant for the other one.
+    const primary = r.fake.state.versions[0]?.metadata.bindings as Array<Record<string, unknown>>;
+    expect(primary.some((b) => b.name === "JOBS_KEY")).toBe(false);
+    const order = r.step.names;
+    expect(order.indexOf('promote version (Worker "cut-jobs")')).toBeLessThan(
+      order.indexOf("promote version"),
+    );
+    expect(order.indexOf("D1 DB: apply migrations")).toBeLessThan(
+      order.indexOf('promote version (Worker "cut-jobs")'),
+    );
+    expect(new Set(order).size).toBe(order.length);
+    expect(JSON.stringify(r.logs)).not.toContain(SECRET);
+  });
+
+  it("promotes nothing when another Worker's canary fails", async () => {
+    const r = await updateBoth(
+      {},
+      {
+        previews: [{ status: 500, body: "boom" }],
+      },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^canary \(Worker "cut-jobs"\) check \d+:/);
+    expect(r.jobs.state.deployments).toHaveLength(1);
+    expect(r.fake.state.deployments).toHaveLength(1);
+    expect(r.install?.catalog_version).toBe("1.0.0");
+  });
+
+  it("refuses a version that adds a Worker, before snapshotting", async () => {
+    const r = await update({ ...NEW_APP, otherWorkers: [jobsWorker([])] }, {}, {}, {});
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain('This version adds the Worker "jobs" (cut-jobs)');
+    expect(r.snapshot).toBeNull();
+  });
+});
+
+describe("update job, an app of several Workers, failing between promotions", () => {
+  const JOBS_OLD = "11111111-2222-4333-8444-555555555555";
+  const app = (version: string): ArtifactFixtureOptions => ({
+    ...NEW_APP,
+    version,
+    otherWorkers: [{ name: "jobs", bindings: [{ type: "kv_namespace", name: "CUT_KV" }] }],
+  });
+
+  async function failingUpdate(refuseJobsReturn: boolean) {
+    const old = await buildArtifactFixture({ ...app("1.0.0"), version: "1.0.0" });
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+    });
+    let deploys = 0;
+    const r = await update(
+      app("1.1.0"),
+      // The primary Worker's promotion is refused, after the other Worker's.
+      { failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]) },
+      {
+        manifestJson: JSON.stringify(old.manifest),
+        resources: [...RESOURCES, { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" }],
+      },
+      {},
+      "self",
+      async () => {
+        await env.DB.prepare("UPDATE installs SET worker_versions_json = ?1 WHERE id = ?2")
+          .bind(JSON.stringify({ "cut-jobs": JOBS_OLD }), INSTALL_ID)
+          .run();
+      },
+      (fake) => async (input, init) => {
+        const toJobs = input.includes("/workers/scripts/cut-jobs") || input.includes("-cut-jobs.");
+        if (toJobs && init?.method === "POST" && input.includes("/cut-jobs/deployments")) {
+          deploys += 1;
+          if (refuseJobsReturn && deploys > 1) {
+            return Response.json(
+              { success: false, errors: [{ code: 10000, message: "injected refusal" }] },
+              { status: 400 },
+            );
+          }
+        }
+        return (toJobs ? jobs : fake).fetch(input, init);
+      },
+    );
+    return { ...r, jobs };
+  }
+
+  it("puts the other Workers back on the snapshot's versions when the primary is not promoted", async () => {
+    const r = await failingUpdate(false);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^promote version:/);
+    // Promoted, then returned (forced, as a rollback deploys).
+    expect(r.jobs.state.deployments.map((d) => d.versions[0]?.version_id)).toEqual([
+      JOBS_OLD,
+      NEW_VERSION,
+      JOBS_OLD,
+    ]);
+    expect(r.jobs.state.deployForced).toEqual([false, true]);
+    expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual({ "cut-jobs": JOBS_OLD });
+    expect(r.install?.current_version_id).toBe(OLD_VERSION);
+    expect(
+      r.logs.some((l) => l.message.includes("were back on the versions the snapshot kept")),
+    ).toBe(true);
+  });
+
+  it("records a Worker it could not put back, and a rollback to the snapshot then returns it", async () => {
+    const r = await failingUpdate(true);
+    expect(r.job?.status).toBe("failed");
+    expect(r.jobs.state.deployments[0]?.versions[0]?.version_id).toBe(NEW_VERSION);
+    expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual({
+      "cut-jobs": NEW_VERSION,
+    });
+    expect(r.logs.some((l) => l.message.includes("may still serve the new version"))).toBe(true);
+
+    // The primary Worker runs the snapshot's version, but the other one does
+    // not: the snapshot is not current, and a rollback may start.
+    const [snapshot] = await listSnapshotsCore(env.DB, INSTALL_ID);
+    expect(snapshot?.isCurrent).toBe(false);
+    let params: RollbackJobParams | null = null;
+    await startRollbackCore(
+      {
+        db: env.DB,
+        createJob: async (id, p) => {
+          params = p;
+          return { id };
+        },
+        newId: () => "rb1",
+      },
+      { installId: INSTALL_ID, snapshotId: "job1" },
+    );
+    if (params === null) throw new Error("no rollback params");
+    const primary = fakeAccount(null, {
+      deployments: [{ id: "dep-0", versions: [{ version_id: OLD_VERSION, percentage: 100 }] }],
+    });
+    await runRollback({
+      params,
+      step: fakeStep(),
+      env: { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN },
+      deps: {
+        fetch: async (input, init) =>
+          (input.includes("/workers/scripts/cut-jobs") ? r.jobs : primary).fetch(input, init),
+      },
+    });
+    const job = await env.DB.prepare("SELECT status FROM jobs WHERE id = 'rb1'").first<{
+      status: string;
+    }>();
+    expect(job?.status).toBe("succeeded");
+    expect(r.jobs.state.deployments[0]?.versions[0]?.version_id).toBe(JOBS_OLD);
+    const install = await env.DB.prepare("SELECT worker_versions_json FROM installs WHERE id = ?1")
+      .bind(INSTALL_ID)
+      .first<{ worker_versions_json: string }>();
+    expect(JSON.parse(install?.worker_versions_json ?? "null")).toEqual({ "cut-jobs": JOBS_OLD });
+    // Now nothing differs from the snapshot: no second rollback.
+    await expect(
+      startRollbackCore(
+        { db: env.DB, createJob: async (id) => ({ id }), newId: () => "rb2" },
+        { installId: INSTALL_ID, snapshotId: "job1" },
+      ),
+    ).rejects.toThrow(/already runs the version/);
   });
 });

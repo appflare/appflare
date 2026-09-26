@@ -17,6 +17,14 @@ import { readSettings, SETTING } from "../db/settings";
 import { EMAIL_ROUTE_KIND } from "../installs/resource-kinds";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
 import { sandboxBinding } from "../sandbox/binding";
+import {
+  entryBindings,
+  entryPlaceholders,
+  entryScriptNamesOf,
+  entryWorkers,
+  mergedWorkerVersions,
+  workerLabel,
+} from "./entry-workers";
 import { sha256Hex } from "./install/artifact";
 import {
   checkEmailRoutingPhase,
@@ -25,6 +33,14 @@ import {
   provisionEmailRoutingPhase,
   removeEmailRoutesPhase,
 } from "./install/email-routing";
+import {
+  deployOtherWorkerVersionPhase,
+  type EntryUploadContext,
+  type OtherWorkerUpdate,
+  promoteOtherWorkerPhase,
+  reconfigureOtherWorkerPhase,
+  secretChangesFor,
+} from "./install/entry-worker-phases";
 import { healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
@@ -151,6 +167,11 @@ async function recordSettings(
     vars: Readonly<Record<string, string>>;
     secrets: SecretChanges;
     at: Date;
+    /**
+     * An app of several Workers: the versions its other Workers now serve, by
+     * Worker name (null: not known).
+     */
+    otherVersions?: Readonly<Record<string, string | null>>;
   },
 ): Promise<void> {
   const { installId, at } = target;
@@ -159,6 +180,9 @@ async function recordSettings(
     .set({
       current_version_id: target.versionId,
       config_json: storedVarsJson(target.vars),
+      ...(target.otherVersions === undefined || Object.keys(target.otherVersions).length === 0
+        ? {}
+        : { worker_versions_json: mergedWorkerVersions(target.otherVersions) }),
       updated_at: at,
     })
     .where(eq(installs.id, installId));
@@ -227,9 +251,27 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
   let snapshotVersionId: string | null = null;
   let ownUploadId: string | null = null;
   /** What undoing unpromoted secret changes needs, once the plan is known. */
-  let undoContext: { slots: SecretSlot[]; workerName: string } | null = null;
+  let undoContext: { slots: SecretSlot[]; workerName: string; changes: SecretChanges } | null =
+    null;
   /** The removal of the old zone's email routes began (a failure leaves a move to finish). */
   let emailMoveStarted = false;
+  /**
+   * An app of several Workers: its other Workers that got a new version with
+   * secret changes, for a failure before their promotion to put them back.
+   */
+  const othersPatched: Array<{
+    workerName: string;
+    label: string;
+    uploadedVersionId: string;
+    servingVersionId: string;
+    changes: SecretChanges;
+  }> = [];
+  const promotedOthers: string[] = [];
+  /** The other Workers whose promotion started, and the version each serves once promoted. */
+  const attemptedOthers: string[] = [];
+  const promotedVersions: Record<string, string> = {};
+  /** The version each changed other Worker served when the snapshot was taken. */
+  let snapshotOthers: Record<string, string> = {};
 
   try {
     const started = await run("start", async ({ log, orm }) => {
@@ -349,13 +391,21 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     const manifest =
       started.revisedCatalog === null ? signed : withRevisedCatalog(signed, started.revisedCatalog);
     const host: ArtifactHost = started.sandboxBuild ? { kind: "sandbox" } : { kind: "catalog" };
+    // An app of several Workers: the primary one is the install's Worker; the
+    // others get a new version only when a changed setting or secret goes to
+    // them, and are promoted before it.
+    const workers = entryWorkers(manifest, workerName);
+    const primary = workers.find((w) => w.primary);
+    if (primary === undefined) throw new JobError("the artifact has no primary Worker");
+    const primaryManifest = primary.manifest;
+    const entryNames = entryScriptNamesOf(manifest, workerName);
     const diff = diffBindings(
       workerName,
-      manifest.worker.bindings,
+      entryBindings(manifest),
       started.resources,
       started.vectorizeShapes,
     );
-    const path = updatePath(manifest, started.appliedDoTag);
+    const path = updatePath(primaryManifest, started.appliedDoTag);
     const slots = secretSlots(
       manifest.catalog.secrets,
       started.resources.filter((r) => r.kind === "secret").map((r) => r.name),
@@ -383,9 +433,31 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     const changedVars = changedVarNames(started.storedVars, params.vars);
     /** Only settings and secrets need a new version; Email Routing names the Worker, not a version. */
     const redeploy = changedVars.length > 0 || secretsChange;
+    // Each Worker gets the secret changes of the secrets that go to it; a
+    // secret the catalog no longer declares is the primary Worker's.
+    const declaredSecrets = new Set(manifest.catalog.secrets.map((s) => s.name));
+    const secretsOf = (w: (typeof workers)[number]) => {
+      const own = new Set(w.manifest.catalog.secrets.map((s) => s.name));
+      return secretChangesFor(
+        params.secrets,
+        [...Object.keys(params.secrets.set), ...params.secrets.unset].filter(
+          (name) => own.has(name) || (w.primary && !declaredSecrets.has(name)),
+        ),
+      );
+    };
+    const primaryChanges = secretsOf(primary);
+    const primarySecretsChange = changesSecrets(primaryChanges);
+    const changedSecrets = [...Object.keys(params.secrets.set), ...params.secrets.unset];
+    const affectedOthers = workers.filter(
+      (w) =>
+        !w.primary &&
+        (changedVars.some((n) => w.manifest.catalog.vars.some((v) => v.name === n)) ||
+          changedSecrets.some((n) => w.manifest.catalog.secrets.some((s) => s.name === n))),
+    );
     undoContext = {
       slots,
       workerName,
+      changes: primaryChanges,
     };
     const healthPath = appHealthPath(manifest.catalog.install);
     const healthMode = appHealthMode(manifest.catalog.install);
@@ -419,8 +491,13 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       if (params.emailRouting !== undefined && emailConfig === undefined) {
         problems.push("This app does not receive email; it takes no zone.");
       }
-      const tooMany = tooManyModulesMessage(manifest.worker.modules.length, "This version");
-      if (tooMany !== null) problems.push(tooMany);
+      for (const w of workers) {
+        const tooMany = tooManyModulesMessage(
+          w.manifest.worker.modules.length,
+          w.primary ? "This version" : `The Worker "${w.name}" of this version`,
+        );
+        if (tooMany !== null) problems.push(tooMany);
+      }
       if (!redeploy && newZoneId === null && oldRoutes.length === 0) {
         problems.push("Nothing changes: the settings, secrets and email zone are as they are.");
       }
@@ -484,13 +561,15 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         resources: started.resources,
         appliedDoTag: started.appliedDoTag,
         targetVersion: started.version,
+        otherWorkers: affectedOthers,
       });
       snapshotVersionId = snapshot.versionId;
+      snapshotOthers = snapshot.otherVersions;
 
       const rateLimitIds = await assignRateLimitsPhase(
         steps,
         params.installId,
-        manifest.worker.bindings,
+        entryBindings(manifest),
       );
       // Cloudflare keeps assets account-wide by hash, so the files the version
       // already uses are not uploaded again; the session still yields the
@@ -499,26 +578,67 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         steps,
         workerName,
         started.zipUrl,
-        manifest.assets.files,
+        primaryManifest.assets.files,
         host,
       );
-      const vars = installVars(manifest, params.vars, {
+      const placeholders = entryPlaceholders(manifest, workerName, subdomain, appBase);
+      const vars = installVars(primaryManifest, params.vars, {
         workerName,
         subdomain,
         accountId: steps.accountId(),
         workerUrl: appBase,
+        ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });
+
+      // The other Workers the change reaches: a version each, checked, not serving yet.
+      const entryContext: EntryUploadContext = {
+        installId: params.installId,
+        installWorkerName: workerName,
+        source: { zipUrl: started.zipUrl, host },
+        resources: diff.existing,
+        workflowNames: diff.workflowNames,
+        rateLimitIds,
+        userVars: params.vars,
+        subdomain,
+        accountId: steps.accountId(),
+        appUrl: appBase,
+        placeholders,
+        entryNames,
+      };
+      const otherVersions: OtherWorkerUpdate[] = [];
+      for (const w of affectedOthers) {
+        const changes = secretsOf(w);
+        const made = await reconfigureOtherWorkerPhase(steps, step, entryContext, w, {
+          changes,
+          slug: started.slug,
+          version: started.version,
+          jobId: params.jobId,
+          canaryAttempts: CANARY_MAX_ATTEMPTS,
+        });
+        const serving = snapshot.otherVersions[w.scriptName];
+        if (made.secretsPatched && serving !== undefined) {
+          othersPatched.push({
+            workerName: w.scriptName,
+            label: workerLabel(w),
+            uploadedVersionId: made.uploadedVersionId,
+            servingVersionId: serving,
+            changes,
+          });
+        }
+        otherVersions.push(made);
+      }
 
       const uploaded = await run("upload Worker version", async ({ log }) => {
         for (const warning of vars.warnings) log.warn(warning);
         const { migrations: _none, ...base } = buildScriptMetadata({
-          manifest,
+          manifest: primaryManifest,
           workerName,
           resources: diff.existing,
           vars: vars.vars,
           assetsJwt,
           workflowNames: diff.workflowNames,
           rateLimitIds,
+          entryWorkers: entryNames,
         });
         const metadata: VersionMetadata = {
           ...base,
@@ -534,7 +654,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
             accountId: steps.accountId(),
             artifact: { zipUrl: started.zipUrl, host },
             workerName,
-            modules: manifest.worker.modules,
+            modules: primaryManifest.worker.modules,
             metadata,
             target: "version",
           }),
@@ -564,13 +684,13 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
 
       // Secrets go on a version of their own, made from the upload, before
       // anything serves either.
-      const final = secretsChange
+      const final = primarySecretsChange
         ? await applySecretChangesPhase(steps, {
             jobId: params.jobId,
             workerName,
             uploadedVersionId: uploaded.versionId,
             version: started.version,
-            changes: params.secrets,
+            changes: primaryChanges,
           })
         : { versionId: uploaded.versionId };
       uploadedVersionId = final.versionId;
@@ -598,6 +718,19 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         });
       }
 
+      // The other Workers first, the primary one last.
+      for (const other of otherVersions) {
+        attemptedOthers.push(other.worker.scriptName);
+        promotedVersions[other.worker.scriptName] = await promoteOtherWorkerPhase(
+          steps,
+          entryContext,
+          other,
+          started.version,
+          "Appflare: settings change",
+        );
+        promotedOthers.push(other.worker.scriptName);
+      }
+
       await run("promote version", async ({ log, cf }) => {
         await cf().versions.createDeployment(workerName, {
           versions: [{ version_id: final.versionId, percentage: 100 }],
@@ -615,6 +748,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           vars: params.vars,
           secrets: params.secrets,
           at: new Date(now()),
+          otherVersions: promotedVersions,
         });
         log.info("Recorded the new settings and secret names on the install.");
         return {};
@@ -697,8 +831,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     let secretsUndo: "undone" | "not-needed" | "left" | "failed" | null = null;
     if (
       serving === null &&
-      secretsChange &&
       undoContext !== null &&
+      changesSecrets(undoContext.changes) &&
       snapshotVersionId !== null &&
       ownUploadId !== null
     ) {
@@ -708,14 +842,52 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           workerName: undoContext.workerName,
           uploadedVersionId: ownUploadId,
           servingVersionId: snapshotVersionId,
-          changes: params.secrets,
+          changes: undoContext.changes,
           slots: undoContext.slots,
         });
       } catch {
         secretsUndo = "failed";
       }
     }
+    // The same for each other Worker whose new version was not promoted.
+    for (const other of othersPatched) {
+      if (promotedOthers.includes(other.workerName) || undoContext === null) continue;
+      try {
+        await undoSecretChangesPhase(steps, {
+          jobId: params.jobId,
+          workerName: other.workerName,
+          uploadedVersionId: other.uploadedVersionId,
+          servingVersionId: other.servingVersionId,
+          changes: other.changes,
+          slots: undoContext.slots,
+          label: other.label,
+        });
+      } catch {
+        // Reported with the primary Worker's outcome below; nothing serves the values.
+      }
+    }
     const moveEmail = emailMoveStarted;
+    // The primary Worker still serves the previous settings: the other
+    // Workers whose promotion started go back to the versions the snapshot
+    // kept (one deployment call each, harmless when repeated).
+    const othersLeft: Record<string, string | null> = {};
+    if (serving === null) {
+      for (const name of attemptedOthers) {
+        const back = snapshotOthers[name];
+        try {
+          if (back === undefined) throw new Error("the snapshot has no version of it");
+          await deployOtherWorkerVersionPhase(
+            steps,
+            { primary: false, scriptName: name },
+            back,
+            "the previous settings",
+          );
+        } catch {
+          othersLeft[name] = promotedVersions[name] ?? null;
+        }
+      }
+    }
+    const othersRecorded = serving !== null ? promotedVersions : othersLeft;
     await step.do("mark settings change failed", async () => {
       const orm = createDb(env.DB);
       const at = new Date(now());
@@ -732,7 +904,14 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           vars: params.vars,
           secrets: params.secrets,
           at,
+          otherVersions: othersRecorded,
         });
+      } else if (Object.keys(othersRecorded).length > 0) {
+        // Other Workers left on the new settings: a rollback to the snapshot puts them back.
+        await orm
+          .update(installs)
+          .set({ worker_versions_json: mergedWorkerVersions(othersRecorded) })
+          .where(eq(installs.id, params.installId));
       }
       await orm
         .update(installs)

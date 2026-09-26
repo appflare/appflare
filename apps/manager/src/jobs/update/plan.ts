@@ -430,6 +430,8 @@ export interface SnapshotInput {
   doMigrationTag: string | null;
   /** The catalog version the job moves to (the same one for a settings change). */
   targetVersion: string;
+  /** An app of several Workers: the version each other Worker served, by Worker name. */
+  otherVersions?: Readonly<Record<string, string>>;
 }
 
 /** The `snapshots` row an update or a settings change inserts before it changes anything. */
@@ -457,6 +459,10 @@ export function snapshotRow(input: SnapshotInput): typeof snapshots.$inferInsert
     // "{}" for an install with no changed settings, so a rollback can tell
     // "none" from "not recorded" (null).
     config_json: input.before.config_json === undefined ? null : (input.before.config_json ?? "{}"),
+    worker_versions_json:
+      input.otherVersions === undefined || Object.keys(input.otherVersions).length === 0
+        ? null
+        : JSON.stringify(input.otherVersions),
   };
 }
 

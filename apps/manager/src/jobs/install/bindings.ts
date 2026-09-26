@@ -1,4 +1,5 @@
 import {
+  entryWorkerRefName,
   isVectorizeBinding,
   serviceBindingProblem,
   type VectorizeIndexConfig,
@@ -153,6 +154,9 @@ export function planBindings(workerName: string, bindings: readonly WorkerBindin
         name: resourceName(workerName, binding.name),
       });
     } else if (binding.type === "durable_object_namespace") {
+      // A class in another Worker of the app: that Worker implements and
+      // records it; the upload points the binding at its installed name.
+      if (entryWorkerRefName(binding.script_name) !== null) continue;
       if (typeof binding.script_name === "string" && binding.script_name.length > 0) {
         plan.problems.push(
           `Durable Object binding ${binding.name} points at another Worker ("${binding.script_name}"); Appflare installs self-contained apps only.`,

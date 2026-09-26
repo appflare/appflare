@@ -136,9 +136,21 @@ describe("heartbeatProperties", () => {
       installs_with_domain: 1,
       installs_with_email_routing: 0,
       installs_with_crons: 2,
+      installs_with_several_workers: 0,
       removed_with_retained: 1,
       apps: ["cut", "open-seo"],
     });
+  });
+
+  it("counts installs of apps of several Workers", () => {
+    const base = heartbeat();
+    const first = base.installs[0];
+    if (first === undefined) throw new Error("no install");
+    const props = heartbeatProperties({
+      ...base,
+      installs: [{ ...first, workers: 2 }, ...base.installs.slice(1)],
+    });
+    expect(props.installs_with_several_workers).toBe(1);
   });
 
   it("counts custom catalogs and their installs, and never names their apps", () => {
@@ -207,6 +219,7 @@ function job(overrides: Partial<JobRow>): JobRow {
     buildKind: "artifact",
     snapshotTargetVersion: null,
     startedBy: "admin",
+    workers: 1,
     ...overrides,
   };
 }
@@ -229,6 +242,7 @@ describe("jobEvents", () => {
       from_version: null,
       tier: "artifact",
       origin: "catalog",
+      workers: 1,
       trigger: "manual",
       outcome: "succeeded",
       duration_s: 60,

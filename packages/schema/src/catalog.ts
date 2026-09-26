@@ -121,6 +121,134 @@ export function buildCommandText(command: CatalogBuildCommand): string {
 }
 
 /**
+ * The Workers of an entry that installs as several (`install.workers`). Each
+ * has a short name within the entry; the install runs the primary Worker
+ * under the install's own Worker name and every other one as
+ * `<install Worker name>-<name>`, so the name must fit in a Worker name.
+ */
+
+/** The most Workers one catalog entry may declare. */
+export const MAX_ENTRY_WORKERS = 5;
+
+/** The longest name of one of an entry's Workers. */
+export const MAX_ENTRY_WORKER_NAME_LENGTH = 24;
+
+/** Lowercase letters, digits and inner hyphens: what a Worker name allows. */
+export const ENTRY_WORKER_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+/** The name of one of an entry's Workers, as `install.workers[].name` gives it. */
+export const entryWorkerNameSchema = z
+  .string()
+  .min(1)
+  .max(MAX_ENTRY_WORKER_NAME_LENGTH)
+  .regex(
+    ENTRY_WORKER_NAME_PATTERN,
+    "must be lowercase letters, digits, and hyphens, starting and ending with a letter or digit",
+  );
+
+/**
+ * Which of an entry's Workers a secret or var goes to, by name. Only for
+ * entries with `install.workers`.
+ */
+const entryWorkerTargetsSchema = z
+  .array(entryWorkerNameSchema)
+  .min(1)
+  .describe(
+    "For an entry that installs several Workers (`install.workers`): the names of the Workers " +
+      "that get this value. Omitted means every Worker for a secret, and for a var the Workers " +
+      "whose wrangler config declares it (every Worker when none does).",
+  );
+
+/** One Worker of an entry that installs as several (`install.workers`). */
+export const catalogEntryWorkerSchema = z
+  .object({
+    name: entryWorkerNameSchema.describe(
+      "The Worker's name within the entry, for example `api`. The primary Worker installs " +
+        "under the install's Worker name; every other one as `<install Worker name>-<name>`. " +
+        "Placeholders name it too: `{{workerUrl:<name>}}` and `{{workerName:<name>}}`.",
+    ),
+    wranglerConfig: z
+      .string()
+      .min(1)
+      .describe("Path of this Worker's wrangler config in the repository."),
+    buildCommand: z
+      .union([
+        singleBuildCommandSchema,
+        z.array(singleBuildCommandSchema).min(1).max(MAX_BUILD_COMMANDS),
+      ])
+      .describe(
+        "The command, or the commands in order, the packer runs at the root of the checkout for " +
+          "this Worker, after `install.buildCommand` (when set) and before bundling it. Same " +
+          "rules as `install.buildCommand`.",
+      )
+      .optional(),
+    primary: z
+      .literal(true)
+      .describe(
+        "The Worker that answers the app's address and its health check. Exactly one Worker " +
+          "is primary, and its `wranglerConfig` is `install.wranglerConfig`.",
+      )
+      .optional(),
+  })
+  .describe("One Worker of an entry that installs as several Workers.");
+export type CatalogEntryWorker = z.infer<typeof catalogEntryWorkerSchema>;
+
+/** A problem with an entry's `install.workers`, on a path inside `install`. */
+export interface EntryWorkersProblem {
+  path: Array<string | number>;
+  message: string;
+}
+
+/**
+ * What is wrong with an install's `workers` list; empty when nothing is (or
+ * when the entry installs one Worker).
+ */
+export function entryWorkersProblems(install: {
+  tier: string;
+  wranglerConfig: string;
+  workers?: readonly CatalogEntryWorker[] | undefined;
+}): EntryWorkersProblem[] {
+  const workers = install.workers;
+  if (workers === undefined) return [];
+  const problems: EntryWorkersProblem[] = [];
+  if (install.tier !== "artifact") {
+    problems.push({
+      path: ["workers"],
+      message: `install.workers is only for the artifact tier; this entry's tier is ${install.tier}`,
+    });
+  }
+  const primaries = workers.filter((w) => w.primary === true);
+  const primary = primaries[0];
+  if (primaries.length !== 1 || primary === undefined) {
+    problems.push({
+      path: ["workers"],
+      message: `exactly one Worker in install.workers must set "primary": true; ${primaries.length} do`,
+    });
+  } else if (primary.wranglerConfig !== install.wranglerConfig) {
+    problems.push({
+      path: ["wranglerConfig"],
+      message: `install.wranglerConfig must be the primary Worker's wranglerConfig ("${primary.wranglerConfig}"), so tools that build one Worker build the primary`,
+    });
+  }
+  const names = new Set<string>();
+  const configs = new Set<string>();
+  workers.forEach((w, i) => {
+    if (names.has(w.name)) {
+      problems.push({ path: ["workers", i, "name"], message: `two Workers are named "${w.name}"` });
+    }
+    names.add(w.name);
+    if (configs.has(w.wranglerConfig)) {
+      problems.push({
+        path: ["workers", i, "wranglerConfig"],
+        message: `two Workers are built from ${w.wranglerConfig}`,
+      });
+    }
+    configs.add(w.wranglerConfig);
+  });
+  return problems;
+}
+
+/**
  * How an app is built: `artifact` (a signed release catalog CI built),
  * `sandbox` (built from its pinned commit in the account's sandbox Worker),
  * or `self-deploying` (the app's own installer, run in the sandbox Worker).
@@ -224,6 +352,11 @@ export const catalogSecretSchema = z
      * defaulted for the same reason as `optional`.
      */
     derive: catalogSecretDeriveSchema.optional(),
+    /**
+     * For an entry with `install.workers`: the Workers that get the secret.
+     * Omitted means every Worker of the entry.
+     */
+    workers: entryWorkerTargetsSchema.optional(),
   })
   // The manifest-level refinement does not reach the JSON Schema; this states
   // its per-secret half there (no `generate: true` or `optional: true` next to
@@ -512,6 +645,11 @@ export const catalogVarSchema = z
           "for, and only allowed with, `select`. Values must be distinct.",
       )
       .optional(),
+    /**
+     * For an entry with `install.workers`: the Workers that get the var.
+     * Omitted means the Workers whose wrangler config declares it, else every Worker.
+     */
+    workers: entryWorkerTargetsSchema.optional(),
   })
   .superRefine((v, ctx) => {
     for (const problem of selectVarProblems(v)) {
@@ -873,8 +1011,30 @@ export const catalogInstallSchema = z
      * the `self-deploying` tier.
      */
     selfDeploying: catalogSelfDeployingSchema.optional(),
+    // --- Several Workers -----------------------------------------------------
+    /**
+     * An app that installs as several Workers deployed together; see
+     * {@link catalogEntryWorkerSchema}. Omitted for an app of one Worker
+     * (`wranglerConfig`). Optional for the same reason as `fixedWorkerName`.
+     */
+    workers: z
+      .array(catalogEntryWorkerSchema)
+      .min(2)
+      .max(MAX_ENTRY_WORKERS)
+      .describe(
+        "For an app that installs as several Workers deployed together (for example an API and a " +
+          "web front end): each Worker's name, wrangler config and optional build command. Exactly " +
+          "one is `primary`: it answers the app's address and health check, and its " +
+          "`wranglerConfig` is `install.wranglerConfig`. Service bindings between these Workers, " +
+          "and Durable Object bindings to a class in another of them, are pointed at the installed " +
+          "Workers; bindings of the same name share one resource. Artifact tier only.",
+      )
+      .optional(),
   })
   .superRefine((install, ctx) => {
+    for (const problem of entryWorkersProblems(install)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
     if (install.sandbox !== undefined && !runsInSandbox(install.tier)) {
       ctx.addIssue({
         code: "custom",
@@ -898,7 +1058,8 @@ export const catalogInstallSchema = z
   // The refinements do not reach the JSON Schema; `allOf` states them there
   // (no `sandbox`, or a tier that runs in the sandbox Worker; `selfDeploying`
   // exactly when the tier is `self-deploying`; no `emailRouting` on a
-  // `self-deploying` entry), so editors refuse the same manifests.
+  // `self-deploying` entry; `workers` only on the `artifact` tier), so editors
+  // refuse the same manifests.
   .meta({
     allOf: [
       {
@@ -923,6 +1084,12 @@ export const catalogInstallSchema = z
         anyOf: [
           { not: { required: ["emailRouting"] } },
           { properties: { tier: { not: { const: "self-deploying" } } } },
+        ],
+      },
+      {
+        anyOf: [
+          { not: { required: ["workers"] } },
+          { properties: { tier: { const: "artifact" } } },
         ],
       },
     ],
@@ -1115,6 +1282,38 @@ export const catalogManifestSchema = z
         message: problem.message,
       });
     }
+    // `workers` on a secret or var names Workers of `install.workers`.
+    const declared = manifest.install.workers;
+    const names = new Set((declared ?? []).map((w) => w.name));
+    const check = (
+      field: "secrets" | "vars",
+      items: ReadonlyArray<{ name: string; workers?: readonly string[] | undefined }>,
+    ): void => {
+      items.forEach((item, i) => {
+        if (item.workers === undefined) return;
+        if (declared === undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: [field, i, "workers"],
+            message: `${field}[${i}].workers is only for an entry that installs several Workers (install.workers)`,
+          });
+          return;
+        }
+        for (const name of item.workers) {
+          if (!names.has(name)) {
+            ctx.addIssue({
+              code: "custom",
+              path: [field, i, "workers"],
+              message: `${item.name} names the Worker "${name}", which install.workers does not declare`,
+            });
+          }
+        }
+      });
+    };
+    check("secrets", manifest.secrets);
+    check("vars", manifest.vars);
+  })
+  .superRefine((manifest, ctx) => {
     if (manifest.install.tier !== "self-deploying") return;
     manifest.secrets.forEach((secret, i) => {
       if (isOptionalSecret(secret)) {

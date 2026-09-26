@@ -58,10 +58,12 @@ export async function applySecretChangesPhase(
     /** The catalog version, as the version's tag. */
     version: string;
     changes: SecretChanges;
+    /** Appended to the step name, to tell apart the Workers of an app of several. */
+    label?: string;
   },
 ): Promise<{ versionId: string }> {
   const { jobId, workerName, uploadedVersionId, changes } = input;
-  return steps.run("set and remove secrets", async ({ log, cf, orm }) => {
+  return steps.run(`set and remove secrets${input.label ?? ""}`, async ({ log, cf, orm }) => {
     const api = cf();
     const marker = secretVersionMessage(jobId);
     const newest = newestVersion(await api.versions.listVersions(workerName));
@@ -160,11 +162,14 @@ export async function undoSecretChangesPhase(
     uploadMessage?: string;
     /** The annotation of the version that puts the serving secrets back. */
     undoneMessage?: string;
+    /** Appended to the step name, to tell apart the Workers of an app of several. */
+    label?: string;
   },
 ): Promise<"undone" | "not-needed" | "left"> {
   const { jobId, workerName } = input;
   const undoneMessage = input.undoneMessage ?? secretsUndoneMessage(jobId);
-  const result = await steps.run("put back the previous secrets", async ({ log, cf }) => {
+  const stepName = `put back the previous secrets${input.label ?? ""}`;
+  const result = await steps.run(stepName, async ({ log, cf }) => {
     const api = cf();
     const newest = newestVersion(await api.versions.listVersions(workerName));
     const message = newest?.annotations?.["workers/message"];

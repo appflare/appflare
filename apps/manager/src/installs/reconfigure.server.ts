@@ -2,6 +2,8 @@ import {
   type ArtifactManifest,
   artifactManifestSchema,
   type CatalogManifest,
+  type EntryWorkerPlaceholders,
+  entryPlaceholderValues,
   type SandboxInstanceType,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -9,6 +11,7 @@ import { ulid } from "ulidx";
 import { effectiveManifest } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { type BuildKind, installs, resources } from "../db/schema";
+import { parseStoredManifest } from "../jobs/entry-workers";
 import type { ReconfigureJobParams } from "../jobs/reconfigure";
 import {
   changedVarNames,
@@ -68,7 +71,12 @@ export interface InstallSettings {
   /** One per setting the installed version declares, in the catalog's order. */
   fields: SettingField[];
   /** What `{{workerName}}` and `{{workerUrl}}` stand for in this install. */
-  placeholders: { workerName: string; workerUrl: string | null };
+  placeholders: {
+    workerName: string;
+    workerUrl: string | null;
+    /** An app of several Workers: what `{{workerUrl:<name>}}` and `{{workerName:<name>}}` become. */
+    entryWorkers?: EntryWorkerPlaceholders;
+  };
   /** Names and labels only; values are never read back. */
   secrets: SecretSlot[];
   /** Whether secrets the version does not need can be removed (not for a self-deploying app). */
@@ -217,11 +225,20 @@ export async function readInstallSettingsCore(
     kind: install.build_kind,
     unavailable: ctx.problem ?? statusRefusal(install.status),
     fields: ctx.fields.map((f) => ({ ...f, stored: stored[f.name] ?? null })),
-    placeholders: {
-      workerName: install.worker_name,
+    placeholders: await (async () => {
       // Where the app is reached: its custom domain while workers.dev is off.
-      workerUrl: await readAppBaseUrl(orm, install, deps.subdomain),
-    },
+      const workerUrl = await readAppBaseUrl(orm, install, deps.subdomain);
+      const catalog = parseStoredManifest(install.manifest_json)?.catalog;
+      const entryWorkers =
+        catalog === undefined
+          ? undefined
+          : entryPlaceholderValues(catalog, install.worker_name, deps.subdomain, workerUrl);
+      return {
+        workerName: install.worker_name,
+        workerUrl,
+        ...(entryWorkers === undefined ? {} : { entryWorkers }),
+      };
+    })(),
     // Derived secrets are never entered; their source's row says they follow it.
     secrets: ctx.slots.filter((slot) => slot.derivedFrom === undefined),
     canRemoveSecrets: install.build_kind !== "self-deploying",

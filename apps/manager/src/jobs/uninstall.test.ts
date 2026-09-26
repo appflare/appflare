@@ -1215,3 +1215,44 @@ describe("uninstall job: external domains", () => {
     expect(saas.world.scripts["appflare-gateway"]?.some((b) => b.name === "APP_I1")).toBe(false);
   });
 });
+
+describe("uninstall job, an app of several Workers", () => {
+  it("deletes every other Worker of the app before the primary one", async () => {
+    await seedInstall();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:worker:cut-jobs', 'i1', 'worker', NULL, 'cut-jobs', 'cut-jobs', 1),
+              ('i1:subdomain:cut-jobs', 'i1', 'subdomain', NULL, 'cut-jobs.appflare-dev.workers.dev', NULL, 1)`,
+    ).run();
+    const fake = fakeWorld({ scripts: new Set(["appflare", "cut", "cut-jobs"]) });
+    const r = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fake);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const calls = fake.world.calls;
+    expect(calls.indexOf("DELETE /workers/scripts/cut-jobs?force=true")).toBeGreaterThan(-1);
+    expect(calls.indexOf("DELETE /workers/scripts/cut-jobs?force=true")).toBeLessThan(
+      calls.indexOf("DELETE /workers/scripts/cut?force=true"),
+    );
+    expect(fake.world.scripts).toEqual(new Set(["appflare"]));
+    expect(r.state("i1:worker:cut-jobs")).toBe("deleted");
+    expect(r.state("i1:subdomain:cut-jobs")).toBe("deleted");
+    expect(r.step.names.slice(0, 3)).toEqual([
+      "start",
+      "delete Worker cut-jobs",
+      "delete Worker cut",
+    ]);
+  });
+
+  it("counts another Worker that is already gone as deleted", async () => {
+    await seedInstall();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:worker:cut-jobs', 'i1', 'worker', NULL, 'cut-jobs', 'cut-jobs', 1)`,
+    ).run();
+    const fake = fakeWorld();
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.state("i1:worker:cut-jobs")).toBe("deleted");
+    expect(r.logs.some((l) => l.message === 'Worker "cut-jobs" was already gone.')).toBe(true);
+  });
+});

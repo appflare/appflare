@@ -258,9 +258,11 @@ export async function uploadAssetsPhase(
   files: readonly AssetFile[],
   /** Where the zip lives (the self-update reads the manager's own release feed). */
   host: ArtifactHost = { kind: "catalog" },
+  /** Appended to every step name, to tell apart the Workers of an app of several. */
+  label = "",
 ): Promise<string | null> {
   if (files.length === 0) return null;
-  const session = await steps.run("open assets upload session", async ({ log, cf }) => {
+  const session = await steps.run(`open assets upload session${label}`, async ({ log, cf }) => {
     const result = await cf().assets.createUploadSession(
       workerName,
       buildAssetsManifest(files.map((f) => ({ route: f.route, hash: f.hash, size: f.size }))),
@@ -291,7 +293,8 @@ export async function uploadAssetsPhase(
     for (const [p, part] of parts.entries()) {
       const name =
         `upload assets bucket ${b + 1}/${buckets.length}` +
-        (parts.length > 1 ? ` part ${p + 1}/${parts.length}` : "");
+        (parts.length > 1 ? ` part ${p + 1}/${parts.length}` : "") +
+        label;
       const uploaded = await steps.run(name, async ({ log }) =>
         settleUnit(
           await steps.units.api.uploadAssetPart({

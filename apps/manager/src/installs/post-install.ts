@@ -1,4 +1,9 @@
-import { type PlaceholderValues, renderPlaceholders } from "@appflare/schema";
+import {
+  type EntryWorkerPlaceholders,
+  type PlaceholderValues,
+  renderEntryWorkerPlaceholders,
+  renderPlaceholders,
+} from "@appflare/schema";
 
 /**
  * Post-install notes: markdown from the
@@ -17,6 +22,15 @@ export function workersDevUrl(
   return subdomain ? `https://${workerName}.${subdomain}.workers.dev` : null;
 }
 
-export function renderPostInstall(content: string, values: PostInstallValues): string {
-  return renderPlaceholders(content, values);
+/**
+ * `content` with the install's placeholders filled in, and for an app of
+ * several Workers `{{workerUrl:<name>}}` and `{{workerName:<name>}}` too.
+ */
+export function renderPostInstall(
+  content: string,
+  values: PostInstallValues,
+  entryWorkers?: EntryWorkerPlaceholders,
+): string {
+  const text = renderPlaceholders(content, values);
+  return entryWorkers === undefined ? text : renderEntryWorkerPlaceholders(text, entryWorkers);
 }

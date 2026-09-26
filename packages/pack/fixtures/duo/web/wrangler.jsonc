@@ -1,0 +1,25 @@
+{
+  // The primary Worker of the `duo` fixture: an app of two Workers.
+  "name": "duo-web",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-30",
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "vars": { "JOBS_URL": "https://duo-jobs.example.workers.dev" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "duo",
+      // account-specific; stripped by the packer.
+      "database_id": "11111111-2222-3333-4444-555555555555",
+      "migrations_dir": "../migrations"
+    }
+  ],
+  "queues": { "producers": [{ "binding": "TASKS", "queue": "duo-tasks" }] },
+  "services": [
+    { "binding": "JOBS", "service": "duo-jobs", "entrypoint": "Jobs" },
+    { "binding": "SELF", "service": "duo-web" }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "COUNTER", "class_name": "Counter", "script_name": "duo-jobs" }]
+  }
+}

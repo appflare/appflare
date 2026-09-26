@@ -43,6 +43,17 @@ When a change to an app reaches the `main` branch, CI:
    URLs, and manifest digest, and publishes it to
    `https://appflare.github.io/catalog/index.json`.
 
+An [app of several Workers](/catalog/submit/#apps-of-several-workers) is built and
+bundled one Worker at a time, in the order its entry lists them, and packed into one
+artifact. Its `manifest.json` is format 2: the primary Worker is `worker`, exactly
+as the only Worker of a one-Worker app is, and every other Worker is listed in
+`workers` with its own modules and static assets. D1 migrations are recorded once
+per binding, since Workers that share a binding share the database. Where a wrangler
+config names another Worker of the entry, the artifact records that Worker's name in
+the entry instead, and the manager fills in the name it installed that Worker under.
+One-Worker apps stay format 1. A manager older than format 2 refuses such an
+artifact rather than installing half the app.
+
 Releases are immutable. A change to `appflare.jsonc` alone, without a new pin, cannot
 be published as a new release; re-pin `source` to ship it. Two exceptions need no
 release:

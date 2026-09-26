@@ -211,6 +211,13 @@ export const installs = sqliteTable("installs", {
    * (else its first live domain).
    */
   served_domain: text("served_domain"),
+  /**
+   * For an app of several Workers: the version each Worker other than the
+   * primary one serves, as the last job left it, `{ [Worker name]: version
+   * id }`. Null for an app of one Worker (its version is
+   * `current_version_id`), or while not known.
+   */
+  worker_versions_json: text("worker_versions_json"),
   installed_at: timestamp("installed_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
   /** Set when the uninstall job finishes (status `uninstalled`). */
@@ -383,6 +390,12 @@ export const snapshots = sqliteTable(
      * recorded.
      */
     config_json: text("config_json"),
+    /**
+     * For an app of several Workers: the version each Worker other than the
+     * primary one served, `{ [Worker name]: version id }`. Null for an app of
+     * one Worker, whose version is `worker_version_id`.
+     */
+    worker_versions_json: text("worker_versions_json"),
   },
   (t) => [index("snapshots_install_id_idx").on(t.install_id)],
 );

@@ -1,6 +1,7 @@
 import type { D1TimeTravelRestore, RequestLog } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  appWorkers,
   artifactManifestSchema,
   type CatalogManifest,
   type CatalogSecret,
@@ -14,6 +15,7 @@ import { cronTriggerCount } from "../catalog/cron-triggers";
 import { installAppKey, unsignedTierRefusal } from "../catalog/sources";
 import { createDb, type Database } from "../db/client";
 import { installs, type JobStarter, jobs, resources, snapshots } from "../db/schema";
+import { otherDoTagsDiffer, otherWorkersMatch, storedOtherWorkers } from "../jobs/entry-workers";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import type { RollbackJobParams } from "../jobs/rollback";
 import { installerRunId } from "../jobs/self-deploying/phases";
@@ -279,7 +281,7 @@ export async function startUpdateCore(
   } else {
     const manifest = await deps.loadManifest(app);
     catalog = manifest.catalog;
-    newCrons = cronTriggerCount(manifest.worker.crons);
+    newCrons = appWorkers(manifest).reduce((n, w) => n + cronTriggerCount(w.worker.crons), 0);
     skipPreview = updatePath(
       manifest,
       install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
@@ -303,7 +305,13 @@ export async function startUpdateCore(
       recorded.filter((r) => r.kind === "secret").map((r) => r.name),
     ),
   );
-  const recordedCrons = recorded.filter((r) => r.kind === "cron").length;
+  // The installed version's other Workers keep their cron triggers with them, not as rows.
+  const recordedCrons =
+    recorded.filter((r) => r.kind === "cron").length +
+    storedOtherWorkers(install.manifest_json, install.worker_name).reduce(
+      (n, w) => n + cronTriggerCount(w.manifest.worker.crons),
+      0,
+    );
   const accountPaid = (await readAccountPlan(createDb(deps.db))) === "paid";
   const cronTriggers =
     newCrons !== null && newCrons > recordedCrons && catalog.plan !== "paid" && !accountPaid
@@ -503,11 +511,20 @@ export async function startRollbackCore(
   if (snapshot === undefined) {
     throw new VersionActionError("That snapshot does not belong to this install.");
   }
-  if (snapshot.worker_version_id === install.current_version_id) {
+  // An app of several Workers may have other Workers on another version
+  // while the primary one runs the snapshot's (an update that failed between
+  // promotions): the rollback puts them back.
+  if (
+    snapshot.worker_version_id === install.current_version_id &&
+    otherWorkersMatch(snapshot.worker_versions_json, install.worker_versions_json)
+  ) {
     throw new VersionActionError("The Worker already runs the version this snapshot recorded.");
   }
   const currentDoTag = install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json);
-  if (snapshot.do_migration_tag !== currentDoTag) {
+  if (
+    snapshot.do_migration_tag !== currentDoTag ||
+    otherDoTagsDiffer(snapshot.manifest_json, install.manifest_json, install.worker_name)
+  ) {
     throw new VersionActionError(
       "This update changed the app's Durable Object classes, and Cloudflare refuses to roll a Worker back across such a change.",
     );
@@ -718,6 +735,8 @@ export async function listSnapshotsCore(
       currentVersionId: installs.current_version_id,
       doMigrationTag: installs.do_migration_tag,
       manifestJson: installs.manifest_json,
+      workerName: installs.worker_name,
+      workerVersionsJson: installs.worker_versions_json,
       catalogVersion: installs.catalog_version,
       artifactDigest: installs.artifact_digest,
     })
@@ -769,12 +788,16 @@ export async function listSnapshotsCore(
       jobId: row.job_id,
       jobStatus: job?.status ?? null,
       jobKind: job?.kind ?? null,
-      isCurrent: row.worker_version_id === install.currentVersionId,
+      isCurrent:
+        row.worker_version_id === install.currentVersionId &&
+        otherWorkersMatch(row.worker_versions_json, install.workerVersionsJson),
       sameCode: snapshotHasSameCode(
         { catalogVersion: row.catalog_version, artifactDigest: row.artifact_digest },
         install,
       ),
-      crossesDoMigration: row.do_migration_tag !== currentDoTag,
+      crossesDoMigration:
+        row.do_migration_tag !== currentDoTag ||
+        otherDoTagsDiffer(row.manifest_json, install.manifestJson, install.workerName),
       databases: liveDatabases.flatMap((d) => {
         const bookmark = d.cf_id === null ? undefined : bookmarks[d.cf_id];
         return d.cf_id === null || bookmark === undefined

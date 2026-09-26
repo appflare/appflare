@@ -1,6 +1,7 @@
 import {
   type ArtifactManifest,
   appServices,
+  combinedWorkerFacts,
   type RepositoryDetection,
   tooManyModulesMessage,
   type UNSUPPORTED_WRANGLER_SECTIONS,
@@ -8,8 +9,9 @@ import {
 
 type UnsupportedWranglerSection = (typeof UNSUPPORTED_WRANGLER_SECTIONS)[number];
 
+import { entryBindings, entryNameProblems, entryWorkers } from "../jobs/entry-workers";
 import { planBindings } from "../jobs/install/bindings";
-import { planQueueConsumers } from "../jobs/install/queue-consumers";
+import { planEntryQueueConsumers } from "../jobs/install/entry-worker-phases";
 
 /**
  * What the review of a build from a repository (or from source) shows before
@@ -83,35 +85,47 @@ export interface SourceReview {
  * does was changed by the build and is refused.
  */
 export function reviewBuild(
-  manifest: Pick<ArtifactManifest, "worker" | "catalog">,
+  manifest: ArtifactManifest,
   detection: Pick<RepositoryDetection, "unsupported"> | null,
   workerName: string,
   origin: "repository" | "source" = "repository",
 ): SourceReview {
-  const plan = planBindings(workerName, manifest.worker.bindings);
-  const queues = planQueueConsumers(workerName, manifest.worker);
+  // An app of several Workers is reviewed as a whole: its resources are the
+  // app's, shared by binding name.
+  const workers = entryWorkers(manifest, workerName);
+  const plan = planBindings(workerName, entryBindings(manifest));
+  const queues = planEntryQueueConsumers(workerName, manifest, workers);
+  const facts = combinedWorkerFacts(manifest);
   const problems = [
     ...(detection?.unsupported ?? []).map(unsupportedSectionProblem),
     ...plan.problems,
     ...queues.problems,
+    ...entryNameProblems(manifest, workerName),
   ];
-  const tooMany = tooManyModulesMessage(manifest.worker.modules.length, "This build");
-  if (tooMany !== null) problems.push(tooMany);
+  for (const w of workers) {
+    const tooMany = tooManyModulesMessage(
+      w.manifest.worker.modules.length,
+      w.primary ? "This build" : `The Worker "${w.name}" of this build`,
+    );
+    if (tooMany !== null) problems.push(tooMany);
+  }
   if (origin === "repository" && manifest.catalog.install.emailRouting !== undefined) {
     problems.push(
       "The build's manifest sets up Email Routing, which Appflare does only for catalog apps.",
     );
   }
-  const plain = new Set(
-    manifest.worker.bindings
-      .filter((b) => b.type === "plain_text" || b.type === "json")
-      .map((b) => b.name),
-  );
-  for (const secret of manifest.catalog.secrets) {
-    if (plain.has(secret.name)) {
-      problems.push(
-        `${secret.name} is both a secret and a plain var of the wrangler config; a Worker cannot have both. Remove it from one of them.`,
-      );
+  for (const w of workers) {
+    const plain = new Set(
+      w.manifest.worker.bindings
+        .filter((b) => b.type === "plain_text" || b.type === "json")
+        .map((b) => b.name),
+    );
+    for (const secret of w.manifest.catalog.secrets) {
+      if (plain.has(secret.name)) {
+        problems.push(
+          `${secret.name} is both a secret and a plain var of the wrangler config${w.primary ? "" : ` of the Worker "${w.name}"`}; a Worker cannot have both. Remove it from one of them.`,
+        );
+      }
     }
   }
   // A build's manifest is a sandbox tier one, whose `requires: containers`
@@ -120,7 +134,7 @@ export function reviewBuild(
   // Containers (the packer refuses the section). What it runs on comes from
   // the built Worker's bindings, and any other requirement the catalog lists.
   const declared = manifest.catalog.requires.filter((r) => r !== BUILD_CONTAINER_REQUIREMENT);
-  const services = appServices({ ...manifest.catalog, requires: declared }, manifest.worker).ids;
+  const services = appServices({ ...manifest.catalog, requires: declared }, facts).ids;
   const requires = [
     ...new Set([
       ...declared,
@@ -136,8 +150,8 @@ export function reviewBuild(
     })),
     durableObjects: plan.durableObjects.map((d) => d.className),
     workflows: plan.workflows.map((w) => w.name),
-    bindings: manifest.worker.bindings.map((b) => ({ type: b.type, name: b.name })),
-    crons: [...new Set(manifest.worker.crons)],
+    bindings: entryBindings(manifest).map((b) => ({ type: b.type, name: b.name })),
+    crons: [...new Set(facts.crons)],
     services,
     requires,
     problems,
@@ -151,13 +165,14 @@ export function reviewBuild(
  * compare with (a sandbox tier app).
  */
 export function bindingChanges(
-  release: Pick<ArtifactManifest, "worker"> | null,
-  built: Pick<ArtifactManifest, "worker">,
+  release: ArtifactManifest | null,
+  built: ArtifactManifest,
 ): { added: string[]; removed: string[] } | null {
   if (release === null) return null;
   const key = (b: { type: string; name: string }) => `${b.type} ${b.name}`;
-  const before = new Set(release.worker.bindings.map(key));
-  const after = new Set(built.worker.bindings.map(key));
+  // Every Worker's bindings, for an app of several.
+  const before = new Set(combinedWorkerFacts(release).bindings.map(key));
+  const after = new Set(combinedWorkerFacts(built).bindings.map(key));
   return {
     added: [...after].filter((k) => !before.has(k)),
     removed: [...before].filter((k) => !after.has(k)),

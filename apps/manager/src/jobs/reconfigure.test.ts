@@ -975,3 +975,59 @@ describe("moving an app's email to another zone", () => {
     expect(after?.email).toEqual({ zoneId: ZONE_ID, zoneName: "example.com", leftover: [] });
   });
 });
+
+describe("settings change job, an app of several Workers", () => {
+  const JOBS_OLD = "11111111-2222-4333-8444-555555555555";
+  const JOBS_KEY = "jobs-key-DO-NOT-LEAK";
+  const TWO: ArtifactFixtureOptions = {
+    ...APP,
+    otherWorkers: [{ name: "jobs", bindings: [{ type: "kv_namespace", name: "CUT_KV" }] }],
+    catalog: {
+      ...APP.catalog,
+      secrets: [
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true, workers: ["app"] },
+        { name: "JOBS_KEY", label: "Jobs key", generate: false, workers: ["jobs"] },
+      ],
+    },
+  };
+
+  it("gives the secret only to the Worker that gets it, promoting that Worker first", async () => {
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+    });
+    const r = await reconfigure({
+      app: TWO,
+      resources: [
+        ...RESOURCES,
+        { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
+        { kind: "secret", binding: "JOBS_KEY", name: "JOBS_KEY" },
+      ],
+      request: {
+        vars: { HOME_PAGE: "links", TITLE: "My links" },
+        secrets: { set: { JOBS_KEY }, unset: [] },
+      },
+      front: async (request) =>
+        /\/workers\/(scripts|workers)\/cut-jobs\b/.test(request.url) ||
+        request.url.includes("-cut-jobs.")
+          ? jobs.fetch(request.url, request)
+          : null,
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    // The other Worker: a version with the settings, the secret patched on top, promoted.
+    expect(jobs.state.versionPatches).toEqual([
+      expect.objectContaining({ env: { JOBS_KEY: { type: "secret_text", text: JOBS_KEY } } }),
+    ]);
+    expect(jobs.state.deployments[0]?.versions[0]?.version_id).not.toBe(JOBS_OLD);
+    // The primary Worker gets the settings but not the other Worker's secret.
+    expect(r.fake.state.versionPatches).toEqual([]);
+    expect(r.fake.state.deployments[0]?.versions[0]?.version_id).not.toBe(OLD_VERSION);
+    expect(JSON.parse(String(r.snapshot?.worker_versions_json))).toEqual({ "cut-jobs": JOBS_OLD });
+    const names = r.step.names;
+    expect(names.indexOf('promote version (Worker "cut-jobs")')).toBeLessThan(
+      names.indexOf("promote version"),
+    );
+    expect(JSON.stringify(r.logs)).not.toContain(JOBS_KEY);
+  });
+});

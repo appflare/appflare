@@ -21,6 +21,15 @@ import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/e
 import { appSlugLabel } from "../installs/source-review";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
 import {
+  entryBindings,
+  entryPlaceholders,
+  entryScriptNamesOf,
+  entryWorkers,
+  storedOtherWorkers,
+  workerCountProblem,
+  workerLabel,
+} from "./entry-workers";
+import {
   type ArtifactOrigin,
   artifactOriginOf,
   cleanupSandboxBuildsPhase,
@@ -29,6 +38,15 @@ import {
   sourceManifest,
 } from "./install/artifact-source";
 import { checkCronLimitPhase } from "./install/cron-limit";
+import {
+  deployOtherWorkerVersionPhase,
+  type EntryUploadContext,
+  type OtherWorkerUpdate,
+  planEntryQueueConsumers,
+  prepareOtherWorkerPhase,
+  promoteOtherWorkerPhase,
+  setOtherWorkerCronsPhase,
+} from "./install/entry-worker-phases";
 import { healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
@@ -45,9 +63,9 @@ import {
   uploadAssetsPhase,
 } from "./install/phases";
 import {
+  consumerPlans,
   consumerPlansOf,
   diffConsumerQueues,
-  planQueueConsumers,
   syncQueueConsumersPhase,
 } from "./install/queue-consumers";
 import { assignRateLimitsPhase } from "./install/rate-limits";
@@ -63,6 +81,7 @@ import {
   canarySkipReason,
   diffBindings,
   FULL_DEPLOY_REASON,
+  lastDurableObjectTag,
   lastDurableObjectTagOf,
   missingSecrets,
   previewUrl,
@@ -207,6 +226,27 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   let servingRecord: Partial<typeof installs.$inferInsert> | null = null;
   /** D1 databases that got new migration files (named when a failure leaves them ahead of the code). */
   const migrated: string[] = [];
+  /** An app of several Workers: its other Workers already moved to the new version. */
+  const promotedOthers: string[] = [];
+  /** The other Workers whose promotion started, and the version each serves once promoted. */
+  const attemptedOthers: string[] = [];
+  const promotedVersions: Record<string, string> = {};
+  /** The version each other Worker served when the snapshot was taken. */
+  let snapshotOthers: Record<string, string> | null = null;
+  /** The catalog version installed before the job, for the annotation of a return. */
+  let previousVersion = "the previous version";
+  /**
+   * Its other Workers' uploads that carry secrets this version introduces,
+   * for a failure before their promotion to take them off again.
+   */
+  const othersSecretsUndo: Array<{
+    workerName: string;
+    label: string;
+    versionId: string;
+    servingVersionId: string;
+    names: string[];
+    uploadMessage: string;
+  }> = [];
   /**
    * Set once an uploaded version carries secrets this version introduces:
    * what a failure before promotion needs to take them off again.
@@ -316,6 +356,13 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         vectorizeShapes: vectorizeShapesOf(install.manifest_json),
         // The installed version's queue consumers, to tell which ones change.
         previousConsumers: consumerPlansOf(install.manifest_json),
+        // An app of several Workers: what the installed version's other Workers have.
+        previousOthers: storedOtherWorkers(install.manifest_json, install.worker_name).map((w) => ({
+          scriptName: w.scriptName,
+          doTag: lastDurableObjectTag(w.manifest.worker.migrations),
+          crons: w.manifest.worker.crons,
+          consumers: consumerPlans(w.manifest.worker.queueConsumers),
+        })),
         emailRouting: emailRoutingOfManifest(install.manifest_json),
         userVars: parseVars(install.config_json),
         workersDev: install.workers_dev_enabled,
@@ -347,15 +394,31 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const manifestText = source.manifestText;
     // The signed Worker; the form's secrets and vars from a revision when the catalog lists one.
     const manifest: ArtifactManifest = sourceManifest(source);
+    // An app of several Workers: the primary one is the install's Worker and
+    // goes through the steps below; the others are uploaded and checked
+    // before it and promoted, one by one, right before it.
+    const workers = entryWorkers(manifest, workerName);
+    const primary = workers.find((w) => w.primary);
+    if (primary === undefined) throw new JobError("the artifact has no primary Worker");
+    const primaryManifest = primary.manifest;
+    const others = workers.filter((w) => !w.primary);
+    // A step output recorded before other Workers existed has none.
+    const previousOthers = started.previousOthers ?? [];
+    const previousOf = (name: string) => previousOthers.find((p) => p.scriptName === name);
+    const addedOthers = others.filter((w) => previousOf(w.scriptName) === undefined);
+    const droppedOthers = previousOthers.filter(
+      (p) => !others.some((w) => w.scriptName === p.scriptName),
+    );
+    const entryNames = entryScriptNamesOf(manifest, workerName);
     const diff = diffBindings(
       workerName,
-      manifest.worker.bindings,
+      entryBindings(manifest),
       started.resources,
       started.vectorizeShapes,
     );
-    const queuePlan = planQueueConsumers(workerName, manifest.worker);
+    const queuePlan = planEntryQueueConsumers(workerName, manifest, workers);
     const queueDiff = diffConsumerQueues(queuePlan.queues, started.resources);
-    const path = updatePath(manifest, started.appliedDoTag);
+    const path = updatePath(primaryManifest, started.appliedDoTag);
     const fullDeploy = path.fullDeploy;
     const recordedSecrets = started.resources.filter((r) => r.kind === "secret").map((r) => r.name);
     // A derived secret the Worker lacks comes with its source, which the
@@ -369,6 +432,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       const value = params.secrets[secret.name];
       if (value !== undefined && value.length > 0) secretValues[secret.name] = value;
     }
+    // The new secrets the primary Worker gets; the others' ride on their own uploads.
+    const primarySecretValues = Object.fromEntries(
+      Object.entries(secretValues).filter(([name]) =>
+        primaryManifest.catalog.secrets.some((s) => s.name === name),
+      ),
+    );
     const healthPath = appHealthPath(manifest.catalog.install);
     const healthMode = appHealthMode(manifest.catalog.install);
 
@@ -394,9 +463,31 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }
       // The upload fetches every module in one invocation; refuse before
       // the snapshot rather than failing mid-upload.
-      const tooMany = tooManyModulesMessage(manifest.worker.modules.length, "This version");
-      if (tooMany !== null) problems.push(tooMany);
+      for (const w of workers) {
+        const tooMany = tooManyModulesMessage(
+          w.manifest.worker.modules.length,
+          w.primary ? "This version" : `The Worker "${w.name}" of this version`,
+        );
+        if (tooMany !== null) problems.push(tooMany);
+      }
+      const tooManyWorkers = workerCountProblem(
+        workers.length,
+        started.accountPaid || params.paidConfirmed === true || manifest.catalog.plan === "paid",
+      );
+      if (tooManyWorkers !== null) problems.push(tooManyWorkers);
+      // A Worker new in this version would need every secret it gets, and
+      // Appflare keeps no secret values to give it.
+      for (const w of addedOthers) {
+        problems.push(
+          `This version adds the Worker "${w.name}" (${w.scriptName}), which an update cannot create; uninstall the app and install this version instead.`,
+        );
+      }
       if (problems.length > 0) throw new JobError(problems.join(" "));
+      for (const p of droppedOthers) {
+        log.warn(
+          `This version no longer has the Worker "${p.scriptName}"; it is left in place and removed when the app is uninstalled.`,
+        );
+      }
       for (const res of diff.toCreate) {
         log.info(`New binding ${res.binding}: creating ${RESOURCE_LABEL[res.kind]} "${res.name}".`);
       }
@@ -437,8 +528,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     // triggers than the Worker has, before anything changes. Skipped on
     // Workers Paid: a paid app was confirmed on it when it was installed, the
     // admin confirmed it for this update, or Settings records it.
-    const recordedCrons = started.resources.filter((r) => r.kind === "cron").length;
-    const wantedCrons = cronTriggerCount(manifest.worker.crons);
+    // The other Workers' cron triggers are theirs, not recorded rows.
+    const recordedCrons =
+      started.resources.filter((r) => r.kind === "cron").length +
+      previousOthers.reduce((n, p) => n + cronTriggerCount([...new Set(p.crons)]), 0);
+    const wantedCrons = workers.reduce(
+      (n, w) => n + cronTriggerCount([...new Set(w.manifest.worker.crons)]),
+      0,
+    );
     if (wantedCrons > recordedCrons) {
       await checkCronLimitPhase(steps, {
         workerName,
@@ -458,7 +555,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       resources: started.resources,
       appliedDoTag: started.appliedDoTag,
       targetVersion: params.version,
+      otherWorkers: others,
     });
+    snapshotOthers = others.length === 0 ? null : snapshot.otherVersions;
+    previousVersion = started.fromVersion;
 
     // 3. Resources for new bindings; nothing is deleted.
     for (const wf of diff.newWorkflows) await checkWorkflowNamePhase(steps, wf);
@@ -471,7 +571,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const rateLimitIds = await assignRateLimitsPhase(
       steps,
       params.installId,
-      manifest.worker.bindings,
+      entryBindings(manifest),
     );
 
     // 4. Static assets.
@@ -479,7 +579,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       steps,
       workerName,
       source.zipUrl,
-      manifest.assets.files,
+      primaryManifest.assets.files,
       source.host,
     );
 
@@ -497,11 +597,13 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       domains: started.domains ?? domainHostnames(started.resources),
       served: started.servedDomain,
     });
-    const vars = installVars(manifest, started.userVars, {
+    const placeholders = entryPlaceholders(manifest, workerName, subdomain, appBase);
+    const vars = installVars(primaryManifest, started.userVars, {
       workerName,
       subdomain,
       accountId: steps.accountId(),
       workerUrl: appBase,
+      ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
     });
 
     /** The metadata of the upload (never logged: it holds new secret values). */
@@ -509,17 +611,18 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       // Durable Object migrations go only to a full deploy, and only the
       // pending ones; the Worker has the others already.
       const { migrations: _all, ...base } = buildScriptMetadata({
-        manifest,
+        manifest: primaryManifest,
         workerName,
         resources: bound,
         vars: vars.vars,
         assetsJwt,
         workflowNames: diff.workflowNames,
         rateLimitIds,
+        entryWorkers: entryNames,
       });
       const metadata: ScriptMetadata = {
         ...base,
-        bindings: [...(base.bindings ?? []), ...secretBindings(secretValues)],
+        bindings: [...(base.bindings ?? []), ...secretBindings(primarySecretValues)],
         // Existing secrets are the only bindings carried over; everything else is sent above.
         keep_bindings: ["secret_text"],
       };
@@ -537,7 +640,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           accountId: steps.accountId(),
           artifact: { zipUrl: source.zipUrl, host: source.host },
           workerName,
-          modules: manifest.worker.modules,
+          modules: primaryManifest.worker.modules,
           metadata,
           target,
         }),
@@ -587,6 +690,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       pin_sha: manifest.source.sha,
       ...source.provenance,
       do_migration_tag: fullDeploy?.new_tag ?? started.appliedDoTag,
+      ...(others.length === 0
+        ? {}
+        : {
+            worker_versions_json: JSON.stringify({
+              ...snapshot.otherVersions,
+              ...promotedVersions,
+            }),
+          }),
     });
 
     /**
@@ -605,12 +716,66 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }
     }
 
+    // The other Workers' new versions, uploaded and checked before the
+    // primary one; none serves until the promotions below.
+    const entryContext: EntryUploadContext = {
+      installId: params.installId,
+      installWorkerName: workerName,
+      source: { zipUrl: source.zipUrl, host: source.host },
+      resources: bound,
+      workflowNames: diff.workflowNames,
+      rateLimitIds,
+      userVars: started.userVars,
+      subdomain,
+      accountId: steps.accountId(),
+      appUrl: appBase,
+      placeholders,
+      entryNames,
+    };
+    const otherUpdates: OtherWorkerUpdate[] = [];
+    for (const w of others) {
+      const update = await prepareOtherWorkerPhase(steps, step, entryContext, w, {
+        appliedDoTag: previousOf(w.scriptName)?.doTag ?? null,
+        newSecrets: secretValues,
+        slug: started.slug,
+        version: params.version,
+        jobId: params.jobId,
+        canaryAttempts: CANARY_MAX_ATTEMPTS,
+      });
+      otherUpdates.push(update);
+      const serving = snapshot.otherVersions[w.scriptName];
+      const names = Object.keys(update.introduced);
+      if (update.versionId !== null && serving !== undefined && names.length > 0) {
+        othersSecretsUndo.push({
+          workerName: w.scriptName,
+          label: workerLabel(w),
+          versionId: update.versionId,
+          servingVersionId: serving,
+          names,
+          uploadMessage: updateVersionMessage(started.slug, params.version, params.jobId),
+        });
+      }
+    }
+    /** The other Workers to their new versions, one by one, before the primary one. */
+    async function promoteOthers(): Promise<void> {
+      for (const update of otherUpdates) {
+        attemptedOthers.push(update.worker.scriptName);
+        promotedVersions[update.worker.scriptName] = await promoteOtherWorkerPhase(
+          steps,
+          entryContext,
+          update,
+          params.version,
+        );
+        promotedOthers.push(update.worker.scriptName);
+      }
+    }
+
     if (fullDeploy === null) {
       // 5. The new version: every module in ONE multipart request. From here
       // until promotion, a failure takes the secrets it introduces off the
       // newest version again, even when the upload made a version and did not
       // say which (it is found by its annotation).
-      const introduced = Object.keys(secretValues);
+      const introduced = Object.keys(primarySecretValues);
       if (introduced.length > 0) {
         secretsUndo = {
           workerName,
@@ -671,6 +836,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
 
       // 7. D1 migrations: only files not applied yet, before promotion.
       await migrateDatabases();
+      await promoteOthers();
 
       // 8. Promote. The API call is a step of its own, so the moment it
       // returns the job knows the new version serves traffic.
@@ -687,6 +853,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     } else {
       // 5-8 for Durable Object migrations: D1 first, then one full deploy.
       await migrateDatabases();
+      await promoteOthers();
       await run("skip canary", async ({ log }) => {
         log.warn(`${FULL_DEPLOY_REASON}.`);
         return {};
@@ -722,15 +889,31 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    // Queue consumers belong to the script too: set them once the version serves.
+    // Queue consumers belong to the script too: set them once the version
+    // serves, each Worker's own; the primary Worker's sync, last, removes
+    // those no Worker of the version has.
+    for (const w of others) {
+      await syncQueueConsumersPhase(steps, {
+        installId: params.installId,
+        workerName: w.scriptName,
+        wanted: queuePlan.consumers.get(w.scriptName) ?? [],
+        previous: previousOf(w.scriptName)?.consumers ?? [],
+        queues: bound,
+        recorded: started.resources,
+        removeUnwanted: false,
+      });
+    }
     await syncQueueConsumersPhase(steps, {
       installId: params.installId,
       workerName,
-      wanted: queuePlan.consumers,
+      wanted: queuePlan.consumers.get(workerName) ?? [],
       // A job started before consumers were tracked has no record of them.
       previous: started.previousConsumers ?? [],
       queues: bound,
       recorded: started.resources,
+      keepKeys: others.flatMap((w) =>
+        (queuePlan.consumers.get(w.scriptName) ?? []).map((c) => c.queueKey),
+      ),
     });
 
     // Cron triggers last of the script's settings: a refusal at the account's
@@ -740,8 +923,16 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       params.installId,
       workerName,
       started.resources.filter((r) => r.kind === "cron").map((r) => r.name),
-      manifest.worker.crons,
+      primaryManifest.worker.crons,
     );
+    for (const w of others) {
+      await setOtherWorkerCronsPhase(
+        steps,
+        w,
+        w.manifest.worker.crons,
+        previousOf(w.scriptName)?.crons ?? [],
+      );
+    }
 
     // 9. Live health check, recorded rather than fatal: the version already serves.
     const url = `${appBase}${healthPath}`;
@@ -817,6 +1008,59 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         secretsBack = "failed";
       }
     }
+    // The same for each other Worker's unpromoted upload.
+    const othersBack: string[] = [];
+    for (const undoOther of othersSecretsUndo) {
+      if (promotedOthers.includes(undoOther.workerName)) continue;
+      try {
+        await undoSecretChangesPhase(steps, {
+          jobId: params.jobId,
+          workerName: undoOther.workerName,
+          uploadedVersionId: undoOther.versionId,
+          uploadMessage: undoOther.uploadMessage,
+          servingVersionId: undoOther.servingVersionId,
+          changes: { set: {}, unset: undoOther.names },
+          slots: [],
+          carrier: "upload",
+          undoneMessage: updateSecretsUndoneMessage(params.jobId),
+          label: undoOther.label,
+        });
+      } catch {
+        othersBack.push(undoOther.workerName);
+      }
+    }
+    // The primary Worker still serves the previous version: the other Workers
+    // whose promotion started go back to the versions the snapshot kept, so
+    // the app runs one version again. Each return is one deployment call to
+    // a version that already exists, so a retried step repeats it harmlessly.
+    const returned: string[] = [];
+    const othersPromoted: string[] = [];
+    let othersRecord: Record<string, string> | null = null;
+    if (!wasPromoted && snapshotOthers !== null && attemptedOthers.length > 0) {
+      const kept = snapshotOthers;
+      const record: Record<string, string> = { ...kept };
+      for (const name of attemptedOthers) {
+        const back = kept[name];
+        try {
+          if (back === undefined) throw new Error("the snapshot has no version of it");
+          await deployOtherWorkerVersionPhase(
+            steps,
+            { primary: false, scriptName: name },
+            back,
+            previousVersion,
+          );
+          returned.push(name);
+        } catch {
+          othersPromoted.push(name);
+          // Serving the new version when its promotion finished; unknown otherwise.
+          const now = promotedVersions[name];
+          if (now === undefined) delete record[name];
+          else record[name] = now;
+        }
+      }
+      othersRecord = record;
+    }
+    const othersRecordJson = othersRecord === null ? null : JSON.stringify(othersRecord);
     await step.do("mark update failed", async () => {
       const orm = createDb(env.DB);
       const at = new Date(now());
@@ -828,13 +1072,35 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       // that writes it is the one that failed.
       await orm
         .update(installs)
-        .set({ ...(serving ?? {}), status: "installed", updated_at: at })
+        .set({
+          ...(serving ?? {}),
+          ...(othersRecordJson === null ? {} : { worker_versions_json: othersRecordJson }),
+          status: "installed",
+          updated_at: at,
+        })
         .where(and(eq(installs.id, params.installId), eq(installs.status, "updating")));
       const log = new StepLog(now);
       if (aheadOfCode.length > 0) {
         log.error(
           `The D1 database${aheadOfCode.length === 1 ? "" : "s"} ${aheadOfCode.join(", ")} ${aheadOfCode.length === 1 ? "is" : "are"} already migrated to the new schema while the previous code still serves. Retry the update, or restore ${aheadOfCode.length === 1 ? "it" : "them"} from this update's snapshot on the install page.`,
           { migrated: aheadOfCode },
+        );
+      }
+      if (returned.length > 0) {
+        log.error(
+          `The app's Workers ${returned.map((n) => `"${n}"`).join(", ")} were back on the versions the snapshot kept, as the primary Worker still serves the previous version.`,
+          { returned },
+        );
+      }
+      if (othersPromoted.length > 0) {
+        log.error(
+          `The app's Workers ${othersPromoted.map((n) => `"${n}"`).join(", ")} may still serve the new version while the primary Worker serves the previous one. Roll back to this update's snapshot from the install page, or retry the update.`,
+          { promoted: othersPromoted },
+        );
+      }
+      if (othersBack.length > 0) {
+        log.error(
+          `Appflare could not take the secrets this version introduced off the newest version of ${othersBack.map((n) => `"${n}"`).join(", ")}; the next upload would carry them.`,
         );
       }
       if (wasPromoted) {

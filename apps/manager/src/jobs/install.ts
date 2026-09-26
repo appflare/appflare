@@ -10,7 +10,7 @@ import {
   sha256Schema,
   tooManyModulesMessage,
 } from "@appflare/schema";
-import { and, eq, isNull, ne, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
@@ -23,6 +23,16 @@ import { installDomainInput, workerNameSchema } from "../installs/install-input"
 import { varsUseWorkerUrl } from "../installs/install-vars";
 import { appSlugLabel } from "../installs/source-review";
 import { workersDevSubdomain } from "../installs/workers-dev";
+import {
+  type EntryWorker,
+  entryBindings,
+  entryNameProblems,
+  entryPlaceholders,
+  entryScriptNamesOf,
+  entryWorkers,
+  otherEntryWorkers,
+  workerCountProblem,
+} from "./entry-workers";
 import {
   type ArtifactOrigin,
   prebuiltBuildParams,
@@ -39,6 +49,11 @@ import {
   emailRoutingJobInput,
   provisionEmailRoutingPhase,
 } from "./install/email-routing";
+import {
+  deployOtherWorkerPhase,
+  type EntryUploadContext,
+  planEntryQueueConsumers,
+} from "./install/entry-worker-phases";
 import { healthLabel } from "./install/health";
 import { buildScriptMetadata, type CreatedResource, installVars } from "./install/metadata";
 import {
@@ -53,7 +68,7 @@ import {
   resourceId,
   uploadAssetsPhase,
 } from "./install/phases";
-import { attachQueueConsumersPhase, planQueueConsumers } from "./install/queue-consumers";
+import { attachQueueConsumersPhase } from "./install/queue-consumers";
 import { explainR2Refusal } from "./install/r2-enablement";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import type { JobContext } from "./run-job";
@@ -206,8 +221,19 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const manifestText = source.manifestText;
     // The signed Worker; the form's secrets and vars from a revision when the catalog lists one.
     const manifest: ArtifactManifest = sourceManifest(source);
-    const plan = planBindings(params.workerName, manifest.worker.bindings);
-    const queuePlan = planQueueConsumers(params.workerName, manifest.worker);
+    // An app of several Workers: the primary one is the install's own Worker
+    // and goes through the steps below; the others are deployed around it,
+    // in the order their bindings to each other need.
+    const workers = entryWorkers(manifest, params.workerName);
+    const primary = workers.find((w) => w.primary);
+    if (primary === undefined) throw new NonRetryableError("the artifact has no primary Worker");
+    const primaryManifest = primary.manifest;
+    const others = otherEntryWorkers(manifest, params.workerName);
+    const entryNames = entryScriptNamesOf(manifest, params.workerName);
+    // Resources are the app's, shared by binding name across its Workers.
+    const plan = planBindings(params.workerName, entryBindings(manifest));
+    const queuePlan = planEntryQueueConsumers(params.workerName, manifest, workers);
+    const primaryConsumers = queuePlan.consumers.get(params.workerName) ?? [];
     const toCreate = [...plan.resources, ...queuePlan.queues];
 
     // 2. Preflight.
@@ -233,12 +259,21 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           log.info("The admin confirmed this account meets these requirements.");
         }
       }
-      const problems = [...plan.problems, ...queuePlan.problems];
+      const problems = [
+        ...plan.problems,
+        ...queuePlan.problems,
+        ...entryNameProblems(manifest, params.workerName),
+      ];
       if (problems.length > 0) throw new InstallError(problems.join(" "));
       // The upload fetches every module in one invocation; refuse before
       // anything is created rather than failing mid-upload.
-      const tooMany = tooManyModulesMessage(manifest.worker.modules.length, "This app version");
-      if (tooMany !== null) throw new InstallError(tooMany);
+      for (const w of workers) {
+        const tooMany = tooManyModulesMessage(
+          w.manifest.worker.modules.length,
+          w.primary ? "This app version" : `The Worker "${w.name}" of this app version`,
+        );
+        if (tooMany !== null) throw new InstallError(tooMany);
+      }
       // The Worker name is the unique key of an active install; an app whose
       // Worker name is fixed installs once.
       const fixed = hasFixedWorkerName(manifest.catalog.install);
@@ -261,6 +296,42 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         )
         .limit(1);
       const other = clash[0];
+      // The app's other Workers take names of their own, which no other
+      // install may use either.
+      const otherNames = workers.filter((w) => !w.primary).map((w) => w.scriptName);
+      if (otherNames.length > 0) {
+        const taken = await orm
+          .select({ name: resources.name })
+          .from(resources)
+          .innerJoin(installs, eq(installs.id, resources.install_id))
+          .where(
+            and(
+              ne(resources.install_id, params.installId),
+              eq(resources.kind, "worker"),
+              isNull(resources.deleted_at),
+              ne(installs.status, "uninstalled"),
+              inArray(resources.name, otherNames),
+            ),
+          )
+          .limit(1);
+        const primaries = await orm
+          .select({ worker: installs.worker_name })
+          .from(installs)
+          .where(
+            and(
+              ne(installs.id, params.installId),
+              ne(installs.status, "uninstalled"),
+              inArray(installs.worker_name, otherNames),
+            ),
+          )
+          .limit(1);
+        const name = taken[0]?.name ?? primaries[0]?.worker;
+        if (name !== undefined) {
+          throw new InstallError(
+            `another install already uses the Worker name "${name}", which this app needs for one of its Workers; choose another Worker name`,
+          );
+        }
+      }
       if (other !== undefined) {
         throw new InstallError(
           other.worker === params.workerName
@@ -277,18 +348,21 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       if (!env.CF_API_TOKEN) {
         throw new InstallError("the Cloudflare API token is not configured; finish setup first");
       }
+      // The detected plan first, then the one an admin set.
+      const accountPaid =
+        resolveAccountPlan(
+          settings.account_plan,
+          parseStoredCapabilities(settings.account_capabilities),
+        ).plan === "paid";
+      const tooManyWorkers = workerCountProblem(
+        workers.length,
+        accountPaid || params.paidConfirmed,
+      );
+      if (tooManyWorkers !== null) throw new InstallError(tooManyWorkers);
       log.info(
         `Preflight passed: plan ${manifest.catalog.plan}, ${toCreate.length} resource(s) to create.`,
       );
-      return {
-        accountId: settings.account_id,
-        // The detected plan first, then the one an admin set.
-        accountPaid:
-          resolveAccountPlan(
-            settings.account_plan,
-            parseStoredCapabilities(settings.account_capabilities),
-          ).plan === "paid",
-      };
+      return { accountId: settings.account_id, accountPaid };
     });
     steps.setAccountId(preflight.accountId);
 
@@ -310,12 +384,18 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     await run("check Worker name", async ({ log, cf }) => {
       const scripts = await cf().workers.listScripts();
-      if (scripts.some((s) => s.id === params.workerName)) {
-        throw new InstallError(
-          `a Worker named ${params.workerName} already exists in this account; Appflare does not adopt existing Workers`,
-        );
+      for (const w of workers) {
+        if (scripts.some((s) => s.id === w.scriptName)) {
+          throw new InstallError(
+            `a Worker named ${w.scriptName} already exists in this account; Appflare does not adopt existing Workers`,
+          );
+        }
       }
-      log.info(`No Worker named "${params.workerName}" exists yet.`);
+      log.info(
+        workers.length === 1
+          ? `No Worker named "${params.workerName}" exists yet.`
+          : `No Worker named ${workers.map((w) => `"${w.scriptName}"`).join(", ")} exists yet.`,
+      );
       return {};
     });
 
@@ -338,10 +418,14 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // anything is created, like R2. Skipped on Workers Paid: the admin
     // confirmed it for this install (a paid app always asks), or Settings
     // records it for the account.
-    const crons = [...new Set(manifest.worker.crons)];
+    const crons = [...new Set(primaryManifest.worker.crons)];
     await checkCronLimitPhase(steps, {
       workerName: params.workerName,
-      wanted: cronTriggerCount(crons),
+      // Every Worker of the app counts its own.
+      wanted: workers.reduce(
+        (n, w) => n + cronTriggerCount([...new Set(w.manifest.worker.crons)]),
+        0,
+      ),
       paid: params.paidConfirmed || preflight.accountPaid,
       subject: "this app",
     });
@@ -388,21 +472,52 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const rateLimitIds = await assignRateLimitsPhase(
       steps,
       params.installId,
-      manifest.worker.bindings,
+      entryBindings(manifest),
     );
+
+    // Vars may name the Worker's URL (`{{workerUrl}}`), so the account's
+    // workers.dev subdomain is known before the upload.
+    const subdomain = await lookupSubdomainPhase(steps);
+    const workflowNames = Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name]));
+    const placeholders = entryPlaceholders(manifest, params.workerName, subdomain);
+    const entryContext: EntryUploadContext = {
+      installId: params.installId,
+      installWorkerName: params.workerName,
+      source: { zipUrl: source.zipUrl, host: source.host },
+      resources: created,
+      workflowNames,
+      rateLimitIds,
+      userVars: params.vars,
+      subdomain,
+      accountId: steps.accountId(),
+      placeholders,
+      entryNames,
+    };
+    /** Deploys the app's other Workers, each with its secrets, crons, consumers and route. */
+    /** The version each other Worker serves once deployed, recorded on the install. */
+    const otherVersions: Record<string, string> = {};
+    async function deployOthers(list: readonly EntryWorker[]): Promise<void> {
+      for (const w of list) {
+        const deployed = await deployOtherWorkerPhase(steps, entryContext, w, {
+          secrets: params.secrets,
+          consumers: queuePlan.consumers.get(w.scriptName) ?? [],
+          attachConsumers: (s, name, plans) =>
+            attachQueueConsumersPhase(s, params.installId, name, plans, created),
+        });
+        if (deployed.versionId !== null) otherVersions[w.scriptName] = deployed.versionId;
+      }
+    }
+    // The other Workers the primary one binds to exist before it is uploaded.
+    await deployOthers(others.before);
 
     // 4. Static assets.
     const assetsJwt = await uploadAssetsPhase(
       steps,
       params.workerName,
       source.zipUrl,
-      manifest.assets.files,
+      primaryManifest.assets.files,
       source.host,
     );
-
-    // Vars may name the Worker's URL (`{{workerUrl}}`), so the account's
-    // workers.dev subdomain is known before the upload.
-    const subdomain = await lookupSubdomainPhase(steps);
 
     // 5. Script upload: every module in ONE multipart request. The Worker is
     // recorded first, with no id yet (pending): an upload whose response is
@@ -419,20 +534,22 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
     const upload = await run("upload Worker script", async ({ log, orm }) => {
-      const vars = installVars(manifest, params.vars, {
+      const vars = installVars(primaryManifest, params.vars, {
         workerName: params.workerName,
         subdomain,
         accountId: steps.accountId(),
+        ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });
       for (const warning of vars.warnings) log.warn(warning);
       const metadata = buildScriptMetadata({
-        manifest,
+        manifest: primaryManifest,
         workerName: params.workerName,
         resources: created,
         vars: vars.vars,
         assetsJwt,
-        workflowNames: Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name])),
+        workflowNames,
         rateLimitIds,
+        entryWorkers: entryNames,
       });
       try {
         // Every module in ONE multipart request, read and uploaded by one unit.
@@ -441,7 +558,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             accountId: steps.accountId(),
             artifact: { zipUrl: source.zipUrl, host: source.host },
             workerName: params.workerName,
-            modules: manifest.worker.modules,
+            modules: primaryManifest.worker.modules,
             metadata,
             target: "script",
           }),
@@ -480,7 +597,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         .set({
           current_version_id: upload.versionId,
           // The upload applied every Durable Object migration the manifest has.
-          do_migration_tag: lastDurableObjectTag(manifest.worker.migrations),
+          do_migration_tag: lastDurableObjectTag(primaryManifest.worker.migrations),
           updated_at: new Date(now()),
         })
         .where(eq(installs.id, params.installId));
@@ -500,13 +617,16 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
 
-    // 6. D1 migrations, wrangler-style.
+    // The other Workers that bind to the primary one, now that it exists.
+    await deployOthers(others.after);
+
+    // 6. D1 migrations, wrangler-style, once for every Worker of the app.
     for (const target of d1Targets(manifest, created)) {
       await applyD1MigrationsPhase(steps, source.zipUrl, target, undefined, source.host);
     }
 
     // 7. Secrets. An optional secret the admin left unset gets no step.
-    for (const secret of manifest.catalog.secrets) {
+    for (const secret of primaryManifest.catalog.secrets) {
       if (isOptionalSecret(secret) && (params.secrets[secret.name] ?? "").length === 0) continue;
       await run(`set secret ${secret.name}`, async ({ log, cf, orm }) => {
         const value = params.secrets[secret.name];
@@ -554,7 +674,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       steps,
       params.installId,
       params.workerName,
-      queuePlan.consumers,
+      primaryConsumers,
       created,
     );
 
@@ -626,6 +746,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           .set({
             status: "installed",
             current_version_id: upload.versionId,
+            ...(others.before.length + others.after.length === 0
+              ? {}
+              : { worker_versions_json: JSON.stringify(otherVersions) }),
             manifest_json: manifestText,
             artifact_url: source.zipUrl,
             artifact_digest: source.digest,

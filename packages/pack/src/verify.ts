@@ -4,13 +4,16 @@ import path from "node:path";
 import { assetHash } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  appWorkers,
   artifactManifestSchema,
   catalogVarProblems,
+  combinedWorkerFacts,
   isVectorizeBinding,
   queueConsumerProblems,
   serviceBindingProblem,
   signingKeys,
   tooManyModulesMessage,
+  workerManifest,
 } from "@appflare/schema";
 import { UNSIGNED_KEY_ID } from "./signing.ts";
 
@@ -87,7 +90,7 @@ async function verifySignature(
  */
 function checkVectorizeBindings(manifest: ArtifactManifest): void {
   const declared = manifest.catalog.resources?.vectorize ?? {};
-  for (const binding of manifest.worker.bindings) {
+  for (const binding of appWorkers(manifest).flatMap((w) => w.worker.bindings)) {
     if (!isVectorizeBinding(binding)) {
       continue;
     }
@@ -182,29 +185,35 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   }
 
   checkVectorizeBindings(manifest);
-  const problems = [
-    ...queueConsumerProblems(manifest.worker),
-    ...catalogVarProblems(manifest.worker.bindings, manifest.catalog.vars),
-    ...manifest.worker.bindings.flatMap((b) => serviceBindingProblem(b) ?? []),
-  ];
+  const workers = appWorkers(manifest);
+  // A queue a Worker consumes may be one another Worker of the app sends to.
+  const allBindings = combinedWorkerFacts(manifest).bindings;
+  const problems = workers.flatMap((w) => [
+    ...queueConsumerProblems({ bindings: allBindings, queueConsumers: w.worker.queueConsumers }),
+    ...catalogVarProblems(w.worker.bindings, workerManifest(manifest, w).catalog.vars),
+    ...w.worker.bindings.flatMap((b) => serviceBindingProblem(b) ?? []),
+  ]);
   if (problems.length > 0) {
     throw new Error(problems.join(" "));
   }
 
   if (options.maxModules !== undefined) {
-    const tooMany = tooManyModulesMessage(
-      manifest.worker.modules.length,
-      `${manifest.app}@${manifest.version}`,
-      options.maxModules,
-    );
-    if (tooMany !== null) {
-      throw new Error(tooMany);
+    for (const w of workers) {
+      const tooMany = tooManyModulesMessage(
+        w.worker.modules.length,
+        w.primary
+          ? `${manifest.app}@${manifest.version}`
+          : `The Worker "${w.name}" of ${manifest.app}@${manifest.version}`,
+        options.maxModules,
+      );
+      if (tooMany !== null) {
+        throw new Error(tooMany);
+      }
     }
   }
 
   const entries: Addressable[] = [
-    ...manifest.worker.modules,
-    ...manifest.assets.files,
+    ...workers.flatMap((w) => [...w.worker.modules, ...w.assets.files]),
     ...Object.values(manifest.d1Migrations).flat(),
   ];
 

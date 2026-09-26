@@ -1,5 +1,7 @@
 import {
   type CatalogResources,
+  type EntryServiceBinding,
+  entryWorkerRef,
   type JsonValue,
   type ModuleType,
   type QueueConsumer,
@@ -126,13 +128,25 @@ type WranglerService = NonNullable<ResolvedWranglerConfig["services"]>[number];
  * binding throws {@link ServiceBindingError}: an app must never be able to call
  * another Worker in the account, least of all the manager.
  */
-function selfServiceBinding(svc: WranglerService, workerName: string | null | undefined) {
-  if (svc.service === undefined || svc.service !== workerName) {
+function selfServiceBinding(
+  svc: WranglerService,
+  workerName: string | null | undefined,
+  entryWorkers?: ReadonlyMap<string, string>,
+): SelfServiceBinding | EntryServiceBinding {
+  const entryWorker =
+    svc.service !== undefined && svc.service !== workerName
+      ? entryWorkers?.get(svc.service)
+      : undefined;
+  if (svc.service === undefined || (svc.service !== workerName && entryWorker === undefined)) {
     const target = svc.service === undefined ? "no Worker" : `the Worker "${svc.service}"`;
+    const allowed =
+      entryWorkers === undefined
+        ? "the only service binding an app may have is one to itself"
+        : "an app may bind only to itself and to the other Workers of its catalog entry";
     throw new ServiceBindingError(
       `the wrangler config's service binding ${svc.binding} points at ${target}, not at the app's own Worker` +
         `${workerName ? ` ("${workerName}")` : ""}; Appflare installs self-contained apps and never lets one call another Worker ` +
-        "in the account, so the only service binding an app may have is one to itself",
+        `in the account, so ${allowed}`,
     );
   }
   const extras = (["environment", "props", "cross_account_grant"] as const).filter(
@@ -144,9 +158,47 @@ function selfServiceBinding(svc: WranglerService, workerName: string | null | un
         "Appflare records a binding to the app's own Worker with nothing but an optional entrypoint",
     );
   }
-  const binding: SelfServiceBinding = { type: "service", name: svc.binding, service: SELF_SERVICE };
+  const binding: SelfServiceBinding | EntryServiceBinding =
+    entryWorker === undefined
+      ? { type: "service", name: svc.binding, service: SELF_SERVICE }
+      : { type: "service", name: svc.binding, service: entryWorkerRef(entryWorker) };
   if (svc.entrypoint !== undefined) binding.entrypoint = svc.entrypoint;
   return binding;
+}
+
+/** How {@link collectBindings} treats an app of several Workers. */
+export interface CollectBindingsOptions {
+  /**
+   * For one Worker of an app of several: every Worker of the entry, by the
+   * name its wrangler config gives it, to its name within the entry. A service
+   * binding's `service` or a Durable Object binding's `script_name` that names
+   * one of them is recorded as `{{workerName:<name>}}`.
+   */
+  entryWorkers?: ReadonlyMap<string, string>;
+  /**
+   * Whether a Vectorize index the catalog manifest declares but this config
+   * does not bind is an error. Default true; an app of several Workers checks
+   * that across all of them ({@link checkVectorizeDeclarations}).
+   */
+  checkUnboundVectorize?: boolean;
+}
+
+/**
+ * Throws {@link VectorizeDeclarationError} when the catalog manifest declares
+ * `resources.vectorize` for a binding none of `bindings` has.
+ */
+export function checkVectorizeDeclarations(
+  bindings: readonly WorkerBinding[],
+  resources?: CatalogResources,
+): void {
+  const bound = new Set(bindings.filter((b) => b.type === "vectorize").map((b) => b.name));
+  const unbound = Object.keys(resources?.vectorize ?? {}).filter((binding) => !bound.has(binding));
+  if (unbound.length > 0) {
+    throw new VectorizeDeclarationError(
+      `the catalog manifest declares resources.vectorize.${unbound.join(", resources.vectorize.")}, ` +
+        "but the wrangler config has no Vectorize binding by that name; remove it from appflare.jsonc or fix the binding name",
+    );
+  }
 }
 
 /**
@@ -178,7 +230,9 @@ function selfServiceBinding(svc: WranglerService, workerName: string | null | un
 export function collectBindings(
   config: ResolvedWranglerConfig,
   resources?: CatalogResources,
+  options: CollectBindingsOptions = {},
 ): WorkerBinding[] {
+  const { entryWorkers, checkUnboundVectorize = true } = options;
   const bindings: WorkerBinding[] = [];
   // Spread the optional extras so excess-property checks never fight the
   // schema's loose binding shape, and undefined extras drop out cleanly.
@@ -217,12 +271,8 @@ export function collectBindings(
     }
     push("vectorize", v.binding, { dimensions: index.dimensions, metric: index.metric });
   }
-  const unbound = Object.keys(declared).filter((binding) => !bound.has(binding));
-  if (unbound.length > 0) {
-    throw new VectorizeDeclarationError(
-      `the catalog manifest declares resources.vectorize.${unbound.join(", resources.vectorize.")}, ` +
-        "but the wrangler config has no Vectorize binding by that name; remove it from appflare.jsonc or fix the binding name",
-    );
+  if (checkUnboundVectorize) {
+    checkVectorizeDeclarations(bindings, resources);
   }
   for (const h of config.hyperdrive ?? []) {
     push("hyperdrive", h.binding);
@@ -235,16 +285,36 @@ export function collectBindings(
   }
   for (const dobj of config.durable_objects?.bindings ?? []) {
     // class_name/script_name/environment are code references, not account ids.
+    // In an app of several Workers, a class in another of them is named by
+    // that Worker's name within the entry, and one in this Worker by none.
+    const inEntry =
+      dobj.script_name === undefined ? undefined : entryWorkers?.get(dobj.script_name);
+    const scriptName =
+      entryWorkers !== undefined && dobj.script_name === config.name
+        ? undefined
+        : inEntry !== undefined
+          ? entryWorkerRef(inEntry)
+          : dobj.script_name;
     push("durable_object_namespace", dobj.name, {
       class_name: dobj.class_name,
-      script_name: dobj.script_name,
+      script_name: scriptName,
       environment: dobj.environment,
     });
   }
   for (const svc of config.services ?? []) {
-    bindings.push(selfServiceBinding(svc, config.name));
+    bindings.push(selfServiceBinding(svc, config.name, entryWorkers));
   }
   for (const wf of config.workflows ?? []) {
+    if (
+      wf.script_name !== undefined &&
+      wf.script_name !== config.name &&
+      entryWorkers?.has(wf.script_name) === true
+    ) {
+      throw new ServiceBindingError(
+        `the wrangler config's Workflow binding ${wf.binding} runs the Workflow of the Worker "${wf.script_name}"; ` +
+          "Appflare installs each Workflow with the Worker that defines it, so bind it there",
+      );
+    }
     // Upload-metadata shape for a workflow binding (verified against wrangler
     // 4.136.2: `type: "workflow", name: <binding>, workflow_name, class_name,
     // script_name`). All four are code/config references, not account ids, so the
@@ -316,6 +386,26 @@ function toJsonValue(name: string, value: unknown): JsonValue {
   return JSON.parse(text) as JsonValue;
 }
 
+/**
+ * Each queue the configs send to, by its upstream name, to the first producer
+ * binding that sends to it. For an app of several Workers, pass every
+ * Worker's config: a queue one Worker sends to and another consumes is then
+ * known by that binding in both, so the install creates one queue for it.
+ */
+export function queueProducerBindings(
+  configs: readonly ResolvedWranglerConfig[],
+): Map<string, string> {
+  const producerOf = new Map<string, string>();
+  for (const config of configs) {
+    for (const producer of config.queues?.producers ?? []) {
+      if (producer.queue !== undefined && !producerOf.has(producer.queue)) {
+        producerOf.set(producer.queue, producer.binding);
+      }
+    }
+  }
+  return producerOf;
+}
+
 /** The wrangler config declares a queue consumer the packer cannot record. */
 export class QueueConsumerError extends Error {
   override name = "QueueConsumerError";
@@ -331,13 +421,11 @@ export class QueueConsumerError extends Error {
  * recorded; an HTTP pull consumer (`type: "http_pull"`) throws
  * {@link QueueConsumerError}, since nothing in the app's Worker would read it.
  */
-export function collectQueueConsumers(config: ResolvedWranglerConfig): QueueConsumer[] {
-  const producerOf = new Map<string, string>();
-  for (const producer of config.queues?.producers ?? []) {
-    if (producer.queue !== undefined && !producerOf.has(producer.queue)) {
-      producerOf.set(producer.queue, producer.binding);
-    }
-  }
+export function collectQueueConsumers(
+  config: ResolvedWranglerConfig,
+  producers?: ReadonlyMap<string, string>,
+): QueueConsumer[] {
+  const producerOf = new Map<string, string>(producers ?? queueProducerBindings([config]));
   const ref = (queue: string): QueueRef => {
     const binding = producerOf.get(queue);
     return binding !== undefined ? { binding } : { name: queue };

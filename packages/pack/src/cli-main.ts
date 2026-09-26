@@ -111,7 +111,14 @@ async function runPack(argv: string[]): Promise<number> {
   process.stdout.write(
     `  modules=${result.moduleCount} assets=${result.assetCount} migrations=${result.d1MigrationCount}\n`,
   );
-  process.stdout.write(`  worker:    ${workerSizeLine(result.workerSize, result.moduleCount)}\n`);
+  if (result.workers.length > 1) {
+    for (const w of result.workers) {
+      const label = `${w.name ?? ""}${w.primary ? " (primary)" : ""}`;
+      process.stdout.write(`  worker ${label}: ${workerSizeLine(w.workerSize, w.moduleCount)}\n`);
+    }
+  } else {
+    process.stdout.write(`  worker:    ${workerSizeLine(result.workerSize, result.moduleCount)}\n`);
+  }
   for (const warning of result.warnings) {
     process.stdout.write(`  warning: ${warning}\n`);
   }

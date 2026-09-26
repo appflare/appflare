@@ -96,9 +96,40 @@ fails for a moment. The log shows every API call as `METHOD path -> status`.
    such as a dead-letter queue, is created in step 3 as `<worker-name>-<queue name>`.
 7. Runs a [health check](/guides/health/).
 
+For an [app of several Workers](#apps-of-several-workers), step 4 and step 6 run
+once per Worker, as described below.
+
 If a step fails, the job stops and names the step. Everything created so far stays
 recorded. Nothing is deleted automatically. To try again, [uninstall](/guides/uninstall/)
 the failed install, which removes what it created, and install again.
+
+## Apps of several Workers
+
+Some apps install as several Workers, for example a web front end and an API. One of
+them is the app: it runs under the Worker name you choose, serves the app's address
+and any custom or external domain, and answers the health check. Every other Worker
+runs as `<worker-name>-<name>` on its own `workers.dev` address; an app installed as
+`notes` with an `api` Worker also gets `notes-api`.
+
+On Workers Free an app may have at most three Workers: each one adds requests
+to the install job, which the free plan limits to 50, so the manager refuses a
+larger app there before creating anything.
+
+The form asks for each secret and setting once. The manager sets it on the Workers
+of the app that use it. Post-install steps and settings can mention any of the
+Workers' addresses, filled in for this install.
+
+The install job creates the app's resources first, one for each binding name: two
+Workers that bind `DB` share one D1 database. It then deploys the Workers one at a
+time, each after the Workers it binds to, with the app's own Worker as late as
+possible. Each gets its own static assets, secrets, cron triggers, queue consumers,
+and `workers.dev` address. D1 migrations run once all of them are deployed, and the
+health check requests the app's own Worker.
+
+The app's page lists each Worker under its resources. [Updates and
+rollbacks](/guides/updates/#apps-of-several-workers), [settings
+changes](/guides/settings/), and [uninstalling](/guides/uninstall/) always cover
+every Worker of the app.
 
 ## Post-install steps
 

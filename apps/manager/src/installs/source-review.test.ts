@@ -10,8 +10,20 @@ import {
   unsupportedSectionProblem,
 } from "./source-review";
 
-function manifest(bindings: WorkerBinding[], over: Partial<ArtifactManifest["worker"]> = {}) {
+function manifest(
+  bindings: WorkerBinding[],
+  over: Partial<ArtifactManifest["worker"]> = {},
+): ArtifactManifest {
   return {
+    format: 1,
+    app: "cut",
+    version: "1.0.0",
+    source: { repo: "MendyLanda/cut", sha: "a".repeat(40), ref: "main" },
+    builtAt: "2026-09-01T00:00:00.000Z",
+    builder: "@appflare/pack@0.0.0",
+    keyId: "unsigned",
+    assets: { config: {}, binding: null, files: [] },
+    d1Migrations: {},
     worker: {
       name: "cut",
       mainModule: "index.js",
@@ -36,7 +48,7 @@ function manifest(bindings: WorkerBinding[], over: Partial<ArtifactManifest["wor
       ...over,
     },
     catalog: baseCatalog({ install: { ...baseCatalog().install, tier: "sandbox" } }),
-  } satisfies Pick<ArtifactManifest, "worker" | "catalog">;
+  };
 }
 
 describe("reviewBuild", () => {

@@ -24,8 +24,8 @@ export {
 export { deriveSecretValue } from "./derive-secret.ts";
 export { inspectWranglerConfig, wranglerFacts } from "./inspect.ts";
 export { parseJsonc } from "./jsonc.ts";
-export type { PackOptions, PackResult } from "./pack.ts";
-export { describeVersionOrigin, pack, packWarnings } from "./pack.ts";
+export type { PackedWorker, PackOptions, PackResult } from "./pack.ts";
+export { describeVersionOrigin, mergeD1Migrations, pack, packWarnings } from "./pack.ts";
 export type { SignOptions, SignResult } from "./sign.ts";
 export { sign } from "./sign.ts";
 export { UNSIGNED_KEY_ID } from "./signing.ts";
@@ -49,11 +49,14 @@ export {
   workerTooLargeMessage,
 } from "./worker-size.ts";
 export {
+  type CollectBindingsOptions,
+  checkVectorizeDeclarations,
   classifyModuleType,
   collectBindings,
   collectQueueConsumers,
   mainModuleName,
   QueueConsumerError,
+  queueProducerBindings,
   type ResolvedWranglerConfig,
   ServiceBindingError,
   VectorizeDeclarationError,

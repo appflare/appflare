@@ -2,6 +2,7 @@ import {
   type ArtifactManifest,
   appServices,
   type CatalogManifest,
+  combinedWorkerFacts,
   type IndexApp,
 } from "@appflare/schema";
 import { type AppPrimitives, derivePrimitives, indexPrimitives } from "./primitives";
@@ -55,7 +56,7 @@ function manifestPrimitives(
   const { catalog, manifest } = manifests;
   const services = appServices(
     { ...catalog, requires: [...app.requires, ...catalog.requires] },
-    manifest?.worker ?? null,
+    manifest == null ? null : combinedWorkerFacts(manifest),
   );
   return { ...services, complete: app.tier === "artifact" && manifest !== null };
 }

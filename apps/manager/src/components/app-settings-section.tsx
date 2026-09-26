@@ -1,4 +1,4 @@
-import { renderPlaceholders } from "@appflare/schema";
+import { renderEntryWorkerPlaceholders, renderPlaceholders } from "@appflare/schema";
 import {
   Badge,
   Banner,
@@ -71,7 +71,10 @@ export function AppSettingsSection({
   const [error, setError] = useState<string | null>(null);
 
   const defaultOf = (field: SettingField) =>
-    renderPlaceholders(field.shownDefault, settings.placeholders);
+    renderEntryWorkerPlaceholders(
+      renderPlaceholders(field.shownDefault, settings.placeholders),
+      settings.placeholders.entryWorkers ?? {},
+    );
   const initialOf = (field: SettingField) => field.stored ?? defaultOf(field);
   const shownOf = (field: SettingField) => edited[field.name] ?? initialOf(field);
 

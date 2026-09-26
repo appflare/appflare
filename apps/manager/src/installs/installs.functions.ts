@@ -1,7 +1,9 @@
 import { env } from "cloudflare:workers";
 import {
   artifactManifestSchema,
-  renderPlaceholders,
+  combinedWorkerFacts,
+  type EntryWorkerPlaceholders,
+  entryPlaceholderValues,
   SELF_DEPLOYING_TOOLS,
   selfDeployingStage,
   type TokenPermission,
@@ -459,6 +461,7 @@ export const getInstall = createServerFn({ method: "GET" })
     let name = listed?.name ?? row.app_slug;
     let postInstall: string[] = [];
     let tokenPermissions: TokenPermission[] = [];
+    let entryWorkers: EntryWorkerPlaceholders | undefined;
     const installerCatalog =
       row.build_kind === "self-deploying" ? recordedCatalog(row.manifest_json) : null;
     if (installerCatalog !== null) {
@@ -478,10 +481,13 @@ export const getInstall = createServerFn({ method: "GET" })
         }
         const manifest = await effectiveManifest(db, parsed.data, row.artifact_digest);
         name = manifest.catalog.name;
+        // An app of several Workers: `{{workerUrl:<name>}}` names one of them.
+        entryWorkers = entryPlaceholderValues(manifest.catalog, row.worker_name, sub, primaryUrl);
+        const entry = entryWorkers;
         postInstall = manifest.catalog.postInstall.map((p) =>
-          renderPostInstall(p.content, placeholders),
+          renderPostInstall(p.content, placeholders, entry),
         );
-        if (sendsEmail(manifest.worker.bindings)) postInstall.push(SEND_EMAIL_NOTE);
+        if (sendsEmail(combinedWorkerFacts(manifest).bindings)) postInstall.push(SEND_EMAIL_NOTE);
         tokenPermissions = manifest.catalog.tokenPermissions;
       }
     }
@@ -547,7 +553,7 @@ export const getInstall = createServerFn({ method: "GET" })
       vars: Object.fromEntries(
         Object.entries(parseVars(row.config_json)).map(([name, value]) => [
           name,
-          renderPlaceholders(value, placeholders),
+          renderPostInstall(value, placeholders, entryWorkers),
         ]),
       ),
       // Email routes are listed under Email; their ids carry encoded state.

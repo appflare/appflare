@@ -1,5 +1,7 @@
 import { eq } from "drizzle-orm";
 import { installs, snapshots } from "../../db/schema";
+import type { EntryWorker } from "../entry-workers";
+import { readOtherWorkerVersionsPhase } from "../install/entry-worker-phases";
 import { JobError, type JobSteps } from "../steps";
 import { activeVersionId, type RecordedResource, snapshotRow } from "./plan";
 
@@ -23,8 +25,10 @@ export async function takeSnapshotPhase(
     appliedDoTag: string | null;
     /** The catalog version the job moves to (the installed one for a settings change). */
     targetVersion: string;
+    /** An app of several Workers: its other Workers, whose serving versions the snapshot keeps too. */
+    otherWorkers?: readonly EntryWorker[];
   },
-): Promise<{ versionId: string; databases: number }> {
+): Promise<{ versionId: string; databases: number; otherVersions: Record<string, string> }> {
   const { run, now } = steps;
   const deployed = await run("read current deployment", async ({ log, cf }) => {
     const versionId = activeVersionId(await cf().versions.listDeployments(input.workerName));
@@ -41,6 +45,7 @@ export async function takeSnapshotPhase(
     log.info(`Version ${versionId} serves all traffic.`);
     return { versionId };
   });
+  const otherVersions = await readOtherWorkerVersionsPhase(steps, input.otherWorkers ?? []);
   const bookmarks: Array<{ databaseId: string; bookmark: string }> = [];
   for (const db of input.resources) {
     if (db.kind !== "d1" || db.cfId === null) continue;
@@ -72,6 +77,7 @@ export async function takeSnapshotPhase(
           before: install,
           doMigrationTag: input.appliedDoTag,
           targetVersion: input.targetVersion,
+          otherVersions,
         }),
       )
       .onConflictDoNothing();
@@ -80,5 +86,5 @@ export async function takeSnapshotPhase(
     );
     return {};
   });
-  return { versionId: deployed.versionId, databases: bookmarks.length };
+  return { versionId: deployed.versionId, databases: bookmarks.length, otherVersions };
 }

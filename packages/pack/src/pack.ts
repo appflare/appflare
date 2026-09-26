@@ -20,6 +20,7 @@ import { assetHash } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
   type AssetFile,
+  appWorkers,
   artifactManifestSchema,
   buildCommandList,
   type CatalogManifest,
@@ -29,6 +30,7 @@ import {
   type DoMigration,
   tooManyModulesMessage,
   type WorkerModule,
+  workerManifest,
 } from "@appflare/schema";
 import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
@@ -46,10 +48,12 @@ import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
 import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./version.ts";
 import { type WorkerSize, workerSize, workerTooLargeMessage } from "./worker-size.ts";
 import {
+  checkVectorizeDeclarations,
   classifyModuleType,
   collectBindings,
   collectQueueConsumers,
   mainModuleName,
+  queueProducerBindings,
   type ResolvedWranglerConfig,
 } from "./wrangler-config.ts";
 import { ZipStore } from "./zip.ts";
@@ -93,14 +97,26 @@ export interface PackResult {
   assetCount: number;
   d1MigrationCount: number;
   zipSize: number;
-  /** The Worker's size, as wrangler reports it after a dry run. */
+  /** The Worker's size, as wrangler reports it after a dry run; the primary Worker's for an app of several. */
   workerSize: WorkerSize;
+  /** Every Worker packed, the primary one first: one for most apps. */
+  workers: PackedWorker[];
   /**
    * Problems that do not stop the pack but that the artifact's users hit
    * later, such as more Worker modules than Appflare can upload
    * (`MAX_WORKER_MODULES`). Also sent to the logger.
    */
   warnings: string[];
+}
+
+/** One Worker of a packed artifact, as the pack summary reports it. */
+export interface PackedWorker {
+  /** Its name within the catalog entry; null for an app of one Worker. */
+  name: string | null;
+  primary: boolean;
+  moduleCount: number;
+  assetCount: number;
+  workerSize: WorkerSize;
 }
 
 interface CollectedFile {
@@ -284,11 +300,15 @@ interface CollectedAssets {
   files: Array<CollectedFile & { route: string }>;
 }
 
-/** Collects static assets from `assets.directory`, honoring `.assetsignore`. */
+/**
+ * Collects static assets from `assets.directory`, honoring `.assetsignore`.
+ * Their zip paths are `<prefix>assets/<path>`.
+ */
 function collectAssets(
   config: ResolvedWranglerConfig,
   configDir: string,
   logger: (m: string) => void,
+  prefix = "",
 ): CollectedAssets {
   const assets = config.assets;
   if (!assets?.directory) {
@@ -321,7 +341,7 @@ function collectAssets(
     files.push({
       route: `/${relPosix}`,
       name: relPosix,
-      path: `assets/${relPosix}`,
+      path: `${prefix}assets/${relPosix}`,
       bytes: readFileSync(abs),
     });
   }
@@ -338,6 +358,110 @@ function collectAssets(
     cfg.run_worker_first = assets.run_worker_first;
   }
   return { config: cfg, binding: assets.binding ?? null, files };
+}
+
+/** A Worker's wrangler config as the packer reads it. */
+interface ReadWorkerConfig {
+  target: WranglerConfigTarget;
+  /** The declared and effective config, relative to the checkout. */
+  wranglerConfig: { declared: string; effective: string };
+  config: ResolvedWranglerConfig & { main: string; name: string; compatibility_date: string };
+  configDir: string;
+}
+
+/**
+ * Reads the resolved wrangler config at `declared` (relative to the
+ * checkout) with wrangler's own reader, following a redirect the build left,
+ * as `wrangler deploy` would. Throws when it lacks `main`, `name` or
+ * `compatibility_date`.
+ */
+function readWorkerConfig(
+  checkoutDir: string,
+  declared: string,
+  logger: (m: string) => void,
+): ReadWorkerConfig {
+  const target = resolveWranglerConfig(checkoutDir, declared);
+  const wranglerConfig = {
+    declared: checkoutRelative(checkoutDir, target.declaredPath),
+    effective: checkoutRelative(checkoutDir, target.effectivePath),
+  };
+  if (target.deployConfigPath !== null) {
+    logger(
+      `the build redirects wrangler from ${wranglerConfig.declared} to ${wranglerConfig.effective} ` +
+        `(${checkoutRelative(checkoutDir, target.deployConfigPath)}); packing that config`,
+    );
+  }
+  const read = readConfigArgs(target);
+  const config = unstable_readConfig(read.args, read.options) as ResolvedWranglerConfig;
+  const readPath = config.configPath ? path.resolve(config.configPath) : target.effectivePath;
+  if (readPath !== target.effectivePath) {
+    throw new Error(
+      `wrangler read ${readPath} instead of ${target.effectivePath}; ` +
+        "a wrangler config or redirect in a parent directory of the declared config is in the way",
+    );
+  }
+  const { main, name, compatibility_date } = config;
+  if (!main) {
+    throw new Error(`wrangler config ${wranglerConfig.declared} has no \`main\` entrypoint`);
+  }
+  if (!name) {
+    throw new Error(`wrangler config ${wranglerConfig.declared} has no \`name\``);
+  }
+  if (!compatibility_date) {
+    throw new Error(`wrangler config ${wranglerConfig.declared} has no \`compatibility_date\``);
+  }
+  return {
+    target,
+    wranglerConfig,
+    config: { ...config, main, name, compatibility_date },
+    configDir: path.dirname(target.effectivePath),
+  };
+}
+
+/** Bundles one Worker with a scrubbed dry run into a temp outdir and collects its modules. */
+function bundleWorker(
+  target: WranglerConfigTarget,
+  checkoutDir: string,
+  config: ResolvedWranglerConfig,
+  childEnv: NodeJS.ProcessEnv,
+  logger: (m: string) => void,
+): CollectedModule[] {
+  const outdir = mkdtempSync(path.join(tmpdir(), "appflare-pack-"));
+  try {
+    runDryRun(target, checkoutDir, outdir, childEnv, logger);
+    return collectModules(outdir, config);
+  } finally {
+    rmSync(outdir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The D1 migrations of every Worker of the app, by binding. Workers that bind
+ * one name share one database, so they must bring the same migration files
+ * (or none); a Worker that brings none takes the others'.
+ */
+export function mergeD1Migrations(
+  workers: ReadonlyArray<{ worker: string; d1: Record<string, CollectedFile[]> }>,
+): Record<string, CollectedFile[]> {
+  const merged: Record<string, CollectedFile[]> = {};
+  const from: Record<string, string> = {};
+  const key = (files: readonly CollectedFile[]) =>
+    files.map((f) => `${f.name}:${sha256Hex(f.bytes)}`).join("\n");
+  for (const { worker, d1 } of workers) {
+    for (const [binding, files] of Object.entries(d1)) {
+      const seen = Object.hasOwn(merged, binding) ? merged[binding] : undefined;
+      if (seen === undefined || (seen.length === 0 && files.length > 0)) {
+        merged[binding] = files;
+        from[binding] = worker;
+      } else if (files.length > 0 && key(seen) !== key(files)) {
+        throw new Error(
+          `the Workers "${from[binding]}" and "${worker}" bind the D1 database ${binding} with different migrations; ` +
+            "Workers that bind one name share one database, so point both configs' migrations_dir at the same files",
+        );
+      }
+    }
+  }
+  return merged;
 }
 
 /** Collects D1 migration `.sql` files per D1 binding, sorted by filename. */
@@ -446,86 +570,141 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     });
   }
 
-  // (c) Read the resolved wrangler config with wrangler's own reader,
+  // (b3) An app of several Workers: each Worker's own build commands, in the
+  // entry's order, after the shared ones and before any config is read.
+  const entry = catalog.install.workers;
+  for (const spec of entry ?? []) {
+    const commands = buildCommandList(spec.buildCommand);
+    if (commands.length === 0) continue;
+    logger(`building the Worker "${spec.name}"`);
+    await runBuildCommands({
+      checkoutDir,
+      commands,
+      env: childEnv,
+      timeoutMs: options.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
+      logger,
+    });
+  }
+
+  // (c) Read every resolved wrangler config with wrangler's own reader,
   // following a redirect the build left, as `wrangler deploy` would.
-  const target = resolveWranglerConfig(checkoutDir, catalog.install.wranglerConfig);
-  const wranglerConfig = {
-    declared: checkoutRelative(checkoutDir, target.declaredPath),
-    effective: checkoutRelative(checkoutDir, target.effectivePath),
-  };
-  if (target.deployConfigPath !== null) {
-    logger(
-      `the build redirects wrangler from ${wranglerConfig.declared} to ${wranglerConfig.effective} ` +
-        `(${checkoutRelative(checkoutDir, target.deployConfigPath)}); packing that config`,
-    );
+  const specs: ReadonlyArray<{ name: string | null; wranglerConfig: string; primary?: true }> =
+    entry ?? [{ name: null, wranglerConfig: catalog.install.wranglerConfig, primary: true }];
+  const read = specs.map((spec) => ({
+    name: spec.name,
+    primary: spec.primary === true,
+    ...readWorkerConfig(checkoutDir, spec.wranglerConfig, logger),
+  }));
+  // Where a config names another Worker of the entry, by its wrangler name.
+  const entryNames = new Map<string, string>();
+  for (const r of read) {
+    if (r.name === null) continue;
+    const other = entryNames.get(r.config.name);
+    if (other !== undefined) {
+      throw new Error(
+        `the wrangler configs of the Workers "${other}" and "${r.name}" both name their Worker "${r.config.name}"`,
+      );
+    }
+    entryNames.set(r.config.name, r.name);
   }
-  const read = readConfigArgs(target);
-  const config = unstable_readConfig(read.args, read.options) as ResolvedWranglerConfig;
-  const readPath = config.configPath ? path.resolve(config.configPath) : target.effectivePath;
-  if (readPath !== target.effectivePath) {
-    throw new Error(
-      `wrangler read ${readPath} instead of ${target.effectivePath}; ` +
-        "a wrangler config or redirect in a parent directory of the declared config is in the way",
-    );
-  }
-  const configDir = path.dirname(target.effectivePath);
-
-  if (!config.main) {
-    throw new Error("wrangler config has no `main` entrypoint");
-  }
-  if (!config.name) {
-    throw new Error("wrangler config has no `name`");
-  }
-  if (!config.compatibility_date) {
-    throw new Error("wrangler config has no `compatibility_date`");
-  }
+  // Queue names are the account's: a queue one Worker sends to and another
+  // consumes is one queue, known by the producer binding.
+  const producers = queueProducerBindings(read.map((r) => r.config));
   // Before bundling, so a missing Vectorize declaration fails fast.
-  const bindings = collectBindings(config, catalog.resources);
-  const queueConsumers = collectQueueConsumers(config);
-  const varProblems = catalogVarProblems(bindings, catalog.vars);
-  if (varProblems.length > 0) {
-    throw new Error(varProblems.join(" "));
+  const collected = read.map((r) => ({
+    ...r,
+    bindings: collectBindings(r.config, catalog.resources, {
+      entryWorkers: r.name === null ? undefined : entryNames,
+      checkUnboundVectorize: entry === undefined,
+    }),
+    queueConsumers: collectQueueConsumers(r.config, producers),
+  }));
+  if (entry !== undefined) {
+    checkVectorizeDeclarations(
+      collected.flatMap((c) => c.bindings),
+      catalog.resources,
+    );
+  } else {
+    const varProblems = catalogVarProblems(collected[0]?.bindings ?? [], catalog.vars);
+    if (varProblems.length > 0) {
+      throw new Error(varProblems.join(" "));
+    }
   }
 
-  // (d) Bundle the worker via a scrubbed dry-run into a temp outdir.
-  const outdir = mkdtempSync(path.join(tmpdir(), "appflare-pack-"));
-  let modules: CollectedModule[];
-  try {
-    runDryRun(target, checkoutDir, outdir, childEnv, logger);
-    // (e) Collect emitted modules.
-    modules = collectModules(outdir, config);
-  } finally {
-    rmSync(outdir, { recursive: true, force: true });
-  }
-
-  // (f) Static assets and (g) D1 migrations.
-  const assets = collectAssets(config, configDir, logger);
-  const d1 = collectD1Migrations(config, configDir);
-
-  // Lay the zip out so byte offsets are recorded as each file is added. Order:
-  // worker/, assets/, d1/, then manifest.json LAST.
-  const zip = new ZipStore();
-  const moduleManifest: WorkerModule[] = modules.map((m) => {
-    const { dataOffset } = zip.addFile(m.path, m.bytes);
+  // (d) Bundle each Worker via a scrubbed dry-run, then collect (e) its
+  // modules, (f) its static assets and (g) its D1 migrations. The primary
+  // Worker's files keep the paths of a one-Worker artifact; every other
+  // Worker's go under `workers/<name>/`.
+  const built = collected.map((c) => {
+    if (c.name !== null) logger(`bundling the Worker "${c.name}"`);
+    const prefix = c.primary || c.name === null ? "" : `workers/${c.name}/`;
+    const modules = bundleWorker(c.target, checkoutDir, c.config, childEnv, logger).map((m) => ({
+      ...m,
+      path: `${prefix}${m.path}`,
+    }));
     return {
-      name: m.name,
-      type: classifyModuleType(m.name, m.isMain),
-      path: m.path,
-      size: m.bytes.length,
-      sha256: sha256Hex(m.bytes),
-      offset: dataOffset,
+      ...c,
+      modules,
+      assets: collectAssets(c.config, c.configDir, logger, prefix),
+      d1: collectD1Migrations(c.config, c.configDir),
     };
   });
-  const assetManifest: AssetFile[] = assets.files.map((a) => {
-    const { dataOffset } = zip.addFile(a.path, a.bytes);
+  const d1 = mergeD1Migrations(built.map((b) => ({ worker: b.name ?? b.config.name, d1: b.d1 })));
+
+  // Lay the zip out so byte offsets are recorded as each file is added. Order:
+  // worker/, assets/, each other Worker's workers/<name>/, d1/, then
+  // manifest.json LAST.
+  const zip = new ZipStore();
+  const ordered = [...built.filter((b) => b.primary), ...built.filter((b) => !b.primary)];
+  const sections = ordered.map((b) => {
+    const moduleManifest: WorkerModule[] = b.modules.map((m) => {
+      const { dataOffset } = zip.addFile(m.path, m.bytes);
+      return {
+        name: m.name,
+        type: classifyModuleType(m.name, m.isMain),
+        path: m.path,
+        size: m.bytes.length,
+        sha256: sha256Hex(m.bytes),
+        offset: dataOffset,
+      };
+    });
+    const assetManifest: AssetFile[] = b.assets.files.map((a) => {
+      const { dataOffset } = zip.addFile(a.path, a.bytes);
+      return {
+        route: a.route,
+        // BLAKE3 asset id for the upload session; sha256 for Range-slice integrity.
+        hash: assetHash(a.bytes, a.name),
+        path: a.path,
+        size: a.bytes.length,
+        sha256: sha256Hex(a.bytes),
+        offset: dataOffset,
+      };
+    });
+    // (h) Record the stripped worker config.
+    const mainModule = b.modules.find((m) => m.isMain)?.name;
+    if (!mainModule) {
+      throw new Error("internal error: no main module identified");
+    }
     return {
-      route: a.route,
-      // BLAKE3 asset id for the upload session; sha256 for Range-slice integrity.
-      hash: assetHash(a.bytes, a.name),
-      path: a.path,
-      size: a.bytes.length,
-      sha256: sha256Hex(a.bytes),
-      offset: dataOffset,
+      name: b.name,
+      primary: b.primary,
+      size: workerSize(b.modules.map((m) => m.bytes)),
+      worker: {
+        name: b.config.name,
+        wranglerConfig: b.wranglerConfig,
+        mainModule,
+        compatibilityDate: b.config.compatibility_date,
+        compatibilityFlags: b.config.compatibility_flags ?? [],
+        modules: moduleManifest,
+        bindings: b.bindings,
+        migrations: (b.config.migrations ?? []) as DoMigration[],
+        crons: b.config.triggers?.crons ?? [],
+        ...(b.queueConsumers.length > 0 ? { queueConsumers: b.queueConsumers } : {}),
+        observability: b.config.observability ?? null,
+        placement: b.config.placement ?? null,
+        limits: b.config.limits ?? null,
+      },
+      assets: { config: b.assets.config, binding: b.assets.binding, files: assetManifest },
     };
   });
   const d1Manifest: Record<string, D1MigrationFile[]> = {};
@@ -542,11 +721,6 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     });
   }
 
-  // (h) Record the stripped worker config.
-  const mainModule = modules.find((m) => m.isMain)?.name;
-  if (!mainModule) {
-    throw new Error("internal error: no main module identified");
-  }
   const { version, origin: versionOrigin } = deriveVersionWithOrigin({
     installVersion: catalog.install.version,
     ref: catalog.source.ref,
@@ -555,35 +729,44 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     buildDate: formatBuildDate(new Date()),
   });
 
-  // (i) Assemble + validate the manifest.
-  const manifestInput = {
-    format: 1 as const,
+  // (i) Assemble + validate the manifest: format 1 for one Worker, format 2
+  // (the primary Worker as `worker`, the others in `workers`) for several.
+  const primarySection = sections[0];
+  if (primarySection === undefined) {
+    throw new Error("internal error: no Worker was packed");
+  }
+  const common = {
     app: catalog.slug,
     version,
     source: { repo: catalog.repo, sha: catalog.source.sha, ref: catalog.source.ref },
     builtAt: new Date().toISOString(),
     builder: `@appflare/pack@${packerVersion()}`,
     keyId: options.keyId ?? UNSIGNED_KEY_ID,
-    worker: {
-      name: config.name,
-      wranglerConfig,
-      mainModule,
-      compatibilityDate: config.compatibility_date,
-      compatibilityFlags: config.compatibility_flags ?? [],
-      modules: moduleManifest,
-      bindings,
-      migrations: (config.migrations ?? []) as DoMigration[],
-      crons: config.triggers?.crons ?? [],
-      ...(queueConsumers.length > 0 ? { queueConsumers } : {}),
-      observability: config.observability ?? null,
-      placement: config.placement ?? null,
-      limits: config.limits ?? null,
-    },
-    assets: { config: assets.config, binding: assets.binding, files: assetManifest },
+    worker: primarySection.worker,
+    assets: primarySection.assets,
     d1Migrations: d1Manifest,
     catalog,
   };
+  const manifestInput =
+    entry === undefined
+      ? { format: 1 as const, ...common }
+      : {
+          format: 2 as const,
+          ...common,
+          workers: sections
+            .filter((s) => !s.primary)
+            .map((s) => ({ name: s.name, worker: s.worker, assets: s.assets })),
+        };
   const manifest = artifactManifestSchema.parse(manifestInput);
+  if (entry !== undefined) {
+    // Each Worker against the catalog vars it gets.
+    const varProblems = appWorkers(manifest).flatMap((w) =>
+      catalogVarProblems(w.worker.bindings, workerManifest(manifest, w).catalog.vars),
+    );
+    if (varProblems.length > 0) {
+      throw new Error(varProblems.join(" "));
+    }
+  }
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
   // (j) manifest.json is the LAST zip entry: its bytes carry every other file's
@@ -624,15 +807,33 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   }
 
   const d1MigrationCount = Object.values(d1Manifest).reduce((n, f) => n + f.length, 0);
-  const size = workerSize(modules.map((m) => m.bytes));
-  const warnings = packWarnings(manifest, size);
+  const size = primarySection.size;
+  const workers: PackedWorker[] = sections.map((s) => ({
+    name: s.name,
+    primary: s.primary,
+    moduleCount: s.worker.modules.length,
+    assetCount: s.assets.files.length,
+    workerSize: s.size,
+  }));
+  const warnings = sections.flatMap((s) =>
+    packWarnings(
+      {
+        app: s.primary ? manifest.app : `${manifest.app} (Worker "${s.name}")`,
+        version: manifest.version,
+        worker: s.worker,
+      },
+      s.size,
+    ),
+  );
   for (const warning of warnings) {
     logger(`warning: ${warning}`);
   }
+  const moduleCount = workers.reduce((n, w) => n + w.moduleCount, 0);
+  const assetCount = workers.reduce((n, w) => n + w.assetCount, 0);
   logger(
     `packed ${catalog.slug}@${version} (${describeVersionOrigin(versionOrigin)}): ` +
-      `${moduleManifest.length} modules, ` +
-      `${assetManifest.length} assets, ${d1MigrationCount} migrations, ${zipBytes.length} bytes`,
+      `${workers.length > 1 ? `${workers.length} Workers, ` : ""}${moduleCount} modules, ` +
+      `${assetCount} assets, ${d1MigrationCount} migrations, ${zipBytes.length} bytes`,
   );
 
   return {
@@ -643,11 +844,12 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     slug: catalog.slug,
     version,
     versionOrigin,
-    moduleCount: moduleManifest.length,
-    assetCount: assetManifest.length,
+    moduleCount: primarySection.worker.modules.length,
+    assetCount: primarySection.assets.files.length,
     d1MigrationCount,
     zipSize: zipBytes.length,
     workerSize: size,
+    workers,
     warnings,
   };
 }

@@ -1,7 +1,9 @@
 import {
   type CatalogManifest,
+  entryPlaceholderValues,
   hasPlaceholder,
   type IndexBuild,
+  renderEntryWorkerPlaceholders,
   renderPlaceholders,
 } from "@appflare/schema";
 import {
@@ -182,8 +184,15 @@ export function InstallForm({
   const [error, setError] = useState<string | null>(null);
 
   const placeholders = { workerName, workerUrl: workersDevUrl(workerName, subdomain) };
+  // An app of several Workers: `{{workerUrl:<name>}}` names one of them.
+  const entryWorkers = entryPlaceholderValues(catalog, workerName, subdomain) ?? {};
+  const shownDefault = (field: InstallVarField): string =>
+    renderEntryWorkerPlaceholders(
+      renderPlaceholders(field.shownDefault, placeholders),
+      entryWorkers,
+    );
   const shownVar = (field: InstallVarField): string =>
-    editedVars[field.name] ?? renderPlaceholders(field.shownDefault, placeholders);
+    editedVars[field.name] ?? shownDefault(field);
   /**
    * Only settings the admin changed. The others are not stored, so each
    * install and update job uses the default of the version it deploys.
@@ -192,7 +201,7 @@ export function InstallForm({
     const out: Record<string, string> = {};
     for (const field of varFields) {
       const edited = editedVars[field.name];
-      const shown = renderPlaceholders(field.shownDefault, placeholders);
+      const shown = shownDefault(field);
       if (edited !== undefined && edited !== shown) out[field.name] = edited;
     }
     return out;

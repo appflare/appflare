@@ -31,6 +31,10 @@ Then the Worker itself, and everything that only exists with it:
 - its Workflows,
 - its Durable Object classes and everything they stored.
 
+For an [app of several Workers](/guides/install-apps/#apps-of-several-workers), the
+uninstall deletes every Worker of the app this way, each with its queue consumers
+detached first, before it deletes any resource.
+
 ## What you choose
 
 Each data resource has a checkbox: KV namespaces, D1 databases, R2 buckets, queues,

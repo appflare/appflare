@@ -85,9 +85,23 @@ function recordedVars(manifest: VarManifest): Map<string, VarBinding> {
   return vars;
 }
 
-/** The fields of the install form, one per catalog var, in the catalog's order. */
-export function installVarFields(manifest: VarManifest): InstallVarField[] {
+/**
+ * The fields of the install form, one per catalog var, in the catalog's
+ * order. For an app of several Workers a var the primary Worker's wrangler
+ * config lacks takes its kind and value from the first other Worker that
+ * declares it.
+ */
+export function installVarFields(
+  manifest: VarManifest & {
+    workers?: ReadonlyArray<{ worker: Pick<ArtifactManifest["worker"], "bindings"> }>;
+  },
+): InstallVarField[] {
   const recorded = recordedVars(manifest);
+  for (const other of manifest.workers ?? []) {
+    for (const [name, v] of recordedVars({ catalog: manifest.catalog, worker: other.worker })) {
+      if (!recorded.has(name)) recorded.set(name, v);
+    }
+  }
   return manifest.catalog.vars.map((v) => {
     const own = recorded.get(v.name);
     const kind: VarKind = own?.type === "json" ? "json" : "text";

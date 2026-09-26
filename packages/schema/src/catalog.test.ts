@@ -467,6 +467,13 @@ describe("install.sandbox", () => {
             { properties: { tier: { not: { const: "self-deploying" } } } },
           ],
         },
+        // Several Workers only on the artifact tier.
+        {
+          anyOf: [
+            { not: { required: ["workers"] } },
+            { properties: { tier: { const: "artifact" } } },
+          ],
+        },
       ],
       properties: {
         sandbox: {

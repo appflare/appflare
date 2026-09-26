@@ -22,8 +22,9 @@ app's own repository.
   is one to its own Worker (its `service` is the wrangler config's own `name`, as
   OpenNext's `WORKER_SELF_REFERENCE` is), optionally with an `entrypoint`. A service
   binding to any other Worker fails the pack, because an app must never be able to
-  call another app or Appflare itself.
-- **The Worker has at most 21 modules.** The manager installs apps from inside a
+  call another app or Appflare itself. An app made of several Workers lists them all
+  in its entry; see [Apps of several Workers](#apps-of-several-workers).
+- **Each Worker has at most 21 modules.** The manager installs apps from inside a
   Workflow on the free plan, which allows 50 subrequests per invocation, and it
   fetches each module as its own subrequest. A build that code-splits into many
   chunks must be configured to emit one module.
@@ -172,7 +173,9 @@ Points that need care:
   that query the Cloudflare API about their own account, such as the
   Analytics Engine SQL API. Vars are filled in again on every update and settings
   change. `{{workerUrl}}` is always the
-  workers.dev address, even when a custom domain is attached to the install.
+  workers.dev address, even when a custom domain is attached to the install. An
+  [app of several Workers](#apps-of-several-workers) can also name each of its
+  Workers.
 - **JSON vars.** A wrangler config var whose value is not a string (an array, object,
   number, or boolean) reaches the Worker as that JSON value, as with `wrangler
   deploy`. When `vars` lists such a var, its `default` must be JSON text, such as
@@ -196,6 +199,67 @@ Points that need care:
 
 Every field is described in the [manifest reference](/catalog/manifest-reference/).
 Add an optional `apps/<slug>/README.md` for notes.
+
+## Apps of several Workers
+
+Some apps are more than one Worker, such as a web front end and an API, or an app
+that serves uploaded files from an origin of their own. List every Worker in
+`install.workers`, and the manager installs, updates, and uninstalls them together
+as one app:
+
+```jsonc
+"install": {
+  "tier": "artifact",
+  "packageManager": "pnpm",
+  "wranglerConfig": "apps/web/wrangler.jsonc",
+  "workerName": "notes",
+  "buildCommand": "pnpm run build",
+  "workers": [
+    { "name": "web", "wranglerConfig": "apps/web/wrangler.jsonc", "primary": true },
+    { "name": "api", "wranglerConfig": "apps/api/wrangler.jsonc" }
+  ]
+},
+"secrets": [
+  { "name": "SESSION_SECRET", "label": "Session secret", "generate": true, "workers": ["web"] },
+  { "name": "API_KEY", "label": "API key", "generate": true }
+],
+"vars": [{ "name": "API_URL", "label": "API URL", "default": "{{workerUrl:api}}" }]
+```
+
+- **Two to five Workers**, on the artifact tier only. Each has a `name` within the
+  entry: up to 24 lowercase letters, digits, and hyphens, not starting or ending
+  with a hyphen. Each wrangler config must have a `name` of its own. On Workers Free
+  the manager installs and updates at most three Workers per app, since each Worker
+  adds requests to the one job and the free plan allows 50 per job; an entry of four
+  or five Workers needs Workers Paid (`"plan": "paid"`).
+- **Exactly one is `primary`.** It is the app: it runs under the install's Worker
+  name and serves the app's address, its custom domains, and the health check
+  (`install.healthPath` is a path on it). Its `wranglerConfig` must equal
+  `install.wranglerConfig`, so tools that build one Worker build the primary. Every
+  other Worker runs as `<install Worker name>-<name>` on its own workers.dev
+  address: `notes-api` in the example.
+- **Builds.** `install.buildCommand` runs once, first. Then each Worker's own
+  `buildCommand`, if it has one, runs in the order of the list. Both follow the
+  rules for `install.buildCommand` above.
+- **Secrets and vars.** A secret's or var's `workers` lists the Workers that get it.
+  Without it, a secret goes to every Worker, and a var goes to the Workers whose
+  wrangler config declares it, or to every Worker when none does.
+- **Placeholders.** `{{workerUrl:<name>}}` and `{{workerName:<name>}}` give one
+  Worker's workers.dev URL and installed Worker name. `{{workerUrl}}` and
+  `{{workerName}}` still mean the app, that is, the primary Worker.
+- **Resources are shared by binding name.** Workers that both bind `DB` use one D1
+  database, so they must bring the same migrations, or only one of them brings any.
+  A queue one Worker sends to and another consumes is one queue. Bindings of one
+  name must be of one type and declared alike.
+- **Bindings between the Workers.** A service binding whose `service` is another
+  Worker's wrangler `name`, and a Durable Object binding whose `script_name` is,
+  are pointed at that Worker as installed. Durable Objects may live in any of the
+  Workers. Each Worker is deployed after the Workers it binds to, with the primary
+  as late as possible.
+
+The pack fails on a service binding to any Worker outside the entry, on Workers that
+bind each other in a cycle, on a Workflow bound from a Worker other than the one
+that defines it, and on one D1 binding with different migrations in two Workers.
 
 ## 2. Open a pull request
 

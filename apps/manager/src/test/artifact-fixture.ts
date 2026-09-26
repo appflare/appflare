@@ -27,6 +27,13 @@ export interface ArtifactFixtureOptions {
   d1?: Record<string, Array<{ name: string; content: string }>>;
   crons?: string[];
   migrations?: ArtifactManifest["worker"]["migrations"];
+  /**
+   * Makes the app one of several Workers (format 2): the fixture's Worker is
+   * the primary one, named `app` in the entry, and these are the others, in
+   * the entry's order. Their modules and assets are laid out under
+   * `workers/<name>/`.
+   */
+  otherWorkers?: FixtureWorker[];
   /** Mutate the manifest object after it is built (before signing). */
   tweak?: (manifest: ArtifactManifest) => void;
   /**
@@ -35,6 +42,16 @@ export interface ArtifactFixtureOptions {
    * at it and `serve` answers {@link REVISED_URL} with it.
    */
   revision?: Partial<CatalogManifest>;
+}
+
+/** One Worker of an app of several, other than the primary one. */
+export interface FixtureWorker {
+  name: string;
+  bindings?: ArtifactManifest["worker"]["bindings"];
+  crons?: string[];
+  migrations?: ArtifactManifest["worker"]["migrations"];
+  queueConsumers?: ArtifactManifest["worker"]["queueConsumers"];
+  assets?: Array<{ route: string; content: string }>;
 }
 
 /** Where a fixture's revised catalog manifest is served. */
@@ -119,6 +136,36 @@ export async function buildArtifactFixture(
     const placed = await place(`assets${a.route}`, a.content);
     assets.push({ route: a.route, hash: assetHash(a.content, a.route), ...placed });
   }
+  const others = [];
+  for (const w of opts.otherWorkers ?? []) {
+    const module = await place(
+      `workers/${w.name}/worker/worker.js`,
+      `export default { fetch() { return new Response('${w.name}') } };`,
+    );
+    const files = [];
+    for (const a of w.assets ?? []) {
+      const placed = await place(`workers/${w.name}/assets${a.route}`, a.content);
+      files.push({ route: a.route, hash: assetHash(a.content, a.route), ...placed });
+    }
+    others.push({
+      name: w.name,
+      worker: {
+        name: `cut-${w.name}`,
+        mainModule: "worker.js",
+        compatibilityDate: "2024-12-30",
+        compatibilityFlags: ["nodejs_compat"],
+        modules: [{ name: "worker.js", type: "esm" as const, ...module }],
+        bindings: w.bindings ?? [],
+        migrations: w.migrations ?? [],
+        crons: w.crons ?? [],
+        ...(w.queueConsumers === undefined ? {} : { queueConsumers: w.queueConsumers }),
+        observability: null,
+        placement: null,
+        limits: null,
+      },
+      assets: { config: {}, binding: null, files },
+    });
+  }
   const d1: ArtifactManifest["d1Migrations"] = {};
   for (const [binding, files] of Object.entries(opts.d1 ?? {})) {
     d1[binding] = [];
@@ -134,8 +181,14 @@ export async function buildArtifactFixture(
     at += c.byteLength;
   }
 
-  const manifest: ArtifactManifest = {
-    format: 1,
+  const catalog = baseCatalog(opts.catalog);
+  if (others.length > 0) {
+    catalog.install.workers = [
+      { name: "app", wranglerConfig: catalog.install.wranglerConfig, primary: true },
+      ...others.map((w) => ({ name: w.name, wranglerConfig: `${w.name}/wrangler.jsonc` })),
+    ];
+  }
+  const fields = {
     app: "cut",
     version,
     source: {
@@ -151,7 +204,7 @@ export async function buildArtifactFixture(
       mainModule: "worker.js",
       compatibilityDate: "2024-12-30",
       compatibilityFlags: ["nodejs_compat"],
-      modules: [{ name: "worker.js", type: "esm", ...worker }],
+      modules: [{ name: "worker.js", type: "esm" as const, ...worker }],
       bindings: opts.bindings ?? [{ type: "kv_namespace", name: "CUT_KV" }],
       migrations: opts.migrations ?? [],
       crons: opts.crons ?? [],
@@ -161,8 +214,10 @@ export async function buildArtifactFixture(
     },
     assets: { config: {}, binding: null, files: assets },
     d1Migrations: d1,
-    catalog: baseCatalog(opts.catalog),
+    catalog,
   };
+  const manifest: ArtifactManifest =
+    others.length > 0 ? { format: 2, ...fields, workers: others } : { format: 1, ...fields };
   opts.tweak?.(manifest);
 
   const manifestBytes = enc.encode(JSON.stringify(manifest, null, 2));

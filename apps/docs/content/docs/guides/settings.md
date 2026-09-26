@@ -16,6 +16,9 @@ Saving is refused while another job of the app is queued or running, and while
 Appflare updates itself. While a job of the app runs, the tab says so, with
 **View log** to follow it.
 
+For an [app of several Workers](/guides/install-apps/#apps-of-several-workers), a
+changed setting or secret is applied to each Worker of the app that gets it.
+
 ## Settings
 
 Settings are variables on the app's Worker. They work as on the

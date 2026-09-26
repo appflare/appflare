@@ -89,6 +89,16 @@ interface FakeState {
   queues: Array<{ queue_id: string; queue_name: string }>;
   /** Consumers per queue id, with the body each was created from. */
   consumers: Record<string, Array<Record<string, unknown> & { consumer_id: string }>>;
+  /** The app's other Workers (`cut-<name>`), each with what its calls set. */
+  others: Record<string, OtherScript>;
+}
+
+/** What the fake records for an app's Worker other than `cut`. */
+interface OtherScript {
+  metadata: Record<string, unknown> | null;
+  secrets: Record<string, string>;
+  schedules: string[];
+  subdomain: unknown;
 }
 
 function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
@@ -125,6 +135,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     requestsByStep: {},
     queues: [],
     consumers: {},
+    others: {},
     ...over,
   };
   const host = redirectingArtifactHost(fixture);
@@ -172,6 +183,38 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         },
         { status: 403 },
       );
+    }
+    const otherScript =
+      /^(?:PUT|POST) \/workers\/scripts\/(cut-[a-z0-9-]+)(?:\/(secrets|schedules|subdomain|assets-upload-session))?$/.exec(
+        key,
+      );
+    if (otherScript?.[1] !== undefined) {
+      const name = otherScript[1];
+      state.others[name] ??= { metadata: null, secrets: {}, schedules: [], subdomain: null };
+      const w = state.others[name];
+      switch (otherScript[2]) {
+        case undefined: {
+          const form = await request.formData();
+          w.metadata = JSON.parse(String(form.get("metadata")));
+          state.scripts.push(name);
+          return ok({ id: name, deployment_id: VERSION_HEX });
+        }
+        case "secrets": {
+          const body = (await request.json()) as { name: string; text: string };
+          w.secrets[body.name] = body.text;
+          return ok({ name: body.name, type: "secret_text" });
+        }
+        case "schedules": {
+          const body = (await request.json()) as Array<{ cron: string }>;
+          w.schedules = body.map((s) => s.cron);
+          return ok({ schedules: body });
+        }
+        case "subdomain":
+          w.subdomain = await request.json();
+          return ok({ enabled: true, previews_enabled: true });
+        default:
+          return ok({ jwt: sessionJwt, buckets: [] });
+      }
     }
     switch (key) {
       case "GET /r2/buckets": {
@@ -527,9 +570,9 @@ describe("install job", () => {
       "check D1 database cut-db",
       "create D1 database cut-db",
       "record D1 database cut-db",
+      "look up workers.dev subdomain",
       "open assets upload session",
       "upload assets bucket 1/1",
-      "look up workers.dev subdomain",
       "record Worker name",
       "upload Worker script",
       "record Worker script",
@@ -1700,5 +1743,147 @@ describe("install job", () => {
       steps: [{ new_sqlite_classes: ["Room"] }, { new_sqlite_classes: ["Lobby"] }],
     });
     expect(r.installRow?.do_migration_tag).toBe("v2");
+  });
+});
+
+describe("install job, an app of several Workers", () => {
+  /** The primary Worker binds the `jobs` Worker; `jobs` implements the Durable Object. */
+  const twoWorkers = (): ArtifactFixtureOptions => ({
+    bindings: [
+      { type: "kv_namespace", name: "CUT_KV" },
+      { type: "service", name: "JOBS", service: "{{workerName:jobs}}", entrypoint: "Jobs" },
+      {
+        type: "durable_object_namespace",
+        name: "ROOM",
+        class_name: "Room",
+        script_name: "{{workerName:jobs}}",
+      },
+      { type: "plain_text", name: "JOBS_URL", text: "https://example.test" },
+    ],
+    otherWorkers: [
+      {
+        name: "jobs",
+        bindings: [
+          { type: "kv_namespace", name: "CUT_KV" },
+          { type: "durable_object_namespace", name: "ROOM", class_name: "Room" },
+        ],
+        migrations: [{ tag: "v1", new_sqlite_classes: ["Room"] }],
+        crons: ["*/5 * * * *"],
+      },
+    ],
+    catalog: {
+      secrets: [
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true, workers: ["app"] },
+        { name: "SHARED_KEY", label: "Shared key", generate: true },
+      ],
+      vars: [
+        { name: "JOBS_URL", label: "Jobs URL", default: "{{workerUrl:jobs}}", required: false },
+      ],
+    },
+  });
+  const secrets = { secrets: { ADMIN_PASSWORD: PASSWORD, SHARED_KEY: "shared" }, vars: {} };
+
+  it("deploys the Worker the primary one binds to first, sharing the app's resources", async () => {
+    const r = await install(twoWorkers(), {}, secrets);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const calls = r.fake.state.calls;
+    expect(calls.indexOf("PUT /workers/scripts/cut-jobs")).toBeLessThan(
+      calls.indexOf("PUT /workers/scripts/cut"),
+    );
+    // One KV namespace for the binding both Workers have.
+    expect(r.fake.state.kv.map((k) => k.title)).toEqual(["cut-cut-kv"]);
+    const jobs = r.fake.state.others["cut-jobs"];
+    const jobsBindings = (jobs?.metadata?.bindings ?? []) as Array<Record<string, unknown>>;
+    expect(jobsBindings).toContainEqual({
+      type: "kv_namespace",
+      name: "CUT_KV",
+      namespace_id: "kv-1",
+    });
+    expect(jobs?.metadata?.migrations).toEqual({
+      new_tag: "v1",
+      steps: [{ new_sqlite_classes: ["Room"] }],
+    });
+    // Secrets go to the Workers that get them.
+    expect(jobs?.secrets).toEqual({ SHARED_KEY: "shared" });
+    expect(r.fake.state.secrets).toEqual({ ADMIN_PASSWORD: PASSWORD, SHARED_KEY: "shared" });
+    expect(jobs?.schedules).toEqual(["*/5 * * * *"]);
+    expect(jobs?.subdomain).toEqual({ enabled: true, previews_enabled: true });
+    // The primary Worker's bindings to the other one name its installed name.
+    const bindings = (r.fake.state.metadata?.bindings ?? []) as Array<Record<string, unknown>>;
+    expect(bindings).toContainEqual({
+      type: "service",
+      name: "JOBS",
+      service: "cut-jobs",
+      entrypoint: "Jobs",
+    });
+    expect(bindings).toContainEqual({
+      type: "durable_object_namespace",
+      name: "ROOM",
+      class_name: "Room",
+      script_name: "cut-jobs",
+    });
+    expect(bindings).toContainEqual({
+      type: "plain_text",
+      name: "JOBS_URL",
+      text: "https://cut-jobs.appflare-dev.workers.dev",
+    });
+    expect(r.fake.state.metadata?.migrations).toBeUndefined();
+    const workers = r.resources.filter((row) => row.kind === "worker").map((row) => row.name);
+    expect(workers).toEqual(["cut-jobs", "cut"]);
+    const recorded = await env.DB.prepare("SELECT worker_versions_json FROM installs").first<{
+      worker_versions_json: string;
+    }>();
+    expect(JSON.parse(recorded?.worker_versions_json ?? "null")).toEqual({
+      "cut-jobs": "01234567-89ab-cdef-0123-456789abcdef",
+    });
+    expect(r.resources.filter((row) => row.kind === "durable_object")).toEqual([
+      { kind: "durable_object", binding: "ROOM", name: "Room", cf_id: null },
+    ]);
+    expect(r.resources.filter((row) => row.kind === "subdomain").map((row) => row.name)).toEqual([
+      "cut-jobs.appflare-dev.workers.dev",
+      "cut.appflare-dev.workers.dev",
+    ]);
+    // Step names never repeat, so each Worker's steps are its own.
+    expect(new Set(r.step.names).size).toBe(r.step.names.length);
+  });
+
+  it("deploys a Worker that binds to the primary one after it", async () => {
+    const r = await install({
+      otherWorkers: [
+        {
+          name: "hooks",
+          bindings: [{ type: "service", name: "APP", service: "{{workerName:app}}" }],
+        },
+      ],
+    });
+    expect(r.error).toBeNull();
+    const calls = r.fake.state.calls;
+    expect(calls.indexOf("PUT /workers/scripts/cut")).toBeLessThan(
+      calls.indexOf("PUT /workers/scripts/cut-hooks"),
+    );
+    expect(r.fake.state.others["cut-hooks"]?.metadata?.bindings).toContainEqual({
+      type: "service",
+      name: "APP",
+      service: "cut",
+    });
+    // The default secret goes to every Worker.
+    expect(r.fake.state.others["cut-hooks"]?.secrets).toEqual({ ADMIN_PASSWORD: PASSWORD });
+  });
+
+  it("refuses more Workers than the free plan's request budget allows, before creating anything", async () => {
+    const r = await install({
+      otherWorkers: [{ name: "a" }, { name: "b" }, { name: "c" }],
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain("This app has 4 Workers; more than 3 Workers exceed");
+    expect(r.fake.state.kv).toEqual([]);
+  });
+
+  it("refuses when one of the app's Worker names is taken, before creating anything", async () => {
+    const r = await install(twoWorkers(), { scripts: ["appflare", "cut-jobs"] }, secrets);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain("a Worker named cut-jobs already exists");
+    expect(r.fake.state.kv).toEqual([]);
   });
 });

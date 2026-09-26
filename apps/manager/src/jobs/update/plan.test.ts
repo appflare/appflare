@@ -260,6 +260,7 @@ describe("snapshot shape", () => {
       install_id: "i1",
       job_id: "job1",
       worker_version_id: "11111111-2222-3333-4444-555555555555",
+      worker_versions_json: null,
       d1_bookmarks_json: '{"d1-a":"0000001-aaa","d1-b":"0000002-bbb"}',
       taken_at: takenAt,
       catalog_version: "1.0.0",

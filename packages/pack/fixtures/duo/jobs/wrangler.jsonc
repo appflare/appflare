@@ -1,0 +1,18 @@
+{
+  // The second Worker of the `duo` fixture: consumes the queue the web Worker sends to.
+  "name": "duo-jobs",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-30",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "duo",
+      "database_id": "11111111-2222-3333-4444-555555555555",
+      "migrations_dir": "../migrations"
+    }
+  ],
+  "queues": { "consumers": [{ "queue": "duo-tasks", "max_retries": 3 }] },
+  "durable_objects": { "bindings": [{ "name": "COUNTER", "class_name": "Counter" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Counter"] }],
+  "triggers": { "crons": ["*/30 * * * *"] }
+}

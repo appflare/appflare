@@ -126,7 +126,10 @@ function heartbeatStatements(db: D1Database): D1PreparedStatement[] {
     ),
     db.prepare("SELECT count(*) AS passkeys, count(DISTINCT user_id) AS users FROM passkey"),
     db.prepare(
-      `SELECT app_slug, catalog_id, status, build_kind, catalog_version, updated_at, auto_update
+      `SELECT app_slug, catalog_id, status, build_kind, catalog_version, updated_at, auto_update,
+              (SELECT count(*) FROM resources r
+               WHERE r.install_id = installs.id AND r.kind = 'worker' AND r.deleted_at IS NULL)
+                AS workers
        FROM installs WHERE status <> 'uninstalled'`,
     ),
     db.prepare(
@@ -214,6 +217,7 @@ async function heartbeatInput(
       version: String(row.catalog_version),
       updatedAt: num(row.updated_at),
       autoUpdate: String(row.auto_update ?? "inherit"),
+      workers: num(row.workers),
     })),
     catalogVersions: versions,
     installsWithDomain: feature("domain"),
@@ -263,7 +267,9 @@ function jobsStatement(db: D1Database, from: number, to: number): D1PreparedStat
     .prepare(
       `SELECT j.id, j.kind, j.status, j.input_json, j.error, j.started_at, j.finished_at,
               j.started_by,
-              i.app_slug, i.catalog_id, i.catalog_version, i.build_kind, s.target_catalog_version
+              i.app_slug, i.catalog_id, i.catalog_version, i.build_kind, s.target_catalog_version,
+              (SELECT count(*) FROM resources r
+               WHERE r.install_id = j.install_id AND r.kind = 'worker') AS workers
        FROM jobs j
        LEFT JOIN installs i ON i.id = j.install_id
        LEFT JOIN snapshots s ON j.kind = 'rollback' AND json_valid(j.input_json)
@@ -298,6 +304,7 @@ function jobRows(result: D1Result | undefined): JobRow[] {
     snapshotTargetVersion:
       typeof r.target_catalog_version === "string" ? r.target_catalog_version : null,
     startedBy: typeof r.started_by === "string" ? r.started_by : "admin",
+    workers: num(r.workers) > 0 ? num(r.workers) : null,
   }));
 }
 

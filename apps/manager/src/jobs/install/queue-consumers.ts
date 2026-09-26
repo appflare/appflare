@@ -412,6 +412,13 @@ export async function syncQueueConsumersPhase(
     queues: readonly CreatedResource[];
     /** The install's live resource rows before the update. */
     recorded: readonly RecordedResource[];
+    /**
+     * An app of several Workers: the queue keys its other Workers consume,
+     * whose consumers this sync must leave alone.
+     */
+    keepKeys?: readonly string[];
+    /** False: only attach and update; leave consumers no Worker wants to the last sync. */
+    removeUnwanted?: boolean;
   },
 ): Promise<void> {
   const { installId, workerName, wanted, previous, queues, recorded } = input;
@@ -447,7 +454,12 @@ export async function syncQueueConsumersPhase(
       return {};
     });
   }
-  const keep = new Set(wanted.map((p) => resourceId(installId, QUEUE_CONSUMER_KIND, p.queueKey)));
+  if (input.removeUnwanted === false) return;
+  const keep = new Set(
+    [...wanted.map((p) => p.queueKey), ...(input.keepKeys ?? [])].map((key) =>
+      resourceId(installId, QUEUE_CONSUMER_KIND, key),
+    ),
+  );
   for (const target of targets) {
     if (!keep.has(target.id)) await removeConsumerStep(steps, workerName, target);
   }

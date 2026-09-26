@@ -1,5 +1,6 @@
 import { env, waitUntil } from "cloudflare:workers";
 import {
+  appWorkers,
   type CatalogAuthor,
   type CatalogManifest,
   hasFixedWorkerName,
@@ -19,6 +20,7 @@ import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { installLabel } from "../installs/display-name";
 import { type InstallVarField, installVarFields } from "../installs/install-vars";
 import { suggestWorkerName } from "../installs/instance-names";
+import { entryBindings } from "../jobs/entry-workers";
 import { planBindings } from "../jobs/install/bindings";
 import { sandboxBinding } from "../sandbox/binding";
 import { type SandboxReadiness, sandboxReadinessOf } from "../sandbox/readiness";
@@ -506,7 +508,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
     const plan =
       manifest.manifest === null
         ? null
-        : planBindings(install.workerName, manifest.manifest.worker.bindings);
+        : planBindings(install.workerName, entryBindings(manifest.manifest));
     return {
       ...empty,
       ...shown,
@@ -519,7 +521,10 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       createsKnown: plan !== null,
       creates: plan?.resources.map((r) => ({ kind: r.kind, binding: r.binding })) ?? [],
       durableObjects: plan?.durableObjects.map((d) => d.className) ?? [],
-      cronTriggers: cronTriggerCount(manifest.manifest?.worker.crons ?? []),
+      cronTriggers:
+        manifest.manifest === null
+          ? 0
+          : appWorkers(manifest.manifest).reduce((n, w) => n + cronTriggerCount(w.worker.crons), 0),
       error: null,
       instances,
       suggestedWorkerName: fixed

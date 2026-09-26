@@ -22,6 +22,10 @@ function usageText(usage: ResourceUsage | undefined): string | null {
 function workerBoundSummary(install: InstallDetail): string[] {
   const out: string[] = [];
   const byKind = (kind: string) => install.resources.filter((r) => r.kind === kind);
+  // An app of several Workers: its other Workers go too.
+  for (const r of byKind("worker")) {
+    if (r.name !== install.workerName) out.push(`the Worker "${r.name}"`);
+  }
   for (const d of install.domains) out.push(`the custom domain ${d.hostname}`);
   for (const d of install.externalDomains) out.push(`the external domain ${d.hostname}`);
   for (const r of byKind("subdomain")) out.push(`the route ${r.name}`);

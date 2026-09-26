@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { combinedWorkerFacts } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getCatalogManifest } from "../catalog/app-manifest.server";
@@ -59,7 +60,7 @@ export const previewEmailRouting = createServerFn({ method: "GET" })
       if (!entry.ok) throw new EmailRoutingError(entry.error);
       return previewEmailRoutingCore(await getCfClient(env), {
         catalog: entry.catalog,
-        bindings: entry.manifest?.worker.bindings ?? null,
+        bindings: entry.manifest == null ? null : combinedWorkerFacts(entry.manifest).bindings,
         zoneId: data.zoneId,
         workerName: data.workerName,
       });

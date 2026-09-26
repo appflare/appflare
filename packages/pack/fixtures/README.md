@@ -10,6 +10,13 @@ It exercises: static assets in nested directories, an `.assetsignore` file
 stripped, plain `vars`, and a cron trigger. `appflare.jsonc` is its catalog
 manifest.
 
+`fixtures/duo/` is an app of two Workers (`install.workers`): `web/` is the
+primary Worker and `jobs/` the other. It exercises a service binding and a
+Durable Object binding from one Worker to the other, a self binding, a D1
+database both Workers bind with the same migrations, a queue one Worker sends
+to and the other consumes, and secrets and vars aimed at one Worker. It has no
+dependencies either.
+
 This tree is deliberately kept out of the workspace's tooling:
 
 - **turbo**: it is not a workspace package (no `package.json`, and

@@ -54,7 +54,8 @@ Once a day, the manager sends one report with:
   self-deploying), and by version age (current, or, when the catalog has a newer
   version, how long ago the running one was installed: under 7 days, 7 to 30, 30 to
   90, over 90 days); how many have a custom domain,
-  Email Routing, or cron triggers; how many come from added catalogs; how many
+  Email Routing, or cron triggers; how many install as several Workers; how many
+  come from added catalogs; how many
   removed apps still keep data; and the catalog slugs of the installed apps, only
   for apps in Appflare's own catalog.
 
@@ -67,8 +68,9 @@ manager rollback, one event when it starts and one when it ends, with:
 - the kind of job, the app's catalog slug (`custom` for an app from a custom
   catalog or from a repository), the version it moves from and to (none for a custom
   catalog's app, an app from a repository, or an app built from source), the build
-  type, where the app comes from (`catalog`, `repository` or `source`), and what
-  started it (an admin, or the schedule for automatic updates); a manager rollback
+  type, where the app comes from (`catalog`, `repository` or `source`), how many
+  Workers the app installs, and what started it (an admin, or the schedule for
+  automatic updates); a manager rollback
   carries its kind only, never the versions it moves between. Nothing about a
   repository is sent: not its address, owner, name, branch or commit;
 - when it ends: whether it succeeded, how long it took, and for a failure, its
