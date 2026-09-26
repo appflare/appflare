@@ -35,6 +35,17 @@ describe("deriveServices", () => {
     expect(deriveServices({ emailRouting: true }).ids).toEqual(["email-routing", "zone"]);
   });
 
+  it("names Analytics Engine for a dataset binding and for the requirement", () => {
+    expect(deriveServices({ bindings: [{ type: "analytics_engine" }] }).ids).toEqual([
+      "analytics-engine",
+    ]);
+    expect(deriveServices({ requires: ["analytics-engine", "r2"] }).ids).toEqual([
+      "r2",
+      "analytics-engine",
+    ]);
+    expect(requirementService("analytics-engine")).toBe("analytics-engine");
+  });
+
   it("reads what a token may touch: zone-scoped groups, DNS, Access, storage", () => {
     // unifi-ddns: no bindings, a token that edits DNS.
     expect(deriveServices({ tokenPermissions: [{ name: "Zone.DNS", scope: "zone" }] }).ids).toEqual(

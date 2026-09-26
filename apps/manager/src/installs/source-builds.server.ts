@@ -20,6 +20,8 @@ import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import type { AccountPlan } from "../account/plan";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
+import { parseStoredCapabilities } from "../capabilities/capabilities";
+import { analyticsEngineRefusal } from "../catalog/requirement-checks";
 import { appKey, installAppKey, parseAppKey } from "../catalog/sources";
 import { createDb } from "../db/client";
 import {
@@ -30,6 +32,7 @@ import {
   snapshots,
   source_builds,
 } from "../db/schema";
+import { readSettings, SETTING } from "../db/settings";
 import type { UsedGithubToken } from "../github/access.server";
 import type { InstallJobParams } from "../jobs/install";
 import type { PrebuiltBuildParams } from "../jobs/install/artifact-source";
@@ -635,6 +638,14 @@ export async function installSourceBuildCore(
   if (row.purpose !== "install")
     throw fail("This build is for updating an install, not a new one.");
   const orm = createDb(deps.db);
+  // Cloudflare refuses the deploy while Analytics Engine is off; say so before anything is created.
+  const settings = await readSettings(orm, [SETTING.accountCapabilities]);
+  const analyticsEngine = analyticsEngineRefusal(
+    manifest.catalog.name,
+    { requires: manifest.catalog.requires, bindings: manifest.worker.bindings },
+    parseStoredCapabilities(settings.account_capabilities),
+  );
+  if (analyticsEngine !== null) throw fail(analyticsEngine);
   const accountPlan = await readAccountPlan(orm);
   const paidConfirmed = input.paidConfirmed || accountPlan === "paid";
   let resolved: ReturnType<typeof resolveInstallInput>;

@@ -23,6 +23,7 @@ export type ChecklistRowId =
   | "workers-dev"
   | "workers-plan"
   | "r2"
+  | "analytics-engine"
   | "zone"
   | "email-routing"
   | "zero-trust"
@@ -72,6 +73,7 @@ export interface CatalogNeeds {
   total: number;
   workersPaid: number;
   r2: number;
+  analyticsEngine: number;
   zone: number;
   emailRouting: number;
   access: number;
@@ -93,6 +95,7 @@ export const DASHBOARD_LINKS = {
   workersOnboarding: (accountId: string) => `${DASH}/${accountId}/workers/onboarding`,
   workersPlans: `${DASH}/?to=/:account/workers/plans`,
   r2: `${DASH}/?to=/:account/r2/overview`,
+  analyticsEngine: `${DASH}/?to=/:account/workers/analytics-engine`,
   domains: `${DASH}/?to=/:account/domains/overview`,
   emailRouting: `${DASH}/?to=/:account/email-service/routing`,
   zeroTrust: "https://one.dash.cloudflare.com/?to=/:account/home",
@@ -118,6 +121,7 @@ export function catalogNeeds(
     total: apps.length,
     workersPaid: 0,
     r2: 0,
+    analyticsEngine: 0,
     zone: 0,
     emailRouting: 0,
     access: 0,
@@ -127,6 +131,7 @@ export function catalogNeeds(
     const services = servicesOf(app);
     if (app.plan === "paid") needs.workersPaid++;
     if (services.has("r2")) needs.r2++;
+    if (services.has("analytics-engine")) needs.analyticsEngine++;
     if (services.has("zone") || services.has("email-routing")) needs.zone++;
     if (services.has("email-routing")) needs.emailRouting++;
     if (services.has("access")) needs.access++;
@@ -258,6 +263,45 @@ function r2Row({ view, needs }: ChecklistInput): LinkRow {
     return { ...row, status: "optional", value: NOT_CHECKED, note: RECHECK_NOTE };
   }
   return { ...row, status: "optional", value: "Unknown", note: unknownSentence(probe, "r2") };
+}
+
+/**
+ * Analytics Engine is off on an account until someone opens its dashboard
+ * page once, and Cloudflare refuses to deploy an app that writes to it until
+ * then. Optional: only the apps that use it need it.
+ */
+function analyticsEngineRow({ view, needs }: ChecklistInput): LinkRow {
+  const probe = view.analyticsEngine;
+  const row = {
+    id: "analytics-engine" as const,
+    label: "Analytics Engine",
+    why: why(
+      "Stores the events apps count and chart, such as page views and link clicks. Turning it on is free.",
+      needs === null ? null : counted(needs.analyticsEngine, "writes to it", "write to it"),
+    ),
+    link: { href: DASHBOARD_LINKS.analyticsEngine, label: "Analytics Engine", external: true },
+  };
+  if (probe?.state === "enabled") {
+    return { ...row, status: "done", value: "Turned on", note: null };
+  }
+  if (probe?.state === "not-enabled") {
+    return {
+      ...row,
+      status: "optional",
+      value: "Not turned on",
+      detail: "Open Analytics Engine in the dashboard once to turn it on, then Re-check.",
+      note: null,
+    };
+  }
+  if (probe === null) {
+    return { ...row, status: "optional", value: NOT_CHECKED, note: RECHECK_NOTE };
+  }
+  return {
+    ...row,
+    status: "optional",
+    value: "Unknown",
+    note: unknownSentence(probe, "analytics-engine"),
+  };
 }
 
 function zoneRow({ view, needs }: ChecklistInput): LinkRow {
@@ -447,6 +491,7 @@ export function buildChecklist(input: ChecklistInput): ChecklistRow[] {
     workersDevRow(input),
     planRow(input),
     r2Row(input),
+    analyticsEngineRow(input),
     zoneRow(input),
     emailRoutingRow(input),
     zeroTrustRow(input),
@@ -492,6 +537,13 @@ export function groupChecklist(rows: readonly ChecklistRow[]): {
     optional: rows.filter((r) => r.status === "optional"),
   };
 }
+
+/** The account checklist's Analytics Engine row, where a refused install points. */
+export const ANALYTICS_ENGINE_CHECKLIST_LINK: ChecklistLink = {
+  href: "/settings/account#checklist-analytics-engine",
+  label: "Analytics Engine in the account checklist",
+  external: false,
+};
 
 /**
  * The element id of a row, so other pages can link to it (the sandbox row is

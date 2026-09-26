@@ -19,7 +19,10 @@ import {
 const ACC = "acc0000000000000000000000000000a";
 const NO_PERMISSION = { state: "unknown", reason: "no-permission", detail: "HTTP 403" } as const;
 
-/** A free account with R2 on, a zone, Email Routing readable, no Zero Trust organization. */
+/**
+ * A free account with R2 and Analytics Engine on, a zone, Email Routing
+ * readable, no Zero Trust organization.
+ */
 function view(over: Partial<CapabilitiesView> = {}): CapabilitiesView {
   const base = capabilitiesView(undefined, {
     checkedAt: "2026-09-24T10:00:00.000Z",
@@ -30,6 +33,7 @@ function view(over: Partial<CapabilitiesView> = {}): CapabilitiesView {
     emailRouting: { state: "available" },
     workersDev: { state: "registered", subdomain: "acme" },
     zeroTrust: { state: "none" },
+    analyticsEngine: { state: "enabled" },
   });
   return { ...base, ...over };
 }
@@ -46,6 +50,7 @@ const NEEDS: CatalogNeeds = {
   total: 12,
   workersPaid: 3,
   r2: 4,
+  analyticsEngine: 2,
   zone: 2,
   emailRouting: 1,
   access: 0,
@@ -64,7 +69,7 @@ function rows(input: Partial<ChecklistInput> = {}): Record<ChecklistRowId, Check
 }
 
 describe("buildChecklist", () => {
-  it("lists the seven rows in order", () => {
+  it("lists the eight rows in order", () => {
     expect(
       buildChecklist({ view: view(), sandbox: "off", needs: NEEDS, accountId: ACC }).map(
         (r) => r.id,
@@ -73,6 +78,7 @@ describe("buildChecklist", () => {
       "workers-dev",
       "workers-plan",
       "r2",
+      "analytics-engine",
       "zone",
       "email-routing",
       "zero-trust",
@@ -85,6 +91,7 @@ describe("buildChecklist", () => {
     expect(r["workers-dev"]).toMatchObject({ status: "done", value: "acme.workers.dev" });
     expect(r["workers-plan"]).toMatchObject({ status: "done" });
     expect(r.r2.status).toBe("done");
+    expect(r["analytics-engine"]).toMatchObject({ status: "done", value: "Turned on" });
     expect(r.zone.status).toBe("done");
     expect(r["email-routing"].status).toBe("done");
     expect(r.sandbox).toMatchObject({ status: "done", value: "Enabled", link: null, action: null });
@@ -111,6 +118,26 @@ describe("buildChecklist", () => {
     expect(rows({ view: off, needs: { ...NEEDS, r2: 0 } }).r2.status).toBe("optional");
     // Unknown catalog: assume some app needs it.
     expect(rows({ view: off, needs: null }).r2.status).toBe("needs-you");
+  });
+
+  it("keeps Analytics Engine optional, with the dashboard page and Re-check as the fix", () => {
+    const off = rows({ view: view({ analyticsEngine: { state: "not-enabled" } }) });
+    expect(off["analytics-engine"]).toMatchObject({
+      status: "optional",
+      value: "Not turned on",
+      link: {
+        href: "https://dash.cloudflare.com/?to=/:account/workers/analytics-engine",
+        label: "Analytics Engine",
+        external: true,
+      },
+    });
+    expect(off["analytics-engine"].detail).toContain("then Re-check");
+    const unknown = rows({ view: view({ analyticsEngine: NO_PERMISSION }) });
+    expect(unknown["analytics-engine"]).toMatchObject({ status: "optional", value: "Unknown" });
+    expect(unknown["analytics-engine"].note).toContain("Analytics Engine");
+    // A row stored before the probe existed reads as not checked yet.
+    const old = rows({ view: view({ analyticsEngine: null }) });
+    expect(old["analytics-engine"]).toMatchObject({ status: "optional", value: "Not checked yet" });
   });
 
   it("keeps plan, domains, Email Routing, Zero Trust and sandbox builds optional", () => {
@@ -230,6 +257,7 @@ describe("buildChecklist", () => {
     expect(r["workers-plan"].why).toContain("3 catalog apps need it.");
     expect(r.r2.why).toContain("4 catalog apps store files in R2.");
     expect(r["email-routing"].why).toContain("1 catalog app uses it.");
+    expect(r["analytics-engine"].why).toContain("2 catalog apps write to it.");
     expect(r["zero-trust"].why).toContain("No catalog app uses Access yet.");
     expect(r["workers-dev"].why).toContain("12 catalog apps use it by default.");
     // No cached catalog: the reason alone.
@@ -257,14 +285,20 @@ describe("catalogNeeds", () => {
           plan: "free",
           tier: "artifact",
         },
-        { services: ["access", "containers"], requires: [], plan: "paid", tier: "sandbox" },
+        {
+          services: ["access", "containers", "analytics-engine"],
+          requires: [],
+          plan: "paid",
+          tier: "sandbox",
+        },
         // An older row without services: its `requires` stand in.
-        { requires: ["r2", "zone"], plan: "paid", tier: "self-deploying" },
+        { requires: ["r2", "zone", "analytics-engine"], plan: "paid", tier: "self-deploying" },
       ]),
     ).toEqual({
       total: 4,
       workersPaid: 2,
       r2: 2,
+      analyticsEngine: 2,
       zone: 2,
       emailRouting: 1,
       access: 1,
@@ -279,10 +313,14 @@ describe("checklist display rules", () => {
   }
 
   it("counts progress over the rows that are done or need the admin, not optional ones", () => {
-    // Free account: workers.dev, R2, zone, Email Routing done; plan, Zero Trust, sandbox optional.
-    expect(checklistProgress(list())).toEqual({ done: 4, total: 4 });
+    // Free account: workers.dev, R2, Analytics Engine, zone, Email Routing done;
+    // plan, Zero Trust, sandbox optional.
+    expect(checklistProgress(list())).toEqual({ done: 5, total: 5 });
     const missing = list({ view: view({ workersDev: { state: "not-registered" } }) });
-    expect(checklistProgress(missing)).toEqual({ done: 3, total: 4 });
+    expect(checklistProgress(missing)).toEqual({ done: 4, total: 5 });
+    // Analytics Engine off stays optional: it never holds setup back.
+    const off = list({ view: view({ analyticsEngine: { state: "not-enabled" } }) });
+    expect(checklistProgress(off)).toEqual({ done: 4, total: 4 });
     // Nothing checked yet: nothing done, and only what needs the admin counts.
     expect(checklistProgress(list({ view: capabilitiesView(undefined, null) }))).toEqual({
       done: 0,
@@ -297,7 +335,7 @@ describe("checklist display rules", () => {
       }),
     );
     expect(grouped.needsYou.map((r) => r.id)).toEqual(["workers-dev", "r2"]);
-    expect(grouped.done.map((r) => r.id)).toEqual(["zone", "email-routing"]);
+    expect(grouped.done.map((r) => r.id)).toEqual(["analytics-engine", "zone", "email-routing"]);
     expect(grouped.optional.map((r) => r.id)).toEqual(["workers-plan", "zero-trust", "sandbox"]);
   });
 
@@ -328,6 +366,8 @@ describe("checklist display rules", () => {
       { ...paidView(), r2: { state: "not-enabled" } },
       view({ zone: { state: "none" }, emailRouting: { state: "no-zone" } }),
       view({ plan: { plan: "paid", source: "set-by-you" }, containers: null }),
+      view({ analyticsEngine: { state: "not-enabled" } }),
+      view({ analyticsEngine: NO_PERMISSION }),
     ];
     for (const v of views) {
       for (const sandbox of ["off", "enabled"] as const) {

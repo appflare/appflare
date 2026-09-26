@@ -53,6 +53,8 @@ const FREE_ACCOUNT: Record<string, FakeRoute> = {
     status: 404,
     errors: [{ code: 404, message: "not found" }],
   },
+  // Analytics Engine never turned on: the SQL service's own plain-text refusal.
+  [`POST ${A}/analytics_engine/sql`]: { status: 403, text: "Authorization error" },
 };
 
 /** The same account seen with a token that has no "Billing: Read" and no Containers permission. */
@@ -75,6 +77,7 @@ const PAID_ACCOUNT: Record<string, FakeRoute> = {
   [`GET ${A}/access/organizations`]: {
     result: { auth_domain: "paid-team.cloudflareaccess.com", name: "paid-team" },
   },
+  [`POST ${A}/analytics_engine/sql`]: { result: null },
 };
 
 async function configured() {
@@ -104,6 +107,7 @@ describe("capabilities after a token save", () => {
       `GET ${A}/workers/subdomain`,
       "GET /zones",
       "GET /zones/zone1/email/routing",
+      `POST ${A}/analytics_engine/sql`,
     ]);
     expect(api.calls.every((c) => c.authorization === `Bearer ${TOKEN}`)).toBe(true);
     const view = await readCapabilitiesView(db);
@@ -116,8 +120,12 @@ describe("capabilities after a token save", () => {
       emailRouting: { state: "available" },
       workersDev: { state: "registered", subdomain: "appflare-dev" },
       zeroTrust: { state: "none" },
+      analyticsEngine: { state: "not-enabled" },
       plan: { plan: "free", source: "detected" },
     });
+    expect(api.calls.find((c) => c.key.endsWith("/analytics_engine/sql"))?.body).toBe(
+      "SHOW TABLES",
+    );
     const row = await readSettings(db, [SETTING.accountCapabilities]);
     expect(row.account_capabilities).not.toContain(TOKEN);
   });
@@ -210,14 +218,16 @@ describe("the daily check", () => {
     expect(await refreshCapabilitiesDaily(cf, db, { now: EVENING, fetch: api.fetch })).toBe(
       "fresh",
     );
-    // Three account probes, the zone list, workers.dev and Zero Trust; no zone,
-    // so no Email Routing read.
-    expect(api.calls).toHaveLength(6);
+    // Three account probes, the zone list, workers.dev, Zero Trust and
+    // Analytics Engine; no zone, so no Email Routing read.
+    expect(api.calls).toHaveLength(7);
     expect(await refreshCapabilitiesDaily(cf, db, { now: NEXT_DAY, fetch: api.fetch })).toBe(
       "checked",
     );
-    expect(api.calls).toHaveLength(12);
-    expect((await readCapabilitiesView(db)).plan).toEqual({ plan: "paid", source: "detected" });
+    expect(api.calls).toHaveLength(14);
+    const view = await readCapabilitiesView(db);
+    expect(view.plan).toEqual({ plan: "paid", source: "detected" });
+    expect(view.analyticsEngine).toEqual({ state: "enabled" });
   });
 
   it("does nothing before setup has stored a token", async () => {

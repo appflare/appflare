@@ -1,6 +1,7 @@
 import type { Plan } from "@appflare/schema";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import {
+  ANALYTICS_ENGINE_FIX,
   type Availability,
   primitiveStatus,
   requirementPrimitive,
@@ -54,4 +55,39 @@ export function requirementChecks(
     met: checks.filter((c) => c.availability === "available"),
     pending: checks.filter((c) => c.availability !== "available"),
   };
+}
+
+/** What an app is known to use, from its `requires`, its index row and its Worker's bindings. */
+export interface AnalyticsEngineUse {
+  requires: readonly string[];
+  /** The services the index row publishes, when it does. */
+  services?: readonly string[] | undefined;
+  /** The Worker's bindings, when an artifact records them (wrangler's type names). */
+  bindings?: ReadonlyArray<{ type: string }> | undefined;
+}
+
+/** Whether an app writes to Analytics Engine: it asks for it, or binds a dataset. */
+export function usesAnalyticsEngine(app: AnalyticsEngineUse): boolean {
+  return (
+    app.requires.includes("analytics-engine") ||
+    (app.services ?? []).includes("analytics-engine") ||
+    (app.bindings ?? []).some((b) => b.type === "analytics_engine")
+  );
+}
+
+/**
+ * Why an app cannot be installed while Analytics Engine is off, or null.
+ * Cloudflare refuses to deploy a Worker that binds a dataset until Analytics
+ * Engine is turned on for the account, so a detected "not turned on" stops
+ * the install before anything is created. When the probe could not tell, the
+ * requirement stays for the admin to confirm like any other.
+ */
+export function analyticsEngineRefusal(
+  appName: string,
+  app: AnalyticsEngineUse,
+  // The view, or the stored probe row (where a row from before the probe has none).
+  view: { analyticsEngine?: CapabilitiesView["analyticsEngine"] | undefined } | null,
+): string | null {
+  if (view?.analyticsEngine?.state !== "not-enabled" || !usesAnalyticsEngine(app)) return null;
+  return `${appName} writes to Analytics Engine, which is not turned on for this account. ${ANALYTICS_ENGINE_FIX}`;
 }

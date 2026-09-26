@@ -1,6 +1,7 @@
 import { CloudflareApiError } from "./errors";
 import { type ClientOptions, createHttpApi } from "./http";
 import { createAccess } from "./namespaces/access";
+import { createAnalyticsEngine } from "./namespaces/analytics-engine";
 import { createBilling } from "./namespaces/billing";
 import { createContainers } from "./namespaces/containers";
 import { createEmailRouting } from "./namespaces/email-routing";
@@ -12,9 +13,9 @@ import type { AccountSubscription } from "./types";
 /**
  * What an account can do, read with a token: whether R2 is enabled, whether
  * Containers can be used, which Workers plan the account is on, whether the
- * token can see a zone (a domain on Cloudflare), and whether it can read that
- * zone's Email Routing. Each probe is one read call and never changes
- * anything. Shared by the manager (with its stored token) and the CLI (with
+ * token can see a zone (a domain on Cloudflare), whether it can read that
+ * zone's Email Routing, and whether Analytics Engine is on. Each probe is one
+ * read call and never changes anything. Shared by the manager (with its stored token) and the CLI (with
  * wrangler's credential), so both read the answers the same way.
  *
  * Also a separate entry (`@appflare/cf-api/capabilities`) that pulls in only
@@ -57,6 +58,21 @@ import type { AccountSubscription } from "./types";
  *   (the manager's Access setting reads it the same way); a token without
  *   "Access: Organizations, Identity Providers, and Groups" is refused with a
  *   401 or 403.
+ *
+ * Recorded live (2026-09-26), Analytics Engine, with two tokens holding the
+ * same permission groups (neither has "Account Analytics"):
+ * - `POST /analytics_engine/sql` with the body `SHOW TABLES` is 200 with the
+ *   SQL service's own JSON (`meta`, `data`, `rows`; no envelope) on an
+ *   account with Analytics Engine on.
+ * - On an account where it was never turned on, the same call is 403 with a
+ *   plain-text body, "Authorization error": the SQL service's refusal, not
+ *   the API gateway's JSON one. A token the gateway rejects gets JSON code
+ *   10000 instead (401 "Authentication error" for an invalid token), so a
+ *   Cloudflare error code in the answer means the token, not the account.
+ * - Deploying a Worker with an `analytics_engine` binding to such an account
+ *   fails with code 10089, `workers.api.error.no_access_to_analytics_engine`
+ *   (cloudflare/workers-sdk#5940); the fix is the dashboard's Analytics
+ *   Engine page, once per account.
  */
 
 /** Why a probe could not tell. */
@@ -83,6 +99,16 @@ export type ContainersCapability =
   | CapabilityUnknown;
 
 export type WorkersPlanCapability = { state: "paid" } | { state: "free" } | CapabilityUnknown;
+
+/**
+ * Whether Workers Analytics Engine is turned on for the account. It is off
+ * until someone opens its page in the dashboard once, and until then every
+ * deploy of a Worker that binds a dataset is refused.
+ */
+export type AnalyticsEngineCapability =
+  | { state: "enabled" }
+  | { state: "not-enabled" }
+  | CapabilityUnknown;
 
 export interface AccountCapabilities {
   r2: R2Capability;
@@ -131,6 +157,7 @@ export type ZeroTrustCapability =
 export interface AccountSetupCapabilities {
   workersDev: WorkersDevCapability;
   zeroTrust: ZeroTrustCapability;
+  analyticsEngine: AnalyticsEngineCapability;
 }
 
 /** What the token can do with the account's domains. */
@@ -144,6 +171,16 @@ export const WORKERS_DEV_NOT_REGISTERED_CODE = 10007;
 
 /** Cloudflare's code for "Please enable R2 through the Cloudflare Dashboard." */
 export const R2_NOT_ENABLED_CODE = 10042;
+
+/**
+ * Cloudflare's code for a Worker upload that binds an Analytics Engine
+ * dataset on an account where Analytics Engine is off
+ * (`workers.api.error.no_access_to_analytics_engine`).
+ */
+export const ANALYTICS_ENGINE_NOT_ENABLED_CODE = 10089;
+
+/** The statement the Analytics Engine probe runs: lists datasets, changes nothing. */
+export const ANALYTICS_ENGINE_PROBE_QUERY = "SHOW TABLES";
 
 /** The container application name the Containers probe filters on (it need not exist). */
 export const CONTAINERS_PROBE_NAME = "appflare-sandbox-standard-1";
@@ -167,6 +204,7 @@ export interface CapabilityClient {
   emailRouting: Pick<ReturnType<typeof createEmailRouting>, "getSettings">;
   workers: Pick<ReturnType<typeof createWorkers>, "getAccountSubdomain">;
   access: Pick<ReturnType<typeof createAccess>, "getOrganization">;
+  analyticsEngine: Pick<ReturnType<typeof createAnalyticsEngine>, "sql">;
 }
 
 /** A client with only what the probes need, for callers that do not need the full one. */
@@ -180,6 +218,7 @@ export function createCapabilityClient(options: ClientOptions): CapabilityClient
     emailRouting: createEmailRouting(http),
     workers: createWorkers(http),
     access: createAccess(http),
+    analyticsEngine: createAnalyticsEngine(http),
   };
 }
 
@@ -377,15 +416,50 @@ export async function probeZeroTrust(
   }
 }
 
-/** The workers.dev and Zero Trust probes, concurrently; one read call each. Never throws. */
+/**
+ * Whether the SQL service itself refused the query: a 403 whose body was not
+ * the API's JSON envelope, so it carries no Cloudflare error code. The
+ * gateway's refusals of a token always carry one (10000).
+ */
+function isSqlServiceRefusal(error: unknown): boolean {
+  return (
+    error instanceof CloudflareApiError &&
+    error.status === 403 &&
+    error.errors.every((e) => e.code === 0)
+  );
+}
+
+/**
+ * Analytics Engine: `SHOW TABLES` through the SQL API, which reads the
+ * account's dataset names and changes nothing. An answer means it is on; the
+ * SQL service's plain-text 403 means it was never turned on; a refusal with a
+ * Cloudflare error code is the token's permissions.
+ */
+export async function probeAnalyticsEngine(
+  client: Pick<CapabilityClient, "analyticsEngine">,
+): Promise<AnalyticsEngineCapability> {
+  try {
+    await client.analyticsEngine.sql(ANALYTICS_ENGINE_PROBE_QUERY);
+    return { state: "enabled" };
+  } catch (error) {
+    if (isSqlServiceRefusal(error)) return { state: "not-enabled" };
+    return unknown(isRefusal(error) ? "no-permission" : "error", error);
+  }
+}
+
+/**
+ * The workers.dev, Zero Trust and Analytics Engine probes, concurrently; one
+ * read call each. Never throws.
+ */
 export async function probeAccountSetup(
-  client: Pick<CapabilityClient, "workers" | "access">,
+  client: Pick<CapabilityClient, "workers" | "access" | "analyticsEngine">,
 ): Promise<AccountSetupCapabilities> {
-  const [workersDev, zeroTrust] = await Promise.all([
+  const [workersDev, zeroTrust, analyticsEngine] = await Promise.all([
     probeWorkersDev(client),
     probeZeroTrust(client),
+    probeAnalyticsEngine(client),
   ]);
-  return { workersDev, zeroTrust };
+  return { workersDev, zeroTrust, analyticsEngine };
 }
 
 /**

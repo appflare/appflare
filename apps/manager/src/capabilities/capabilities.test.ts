@@ -38,6 +38,15 @@ describe("the stored capabilities row", () => {
     ).toBeNull();
   });
 
+  it("keeps the Analytics Engine probe, and reads rows without it as not checked", () => {
+    const withIt = stored({ analyticsEngine: { state: "not-enabled" } });
+    expect(parseStoredCapabilities(JSON.stringify(withIt))).toEqual(withIt);
+    expect(capabilitiesView(null, stored()).analyticsEngine).toBeNull();
+    expect(
+      parseStoredCapabilities(JSON.stringify({ ...withIt, analyticsEngine: { state: "on" } })),
+    ).toBeNull();
+  });
+
   it("keeps the domain probes, and still reads rows written before they existed", () => {
     const withDomains = stored({ zone: { state: "none" }, emailRouting: { state: "no-zone" } });
     expect(parseStoredCapabilities(JSON.stringify(withDomains))).toEqual(withDomains);
@@ -159,6 +168,22 @@ describe("requirement badges", () => {
     expect(requirementBadge("email-routing", refused)).toBeNull();
   });
 
+  it("say what the probe found about Analytics Engine", () => {
+    const on = capabilitiesView(null, stored({ analyticsEngine: { state: "enabled" } }));
+    expect(requirementBadge("analytics-engine", on)).toEqual({
+      met: true,
+      label: "Detected: turned on",
+    });
+    const off = capabilitiesView(null, stored({ analyticsEngine: { state: "not-enabled" } }));
+    expect(requirementBadge("analytics-engine", off)).toEqual({
+      met: false,
+      label: "Detected: not turned on",
+    });
+    const refused = capabilitiesView(null, stored({ analyticsEngine: NO_PERMISSION }));
+    expect(requirementBadge("analytics-engine", refused)).toBeNull();
+    expect(requirementBadge("analytics-engine", capabilitiesView(null, stored()))).toBeNull();
+  });
+
   it("say nothing for requirements the probes do not cover or have not checked", () => {
     expect(requirementBadge("zone", capabilitiesView("paid", stored()))).toBeNull();
     expect(requirementBadge("email-routing", capabilitiesView("paid", stored()))).toBeNull();
@@ -189,6 +214,7 @@ describe("capabilitiesView", () => {
       emailRouting: null,
       workersDev: null,
       zeroTrust: null,
+      analyticsEngine: null,
       plan: { plan: "paid", source: "detected" },
       manualPlan: "free",
     });

@@ -5,6 +5,7 @@ import {
   detectedWorkersPlan,
   probeAccountCapabilities,
   probeAccountSetup,
+  probeAnalyticsEngine,
   probeContainers,
   probeDomainCapabilities,
   probeEmailRouting,
@@ -448,7 +449,7 @@ describe("probeZeroTrust", () => {
 });
 
 describe("probeAccountSetup", () => {
-  it("runs both probes and never names the token or the account", async () => {
+  it("runs the three probes and never names the token or the account", async () => {
     const { fake, client } = make((req) =>
       req.path.endsWith("/workers/subdomain") ? { result: { subdomain: "acme" } } : AUTH_ERROR,
     );
@@ -460,9 +461,58 @@ describe("probeAccountSetup", () => {
         reason: "no-permission",
         detail: "HTTP 403, Cloudflare code 10000",
       },
+      analyticsEngine: {
+        state: "unknown",
+        reason: "no-permission",
+        detail: "HTTP 403, Cloudflare code 10000",
+      },
     });
-    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls).toHaveLength(3);
     expect(JSON.stringify(result)).not.toContain(TOKEN);
     expect(JSON.stringify(result)).not.toContain(ACCOUNT);
+  });
+});
+
+describe("probeAnalyticsEngine", () => {
+  it("lists the datasets with the SQL API and says enabled on an answer", async () => {
+    const { fake, client } = make(() => ({
+      envelope: { meta: [{ name: "dataset", type: "String" }], data: [], rows: 0 },
+    }));
+    expect(await probeAnalyticsEngine(client)).toEqual({ state: "enabled" });
+    const call = fake.last();
+    expect(`${call.method} ${call.url}`).toBe(`POST ${A}/analytics_engine/sql`);
+    expect(call.headers.get("content-type")).toBe("text/plain");
+    expect(await call.request.clone().text()).toBe("SHOW TABLES");
+  });
+
+  it("says not enabled on the SQL service's plain-text 403", async () => {
+    const { client } = make(() => ({ status: 403, text: "Authorization error" }));
+    expect(await probeAnalyticsEngine(client)).toEqual({ state: "not-enabled" });
+  });
+
+  it("says no permission when the API refuses the token with a Cloudflare code", async () => {
+    for (const status of [401, 403]) {
+      const refused = make(() => ({
+        status,
+        errors: [{ code: 10000, message: "Authentication error" }],
+      }));
+      expect(await probeAnalyticsEngine(refused.client)).toEqual({
+        state: "unknown",
+        reason: "no-permission",
+        detail: `HTTP ${status}, Cloudflare code 10000`,
+      });
+    }
+  });
+
+  it("says error on a 5xx, and reads only a 403 as the SQL service's refusal", async () => {
+    expect(await probeAnalyticsEngine(make(() => ({ status: 500 })).client)).toMatchObject({
+      state: "unknown",
+      reason: "error",
+    });
+    const plain401 = make(() => ({ status: 401, text: "Unauthorized" }));
+    expect(await probeAnalyticsEngine(plain401.client)).toMatchObject({
+      state: "unknown",
+      reason: "no-permission",
+    });
   });
 });

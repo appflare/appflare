@@ -9,6 +9,7 @@ export { assetHash, buildAssetsManifest } from "./asset-hash";
 export type {
   AccountCapabilities,
   AccountSetupCapabilities,
+  AnalyticsEngineCapability,
   CapabilityClient,
   CapabilityUnknown,
   CapabilityUnknownReason,
@@ -22,12 +23,15 @@ export type {
   ZoneCapability,
 } from "./capabilities";
 export {
+  ANALYTICS_ENGINE_NOT_ENABLED_CODE,
+  ANALYTICS_ENGINE_PROBE_QUERY,
   CONTAINERS_PROBE_NAME,
   createCapabilityClient,
   detectedWorkersPlan,
   failureDetail,
   probeAccountCapabilities,
   probeAccountSetup,
+  probeAnalyticsEngine,
   probeContainers,
   probeDomainCapabilities,
   probeEmailRouting,
@@ -59,6 +63,10 @@ export {
   fetchAccessCerts,
   isAccessTeamDomain,
 } from "./namespaces/access";
+export type {
+  AnalyticsEngineSqlColumn,
+  AnalyticsEngineSqlResult,
+} from "./namespaces/analytics-engine";
 export type {
   AssetBucketFile,
   AssetBucketResult,

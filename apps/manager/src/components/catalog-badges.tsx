@@ -3,6 +3,7 @@ import { Badge, cn, Text } from "@cloudflare/kumo";
 import {
   ArchiveIcon,
   BrowserIcon,
+  ChartLineIcon,
   ClockIcon,
   CubeIcon,
   DatabaseIcon,
@@ -108,6 +109,7 @@ export const PRIMITIVE_ICONS: Record<PrimitiveId, Icon> = {
   "durable-objects": CubeIcon,
   hyperdrive: LightningIcon,
   vectorize: VectorThreeIcon,
+  "analytics-engine": ChartLineIcon,
   queues: QueueIcon,
   workflows: FlowArrowIcon,
   cron: ClockIcon,

@@ -53,6 +53,7 @@ const SERVICE_REQUIREMENTS: ReadonlyArray<readonly [string, string]> = [
   ["workers-ai", "workers-ai"],
   ["browser-rendering", "browser-rendering"],
   ["email-routing", "email-routing"],
+  ["analytics-engine", "analytics-engine"],
 ];
 
 export interface SourceReview {

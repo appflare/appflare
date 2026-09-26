@@ -392,7 +392,8 @@
           "email-routing",
           "workers-ai",
           "browser-rendering",
-          "containers"
+          "containers",
+          "analytics-engine"
         ]
       }
     },

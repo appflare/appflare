@@ -12,6 +12,8 @@ export interface FakeRoute {
   result?: unknown;
   errors?: Array<{ code: number; message: string }>;
   result_info?: { page?: number; per_page?: number; total_pages?: number; cursor?: string };
+  /** A plain-text body instead of the JSON envelope (the Analytics Engine SQL API's refusals). */
+  text?: string;
 }
 
 export interface FakeCall {
@@ -43,6 +45,9 @@ export function fakeCloudflare(
           ? route(url)
           : route;
     const status = spec.status ?? 200;
+    if (spec.text !== undefined) {
+      return new Response(spec.text, { status, headers: { "content-type": "text/plain" } });
+    }
     return Response.json(
       {
         success: status < 400,

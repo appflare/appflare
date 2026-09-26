@@ -1,6 +1,7 @@
 import { type ClientOptions, createHttpApi } from "./http";
 import { createAccess } from "./namespaces/access";
 import { createAccounts } from "./namespaces/accounts";
+import { createAnalyticsEngine } from "./namespaces/analytics-engine";
 import { createAssets } from "./namespaces/assets";
 import { createBilling } from "./namespaces/billing";
 import { createContainers } from "./namespaces/containers";
@@ -38,6 +39,7 @@ export interface CloudflareClient {
   readonly containers: ReturnType<typeof createContainers>;
   readonly billing: ReturnType<typeof createBilling>;
   readonly customHostnames: ReturnType<typeof createCustomHostnames>;
+  readonly analyticsEngine: ReturnType<typeof createAnalyticsEngine>;
 }
 
 /**
@@ -68,5 +70,6 @@ export function createClient(options: ClientOptions): CloudflareClient {
     containers: createContainers(http),
     billing: createBilling(http),
     customHostnames: createCustomHostnames(http),
+    analyticsEngine: createAnalyticsEngine(http),
   };
 }

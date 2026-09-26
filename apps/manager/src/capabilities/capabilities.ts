@@ -1,6 +1,7 @@
 import {
   type AccountCapabilities,
   type AccountSetupCapabilities,
+  type AnalyticsEngineCapability,
   type CapabilityUnknown,
   type ContainersCapability,
   type DomainCapabilities,
@@ -18,7 +19,8 @@ import { type AccountPlan, parseAccountPlan } from "../account/plan";
 /**
  * Account capabilities as the manager keeps them: what the probes in
  * `@appflare/cf-api/capabilities` last found (R2 enabled, Containers
- * available, Workers plan, a zone the token can see, Email Routing on it),
+ * available, Workers plan, a zone the token can see, Email Routing on it,
+ * Analytics Engine turned on),
  * when, and the Workers plan every confirmation reads: the detected one
  * first, then the one an admin set. Client-safe: the Settings card and the
  * catalog page use the same words.
@@ -59,6 +61,10 @@ export const storedCapabilitiesSchema = z.object({
       z.object({ state: z.literal("none") }),
       unknownSchema,
     ])
+    .optional(),
+  // Absent in rows written before the Analytics Engine probe existed.
+  analyticsEngine: z
+    .union([z.object({ state: z.enum(["enabled", "not-enabled"]) }), unknownSchema])
     .optional(),
 });
 export type StoredCapabilities = AccountCapabilities &
@@ -116,6 +122,8 @@ export interface CapabilitiesView {
   /** Null until the onboarding probes have run once. */
   workersDev: WorkersDevCapability | null;
   zeroTrust: ZeroTrustCapability | null;
+  /** Null until the Analytics Engine probe has run once. */
+  analyticsEngine: AnalyticsEngineCapability | null;
   /** The plan in force and where it comes from. */
   plan: ResolvedAccountPlan;
   /** The plan an admin set in Settings, used when none is detected. */
@@ -135,6 +143,7 @@ export function capabilitiesView(
     emailRouting: stored?.emailRouting ?? null,
     workersDev: stored?.workersDev ?? null,
     zeroTrust: stored?.zeroTrust ?? null,
+    analyticsEngine: stored?.analyticsEngine ?? null,
     plan: resolveAccountPlan(manual, stored),
     manualPlan: manual === "free" || manual === "paid" ? manual : null,
   };
@@ -181,7 +190,15 @@ export const SOURCE_LABELS = {
 /** Why a probe could not tell, in one sentence. */
 export function unknownSentence(
   value: CapabilityUnknown,
-  what: "r2" | "containers" | "plan" | "zone" | "email-routing" | "workers-dev" | "zero-trust",
+  what:
+    | "r2"
+    | "containers"
+    | "plan"
+    | "zone"
+    | "email-routing"
+    | "workers-dev"
+    | "zero-trust"
+    | "analytics-engine",
 ): string {
   if (value.reason === "no-permission") {
     return {
@@ -196,6 +213,8 @@ export function unknownSentence(
       zone: 'The token cannot list the account\'s domains. Add the optional "Zone: Read" permission.',
       "email-routing":
         'The token cannot read Email Routing on the account\'s domain. Add the optional "Zone Settings" permission.',
+      "analytics-engine":
+        "Cloudflare refused the token's Analytics Engine query, so Appflare cannot tell whether it is on.",
     }[what];
   }
   if (value.reason === "unrecognised") {
@@ -253,6 +272,12 @@ export function requirementBadge(
     const state = view.emailRouting?.state;
     if (state === "available") return { met: true, label: "Detected: available" };
     if (state === "no-zone") return { met: false, label: "Detected: no active zone" };
+    return null;
+  }
+  if (requirement === "analytics-engine") {
+    const state = view.analyticsEngine?.state;
+    if (state === "enabled") return { met: true, label: "Detected: turned on" };
+    if (state === "not-enabled") return { met: false, label: "Detected: not turned on" };
     return null;
   }
   return null;

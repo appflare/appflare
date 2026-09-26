@@ -40,7 +40,6 @@ import { EmailRoutingFields } from "./email-routing-fields";
 import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
-import { SANDBOX_CHECKLIST_LINK_LABEL } from "./sandbox-first";
 import {
   initialSecretValues,
   SecretFields,
@@ -117,8 +116,8 @@ export function InstallForm({
   fixedWorkerName: boolean;
   /** Why the install is not possible right now (for example, already installed). */
   blockedReason: string | null;
-  /** Where to fix what blocks the install, shown under the reason (the checklist row). */
-  blockedLink?: string | null;
+  /** Where to fix what blocks the install, shown under the reason (a checklist row). */
+  blockedLink?: { href: string; label: string } | null;
   /** Sandbox builds are off and the install turns them on first; its confirmation says so. */
   sandboxFirst?: boolean;
   /** The admin ticked "This account meets these requirements" (only asked when `requires` is not empty). */
@@ -271,7 +270,7 @@ export function InstallForm({
               title={blockedReason}
               description={
                 blockedLink === null ? undefined : (
-                  <Link href={blockedLink}>{SANDBOX_CHECKLIST_LINK_LABEL}</Link>
+                  <Link href={blockedLink.href}>{blockedLink.label}</Link>
                 )
               }
             />

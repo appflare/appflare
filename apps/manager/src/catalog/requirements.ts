@@ -37,6 +37,11 @@ export const REQUIREMENTS: Record<Requirement, { label: string; sentence: string
     label: "Containers",
     sentence: "The app runs Containers, which need the Workers Paid plan on the account.",
   },
+  "analytics-engine": {
+    label: "Analytics Engine",
+    sentence:
+      "The app writes to Workers Analytics Engine, which must be turned on once for the account in the dashboard; until then Cloudflare refuses to deploy it.",
+  },
 };
 
 /**

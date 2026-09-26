@@ -26,6 +26,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { requirementBadge } from "../../../capabilities/capabilities";
 import { CapabilityBadge } from "../../../capabilities/capability-badge";
 import { cronTriggerCount } from "../../../catalog/cron-triggers";
+import { analyticsEngineRefusal } from "../../../catalog/requirement-checks";
 import { requirementSentence } from "../../../catalog/requirements";
 import { PrimitiveBadges } from "../../../components/catalog-badges";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
@@ -50,6 +51,7 @@ import {
   type SourceBuildView,
   updateFromSourceBuild,
 } from "../../../installs/source-builds.functions";
+import { ANALYTICS_ENGINE_CHECKLIST_LINK } from "../../../onboarding/checklist";
 
 /**
  * `/catalog/source/$buildId`: the review of a build from a repository (or
@@ -254,6 +256,11 @@ function Review({
   const confirmed = requirementsConfirmed || review.checks.pending.length === 0;
   const waiting = build.status === "built";
   const refused = review.problems.length > 0;
+  const analyticsEngineOff = analyticsEngineRefusal(
+    review.catalog.name,
+    { requires: review.requires, bindings: review.bindings },
+    review.capabilities,
+  );
   return (
     <>
       <SourceCard build={build} review={review} />
@@ -314,7 +321,12 @@ function Review({
           defaultWorkerName={review.suggestedWorkerName}
           fixedWorkerName={hasFixedWorkerName(review.catalog.install)}
           blockedReason={
-            refused ? "This build cannot be installed; the problems are listed above." : null
+            refused
+              ? "This build cannot be installed; the problems are listed above."
+              : analyticsEngineOff
+          }
+          blockedLink={
+            !refused && analyticsEngineOff !== null ? ANALYTICS_ENGINE_CHECKLIST_LINK : null
           }
           requirementsConfirmed={confirmed}
           cronTriggers={cronTriggerCount(review.crons)}

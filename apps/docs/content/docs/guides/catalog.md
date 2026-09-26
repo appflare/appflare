@@ -48,7 +48,9 @@ box lists it. Tick **This account meets these requirements** to enable the
 The manager cannot check most of these for you. R2 is the exception: the install
 checks that R2 is enabled before it creates anything, except for a
 [self-deploying app](/guides/builds/#self-deploying-apps), whose own installer
-creates its resources.
+creates its resources. Analytics Engine is checked too: while the account check
+finds it off, the install is refused. Turn on Analytics Engine once in the
+dashboard, then choose **Re-check** in **Settings › Account and capabilities**.
 
 | Requirement | What it means |
 | --- | --- |
@@ -57,6 +59,7 @@ creates its resources.
 | Email Routing | Email Routing must be enabled on a zone so email reaches the app's Worker. Appflare does not set Email Routing up for a self-deploying app. |
 | Workers AI | The app runs models on Workers AI. Use beyond the daily free allocation needs Workers Paid. |
 | Browser Rendering | The app drives a headless browser. The free plan allows limited browser time a day. |
+| Analytics Engine | The app writes events to Workers Analytics Engine. It is off on an account until you open its page in the dashboard once, and Cloudflare refuses to deploy the app until then. |
 | Containers | The app runs Containers, which need Workers Paid. For a [sandbox tier](/guides/builds/) app, the app is built in a container in your account instead; for a self-deploying app, its installer runs in one. Both need Workers Paid. |
 
 ### Apps that need their own token

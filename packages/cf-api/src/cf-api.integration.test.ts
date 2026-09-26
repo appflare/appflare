@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { probeAccountCapabilities, probeDomainCapabilities } from "./capabilities";
+import {
+  probeAccountCapabilities,
+  probeAnalyticsEngine,
+  probeDomainCapabilities,
+} from "./capabilities";
 import { createClient } from "./client";
 import { type DevContext, hasDevContext, loadDevContext } from "./dev";
 
@@ -70,6 +74,20 @@ describe.skipIf(dev === null)("cf-api integration (dev account, read-only)", () 
     expect(calls.length).toBeLessThanOrEqual(2);
     expect(JSON.stringify(domains)).not.toContain(context.token);
     expect(JSON.stringify(domains)).not.toContain(context.accountId);
+  });
+
+  it("reads whether Analytics Engine is on with one SQL read", async () => {
+    const calls: string[] = [];
+    const client = createClient({
+      ...context,
+      onRequest: ({ method, path }) => calls.push(`${method} ${path}`),
+    });
+
+    const analyticsEngine = await probeAnalyticsEngine(client);
+    expect(["enabled", "not-enabled", "unknown"]).toContain(analyticsEngine.state);
+    // A SHOW statement: the SQL API takes it as a POST body but changes nothing.
+    expect(calls).toEqual([`POST /accounts/${context.accountId}/analytics_engine/sql`]);
+    expect(JSON.stringify(analyticsEngine)).not.toContain(context.token);
   });
 });
 

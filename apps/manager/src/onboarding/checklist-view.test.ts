@@ -6,7 +6,16 @@ import { NO_SANDBOX_JOBS } from "../sandbox/readiness";
 import type { ChecklistData } from "./checklist.server";
 import { ChecklistBody } from "./checklist-view";
 
-const NEEDS = { total: 5, workersPaid: 1, r2: 2, zone: 1, emailRouting: 1, access: 0, sandbox: 1 };
+const NEEDS = {
+  total: 5,
+  workersPaid: 1,
+  r2: 2,
+  analyticsEngine: 0,
+  zone: 1,
+  emailRouting: 1,
+  access: 0,
+  sandbox: 1,
+};
 
 function data(over: Partial<CapabilitiesView> = {}): ChecklistData {
   const view = capabilitiesView(undefined, {
@@ -96,7 +105,7 @@ describe("the checklist view", () => {
   it("draws every row as one fixed-height line with no paragraph in it", () => {
     const html = render(data({ workersDev: { state: "not-registered" } }));
     const rowsHtml = html.match(/<li [^>]*>/g) ?? [];
-    expect(rowsHtml.length).toBe(7);
+    expect(rowsHtml.length).toBe(8);
     for (const li of rowsHtml) expect(li).toContain("h-11");
     expect(html).not.toMatch(/<li[^>]*>(?:(?!<\/li>).)*<p[ >]/s);
   });

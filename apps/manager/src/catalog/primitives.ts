@@ -32,6 +32,7 @@ export const PRIMITIVE_LABELS: Record<PrimitiveId, string> = {
   "durable-objects": "Durable Objects",
   hyperdrive: "Hyperdrive",
   vectorize: "Vectorize",
+  "analytics-engine": "Analytics Engine",
   queues: "Queues",
   workflows: "Workflows",
   cron: "Cron triggers",
@@ -155,6 +156,39 @@ function emailRoutingStatus(view: CapabilitiesView | null): PrimitiveStatus {
 }
 
 /**
+ * What an admin does about Analytics Engine being off: it is turned on once
+ * per account, from its page in the dashboard, and the probe reads it again on
+ * Re-check.
+ */
+export const ANALYTICS_ENGINE_FIX =
+  "Turn on Analytics Engine once in the dashboard, then Re-check.";
+
+/**
+ * Analytics Engine, as its probe found it. It is off on an account until
+ * someone opens its dashboard page once; until then Cloudflare refuses every
+ * deploy of a Worker that binds a dataset.
+ */
+function analyticsEngineStatus(view: CapabilitiesView | null): PrimitiveStatus {
+  const id = "analytics-engine";
+  const state = view?.analyticsEngine?.state;
+  if (state === "enabled") {
+    return { id, availability: "available", reason: "Detected: Analytics Engine is turned on." };
+  }
+  if (state === "not-enabled") {
+    return {
+      id,
+      availability: "unavailable",
+      reason: `Detected: Analytics Engine is not turned on. ${ANALYTICS_ENGINE_FIX}`,
+    };
+  }
+  return {
+    id,
+    availability: "unknown",
+    reason: "Needs Analytics Engine turned on for this account; Appflare could not check.",
+  };
+}
+
+/**
  * Whether the account is on Workers Paid, as far as the plan in force says:
  * detected, set by an admin, or not known. An admin's "Free" is only the
  * fallback they chose, so it leaves the answer unknown.
@@ -185,8 +219,8 @@ function paidPlanStatus(id: PrimitiveId, view: CapabilitiesView | null): Primiti
 
 /**
  * Whether this account offers `id`. Primitives every plan includes are
- * available; R2, Containers, domains and Email Routing follow the capability
- * probes; key-value Durable Objects and Containers without a probe result
+ * available; R2, Containers, domains, Email Routing and Analytics Engine
+ * follow the capability probes; key-value Durable Objects and Containers without a probe result
  * follow the plan; Access is not probed, so it stays unknown.
  */
 export function primitiveStatus(
@@ -200,6 +234,7 @@ export function primitiveStatus(
   if (notChecked !== undefined) return { id, availability: "unknown", reason: notChecked };
   if (id === "zone") return zoneStatus(view);
   if (id === "email-routing") return emailRoutingStatus(view);
+  if (id === "analytics-engine") return analyticsEngineStatus(view);
   if (id === "durable-objects") {
     if (!app.keyValueDurableObjects) {
       return {

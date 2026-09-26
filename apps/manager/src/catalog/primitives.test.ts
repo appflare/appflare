@@ -159,6 +159,25 @@ describe("primitiveStatus", () => {
     }
   });
 
+  it("follows the Analytics Engine probe, naming the fix when it is off", () => {
+    const on = capabilitiesView(null, stored({ analyticsEngine: { state: "enabled" } }));
+    const off = capabilitiesView(null, stored({ analyticsEngine: { state: "not-enabled" } }));
+    const refused = capabilitiesView(null, stored({ analyticsEngine: unknownProbe }));
+    expect(primitiveStatus("analytics-engine", on, plain).availability).toBe("available");
+    expect(primitiveStatus("analytics-engine", off, plain)).toEqual({
+      id: "analytics-engine",
+      availability: "unavailable",
+      reason:
+        "Detected: Analytics Engine is not turned on. Turn on Analytics Engine once in the dashboard, then Re-check.",
+    });
+    expect(primitiveStatus("analytics-engine", refused, plain).availability).toBe("unknown");
+    // A row stored before the probe existed: not known yet.
+    expect(
+      primitiveStatus("analytics-engine", capabilitiesView(null, stored()), plain).availability,
+    ).toBe("unknown");
+    expect(requirementPrimitive("analytics-engine")).toBe("analytics-engine");
+  });
+
   it("leaves Access unknown: nothing probes it", () => {
     expect(primitiveStatus("access", capabilitiesView(null, stored()), plain)).toMatchObject({
       availability: "unknown",

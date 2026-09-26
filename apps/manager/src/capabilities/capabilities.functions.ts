@@ -15,7 +15,7 @@ export const getAccountCapabilities = createServerFn({ method: "GET" }).handler(
   },
 );
 
-/** Runs the probes now with the stored token (seven read calls at most) and returns the new values. */
+/** Runs the probes now with the stored token (eight read calls at most) and returns the new values. */
 export const recheckAccountCapabilities = createServerFn({ method: "POST" }).handler(
   async (): Promise<CapabilitiesView> => {
     await requireRole("admin");

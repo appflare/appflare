@@ -10,10 +10,13 @@ import {
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
+import { parseStoredCapabilities } from "../capabilities/capabilities";
+import { analyticsEngineRefusal } from "../catalog/requirement-checks";
 import { requirementLabel } from "../catalog/requirements";
 import { OFFICIAL_CATALOG_ID, unsignedTierRefusal } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
+import { readSettings, SETTING } from "../db/settings";
 import { checkExternalHostname } from "../gateway/gateway";
 import { isGatewayReady, readGateway } from "../gateway/gateway.server";
 import type { InstallJobParams } from "../jobs/install";
@@ -229,6 +232,18 @@ export async function startInstallCore(
   const catalogId = loaded.catalogId ?? OFFICIAL_CATALOG_ID;
   const unsigned = unsignedTierRefusal(catalogId, app.tier);
   if (unsigned !== null) throw new StartInstallError(unsigned);
+  // Cloudflare refuses the deploy while Analytics Engine is off; say so before anything is created.
+  const settings = await readSettings(createDb(deps.db), [SETTING.accountCapabilities]);
+  const analyticsEngine = analyticsEngineRefusal(
+    manifest.catalog.name,
+    {
+      requires: manifest.catalog.requires,
+      services: app.services,
+      bindings: manifest.worker.bindings,
+    },
+    parseStoredCapabilities(settings.account_capabilities),
+  );
+  if (analyticsEngine !== null) throw new StartInstallError(analyticsEngine);
   // An account recorded as on Workers Paid needs no confirmation per install.
   const accountPlan = await readAccountPlan(createDb(deps.db));
   const paidConfirmed = input.paidConfirmed || accountPlan === "paid";

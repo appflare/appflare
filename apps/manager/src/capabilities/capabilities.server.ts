@@ -25,10 +25,10 @@ import {
  * Runs the account capability probes and keeps their answer in
  * `settings.account_capabilities`: at token save (with the new token), when an
  * admin chooses "Re-check", and once a UTC day from the cron. Each run is one
- * read call per probe, seven in all: R2, Containers, the Workers plan, one zone
+ * read call per probe, eight in all: R2, Containers, the Workers plan, one zone
  * of the account, Email Routing on that zone (skipped when there is no
- * zone), the workers.dev subdomain and the Zero Trust organization (both
- * for the onboarding checklist). The plan probe reads further subscription pages, up to 4, only on
+ * zone), and for the onboarding checklist the workers.dev subdomain, the Zero
+ * Trust organization and an Analytics Engine `SHOW TABLES`. The plan probe reads further subscription pages, up to 4, only on
  * accounts with more than 50 subscriptions and no Workers entry on the
  * first. A probe that cannot tell for lack of permission is stored as
  * such, so the manual plan applies; one that failed outright (network, 5xx)
@@ -72,6 +72,7 @@ export async function refreshCapabilities(
     emailRouting: keepOnFailure(domains.emailRouting, previous?.emailRouting),
     workersDev: keepOnFailure(setup.workersDev, previous?.workersDev),
     zeroTrust: keepOnFailure(setup.zeroTrust, previous?.zeroTrust),
+    analyticsEngine: keepOnFailure(setup.analyticsEngine, previous?.analyticsEngine),
   };
   await writeSettings(db, { [SETTING.accountCapabilities]: JSON.stringify(stored) }, now);
   return stored;

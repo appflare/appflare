@@ -30,6 +30,7 @@ import { avatarSrc } from "../../../catalog/avatar";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
 import { licenseParts } from "../../../catalog/license";
 import {
+  analyticsEngineRefusal,
   type RequirementCheck,
   type RequirementChecks,
   requirementChecks,
@@ -56,8 +57,10 @@ import { DocsLink } from "../../../components/docs-link";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
+import { SANDBOX_CHECKLIST_LINK_LABEL } from "../../../components/sandbox-first";
 import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
+import { ANALYTICS_ENGINE_CHECKLIST_LINK } from "../../../onboarding/checklist";
 import {
   buildCostLine,
   describeInstance,
@@ -121,12 +124,26 @@ function CatalogEntryPage() {
   // has what they need, and says what is missing otherwise.
   const needsSandbox = sandboxBuild !== null || installer !== null;
   const sandboxMissing = needsSandbox ? detail.sandbox.missing : null;
-  const blockedReason =
+  const analyticsEngineOff = analyticsEngineRefusal(
+    app.name,
+    { requires: [...app.requires, ...(catalog?.requires ?? [])], services: detail.primitives.ids },
+    detail.capabilities,
+  );
+  const blocked: { reason: string; link: { href: string; label: string } | null } | null =
     detail.fixedWorkerName && detail.instances[0] !== undefined
-      ? `${app.name} is already installed as "${detail.instances[0].workerName}". It only works under one Worker name, so it installs once per account.`
+      ? {
+          reason: `${app.name} is already installed as "${detail.instances[0].workerName}". It only works under one Worker name, so it installs once per account.`,
+          link: null,
+        }
       : sandboxMissing !== null
-        ? `${app.name} ${installer !== null ? "is deployed by its own installer in" : "is built in"} your account's sandbox Worker. Sandbox builds are off, and Appflare cannot turn them on: ${sandboxMissing}`
-        : null;
+        ? {
+            reason: `${app.name} ${installer !== null ? "is deployed by its own installer in" : "is built in"} your account's sandbox Worker. Sandbox builds are off, and Appflare cannot turn them on: ${sandboxMissing}`,
+            link: { href: SANDBOX_CHECKLIST_HREF, label: SANDBOX_CHECKLIST_LINK_LABEL },
+          }
+        : analyticsEngineOff !== null
+          ? { reason: analyticsEngineOff, link: ANALYTICS_ENGINE_CHECKLIST_LINK }
+          : null;
+  const blockedReason = blocked?.reason ?? null;
   const installable = catalog !== null && detail.suggestedWorkerName !== null;
   const checks = requirementChecks(
     { plan: app.plan, requires: [...new Set([...app.requires, ...(catalog?.requires ?? [])])] },
@@ -204,9 +221,7 @@ function CatalogEntryPage() {
           defaultWorkerName={detail.suggestedWorkerName}
           fixedWorkerName={detail.fixedWorkerName}
           blockedReason={blockedReason}
-          blockedLink={
-            blockedReason !== null && sandboxMissing !== null ? SANDBOX_CHECKLIST_HREF : null
-          }
+          blockedLink={blocked?.link ?? null}
           requirementsConfirmed={confirmed}
           sandboxBuild={sandboxBuild}
           sandboxFirst={needsSandbox && detail.sandbox.state === "ready-auto"}

@@ -501,6 +501,39 @@ describe("startInstallCore", () => {
     expect(JSON.parse(job?.input_json ?? "{}").requirementsConfirmed).toBe(true);
   });
 
+  it("refuses an app that writes to Analytics Engine while the probe found it off", async () => {
+    const f = await buildArtifactFixture({ catalog: { requires: ["analytics-engine"] } });
+    const h = harness(f);
+    const probes = {
+      checkedAt: NOW.toISOString(),
+      r2: { state: "enabled" },
+      containers: { state: "needs-workers-paid" },
+      workersPlan: { state: "free" },
+    };
+    await writeSettings(createDb(env.DB), {
+      [SETTING.accountCapabilities]: JSON.stringify({
+        ...probes,
+        analyticsEngine: { state: "not-enabled" },
+      }),
+    });
+    await expect(startInstallCore(h.deps, input({ requirementsConfirmed: true }))).rejects.toThrow(
+      "Cut writes to Analytics Engine, which is not turned on for this account. Turn on Analytics Engine once in the dashboard, then Re-check.",
+    );
+    expect(h.created).toHaveLength(0);
+    const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM installs").first<{ n: number }>();
+    expect(rows?.n).toBe(0);
+
+    // Turned on and re-checked: the install goes ahead.
+    await writeSettings(createDb(env.DB), {
+      [SETTING.accountCapabilities]: JSON.stringify({
+        ...probes,
+        analyticsEngine: { state: "enabled" },
+      }),
+    });
+    await startInstallCore(h.deps, input({ requirementsConfirmed: true }));
+    expect(h.created).toHaveLength(1);
+  });
+
   it("does not ask for the confirmation when the app has no account requirements", async () => {
     const f = await buildArtifactFixture();
     expect(() => resolveInstallInput(f.manifest, input())).not.toThrow();

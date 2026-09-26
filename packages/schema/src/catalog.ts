@@ -144,6 +144,7 @@ export const requirementSchema = z.enum([
   "workers-ai",
   "browser-rendering",
   "containers",
+  "analytics-engine",
 ]);
 export type Requirement = z.infer<typeof requirementSchema>;
 

@@ -16,6 +16,7 @@ export const SERVICE_IDS = [
   "durable-objects",
   "hyperdrive",
   "vectorize",
+  "analytics-engine",
   "queues",
   "workflows",
   "cron",
@@ -44,6 +45,7 @@ const BINDING_SERVICES: Readonly<Record<string, ServiceId>> = {
   durable_object_namespace: "durable-objects",
   hyperdrive: "hyperdrive",
   vectorize: "vectorize",
+  analytics_engine: "analytics-engine",
   queue: "queues",
   workflow: "workflows",
   ai: "workers-ai",
@@ -61,6 +63,7 @@ const REQUIREMENT_SERVICES: Readonly<Record<string, ServiceId>> = {
   "workers-ai": "workers-ai",
   "browser-rendering": "browser-rendering",
   containers: "containers",
+  "analytics-engine": "analytics-engine",
 };
 
 /** The service a catalog `requires` value is, or null for one this version does not know. */
