@@ -64,6 +64,11 @@ COPY --from=packer /opt/appflare-pack /opt/appflare-pack
 RUN ln -s /opt/appflare-pack/bin/appflare-pack.js /usr/local/bin/appflare-pack \
   && ln -s /opt/appflare-pack/node_modules/wrangler/bin/wrangler.js /usr/local/bin/wrangler
 
+# `bunx` beside the base image's bun, as bun's own installers provide it: bun
+# projects call it in their build scripts (glance builds its web UI with
+# `bunx vite build`). Bun acts as `bunx` when it runs under that name.
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
+
 # Builds do not use the Sandbox code interpreter; its warm pools would only
 # take memory from the build.
 ENV JAVASCRIPT_POOL_MIN_SIZE=0 \
@@ -72,7 +77,8 @@ ENV JAVASCRIPT_POOL_MIN_SIZE=0 \
 
 # Fail the image build, not a user's build, when a tool is missing.
 RUN node --version | grep -q '^v22\.' \
-  && pnpm --version && yarn --version && bun --version && git --version \
+  && pnpm --version && yarn --version && bun --version && bunx --version \
+  && git --version \
   && s3fs --version | head -n 1 \
   && wrangler --version && appflare-pack --help > /dev/null
 
