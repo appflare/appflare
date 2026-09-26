@@ -35,6 +35,7 @@ export const DOCS_TOPICS = {
   sourceBuildReview: "guides/install-from-a-repository#review-the-build",
   sourceBuildJob: "guides/install-from-a-repository#if-the-build-fails",
   repositoryUpdates: "guides/install-from-a-repository#check-for-changes",
+  githubAccess: "guides/install-from-a-repository#private-repositories",
 } as const satisfies Record<string, string>;
 
 export type DocsTopic = keyof typeof DOCS_TOPICS;

@@ -67,7 +67,7 @@ export type BuildKind = (typeof BUILD_KINDS)[number];
 
 /**
  * Where an install's code comes from: `catalog`, the catalog's own release
- * or pinned build; `repository`, a public GitHub repository an admin named,
+ * or pinned build; `repository`, a GitHub repository an admin named,
  * built in this account and never reviewed by the catalog (it is shown as
  * "Not from the catalog, not checked" and never updated on its own); or
  * `source`, a catalog app an admin built from source at another commit, with
@@ -441,3 +441,22 @@ export const source_builds = sqliteTable(
   },
   (t) => [index("source_builds_install_id_idx").on(t.install_id)],
 );
+
+/**
+ * GitHub access tokens an admin added (Settings, Account): fine-grained,
+ * read-only tokens for building private repositories. Only the record is
+ * here; each token's value is a secret on the sandbox Worker
+ * (`githubTokenSecretName(id)`), never in this database. Disabling sandbox
+ * builds deletes that Worker, and with it every token, so the rows go too.
+ */
+export const github_tokens = sqliteTable("github_tokens", {
+  /** A ULID; also names the token's secret on the sandbox Worker. */
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  /** The repositories it covers, as the admin describes them (`acme/api, acme/*`). */
+  repositories: text("repositories").notNull(),
+  /** Appflare reads its own releases with this token (at most one row). */
+  for_releases: integer("for_releases", { mode: "boolean" }).notNull().default(false),
+  created_at: timestamp("created_at").notNull(),
+  last_used_at: timestamp("last_used_at"),
+});

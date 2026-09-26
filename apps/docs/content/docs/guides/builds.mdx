@@ -113,6 +113,9 @@ app built or deployed in the sandbox Worker is still installed; uninstall those 
 first. The job then removes the `SANDBOX` binding from the manager (a checked new
 version, as above), deletes the sandbox Worker and its two container applications, and
 empties and deletes the `appflare-builds` bucket, leaving the account as it was before.
+The [GitHub access tokens](/guides/install-from-a-repository/#private-repositories) are
+secrets of the sandbox Worker, so they go with it; add them again after enabling
+sandbox builds again.
 
 ## Install a sandbox tier app
 

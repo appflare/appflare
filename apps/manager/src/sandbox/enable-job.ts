@@ -11,10 +11,11 @@ import {
 } from "@appflare/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { releaseFetch } from "../catalog/release-fetch";
+import { releaseFetch, releaseFetchAuthenticated } from "../catalog/release-fetch";
 import { createDb } from "../db/client";
 import { jobs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { releaseTokenOptions, releaseTokenSecret } from "../github/release-access.server";
 import { fetchWhole } from "../jobs/install/artifact";
 import { lookupSubdomainPhase } from "../jobs/install/phases";
 import { explainR2Refusal } from "../jobs/install/r2-enablement";
@@ -123,8 +124,19 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
   const { run } = steps;
   const version = params.version;
   const userAgent = `Appflare/${params.managerVersion}`;
-  const feed = (fetch: FetchLike) => releaseFetch(fetch, { token: env.GITHUB_TOKEN, userAgent });
-  const releaseHost: ArtifactHost = { kind: "release", userAgent };
+  /**
+   * The GitHub access token marked for release downloads (from "start"):
+   * usable when updating, since the sandbox Worker that holds it exists;
+   * enabling falls back to `GITHUB_TOKEN`.
+   */
+  let releaseSecret: string | null = null;
+  const tokenOptions = () => releaseTokenOptions(env, releaseSecret);
+  const feed = (fetch: FetchLike) => releaseFetch(fetch, { ...tokenOptions(), userAgent });
+  const releaseHost = (): ArtifactHost => ({
+    kind: "release",
+    userAgent,
+    ...(releaseSecret === null ? {} : { tokenSecret: releaseSecret }),
+  });
 
   try {
     const started = await run("start", async ({ log, orm }) => {
@@ -147,9 +159,14 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
           `Turned on first for the ${params.neededBy.kind === "install" ? "install" : "build"} job ${params.neededBy.jobId}, which waits for this one.`,
         );
       }
-      return { accountId: settings.account_id, workerName: settings.worker_name };
+      return {
+        accountId: settings.account_id,
+        workerName: settings.worker_name,
+        releaseTokenSecret: await releaseTokenSecret(env),
+      };
     });
     steps.setAccountId(started.accountId);
+    releaseSecret = started.releaseTokenSecret ?? null;
 
     // 1. What the account allows.
     await run("check account", async ({ log, cf }) => {
@@ -168,7 +185,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
     // 2. The signed release.
     const release = await run("find sandbox Worker release", async ({ log, fetch }) => {
       const assets = await findSandboxRelease(feed(fetch), env, version, {
-        viaApi: typeof env.GITHUB_TOKEN === "string" && env.GITHUB_TOKEN.trim().length > 0,
+        viaApi: releaseFetchAuthenticated(tokenOptions()),
       });
       log.info(`Found the release sandbox@${version}.`);
       return { assets };
@@ -260,7 +277,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
         const result = settleUnit(
           await steps.units.api.uploadWorker({
             accountId: steps.accountId(),
-            artifact: { zipUrl: assets.zip, host: releaseHost },
+            artifact: { zipUrl: assets.zip, host: releaseHost() },
             workerName: SANDBOX_WORKER_NAME,
             modules: manifest.worker.modules,
             metadata: sandboxScriptMetadata(manifest, migrationTag),

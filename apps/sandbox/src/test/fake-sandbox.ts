@@ -110,7 +110,12 @@ export class FakeSandbox implements BuildSandbox {
       return ok(this.options.committedAt === undefined ? "" : `${this.options.committedAt}\n`);
     }
     if (command.includes(" fetch -q --depth 1 origin ")) {
-      const wanted = /origin ([0-9a-f]{40})/.exec(command)?.[1] ?? "";
+      const name = /fetch -q --depth 1 origin (\S+)/.exec(command)?.[1] ?? "";
+      const byName =
+        name === "HEAD"
+          ? this.options.refs?.[this.options.defaultBranch ?? "main"]
+          : this.options.refs?.[name];
+      const wanted = /^[0-9a-f]{40}$/.test(name) ? name : (byName ?? "");
       const known = this.options.commits ?? Object.values(this.options.refs ?? {});
       if (this.options.refs !== undefined && !known.includes(wanted)) {
         return {

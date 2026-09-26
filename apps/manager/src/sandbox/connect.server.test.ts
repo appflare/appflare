@@ -259,7 +259,7 @@ describe("readSandboxStatus", () => {
         protocol: 1,
         sandboxVersion: "0.4.0",
         image: "docker.io/mendylanda/appflare-sandbox:0.4.0",
-        features: ["self-deploying", "repository-builds"],
+        features: ["self-deploying", "repository-builds", "github-tokens"],
       },
       problem: null,
       workerExists: null,

@@ -12,6 +12,7 @@ import { managerUpdateView, readManagerLatest } from "../catalog/manager-release
 import { createDb } from "../db/client";
 import { SCHEMA_VERSION_KEY } from "../db/migrate";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
+import { githubTokenCount } from "../github/tokens.server";
 import { channelCounts } from "../notifications/channels.server";
 import { sandboxBinding } from "../sandbox/binding";
 import { hasAnyUser } from "../server/users.server";
@@ -203,6 +204,7 @@ async function heartbeatInput(
     installsWithCrons: feature("cron"),
     removedWithRetained: num(removed?.[0]?.installs),
     notificationChannels: await channelCounts(env.DB),
+    githubTokens: await githubTokenCount(env.DB),
   };
 }
 

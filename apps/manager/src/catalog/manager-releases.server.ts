@@ -1,9 +1,10 @@
 import type { FetchLike } from "@appflare/cf-api";
 import { indexArtifactsSchema } from "@appflare/schema";
 import { z } from "zod";
+import { releaseTokenOptions, releaseTokenSecret } from "../github/release-access.server";
 import { pickReleaseNotes } from "../whats-new/release-notes";
 import { storeReleaseNotes } from "../whats-new/release-notes.server";
-import { releaseFetch } from "./release-fetch";
+import { releaseFetch, releaseFetchAuthenticated } from "./release-fetch";
 import { compareVersions, isUpdateAvailable, parseVersion } from "./versions";
 
 /**
@@ -41,10 +42,17 @@ export type ManagerRelease = z.infer<typeof managerReleaseSchema>;
 export interface ManagerReleasesEnv {
   KV: KVNamespace;
   APPFLARE_VERSION: string;
-  /** Needed only while the repository is private. Never logged. */
+  /**
+   * Needed only while the repository is private, when no GitHub access
+   * token is marked for release downloads. Never logged.
+   */
   GITHUB_TOKEN?: string;
   /** Releases API base override (local dev, tests). */
   MANAGER_RELEASES_URL?: string;
+  /** Where the GitHub access token marked for release downloads is recorded. */
+  DB?: D1Database;
+  /** The sandbox Worker, which holds that token and makes the requests with it. */
+  SANDBOX?: unknown;
 }
 
 export interface ManagerReleasesOptions {
@@ -160,9 +168,10 @@ export async function refreshManagerReleases(
     throw new ManagerReleasesError(`MANAGER_RELEASES_URL must be an http(s) URL.`);
   }
   url.searchParams.set("per_page", "100");
-  const token = env.GITHUB_TOKEN?.trim() || undefined;
+  const tokenOptions = releaseTokenOptions(env, await releaseTokenSecret(env));
+  const authenticated = releaseFetchAuthenticated(tokenOptions);
   const fetchImpl = releaseFetch(opts.fetch ?? ((input, init) => fetch(input, init)), {
-    token,
+    ...tokenOptions,
     userAgent: `Appflare/${env.APPFLARE_VERSION}`,
   });
   const where = `${url.host}${url.pathname}`;
@@ -180,8 +189,8 @@ export async function refreshManagerReleases(
   if (!response.ok) {
     await response.body?.cancel();
     const hint =
-      response.status === 404 && token === undefined
-        ? " While the repository is private, the feed needs a GITHUB_TOKEN secret."
+      response.status === 404 && !authenticated
+        ? " While the repository is private, the feed needs a GitHub access token marked for release downloads (Settings > Account and capabilities > GitHub access) or a GITHUB_TOKEN secret."
         : "";
     throw new ManagerReleasesError(
       `The release feed at ${where} answered HTTP ${response.status}.${hint}`,
@@ -196,7 +205,7 @@ export async function refreshManagerReleases(
   if (!Array.isArray(json)) {
     throw new ManagerReleasesError(`The release feed at ${where} did not return a list.`);
   }
-  const picked = pickLatestManagerRelease(json, { viaApi: token !== undefined });
+  const picked = pickLatestManagerRelease(json, { viaApi: authenticated });
   let release: ManagerRelease | null = null;
   if (picked !== null) {
     release = { ...picked, checkedAt: (opts.now ?? (() => new Date()))().toISOString() };

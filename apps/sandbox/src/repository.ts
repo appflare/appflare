@@ -19,8 +19,10 @@ import {
 } from "@appflare/schema";
 import { z } from "zod";
 import { type BuildDeps, BuildSteps, isBuildStage, type PackTarget } from "./build";
+import { gitTokenEnv, tokenRedactions } from "./github";
 import { BuildLog } from "./log";
 import {
+  BUILD_ENV,
   cloneUrl,
   commandLine,
   DETECTION_READ_LIMIT,
@@ -55,9 +57,13 @@ import { CommandRunner, messageOf, StepError } from "./steps";
 /**
  * A build from a repository, start to finish (`SandboxBuilds.buildRepository`):
  *
- * 1. checkout: shallow-clone the public GitHub repository at the branch or
- *    tag asked for (its default branch when none), or fetch the commit asked
- *    for; when the caller named the commit too, HEAD must end up there.
+ * 1. checkout: shallow-clone the GitHub repository at the branch or tag
+ *    asked for (its default branch when none), or fetch the commit asked
+ *    for; when the caller named the commit too, HEAD must end up there. A
+ *    private repository is fetched with the GitHub access token the request
+ *    names (see github.ts): only the fetch commands get it, through git's
+ *    environment, never the command line or the remote URL, and never the
+ *    install or the build, which run the repository's own code.
  * 2. detect: read the root of the checkout (see repository-manifest.ts) and
  *    write the catalog manifest the packer takes: worked out from the
  *    repository, or for a catalog app built from source, the catalog's own
@@ -94,14 +100,26 @@ function isoOrNull(text: string): string | null {
   return z.iso.datetime({ offset: true }).safeParse(value).success ? value : null;
 }
 
+/** A repository build's dependencies: a sandbox build's, plus the GitHub access tokens this Worker holds. */
+export interface RepositoryBuildDeps extends BuildDeps {
+  /** The value of a GitHub access token secret, or null when this Worker does not hold it. */
+  githubToken?: (secretName: string) => string | null;
+}
+
 class RepositorySteps extends CommandRunner<BuildStage> {
+  /** The environment of the commands that fetch from GitHub; with a token, it carries it. */
+  private readonly fetchEnv: Readonly<Record<string, string>>;
+
   constructor(
     sandbox: BuildSandbox,
     log: BuildLog,
     private readonly request: RepositoryBuildRequest,
     private readonly now: () => number,
+    /** The GitHub access token of a private repository; null for a public one. */
+    private readonly token: string | null,
   ) {
     super(sandbox, log);
+    this.fetchEnv = token === null ? BUILD_ENV : { ...BUILD_ENV, ...gitTokenEnv(token) };
   }
 
   private async git(args: string): Promise<string> {
@@ -112,7 +130,19 @@ class RepositorySteps extends CommandRunner<BuildStage> {
     return result.stdout.trim();
   }
 
-  private async fetchCommit(sha: string, fresh: boolean): Promise<void> {
+  /** Why a fetch from the repository failed, as far as the build can tell. */
+  private fetchFailure(what: string): string {
+    return this.token === null
+      ? `${what} could not be fetched from ${this.request.repo}; it may not exist there, or the repository is not public`
+      : `${what} could not be fetched from ${this.request.repo} with the GitHub access token; it may not exist there, or the token cannot read the repository (it may have expired)`;
+  }
+
+  /**
+   * Fetches `revision` (a commit, a branch or tag name, or `HEAD` for the
+   * default branch) at depth 1 and checks it out, detached. `fresh` starts
+   * a new repository in the source directory first.
+   */
+  private async fetchRevision(revision: string, fresh: boolean): Promise<void> {
     const src = shellQuote(SOURCE_DIR);
     const init = fresh
       ? [
@@ -125,12 +155,19 @@ class RepositorySteps extends CommandRunner<BuildStage> {
       "checkout",
       [
         ...init,
-        `git -C ${src} fetch -q --depth 1 origin ${sha}`,
+        `git -C ${src} fetch -q --depth 1 origin ${shellQuote(revision)}`,
         `git -C ${src} checkout -q --detach FETCH_HEAD`,
       ].join(" && "),
       {
         timeoutMs: STAGE_TIMEOUTS.checkout,
-        failure: `the commit ${sha} could not be fetched from ${this.request.repo}; it may not exist there, or the repository is not public`,
+        env: this.fetchEnv,
+        failure: this.fetchFailure(
+          isCommitSha(revision)
+            ? `the commit ${revision}`
+            : revision === "HEAD"
+              ? "the default branch"
+              : revision,
+        ),
       },
     );
   }
@@ -142,13 +179,20 @@ class RepositorySteps extends CommandRunner<BuildStage> {
       "checkout",
       `Checking out ${repo} at ${ref ?? "its default branch"}${commit !== undefined && commit !== ref ? ` (${commit})` : ""}`,
     );
+    if (this.token !== null) {
+      this.note("The repository is read with a GitHub access token this Worker holds.");
+    }
     await this.run(
       "checkout",
       `rm -rf ${shellQuote(WORK_ROOT)} && mkdir -p ${shellQuote(WORK_ROOT)}`,
       { timeoutMs: STAGE_TIMEOUTS.quick },
     );
     if (byCommit !== undefined) {
-      await this.fetchCommit(byCommit, true);
+      await this.fetchRevision(byCommit, true);
+    } else if (this.token !== null) {
+      // With a token, git fetches (the Sandbox SDK's clone takes no
+      // environment): the commit the caller resolved, else the ref itself.
+      await this.fetchRevision(commit ?? ref ?? "HEAD", true);
     } else {
       try {
         await this.sandbox.gitCheckout(cloneUrl(repo), {
@@ -171,7 +215,7 @@ class RepositorySteps extends CommandRunner<BuildStage> {
       this.note(
         `${ref ?? "The default branch"} is at ${sha || "no commit"}, not ${commit}; fetching ${commit}.`,
       );
-      await this.fetchCommit(commit, false);
+      await this.fetchRevision(commit, false);
       sha = await this.git("rev-parse HEAD");
       if (sha !== commit) {
         throw new StepError<BuildStage>(
@@ -325,7 +369,7 @@ class RepositorySteps extends CommandRunner<BuildStage> {
 /** Runs one build from a repository. Never throws. */
 export async function runRepositoryBuild(
   input: unknown,
-  deps: BuildDeps,
+  deps: RepositoryBuildDeps,
 ): Promise<RepositoryBuildOutcome> {
   const now = deps.now ?? Date.now;
   const started = now();
@@ -364,12 +408,25 @@ export async function runRepositoryBuild(
   let sandbox: BuildSandbox | null = null;
   let outcome: RepositoryBuildOutcome;
   try {
+    let token: string | null = null;
+    if (request.tokenSecret !== undefined) {
+      token = deps.githubToken?.(request.tokenSecret) ?? null;
+      if (token === null) {
+        throw new StepError<BuildStage>(
+          "checkout",
+          `the sandbox Worker does not hold the GitHub access token ${request.tokenSecret}: if it was just added, try again in a minute; otherwise delete it in Settings > Account and capabilities > GitHub access, and add it again`,
+          null,
+          false,
+        );
+      }
+      log.redact(tokenRedactions(token));
+    }
     sandbox = restartOnRuntimeUpdate(
       (id) => deps.openSandbox(id, instanceType),
       await repositorySandboxId(request.installId, request.attempt ?? 1),
       (reason) => log.line(restartNote(reason)),
     );
-    const repository = new RepositorySteps(sandbox, log, request, now);
+    const repository = new RepositorySteps(sandbox, log, request, now, token);
     const checkedOut = await repository.checkout();
     stage = "detect";
     const detected = await repository.detect(checkedOut);

@@ -46,7 +46,8 @@ Once a day, the manager sends one report with:
   Worker is connected, whether Appflare and apps update automatically, and how many
   apps use the account setting for automatic updates or override it with on or off,
   and how many notification channels there are of each kind (Telegram, Slack,
-  Discord, webhook).
+  Discord, webhook), and how many GitHub access tokens there are (the count only: never
+  a label, a repository or a token).
 - **Apps:** how many are installed, counted by status (installed, failed,
   installing, updating, uninstalling), by build type (prebuilt, sandbox,
   self-deploying), and by version age (current, or, when the catalog has a newer

@@ -20,12 +20,12 @@ import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { type InstallOrigin, installs, jobs, type SourceBuildStatus } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { readRepositoryRefs, repositoryReader } from "../github/access.server";
 import { reconcileJobs } from "../jobs/reconcile.server";
 import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
 import { sandboxBinding, sandboxInfo } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { installLabel } from "./display-name";
-import { listRemoteRefs } from "./git-refs";
 import { type InstallVarField, installVarFields } from "./install-vars";
 import { suggestWorkerName } from "./instance-names";
 import {
@@ -81,7 +81,8 @@ async function loadCatalogApp(slug: string) {
   return { app: read.app, catalog: manifest.catalog };
 }
 
-const listRefs = (repo: string) => listRemoteRefs((input, init) => fetch(input, init), repo);
+/** Public repositories directly; private ones with the GitHub access tokens, through the sandbox Worker. */
+const listRefs = (repo: string) => readRepositoryRefs(repositoryReader(env), repo);
 
 /**
  * Admin only: starts a build for review, of a repository, of a catalog app

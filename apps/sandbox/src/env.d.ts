@@ -5,8 +5,9 @@
  *
  * Besides these, the manager sets secrets per self-deploying install
  * (`APP_TOKEN_<installId>`, `APP_SECRET_<installId>_<name>`) through the Cloudflare
- * API; their names are not known in advance, so self-managed.ts reads them by
- * name instead of through this interface.
+ * API, and one per GitHub access token an admin adds (`GITHUB_TOKEN_<id>`);
+ * their names are not known in advance, so self-managed.ts and github.ts read
+ * them by name instead of through this interface.
  */
 interface Env {
   /** Build outputs and logs, under builds/<installId>/<version>/. */

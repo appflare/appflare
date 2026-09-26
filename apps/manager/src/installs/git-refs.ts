@@ -2,12 +2,14 @@ import type { FetchLike } from "@appflare/cf-api";
 import { isCommitSha } from "@appflare/schema";
 
 /**
- * The branches and tags of a public GitHub repository, read the way `git
+ * The branches and tags of a GitHub repository, read the way `git
  * ls-remote` reads them: one GET of the smart HTTP ref advertisement
  * (`<repo>.git/info/refs?service=git-upload-pack`). No GitHub API call, so
- * no API rate limit and no token; a private or missing repository answers
- * 401 or 404. The manager uses it to check a ref before a build and to see
- * whether a branch has moved ("Check for changes").
+ * no API rate limit; a private or missing repository answers 401 or 404 to
+ * a reader without a token. The fetch decides who reads: the manager's own
+ * (anonymous), or the sandbox Worker's with a GitHub access token
+ * (github/access.server.ts). The manager uses it to check a ref before a
+ * build and to see whether a branch has moved ("Check for changes").
  */
 
 /** Ref names (`refs/heads/main`, `refs/tags/v1.0.0`, `refs/tags/v1.0.0^{}`) to commits. */
@@ -20,6 +22,13 @@ export interface RemoteRefs {
 /** The repository could not be read, or has no such branch or tag. */
 export class GitRefError extends Error {
   override name = "GitRefError";
+  constructor(
+    message: string,
+    /** GitHub refused to show the repository (401, 403 or 404): missing, or private to this reader. */
+    readonly refused = false,
+  ) {
+    super(message);
+  }
 }
 
 /** The most of an advertisement the manager reads (a repository with very many tags). */
@@ -117,9 +126,7 @@ export async function listRemoteRefs(fetchImpl: FetchLike, repo: string): Promis
   }
   if (response.status === 401 || response.status === 403 || response.status === 404) {
     await response.body?.cancel();
-    throw new GitRefError(
-      `${repo} was not found on GitHub, or is not public. Appflare builds public repositories only.`,
-    );
+    throw new GitRefError(`${repo} was not found on GitHub, or is not public.`, true);
   }
   if (!response.ok) {
     await response.body?.cancel();

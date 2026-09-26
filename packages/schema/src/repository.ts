@@ -9,6 +9,7 @@ import {
   packageManagerSchema,
   sandboxInstanceTypeSchema,
 } from "./catalog";
+import { githubTokenSecretNameSchema } from "./github-tokens";
 import {
   buildFailureSchema,
   buildInstallIdSchema,
@@ -18,8 +19,8 @@ import {
 } from "./sandbox";
 
 /**
- * Builds from a repository: the sandbox Worker clones a public GitHub
- * repository at a branch, tag or commit the admin chose, works out how to
+ * Builds from a repository: the sandbox Worker clones a GitHub repository
+ * (public, or private with a GitHub access token) at a branch, tag or commit the admin chose, works out how to
  * build it (package manager from the lockfile, wrangler config, build command
  * from `package.json` or the admin, secrets from `.dev.vars.example`), packs
  * an unsigned artifact with the same packer a catalog build uses, and stores
@@ -103,7 +104,7 @@ export function parseRepositoryInput(text: string): RepositoryInput {
   let rest = text.trim();
   const refused = {
     ok: false as const,
-    error: "Enter a public GitHub repository, such as https://github.com/owner/repo.",
+    error: "Enter a GitHub repository, such as https://github.com/owner/repo.",
   };
   if (rest.length === 0 || rest.length > 400) return refused;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rest)) {
@@ -202,6 +203,13 @@ export const repositoryBuildRequestSchema = z
      * container of its own: the one before may still be busy.
      */
     attempt: z.int().min(1).max(20).optional(),
+    /**
+     * A private repository: the sandbox Worker secret holding the GitHub
+     * access token to clone it with (`githubTokenSecretName`). The request
+     * names the secret only; the sandbox Worker reads the value itself.
+     * Sandbox Workers whose `info().features` lists `github-tokens` take it.
+     */
+    tokenSecret: githubTokenSecretNameSchema.optional(),
   })
   .superRefine((request, ctx) => {
     if (request.baseline !== undefined && request.baseline.repo !== request.repo) {

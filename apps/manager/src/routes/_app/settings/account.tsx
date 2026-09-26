@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AccountCapabilitiesCard } from "../../../capabilities/account-capabilities-card";
 import { getAccountCapabilities } from "../../../capabilities/capabilities.functions";
 import { CloudflareTokenCard } from "../../../components/cloudflare-token-card";
+import { GithubAccessCard } from "../../../components/github-access-card";
 import { SETTINGS_CRUMB, SETTINGS_PAGES } from "../../../components/navigation";
 import { PageHeader } from "../../../components/page-header";
 import { SandboxCard } from "../../../components/sandbox-card";
@@ -44,6 +45,7 @@ function AccountSettingsPage() {
       <OnboardingChecklistCard data={checklist} isAdmin={isAdmin} />
       <AccountCapabilitiesCard view={capabilities} isAdmin={isAdmin} />
       <SandboxCard status={sandboxStatus} capabilities={capabilities} isAdmin={isAdmin} />
+      <GithubAccessCard isAdmin={isAdmin} />
     </>
   );
 }

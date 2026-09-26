@@ -4,8 +4,10 @@ import {
   type BuildProgress,
   buildOutcomeSchema,
   buildProgressSchema,
+  GITHUB_FETCH_HEADERS,
   type RepositoryBuildOutcome,
   repositoryBuildOutcomeSchema,
+  SANDBOX_FEATURE_GITHUB_TOKENS,
   SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
@@ -49,6 +51,11 @@ export interface SandboxBuildsBinding {
   deploySelfManaged(request: unknown): Promise<unknown>;
   destroySelfManaged(request: unknown): Promise<unknown>;
   selfManagedStatus(request: unknown): Promise<unknown>;
+  /**
+   * One GET to GitHub with a GitHub access token the sandbox Worker holds
+   * (sandbox Workers whose `info().features` lists `github-tokens`).
+   */
+  githubFetch(request: unknown): Promise<Response>;
 }
 
 /**
@@ -124,6 +131,34 @@ export function parseRepositoryBuildOutcome(value: unknown): RepositoryBuildOutc
     );
   }
   return parsed.data;
+}
+
+/** Whether the sandbox Worker holds GitHub access tokens and reads GitHub with them. */
+export function usesGithubTokens(info: SandboxInfo): boolean {
+  return info.features?.includes(SANDBOX_FEATURE_GITHUB_TOKENS) === true;
+}
+
+/**
+ * A fetch that sends each request to GitHub through the sandbox Worker, with
+ * the GitHub access token held there as `tokenSecret`. Only GitHub URLs and
+ * the headers GitHub needs are passed on; the answer is GitHub's, redirects
+ * unfollowed. The token itself never reaches this Worker.
+ */
+export function sandboxGithubFetch(binding: SandboxBuildsBinding, tokenSecret: string): FetchLike {
+  return async (input, init) => {
+    const given = new Headers(init?.headers);
+    const headers: Record<string, string> = {};
+    for (const name of GITHUB_FETCH_HEADERS) {
+      const value = given.get(name);
+      if (value !== null) headers[name] = value;
+    }
+    return binding.githubFetch({
+      protocol: SANDBOX_PROTOCOL_VERSION,
+      url: input,
+      tokenSecret,
+      headers,
+    });
+  };
 }
 
 /** Whether the sandbox Worker runs self-deploying apps' installers. */

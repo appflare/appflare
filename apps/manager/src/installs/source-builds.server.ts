@@ -29,6 +29,7 @@ import {
   snapshots,
   source_builds,
 } from "../db/schema";
+import type { UsedGithubToken } from "../github/access.server";
 import type { InstallJobParams } from "../jobs/install";
 import type { PrebuiltBuildParams } from "../jobs/install/artifact-source";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
@@ -123,6 +124,12 @@ export type StartSourceBuildRequest =
     }
   | { kind: "rebuild"; installId: string; costConfirmed: boolean };
 
+/**
+ * A repository's branches and tags, and the GitHub access token that read
+ * them (none for a public repository).
+ */
+export type ReadRefs = RemoteRefs & { token?: UsedGithubToken | null };
+
 export interface SourceBuildDeps {
   db: D1Database;
   workflows?: WorkflowLookup;
@@ -135,7 +142,7 @@ export interface SourceBuildDeps {
    */
   autoEnable?: SandboxAutoEnableDeps;
   /** The branches and tags of a repository (`git ls-remote`); throws `GitRefError`. */
-  listRefs(repo: string): Promise<RemoteRefs>;
+  listRefs(repo: string): Promise<ReadRefs>;
   /** A catalog app and its verified catalog manifest; throws `SourceBuildError` when unavailable. */
   loadCatalogApp(slug: string): Promise<{ app: IndexApp; catalog: CatalogManifest }>;
   now?: () => Date;
@@ -301,8 +308,9 @@ function parseManifest(text: string | null): ArtifactManifest | null {
  * Starts a build for review: of a repository an admin named, of a catalog
  * app from source at another commit, or of an install that came from a
  * repository, at its branch's newest commit ("Rebuild and update"). The
- * ref is resolved first (so a missing branch or a private repository is
- * refused before a container starts), and the build is pinned to that commit.
+ * ref is resolved first (so a missing branch, or a private repository no
+ * GitHub access token can read, is refused before a container starts), and
+ * the build is pinned to that commit, cloned with the token that read it.
  */
 export async function startSourceBuildCore(
   deps: SourceBuildDeps,
@@ -325,8 +333,12 @@ export async function startSourceBuildCore(
   const plan = await planBuild(deps, request, newId);
 
   let resolved: ReturnType<typeof resolveRef>;
+  /** The GitHub access token that read a private repository; the build clones with it. */
+  let githubToken: UsedGithubToken | null = null;
   try {
-    resolved = resolveRef(await deps.listRefs(plan.repo), plan.ref, plan.repo);
+    const remote = await deps.listRefs(plan.repo);
+    githubToken = remote.token ?? null;
+    resolved = resolveRef(remote, plan.ref, plan.repo);
   } catch (error) {
     if (error instanceof GitRefError) throw fail(`${error.message}.`.replace(/\.\.$/, "."));
     throw error;
@@ -440,6 +452,7 @@ export async function startSourceBuildCore(
       : { instanceType: plan.baseline.install.sandbox.instanceType }),
     costConfirmed: true,
     ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
+    ...(githubToken === null ? {} : { githubToken }),
   };
   try {
     // The enable job first: the build waits for it.
@@ -984,7 +997,7 @@ export interface SourceChanges {
 
 /** The newest commit at the branch or tag an install from a repository was built from. */
 export async function checkSourceChangesCore(
-  deps: { db: D1Database; listRefs(repo: string): Promise<RemoteRefs> },
+  deps: { db: D1Database; listRefs(repo: string): Promise<ReadRefs> },
   installId: string,
 ): Promise<SourceChanges> {
   const install = await readInstall(deps.db, installId).catch((error: unknown) => {

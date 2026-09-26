@@ -7,10 +7,12 @@ import {
   buildKeys,
   buildRequestSchema,
   type CatalogManifest,
+  githubFetchRequestSchema,
   type IndexApp,
   type RepositoryBuildOutcome,
   type RepositoryBuildRequest,
   repositoryBuildRequestSchema,
+  SANDBOX_FEATURE_GITHUB_TOKENS,
   SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
@@ -75,6 +77,12 @@ export interface FakeSandboxOptions {
     /** Retryable failures (the container went away) before a run succeeds. */
     retryableFailures?: number;
   };
+  /**
+   * GitHub as seen with the sandbox Worker's GitHub access tokens: the
+   * answer to a `githubFetch` with the named token secret. Absent: 404.
+   * Throw to play a token the sandbox Worker does not hold.
+   */
+  github?: (request: { url: string; tokenSecret: string; headers: Headers }) => Response;
 }
 
 export interface FakeSandbox extends SandboxBuildsBinding {
@@ -88,6 +96,8 @@ export interface FakeSandbox extends SandboxBuildsBinding {
   /** Every self-deploying run request, deploy and destroy. */
   runs: SelfManagedRunRequest[];
   statusCalls: unknown[];
+  /** Every `githubFetch` request, as sent (names only: the fake holds no token). */
+  githubRequests: unknown[];
 }
 
 /** `fixture` is what a build produces; null for a fake that only runs installers. */
@@ -110,6 +120,7 @@ export function fakeSandbox(
   let runFailuresLeft = opts.selfManaged?.retryableFailures ?? 0;
   const runs: SelfManagedRunRequest[] = [];
   const statusCalls: unknown[] = [];
+  const githubRequests: unknown[] = [];
 
   function selfManagedRun(action: "deploy" | "destroy", input: unknown): SelfManagedOutcome {
     const request = selfManagedRunRequestSchema.parse(structuredClone(input));
@@ -191,6 +202,7 @@ export function fakeSandbox(
     fetches,
     runs,
     statusCalls,
+    githubRequests,
     async info() {
       fake.infoCalls += 1;
       const versions = opts.versionIds ?? [];
@@ -200,9 +212,23 @@ export function fakeSandbox(
           protocol: SANDBOX_PROTOCOL_VERSION,
           sandboxVersion: "0.4.0",
           image: SANDBOX_IMAGE,
-          features: [SANDBOX_FEATURE_SELF_DEPLOYING, SANDBOX_FEATURE_REPOSITORY],
+          features: [
+            SANDBOX_FEATURE_SELF_DEPLOYING,
+            SANDBOX_FEATURE_REPOSITORY,
+            SANDBOX_FEATURE_GITHUB_TOKENS,
+          ],
         }),
         ...(versionId === undefined ? {} : { versionId }),
+      });
+    },
+    async githubFetch(input) {
+      githubRequests.push(structuredClone(input));
+      const request = githubFetchRequestSchema.parse(structuredClone(input));
+      if (opts.github === undefined) return new Response("Not Found", { status: 404 });
+      return opts.github({
+        url: request.url,
+        tokenSecret: request.tokenSecret,
+        headers: new Headers(request.headers),
       });
     },
     async deploySelfManaged(input) {

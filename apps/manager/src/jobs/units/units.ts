@@ -5,11 +5,13 @@ import {
   assetFileSchema,
   type D1MigrationFile,
   d1MigrationFileSchema,
+  githubTokenSecretNameSchema,
   type WorkerModule,
   workerModuleSchema,
 } from "@appflare/schema";
 import { z } from "zod";
 import { releaseFetch } from "../../catalog/release-fetch";
+import { releaseTokenOptions } from "../../github/release-access.server";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import { sandboxFetch } from "../../sandbox/binding";
 import {
@@ -101,8 +103,16 @@ export const JOB_UNITS_ENTRYPOINT = "JobUnits";
  */
 export const artifactHostSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("catalog") }),
-  /** The release feed may need `GITHUB_TOKEN`, sent only to GitHub (see `releaseFetch`). */
-  z.object({ kind: z.literal("release"), userAgent: z.string().min(1) }),
+  /**
+   * The release feed may need a GitHub token, sent only to GitHub (see
+   * `releaseFetch`): the GitHub access token marked for release downloads,
+   * whose sandbox Worker secret `tokenSecret` names, else `GITHUB_TOKEN`.
+   */
+  z.object({
+    kind: z.literal("release"),
+    userAgent: z.string().min(1),
+    tokenSecret: githubTokenSecretNameSchema.optional(),
+  }),
   z.object({ kind: z.literal("sandbox") }),
 ]);
 export type ArtifactHost = z.infer<typeof artifactHostSchema>;
@@ -285,10 +295,23 @@ function parsed<S extends z.ZodType, T>(
  * manager's own releases, the sandbox Worker's own `fetch` for a sandbox
  * build (its objects are reachable only through the service binding).
  */
-export function artifactFetch(env: UnitEnv, fetch: FetchLike, host: ArtifactHost): FetchLike {
+export function artifactFetch(
+  env: UnitEnv,
+  fetch: FetchLike,
+  host: ArtifactHost,
+  count: (fetch: FetchLike) => FetchLike = (f) => f,
+): FetchLike {
   switch (host.kind) {
     case "release":
-      return releaseFetch(fetch, { token: env.GITHUB_TOKEN, userAgent: host.userAgent });
+      return releaseFetch(fetch, {
+        ...releaseTokenOptions(
+          // No DB: the job that planned the read records the token's use.
+          { GITHUB_TOKEN: env.GITHUB_TOKEN, SANDBOX: env.SANDBOX },
+          host.tokenSecret,
+          count,
+        ),
+        userAgent: host.userAgent,
+      });
     case "sandbox":
       return sandboxFetch(env);
     case "catalog":
@@ -301,12 +324,12 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
   return {
     uploadAssetPart: (input) =>
       parsed(assetPartInputSchema, input, "uploadAssetPart", (part) =>
-        runUnit(env, deps, part.accountId, async ({ log, fetch, cf }) => {
+        runUnit(env, deps, part.accountId, async ({ log, fetch, count, cf }) => {
           const api = cf();
           // One reader per call: it follows the release-asset redirect once and
           // reads adjacent files with one Range request.
           const reader = artifactReader(
-            artifactFetch(env, fetch, part.artifact.host),
+            artifactFetch(env, fetch, part.artifact.host, count),
             part.artifact.zipUrl,
           );
           const files: AssetFile[] = part.files;
@@ -347,9 +370,9 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
 
     uploadWorker: (input) =>
       parsed(workerUploadInputSchema, input, "uploadWorker", (upload) =>
-        runUnit(env, deps, upload.accountId, async ({ fetch, cf }) => {
+        runUnit(env, deps, upload.accountId, async ({ fetch, count, cf }) => {
           const reader = artifactReader(
-            artifactFetch(env, fetch, upload.artifact.host),
+            artifactFetch(env, fetch, upload.artifact.host, count),
             upload.artifact.zipUrl,
           );
           const refs: WorkerModule[] = upload.modules;
@@ -390,7 +413,7 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
 
     applyD1Migrations: (input) =>
       parsed(d1MigrationsInputSchema, input, "applyD1Migrations", (target) =>
-        runUnit(env, deps, target.accountId, async ({ log, fetch, cf }) => {
+        runUnit(env, deps, target.accountId, async ({ log, fetch, count, cf }) => {
           const api = cf();
           const db = target.databaseId;
           await api.d1.query(db, CREATE_MIGRATIONS_TABLE_SQL);
@@ -407,7 +430,7 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
             `${rows.length} migration(s) already applied to ${target.databaseName}; applying ${batch.length} of ${pending.length} new.`,
           );
           const reader = artifactReader(
-            artifactFetch(env, fetch, target.artifact.host),
+            artifactFetch(env, fetch, target.artifact.host, count),
             target.artifact.zipUrl,
           );
           const contents = await reader.read(batch);

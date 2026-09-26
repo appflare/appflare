@@ -5,6 +5,8 @@ import {
   buildVersionSchema,
   catalogManifestSchema,
   githubRepositorySchema,
+  githubTokenIdSchema,
+  githubTokenSecretName,
   gitRefSchema,
   gitShaSchema,
   type RepositoryBuildRequest,
@@ -18,6 +20,7 @@ import { z } from "zod";
 import { createDb } from "../db/client";
 import { jobs, SOURCE_BUILD_PURPOSES, source_builds } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { addedJustNow, justAddedMessage, readGithubToken } from "../github/tokens.server";
 import {
   buildsFromRepository,
   parseRepositoryBuildOutcome,
@@ -25,6 +28,7 @@ import {
   sandboxBinding,
   sandboxFetch,
   sandboxInfo,
+  usesGithubTokens,
 } from "../sandbox/binding";
 import { UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { verifySourceBuildManifest } from "../sandbox/verify";
@@ -37,7 +41,7 @@ import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 
 /**
- * The `source_build` job: builds a public GitHub repository (or a catalog
+ * The `source_build` job: builds a GitHub repository (or a catalog
  * app at another commit) in the sandbox Worker for an admin to review, and
  * records the result in `source_builds`. Nothing is deployed: the review
  * page shows what the build found, and installing or updating from it is an
@@ -83,6 +87,12 @@ export const sourceBuildJobParams = z.object({
    * were off at the start; the build waits for it.
    */
   sandboxEnableJob: sandboxEnableJobField,
+  /**
+   * A private repository: the GitHub access token that read its branches and
+   * tags, by id and label (its value stays on the sandbox Worker). The build
+   * clones with the same one.
+   */
+  githubToken: z.object({ id: githubTokenIdSchema, label: z.string().min(1).max(100) }).optional(),
 });
 export type SourceBuildJobParams = z.infer<typeof sourceBuildJobParams>;
 
@@ -102,6 +112,9 @@ export function repositoryBuildRequest(
     ...(params.baseline === undefined ? {} : { baseline: params.baseline }),
     avoidVersions: params.avoidVersions,
     ...(params.instanceType === undefined ? {} : { instanceType: params.instanceType }),
+    ...(params.githubToken === undefined
+      ? {}
+      : { tokenSecret: githubTokenSecretName(params.githubToken.id) }),
     attempt,
   });
 }
@@ -162,6 +175,16 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
           `the sandbox Worker ${info.sandboxVersion} cannot build from a repository; to update it, ${UPDATE_SANDBOX_HINT}`,
         );
       }
+      if (params.githubToken !== undefined && !usesGithubTokens(info)) {
+        throw new JobError(
+          `the sandbox Worker ${info.sandboxVersion} cannot clone with a GitHub access token; to update it, ${UPDATE_SANDBOX_HINT}`,
+        );
+      }
+      if (params.githubToken !== undefined) {
+        log.info(
+          `The repository is private: the sandbox Worker clones it with the GitHub access token "${params.githubToken.label}", which it holds; Appflare never sees the token.`,
+        );
+      }
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       log.info(`The sandbox Worker ${info.sandboxVersion} builds with ${info.image}.`);
@@ -187,6 +210,18 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
           throw error;
         }
         for (const line of tailLines(outcome.log, BUILD_LOG_LINES)) log.log("debug", line);
+        if (
+          !outcome.ok &&
+          params.githubToken !== undefined &&
+          outcome.message.includes("does not hold the GitHub access token")
+        ) {
+          // Added a moment ago: the version of the sandbox Worker that ran
+          // the build may predate the token's secret.
+          const token = await readGithubToken(env.DB, params.githubToken.id);
+          if (token !== null && addedJustNow(token, new Date(now()))) {
+            throw new JobError(justAddedMessage(params.githubToken.label));
+          }
+        }
         if (!outcome.ok) {
           const message = `the build failed in its ${outcome.stage} step${outcome.exitCode === null ? "" : ` (exit code ${outcome.exitCode})`}: ${outcome.message}`;
           if (outcome.retryable) throw new Error(message);

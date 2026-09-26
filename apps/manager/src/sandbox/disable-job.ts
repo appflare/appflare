@@ -4,7 +4,7 @@ import { SANDBOX_BUCKET_NAME, SANDBOX_CONTAINERS, SANDBOX_WORKER_NAME } from "@a
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { createDb } from "../db/client";
-import { jobs } from "../db/schema";
+import { github_tokens, jobs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { lookupSubdomainPhase } from "../jobs/install/phases";
 import type { JobContext } from "../jobs/run-job";
@@ -26,7 +26,8 @@ import { NO_CONTAINERS_PERMISSION_REASON } from "./preflight";
  * 1. Delete the sandbox Worker with `?force=true`: Cloudflare refuses a
  *    plain delete (code 10142) while any version of another Worker binds it,
  *    and the manager's serving version still does. Its Durable Object
- *    namespaces go with it.
+ *    namespaces go with it, and so do its secrets: the records of the
+ *    GitHub access tokens it held are deleted next.
  * 2. Delete both container applications, which outlive the Worker.
  * 3. Empty the build bucket, a page per job unit, and delete it.
  * 4. Disconnect the manager: a new version of its Worker without `SANDBOX`,
@@ -100,6 +101,17 @@ export async function runSandboxDisable(ctx: JobContext): Promise<void> {
       } catch (error) {
         if (!isNotFound(error)) throw error;
         log.info(`The Worker "${SANDBOX_WORKER_NAME}" was already gone.`);
+      }
+      return {};
+    });
+
+    // The GitHub access tokens were secrets of that Worker; their records go too.
+    await run("forget GitHub access tokens", async ({ log, orm }) => {
+      const rows = await orm.delete(github_tokens).returning({ id: github_tokens.id });
+      if (rows.length > 0) {
+        log.info(
+          `Removed ${rows.length} GitHub access token(s): they were kept on the sandbox Worker, which is gone. Add them again after enabling sandbox builds.`,
+        );
       }
       return {};
     });

@@ -444,10 +444,20 @@ describe("disable sandbox builds", () => {
       { ...enabledAt(VERSION), objects: { "appflare-builds": ["builds/i1/1.0.0/a", "logs/b"] } },
       { previews: [healthy], ...connected },
     );
+    // A GitHub access token kept on the sandbox Worker goes with it.
+    await env.DB.prepare(
+      "INSERT INTO github_tokens (id, label, repositories, created_at) VALUES ('01J8TOKEN0000000000000000A', 'acme', 'acme/*', 1)",
+    ).run();
     const { params } = await start(world, { action: "disable", confirm: "appflare-sandbox" });
     const r = await runJob(world, params, release);
     expect(r.error).toBeNull();
     expect(r.job).toMatchObject({ kind: "sandbox_disable", status: "succeeded" });
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM github_tokens").first<{ n: number }>(),
+    ).toEqual({ n: 0 });
+    expect(r.logs).toContain(
+      "Removed 1 GitHub access token(s): they were kept on the sandbox Worker, which is gone. Add them again after enabling sandbox builds.",
+    );
     expect(world.manager.state.versionPatches).toEqual([
       {
         env: { SANDBOX: null },

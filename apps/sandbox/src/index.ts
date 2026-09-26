@@ -6,6 +6,7 @@ import {
   buildKeys,
   buildProgressRequestSchema,
   type RepositoryBuildOutcome,
+  SANDBOX_FEATURE_GITHUB_TOKENS,
   SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
@@ -16,6 +17,7 @@ import {
 } from "@appflare/schema";
 import { runBuild } from "./build";
 import { accountReader } from "./discover";
+import { githubFetch, heldGithubToken } from "./github";
 import { readProgress } from "./log";
 import { serveBuildObject } from "./range";
 import { runRepositoryBuild } from "./repository";
@@ -46,7 +48,11 @@ export class SandboxBuilds extends WorkerEntrypoint<Env> {
       protocol: SANDBOX_PROTOCOL_VERSION,
       sandboxVersion: this.env.APPFLARE_VERSION,
       image: sandboxImage(this.env.APPFLARE_VERSION),
-      features: [SANDBOX_FEATURE_SELF_DEPLOYING, SANDBOX_FEATURE_REPOSITORY],
+      features: [
+        SANDBOX_FEATURE_SELF_DEPLOYING,
+        SANDBOX_FEATURE_REPOSITORY,
+        SANDBOX_FEATURE_GITHUB_TOKENS,
+      ],
       // Which version answered: the manager waits for a secret change (a new
       // version) to reach this Worker before it starts a run.
       ...(this.env.CF_VERSION_METADATA?.id ? { versionId: this.env.CF_VERSION_METADATA.id } : {}),
@@ -67,18 +73,31 @@ export class SandboxBuilds extends WorkerEntrypoint<Env> {
   }
 
   /**
-   * Builds a public GitHub repository at a branch, tag or commit (or a
-   * catalog app from source at another commit): works out how to build it
-   * from the checkout, then packs and stores an unsigned artifact under
-   * `builds/<installId>/<version>/` like `build()`. Its log is under the
-   * request's run id. Resolves when the build is done.
+   * Builds a GitHub repository at a branch, tag or commit (or a catalog app
+   * from source at another commit): works out how to build it from the
+   * checkout, then packs and stores an unsigned artifact under
+   * `builds/<installId>/<version>/` like `build()`. A private repository is
+   * cloned with the GitHub access token secret the request names. Its log is
+   * under the request's run id. Resolves when the build is done.
    */
   buildRepository(request: unknown): Promise<RepositoryBuildOutcome> {
     return runRepositoryBuild(request, {
       bucket: this.env.BUILDS,
       sandboxVersion: this.env.APPFLARE_VERSION,
       openSandbox: (id, instanceType) => openBuildSandbox(this.env, id, instanceType),
+      githubToken: (secretName) => heldGithubToken(this.env, secretName),
     });
+  }
+
+  /**
+   * One GET to github.com or api.github.com with a GitHub access token this
+   * Worker holds, named by the request: how the manager reads a private
+   * repository's branches and tags, and its release feed when a token is
+   * marked for release downloads. GitHub's answer comes back as it is;
+   * redirects are not followed here.
+   */
+  githubFetch(request: unknown): Promise<Response> {
+    return githubFetch(this.env, request);
   }
 
   /**

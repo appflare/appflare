@@ -449,7 +449,7 @@ function DisableDialog({ status, disabled }: { status: SandboxCardState; disable
         </Button>
       )}
       title="Disable sandbox builds"
-      description="Appflare disconnects from the sandbox Worker, then deletes it, its two container applications, and the R2 bucket appflare-builds with every build output and log in it."
+      description="Appflare disconnects from the sandbox Worker, then deletes it, its two container applications, and the R2 bucket appflare-builds with every build output and log in it. GitHub access tokens are kept on the sandbox Worker, so they are removed too."
       {...(inUse ? {} : { confirmText: SANDBOX_WORKER })}
       actionLabel="Disable and delete"
       disabled={inUse}

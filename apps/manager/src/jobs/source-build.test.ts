@@ -14,6 +14,7 @@ import {
   checkSourceChangesCore,
   discardSourceBuildCore,
   installSourceBuildCore,
+  type ReadRefs,
   type SourceBuildDeps,
   startSourceBuildCore,
   updateFromSourceBuildCore,
@@ -116,7 +117,7 @@ let catalogApp: Awaited<ReturnType<SourceBuildDeps["loadCatalogApp"]>> | null = 
 
 function buildDeps(
   sandbox: FakeSandbox | undefined,
-  remote: RemoteRefs,
+  remote: ReadRefs,
   capture: (p: SourceBuildJobParams) => void,
   ids: () => string,
 ): SourceBuildDeps {
@@ -144,7 +145,7 @@ function buildDeps(
 async function build(opts: {
   fixture: ArtifactFixture;
   request?: Parameters<typeof startSourceBuildCore>[1];
-  remote?: RemoteRefs;
+  remote?: ReadRefs;
   sandbox?: FakeSandboxOptions;
   ids?: () => string;
 }) {
@@ -242,6 +243,76 @@ describe("building a repository for review", () => {
       n: number;
     }>();
     expect(installs?.n).toBe(0);
+  });
+
+  it("clones a private repository with the GitHub access token that read it, by secret name", async () => {
+    const fixture = await repositoryBuild(COMMIT, VERSION);
+    const token = { id: "01J8TOKEN00000000000000000", label: "Acme private" };
+    const r = await build({ fixture, remote: { ...refsAt(COMMIT), token } });
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded" });
+    expect(r.params.githubToken).toEqual(token);
+    expect(r.sandbox.requests[0]).toMatchObject({
+      commit: COMMIT,
+      tokenSecret: `GITHUB_TOKEN_${token.id}`,
+    });
+    const logs = await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = ?1")
+      .bind(r.jobId)
+      .all<{ message: string }>();
+    expect(logs.results.some((l) => l.message.includes('GitHub access token "Acme private"'))).toBe(
+      true,
+    );
+  });
+
+  it("says to try again in a minute when a token added just now is not on the sandbox Worker yet", async () => {
+    const fixture = await repositoryBuild(COMMIT, VERSION);
+    const token = { id: "01J8TOKEN00000000000000000", label: "Acme private" };
+    await env.DB.prepare(
+      "INSERT INTO github_tokens (id, label, repositories, created_at) VALUES (?1, ?2, 'acme/*', ?3)",
+    )
+      .bind(token.id, token.label, NOW - 60_000)
+      .run();
+    const r = await build({
+      fixture,
+      remote: { ...refsAt(COMMIT), token },
+      sandbox: {
+        repositoryOutcome: () => ({
+          ok: false,
+          protocol: 1,
+          sandboxVersion: "0.4.0",
+          minutes: 0,
+          logKey: null,
+          log: "",
+          stage: "checkout",
+          message: `the sandbox Worker does not hold the GitHub access token GITHUB_TOKEN_${token.id}: if it was just added, try again in a minute`,
+          retryable: false,
+          exitCode: null,
+        }),
+      },
+    });
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String(r.job?.error)).toContain(
+      'the GitHub access token "Acme private" was just added, and the sandbox Worker does not have it yet; try again in a minute',
+    );
+  });
+
+  it("refuses a private build on a sandbox Worker that cannot use GitHub access tokens", async () => {
+    const fixture = await repositoryBuild(COMMIT, VERSION);
+    const r = await build({
+      fixture,
+      remote: { ...refsAt(COMMIT), token: { id: "01J8TOKEN00000000000000000", label: "Acme" } },
+      sandbox: {
+        info: {
+          protocol: 1,
+          sandboxVersion: "0.1.3",
+          image: "docker.io/mendylanda/appflare-sandbox:0.1.3",
+          features: ["self-deploying", "repository-builds"],
+        },
+      },
+    });
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String(r.job?.error)).toContain("cannot clone with a GitHub access token");
+    expect(r.sandbox.requests).toEqual([]);
   });
 
   it("refuses a manifest that does not describe the commit it built", async () => {

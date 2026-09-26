@@ -1,11 +1,12 @@
 ---
 title: Install from a repository
-description: Build any public GitHub repository with a wrangler config in your own account, review what it declares, and install it. Also, build a catalog app from source at another commit. Needs Workers Paid and sandbox builds.
+description: Build any GitHub repository with a wrangler config in your own account, public or private with a read-only token, review what it declares, and install it. Also, build a catalog app from source at another commit. Needs Workers Paid and sandbox builds.
 ---
 
 The catalog lists apps that someone packaged and checked. You can also install a
-Workers project that is not in the catalog, straight from its public GitHub
-repository, the way the "Deploy to Cloudflare" button would: your
+Workers project that is not in the catalog, straight from its GitHub repository
+(public, or private with a [GitHub access token](#private-repositories)), the way the
+"Deploy to Cloudflare" button would: your
 [sandbox Worker](/guides/builds/) builds it in a container in your own account, you
 review what the build declares, and then Appflare installs it like any other app, with
 resources it creates and records, updates with a snapshot and a rollback, and an
@@ -21,9 +22,10 @@ Nobody reviewed its code for you, and Appflare never updates it on its own.
   means **Workers Paid** and R2 on the account. See [Sandbox builds](/guides/builds/).
   If the card offers **Update sandbox**, update first: older sandbox Workers cannot
   build from a repository.
-- A **public** repository on github.com with a `wrangler.json`, `wrangler.jsonc` or
+- A repository on github.com with a `wrangler.json`, `wrangler.jsonc` or
   `wrangler.toml` at its root, and a lockfile (`pnpm-lock.yaml`,
-  `package-lock.json`, `yarn.lock` or `bun.lock`) when it has a `package.json`.
+  `package-lock.json`, `yarn.lock` or `bun.lock`) when it has a `package.json`. A
+  private one also needs a [GitHub access token](#private-repositories) that can read it.
 
 ## Start a build
 
@@ -42,9 +44,9 @@ On the **Catalog** page, admins see **From a repository**. Enter:
   besides the wrangler config's own `build.command`, as `wrangler deploy` would.
 
 Confirm the cost and choose **Build for review**. Before a container starts, Appflare
-reads the repository's branches and tags from GitHub, so a private repository or a
-misspelled branch is refused at once, and the build is pinned to the commit the branch
-points at right then.
+reads the repository's branches and tags from GitHub, so a misspelled branch, or a
+private repository none of your GitHub access tokens can read, is refused at once, and
+the build is pinned to the commit the branch points at right then.
 
 The build runs as a job, and its log opens. In the container, the sandbox Worker:
 
@@ -114,13 +116,52 @@ if you need it.
 Appflare never checks for changes or rebuilds on its own, and automatic updates do not
 apply to these installs.
 
+## Private repositories
+
+A private repository needs a GitHub access token that can read it. Tokens are listed and
+managed in **Settings > Account and capabilities > GitHub access**, which only admins
+see; members get nothing about them. With sandbox builds on, an admin adds one:
+
+1. Choose **Add token**, then **Create it on GitHub**. It opens GitHub's page for a new
+   fine-grained personal access token with the permissions filled in: **Contents:
+   Read-only**, plus **Metadata: Read-only**, which GitHub adds to every token. Pick
+   the owner and **Only select repositories**, choose the repositories to install, and
+   an expiry. Give it no other permission.
+2. Back in Appflare, enter a **Label**, the **Repositories** it covers as you chose them
+   (`owner/repo`, or `owner/*` for all of an owner's), and paste the token.
+
+You can add several tokens, for example one per organisation. When a repository is not
+public, Appflare tries the tokens in order: the ones whose repositories name it first,
+then those naming its owner, then the others. The token that reads it is the one the
+build clones with, and **Check for changes** and **Rebuild and update** find it the same
+way. The list shows when each token was last used.
+
+Appflare stores each token as a secret on the sandbox Worker, the same way it keeps a
+self-deploying app's token, and records only its label, repositories and last use. It
+never shows a token again. In a build, only the commands that fetch the repository get
+the token, as the password of the https clone; the dependency install and the build
+command, which run the repository's own code, never see it, and the job log never shows
+it. The token is sent to github.com and api.github.com only.
+
+**Delete** removes the token from the sandbox Worker. Apps already installed keep
+running, but a private repository no remaining token covers cannot be rebuilt. Revoke
+the token on GitHub as well. Disabling sandbox builds deletes the sandbox Worker, and
+every token with it.
+
+While Appflare's own repository is private, one token may be marked **Use for Appflare
+release downloads**. Appflare then reads its own releases, and nothing else, with that token (for update
+checks, self-updates and updating the sandbox Worker) instead of the `GITHUB_TOKEN`
+secret, which stays the fallback. Turning sandbox builds on for the first time cannot
+use it, since the token is kept on the sandbox Worker being created.
+
 ## If the build fails
 
 The job log and the review page name the step that failed and quote the end of its
 output:
 
 - **checkout**: the repository, branch or commit does not exist, or the repository is
-  not public.
+  private and the GitHub access token cannot read it (it expired, was revoked, or does
+  not cover the repository).
 - **detect**: there is no wrangler config at the root, or no lockfile next to
   `package.json`. A monorepo whose Worker sits in a subdirectory cannot be built this
   way yet.

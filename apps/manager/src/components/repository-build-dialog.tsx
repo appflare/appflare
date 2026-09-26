@@ -2,6 +2,7 @@ import { parseRepositoryInput } from "@appflare/schema";
 import { Banner, Button, Input, LayerDialog, Text } from "@cloudflare/kumo";
 import { GitBranchIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useId, useState } from "react";
+import { GITHUB_ACCESS_PLACE } from "../github/tokens";
 import { NOT_FROM_CATALOG } from "../installs/source-build-input";
 import { startSourceBuild } from "../installs/source-builds.functions";
 import type { SandboxReadiness } from "../sandbox/readiness";
@@ -93,9 +94,9 @@ function RepositoryBuildDialog({
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>Install from a repository</LayerDialog.Title>
         <LayerDialog.Description>
-          Any public GitHub repository with a wrangler config. It is built in your account first;
-          you review what it declares, then install it. {NOT_FROM_CATALOG}: Appflare never updates
-          it on its own. <DocsLink topic="installFromRepository" variant="inline" />
+          Any GitHub repository with a wrangler config. It is built in your account first; you
+          review what it declares, then install it. {NOT_FROM_CATALOG}: Appflare never updates it on
+          its own. <DocsLink topic="installFromRepository" variant="inline" />
         </LayerDialog.Description>
         <LayerDialog.Body>
           <form id={formId} className="grid gap-5" onSubmit={onSubmit}>
@@ -109,7 +110,7 @@ function RepositoryBuildDialog({
               required
               disabled={pending}
               error={repositoryError ?? undefined}
-              description="Public repositories on github.com only."
+              description={`Repositories on github.com. A private one needs a GitHub access token in ${GITHUB_ACCESS_PLACE}.`}
             />
             <Input
               label="Branch, tag or commit"

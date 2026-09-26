@@ -117,10 +117,15 @@ function request(overrides: Record<string, unknown> = {}): Record<string, unknow
   };
 }
 
-function build(sandbox: FakeSandbox, input: Record<string, unknown> = request()) {
+function build(
+  sandbox: FakeSandbox,
+  input: Record<string, unknown> = request(),
+  githubToken?: (secretName: string) => string | null,
+) {
   const opened: string[] = [];
   let clock = Date.parse("2026-09-25T12:00:00Z");
   const promise = runRepositoryBuild(input, {
+    ...(githubToken === undefined ? {} : { githubToken }),
     bucket: env.BUILDS,
     sandboxVersion: "0.2.0",
     openSandbox: (id) => {
@@ -365,6 +370,105 @@ describe("runRepositoryBuild", () => {
       await build(fake(), request({ avoidVersions: ["0.0.0-20260920.0123456"] })).promise,
     );
     expect(result.version).toBe("0.0.0-20260920.0123456+0123456");
+  });
+});
+
+describe("runRepositoryBuild of a private repository", () => {
+  const SECRET = "GITHUB_TOKEN_01J8TOKEN00000";
+  const TOKEN = "github_pat_11AAAAAAA0secretvalue_DO_NOT_LEAK";
+  const BASIC = btoa(`x-access-token:${TOKEN}`);
+  const held = (name: string) => (name === SECRET ? TOKEN : null);
+  const SRC = "/workspace/appflare-build/source";
+
+  it("fetches the resolved commit with the token as the password, only in git's environment", async () => {
+    const sandbox = fake();
+    const { promise } = build(
+      sandbox,
+      request({ ref: "main", commit: MAIN, tokenSecret: SECRET }),
+      held,
+    );
+    const result = asResult(await promise);
+    expect(result).toMatchObject({ commit: MAIN, ref: "main" });
+
+    // No SDK clone (it takes no environment); a plain remote URL, then a fetch.
+    expect(sandbox.commands.some((c) => c.startsWith("<gitCheckout"))).toBe(false);
+    expect(sandbox.commands).toContain(
+      `rm -rf ${SRC} && git init -q ${SRC} && git -C ${SRC} remote add origin https://github.com/MendyLanda/cut.git && git -C ${SRC} fetch -q --depth 1 origin ${MAIN} && git -C ${SRC} checkout -q --detach FETCH_HEAD`,
+    );
+    for (const command of sandbox.commands) {
+      expect(command).not.toContain(TOKEN);
+      expect(command).not.toContain(BASIC);
+    }
+
+    // Exactly one command gets the token: the fetch. The install and the
+    // packer, which run the repository's code, get the plain build environment.
+    const withToken = sandbox.envs.filter((e) => "GIT_CONFIG_VALUE_0" in e);
+    expect(withToken).toEqual([
+      {
+        ...BUILD_ENV,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "http.https://github.com/.extraHeader",
+        GIT_CONFIG_VALUE_0: `Authorization: Basic ${BASIC}`,
+      },
+    ]);
+    for (const used of sandbox.envs.filter((e) => !("GIT_CONFIG_VALUE_0" in e))) {
+      expect(used).toEqual(BUILD_ENV);
+    }
+
+    const stored = await readProgress(env.BUILDS, `builds/${INSTALL}/${RUN}/log.txt`);
+    expect(stored?.log).toContain("read with a GitHub access token");
+    for (const text of [JSON.stringify(result), stored?.log ?? ""]) {
+      expect(text).not.toContain(TOKEN);
+      expect(text).not.toContain(BASIC);
+    }
+  });
+
+  it("fetches the ref by name when no commit was resolved", async () => {
+    const sandbox = fake();
+    const result = asResult(
+      await build(sandbox, request({ ref: "v1.4.0", tokenSecret: SECRET }), held).promise,
+    );
+    expect(result).toMatchObject({ commit: TAGGED, ref: "v1.4.0" });
+    expect(sandbox.commands.some((c) => c.includes("fetch -q --depth 1 origin v1.4.0"))).toBe(true);
+  });
+
+  it("names the token in a failed fetch and keeps its value out of the message", async () => {
+    const sandbox = fake({
+      failures: [
+        {
+          match: /fetch -q --depth 1/,
+          exitCode: 128,
+          output: `fatal: Authentication failed for 'https://x-access-token:${TOKEN}@github.com/MendyLanda/cut.git/'\n`,
+        },
+      ],
+    });
+    const failure = asFailure(
+      await build(sandbox, request({ ref: "main", commit: MAIN, tokenSecret: SECRET }), held)
+        .promise,
+    );
+    expect(failure).toMatchObject({ stage: "checkout", retryable: false });
+    expect(failure.message).toContain("with the GitHub access token");
+    expect(JSON.stringify(failure)).not.toContain(TOKEN);
+  });
+
+  it("refuses a token this Worker does not hold before a container starts", async () => {
+    const { promise, opened } = build(
+      fake(),
+      request({ ref: "main", commit: MAIN, tokenSecret: SECRET }),
+      () => null,
+    );
+    const failure = asFailure(await promise);
+    expect(failure).toMatchObject({ stage: "checkout", retryable: false });
+    expect(failure.message).toContain(`does not hold the GitHub access token ${SECRET}`);
+    expect(opened).toEqual([]);
+  });
+
+  it("takes only a GitHub access token secret's name, never another secret's", async () => {
+    const failure = asFailure(
+      await build(fake(), request({ tokenSecret: "APP_TOKEN_01J8INSTALL" }), () => TOKEN).promise,
+    );
+    expect(failure.stage).toBe("request");
   });
 });
 

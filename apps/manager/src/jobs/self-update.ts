@@ -13,6 +13,7 @@ import { releaseFetch } from "../catalog/release-fetch";
 import { createDb } from "../db/client";
 import { jobs, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { releaseTokenOptions, releaseTokenSecret } from "../github/release-access.server";
 import { MANAGER_SUBDOMAIN } from "../installs/workers-dev";
 import { fetchWhole, sha256Hex } from "./install/artifact";
 import {
@@ -109,9 +110,16 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
   const steps = createJobSteps(ctx, params.jobId);
   const { run } = steps;
   const userAgent = `Appflare/${params.fromVersion}`;
-  const feed = (fetch: FetchLike) => releaseFetch(fetch, { token: env.GITHUB_TOKEN, userAgent });
-  /** Units read the release zip through the feed too, with their own Worker's GitHub token. */
-  const releaseHost: ArtifactHost = { kind: "release", userAgent };
+  /** The GitHub access token marked for release downloads, when there is one (from "start"). */
+  let releaseSecret: string | null = null;
+  const feed = (fetch: FetchLike) =>
+    releaseFetch(fetch, { ...releaseTokenOptions(env, releaseSecret), userAgent });
+  /** Units read the release zip through the feed too, with the same token. */
+  const releaseHost = (): ArtifactHost => ({
+    kind: "release",
+    userAgent,
+    ...(releaseSecret === null ? {} : { tokenSecret: releaseSecret }),
+  });
   /** Set once the new version exists, for the failure report. */
   let uploadedVersionId: string | null = null;
 
@@ -135,10 +143,15 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       log.info(
         `Updating Appflare from ${params.fromVersion} to ${params.version} (release ${params.tag}) on Worker "${settings.worker_name}".`,
       );
-      return { accountId: settings.account_id, workerName: settings.worker_name };
+      return {
+        accountId: settings.account_id,
+        workerName: settings.worker_name,
+        releaseTokenSecret: await releaseTokenSecret(env),
+      };
     });
     steps.setAccountId(started.accountId);
     const { workerName } = started;
+    releaseSecret = started.releaseTokenSecret ?? null;
 
     // 1. The release manifest.
     const verified = await run("verify release manifest", async ({ log, fetch }) => {
@@ -250,7 +263,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       workerName,
       params.artifacts.zip,
       manifest.assets.files,
-      releaseHost,
+      releaseHost(),
     );
     if (assetsJwt === null) {
       steps.current = "upload assets";
@@ -287,7 +300,7 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       const result = settleUnit(
         await steps.units.api.uploadWorker({
           accountId: steps.accountId(),
-          artifact: { zipUrl: params.artifacts.zip, host: releaseHost },
+          artifact: { zipUrl: params.artifacts.zip, host: releaseHost() },
           workerName,
           modules: manifest.worker.modules,
           metadata,

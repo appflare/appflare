@@ -99,6 +99,8 @@ export interface HeartbeatInput {
   removedWithRetained: number;
   /** Notification channels by kind (counts only). */
   notificationChannels: Record<ChannelKind, number>;
+  /** GitHub access tokens (the count only; nothing about them is sent). */
+  githubTokens: number;
 }
 
 function counts<K extends string>(keys: readonly K[]): Record<K, number> {
@@ -181,6 +183,7 @@ export function heartbeatProperties(input: HeartbeatInput): Record<string, Telem
     auto_update_default: input.autoUpdateDefault ? "on" : "off",
     installs_auto_update: byAutoUpdate,
     notification_channels: { ...input.notificationChannels },
+    github_tokens: input.githubTokens,
     installs_total: input.installs.length,
     installs_by_status: byStatus,
     installs_by_tier: byTier,

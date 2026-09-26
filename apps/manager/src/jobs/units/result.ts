@@ -72,6 +72,8 @@ export interface UnitTools {
   log: StepLog;
   /** Fetch that counts the unit's subrequests (redirect hops included). */
   fetch: FetchLike;
+  /** Counts another way out of the Worker (a service binding's calls) the same way. */
+  count(fetch: FetchLike): FetchLike;
   /** A cf-api client with the Worker's own API token. */
   cf(): CloudflareClient;
 }
@@ -142,16 +144,19 @@ export async function runUnit<T>(
   const log = new StepLog(deps.now ?? Date.now);
   const base: FetchLike = deps.fetch ?? ((input, init) => fetch(input, init));
   let subrequests = 0;
-  const counted: FetchLike = async (input, init) => {
-    try {
-      const response = await base(input, init);
-      subrequests += fetchCost(response);
-      return response;
-    } catch (error) {
-      subrequests += 1;
-      throw error;
-    }
-  };
+  const count =
+    (inner: FetchLike): FetchLike =>
+    async (input, init) => {
+      try {
+        const response = await inner(input, init);
+        subrequests += fetchCost(response);
+        return response;
+      } catch (error) {
+        subrequests += 1;
+        throw error;
+      }
+    };
+  const counted = count(base);
   const cf = (): CloudflareClient => {
     const token = env.CF_API_TOKEN;
     if (token === undefined || token.length === 0) {
@@ -167,7 +172,7 @@ export async function runUnit<T>(
   };
   const unitLog = (): UnitLog => ({ lines: [...log.lines], requests: [...log.requests] });
   try {
-    const value = await body({ log, fetch: counted, cf });
+    const value = await body({ log, fetch: counted, count, cf });
     return { ok: true, value, log: unitLog(), subrequests };
   } catch (error) {
     return { ok: false, failure: describeFailure(error), log: unitLog(), subrequests };
