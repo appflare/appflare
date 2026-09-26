@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   changedVarNames,
+  connectionChangeProblems,
+  databaseSlots,
   emailRouteZoneId,
   emailZones,
   enteredSecretProblems,
   nextStoredVars,
   parseStoredVars,
+  replacementConfigName,
   secretChangeProblems,
   secretEnvPatch,
   secretSlots,
@@ -56,6 +59,65 @@ describe("secret slots", () => {
         present: true,
       },
     ]);
+  });
+});
+
+describe("databases elsewhere", () => {
+  const declared = [
+    { binding: "DB", protocol: "postgres" as const, help: "Postgres 15." },
+    { binding: "LEGACY", protocol: "mysql" as const, label: "Old shop" },
+  ];
+
+  it("lists each declared database with the configuration its binding records", () => {
+    expect(
+      databaseSlots(declared, [
+        { binding: "DB", name: "cut-db-r01abcdef" },
+        { binding: null, name: "cut-db" },
+      ]),
+    ).toEqual([
+      {
+        binding: "DB",
+        protocol: "postgres",
+        help: "Postgres 15.",
+        fieldLabel: "PostgreSQL connection string (DB)",
+        configName: "cut-db-r01abcdef",
+      },
+      {
+        binding: "LEGACY",
+        protocol: "mysql",
+        label: "Old shop",
+        fieldLabel: "Old shop (LEGACY)",
+        configName: null,
+      },
+    ]);
+  });
+
+  it("takes a valid string for a database with a configuration, and nothing else", () => {
+    const slots = databaseSlots(declared, [
+      { binding: "DB", name: "cut-db" },
+      { binding: "LEGACY", name: "cut-legacy" },
+    ]);
+    expect(connectionChangeProblems({}, slots)).toEqual([]);
+    expect(connectionChangeProblems({ DB: "postgres://u:p@h/db" }, slots)).toEqual([]);
+    expect(connectionChangeProblems({ LEGACY: "postgres://u:secret@h/db" }, slots)).toEqual([
+      "Old shop (LEGACY): This app needs a MySQL database: the connection string starts with mysql://.",
+    ]);
+    expect(connectionChangeProblems({ X: "postgres://u:p@h/db" }, slots)).toEqual([
+      "X is not a database connection of this app.",
+    ]);
+    const unrecorded = databaseSlots(declared, []);
+    expect(connectionChangeProblems({ DB: "postgres://u:p@h/db" }, unrecorded)).toEqual([
+      "Appflare has no record of a Hyperdrive configuration for PostgreSQL connection string (DB); reinstall the app to connect it.",
+    ]);
+  });
+
+  it("names a replacement after the configuration and the job, never growing", () => {
+    // Named from the install's Worker and binding, whatever the current configuration is called.
+    expect(replacementConfigName("cut", "DB", "01J8ZX4ABCDEFGH")).toBe("cut-db-rabcdefgh");
+    expect(replacementConfigName("cut", "DB", "01J8ZX4ZYXWVUTS")).toBe("cut-db-rzyxwvuts");
+    expect(replacementConfigName("app-rabcdefgh", "PG", "01J8ZX4ZYXWVUTS")).toBe(
+      "app-rabcdefgh-pg-rzyxwvuts",
+    );
   });
 });
 

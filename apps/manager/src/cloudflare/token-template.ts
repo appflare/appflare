@@ -76,6 +76,15 @@ export const PLAN_DETECTION_FEATURE = "Workers plan detection";
  */
 export const SANDBOX_BUILDS_FEATURE = "Sandbox builds";
 
+/**
+ * Installing an app that keeps its data in a database outside Cloudflare
+ * (its catalog manifest's `resources.hyperdrive`): Appflare creates a
+ * Hyperdrive configuration per database from the connection string the
+ * admin enters, replaces it when the string changes, and deletes it on
+ * uninstall.
+ */
+export const DATABASE_ELSEWHERE_FEATURE = "Apps with a database elsewhere";
+
 export const TOKEN_PERMISSION_GROUPS = [
   // Upload, version, deploy, and delete app Workers and the manager itself; their
   // secrets, cron triggers, workers.dev routes, and static assets.
@@ -148,6 +157,15 @@ export const TOKEN_PERMISSION_GROUPS = [
   // own key is `containers`, as published tables of the keys read from the
   // dashboard's code and public template links for this group both use.
   { key: "containers", type: "edit", label: "Containers", onlyFor: SANDBOX_BUILDS_FEATURE },
+  // Create, list and delete Hyperdrive configurations for apps whose database
+  // lives elsewhere ("Hyperdrive Write" in the API's group list). The
+  // template key is not in the template page's table and is not the
+  // product's name: Hyperdrive began as "query cache", and the dashboard
+  // labels the group `query_cache_write` (its permission group list, as
+  // published by Cloudflare-Mining/Cloudflare-Datamining's
+  // `token_permission_groups_dash.json`), so the key is `query_cache` by the
+  // label rule above.
+  { key: "query_cache", type: "edit", label: "Hyperdrive", onlyFor: DATABASE_ELSEWHERE_FEATURE },
   // Find the account id and name the token belongs to (`GET /accounts`).
   { key: "account_settings", type: "read", label: "Account Settings" },
   // Stream a Worker's live logs while diagnosing an install or update.
@@ -239,6 +257,8 @@ const APP_PERMISSION_KEYS: Readonly<Record<string, Omit<PermissionGroup, "type">
   "account.workers r2 storage": { key: "workers_r2", label: "Account: Workers R2 Storage" },
   "account.d1": { key: "d1", label: "Account: D1" },
   "account.queues": { key: "queues", label: "Account: Queues" },
+  // The dashboard's key for Hyperdrive (see TOKEN_PERMISSION_GROUPS above).
+  "account.hyperdrive": { key: "query_cache", label: "Account: Hyperdrive" },
   // The same two groups the manager asks for to put itself behind Access; apps
   // that create their own Access application (self-deploying ones) need them.
   "account.access: apps and policies": { key: "access", label: "Access: Apps and Policies" },

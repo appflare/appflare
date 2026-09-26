@@ -100,6 +100,11 @@ export type {
   UpdateEmailRoutingCatchAllArgs,
 } from "./namespaces/email-routing";
 export { EmailRoutingShapeError } from "./namespaces/email-routing";
+export type {
+  CreateHyperdriveConfigArgs,
+  HyperdriveConfig,
+  HyperdriveOriginInput,
+} from "./namespaces/hyperdrive";
 export type { CreateBucketArgs } from "./namespaces/r2";
 export { isAddressableObjectKey } from "./namespaces/r2";
 export type {

@@ -1,7 +1,15 @@
 import type { EnvBinding } from "@appflare/cf-api";
-import { type CatalogSecret, isOptionalSecret } from "@appflare/schema";
+import {
+  type CatalogHyperdrive,
+  type CatalogSecret,
+  connectionStringProblems,
+  hyperdriveFieldLabel,
+  isOptionalSecret,
+  MAX_CONNECTION_STRING_LENGTH,
+} from "@appflare/schema";
 import { z } from "zod";
 import { parseEmailRouteCfId } from "../../installs/email-routing";
+import { resourceName } from "../install/bindings";
 
 /**
  * The pure decisions of a settings change (job kind `reconfigure`): which
@@ -27,6 +35,16 @@ export const secretChangesSchema = z.object({
   unset: z.array(nameSchema).max(64).default([]),
 });
 export type SecretChanges = z.infer<typeof secretChangesSchema>;
+
+/**
+ * New connection strings by Hyperdrive binding: each replaces that
+ * database's Hyperdrive configuration. Credentials, handled like secret
+ * values: never logged, never stored outside the Workflow params.
+ */
+export const connectionChangesSchema = z.record(
+  nameSchema,
+  z.string().max(MAX_CONNECTION_STRING_LENGTH),
+);
 
 /** One secret of an install, as the Settings section lists it. Values are never shown. */
 export interface SecretSlot {
@@ -94,6 +112,69 @@ export function secretSlots(
     });
   }
   return slots;
+}
+
+/**
+ * One database an install reaches through Hyperdrive, as the Settings
+ * section lists it: the installed version's declaration, and the Hyperdrive
+ * configuration recorded for it.
+ */
+export interface DatabaseSlot extends CatalogHyperdrive {
+  /** The field label (`hyperdriveFieldLabel`). */
+  fieldLabel: string;
+  /** The recorded configuration's name; null when none is recorded (it cannot be replaced). */
+  configName: string | null;
+}
+
+/**
+ * The databases of an install: one per Hyperdrive binding the installed
+ * version declares, with the configuration recorded for it. The connection
+ * string itself is never stored, so it is never shown; it can only be replaced.
+ */
+export function databaseSlots(
+  declared: readonly CatalogHyperdrive[],
+  recorded: ReadonlyArray<{ binding: string | null; name: string }>,
+): DatabaseSlot[] {
+  return declared.map((decl) => ({
+    ...decl,
+    fieldLabel: hyperdriveFieldLabel(decl),
+    configName: recorded.find((r) => r.binding === decl.binding)?.name ?? null,
+  }));
+}
+
+/**
+ * Why the connection strings entered in a settings change cannot be used,
+ * one sentence each: each must be for a database the install has a
+ * configuration of, and be a valid string for its protocol. Never repeats
+ * any part of a string.
+ */
+export function connectionChangeProblems(
+  entered: Readonly<Record<string, string>>,
+  slots: readonly DatabaseSlot[],
+): string[] {
+  const problems = connectionStringProblems(slots, entered, { required: false });
+  for (const binding of Object.keys(entered)) {
+    const slot = slots.find((s) => s.binding === binding);
+    if (slot !== undefined && slot.configName === null) {
+      problems.push(
+        `Appflare has no record of a Hyperdrive configuration for ${slot.fieldLabel}; reinstall the app to connect it.`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * The name of the Hyperdrive configuration a settings change creates to
+ * replace one: the name the install gives the binding's resource
+ * (`<workerName>-<binding>`, from the install's recorded Worker name), then
+ * `-r` and the end of the job's id. Built from the install's own naming, never
+ * by trimming the current configuration's name, so a replacement of a
+ * replacement stays the same length and an upstream name that happens to end
+ * like a suffix is never cut.
+ */
+export function replacementConfigName(workerName: string, binding: string, jobId: string): string {
+  return `${resourceName(workerName, binding)}-r${jobId.slice(-8).toLowerCase()}`;
 }
 
 /**

@@ -82,14 +82,48 @@ describe("planBindings", () => {
 
   it("refuses binding types it cannot install and names that are too long", () => {
     const plan = planBindings("a".repeat(54), [
-      { type: "hyperdrive", name: "PG" },
+      { type: "mtls_certificate", name: "CERT" },
       { type: "r2_bucket", name: "FILES_AND_MORE" },
       { type: "durable_object_namespace", name: "X", class_name: "X", script_name: "other" },
     ]);
     expect(plan.problems).toHaveLength(3);
-    expect(plan.problems[0]).toMatch(/"hyperdrive"/);
+    expect(plan.problems[0]).toMatch(/"mtls_certificate"/);
     expect(plan.problems[1]).toMatch(/longer than 63/);
     expect(plan.problems[2]).toMatch(/another Worker/);
+  });
+
+  it("plans a Hyperdrive configuration for each declared database, named like any resource", () => {
+    const plan = planBindings(
+      "feedlog",
+      [
+        { type: "hyperdrive", name: "HYPERDRIVE" },
+        { type: "r2_bucket", name: "FILES" },
+      ],
+      [{ binding: "HYPERDRIVE", protocol: "postgres" }],
+    );
+    expect(plan.problems).toEqual([]);
+    expect(plan.resources).toEqual([
+      {
+        binding: "HYPERDRIVE",
+        type: "hyperdrive",
+        kind: "hyperdrive",
+        name: "feedlog-hyperdrive",
+        protocol: "postgres",
+      },
+      { binding: "FILES", type: "r2_bucket", kind: "r2", name: "feedlog-files" },
+    ]);
+  });
+
+  it("refuses a Hyperdrive binding the catalog manifest does not declare, and the reverse", () => {
+    const undeclared = planBindings("app", [{ type: "hyperdrive", name: "PG" }]);
+    expect(undeclared.resources).toEqual([]);
+    expect(undeclared.problems).toEqual([
+      expect.stringMatching(/Hyperdrive binding PG is not declared in the catalog manifest/),
+    ]);
+    const unbound = planBindings("app", [], [{ binding: "PG", protocol: "mysql" }]);
+    expect(unbound.problems).toEqual([
+      expect.stringMatching(/declares PG, but the Worker has no Hyperdrive binding/),
+    ]);
   });
 });
 

@@ -16,6 +16,9 @@ import type { ReconfigureJobParams } from "../jobs/reconfigure";
 import {
   changedVarNames,
   changesSecrets,
+  connectionChangeProblems,
+  type DatabaseSlot,
+  databaseSlots,
   emailZones,
   enteredSecretProblems,
   nextStoredVars,
@@ -36,7 +39,7 @@ import {
   varValueProblem,
 } from "./install-vars";
 import type { StartReconfigureInput } from "./reconfigure-input";
-import { EMAIL_ROUTE_KIND } from "./resource-kinds";
+import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND } from "./resource-kinds";
 import { catalogOnlyManifest } from "./start-install.server";
 import {
   claim,
@@ -79,6 +82,11 @@ export interface InstallSettings {
   };
   /** Names and labels only; values are never read back. */
   secrets: SecretSlot[];
+  /**
+   * The databases the app reaches through Hyperdrive. Their connection
+   * strings are never stored, so they are never shown; each can be replaced.
+   */
+  databases: DatabaseSlot[];
   /** Whether secrets the version does not need can be removed (not for a self-deploying app). */
   canRemoveSecrets: boolean;
   /**
@@ -103,6 +111,7 @@ interface SettingsContext {
   catalog: CatalogManifest;
   fields: InstallVarField[];
   slots: SecretSlot[];
+  databases: DatabaseSlot[];
   email: InstallSettings["email"];
   skipsPreview: string | null;
   installer: InstallSettings["installer"];
@@ -128,6 +137,7 @@ async function settingsContext(
   const rows = await createDb(db)
     .select({
       kind: resources.kind,
+      binding: resources.binding,
       name: resources.name,
       cfId: resources.cf_id,
       createdAt: resources.created_at,
@@ -136,7 +146,7 @@ async function settingsContext(
     .where(
       and(
         eq(resources.install_id, install.id),
-        inArray(resources.kind, ["secret", EMAIL_ROUTE_KIND]),
+        inArray(resources.kind, ["secret", EMAIL_ROUTE_KIND, HYPERDRIVE_KIND]),
         isNull(resources.deleted_at),
         isNull(resources.retained_at),
       ),
@@ -152,6 +162,8 @@ async function settingsContext(
       catalog,
       fields: installVarFields(catalogOnlyManifest(catalog)),
       slots: secretSlots(catalog.secrets, secretNames),
+      // A self-deploying entry declares no databases (the schema refuses them).
+      databases: [],
       email: null,
       skipsPreview: null,
       installer: {
@@ -192,6 +204,10 @@ async function settingsContext(
     catalog: manifest.catalog,
     fields: installVarFields(manifest),
     slots: secretSlots(manifest.catalog.secrets, secretNames),
+    databases: databaseSlots(
+      manifest.catalog.resources?.hyperdrive ?? [],
+      rows.filter((r) => r.kind === HYPERDRIVE_KIND),
+    ),
     email:
       manifest.catalog.install.emailRouting === undefined
         ? null
@@ -241,6 +257,7 @@ export async function readInstallSettingsCore(
     })(),
     // Derived secrets are never entered; their source's row says they follow it.
     secrets: ctx.slots.filter((slot) => slot.derivedFrom === undefined),
+    databases: ctx.databases,
     canRemoveSecrets: install.build_kind !== "self-deploying",
     email: ctx.email,
     skipsPreview: ctx.skipsPreview,
@@ -304,6 +321,15 @@ export async function startReconfigureCore(
   const secretProblems = secretChangeProblems(secrets, ctx.slots, { canRemove: !selfDeploying });
   if (secretProblems.length > 0) throw new VersionActionError(secretProblems.join(" "));
 
+  // New connection strings replace the databases' Hyperdrive configurations.
+  const connections: Record<string, string> = {};
+  for (const [binding, value] of Object.entries(request.hyperdrive ?? {})) {
+    connections[binding] = value.trim();
+  }
+  const connectionProblems = connectionChangeProblems(connections, ctx.databases);
+  if (connectionProblems.length > 0) throw new VersionActionError(connectionProblems.join(" "));
+  const replacesConnections = Object.keys(connections).length > 0;
+
   let zoneId: string | null = null;
   if (request.emailRouting !== undefined) {
     if (ctx.email === null) {
@@ -317,7 +343,7 @@ export async function startReconfigureCore(
 
   const changedVars = changedVarNames(before, vars);
   // Only a new version needs a preview check; moving email deploys nothing.
-  const redeploy = changedVars.length > 0 || changesSecrets(secrets);
+  const redeploy = changedVars.length > 0 || changesSecrets(secrets) || replacesConnections;
   if (redeploy && ctx.skipsPreview !== null && request.confirmNoPreview !== true) {
     throw new VersionActionError(
       `${ctx.skipsPreview}. Confirm saving without that check to change the settings.`,
@@ -339,7 +365,7 @@ export async function startReconfigureCore(
 
   if (!redeploy && zoneId === null) {
     throw new VersionActionError(
-      "Nothing to save: the settings, secrets and email zone are as they are.",
+      "Nothing to save: the settings, secrets, database connections and email zone are as they are.",
     );
   }
 
@@ -352,6 +378,8 @@ export async function startReconfigureCore(
       version: install.catalog_version,
       vars: changedVars,
       secrets: { set: Object.keys(secrets.set).sort(), unset: [...secrets.unset].sort() },
+      // Binding names only: connection strings hold database passwords.
+      ...(replacesConnections ? { hyperdrive: Object.keys(connections).sort() } : {}),
       ...(zoneId === null ? {} : { emailRouting: { zoneId } }),
       ...(selfDeploying
         ? {
@@ -367,6 +395,7 @@ export async function startReconfigureCore(
       installId: install.id,
       vars,
       secrets,
+      ...(replacesConnections ? { hyperdrive: connections } : {}),
       ...(zoneId === null ? {} : { emailRouting: { zoneId } }),
       ...(redeploy && ctx.skipsPreview !== null ? { confirmNoPreview: true } : {}),
       ...(selfDeploying ? { selfDeploying: true, buildConfirmed: true } : {}),

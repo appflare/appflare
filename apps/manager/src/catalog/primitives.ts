@@ -30,7 +30,8 @@ export const PRIMITIVE_LABELS: Record<PrimitiveId, string> = {
   d1: "D1",
   r2: "R2",
   "durable-objects": "Durable Objects",
-  hyperdrive: "Hyperdrive",
+  // What the admin brings, not the Cloudflare product that connects to it.
+  hyperdrive: "Database elsewhere",
   vectorize: "Vectorize",
   "analytics-engine": "Analytics Engine",
   queues: "Queues",
@@ -82,7 +83,11 @@ export function indexPrimitives(
   };
 }
 
-export type Availability = "available" | "unavailable" | "unknown";
+/**
+ * `provided`: something the admin brings rather than something the account
+ * offers, such as the database an app reaches through Hyperdrive.
+ */
+export type Availability = "available" | "unavailable" | "unknown" | "provided";
 
 /** A primitive's availability for this account, with the sentence that explains it. */
 export interface PrimitiveStatus {
@@ -94,7 +99,6 @@ export interface PrimitiveStatus {
 const INCLUDED: Partial<Record<PrimitiveId, string>> = {
   kv: "Included on every Workers plan.",
   d1: "Included on every Workers plan.",
-  hyperdrive: "Included on every Workers plan.",
   vectorize: "Included on every Workers plan.",
   queues: "Included on every Workers plan.",
   workflows: "Included on every Workers plan.",
@@ -102,6 +106,12 @@ const INCLUDED: Partial<Record<PrimitiveId, string>> = {
   "workers-ai": "Included on every Workers plan, with a daily free allocation.",
   "browser-rendering": "Included on every Workers plan, with limited browser time on Workers Free.",
   images: "Included on every Cloudflare plan, with a monthly free allocation.",
+};
+
+/** Primitives the admin provides, with what they bring. */
+const PROVIDED: Partial<Record<PrimitiveId, string>> = {
+  hyperdrive:
+    "Provided by you: a PostgreSQL or MySQL database outside Cloudflare, whose connection string you enter when you install. Hyperdrive, included on every Workers plan, connects the app to it.",
 };
 
 const NOT_CHECKED: Partial<Record<PrimitiveId, string>> = {
@@ -230,6 +240,8 @@ export function primitiveStatus(
 ): PrimitiveStatus {
   const included = INCLUDED[id];
   if (included !== undefined) return { id, availability: "available", reason: included };
+  const provided = PROVIDED[id];
+  if (provided !== undefined) return { id, availability: "provided", reason: provided };
   const notChecked = NOT_CHECKED[id];
   if (notChecked !== undefined) return { id, availability: "unknown", reason: notChecked };
   if (id === "zone") return zoneStatus(view);
@@ -287,6 +299,7 @@ export const AVAILABILITY_LABELS: Record<Availability, string> = {
   available: "Available",
   unavailable: "Not available",
   unknown: "Unknown",
+  provided: "Provided by you",
 };
 
 /**

@@ -1,7 +1,7 @@
 import path from "node:path";
 import { UNSUPPORTED_WRANGLER_SECTIONS, type WranglerFacts } from "@appflare/schema";
 import { unstable_readConfig } from "wrangler";
-import { readConfigArgs, resolveWranglerConfig } from "./config-redirect.ts";
+import { copyTemplateConfig, readConfigArgs, resolveWranglerConfig } from "./config-redirect.ts";
 
 /**
  * `appflare-pack inspect`: what a project's wrangler config declares, read
@@ -37,7 +37,9 @@ export function wranglerFacts(config: Record<string, unknown>): WranglerFacts {
  * the packer does, following a redirect a build left, and returns its facts.
  */
 export function inspectWranglerConfig(checkoutDir: string, configPath: string): WranglerFacts {
-  const target = resolveWranglerConfig(path.resolve(checkoutDir), configPath);
+  const root = path.resolve(checkoutDir);
+  // A template (`wrangler.toml.example`) is read under its real name, as the pack reads it.
+  const target = resolveWranglerConfig(root, copyTemplateConfig(root, configPath));
   const read = readConfigArgs(target);
   const config = unstable_readConfig(read.args, read.options) as unknown;
   if (!isRecord(config)) throw new Error("wrangler did not return a config");

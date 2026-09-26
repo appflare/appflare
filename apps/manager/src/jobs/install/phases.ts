@@ -1,11 +1,17 @@
 import { Buffer } from "node:buffer";
-import { buildAssetsManifest, CloudflareApiError, type FetchLike } from "@appflare/cf-api";
-import type {
-  ArtifactManifest,
-  AssetFile,
-  D1MigrationFile,
-  IndexArtifacts,
-  SigningKey,
+import {
+  buildAssetsManifest,
+  CloudflareApiError,
+  type CloudflareClient,
+  type FetchLike,
+} from "@appflare/cf-api";
+import {
+  type ArtifactManifest,
+  type AssetFile,
+  type D1MigrationFile,
+  type IndexArtifacts,
+  parseConnectionString,
+  type SigningKey,
 } from "@appflare/schema";
 import { inArray } from "drizzle-orm";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../../catalog/app-manifest.server";
@@ -152,11 +158,21 @@ export async function provisionResourcePhase(
   steps: JobSteps,
   installId: string,
   res: ResourceBindingPlan,
+  /**
+   * Connection strings by Hyperdrive binding, from the job's input. Read
+   * inside the create step only; never logged, returned, or recorded.
+   */
+  connections: Readonly<Record<string, string>> = {},
 ): Promise<CreatedResource> {
   const label = RESOURCE_LABEL[res.kind];
   // An account without R2 refuses every R2 call; say so instead of the raw error.
+  // A token without the optional Hyperdrive group: name the permission.
   const explain = <T>(call: () => Promise<T>): Promise<T> =>
-    res.kind === "r2" ? explainR2Refusal(res.name, call) : call();
+    res.kind === "r2"
+      ? explainR2Refusal(res.name, call)
+      : res.kind === "hyperdrive"
+        ? explainHyperdriveRefusal(call)
+        : call();
   await steps.run(`check ${label} ${res.name}`, async ({ log, cf }) => {
     if ((await explain(() => findResource(cf(), res))) !== null) {
       throw new JobError(
@@ -180,7 +196,10 @@ export async function provisionResourcePhase(
         return { cfId: existing };
       }
     }
-    const cfId = await explain(() => createResource(api, res));
+    const cfId =
+      res.type === "hyperdrive"
+        ? await createHyperdriveConfig(api, res, connections[res.binding])
+        : await explain(() => createResource(api, res));
     log.info(
       res.unbound === true
         ? `Created ${label} "${res.name}".`
@@ -206,6 +225,60 @@ export async function provisionResourcePhase(
     return {};
   });
   return { binding: res.binding, type: res.type, name: res.name, cfId: made.cfId };
+}
+
+/**
+ * Creates the Hyperdrive configuration of a binding from the connection
+ * string the admin entered and returns its id. A missing or unreadable
+ * string, or a database Cloudflare cannot reach (it connects before it
+ * answers), ends the job with a sentence that names the binding and never
+ * any part of the string.
+ */
+export async function createHyperdriveConfig(
+  api: CloudflareClient,
+  res: Extract<ResourceBindingPlan, { type: "hyperdrive" }>,
+  connection: string | undefined,
+): Promise<string> {
+  if (connection === undefined) {
+    throw new JobError(`no connection string was given for the database of ${res.binding}`);
+  }
+  const parsed = parseConnectionString(connection, res.protocol);
+  if (!parsed.ok) {
+    throw new JobError(`the connection string for ${res.binding} is not usable: ${parsed.problem}`);
+  }
+  try {
+    return await explainHyperdriveRefusal(() => createResource(api, res, parsed.origin));
+  } catch (error) {
+    if (error instanceof CloudflareApiError && error.status < 500 && error.status !== 429) {
+      const said = error.errors.map((e) => e.message).join("; ") || `HTTP ${error.status}`;
+      throw new JobError(
+        `Cloudflare could not set up Hyperdrive for ${res.binding} (${said}). Check that the database accepts connections from the internet with the user, password and database name given, then install again`,
+      );
+    }
+    throw error;
+  }
+}
+
+/** The token permission Hyperdrive calls need, in the dashboard's words. */
+export const HYPERDRIVE_PERMISSION = "Hyperdrive: Edit";
+
+/**
+ * Runs a Hyperdrive API call; a refusal of the token (401 or 403) ends the
+ * job with a sentence naming the permission the token lacks, since the
+ * token's Hyperdrive group is optional and many tokens do not have it.
+ */
+export async function explainHyperdriveRefusal<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof CloudflareApiError && (error.status === 401 || error.status === 403)) {
+      const said = error.errors.map((e) => e.message).join("; ") || `HTTP ${error.status}`;
+      throw new JobError(
+        `Cloudflare refused the Hyperdrive call (${said}). The API token needs ${HYPERDRIVE_PERMISSION}, an optional permission for apps with a database elsewhere: add it to the token in the Cloudflare dashboard, then try again`,
+      );
+    }
+    throw error;
+  }
 }
 
 /** Step "check Workflow <name>": Workflow names are account-wide and never adopted. */

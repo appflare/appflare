@@ -4,6 +4,7 @@ import {
   accountTokenTemplateUrl,
   appTokenTemplateUrl,
   CUSTOM_DOMAINS_FEATURE,
+  DATABASE_ELSEWHERE_FEATURE,
   EMAIL_ROUTING_FEATURE,
   EXTERNAL_DOMAINS_FEATURE,
   optionalGroupsByFeature,
@@ -129,7 +130,26 @@ describe("token template URLs", () => {
       },
       { feature: PLAN_DETECTION_FEATURE, names: ["Billing: Read"] },
       { feature: SANDBOX_BUILDS_FEATURE, names: ["Containers: Edit"] },
+      { feature: DATABASE_ELSEWHERE_FEATURE, names: ["Hyperdrive: Edit"] },
     ]);
+  });
+
+  it("asks for Hyperdrive: Edit only as optional, for apps with a database elsewhere, under the dashboard's key", () => {
+    const { required, optional } = splitPermissionGroups();
+    expect(required.some((g) => g.key === "query_cache")).toBe(false);
+    expect(optional.filter((g) => g.onlyFor === DATABASE_ELSEWHERE_FEATURE)).toEqual([
+      {
+        key: "query_cache",
+        type: "edit",
+        label: "Hyperdrive",
+        onlyFor: DATABASE_ELSEWHERE_FEATURE,
+      },
+    ]);
+    expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({
+      key: "query_cache",
+      type: "edit",
+    });
+    expect(groupsOf(userTokenTemplateUrl())).toContainEqual({ key: "query_cache", type: "edit" });
   });
 
   it("asks for Containers: Edit only as optional, for sandbox builds, under the dashboard's key", () => {

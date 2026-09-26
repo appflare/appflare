@@ -10,6 +10,7 @@ import {
   type PackageManager,
   repositoryUrl,
   type SecretsSource,
+  WRANGLER_CONFIG_TEMPLATE_SUFFIXES,
   type WranglerFacts,
 } from "@appflare/schema";
 
@@ -60,12 +61,23 @@ export function detectPackageManager(files: ReadonlySet<string>): PackageManager
   );
 }
 
-/** The wrangler config at the root; throws when there is none. */
+/**
+ * Wrangler configs kept only as a template to copy (`wrangler.toml.example`),
+ * in the order they are looked for when the root has no real config. The
+ * packer copies one to its real name before wrangler reads it.
+ */
+export const WRANGLER_CONFIG_TEMPLATES = WRANGLER_CONFIGS.flatMap((name) =>
+  WRANGLER_CONFIG_TEMPLATE_SUFFIXES.map((suffix) => `${name}${suffix}`),
+);
+
+/** The wrangler config at the root, else a template of one; throws when there is neither. */
 export function detectWranglerConfig(files: ReadonlySet<string>): string {
-  const found = WRANGLER_CONFIGS.find((name) => files.has(name));
+  const found =
+    WRANGLER_CONFIGS.find((name) => files.has(name)) ??
+    WRANGLER_CONFIG_TEMPLATES.find((name) => files.has(name));
   if (found === undefined) {
     throw new DetectionError(
-      "the repository has no wrangler.json, wrangler.jsonc or wrangler.toml at its root, so it is not a Workers project Appflare can install",
+      "the repository has no wrangler.json, wrangler.jsonc or wrangler.toml at its root (nor one kept as a .example or .template copy), so it is not a Workers project Appflare can install",
     );
   }
   return found;

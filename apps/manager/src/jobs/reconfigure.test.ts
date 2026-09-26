@@ -30,6 +30,7 @@ import { fakeSelf } from "../test/fake-self";
 import { type FakeStep, fakeStep } from "../test/fake-step";
 import { INSTALL_ID, OLD_VERSION, type SeedResource, seedInstall } from "../test/seed-install";
 import { type ReconfigureJobParams, runReconfigure } from "./reconfigure";
+import { reconcileHyperdriveRecords } from "./reconfigure/hyperdrive";
 import { type RollbackJobParams, runRollback } from "./rollback";
 import type { JobEnv } from "./run-job";
 
@@ -604,6 +605,425 @@ describe("settings change job", () => {
         { installId: INSTALL_ID, vars: { TITLE: "x" } },
       ),
     ).rejects.toThrow(/no version preview URL.*Confirm saving without that check/);
+  });
+});
+
+describe("replacing a database's connection string", () => {
+  const NEW_PASSWORD = "new-db-pass-DO-NOT-LEAK";
+  const CONNECTION = `postgres://app:${NEW_PASSWORD}@db2.example.com/feedlog`;
+  const DB_APP: ArtifactFixtureOptions = {
+    ...APP,
+    bindings: [...(APP.bindings ?? []), { type: "hyperdrive", name: "HYPERDRIVE" }],
+    catalog: {
+      ...APP.catalog,
+      resources: {
+        hyperdrive: [{ binding: "HYPERDRIVE", protocol: "postgres", label: "Main database" }],
+      },
+    },
+  };
+  const DB_RESOURCES: SeedResource[] = [
+    ...RESOURCES,
+    { kind: "hyperdrive", binding: "HYPERDRIVE", name: "cut-hyperdrive", cfId: "hd-old" },
+  ];
+
+  /** Hyperdrive in front of the fake account: configurations by id, and the create bodies. */
+  function hyperdriveFront(options: { refuse?: string; also?: Array<[string, string]> } = {}) {
+    const configs = new Map<string, string>([
+      ["hd-old", "cut-hyperdrive"],
+      ...(options.also ?? []),
+    ]);
+    const created: Array<{ name: string; origin: Record<string, unknown> }> = [];
+    const calls: string[] = [];
+    const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
+      Response.json({ success: true, errors: [], messages: [], result, ...extra });
+    const front = async (request: Request): Promise<Response | null> => {
+      const path = new URL(request.url).pathname.replace(`/client/v4/accounts/${ACC}`, "");
+      if (!path.startsWith("/hyperdrive/configs")) return null;
+      calls.push(`${request.method} ${path}`);
+      if (request.method === "GET") {
+        return ok(
+          [...configs].map(([id, name]) => ({ id, name })),
+          { result_info: { total_count: configs.size } },
+        );
+      }
+      if (request.method === "POST") {
+        if (options.refuse !== undefined) {
+          return Response.json(
+            { success: false, errors: [{ code: 2008, message: options.refuse }] },
+            { status: 400 },
+          );
+        }
+        const body = (await request.json()) as { name: string; origin: Record<string, unknown> };
+        created.push(body);
+        configs.set("hd-new", body.name);
+        return ok({ id: "hd-new", name: body.name });
+      }
+      const id = path.split("/").pop() ?? "";
+      return configs.delete(id)
+        ? ok(null)
+        : Response.json(
+            { success: false, errors: [{ code: 1, message: "gone" }] },
+            { status: 404 },
+          );
+    };
+    return { front, configs, created, calls };
+  }
+
+  async function hyperdriveRows() {
+    return (
+      await env.DB.prepare(
+        "SELECT kind, binding, name, cf_id, deleted_at FROM resources WHERE install_id = ?1 AND kind LIKE 'hyperdrive%' ORDER BY rowid",
+      )
+        .bind(INSTALL_ID)
+        .all<{
+          kind: string;
+          binding: string | null;
+          name: string;
+          cf_id: string;
+          deleted_at: number | null;
+        }>()
+    ).results;
+  }
+
+  it("binds a new configuration, and keeps the old one superseded for a rollback", async () => {
+    const hd = hyperdriveFront();
+    const r = await reconfigure({
+      app: DB_APP,
+      resources: DB_RESOURCES,
+      front: hd.front,
+      request: {
+        vars: { HOME_PAGE: "admin" },
+        secrets: { set: {}, unset: [] },
+        hyperdrive: { HYPERDRIVE: CONNECTION },
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(hd.created).toEqual([
+      {
+        name: "cut-hyperdrive-rjob1",
+        origin: {
+          scheme: "postgres",
+          host: "db2.example.com",
+          port: 5432,
+          database: "feedlog",
+          user: "app",
+          password: NEW_PASSWORD,
+        },
+      },
+    ]);
+    const names = r.step.names;
+    expect(names.indexOf("create Hyperdrive configuration cut-hyperdrive-rjob1")).toBeGreaterThan(
+      names.indexOf("record snapshot"),
+    );
+    expect(names.indexOf("create Hyperdrive configuration cut-hyperdrive-rjob1")).toBeLessThan(
+      names.indexOf("upload Worker version"),
+    );
+    expect(names.some((n) => n.startsWith("delete Hyperdrive configuration"))).toBe(false);
+    // The version binds the new configuration.
+    expect(r.fake.state.versions[0]?.metadata.bindings).toContainEqual({
+      type: "hyperdrive",
+      name: "HYPERDRIVE",
+      id: "hd-new",
+    });
+    // The snapshot's version binds the old one: it stays, recorded as superseded.
+    expect([...hd.configs.keys()]).toEqual(["hd-old", "hd-new"]);
+    expect(await hyperdriveRows()).toEqual([
+      {
+        kind: "hyperdrive_superseded",
+        binding: "HYPERDRIVE",
+        name: "cut-hyperdrive",
+        cf_id: "hd-old",
+        deleted_at: null,
+      },
+      {
+        kind: "hyperdrive",
+        binding: "HYPERDRIVE",
+        name: "cut-hyperdrive-rjob1",
+        cf_id: "hd-new",
+        deleted_at: null,
+      },
+    ]);
+    // The string is a credential: only the binding name is kept.
+    expect(JSON.parse(r.job?.input_json ?? "{}").hyperdrive).toEqual(["HYPERDRIVE"]);
+    expect(r.job?.input_json).not.toContain(NEW_PASSWORD);
+    expect(JSON.stringify(r.logs)).not.toContain(NEW_PASSWORD);
+
+    // The Settings section names the configuration now bound.
+    const settings = await readInstallSettingsCore(
+      { db: env.DB, sandboxConnected: false, subdomain: SUBDOMAIN },
+      INSTALL_ID,
+    );
+    expect(settings?.databases).toEqual([
+      {
+        binding: "HYPERDRIVE",
+        protocol: "postgres",
+        label: "Main database",
+        fieldLabel: "Main database (HYPERDRIVE)",
+        configName: "cut-hyperdrive-rjob1",
+      },
+    ]);
+  });
+
+  it("keeps the old configuration serving when Cloudflare cannot reach the new database", async () => {
+    const hd = hyperdriveFront({ refuse: "Failed to connect to the origin database" });
+    const r = await reconfigure({
+      app: DB_APP,
+      resources: DB_RESOURCES,
+      front: hd.front,
+      request: {
+        vars: { HOME_PAGE: "admin" },
+        secrets: { set: {}, unset: [] },
+        hyperdrive: { HYPERDRIVE: CONNECTION },
+      },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(
+      /^create Hyperdrive configuration cut-hyperdrive-rjob1: Cloudflare could not set up Hyperdrive for HYPERDRIVE/,
+    );
+    expect(r.job?.error).not.toContain(NEW_PASSWORD);
+    expect(r.fake.state.versions).toEqual([]);
+    expect([...hd.configs.keys()]).toEqual(["hd-old"]);
+    expect(await hyperdriveRows()).toEqual([
+      {
+        kind: "hyperdrive",
+        binding: "HYPERDRIVE",
+        name: "cut-hyperdrive",
+        cf_id: "hd-old",
+        deleted_at: null,
+      },
+    ]);
+  });
+
+  it("deletes the new configuration again when the change fails before the promotion", async () => {
+    const hd = hyperdriveFront();
+    const r = await reconfigure({
+      app: DB_APP,
+      resources: DB_RESOURCES,
+      front: hd.front,
+      world: { previews: [{ status: 500, body: "boom" }] },
+      request: {
+        vars: { HOME_PAGE: "admin" },
+        secrets: { set: {}, unset: [] },
+        hyperdrive: { HYPERDRIVE: CONNECTION },
+      },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect([...hd.configs.keys()]).toEqual(["hd-old"]);
+    expect(await hyperdriveRows()).toEqual([
+      {
+        kind: "hyperdrive",
+        binding: "HYPERDRIVE",
+        name: "cut-hyperdrive",
+        cf_id: "hd-old",
+        deleted_at: null,
+      },
+      {
+        kind: "hyperdrive",
+        binding: null,
+        name: "cut-hyperdrive-rjob1",
+        cf_id: "hd-new",
+        deleted_at: expect.any(Number),
+      },
+    ]);
+  });
+
+  it("deletes a configuration an earlier change superseded once the next change serves", async () => {
+    const hd = hyperdriveFront({ also: [["hd-older", "cut-hyperdrive-r0older00"]] });
+    const r = await reconfigure({
+      app: DB_APP,
+      resources: [
+        ...DB_RESOURCES,
+        {
+          kind: "hyperdrive_superseded",
+          binding: "HYPERDRIVE",
+          name: "cut-hyperdrive-r0older00",
+          cfId: "hd-older",
+        },
+      ],
+      front: hd.front,
+      // A plain settings change: its snapshot becomes the latest.
+      request: { vars: { HOME_PAGE: "links" }, secrets: { set: {}, unset: [] } },
+    });
+    expect(r.error).toBeNull();
+    const names = r.step.names;
+    expect(
+      names.indexOf("delete Hyperdrive configuration cut-hyperdrive-r0older00"),
+    ).toBeGreaterThan(names.indexOf("promote version"));
+    expect([...hd.configs.keys()]).toEqual(["hd-old"]);
+    expect((await hyperdriveRows()).map((row) => [row.kind, row.cf_id, row.deleted_at])).toEqual([
+      ["hyperdrive", "hd-old", null],
+      ["hyperdrive_superseded", "hd-older", expect.any(Number)],
+    ]);
+  });
+
+  /** Runs the replacement, then marks the configuration it superseded deleted, as a later change would. */
+  async function replacedThenDeleted() {
+    const hd = hyperdriveFront();
+    const r = await reconfigure({
+      app: DB_APP,
+      resources: DB_RESOURCES,
+      front: hd.front,
+      request: {
+        vars: { HOME_PAGE: "admin" },
+        secrets: { set: {}, unset: [] },
+        hyperdrive: { HYPERDRIVE: CONNECTION },
+      },
+    });
+    expect(r.error).toBeNull();
+    r.fake.state.versionBindings[OLD_VERSION] = [
+      { type: "hyperdrive", name: "HYPERDRIVE", id: "hd-old" },
+    ];
+    await env.DB.prepare(
+      "UPDATE resources SET deleted_at = 1 WHERE install_id = ?1 AND cf_id = 'hd-old'",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    hd.configs.delete("hd-old");
+    const [snapshot] = await listSnapshotsCore(env.DB, INSTALL_ID);
+    return { r, hd, snapshot };
+  }
+
+  const rollbackDeps = (onJob: (p: RollbackJobParams) => void) => ({
+    db: env.DB,
+    createJob: async (id: string, p: RollbackJobParams) => {
+      onJob(p);
+      return { id };
+    },
+    newId: () => "rb1",
+  });
+
+  it("records the bound configuration in the snapshot, and marks one deleted since as not rollbackable", async () => {
+    const { snapshot } = await replacedThenDeleted();
+    const recorded = await env.DB.prepare(
+      "SELECT hyperdrive_json FROM snapshots WHERE install_id = ?1",
+    )
+      .bind(INSTALL_ID)
+      .first<{ hyperdrive_json: string }>();
+    expect(JSON.parse(recorded?.hyperdrive_json ?? "null")).toEqual({ HYPERDRIVE: "hd-old" });
+    expect(snapshot?.lostDatabase).toMatch(
+      /^The version this snapshot recorded connects HYPERDRIVE through a Hyperdrive configuration that has since been deleted/,
+    );
+    await expect(
+      startRollbackCore(
+        rollbackDeps(() => {}),
+        {
+          installId: INSTALL_ID,
+          snapshotId: snapshot?.id ?? "",
+        },
+      ),
+    ).rejects.toThrow(
+      /has since been deleted, so rolling back to it would leave the app without its database/,
+    );
+  });
+
+  it("refuses in the job, before deploying, when the snapshot recorded no configurations", async () => {
+    const { r, snapshot } = await replacedThenDeleted();
+    // A snapshot taken before configurations were recorded.
+    await env.DB.prepare("UPDATE snapshots SET hyperdrive_json = NULL WHERE install_id = ?1")
+      .bind(INSTALL_ID)
+      .run();
+    expect((await listSnapshotsCore(env.DB, INSTALL_ID))[0]?.lostDatabase).toBeNull();
+    let params: RollbackJobParams | null = null;
+    await startRollbackCore(
+      rollbackDeps((p) => {
+        params = p;
+      }),
+      { installId: INSTALL_ID, snapshotId: snapshot?.id ?? "" },
+    );
+    if (params === null) throw new Error("no Workflow params");
+    const deploymentsBefore = r.fake.state.deployments.length;
+    await runRollback({
+      params,
+      step: fakeStep(),
+      env: { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN },
+      deps: { fetch: r.fake.fetch },
+    }).catch(() => {});
+    const job = await env.DB.prepare("SELECT status, error FROM jobs WHERE id = 'rb1'").first<{
+      status: string;
+      error: string;
+    }>();
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toMatch(
+      /^check the version's database connections: The version this snapshot recorded connects HYPERDRIVE/,
+    );
+    expect(r.fake.state.deployments.length).toBe(deploymentsBefore);
+  });
+
+  it("warns when a version binds a configuration with no live record", async () => {
+    await seedInstall({ manifestJson: "{}", resources: DB_RESOURCES });
+    const outcome = await reconcileHyperdriveRecords(createDb(env.DB), INSTALL_ID, [
+      { binding: "HYPERDRIVE", id: "hd-gone" },
+    ]);
+    expect(outcome).toEqual({ rebound: [], missing: ["HYPERDRIVE"] });
+  });
+
+  it("binds the superseded configuration again when the change is rolled back", async () => {
+    const hd = hyperdriveFront();
+    const r = await reconfigure({
+      app: DB_APP,
+      resources: DB_RESOURCES,
+      front: hd.front,
+      request: {
+        vars: { HOME_PAGE: "admin" },
+        secrets: { set: {}, unset: [] },
+        hyperdrive: { HYPERDRIVE: CONNECTION },
+      },
+    });
+    expect(r.error).toBeNull();
+    // The version the snapshot recorded binds the old configuration.
+    r.fake.state.versionBindings[OLD_VERSION] = [
+      { type: "hyperdrive", name: "HYPERDRIVE", id: "hd-old" },
+    ];
+    const [snapshot] = await listSnapshotsCore(env.DB, INSTALL_ID);
+    let params: RollbackJobParams | null = null;
+    await startRollbackCore(
+      {
+        db: env.DB,
+        createJob: async (id, p) => {
+          params = p;
+          return { id };
+        },
+        newId: () => "rb1",
+      },
+      { installId: INSTALL_ID, snapshotId: snapshot?.id ?? "" },
+    );
+    if (params === null) throw new Error("no Workflow params");
+    await runRollback({
+      params,
+      step: fakeStep(),
+      env: { DB: env.DB, KV: env.KV, CF_API_TOKEN: TOKEN },
+      deps: { fetch: r.fake.fetch },
+    });
+    expect((await hyperdriveRows()).map((row) => [row.kind, row.binding, row.cf_id])).toEqual([
+      ["hyperdrive", "HYPERDRIVE", "hd-old"],
+      ["hyperdrive_superseded", "HYPERDRIVE", "hd-new"],
+    ]);
+    expect([...hd.configs.keys()]).toEqual(["hd-old", "hd-new"]);
+  });
+
+  it("refuses a string for a database the app does not have", async () => {
+    await expect(
+      reconfigure({
+        app: DB_APP,
+        resources: DB_RESOURCES,
+        front: hyperdriveFront().front,
+        request: { hyperdrive: { OTHER: CONNECTION } },
+      }),
+    ).rejects.toThrow(/OTHER is not a database connection of this app/);
+  });
+
+  it("refuses a string of the wrong protocol, naming the database and never the string", async () => {
+    const hd = hyperdriveFront();
+    await expect(
+      reconfigure({
+        app: DB_APP,
+        resources: DB_RESOURCES,
+        front: hd.front,
+        request: { hyperdrive: { HYPERDRIVE: `mysql://a:${NEW_PASSWORD}@h/db` } },
+      }),
+    ).rejects.toThrow(/^Main database \(HYPERDRIVE\): This app needs a PostgreSQL database/);
+    expect(hd.created).toEqual([]);
   });
 });
 

@@ -14,6 +14,7 @@ import {
   ArrowRightIcon,
   ArrowsClockwiseIcon,
   ArrowUUpLeftIcon,
+  DatabaseIcon,
   EnvelopeSimpleIcon,
   InfoIcon,
   KeyIcon,
@@ -26,7 +27,8 @@ import { missingRequiredVar, varValueProblem } from "../installs/install-vars";
 import type { InstallDetail } from "../installs/installs.functions";
 import { startReconfigure } from "../installs/reconfigure.functions";
 import type { InstallSettings, SettingField } from "../installs/reconfigure.server";
-import type { SecretSlot } from "../jobs/reconfigure/plan";
+import type { DatabaseSlot, SecretSlot } from "../jobs/reconfigure/plan";
+import { connectionsComplete, DatabaseField } from "./database-fields";
 import { DocsLink } from "./docs-link";
 import { EmailRoutingFields } from "./email-routing-fields";
 import { VarField } from "./install-form";
@@ -62,6 +64,8 @@ export function AppSettingsSection({
   /** New secret values being entered, by name (a name is present while its field is open). */
   const [newSecrets, setNewSecrets] = useState<Record<string, string>>({});
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
+  /** New connection strings being entered, by Hyperdrive binding (present while a field is open). */
+  const [newConnections, setNewConnections] = useState<Record<string, string>>({});
   const [zoneId, setZoneId] = useState<string | null>(settings.email?.zoneId ?? null);
   const [movingEmail, setMovingEmail] = useState(false);
   const [emailReady, setEmailReady] = useState(false);
@@ -80,14 +84,20 @@ export function AppSettingsSection({
 
   const varsChanged = settings.fields.some((f) => shownOf(f) !== initialOf(f));
   const secretsChanged = Object.keys(newSecrets).length > 0 || removed.size > 0;
+  const connectionsChanged = Object.keys(newConnections).length > 0;
   const zoneChanged = movingEmail && zoneId !== null && zoneId !== settings.email?.zoneId;
-  const dirty = varsChanged || secretsChanged || zoneChanged;
+  const dirty = varsChanged || secretsChanged || connectionsChanged || zoneChanged;
   const invalid =
     settings.fields.some(
       (f) => missingRequiredVar(f, shownOf(f)) || varValueProblem(f, shownOf(f)) !== null,
-    ) || Object.values(newSecrets).some((v) => v.length === 0);
-  /** Only settings and secrets need a new version (and its checks); moving email does not. */
-  const redeploys = varsChanged || secretsChanged;
+    ) ||
+    Object.values(newSecrets).some((v) => v.length === 0) ||
+    !connectionsComplete(
+      settings.databases.filter((d) => Object.hasOwn(newConnections, d.binding)),
+      newConnections,
+    );
+  /** Only settings, secrets and connections need a new version (and its checks); moving email does not. */
+  const redeploys = varsChanged || secretsChanged || connectionsChanged;
   const ready =
     dirty &&
     !invalid &&
@@ -99,6 +109,7 @@ export function AppSettingsSection({
     setEdited({});
     setNewSecrets({});
     setRemoved(new Set());
+    setNewConnections({});
     setZoneId(settings.email?.zoneId ?? null);
     setMovingEmail(false);
     setError(null);
@@ -132,6 +143,7 @@ export function AppSettingsSection({
           installId: install.id,
           vars: submittedVars(),
           secrets: { set: newSecrets, unset: [...removed] },
+          ...(connectionsChanged ? { hyperdrive: newConnections } : {}),
           ...(email === null ? {} : { emailRouting: email }),
           ...(redeploys && settings.skipsPreview !== null ? { confirmNoPreview } : {}),
           ...(settings.installer === null ? {} : { buildConfirmed }),
@@ -159,7 +171,10 @@ export function AppSettingsSection({
   }
 
   const nothingToEdit =
-    settings.fields.length === 0 && settings.secrets.length === 0 && settings.email === null;
+    settings.fields.length === 0 &&
+    settings.secrets.length === 0 &&
+    settings.databases.length === 0 &&
+    settings.email === null;
 
   return (
     <section aria-label="Settings and secrets" className="grid gap-3">
@@ -265,6 +280,33 @@ export function AppSettingsSection({
                             if (remove) next.add(slot.name);
                             else next.delete(slot.name);
                             return next;
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                </Group>
+              )}
+
+              {settings.databases.length > 0 && (
+                <Group
+                  title="Databases"
+                  description="Reached through Cloudflare Hyperdrive. Connection strings are never stored, so they are never shown. A new one gets a new Hyperdrive configuration, which the new version binds. The old configuration is kept until the next update or settings change, so undoing this change from Versions still reaches the old database."
+                >
+                  <div className="grid gap-4">
+                    {settings.databases.map((db) => (
+                      <DatabaseRow
+                        key={db.binding}
+                        slot={db}
+                        value={newConnections[db.binding]}
+                        disabled={!canEdit || pending}
+                        onValueChange={(value) =>
+                          setNewConnections((s) => {
+                            if (value === undefined) {
+                              const { [db.binding]: _dropped, ...rest } = s;
+                              return rest;
+                            }
+                            return { ...s, [db.binding]: value };
                           })
                         }
                       />
@@ -433,6 +475,71 @@ function Group({
         </Text>
       </div>
       {children}
+    </div>
+  );
+}
+
+/**
+ * One database: its label and the Hyperdrive configuration the Worker binds,
+ * and "Replace connection string", which opens a field for a new one. The
+ * current string is never stored, so it is never shown.
+ */
+function DatabaseRow({
+  slot,
+  value,
+  disabled,
+  onValueChange,
+}: {
+  slot: DatabaseSlot;
+  /** The new connection string being entered; undefined while the field is closed. */
+  value: string | undefined;
+  disabled: boolean;
+  onValueChange(value: string | undefined): void;
+}) {
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Text bold>{slot.fieldLabel}</Text>
+          {slot.configName === null ? (
+            <Badge variant="warning">No configuration recorded</Badge>
+          ) : (
+            <Badge variant="outline">{slot.configName}</Badge>
+          )}
+        </div>
+        {slot.configName !== null &&
+          (value === undefined ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              icon={<DatabaseIcon />}
+              disabled={disabled}
+              onClick={() => onValueChange("")}
+            >
+              Replace connection string
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              icon={<ArrowUUpLeftIcon />}
+              disabled={disabled}
+              onClick={() => onValueChange(undefined)}
+            >
+              Keep current connection
+            </Button>
+          ))}
+      </div>
+      {value !== undefined && (
+        <DatabaseField
+          decl={slot}
+          label={`New connection string for ${slot.binding}`}
+          value={value}
+          onChange={(next) => onValueChange(next)}
+        />
+      )}
     </div>
   );
 }

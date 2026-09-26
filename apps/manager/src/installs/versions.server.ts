@@ -17,6 +17,7 @@ import { createDb, type Database } from "../db/client";
 import { installs, type JobStarter, jobs, resources, snapshots } from "../db/schema";
 import { otherDoTagsDiffer, otherWorkersMatch, storedOtherWorkers } from "../jobs/entry-workers";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
+import { liveHyperdriveIds } from "../jobs/reconfigure/hyperdrive";
 import type { RollbackJobParams } from "../jobs/rollback";
 import { installerRunId } from "../jobs/self-deploying/phases";
 import {
@@ -28,9 +29,11 @@ import {
 import { StepLog } from "../jobs/step-log";
 import type { UpdateJobParams } from "../jobs/update";
 import {
+  hyperdriveRollbackRefusal,
   lastDurableObjectTagOf,
   missingSecrets,
   parseBookmarks,
+  parseSnapshotHyperdrive,
   updatePath,
   updateRefusal,
 } from "../jobs/update/plan";
@@ -529,6 +532,14 @@ export async function startRollbackCore(
       "This update changed the app's Durable Object classes, and Cloudflare refuses to roll a Worker back across such a change.",
     );
   }
+  // Every Hyperdrive configuration the version binds must still exist. A
+  // snapshot taken before they were recorded is checked by the job, which
+  // reads the version itself.
+  const lost = hyperdriveRollbackRefusal(
+    parseSnapshotHyperdrive(snapshot.hyperdrive_json) ?? {},
+    await liveHyperdriveIds(createDb(deps.db), install.id),
+  );
+  if (lost !== null) throw new VersionActionError(lost);
   const jobId = (deps.newId ?? (() => ulid()))();
   return claim(deps, {
     installId: install.id,
@@ -714,6 +725,12 @@ export interface SnapshotView {
    * differs from the Worker's): those changes stay after a rollback.
    */
   crossesDoMigration: boolean;
+  /**
+   * Why a rollback to this snapshot is refused because its version binds a
+   * Hyperdrive configuration that has been deleted since; null when it can
+   * reach its databases (or recorded none).
+   */
+  lostDatabase: string | null;
   /** D1 databases of the install this snapshot holds a bookmark for (bookmarks for admins only). */
   databases: Array<{
     resourceId: string;
@@ -770,6 +787,7 @@ export async function listSnapshotsCore(
       .from(resources)
       .where(and(eq(resources.install_id, installId), eq(resources.kind, "d1"))),
   ]);
+  const liveConfigs = await liveHyperdriveIds(orm, installId);
   const jobById = new Map(jobRows.map((j) => [j.id, j]));
   const currentDoTag = install.doMigrationTag ?? lastDurableObjectTagOf(install.manifestJson);
   const liveDatabases = databases.filter(
@@ -798,6 +816,10 @@ export async function listSnapshotsCore(
       crossesDoMigration:
         row.do_migration_tag !== currentDoTag ||
         otherDoTagsDiffer(row.manifest_json, install.manifestJson, install.workerName),
+      lostDatabase: hyperdriveRollbackRefusal(
+        parseSnapshotHyperdrive(row.hyperdrive_json) ?? {},
+        liveConfigs,
+      ),
       databases: liveDatabases.flatMap((d) => {
         const bookmark = d.cf_id === null ? undefined : bookmarks[d.cf_id];
         return d.cf_id === null || bookmark === undefined

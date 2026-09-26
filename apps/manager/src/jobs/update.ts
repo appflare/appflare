@@ -70,6 +70,7 @@ import {
 } from "./install/queue-consumers";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import { RESOURCE_LABEL } from "./install/resources";
+import { deleteSupersededPhase, supersededConfigs } from "./reconfigure/hyperdrive";
 import { secretSlots } from "./reconfigure/plan";
 import { undoSecretChangesPhase } from "./reconfigure/secrets";
 import type { JobContext } from "./run-job";
@@ -415,6 +416,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       entryBindings(manifest),
       started.resources,
       started.vectorizeShapes,
+      manifest.catalog.resources?.hyperdrive ?? [],
     );
     const queuePlan = planEntryQueueConsumers(workerName, manifest, workers);
     const queueDiff = diffConsumerQueues(queuePlan.queues, started.resources);
@@ -933,6 +935,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         previousOf(w.scriptName)?.crons ?? [],
       );
     }
+
+    // Hyperdrive configurations a settings change superseded are bound only
+    // by versions before this update's snapshot, which is the latest now.
+    await deleteSupersededPhase(steps, supersededConfigs(started.resources));
 
     // 9. Live health check, recorded rather than fatal: the version already serves.
     const url = `${appBase}${healthPath}`;

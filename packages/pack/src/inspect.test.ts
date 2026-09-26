@@ -81,6 +81,14 @@ describe("inspectWranglerConfig", () => {
     expect(inspectWranglerConfig(plain, "wrangler.json")).toMatchObject({ unsupported: [] });
   });
 
+  it("reads a config kept only as a template under its real name", () => {
+    const dir = project({ "wrangler.toml.example": TOML });
+    expect(inspectWranglerConfig(dir, "wrangler.toml.example")).toMatchObject({
+      name: "boxes",
+      vars: ["GREETING", "LIMIT"],
+    });
+  });
+
   it("prints its answer on one line the sandbox Worker parses", async () => {
     const dir = project({ "wrangler.toml": TOML });
     const out: string[] = [];

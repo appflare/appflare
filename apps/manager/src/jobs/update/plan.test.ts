@@ -3,13 +3,16 @@ import { classifyHealthProbe } from "../install/health";
 import {
   activeVersionId,
   bookmarksJson,
+  boundHyperdriveIds,
   canarySkipReason,
   cronChanges,
   diffBindings,
   durableObjectMigrationsSince,
+  hyperdriveRollbackRefusal,
   lastDurableObjectTagOf,
   missingSecrets,
   parseBookmarks,
+  parseSnapshotHyperdrive,
   previewUrl,
   type RecordedResource,
   snapshotRow,
@@ -159,9 +162,35 @@ describe("diffBindings", () => {
   });
 
   it("carries the binding plan's own problems", () => {
-    const diff = diffBindings("cut", [{ type: "hyperdrive", name: "HD" }], []);
+    const diff = diffBindings("cut", [{ type: "mtls_certificate", name: "CERT" }], []);
     expect(diff.problems).toEqual([
-      'Binding HD has type "hyperdrive", which Appflare cannot install yet.',
+      'Binding CERT has type "mtls_certificate", which Appflare cannot install yet.',
+    ]);
+  });
+
+  it("binds a recorded Hyperdrive configuration again, and refuses a new database", () => {
+    const databases = [
+      { binding: "HD", protocol: "postgres" as const },
+      { binding: "NEW_DB", protocol: "mysql" as const },
+    ];
+    const diff = diffBindings(
+      "cut",
+      [
+        { type: "hyperdrive", name: "HD" },
+        { type: "hyperdrive", name: "NEW_DB" },
+      ],
+      [row({ kind: "hyperdrive", binding: "HD", name: "cut-hd-r01h2x3y4", cfId: "hd-2" })],
+      {},
+      databases,
+    );
+    expect(diff.existing).toEqual([
+      { binding: "HD", type: "hyperdrive", name: "cut-hd-r01h2x3y4", cfId: "hd-2" },
+    ]);
+    expect(diff.toCreate).toEqual([]);
+    expect(diff.problems).toEqual([
+      expect.stringMatching(
+        /Binding NEW_DB connects to a database elsewhere and is new in this version/,
+      ),
     ]);
   });
 });
@@ -254,6 +283,7 @@ describe("snapshot shape", () => {
         },
         doMigrationTag: "v1",
         targetVersion: "1.1.0",
+        hyperdrive: { HYPERDRIVE: "hd-1" },
       }),
     ).toEqual({
       id: "job1",
@@ -277,7 +307,26 @@ describe("snapshot shape", () => {
       source_ref: null,
       target_catalog_version: "1.1.0",
       config_json: '{"HOME_PAGE":"admin"}',
+      hyperdrive_json: '{"HYPERDRIVE":"hd-1"}',
     });
+  });
+
+  it("records the bound Hyperdrive configurations, and refuses a version that binds a deleted one", () => {
+    expect(
+      boundHyperdriveIds([
+        { kind: "hyperdrive", binding: "DB", cfId: "hd-1" },
+        { kind: "hyperdrive_superseded", binding: "DB", cfId: "hd-0" },
+        { kind: "hyperdrive", binding: null, cfId: "hd-2" },
+        { kind: "kv", binding: "KV", cfId: "kv-1" },
+      ]),
+    ).toEqual({ DB: "hd-1" });
+    expect(parseSnapshotHyperdrive(null)).toBeNull();
+    expect(parseSnapshotHyperdrive("not json")).toBeNull();
+    expect(parseSnapshotHyperdrive('{"DB":"hd-1"}')).toEqual({ DB: "hd-1" });
+    expect(hyperdriveRollbackRefusal({ DB: "hd-1" }, new Set(["hd-1", "hd-0"]))).toBeNull();
+    expect(hyperdriveRollbackRefusal({ DB: "hd-0" }, new Set(["hd-1"]))).toMatch(
+      /connects DB through a Hyperdrive configuration that has since been deleted/,
+    );
   });
 
   it("round-trips bookmarks and ignores malformed json", () => {

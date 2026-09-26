@@ -4,6 +4,7 @@ import {
   type ArtifactManifest,
   appHealthMode,
   appHealthPath,
+  connectionStringProblems,
   hasFixedWorkerName,
   indexArtifactsSchema,
   isOptionalSecret,
@@ -130,6 +131,13 @@ export const installJobParams = z.object({
    */
   selfDeploying: selfDeployingJobInput.optional(),
   secrets: z.record(z.string(), z.string()),
+  /**
+   * Connection strings by Hyperdrive binding, for the databases the app
+   * reaches through Hyperdrive. Credentials: like secret values, they live
+   * only here; `jobs.input_json` keeps the binding names. Optional because a
+   * job started by an earlier manager version does not carry them.
+   */
+  hyperdrive: z.record(z.string(), z.string()).optional(),
   vars: z.record(z.string(), z.string()),
   paidConfirmed: z.boolean(),
   /**
@@ -231,10 +239,18 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const others = otherEntryWorkers(manifest, params.workerName);
     const entryNames = entryScriptNamesOf(manifest, params.workerName);
     // Resources are the app's, shared by binding name across its Workers.
-    const plan = planBindings(params.workerName, entryBindings(manifest));
+    const databases = manifest.catalog.resources?.hyperdrive ?? [];
+    const plan = planBindings(params.workerName, entryBindings(manifest), databases);
     const queuePlan = planEntryQueueConsumers(params.workerName, manifest, workers);
     const primaryConsumers = queuePlan.consumers.get(params.workerName) ?? [];
-    const toCreate = [...plan.resources, ...queuePlan.queues];
+    // Hyperdrive configurations first: Cloudflare connects to the database
+    // when one is created, so an unreachable database stops the install
+    // before anything else exists in the account.
+    const toCreate = [
+      ...plan.resources.filter((r) => r.type === "hyperdrive"),
+      ...plan.resources.filter((r) => r.type !== "hyperdrive"),
+      ...queuePlan.queues,
+    ];
 
     // 2. Preflight.
     const preflight = await run("preflight checks", async ({ log, orm }) => {
@@ -263,6 +279,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         ...plan.problems,
         ...queuePlan.problems,
         ...entryNameProblems(manifest, params.workerName),
+        // Messages name the binding and the part at fault, never the string.
+        ...connectionStringProblems(databases, params.hyperdrive ?? {}),
       ];
       if (problems.length > 0) throw new InstallError(problems.join(" "));
       // The upload fetches every module in one invocation; refuse before
@@ -448,7 +466,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // 3. Resources: check the name is free, create, then record.
     const created: CreatedResource[] = [];
     for (const res of toCreate) {
-      created.push(await provisionResourcePhase(steps, params.installId, res));
+      created.push(
+        await provisionResourcePhase(steps, params.installId, res, params.hyperdrive ?? {}),
+      );
     }
 
     if (plan.durableObjects.length > 0) {

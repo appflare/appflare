@@ -1,3 +1,4 @@
+import { MAX_CONNECTION_STRING_LENGTH } from "@appflare/schema";
 import { z } from "zod";
 import { VALIDATION_METHODS } from "../gateway/gateway";
 import { displayNameInput } from "./display-name";
@@ -56,6 +57,15 @@ export const startInstallInput = z.object({
   displayName: displayNameInput.optional(),
   /** Secret values by name. Never logged, never stored outside the Workflow payload. */
   secrets: z.record(z.string().max(200), z.string().max(MAX_VALUE_LENGTH)),
+  /**
+   * Connection strings by Hyperdrive binding, for an app that reaches a
+   * database elsewhere (its catalog manifest's `resources.hyperdrive`).
+   * Like secret values: never logged, never stored outside the Workflow
+   * payload. Missing for a client that predates the field.
+   */
+  hyperdrive: z
+    .record(z.string().max(200), z.string().max(MAX_CONNECTION_STRING_LENGTH))
+    .optional(),
   vars: z.record(z.string().max(200), z.string().max(MAX_VALUE_LENGTH)),
   paidConfirmed: z.boolean(),
   /**

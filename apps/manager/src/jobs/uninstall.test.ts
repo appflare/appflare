@@ -44,6 +44,8 @@ interface World {
   r2: Map<string, string[]>;
   queues: Set<string>;
   vectorize: Set<string>;
+  /** Hyperdrive configuration ids. */
+  hyperdrive: Set<string>;
   /** Workflow names; deleting a Worker leaves them, as Cloudflare does. */
   workflows: Set<string>;
   /** Custom domains by id: hostname and the Worker it serves. */
@@ -67,6 +69,7 @@ function fakeWorld(over: Partial<World> = {}) {
     r2: new Map([["cut-files", []]]),
     queues: new Set(["q-1"]),
     vectorize: new Set(["cut-vectors"]),
+    hyperdrive: new Set(),
     workflows: new Set(["cut-jobs"]),
     domains: new Map(),
     calls: [],
@@ -125,6 +128,8 @@ function fakeWorld(over: Partial<World> = {}) {
     if (m?.[1]) return world.queues.delete(m[1]) ? ok(null) : gone();
     m = /^DELETE \/vectorize\/v2\/indexes\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.vectorize.delete(m[1]) ? ok(null) : gone();
+    m = /^DELETE \/hyperdrive\/configs\/([^/]+)$/.exec(key);
+    if (m?.[1]) return world.hyperdrive.delete(m[1]) ? ok(null) : gone();
     m = /^GET \/r2\/buckets\/([^/]+)\/objects$/.exec(key);
     if (m?.[1]) {
       const objects = world.r2.get(m[1]);
@@ -506,6 +511,58 @@ describe("uninstall job: queue consumers", () => {
     expect(r.logs.map((l) => l.message)).toContain(
       'The consumer of the queue "cut-jobs" was already gone.',
     );
+  });
+});
+
+describe("uninstall job: Hyperdrive configurations", () => {
+  async function seedConfigs(): Promise<void> {
+    const r = (id: string, kind: string, name: string, cfId: string, binding: string | null) =>
+      env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES (?1, 'i1', ?2, ?3, ?4, ?5, 1)`,
+      ).bind(id, kind, binding, name, cfId);
+    await env.DB.batch([
+      r("i1:hyperdrive:HYPERDRIVE", "hyperdrive", "cut-hyperdrive", "hd-1", "HYPERDRIVE"),
+      // Made by a settings change that stopped before it was bound.
+      r(
+        "i1:hyperdrive:cut-hyperdrive-r01abcdef",
+        "hyperdrive",
+        "cut-hyperdrive-r01abcdef",
+        "hd-2",
+        null,
+      ),
+      // Replaced by a settings change, kept for a rollback to its snapshot.
+      r(
+        "i1:hyperdrive:cut-hyperdrive-r00000000",
+        "hyperdrive_superseded",
+        "cut-hyperdrive-r00000000",
+        "hd-0",
+        "HYPERDRIVE",
+      ),
+    ]);
+  }
+
+  it("deletes every configuration after the Worker, even when the admin keeps all data", async () => {
+    await seedInstall();
+    await seedConfigs();
+    const fake = fakeWorld({ hyperdrive: new Set(["hd-1", "hd-0"]) });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    const calls = fake.world.calls;
+    const worker = calls.indexOf("DELETE /workers/scripts/cut?force=true");
+    expect(calls.indexOf("DELETE /hyperdrive/configs/hd-1")).toBeGreaterThan(worker);
+    expect(fake.world.hyperdrive.size).toBe(0);
+    // One already gone counts as deleted.
+    expect(r.state("i1:hyperdrive:HYPERDRIVE")).toBe("deleted");
+    expect(r.state("i1:hyperdrive:cut-hyperdrive-r01abcdef")).toBe("deleted");
+    expect(r.state("i1:hyperdrive:cut-hyperdrive-r00000000")).toBe("deleted");
+    expect(calls).toContain("DELETE /hyperdrive/configs/hd-0");
+    expect(r.logs.map((l) => l.message)).toContain(
+      'Hyperdrive configuration "cut-hyperdrive-r01abcdef" was already gone.',
+    );
+    // Never offered as data to keep.
+    expect(r.state("kv")).toBe("retained");
   });
 });
 

@@ -1,9 +1,19 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ConfigRedirectError,
+  ConfigTemplateError,
+  copyTemplateConfig,
   DEPLOY_CONFIG_PATH,
   dryRunInvocation,
   readConfigArgs,
@@ -28,6 +38,46 @@ function write(rel: string, content: string): void {
 function redirect(dir: string, configPath: unknown): void {
   write(path.posix.join(dir, DEPLOY_CONFIG_PATH), JSON.stringify({ configPath }));
 }
+
+describe("copyTemplateConfig", () => {
+  it("returns a real config as it is and copies nothing", () => {
+    write("wrangler.jsonc", "{}");
+    expect(copyTemplateConfig(root, "wrangler.jsonc")).toBe("wrangler.jsonc");
+    expect(readdirSync(root)).toEqual(["wrangler.jsonc"]);
+  });
+
+  it("copies a template beside itself under its real name", () => {
+    write("worker/wrangler.toml.example", 'name = "mail"\n');
+    expect(copyTemplateConfig(root, "worker/wrangler.toml.example")).toBe("worker/wrangler.toml");
+    expect(readFileSync(path.join(root, "worker/wrangler.toml"), "utf8")).toBe('name = "mail"\n');
+    // Copying again (inspect, then pack) finds the same bytes and keeps them.
+    expect(copyTemplateConfig(root, "worker/wrangler.toml.example")).toBe("worker/wrangler.toml");
+  });
+
+  it("refuses a real config that differs from the template, or is a link", () => {
+    write("wrangler.jsonc.example", '{"name":"a"}');
+    write("wrangler.jsonc", '{"name":"b"}');
+    expect(() => copyTemplateConfig(root, "wrangler.jsonc.example")).toThrow(ConfigTemplateError);
+    expect(() => copyTemplateConfig(root, "wrangler.jsonc.example")).toThrow(
+      /wrangler\.jsonc already exists beside the template .* and differs from it/,
+    );
+    write("outside.toml", "x");
+    write("checkout/wrangler.toml.template", "x");
+    symlinkSync(path.join(root, "outside.toml"), path.join(root, "checkout/wrangler.toml"));
+    expect(() => copyTemplateConfig(path.join(root, "checkout"), "wrangler.toml.template")).toThrow(
+      /already exists/,
+    );
+  });
+
+  it("refuses a missing template and one outside the checkout", () => {
+    expect(() => copyTemplateConfig(root, "wrangler.toml.example")).toThrow(/does not exist/);
+    write("wrangler.toml.example", "x");
+    mkdirSync(path.join(root, "checkout"));
+    expect(() =>
+      copyTemplateConfig(path.join(root, "checkout"), "../wrangler.toml.example"),
+    ).toThrow(/outside the checkout/);
+  });
+});
 
 describe("resolveWranglerConfig", () => {
   it("builds from the declared config when the build left no redirect", () => {

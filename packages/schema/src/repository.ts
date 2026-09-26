@@ -267,10 +267,10 @@ export type RepositoryDetection = z.infer<typeof repositoryDetectionSchema>;
 
 /**
  * Sections of a wrangler config the packer does not carry into the artifact:
- * an app that relies on them would run without them. Bindings the packer
- * records but Appflare cannot install (Hyperdrive, mTLS certificates, a
- * service binding to another Worker) are refused by the packer and the
- * install plan instead.
+ * an app that relies on them would run without them. Bindings Appflare cannot
+ * install (mTLS certificates, a service binding to another Worker, a
+ * Hyperdrive binding the catalog manifest does not declare) are refused by
+ * the packer and the install plan instead.
  */
 export const UNSUPPORTED_WRANGLER_SECTIONS = [
   "containers",

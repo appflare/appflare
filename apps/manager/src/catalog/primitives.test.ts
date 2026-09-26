@@ -5,6 +5,7 @@ import {
   type StoredCapabilities,
 } from "../capabilities/capabilities";
 import {
+  AVAILABILITY_LABELS,
   derivePrimitives,
   indexPrimitives,
   PRIMITIVE_IDS,
@@ -176,6 +177,17 @@ describe("primitiveStatus", () => {
       primitiveStatus("analytics-engine", capabilitiesView(null, stored()), plain).availability,
     ).toBe("unknown");
     expect(requirementPrimitive("analytics-engine")).toBe("analytics-engine");
+  });
+
+  it("marks a database elsewhere as provided by the admin, whatever the probes say", () => {
+    expect(PRIMITIVE_LABELS.hyperdrive).toBe("Database elsewhere");
+    for (const view of [null, NOTHING_KNOWN]) {
+      expect(primitiveStatus("hyperdrive", view, plain)).toMatchObject({
+        availability: "provided",
+        reason: expect.stringMatching(/^Provided by you: a PostgreSQL or MySQL database/),
+      });
+    }
+    expect(AVAILABILITY_LABELS.provided).toBe("Provided by you");
   });
 
   it("leaves Access unknown: nothing probes it", () => {

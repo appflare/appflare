@@ -11,6 +11,7 @@ import {
   ACCESS_FEATURE,
   accountTokenTemplateUrl,
   CUSTOM_DOMAINS_FEATURE,
+  DATABASE_ELSEWHERE_FEATURE,
   EMAIL_ROUTING_FEATURE,
   EXTERNAL_DOMAINS_FEATURE,
   optionalGroupsByFeature,
@@ -47,6 +48,8 @@ const FEATURE_PLACES: Readonly<Record<string, string>> = {
     "Reading this account's Workers plan for Settings > Account and capabilities, instead of asking you. Appflare only reads the plan names from the account's subscriptions; it never reads invoices or payment details",
   [SANDBOX_BUILDS_FEATURE]:
     "Enabling, updating and disabling sandbox builds in Settings > Account and capabilities (Workers Paid): Appflare creates, rolls out and deletes the sandbox Worker's container applications",
+  [DATABASE_ELSEWHERE_FEATURE]:
+    "Installing an app that keeps its data in a PostgreSQL or MySQL database outside Cloudflare: Appflare creates a Hyperdrive configuration from the connection string you enter, replaces it when you change the string, and deletes it on uninstall",
 };
 
 /** What a rotation saved. */

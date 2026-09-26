@@ -3,7 +3,7 @@ import { installs, snapshots } from "../../db/schema";
 import type { EntryWorker } from "../entry-workers";
 import { readOtherWorkerVersionsPhase } from "../install/entry-worker-phases";
 import { JobError, type JobSteps } from "../steps";
-import { activeVersionId, type RecordedResource, snapshotRow } from "./plan";
+import { activeVersionId, boundHyperdriveIds, type RecordedResource, snapshotRow } from "./plan";
 
 /**
  * The snapshot an update or a settings change takes before it changes
@@ -78,6 +78,8 @@ export async function takeSnapshotPhase(
           doMigrationTag: input.appliedDoTag,
           targetVersion: input.targetVersion,
           otherVersions,
+          // What the serving version binds, so a rollback can tell it is still there.
+          hyperdrive: boundHyperdriveIds(input.resources),
         }),
       )
       .onConflictDoNothing();

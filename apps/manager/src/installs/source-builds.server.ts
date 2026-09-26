@@ -701,6 +701,10 @@ export async function installSourceBuildCore(
     version: prebuilt.version,
     workerName,
     secrets: Object.keys(resolved.secrets),
+    // Binding names only: connection strings hold database passwords.
+    ...(Object.keys(resolved.hyperdrive).length === 0
+      ? {}
+      : { hyperdrive: Object.keys(resolved.hyperdrive) }),
     vars: resolved.vars,
     paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
@@ -790,6 +794,7 @@ export async function installSourceBuildCore(
     workerName,
     prebuilt,
     secrets: resolved.secrets,
+    ...(Object.keys(resolved.hyperdrive).length === 0 ? {} : { hyperdrive: resolved.hyperdrive }),
     vars: resolved.vars,
     paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,

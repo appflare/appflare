@@ -1,6 +1,7 @@
 import { z } from "zod";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
+import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
 
 /**
@@ -723,9 +724,26 @@ export type VectorizeIndexConfig = z.infer<typeof vectorizeIndexConfigSchema>;
  * Settings for resources the app's wrangler config binds but cannot fully
  * describe. `vectorize` is keyed by binding name and must cover every
  * Vectorize binding in the wrangler config; the packer refuses one without it.
+ * `hyperdrive` lists every Hyperdrive binding with the database protocol
+ * behind it: the database lives outside Cloudflare, so the install form asks
+ * for its connection string, and the packer refuses a Hyperdrive binding the
+ * list does not declare. Both optional so manifests written before them keep
+ * the same parsed shape.
  */
 export const catalogResourcesSchema = z.object({
   vectorize: z.record(z.string().min(1), vectorizeIndexConfigSchema).optional(),
+  hyperdrive: z
+    .array(catalogHyperdriveSchema)
+    .min(1)
+    .max(MAX_HYPERDRIVE_BINDINGS)
+    .describe(
+      "The Hyperdrive bindings of the wrangler config, each with the database it connects to " +
+        "(`postgres` or `mysql`). The database runs outside Cloudflare: the install form asks for " +
+        "its connection string, and Appflare creates a Hyperdrive configuration of the install's " +
+        "own from it. Every Hyperdrive binding must be listed, each once. Not allowed on " +
+        "self-deploying entries.",
+    )
+    .optional(),
 });
 export type CatalogResources = z.infer<typeof catalogResourcesSchema>;
 
@@ -922,12 +940,47 @@ export function sandboxBuildSettings(
   };
 }
 
+/**
+ * Suffixes of a wrangler config kept as a template to copy, such as
+ * `wrangler.toml.example` or `wrangler.jsonc.template`. Wrangler reads a
+ * config by its extension, so it cannot read such a file where it is.
+ */
+export const WRANGLER_CONFIG_TEMPLATE_SUFFIXES = [".example", ".template"] as const;
+
+/** The extensions wrangler reads a config by. */
+const WRANGLER_CONFIG_EXTENSIONS = [".toml", ".json", ".jsonc"] as const;
+
+/**
+ * The file name a template wrangler config is copied to before it is read
+ * (`wrangler.toml.example` -> `wrangler.toml`), or null when `configPath`
+ * is not a template: it does not end in a template suffix, or what is left
+ * is not a `.toml`, `.json` or `.jsonc` file.
+ */
+export function wranglerConfigFromTemplate(configPath: string): string | null {
+  const lower = configPath.toLowerCase();
+  const suffix = WRANGLER_CONFIG_TEMPLATE_SUFFIXES.find((s) => lower.endsWith(s));
+  if (suffix === undefined) return null;
+  const real = configPath.slice(0, -suffix.length);
+  const base = real.split("/").pop() ?? real;
+  const extension = WRANGLER_CONFIG_EXTENSIONS.find((e) => base.toLowerCase().endsWith(e));
+  if (extension === undefined || base.length === extension.length) return null;
+  return real;
+}
+
 /** How the packer builds and names the app. */
 export const catalogInstallSchema = z
   .object({
     tier: installTierSchema,
     packageManager: packageManagerSchema,
-    wranglerConfig: z.string().min(1),
+    wranglerConfig: z
+      .string()
+      .min(1)
+      .describe(
+        "The wrangler config to build from, relative to the repository root, for example " +
+          "`wrangler.jsonc`. A config the repository keeps only as a template " +
+          "(`wrangler.toml.example`, `wrangler.jsonc.template`) is copied to its real name " +
+          "(`wrangler.toml`) before it is read.",
+      ),
     /** The default Worker name; the installer may change it unless `fixedWorkerName` is set. */
     workerName: z.string().min(1),
     /**
@@ -1314,7 +1367,27 @@ export const catalogManifestSchema = z
     check("vars", manifest.vars);
   })
   .superRefine((manifest, ctx) => {
+    const hyperdrive = manifest.resources?.hyperdrive ?? [];
+    const seen = new Set<string>();
+    hyperdrive.forEach((decl, i) => {
+      if (seen.has(decl.binding)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["resources", "hyperdrive", i, "binding"],
+          message: `the Hyperdrive binding ${decl.binding} is declared twice`,
+        });
+      }
+      seen.add(decl.binding);
+    });
     if (manifest.install.tier !== "self-deploying") return;
+    if (hyperdrive.length > 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["resources", "hyperdrive"],
+        message:
+          "resources.hyperdrive is not allowed for the self-deploying tier: the app's own installer creates its Hyperdrive configurations",
+      });
+    }
     manifest.secrets.forEach((secret, i) => {
       if (isOptionalSecret(secret)) {
         ctx.addIssue({
@@ -1335,10 +1408,19 @@ export const catalogManifestSchema = z
     });
   })
   // The refinements do not reach the JSON Schema; `allOf` states the
-  // self-deploying ones there (no optional and no derived secrets). Whether a
-  // `derive.from` names another secret cannot be said in JSON Schema.
+  // self-deploying ones there (no optional and no derived secrets, no
+  // Hyperdrive declarations). Whether a `derive.from` names another secret, or
+  // a Hyperdrive binding is declared twice, cannot be said in JSON Schema.
   .meta({
     allOf: [
+      {
+        anyOf: [
+          {
+            properties: { install: { properties: { tier: { not: { const: "self-deploying" } } } } },
+          },
+          { properties: { resources: { not: { required: ["hyperdrive"] } } } },
+        ],
+      },
       {
         anyOf: [
           {

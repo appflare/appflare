@@ -473,6 +473,7 @@ describe("listSnapshotsCore", () => {
         isCurrent: false,
         sameCode: false,
         crossesDoMigration: false,
+        lostDatabase: null,
         databases: [
           {
             resourceId: `${INSTALL_ID}:d1:DB`,

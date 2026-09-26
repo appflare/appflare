@@ -7,6 +7,9 @@ import {
   CUSTOM_HOSTNAME_KIND,
   DATA_RESOURCE_KINDS,
   EMAIL_ROUTE_KIND,
+  HYPERDRIVE_KIND,
+  HYPERDRIVE_KINDS,
+  HYPERDRIVE_SUPERSEDED_KIND,
   isDataResourceKind,
   QUEUE_CONSUMER_KIND,
   WORKER_BOUND_KINDS,
@@ -31,6 +34,7 @@ describe("resource kinds", () => {
         kind === CUSTOM_HOSTNAME_KIND,
         kind === QUEUE_CONSUMER_KIND,
         kind === EMAIL_ROUTE_KIND,
+        (HYPERDRIVE_KINDS as readonly string[]).includes(kind),
       ].filter(Boolean);
       expect(treatments, kind).toHaveLength(1);
     }
@@ -47,6 +51,15 @@ describe("resource kinds", () => {
     expect(resourceKindLabel(CUSTOM_HOSTNAME_KIND)).toBe("External domain");
     expect(isDataResourceKind(CUSTOM_HOSTNAME_KIND)).toBe(false);
     expect(ADDRESS_KINDS).toEqual([CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND]);
+  });
+
+  it("records Hyperdrive configurations as their own kind, never data to keep", () => {
+    expect(RESOURCE_KINDS).toContain(HYPERDRIVE_KIND);
+    expect(resourceKindLabel(HYPERDRIVE_KIND)).toBe("Hyperdrive configuration");
+    expect(isDataResourceKind(HYPERDRIVE_KIND)).toBe(false);
+    expect(RESOURCE_KINDS).toContain(HYPERDRIVE_SUPERSEDED_KIND);
+    expect(resourceKindLabel(HYPERDRIVE_SUPERSEDED_KIND)).toBe("Replaced Hyperdrive configuration");
+    expect(isDataResourceKind(HYPERDRIVE_SUPERSEDED_KIND)).toBe(false);
   });
 
   it("records email routes as their own kind, never data to keep", () => {

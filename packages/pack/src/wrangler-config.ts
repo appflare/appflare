@@ -109,6 +109,15 @@ export class VectorizeDeclarationError extends Error {
 }
 
 /**
+ * The wrangler config binds Hyperdrive under a name the catalog manifest's
+ * `resources.hyperdrive` does not declare, or the manifest declares one the
+ * config does not bind. The message names the binding and the field to fix.
+ */
+export class HyperdriveDeclarationError extends Error {
+  override name = "HyperdriveDeclarationError";
+}
+
+/**
  * The wrangler config declares a service binding the packer refuses: one to
  * any Worker other than the app's own, or a self binding carrying more than an
  * entrypoint. The message names the binding and says why.
@@ -176,9 +185,10 @@ export interface CollectBindingsOptions {
    */
   entryWorkers?: ReadonlyMap<string, string>;
   /**
-   * Whether a Vectorize index the catalog manifest declares but this config
-   * does not bind is an error. Default true; an app of several Workers checks
-   * that across all of them ({@link checkVectorizeDeclarations}).
+   * Whether a Vectorize index or a Hyperdrive database the catalog manifest
+   * declares but this config does not bind is an error. Default true; an app
+   * of several Workers checks that across all of them
+   * ({@link checkVectorizeDeclarations}, {@link checkHyperdriveDeclarations}).
    */
   checkUnboundVectorize?: boolean;
 }
@@ -202,6 +212,26 @@ export function checkVectorizeDeclarations(
 }
 
 /**
+ * Throws {@link HyperdriveDeclarationError} when the catalog manifest declares
+ * `resources.hyperdrive` for a binding none of `bindings` has.
+ */
+export function checkHyperdriveDeclarations(
+  bindings: readonly WorkerBinding[],
+  resources?: CatalogResources,
+): void {
+  const connected = new Set(bindings.filter((b) => b.type === "hyperdrive").map((b) => b.name));
+  const unconnected = (resources?.hyperdrive ?? [])
+    .map((h) => h.binding)
+    .filter((binding) => !connected.has(binding));
+  if (unconnected.length > 0) {
+    throw new HyperdriveDeclarationError(
+      `the catalog manifest declares the Hyperdrive binding ${unconnected.join(", ")} in resources.hyperdrive, ` +
+        "but the wrangler config has no Hyperdrive binding by that name; remove it from appflare.jsonc or fix the binding name",
+    );
+  }
+}
+
+/**
  * Converts wrangler's per-kind binding arrays into the artifact manifest's flat
  * `bindings` array, keeping only the binding NAME, its TYPE, and fields that are
  * not account-specific.
@@ -211,6 +241,13 @@ export function checkVectorizeDeclarations(
  * no place for them, and the manager must create the index before binding it.
  * A Vectorize binding without that declaration, or a declaration for a binding
  * the config does not have, throws {@link VectorizeDeclarationError}.
+ *
+ * A Hyperdrive binding is recorded by name only, and only when the catalog
+ * manifest's `resources.hyperdrive` declares it: the database lives outside
+ * Cloudflare, so the manager asks for its connection string at install and
+ * creates a Hyperdrive configuration of the install's own. An undeclared
+ * binding, or a declaration the config does not bind, throws
+ * {@link HyperdriveDeclarationError}.
  *
  * The stripping rule is an allowlist, not a denylist: for each binding kind we
  * copy only the handful of fields known to be safe, so no account id
@@ -274,8 +311,18 @@ export function collectBindings(
   if (checkUnboundVectorize) {
     checkVectorizeDeclarations(bindings, resources);
   }
+  const databases = new Set((resources?.hyperdrive ?? []).map((h) => h.binding));
   for (const h of config.hyperdrive ?? []) {
+    if (!databases.has(h.binding)) {
+      throw new HyperdriveDeclarationError(
+        `the wrangler config binds Hyperdrive as ${h.binding}, but the catalog manifest does not say which database it connects to; ` +
+          `add { "binding": "${h.binding}", "protocol": "postgres" | "mysql" } to resources.hyperdrive in appflare.jsonc`,
+      );
+    }
     push("hyperdrive", h.binding);
+  }
+  if (checkUnboundVectorize) {
+    checkHyperdriveDeclarations(bindings, resources);
   }
   for (const ae of config.analytics_engine_datasets ?? []) {
     push("analytics_engine", ae.binding, { dataset: ae.dataset });

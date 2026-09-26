@@ -37,6 +37,7 @@ import { unstable_readConfig } from "wrangler";
 import { DEFAULT_BUILD_TIMEOUT_MS, runBuildCommands } from "./build-command.ts";
 import {
   checkoutRelative,
+  copyTemplateConfig,
   dryRunInvocation,
   readConfigArgs,
   resolveWranglerConfig,
@@ -48,6 +49,7 @@ import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
 import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./version.ts";
 import { type WorkerSize, workerSize, workerTooLargeMessage } from "./worker-size.ts";
 import {
+  checkHyperdriveDeclarations,
   checkVectorizeDeclarations,
   classifyModuleType,
   collectBindings,
@@ -380,9 +382,11 @@ function readWorkerConfig(
   declared: string,
   logger: (m: string) => void,
 ): ReadWorkerConfig {
-  const target = resolveWranglerConfig(checkoutDir, declared);
+  // A template was copied to its real name before the build; that is what wrangler reads.
+  const target = resolveWranglerConfig(checkoutDir, copyTemplateConfig(checkoutDir, declared));
   const wranglerConfig = {
-    declared: checkoutRelative(checkoutDir, target.declaredPath),
+    // The catalog's path, a template included; `effective` is what was read.
+    declared: checkoutRelative(checkoutDir, path.resolve(checkoutDir, declared)),
     effective: checkoutRelative(checkoutDir, target.effectivePath),
   };
   if (target.deployConfigPath !== null) {
@@ -552,6 +556,22 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     parseJsonc(readFileSync(path.resolve(options.manifestPath), "utf8")),
   );
 
+  // (a2) A config kept as a template (`wrangler.toml.example`) gets its real
+  // name first, so the build and wrangler's reader both find it: the
+  // entry's config, and each Worker's of an app of several Workers.
+  const declaredConfigs = [
+    ...new Set([
+      catalog.install.wranglerConfig,
+      ...(catalog.install.workers ?? []).map((w) => w.wranglerConfig),
+    ]),
+  ];
+  for (const declared of declaredConfigs) {
+    const real = copyTemplateConfig(checkoutDir, declared);
+    if (real !== declared) {
+      logger(`copied the wrangler config template ${declared} to ${real}`);
+    }
+  }
+
   // (b) Install dependencies unless disabled.
   if (install) {
     runInstall(checkoutDir, catalog.install.packageManager, childEnv, logger);
@@ -621,6 +641,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   }));
   if (entry !== undefined) {
     checkVectorizeDeclarations(
+      collected.flatMap((c) => c.bindings),
+      catalog.resources,
+    );
+    checkHyperdriveDeclarations(
       collected.flatMap((c) => c.bindings),
       catalog.resources,
     );

@@ -126,7 +126,9 @@ export function VersionsSection({
                         <div className="flex flex-wrap justify-end gap-2">
                           {!s.isCurrent &&
                             (s.crossesDoMigration ? (
-                              <RollbackUnavailable />
+                              <RollbackUnavailable reason={DO_MIGRATION_REASON} />
+                            ) : s.lostDatabase !== null ? (
+                              <RollbackUnavailable reason={s.lostDatabase} />
                             ) : (
                               <RollbackDialog install={install} snapshot={s} />
                             ))}
@@ -164,15 +166,21 @@ export function VersionsSection({
  * Cloudflare refuses to roll a Worker back across a Durable Object class
  * change, and the change itself (deleted or renamed classes) cannot be undone.
  */
-function RollbackUnavailable() {
+const DO_MIGRATION_REASON =
+  "Not available: this update changed the app's Durable Object classes, and Cloudflare refuses to roll a Worker back across such a change.";
+
+/**
+ * A disabled rollback with the reason: a Durable Object class change, or a
+ * version that binds a Hyperdrive configuration deleted since.
+ */
+function RollbackUnavailable({ reason }: { reason: string }) {
   return (
     <div className="grid max-w-64 justify-items-end gap-1">
       <Button size="sm" variant="secondary" icon={<ArrowCounterClockwiseIcon />} disabled>
         Roll back
       </Button>
       <Text variant="secondary" size="sm">
-        Not available: this update changed the app's Durable Object classes, and Cloudflare refuses
-        to roll a Worker back across such a change.
+        {reason}
       </Text>
     </div>
   );

@@ -1,6 +1,7 @@
 import type { WorkerDeployment } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  type CatalogHyperdrive,
   type CatalogSecret,
   type DoMigration,
   isOptionalSecret,
@@ -8,6 +9,7 @@ import {
   vectorizeBindingSchema,
   type WorkerBinding,
 } from "@appflare/schema";
+import { z } from "zod";
 import { isUpdateAvailable } from "../../catalog/versions";
 import type { BuildKind, InstallOrigin, snapshots } from "../../db/schema";
 import {
@@ -131,8 +133,10 @@ export function diffBindings(
   bindings: readonly WorkerBinding[],
   recorded: readonly RecordedResource[],
   installedShapes: VectorizeShapes = {},
+  /** The version's `resources.hyperdrive` (the catalog manifest's database declarations). */
+  databases: readonly CatalogHyperdrive[] = [],
 ): BindingDiff {
-  const plan = planBindings(workerName, bindings);
+  const plan = planBindings(workerName, bindings, databases);
   const byBinding = new Map<string, RecordedResource[]>();
   for (const row of recorded) {
     if (row.binding === null || !BOUND_KINDS.has(row.kind)) continue;
@@ -186,6 +190,15 @@ export function diffBindings(
       used.add(other);
       diff.problems.push(
         `Binding ${res.binding} was a ${other.kind} resource (${other.name}) and is a ${res.kind} resource in this version; Appflare does not replace a resource on update.`,
+      );
+      continue;
+    }
+    if (res.type === "hyperdrive") {
+      // TODO: ask for the new database's connection string with the update,
+      // as the update form asks for a new secret; until then such a version
+      // is installed fresh.
+      diff.problems.push(
+        `Binding ${res.binding} connects to a database elsewhere and is new in this version; Appflare cannot ask for its connection string during an update yet, so this version needs a fresh install.`,
       );
       continue;
     }
@@ -432,6 +445,47 @@ export interface SnapshotInput {
   targetVersion: string;
   /** An app of several Workers: the version each other Worker served, by Worker name. */
   otherVersions?: Readonly<Record<string, string>>;
+  /** Configuration id by Hyperdrive binding, as the install recorded them bound before the job. */
+  hyperdrive?: Readonly<Record<string, string>>;
+}
+
+/**
+ * The Hyperdrive configurations the install records as bound, by binding:
+ * what the serving version binds, and so what a snapshot of it needs.
+ */
+export function boundHyperdriveIds(
+  resources: ReadonlyArray<Pick<RecordedResource, "kind" | "binding" | "cfId">>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const r of resources) {
+    if (r.kind === "hyperdrive" && r.binding !== null && r.cfId !== null) out[r.binding] = r.cfId;
+  }
+  return out;
+}
+
+/** A snapshot's `hyperdrive_json`, or null when it recorded none (taken before it was recorded). */
+export function parseSnapshotHyperdrive(json: string | null): Record<string, string> | null {
+  if (json === null) return null;
+  try {
+    const parsed = z.record(z.string(), z.string()).safeParse(JSON.parse(json));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Why a rollback to a version that binds these Hyperdrive configurations
+ * cannot run, or null when every one of them is live (bound or superseded)
+ * in `live`, the configuration ids the install records and has not deleted.
+ */
+export function hyperdriveRollbackRefusal(
+  bound: Readonly<Record<string, string>>,
+  live: ReadonlySet<string>,
+): string | null {
+  const gone = Object.entries(bound).filter(([, id]) => !live.has(id));
+  if (gone.length === 0) return null;
+  return `The version this snapshot recorded connects ${gone.map(([binding]) => binding).join(" and ")} through a Hyperdrive configuration that has since been deleted, so rolling back to it would leave the app without its database. Roll back to a later snapshot, or replace the connection string in Settings instead.`;
 }
 
 /** The `snapshots` row an update or a settings change inserts before it changes anything. */
@@ -463,6 +517,7 @@ export function snapshotRow(input: SnapshotInput): typeof snapshots.$inferInsert
       input.otherVersions === undefined || Object.keys(input.otherVersions).length === 0
         ? null
         : JSON.stringify(input.otherVersions),
+    hyperdrive_json: JSON.stringify(input.hyperdrive ?? {}),
   };
 }
 

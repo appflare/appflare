@@ -439,6 +439,111 @@ describe("pack with a Vectorize binding", () => {
 });
 
 /**
+ * A copy of the hello fixture whose wrangler config binds Hyperdrive and is
+ * kept only as a template, `wrangler.jsonc.example`, as some repositories
+ * ship it.
+ */
+function hyperdriveTemplateCheckout(
+  parent: string,
+  resources: unknown,
+): { dir: string; manifest: string } {
+  const dir = path.join(parent, "checkout");
+  cpSync(FIXTURE, dir, { recursive: true });
+  const configPath = path.join(dir, "wrangler.jsonc");
+  const config = parseJsonc(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  config.hyperdrive = [
+    {
+      binding: "HYPERDRIVE",
+      id: "0123456789abcdef0123456789abcdef",
+      localConnectionString: "postgres://dev:dev-password@localhost:5432/hello",
+    },
+  ];
+  writeFileSync(path.join(dir, "wrangler.jsonc.example"), JSON.stringify(config));
+  rmSync(configPath);
+  const catalog = parseJsonc(readFileSync(path.join(dir, "appflare.jsonc"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  catalog.install = {
+    ...(catalog.install as Record<string, unknown>),
+    wranglerConfig: "wrangler.jsonc.example",
+  };
+  if (resources !== undefined) catalog.resources = resources;
+  const manifest = path.join(parent, "appflare.jsonc");
+  writeFileSync(manifest, JSON.stringify(catalog));
+  return { dir, manifest };
+}
+
+describe("pack with a Hyperdrive binding and a template config", () => {
+  it("copies the template to its real name and records the declared binding by name", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-hyperdrive-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = hyperdriveTemplateCheckout(parent, {
+        hyperdrive: [{ binding: "HYPERDRIVE", protocol: "postgres" }],
+      });
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      expect(existsSync(path.join(checkout.dir, "wrangler.jsonc"))).toBe(true);
+      expect(logs).toContain(
+        "copied the wrangler config template wrangler.jsonc.example to wrangler.jsonc",
+      );
+      expect(res.manifest.worker.wranglerConfig).toEqual({
+        declared: "wrangler.jsonc.example",
+        effective: "wrangler.jsonc",
+      });
+      expect(res.manifest.worker.bindings).toContainEqual({
+        type: "hyperdrive",
+        name: "HYPERDRIVE",
+      });
+      const recorded = JSON.stringify(res.manifest.worker);
+      expect(recorded).not.toContain("0123456789abcdef0123456789abcdef");
+      expect(recorded).not.toContain("dev-password");
+      await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true });
+
+      // An artifact whose catalog manifest no longer declares the binding fails.
+      const manifestPath = path.join(outDir, "manifest.json");
+      const edited = JSON.parse(readFileSync(manifestPath, "utf8")) as ArtifactManifest;
+      edited.catalog.resources = {};
+      writeFileSync(manifestPath, JSON.stringify(edited));
+      await expect(verify({ dir: outDir })).rejects.toThrow(
+        /Hyperdrive binding HYPERDRIVE is not declared/,
+      );
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("fails before building or writing anything when resources.hyperdrive is missing", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-nohyperdrive-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = hyperdriveTemplateCheckout(parent, undefined);
+      await expect(
+        pack({
+          checkoutDir: checkout.dir,
+          manifestPath: checkout.manifest,
+          outDir,
+          install: false,
+          logger: (m) => logs.push(m),
+        }),
+      ).rejects.toThrow(/binds Hyperdrive as HYPERDRIVE, .*resources\.hyperdrive/);
+      expect(existsSync(outDir)).toBe(false);
+      expect(logs.some((l) => l.includes("dry-run"))).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+/**
  * A copy of the hello fixture whose wrangler config adds `services`, each
  * pointing at the config's own name unless it says otherwise.
  */

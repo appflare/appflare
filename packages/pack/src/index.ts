@@ -17,6 +17,8 @@ export {
 } from "./build-command.ts";
 export {
   ConfigRedirectError,
+  ConfigTemplateError,
+  copyTemplateConfig,
   DEPLOY_CONFIG_PATH,
   resolveWranglerConfig,
   type WranglerConfigTarget,
@@ -50,10 +52,12 @@ export {
 } from "./worker-size.ts";
 export {
   type CollectBindingsOptions,
+  checkHyperdriveDeclarations,
   checkVectorizeDeclarations,
   classifyModuleType,
   collectBindings,
   collectQueueConsumers,
+  HyperdriveDeclarationError,
   mainModuleName,
   QueueConsumerError,
   queueProducerBindings,

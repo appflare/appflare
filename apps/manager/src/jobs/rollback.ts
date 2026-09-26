@@ -10,6 +10,7 @@ import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/e
 import {
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
+  HYPERDRIVE_KINDS,
   QUEUE_CONSUMER_KIND,
 } from "../installs/resource-kinds";
 import {
@@ -36,9 +37,15 @@ import {
   recordedQueues,
   syncQueueConsumersPhase,
 } from "./install/queue-consumers";
+import {
+  liveHyperdriveIds,
+  reconcileHyperdriveRecords,
+  versionHyperdriveBindings,
+} from "./reconfigure/hyperdrive";
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
+import { hyperdriveRollbackRefusal } from "./update/plan";
 
 /**
  * The `rollback` job: redeploys the Worker version a snapshot recorded, at
@@ -277,6 +284,17 @@ export async function runRollback(ctx: JobContext): Promise<void> {
             isNull(resources.deleted_at),
           ),
         );
+      // Any Hyperdrive configuration, live or deleted: the version may bind one.
+      const [hyperdriveRow] = await orm
+        .select({ id: resources.id })
+        .from(resources)
+        .where(
+          and(
+            eq(resources.install_id, params.installId),
+            inArray(resources.kind, [...HYPERDRIVE_KINDS]),
+          ),
+        )
+        .limit(1);
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       if (!env.CF_API_TOKEN) {
@@ -329,6 +347,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           };
         }),
         sameCode,
+        usesHyperdrive: hyperdriveRow !== undefined,
         versionId: snapshot.worker_version_id,
         toVersion: snapshot.catalog_version,
         recordedCrons: crons.map((c) => c.name),
@@ -354,6 +373,30 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     });
     steps.setAccountId(started.accountId);
     const { workerName } = started;
+
+    // A version that binds a Hyperdrive configuration deleted since would
+    // serve without its database: refuse before anything changes. Read from
+    // the version itself, which also covers snapshots taken before their
+    // configurations were recorded. A job started before this check has no
+    // `usesHyperdrive` and skips it.
+    if (started.usesHyperdrive === true) {
+      await run("check the version's database connections", async ({ log, cf, orm }) => {
+        const bound = versionHyperdriveBindings(
+          await cf().versions.getVersion(workerName, started.versionId),
+        );
+        const refusal = hyperdriveRollbackRefusal(
+          Object.fromEntries(bound.map((b) => [b.binding, b.id])),
+          await liveHyperdriveIds(orm, params.installId),
+        );
+        if (refusal !== null) throw new JobError(refusal);
+        log.info(
+          bound.length === 0
+            ? `Version ${started.versionId} binds no Hyperdrive configuration.`
+            : `Every Hyperdrive configuration version ${started.versionId} binds still exists.`,
+        );
+        return {};
+      });
+    }
 
     // The app's other Workers first, each back on the version the snapshot
     // kept; the primary Worker last. A snapshot taken before other Workers
@@ -389,17 +432,17 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     deployed = true;
     // The version brought its own secrets back; the records follow them so
     // the install page lists what the Worker has. A failed read only warns.
+    // The same read names the Hyperdrive configurations the version binds.
     const secretNames = await run("read the version's secrets", async ({ log, cf }) => {
       try {
-        const names = versionSecretNames(
-          await cf().versions.getVersion(workerName, started.versionId),
-        );
+        const version = await cf().versions.getVersion(workerName, started.versionId);
+        const names = versionSecretNames(version);
         log.info(
           names.length === 0
             ? `Version ${started.versionId} has no secrets.`
             : `Version ${started.versionId} has the secrets ${names.join(", ")}.`,
         );
-        return { names };
+        return { names, hyperdrive: versionHyperdriveBindings(version) };
       } catch (error) {
         log.warn(
           `Could not read the secrets of version ${started.versionId} (${errorMessage(error)}); the install's list of secrets may not match the Worker until its next settings change.`,
@@ -417,6 +460,21 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         }
         if (changed.absent.length > 0) {
           log.info(`Secrets this version does not have: ${changed.absent.join(", ")}.`);
+        }
+      }
+      // A step result recorded before the field existed has no bindings to follow.
+      const hyperdrive = "hyperdrive" in secretNames ? secretNames.hyperdrive : undefined;
+      if (hyperdrive !== undefined && hyperdrive.length > 0) {
+        const outcome = await reconcileHyperdriveRecords(orm, params.installId, hyperdrive);
+        if (outcome.rebound.length > 0) {
+          log.info(
+            `Database connections back with this version: ${outcome.rebound.join(", ")} use the Hyperdrive configurations it binds again.`,
+          );
+        }
+        if (outcome.missing.length > 0) {
+          log.warn(
+            `This version binds a Hyperdrive configuration Appflare has no live record of for ${outcome.missing.join(", ")}; the app may not reach that database. Replace its connection string in Settings.`,
+          );
         }
       }
       if (await turnOffAutoUpdate(orm, params.installId)) {

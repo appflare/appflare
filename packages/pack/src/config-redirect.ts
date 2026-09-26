@@ -1,5 +1,13 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
+import { wranglerConfigFromTemplate } from "@appflare/schema";
 
 /**
  * Where a build leaves a redirect to the wrangler config it generated,
@@ -25,6 +33,55 @@ export interface WranglerConfigTarget {
 /** The build left a redirect the packer cannot follow. */
 export class ConfigRedirectError extends Error {
   override name = "ConfigRedirectError";
+}
+
+/** The declared config is a template the packer cannot copy to its real name. */
+export class ConfigTemplateError extends Error {
+  override name = "ConfigTemplateError";
+}
+
+/**
+ * The config to read for the catalog manifest's `install.wranglerConfig`,
+ * relative to the checkout. A template (`wrangler.toml.example`,
+ * `wrangler.jsonc.template`) is copied beside itself under its real name
+ * first, since wrangler reads a config by its extension; relative paths in
+ * it (`main`, `assets.directory`, migrations) resolve from the same
+ * directory either way. Any other path is returned as it is. A real file
+ * already there is kept when it holds the same bytes and refused otherwise,
+ * as is one that is a symlink, and a template outside the checkout.
+ */
+export function copyTemplateConfig(checkoutDir: string, declared: string): string {
+  const real = wranglerConfigFromTemplate(declared);
+  if (real === null) return declared;
+  const root = path.resolve(checkoutDir);
+  const from = path.resolve(root, declared);
+  const to = path.resolve(root, real);
+  if (!existsSync(from) || !statSync(from).isFile()) {
+    throw new ConfigTemplateError(`the wrangler config template ${declared} does not exist`);
+  }
+  if (!isInside(root, from)) {
+    throw new ConfigTemplateError(
+      `the wrangler config template ${declared} is outside the checkout`,
+    );
+  }
+  const bytes = readFileSync(from);
+  let existing: ReturnType<typeof lstatSync> | null = null;
+  try {
+    existing = lstatSync(to);
+  } catch {
+    existing = null;
+  }
+  if (existing !== null) {
+    if (!existing.isFile() || !readFileSync(to).equals(bytes)) {
+      throw new ConfigTemplateError(
+        `${real} already exists beside the template ${declared} and differs from it; ` +
+          `set install.wranglerConfig to ${real} to build from it, or remove it`,
+      );
+    }
+    return real;
+  }
+  writeFileSync(to, bytes, { flag: "wx" });
+  return real;
 }
 
 /** `abs` relative to `root` with `/` separators. */

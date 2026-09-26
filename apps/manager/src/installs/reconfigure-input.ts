@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { MAX_NAME_LENGTH, MAX_VALUE_LENGTH, secretChangesSchema } from "../jobs/reconfigure/plan";
+import {
+  connectionChangesSchema,
+  MAX_NAME_LENGTH,
+  MAX_VALUE_LENGTH,
+  secretChangesSchema,
+} from "../jobs/reconfigure/plan";
 
 /** Client-safe input of the server function that saves an install's settings and redeploys it. */
 
@@ -12,6 +17,11 @@ export const startReconfigureInput = z.object({
   vars: z.record(z.string().max(MAX_NAME_LENGTH), z.string().max(MAX_VALUE_LENGTH)).default({}),
   /** New secret values (never logged; names only in the job record) and names to remove. */
   secrets: secretChangesSchema.default({ set: {}, unset: [] }),
+  /**
+   * New connection strings for the app's databases elsewhere, by Hyperdrive
+   * binding (never logged; binding names only in the job record).
+   */
+  hyperdrive: connectionChangesSchema.optional(),
   /** For an app that receives email: the zone to receive it for instead of the current one. */
   emailRouting: z
     .object({ zoneId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Choose a zone.") })

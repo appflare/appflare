@@ -1,5 +1,8 @@
 import {
+  type CatalogHyperdrive,
   entryWorkerRefName,
+  type HyperdriveProtocol,
+  hyperdriveDeclarationProblems,
   isVectorizeBinding,
   serviceBindingProblem,
   type VectorizeIndexConfig,
@@ -20,6 +23,7 @@ export const RESOURCE_BINDINGS = {
   r2_bucket: "r2",
   queue: "queue",
   vectorize: "vectorize",
+  hyperdrive: "hyperdrive",
 } as const;
 
 export type ResourceBindingType = keyof typeof RESOURCE_BINDINGS;
@@ -61,11 +65,14 @@ interface ResourcePlanFields {
 /**
  * A resource to create for a binding. A Vectorize index always carries the
  * dimensions and metric the artifact records, since Cloudflare cannot create
- * one without them.
+ * one without them. A Hyperdrive configuration carries the protocol the
+ * catalog manifest declares; its origin comes from the connection string the
+ * admin entered, which only the job's input holds.
  */
 export type ResourceBindingPlan =
   | (ResourcePlanFields & { type: "vectorize"; vectorize: VectorizeIndexConfig })
-  | (ResourcePlanFields & { type: Exclude<ResourceBindingType, "vectorize"> });
+  | (ResourcePlanFields & { type: "hyperdrive"; protocol: HyperdriveProtocol })
+  | (ResourcePlanFields & { type: Exclude<ResourceBindingType, "vectorize" | "hyperdrive"> });
 
 /**
  * A `workflow` binding. Workflow names are account-wide, and uploading a script
@@ -114,19 +121,35 @@ const MAX_NAME_LENGTH: Record<ProvisionedKind, number> = {
   r2: 63,
   queue: 63,
   vectorize: 64,
+  // Cloudflare allows 2048; the Worker name (at most 54) keeps these far shorter.
+  hyperdrive: 2048,
 };
 
 /**
  * Resource binding types created from the name alone. Vectorize is not one:
- * its plan needs the index shape, which only a parsed `VectorizeBinding` has.
+ * its plan needs the index shape, which only a parsed `VectorizeBinding` has;
+ * nor is Hyperdrive, whose plan needs the protocol the catalog declares.
  */
-function isNamedResourceType(type: string): type is Exclude<ResourceBindingType, "vectorize"> {
-  return type !== "vectorize" && Object.hasOwn(RESOURCE_BINDINGS, type);
+function isNamedResourceType(
+  type: string,
+): type is Exclude<ResourceBindingType, "vectorize" | "hyperdrive"> {
+  return type !== "vectorize" && type !== "hyperdrive" && Object.hasOwn(RESOURCE_BINDINGS, type);
 }
 
-/** Classifies every recorded binding; `problems` lists what blocks the install. */
-export function planBindings(workerName: string, bindings: readonly WorkerBinding[]): BindingPlan {
+/**
+ * Classifies every recorded binding; `problems` lists what blocks the install.
+ * `databases` is the catalog manifest's `resources.hyperdrive`: each
+ * Hyperdrive binding must be declared there (the packer refuses one that is
+ * not, and an artifact from before that rule is refused here).
+ */
+export function planBindings(
+  workerName: string,
+  bindings: readonly WorkerBinding[],
+  databases: readonly CatalogHyperdrive[] = [],
+): BindingPlan {
   const plan: BindingPlan = { resources: [], durableObjects: [], workflows: [], problems: [] };
+  plan.problems.push(...hyperdriveDeclarationProblems(bindings, databases));
+  const protocols = new Map(databases.map((d) => [d.binding, d.protocol]));
   const addResource = (entry: ResourceBindingPlan): void => {
     const limit = MAX_NAME_LENGTH[entry.kind];
     if (entry.name.length > limit) {
@@ -146,6 +169,18 @@ export function planBindings(workerName: string, bindings: readonly WorkerBindin
         name: resourceName(workerName, binding.name),
         vectorize: { dimensions: binding.dimensions, metric: binding.metric },
       });
+    } else if (binding.type === "hyperdrive") {
+      // An undeclared one is a problem above; it gets no configuration.
+      const protocol = protocols.get(binding.name);
+      if (protocol !== undefined) {
+        addResource({
+          binding: binding.name,
+          type: "hyperdrive",
+          kind: RESOURCE_BINDINGS.hyperdrive,
+          name: resourceName(workerName, binding.name),
+          protocol,
+        });
+      }
     } else if (isNamedResourceType(binding.type)) {
       addResource({
         binding: binding.name,

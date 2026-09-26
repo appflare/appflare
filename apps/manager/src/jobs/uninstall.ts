@@ -26,6 +26,7 @@ import {
   DATA_RESOURCE_KINDS,
   type DataResourceKind,
   EMAIL_ROUTE_KIND,
+  HYPERDRIVE_KINDS,
   WORKER_BOUND_KINDS,
 } from "../installs/resource-kinds";
 import { sandboxBuildOfInput } from "../sandbox/progress";
@@ -57,7 +58,10 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
  * it reads), then the Worker (with `?force=true`, which also removes its cron
  * triggers, workers.dev route, secrets, and Durable Objects), then each of its
  * Workflows by name (deleting a Worker leaves the Workflows it ran, with
- * their instances), then each ticked data resource.
+ * their instances), then its Hyperdrive configurations, the bound ones and
+ * those a settings change replaced (always: they hold a database's
+ * credentials, never its data, which stays in the admin's database), then
+ * each ticked data resource.
  * The Worker is deleted only when this install recorded it: an install that
  * failed before its upload never owned a Worker of that name, and the account
  * may hold someone else's. An R2 bucket must be empty before it can be
@@ -133,6 +137,13 @@ interface Target {
 interface WorkflowTarget {
   id: string;
   name: string;
+}
+
+/** A recorded Hyperdrive configuration, deleted by id after the Worker. */
+interface HyperdriveTarget {
+  id: string;
+  name: string;
+  cfId: string | null;
 }
 
 /** A recorded custom domain: `name` is the hostname, `cfId` the domain's id. */
@@ -242,6 +253,13 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       const workflows: WorkflowTarget[] = live
         .filter((r) => r.kind === "workflow" && r.managed_by !== "app")
         .map((r) => ({ id: r.id, name: r.name }));
+      // Hyperdrive configurations are never kept: they hold the database's
+      // credentials, not its data. They go after the Worker that binds them.
+      const hyperdrive: HyperdriveTarget[] = live
+        .filter(
+          (r) => (HYPERDRIVE_KINDS as readonly string[]).includes(r.kind) && r.managed_by !== "app",
+        )
+        .map((r) => ({ id: r.id, name: r.name, cfId: r.cf_id }));
       const kept = live.filter((r) => r.retained_at !== null).map((r) => r.name);
       // "live": recorded and not deleted yet; "deleted": an earlier run deleted
       // it; "none": this install never recorded a Worker.
@@ -271,6 +289,9 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           (externalDomains.length > 0
             ? `Removing external domains: ${externalDomains.map((d) => d.hostname).join(", ")}. `
             : "") +
+          (hyperdrive.length > 0
+            ? `Removing Hyperdrive configurations: ${hyperdrive.map((h) => h.name).join(", ")} (the databases stay as they are). `
+            : "") +
           (targets.length > 0
             ? `Deleting: ${targets.map((t) => `${RESOURCE_LABEL[t.kind]} ${t.name}`).join(", ")}. `
             : "No data resources to delete. ") +
@@ -290,6 +311,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         consumers,
         emailRoutes,
         workflows,
+        hyperdrive,
         kept,
         worker,
         // An install made before builds were recorded is a signed release.
@@ -435,6 +457,30 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           .update(resources)
           .set({ deleted_at: new Date(now()) })
           .where(eq(resources.id, workflow.id));
+        return {};
+      });
+    }
+
+    // A run started before Hyperdrive configurations were listed deletes none.
+    for (const config of started.hyperdrive ?? []) {
+      const label = RESOURCE_LABEL.hyperdrive;
+      await run(`delete ${label} ${config.name}`, async ({ log, cf, orm }) => {
+        try {
+          if (await deleteResource(cf(), { kind: "hyperdrive", ...config })) {
+            log.info(`Deleted ${label} "${config.name}"; the database itself is untouched.`);
+          } else {
+            log.warn(
+              `No Cloudflare id is recorded for ${label} "${config.name}", so it cannot be addressed; marked deleted without a call. Check the Cloudflare dashboard for it.`,
+            );
+          }
+        } catch (error) {
+          if (!isNotFound(error)) throw error;
+          log.info(`${label} "${config.name}" was already gone.`);
+        }
+        await orm
+          .update(resources)
+          .set({ deleted_at: new Date(now()) })
+          .where(eq(resources.id, config.id));
         return {};
       });
     }

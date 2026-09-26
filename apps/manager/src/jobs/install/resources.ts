@@ -1,4 +1,5 @@
 import type { CloudflareClient } from "@appflare/cf-api";
+import type { HyperdriveOrigin } from "@appflare/schema";
 import type { ResourceBindingPlan } from "./bindings";
 
 /**
@@ -13,6 +14,7 @@ export const RESOURCE_LABEL: Record<ResourceBindingPlan["kind"], string> = {
   r2: "R2 bucket",
   queue: "queue",
   vectorize: "Vectorize index",
+  hyperdrive: "Hyperdrive configuration",
 };
 
 /** The id of the resource with this name, or null when there is none. */
@@ -36,13 +38,20 @@ export async function findResource(
       );
     case "vectorize":
       return (await api.vectorize.listIndexes()).find((i) => i.name === res.name)?.name ?? null;
+    case "hyperdrive":
+      return (await api.hyperdrive.listConfigs()).find((c) => c.name === res.name)?.id ?? null;
   }
 }
 
-/** Creates the resource and returns its id. */
+/**
+ * Creates the resource and returns its id. A Hyperdrive configuration needs
+ * `origin`, read from the connection string the admin entered (never
+ * stored by the manager); without it this throws before any call.
+ */
 export async function createResource(
   api: CloudflareClient,
   res: ResourceBindingPlan,
+  origin?: HyperdriveOrigin,
 ): Promise<string> {
   switch (res.type) {
     case "kv_namespace":
@@ -58,6 +67,14 @@ export async function createResource(
       // an index is addressed by its name, so the name is its id.
       await api.vectorize.createIndex({ name: res.name, config: res.vectorize });
       return res.name;
+    case "hyperdrive":
+      if (origin === undefined) {
+        throw new Error(`no connection string was given for the Hyperdrive binding ${res.binding}`);
+      }
+      // `POST /hyperdrive/configs` with `{ name, origin }`; Cloudflare
+      // connects to the database before it answers. Query caching keeps its
+      // default (on), as `wrangler hyperdrive create` leaves it.
+      return (await api.hyperdrive.createConfig({ name: res.name, origin })).id;
   }
 }
 
@@ -97,6 +114,10 @@ export async function deleteResource(
       return true;
     case "vectorize":
       await api.vectorize.deleteIndex(res.cfId ?? res.name);
+      return true;
+    case "hyperdrive":
+      if (res.cfId === null) return false;
+      await api.hyperdrive.deleteConfig(res.cfId);
       return true;
   }
 }

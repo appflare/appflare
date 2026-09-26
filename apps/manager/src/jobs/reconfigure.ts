@@ -5,6 +5,7 @@ import {
   appHealthMode,
   appHealthPath,
   artifactManifestSchema,
+  connectionStringProblems,
   tooManyModulesMessage,
   withRevisedCatalog,
 } from "@appflare/schema";
@@ -14,7 +15,7 @@ import { effectiveManifest } from "../catalog/revisions.server";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { EMAIL_ROUTE_KIND } from "../installs/resource-kinds";
+import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND } from "../installs/resource-kinds";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
 import { sandboxBinding } from "../sandbox/binding";
 import {
@@ -52,8 +53,17 @@ import {
 } from "./install/phases";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import {
+  type ConnectionReplacement,
+  createReplacementPhase,
+  deleteConfigPhase,
+  deleteSupersededPhase,
+  supersededConfigs,
+  switchConnectionRecords,
+} from "./reconfigure/hyperdrive";
+import {
   changedVarNames,
   changesSecrets,
+  connectionChangesSchema,
   emailRouteZoneId,
   emailZones,
   parseStoredVars,
@@ -105,7 +115,15 @@ import { takeSnapshotPhase } from "./update/snapshot";
  * 7. Move Email Routing to the new zone (new rules first, then the old ones
  *    are removed), then the live health check, recorded as an update's.
  *
- * Steps 2 to 6 run only when settings or secrets change: Email Routing rules
+ * A new connection string for a database the app reaches through Hyperdrive
+ * becomes a new Hyperdrive configuration, made after the snapshot and bound
+ * by the uploaded version; once that version serves, the records move to it
+ * and the configuration it replaced is kept as superseded, so a rollback to
+ * this change's snapshot still binds a live one. Configurations an earlier
+ * change superseded are deleted once the new version serves, since this
+ * change's snapshot is then the latest (./reconfigure/hyperdrive.ts).
+ *
+ * Steps 2 to 6 run only when settings, secrets or connections change: Email Routing rules
  * name the Worker, not a version, so moving email alone deploys nothing. A
  * move whose removal of the old routes failed is finished by asking for the
  * same zone again: the new zone is set up again (idempotent) and whatever
@@ -140,6 +158,12 @@ export const reconfigureJobParams = z.object({
    * stores params encrypted at rest); `jobs.input_json` keeps the names.
    */
   secrets: secretChangesSchema,
+  /**
+   * New connection strings by Hyperdrive binding. Credentials, like secret
+   * values: they live only here. Optional; a job started by an earlier
+   * manager version carries none.
+   */
+  hyperdrive: connectionChangesSchema.optional(),
   /** The zone the app should receive email for instead of the current one. */
   emailRouting: emailRoutingJobInput.optional(),
   /** The admin accepted that the new settings cannot be checked on a preview first. */
@@ -244,6 +268,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;
   const secretsChange = changesSecrets(params.secrets);
+  /** New connection strings by Hyperdrive binding; read only where a configuration is made. */
+  const connections = params.hyperdrive ?? {};
+  const replacing = Object.keys(connections).sort();
+  /** Configurations made from the new connection strings, as they are created. */
+  const replacements: ConnectionReplacement[] = [];
   /** Set once the new version exists / serves traffic, for the failure report. */
   let uploadedVersionId: string | null = null;
   let servingVersionId: string | null = null;
@@ -399,11 +428,13 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     if (primary === undefined) throw new JobError("the artifact has no primary Worker");
     const primaryManifest = primary.manifest;
     const entryNames = entryScriptNamesOf(manifest, workerName);
+    const databases = manifest.catalog.resources?.hyperdrive ?? [];
     const diff = diffBindings(
       workerName,
       entryBindings(manifest),
       started.resources,
       started.vectorizeShapes,
+      databases,
     );
     const path = updatePath(primaryManifest, started.appliedDoTag);
     const slots = secretSlots(
@@ -431,8 +462,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
      */
     const newZoneId = movesEmail || oldRoutes.length > 0 ? targetZoneId : null;
     const changedVars = changedVarNames(started.storedVars, params.vars);
-    /** Only settings and secrets need a new version; Email Routing names the Worker, not a version. */
-    const redeploy = changedVars.length > 0 || secretsChange;
+    /**
+     * Only settings, secrets and database connections need a new version;
+     * Email Routing names the Worker, not a version.
+     */
+    const redeploy = changedVars.length > 0 || secretsChange || replacing.length > 0;
     // Each Worker gets the secret changes of the secrets that go to it; a
     // secret the catalog no longer declares is the primary Worker's.
     const declaredSecrets = new Set(manifest.catalog.secrets.map((s) => s.name));
@@ -454,6 +488,14 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         (changedVars.some((n) => w.manifest.catalog.vars.some((v) => v.name === n)) ||
           changedSecrets.some((n) => w.manifest.catalog.secrets.some((s) => s.name === n))),
     );
+    /** The recorded configuration each replaced connection's binding uses now. */
+    const currentConfigs = new Map(
+      started.resources
+        .filter((r) => r.kind === HYPERDRIVE_KIND && r.binding !== null && r.cfId !== null)
+        .map((r) => [r.binding, { rowId: r.id, name: r.name, cfId: r.cfId as string }]),
+    );
+    /** Configurations an earlier change superseded: deleted once this change serves. */
+    const supersededAtStart = supersededConfigs(started.resources);
     undoContext = {
       slots,
       workerName,
@@ -463,7 +505,19 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     const healthMode = appHealthMode(manifest.catalog.install);
 
     await run("plan settings change", async ({ log }) => {
-      const problems = [...diff.problems, ...secretChangeProblems(params.secrets, slots)];
+      const problems = [
+        ...diff.problems,
+        ...secretChangeProblems(params.secrets, slots),
+        // Names the binding and the part at fault, never the string.
+        ...connectionStringProblems(databases, connections, { required: false }),
+      ];
+      for (const binding of replacing) {
+        if (databases.some((d) => d.binding === binding) && !currentConfigs.has(binding)) {
+          problems.push(
+            `Appflare has no record of the Hyperdrive configuration ${binding} uses; reinstall the app to connect it.`,
+          );
+        }
+      }
       // A settings change creates nothing: every binding that needs a resource
       // must have one recorded. (Workflows and Durable Object classes belong
       // to the script and come with the upload, as an update treats them.)
@@ -499,7 +553,9 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         if (tooMany !== null) problems.push(tooMany);
       }
       if (!redeploy && newZoneId === null && oldRoutes.length === 0) {
-        problems.push("Nothing changes: the settings, secrets and email zone are as they are.");
+        problems.push(
+          "Nothing changes: the settings, secrets, database connections and email zone are as they are.",
+        );
       }
       if (problems.length > 0) throw new JobError(problems.join(" "));
       if (changedVars.length > 0) log.info(`Settings changed: ${changedVars.join(", ")}.`);
@@ -507,6 +563,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       if (set.length > 0) log.info(`Secrets with a new value: ${set.join(", ")}.`);
       if (params.secrets.unset.length > 0) {
         log.info(`Secrets to remove: ${[...params.secrets.unset].sort().join(", ")}.`);
+      }
+      if (replacing.length > 0) {
+        log.info(
+          `Database connections to replace: ${replacing.join(", ")}. A new Hyperdrive configuration is made for each, and the old one is deleted once the new version serves.`,
+        );
       }
       if (movesEmail) {
         log.info(
@@ -565,6 +626,32 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       });
       snapshotVersionId = snapshot.versionId;
       snapshotOthers = snapshot.otherVersions;
+
+      // A new Hyperdrive configuration per replaced connection string, made
+      // (and so checked by Cloudflare against the database) before the
+      // version that binds it is uploaded; the old one keeps serving.
+      for (const binding of replacing) {
+        const current = currentConfigs.get(binding);
+        const decl = databases.find((d) => d.binding === binding);
+        if (current === undefined || decl === undefined) continue;
+        replacements.push(
+          await createReplacementPhase(steps, {
+            installId: params.installId,
+            jobId: params.jobId,
+            workerName,
+            binding,
+            protocol: decl.protocol,
+            current,
+            connection: connections[binding],
+          }),
+        );
+      }
+      const bound = diff.existing.map((res) => {
+        const replaced = replacements.find((r) => r.binding === res.binding);
+        return res.type === "hyperdrive" && replaced !== undefined
+          ? { ...res, name: replaced.next.name, cfId: replaced.next.cfId }
+          : res;
+      });
 
       const rateLimitIds = await assignRateLimitsPhase(
         steps,
@@ -633,7 +720,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         const { migrations: _none, ...base } = buildScriptMetadata({
           manifest: primaryManifest,
           workerName,
-          resources: diff.existing,
+          resources: bound,
           vars: vars.vars,
           assetsJwt,
           workflowNames: diff.workflowNames,
@@ -753,6 +840,22 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         log.info("Recorded the new settings and secret names on the install.");
         return {};
       });
+
+      // The new version binds the new configurations: record that. The ones
+      // they replaced are kept as superseded, since this change's snapshot
+      // binds them and a rollback to it must still reach the database.
+      if (replacements.length > 0) {
+        await run("record database connections", async ({ log, orm }) => {
+          await switchConnectionRecords(orm, params.installId, replacements);
+          log.info(
+            `Recorded the new Hyperdrive configurations: ${replacements.map((r) => `${r.binding} uses "${r.next.name}"`).join(", ")}. The replaced ${replacements.map((r) => `"${r.old.name}"`).join(", ")} stay until the next update or settings change, so rolling back to the previous version still reaches its database.`,
+          );
+          return {};
+        });
+      }
+      // This change's snapshot is the latest now: configurations an earlier
+      // change superseded are bound only by older versions.
+      await deleteSupersededPhase(steps, supersededAtStart);
     }
 
     // Email Routing: the new zone's routes first, so mail is never unrouted,
@@ -866,6 +969,21 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         // Reported with the primary Worker's outcome below; nothing serves the values.
       }
     }
+    // Configurations made from new connection strings that never served are
+    // deleted again; after the promotion the new ones serve, and the ones
+    // they replaced are recorded as superseded, as on success.
+    let unusedConfigs: "removed" | "left" | null = null;
+    if (serving === null && replacements.length > 0) {
+      try {
+        for (const r of replacements) {
+          await deleteConfigPhase(steps, r.next, ", made for this change, which never served");
+        }
+        unusedConfigs = "removed";
+      } catch {
+        unusedConfigs = "left";
+      }
+    }
+    const switched = serving !== null ? [...replacements] : [];
     const moveEmail = emailMoveStarted;
     // The primary Worker still serves the previous settings: the other
     // Workers whose promotion started go back to the versions the snapshot
@@ -906,6 +1024,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           at,
           otherVersions: othersRecorded,
         });
+        // The serving version binds the new configurations.
+        await switchConnectionRecords(orm, params.installId, switched);
       } else if (Object.keys(othersRecorded).length > 0) {
         // Other Workers left on the new settings: a rollback to the snapshot puts them back.
         await orm
@@ -936,6 +1056,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       } else {
         log.error(
           `Settings change failed at "${failedAt}". Nothing was deployed; the app keeps its previous settings and secrets.`,
+        );
+      }
+      if (unusedConfigs === "left") {
+        log.warn(
+          `The Hyperdrive configurations made for this change (${replacements.map((r) => r.next.name).join(", ")}) could not all be deleted; they are recorded, and uninstalling the app deletes them.`,
         );
       }
       await log.flush(env.DB, params.jobId);

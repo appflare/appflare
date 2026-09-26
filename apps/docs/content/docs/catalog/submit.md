@@ -40,9 +40,16 @@ installed Worker, whatever name it is installed under; set `install.fixedWorkerN
 only when something else in the app needs one fixed name. Other binding types cannot
 be installed yet.
 
-The catalog's [install check](#2-open-a-pull-request) does not support Hyperdrive
-or mTLS certificate bindings yet. It fails with a message naming the binding, so such
-an app cannot pass its pull request checks. Queues, email sending, and a service
+An app whose data lives in a PostgreSQL or MySQL database outside Cloudflare, reached
+through Hyperdrive, is installed too: its manifest declares the database (see
+[Databases elsewhere](#1-write-the-manifest)), and the admin enters its connection
+string at install. The catalog's [install check](#2-open-a-pull-request) has no
+database of the app's own to connect to, so it skips an app with Hyperdrive bindings
+and says so, unless the catalog repository has a `HYPERDRIVE_TEST_URL` Actions secret
+holding a connection string to a throwaway test database; then it installs the app
+against that database. The check does not support mTLS certificate bindings yet: it
+fails with a message naming the binding, so such an app cannot pass its pull request
+checks. Queues, email sending, and a service
 binding to the app's own Worker are deployed as the manager would deploy them; the
 check points a self binding at the Worker it deploys. A service binding to any other
 Worker already fails the pack.
@@ -137,7 +144,22 @@ Points that need care:
   the config the build generated, exactly as `wrangler deploy` does, and records both
   paths in the artifact. Do not point `install.wranglerConfig` at the generated config
   itself: wrangler then reads it as a hand-written config and refuses fields that
-  build tools write, such as `legacy_env`.
+  build tools write, such as `legacy_env`. When the repository keeps its config only
+  as a template, such as `wrangler.toml.example` or `wrangler.jsonc.template`, name
+  the template: the packer copies it to its real name (`wrangler.toml`) beside itself
+  before the build runs and wrangler reads it. A real file of that name already in
+  the repository must be identical to the template, or the pack fails.
+- **Databases elsewhere.** An app that keeps its data in PostgreSQL or MySQL outside
+  Cloudflare binds it through Hyperdrive. Declare each Hyperdrive binding of the
+  wrangler config under `resources.hyperdrive`, for example
+  `"resources": { "hyperdrive": [{ "binding": "HYPERDRIVE", "protocol": "postgres", "label": "Main database" }] }`,
+  with an optional `help` sentence. The install form then asks for a connection
+  string per binding (`postgres://user:password@host:5432/database`, or `mysql://`),
+  and the manager creates a Hyperdrive configuration of the install's own from it,
+  named `<worker name>-<binding>`. The packer refuses a Hyperdrive binding the
+  manifest does not declare, and a declaration the config does not bind. The
+  database is the admin's: an uninstall deletes the Hyperdrive configuration, never
+  the database. Self-deploying entries cannot declare databases.
 - **`secrets` and `vars`.** List every secret and setting the app reads from `env`
   that is not in its wrangler config. Use `"generate": true` for passwords and
   signing keys the user does not need to choose. List a var from the wrangler config

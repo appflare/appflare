@@ -2,7 +2,12 @@ import { Banner, Button, Checkbox, Text } from "@cloudflare/kumo";
 import { ArrowClockwiseIcon, TrashIcon, WarningIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
-import { isDataResourceKind, QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
+import {
+  HYPERDRIVE_KIND,
+  HYPERDRIVE_SUPERSEDED_KIND,
+  isDataResourceKind,
+  QUEUE_CONSUMER_KIND,
+} from "../installs/resource-kinds";
 import type { ResourceUsage } from "../installs/resource-usage.server";
 import { getResourceUsage, retryUninstall, startUninstall } from "../installs/uninstall.functions";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -30,6 +35,10 @@ function workerBoundSummary(install: InstallDetail): string[] {
   for (const d of install.externalDomains) out.push(`the external domain ${d.hostname}`);
   for (const r of byKind("subdomain")) out.push(`the route ${r.name}`);
   for (const r of byKind(QUEUE_CONSUMER_KIND)) out.push(`the consumer of the queue ${r.name}`);
+  // The database itself is the admin's and stays as it is.
+  for (const r of [...byKind(HYPERDRIVE_KIND), ...byKind(HYPERDRIVE_SUPERSEDED_KIND)]) {
+    out.push(`the Hyperdrive configuration ${r.name}`);
+  }
   const crons = byKind("cron").length;
   if (crons > 0) out.push(`${crons} cron trigger${crons === 1 ? "" : "s"}`);
   const secrets = install.secretNames.length;

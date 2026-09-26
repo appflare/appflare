@@ -112,8 +112,9 @@ describe("reviewBuild", () => {
     const planned = planBindings("cut", bindings).problems;
     expect(planned.length).toBeGreaterThanOrEqual(4);
     expect(review.problems).toEqual([unsupportedSectionProblem("containers"), ...planned]);
+    // A repository's manifest declares no databases, so its Hyperdrive binding is refused.
     expect(review.problems).toContain(
-      'Binding PG has type "hyperdrive", which Appflare cannot install yet.',
+      "Hyperdrive binding PG is not declared in the catalog manifest's resources.hyperdrive, so Appflare does not know which database it connects to.",
     );
     expect(review.problems[0]).toBe(
       "The wrangler config declares Containers (containers), which Appflare cannot install yet.",

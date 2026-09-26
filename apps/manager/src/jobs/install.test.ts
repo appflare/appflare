@@ -74,6 +74,12 @@ interface FakeState {
   r2Enabled: boolean;
   /** Vectorize indexes with the create body each was made from. */
   vectorize: Array<{ name: string; config: unknown }>;
+  /** Hyperdrive configurations with the create body each was made from. */
+  hyperdrive: Array<{ id: string; name: string; origin: unknown }>;
+  /** When set, creating a Hyperdrive configuration is refused with this message. */
+  hyperdriveRefusal?: string;
+  /** The token lacks Hyperdrive: every Hyperdrive call answers 403. */
+  hyperdriveTokenRefused?: boolean;
   /** The zip answers like a GitHub release asset: a 302 to a signed storage URL. */
   artifactRedirect: boolean;
   /** Files per upload bucket the session asks for (default: one bucket for all). */
@@ -130,6 +136,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     r2: [],
     r2Enabled: true,
     vectorize: [],
+    hyperdrive: [],
     artifactRedirect: false,
     singleUploads: false,
     requestsByStep: {},
@@ -172,6 +179,12 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     if (!path.startsWith("/workers/assets/upload") && auth !== `Bearer ${TOKEN}`) {
       return Response.json(
         { success: false, errors: [{ code: 10000, message: "auth" }] },
+        { status: 403 },
+      );
+    }
+    if (path.startsWith("/hyperdrive/") && state.hyperdriveTokenRefused === true) {
+      return Response.json(
+        { success: false, errors: [{ code: 10000, message: "Authentication error" }] },
         { status: 403 },
       );
     }
@@ -227,6 +240,23 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         const { name } = (await request.json()) as { name: string };
         state.r2.push(name);
         return ok({ name });
+      }
+      case "GET /hyperdrive/configs":
+        return ok(
+          state.hyperdrive.map(({ id, name }) => ({ id, name })),
+          { result_info: { page: 1, per_page: 100, total_count: state.hyperdrive.length } },
+        );
+      case "POST /hyperdrive/configs": {
+        if (state.hyperdriveRefusal !== undefined) {
+          return Response.json(
+            { success: false, errors: [{ code: 2008, message: state.hyperdriveRefusal }] },
+            { status: 400 },
+          );
+        }
+        const body = (await request.json()) as { name: string; origin: unknown };
+        const id = `hd-${state.hyperdrive.length + 1}`;
+        state.hyperdrive.push({ id, ...body });
+        return ok({ id, name: body.name });
       }
       case "GET /vectorize/v2/indexes":
         return ok(state.vectorize.map(({ name, config }) => ({ name, config })));
@@ -706,6 +736,108 @@ describe("install job", () => {
       { type: "plain_text", name: "HOME_PAGE", text: "admin" },
     ]);
     expect(r.fake.state.schedules).toEqual(crons);
+  });
+
+  describe("an app with a database elsewhere", () => {
+    const DB_PASSWORD = "db-pass-NEVER-SHOWN";
+    const CONNECTION = `postgres://app:${DB_PASSWORD}@db.example.com:6543/feedlog?sslmode=require`;
+    const options = {
+      bindings: [
+        { type: "hyperdrive", name: "HYPERDRIVE" },
+        { type: "kv_namespace", name: "CUT_KV" },
+      ],
+      catalog: {
+        resources: { hyperdrive: [{ binding: "HYPERDRIVE", protocol: "postgres" as const }] },
+      },
+    };
+
+    it("creates a Hyperdrive configuration from the connection string and binds it by id", async () => {
+      const r = await install(options, {}, { hyperdrive: { HYPERDRIVE: CONNECTION } });
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.step.names).toEqual(
+        expect.arrayContaining([
+          "check Hyperdrive configuration cut-hyperdrive",
+          "create Hyperdrive configuration cut-hyperdrive",
+          "record Hyperdrive configuration cut-hyperdrive",
+        ]),
+      );
+      // First among the resources: an unreachable database stops the install early.
+      expect(r.step.names.indexOf("create Hyperdrive configuration cut-hyperdrive")).toBeLessThan(
+        r.step.names.findIndex((n) => n.startsWith("check KV namespace")),
+      );
+      // `POST /hyperdrive/configs` with `{ name, origin }`, origin from the string.
+      expect(r.fake.state.hyperdrive).toEqual([
+        {
+          id: "hd-1",
+          name: "cut-hyperdrive",
+          origin: {
+            scheme: "postgres",
+            host: "db.example.com",
+            port: 6543,
+            database: "feedlog",
+            user: "app",
+            password: DB_PASSWORD,
+          },
+        },
+      ]);
+      expect(r.resources).toEqual(
+        expect.arrayContaining([
+          { kind: "hyperdrive", binding: "HYPERDRIVE", name: "cut-hyperdrive", cf_id: "hd-1" },
+        ]),
+      );
+      expect(r.fake.state.metadata?.bindings).toContainEqual({
+        type: "hyperdrive",
+        name: "HYPERDRIVE",
+        id: "hd-1",
+      });
+      // The string is a credential: only the binding name is kept anywhere.
+      const job = await env.DB.prepare("SELECT input_json FROM jobs WHERE kind = 'install'").first<{
+        input_json: string;
+      }>();
+      expect(JSON.parse(job?.input_json ?? "{}").hyperdrive).toEqual(["HYPERDRIVE"]);
+      expect(job?.input_json).not.toContain(DB_PASSWORD);
+      expect(JSON.stringify(r.logs)).not.toContain(DB_PASSWORD);
+      expect(JSON.stringify(r.resources)).not.toContain(DB_PASSWORD);
+    });
+
+    it("fails with Cloudflare's reason when the database cannot be reached, before the upload", async () => {
+      const r = await install(
+        options,
+        { hyperdriveRefusal: "Failed to connect to the origin database" },
+        { hyperdrive: { HYPERDRIVE: CONNECTION } },
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(
+        /^create Hyperdrive configuration cut-hyperdrive: Cloudflare could not set up Hyperdrive for HYPERDRIVE \(Failed to connect to the origin database\)/,
+      );
+      expect(r.job?.error).not.toContain(DB_PASSWORD);
+      expect(r.fake.state.metadata).toBeNull();
+      // Nothing else was created before it.
+      expect(r.fake.state.kv).toEqual([]);
+    });
+
+    it("names the missing Hyperdrive: Edit permission when Cloudflare refuses the token", async () => {
+      const r = await install(
+        options,
+        { hyperdriveTokenRefused: true },
+        { hyperdrive: { HYPERDRIVE: CONNECTION } },
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(
+        /^check Hyperdrive configuration cut-hyperdrive: Cloudflare refused the Hyperdrive call \(Authentication error\)\. The API token needs Hyperdrive: Edit/,
+      );
+      expect(r.fake.state.kv).toEqual([]);
+    });
+
+    it("is refused at the start without a usable connection string", async () => {
+      await expect(install(options, {}, {})).rejects.toThrow(
+        /PostgreSQL connection string \(HYPERDRIVE\) is required/,
+      );
+      await expect(
+        install(options, {}, { hyperdrive: { HYPERDRIVE: `mysql://a:${DB_PASSWORD}@h/db` } }),
+      ).rejects.toThrow(/This app needs a PostgreSQL database/);
+    });
   });
 
   it("refuses an artifact whose Vectorize binding lacks the index shape, before creating anything", async () => {

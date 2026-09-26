@@ -93,7 +93,11 @@ export function reviewBuild(
   // An app of several Workers is reviewed as a whole: its resources are the
   // app's, shared by binding name.
   const workers = entryWorkers(manifest, workerName);
-  const plan = planBindings(workerName, entryBindings(manifest));
+  const plan = planBindings(
+    workerName,
+    entryBindings(manifest),
+    manifest.catalog.resources?.hyperdrive ?? [],
+  );
   const queues = planEntryQueueConsumers(workerName, manifest, workers);
   const facts = combinedWorkerFacts(manifest);
   const problems = [

@@ -122,7 +122,8 @@
         },
         "wranglerConfig": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "The wrangler config to build from, relative to the repository root, for example `wrangler.jsonc`. A config the repository keeps only as a template (`wrangler.toml.example`, `wrangler.jsonc.template`) is copied to its real name (`wrangler.toml`) before it is read."
         },
         "workerName": {
           "type": "string",
@@ -752,6 +753,45 @@
             ],
             "additionalProperties": false
           }
+        },
+        "hyperdrive": {
+          "minItems": 1,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "binding": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The Hyperdrive binding's name in the wrangler config, for example `HYPERDRIVE`."
+              },
+              "protocol": {
+                "type": "string",
+                "enum": [
+                  "postgres",
+                  "mysql"
+                ],
+                "description": "The database the app expects behind the binding: `postgres` or `mysql`."
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "description": "What the install form calls the database, for example \"Main database\"."
+              },
+              "help": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A sentence under the connection string field, for example which schema it needs."
+              }
+            },
+            "required": [
+              "binding",
+              "protocol"
+            ],
+            "additionalProperties": false
+          },
+          "description": "The Hyperdrive bindings of the wrangler config, each with the database it connects to (`postgres` or `mysql`). The database runs outside Cloudflare: the install form asks for its connection string, and Appflare creates a Hyperdrive configuration of the install's own from it. Every Hyperdrive binding must be listed, each once. Not allowed on self-deploying entries."
         }
       },
       "additionalProperties": false
@@ -797,6 +837,34 @@
   ],
   "additionalProperties": false,
   "allOf": [
+    {
+      "anyOf": [
+        {
+          "properties": {
+            "install": {
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "resources": {
+              "not": {
+                "required": [
+                  "hyperdrive"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
     {
       "anyOf": [
         {

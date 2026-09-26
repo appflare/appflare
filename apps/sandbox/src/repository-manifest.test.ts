@@ -36,6 +36,19 @@ describe("detection", () => {
     expect(() => detectWranglerConfig(new Set(["package.json"]))).toThrow(/not a Workers project/);
   });
 
+  it("falls back to a config kept only as a template, which the packer copies to its real name", () => {
+    expect(detectWranglerConfig(new Set(["wrangler.toml.example", "package.json"]))).toBe(
+      "wrangler.toml.example",
+    );
+    expect(
+      detectWranglerConfig(new Set(["wrangler.jsonc.template", "wrangler.toml.example"])),
+    ).toBe("wrangler.jsonc.template");
+    // A real config wins over any template.
+    expect(detectWranglerConfig(new Set(["wrangler.jsonc.example", "wrangler.toml"]))).toBe(
+      "wrangler.toml",
+    );
+  });
+
   it("lists the secrets of .dev.vars.example with their comments, skipping plain vars", () => {
     const secrets = parseSecretsExample(
       [

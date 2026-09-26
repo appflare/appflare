@@ -42,6 +42,34 @@ own installer decides where its Workers answer.
 
 Select **Install**. The manager starts an install job and opens its live log.
 
+## Apps with a database elsewhere
+
+Some apps keep their data in a PostgreSQL or MySQL database that runs outside
+Cloudflare, such as one at Neon, Supabase, PlanetScale, or on your own server. The
+catalog marks them **Database elsewhere**, provided by you. Their install form has a
+**Databases** group with one connection string field per database, such as
+`postgres://user:password@db.example.com:5432/app`. The database must accept
+connections from the internet with that user and password.
+
+The install job gives the string to Cloudflare Hyperdrive, which connects to the
+database before it answers, and binds the resulting Hyperdrive configuration
+(`<worker name>-<binding>`) to the app's Worker. A database Cloudflare cannot reach
+ends the install before the Worker is uploaded, with Cloudflare's reason. Appflare
+never stores the connection string: it is not shown again, and it is not in the job's
+record or log. The API token needs the optional **Hyperdrive: Edit** permission.
+
+To point the app at another database, or to change its password, open the app's
+**Settings**, choose **Replace connection string**, and save. Appflare creates a new
+Hyperdrive configuration, uploads the app with it, checks the new version on a preview
+where Cloudflare allows it, and switches traffic to it. The old configuration is kept,
+listed as a replaced Hyperdrive configuration, so undoing the change from **Versions**
+still reaches the old database; a rollback makes it the app's configuration again. The
+next successful update or settings change deletes it; from then on, **Versions** shows
+older snapshots that bound it as not available for rollback, since their version would
+have no database. Uninstalling deletes all of the
+app's Hyperdrive configurations; the databases themselves are yours and stay as they
+are.
+
 ## Several installs of one app
 
 You can install an app more than once, each under its own Worker name. The form

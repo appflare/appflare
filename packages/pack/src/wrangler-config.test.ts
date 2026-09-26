@@ -3,6 +3,7 @@ import {
   classifyModuleType,
   collectBindings,
   collectQueueConsumers,
+  HyperdriveDeclarationError,
   mainModuleName,
   QueueConsumerError,
   type ResolvedWranglerConfig,
@@ -29,6 +30,7 @@ describe("collectBindings", () => {
 
     const bindings = collectBindings(config, {
       vectorize: { VEC: { dimensions: 768, metric: "euclidean" } },
+      hyperdrive: [{ binding: "HD", protocol: "postgres" }],
     });
     const serialized = JSON.stringify(bindings);
 
@@ -147,6 +149,37 @@ describe("collectBindings", () => {
       }),
     ).toThrow(
       /declares resources\.vectorize\.OLD_INDEX, but the wrangler config has no Vectorize binding/,
+    );
+  });
+
+  it("records a Hyperdrive binding by name only, when the catalog manifest declares it", () => {
+    const config = {
+      hyperdrive: [
+        { binding: "HYPERDRIVE", id: "0123abcd", localConnectionString: "postgres://u:p@h/db" },
+      ],
+    } as unknown as ResolvedWranglerConfig;
+    const bindings = collectBindings(config, {
+      hyperdrive: [{ binding: "HYPERDRIVE", protocol: "postgres" }],
+    });
+    expect(bindings).toEqual([{ type: "hyperdrive", name: "HYPERDRIVE" }]);
+    expect(JSON.stringify(bindings)).not.toMatch(/0123abcd|postgres:/);
+  });
+
+  it("refuses a Hyperdrive binding the catalog manifest does not declare, and the reverse", () => {
+    const config = { hyperdrive: [{ binding: "HYPERDRIVE" }] } as unknown as ResolvedWranglerConfig;
+    expect(() => collectBindings(config)).toThrow(HyperdriveDeclarationError);
+    expect(() => collectBindings(config)).toThrow(
+      /binds Hyperdrive as HYPERDRIVE.*add \{ "binding": "HYPERDRIVE", "protocol"/,
+    );
+    expect(() =>
+      collectBindings(config, { hyperdrive: [{ binding: "DB", protocol: "mysql" }] }),
+    ).toThrow(/binds Hyperdrive as HYPERDRIVE/);
+    expect(() =>
+      collectBindings({} as ResolvedWranglerConfig, {
+        hyperdrive: [{ binding: "DB", protocol: "mysql" }],
+      }),
+    ).toThrow(
+      /declares the Hyperdrive binding DB in resources\.hyperdrive, but the wrangler config/,
     );
   });
 

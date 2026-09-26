@@ -46,6 +46,8 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
   queue: "Queue",
   queue_consumer: "Queue consumer",
   vectorize: "Vectorize index",
+  hyperdrive: "Hyperdrive configuration",
+  hyperdrive_superseded: "Replaced Hyperdrive configuration",
   durable_object: "Durable Object class",
   workflow: "Workflow",
   cron: "Cron trigger",

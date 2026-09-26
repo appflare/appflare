@@ -73,6 +73,29 @@ export const QUEUE_CONSUMER_KIND = "queue_consumer" as const;
  */
 export const EMAIL_ROUTE_KIND = "email_route" as const;
 
+/**
+ * A Hyperdrive configuration: the install's connection to a database that
+ * lives outside Cloudflare, made from the connection string the admin
+ * entered. It holds no data (the database is the admin's), but it holds the
+ * database's credentials, so an uninstall always deletes it, with a call of
+ * its own after the Worker that binds it. `cf_id` is the configuration's id.
+ */
+export const HYPERDRIVE_KIND = "hyperdrive" as const;
+
+/**
+ * A Hyperdrive configuration a settings change replaced: the serving version
+ * binds a newer one, but the version the change's snapshot recorded still
+ * binds this one, so it is kept while that snapshot is the latest and a
+ * rollback to it still reaches the database. `binding` stays the binding it
+ * served. The next successful update or settings change deletes it (its
+ * snapshot is no longer the latest then), and so does an uninstall; a
+ * rollback to a version that binds it makes it the bound one again.
+ */
+export const HYPERDRIVE_SUPERSEDED_KIND = "hyperdrive_superseded" as const;
+
+/** Both Hyperdrive kinds: what an uninstall deletes after the Worker. */
+export const HYPERDRIVE_KINDS = [HYPERDRIVE_KIND, HYPERDRIVE_SUPERSEDED_KIND] as const;
+
 export function isDataResourceKind(kind: string): kind is DataResourceKind {
   return (DATA_RESOURCE_KINDS as readonly string[]).includes(kind);
 }

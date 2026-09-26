@@ -38,6 +38,7 @@ import { startInstall } from "../installs/installs.functions";
 import { workersDevUrl } from "../installs/post-install";
 import { installSourceBuild } from "../installs/source-builds.functions";
 import { CronTriggersField } from "./cron-triggers-field";
+import { connectionsComplete, DatabaseFields } from "./database-fields";
 import { EmailRoutingFields } from "./email-routing-fields";
 import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
@@ -152,6 +153,9 @@ export function InstallForm({
   const [secrets, setSecrets] = useState<Record<string, string>>(() =>
     initialSecretValues(catalog.secrets),
   );
+  /** Connection strings by Hyperdrive binding, for an app that uses a database elsewhere. */
+  const databases = catalog.resources?.hyperdrive ?? [];
+  const [connections, setConnections] = useState<Record<string, string>>({});
   /** Settings the admin edited; the others follow their default. */
   const [editedVars, setEditedVars] = useState<Record<string, string>>({});
   const accountPaid = accountPlan === "paid";
@@ -211,6 +215,7 @@ export function InstallForm({
   const disabled = !canInstall || blockedReason !== null || pending;
   const missing =
     !secretsComplete(catalog.secrets, secrets) ||
+    !connectionsComplete(databases, connections) ||
     varFields.some(
       (f) => missingRequiredVar(f, shownVar(f)) || varValueProblem(f, shownVar(f)) !== null,
     );
@@ -235,6 +240,7 @@ export function InstallForm({
         workerName,
         ...(displayName.trim() === "" ? {} : { displayName }),
         secrets,
+        ...(databases.length === 0 ? {} : { hyperdrive: connections }),
         vars: submittedVars(),
         paidConfirmed,
         ...(!accountPaid && paidTicked && rememberPaid ? { rememberPaidPlan: true } : {}),
@@ -373,6 +379,12 @@ export function InstallForm({
                 />
               </div>
             )}
+
+            <DatabaseFields
+              databases={databases}
+              values={connections}
+              onChange={(binding, value) => setConnections((s) => ({ ...s, [binding]: value }))}
+            />
 
             {varFields.length > 0 && (
               <div className="grid gap-4">

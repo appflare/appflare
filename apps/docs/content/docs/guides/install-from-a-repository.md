@@ -23,7 +23,8 @@ Nobody reviewed its code for you, and Appflare never updates it on its own.
   If the card offers **Update sandbox**, update first: older sandbox Workers cannot
   build from a repository.
 - A repository on github.com with a `wrangler.json`, `wrangler.jsonc` or
-  `wrangler.toml` at its root, and a lockfile (`pnpm-lock.yaml`,
+  `wrangler.toml` at its root (or only a template of one, such as
+  `wrangler.toml.example`, which the build copies to its real name), and a lockfile (`pnpm-lock.yaml`,
   `package-lock.json`, `yarn.lock` or `bun.lock`) when it has a `package.json`. A
   private one also needs a [GitHub access token](#private-repositories) that can read it.
 
@@ -81,7 +82,8 @@ When the build finishes, its log offers **Review**. The review page shows:
   as on a catalog app's page.
 - **Why it cannot be installed**, when that is the case, in the words the install would
   use. Appflare installs self-contained Workers only, so it refuses a build with a
-  Hyperdrive or mTLS certificate binding, a service binding or Durable Object binding
+  Hyperdrive binding (a repository has no catalog manifest to declare its database),
+  an mTLS certificate binding, a service binding or Durable Object binding
   to another Worker, or a wrangler config that uses Containers, dispatch namespaces,
   Tail Workers, Pipelines or Secrets Store secrets.
 

@@ -13,8 +13,8 @@ import {
   type Icon,
   ImageIcon,
   KeyIcon,
-  LightningIcon,
   LockKeyIcon,
+  PlugsConnectedIcon,
   QueueIcon,
   SealCheckIcon,
   ShippingContainerIcon,
@@ -107,7 +107,7 @@ export const PRIMITIVE_ICONS: Record<PrimitiveId, Icon> = {
   d1: DatabaseIcon,
   r2: ArchiveIcon,
   "durable-objects": CubeIcon,
-  hyperdrive: LightningIcon,
+  hyperdrive: PlugsConnectedIcon,
   vectorize: VectorThreeIcon,
   "analytics-engine": ChartLineIcon,
   queues: QueueIcon,
@@ -127,12 +127,14 @@ const CHIP_TONES: Record<Availability, string> = {
   available: "bg-kumo-success-tint text-kumo-success",
   unavailable: "bg-kumo-warning-tint text-kumo-warning",
   unknown: "bg-kumo-recessed text-kumo-subtle",
+  provided: "bg-kumo-info-tint text-kumo-info",
 };
 
-const BADGE_VARIANTS: Record<Availability, "success" | "warning" | "neutral"> = {
+const BADGE_VARIANTS: Record<Availability, "success" | "warning" | "neutral" | "info"> = {
   available: "success",
   unavailable: "warning",
   unknown: "neutral",
+  provided: "info",
 };
 
 function statusText(status: PrimitiveStatus): string {
@@ -240,7 +242,7 @@ export function PrimitiveBadges({
   );
 }
 
-/** What the three tints mean, once, above the cards. */
+/** What the tints mean, once, above the cards. */
 export function AvailabilityLegend() {
   return (
     <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">

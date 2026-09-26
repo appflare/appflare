@@ -107,6 +107,8 @@ export interface ServiceSources {
   emailRouting?: boolean;
   /** Vectorize indexes the catalog manifest sizes (`resources.vectorize`), by binding name. */
   vectorizeIndexes?: readonly string[];
+  /** Databases the catalog manifest declares behind Hyperdrive (`resources.hyperdrive`), by binding name. */
+  hyperdriveBindings?: readonly string[];
 }
 
 /** What an app uses, as {@link deriveServices} works it out. */
@@ -135,6 +137,7 @@ export function deriveServices(sources: ServiceSources): AppServices {
   if ((sources.queueConsumers ?? []).length > 0) found.add("queues");
   if ((sources.crons ?? []).length > 0) found.add("cron");
   if ((sources.vectorizeIndexes ?? []).length > 0) found.add("vectorize");
+  if ((sources.hyperdriveBindings ?? []).length > 0) found.add("hyperdrive");
   for (const requirement of sources.requires ?? []) {
     const id = REQUIREMENT_SERVICES[requirement];
     if (id !== undefined) found.add(id);
@@ -157,7 +160,9 @@ export function deriveServices(sources: ServiceSources): AppServices {
 /** The parts of a catalog manifest {@link appServices} reads. */
 export type ServiceCatalogFacts = Pick<CatalogManifest, "requires" | "tokenPermissions"> & {
   install: Pick<CatalogManifest["install"], "emailRouting">;
-  resources?: Pick<NonNullable<CatalogManifest["resources"]>, "vectorize"> | undefined;
+  resources?:
+    | Partial<Pick<NonNullable<CatalogManifest["resources"]>, "vectorize" | "hyperdrive">>
+    | undefined;
 };
 
 /** The parts of an artifact's Worker {@link appServices} reads. */
@@ -171,7 +176,8 @@ export type ServiceWorkerFacts = Pick<
  * its artifact's Worker. Without a Worker (a `sandbox` or `self-deploying`
  * entry, whose bindings exist only once it runs) the answer is what the
  * catalog manifest declares: `requires`, `install.emailRouting`, the Vectorize
- * indexes it sizes and its token's permissions.
+ * indexes it sizes, the databases it reaches through Hyperdrive and its
+ * token's permissions.
  */
 export function appServices(
   catalog: ServiceCatalogFacts,
@@ -186,5 +192,6 @@ export function appServices(
     tokenPermissions: catalog.tokenPermissions,
     emailRouting: catalog.install.emailRouting !== undefined,
     vectorizeIndexes: Object.keys(catalog.resources?.vectorize ?? {}),
+    hyperdriveBindings: (catalog.resources?.hyperdrive ?? []).map((h) => h.binding),
   });
 }

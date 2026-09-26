@@ -8,6 +8,7 @@ import { createContainers } from "./namespaces/containers";
 import { createCustomHostnames } from "./namespaces/custom-hostnames";
 import { createD1 } from "./namespaces/d1";
 import { createEmailRouting } from "./namespaces/email-routing";
+import { createHyperdrive } from "./namespaces/hyperdrive";
 import { createKv } from "./namespaces/kv";
 import { createQueues } from "./namespaces/queues";
 import { createR2 } from "./namespaces/r2";
@@ -31,6 +32,7 @@ export interface CloudflareClient {
   readonly r2: ReturnType<typeof createR2>;
   readonly queues: ReturnType<typeof createQueues>;
   readonly vectorize: ReturnType<typeof createVectorize>;
+  readonly hyperdrive: ReturnType<typeof createHyperdrive>;
   readonly access: ReturnType<typeof createAccess>;
   readonly workflows: ReturnType<typeof createWorkflows>;
   readonly zones: ReturnType<typeof createZones>;
@@ -62,6 +64,7 @@ export function createClient(options: ClientOptions): CloudflareClient {
     r2: createR2(http),
     queues: createQueues(http),
     vectorize: createVectorize(http),
+    hyperdrive: createHyperdrive(http),
     access: createAccess(http),
     workflows: createWorkflows(http),
     zones: createZones(http),

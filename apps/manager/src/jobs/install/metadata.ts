@@ -30,7 +30,7 @@ import { PASSTHROUGH_BINDING_TYPES, type ResourceBindingType } from "./bindings"
 export interface CreatedResource {
   binding: string;
   type: ResourceBindingType;
-  /** KV namespace id, D1 uuid, R2 bucket name, queue name, Vectorize index name. */
+  /** KV namespace id, D1 uuid, R2 bucket name, queue name, Vectorize index or Hyperdrive configuration name. */
   name: string;
   cfId: string;
 }
@@ -110,6 +110,9 @@ function resourceBinding(binding: WorkerBinding, created: CreatedResource): Uplo
     }
     case "vectorize":
       return { type: "vectorize", name: binding.name, index_name: created.name };
+    case "hyperdrive":
+      // `workers_binding_kind_hyperdrive`: `{ type, name, id }`, the configuration's id.
+      return { type: "hyperdrive", name: binding.name, id: created.cfId };
   }
 }
 

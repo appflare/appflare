@@ -508,7 +508,11 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
     const plan =
       manifest.manifest === null
         ? null
-        : planBindings(install.workerName, entryBindings(manifest.manifest));
+        : planBindings(
+            install.workerName,
+            entryBindings(manifest.manifest),
+            manifest.catalog.resources?.hyperdrive ?? [],
+          );
     return {
       ...empty,
       ...shown,

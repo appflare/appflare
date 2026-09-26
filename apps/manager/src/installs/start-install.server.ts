@@ -1,6 +1,7 @@
 import {
   type ArtifactManifest,
   type CatalogManifest,
+  connectionStringProblems,
   enteredSecrets,
   hasFixedWorkerName,
   type IndexApp,
@@ -127,6 +128,8 @@ export interface StartInstallResult {
 
 export interface ResolvedInstallInput {
   secrets: Record<string, string>;
+  /** Connection strings by Hyperdrive binding (trimmed); empty for an app without databases elsewhere. */
+  hyperdrive: Record<string, string>;
   vars: Record<string, string>;
   /** The zone for an app that receives email; undefined for any other app. */
   emailRouting?: { zoneId: string };
@@ -177,6 +180,17 @@ export function resolveInstallInput(
     }
     secrets[secret.name] = value;
   }
+  // One connection string per database the app reaches through Hyperdrive.
+  // Problems name the binding and the part at fault, never the string.
+  const databases = catalog.resources?.hyperdrive ?? [];
+  const hyperdrive: Record<string, string> = {};
+  for (const [binding, value] of Object.entries(input.hyperdrive ?? {})) {
+    hyperdrive[binding] = value.trim();
+  }
+  const connectionProblems = connectionStringProblems(databases, hyperdrive);
+  if (connectionProblems.length > 0) {
+    throw new StartInstallError(connectionProblems.join(" "));
+  }
   // Values are stored as entered, placeholders included, and filled in by
   // each install and update job.
   const vars: Record<string, string> = {};
@@ -216,6 +230,7 @@ export function resolveInstallInput(
   }
   return {
     secrets,
+    hyperdrive,
     vars,
     ...(input.emailRouting === undefined ? {} : { emailRouting: input.emailRouting }),
     ...(domain === undefined ? {} : { domain }),
@@ -389,6 +404,10 @@ export async function startInstallCore(
       version: app.version,
       workerName,
       secrets: Object.keys(resolved.secrets),
+      // Binding names only: connection strings hold database passwords.
+      ...(Object.keys(resolved.hyperdrive).length === 0
+        ? {}
+        : { hyperdrive: Object.keys(resolved.hyperdrive) }),
       vars: resolved.vars,
       paidConfirmed,
       requirementsConfirmed: input.requirementsConfirmed,
@@ -540,6 +559,7 @@ export async function startInstallCore(
             }
           : {}),
     secrets: resolved.secrets,
+    ...(Object.keys(resolved.hyperdrive).length === 0 ? {} : { hyperdrive: resolved.hyperdrive }),
     vars: resolved.vars,
     paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,

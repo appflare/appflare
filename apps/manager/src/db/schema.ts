@@ -41,6 +41,8 @@ export const RESOURCE_KINDS = [
   "queue",
   "queue_consumer",
   "vectorize",
+  "hyperdrive",
+  "hyperdrive_superseded",
   "durable_object",
   "workflow",
   "cron",
@@ -396,6 +398,12 @@ export const snapshots = sqliteTable(
      * one Worker, whose version is `worker_version_id`.
      */
     worker_versions_json: text("worker_versions_json"),
+    /**
+     * The Hyperdrive configurations the snapshot's version binds, as
+     * `{ [binding]: configuration id }` (`{}` when none); null for snapshots
+     * taken before it was recorded. A rollback needs every one of them live.
+     */
+    hyperdrive_json: text("hyperdrive_json"),
   },
   (t) => [index("snapshots_install_id_idx").on(t.install_id)],
 );
