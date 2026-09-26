@@ -5,6 +5,8 @@ import type { CatalogManifest, SandboxInfo } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { planAppUpdates } from "../auto-update/auto-update";
 import { readCandidateRows, updateCandidates } from "../auto-update/cron.server";
+import { OFFICIAL_TRUST } from "../catalog/catalogs.server";
+import { lookupOf, OFFICIAL_SOURCE } from "../catalog/merged.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -646,8 +648,16 @@ describe("installing a reviewed build", () => {
       env.DB,
       rows,
       new Map([
-        ["cut", catalogCut],
-        ["repository:cut", catalogCut],
+        ...lookupOf([catalogCut]),
+        [
+          "repository:cut",
+          {
+            key: "repository:cut",
+            app: catalogCut,
+            source: OFFICIAL_SOURCE,
+            trust: OFFICIAL_TRUST,
+          },
+        ],
       ]),
     );
     expect(planAppUpdates(candidates, true)).toEqual([

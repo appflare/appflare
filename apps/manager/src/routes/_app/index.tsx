@@ -17,6 +17,7 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute, getRouteApi } from "@tanstack/react-router";
 import { AppIcon } from "../../components/catalog-media";
+import { CatalogSourceBadge } from "../../components/catalog-source-badge";
 import { HealthIcon } from "../../components/install-health";
 import { OpenAppButton } from "../../components/open-app-button";
 import { OriginBadge } from "../../components/origin-badge";
@@ -160,6 +161,9 @@ function InstalledTable({
                       </Text>
                     )}
                     <OriginBadge origin={row.origin} />
+                    {row.catalogSource !== null && !row.catalogSource.official && (
+                      <CatalogSourceBadge source={row.catalogSource} />
+                    )}
                   </div>
                 </div>
               </Table.Cell>

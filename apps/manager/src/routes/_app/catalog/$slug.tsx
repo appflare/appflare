@@ -3,6 +3,7 @@ import {
   Badge,
   Banner,
   Checkbox,
+  cn,
   Empty,
   LayerCard,
   Link,
@@ -48,6 +49,7 @@ import {
   ImageCarousel,
   PopularityLine,
 } from "../../../components/catalog-media";
+import { CatalogSourceBadge } from "../../../components/catalog-source-badge";
 import { CronTriggersField } from "../../../components/cron-triggers-field";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
@@ -195,6 +197,7 @@ function CatalogEntryPage() {
           // A new suggestion (after another install) resets the form.
           key={detail.suggestedWorkerName}
           catalog={catalog}
+          appKey={detail.key ?? app.slug}
           varFields={detail.varFields}
           subdomain={detail.subdomain}
           canInstall={canInstall}
@@ -215,7 +218,7 @@ function CatalogEntryPage() {
       )}
       {catalog !== null && detail.sourceBuilds && (
         <BuildFromSourceCard
-          slug={app.slug}
+          slug={detail.key ?? app.slug}
           appName={app.name}
           repo={catalog.repo}
           pinnedRef={catalog.source.ref}
@@ -283,6 +286,8 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
   const hasPopularity =
     detail.popularity !== null &&
     (detail.popularity.stars !== null || detail.popularity.installsKnown);
+  // Popularity is published for the official catalog's apps only.
+  const showsPopularity = detail.source?.official !== false;
   return (
     <LayerCard>
       <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
@@ -293,7 +298,12 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
         </div>
       </LayerCard.Secondary>
       <LayerCard.Primary className="grid gap-5 px-5 py-4">
-        <div className="mx-auto grid w-full max-w-5xl grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
+        <div
+          className={cn(
+            "mx-auto grid w-full max-w-5xl grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3",
+            showsPopularity ? "lg:grid-cols-6" : "lg:grid-cols-5",
+          )}
+        >
           <Fact label="Version">
             <span className="font-mono text-[0.9em]">{app.version}</span>
           </Fact>
@@ -306,18 +316,25 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
               <License expression={catalog.license} />
             )}
           </Fact>
+          {detail.source !== null && (
+            <Fact label="Source">
+              <CatalogSourceBadge source={detail.source} />
+            </Fact>
+          )}
           <Fact label="Install check">
             <InstallCheckBadge lastVerified={app.lastVerified} />
           </Fact>
-          <Fact label="Popularity">
-            {hasPopularity ? (
-              <PopularityLine popularity={detail.popularity} className="justify-center" />
-            ) : (
-              <Text as="span" variant="secondary">
-                No numbers yet
-              </Text>
-            )}
-          </Fact>
+          {showsPopularity && (
+            <Fact label="Popularity">
+              {hasPopularity ? (
+                <PopularityLine popularity={detail.popularity} className="justify-center" />
+              ) : (
+                <Text as="span" variant="secondary">
+                  No numbers yet
+                </Text>
+              )}
+            </Fact>
+          )}
           <Fact label="Links">
             {repoUrl === null && homepage === null ? (
               <Text as="span" variant="secondary">
@@ -350,7 +367,14 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
                 Not known
               </Text>
             ) : (
-              detail.authors.map((author) => <Author key={author.name} author={author} />)
+              detail.authors.map((author) => (
+                <Author
+                  key={author.name}
+                  author={author}
+                  // Avatars come through the official catalog's proxy only; others get monograms.
+                  withAvatar={detail.source?.official !== false}
+                />
+              ))
             )}
           </Fact>
           <Fact label="Packaged by">
@@ -415,10 +439,14 @@ function License({ expression }: { expression: string }) {
 }
 
 /** An author: avatar (GitHub's, through the manager, or a monogram), name, and their links as icons. */
-function Author({ author }: { author: CatalogAuthor }) {
+function Author({ author, withAvatar }: { author: CatalogAuthor; withAvatar: boolean }) {
   return (
     <span className="inline-flex items-center gap-2">
-      <AuthorAvatar src={avatarSrc(author.github)} name={author.name} size={28} />
+      <AuthorAvatar
+        src={withAvatar ? avatarSrc(author.github) : null}
+        name={author.name}
+        size={28}
+      />
       <Text as="span">{author.name}</Text>
       <span className="inline-flex items-center">
         {authorLinks(author).map((link) => (

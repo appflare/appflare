@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
+import type { IndexApp } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { hasRole } from "../auth/roles";
 import { getAppManifest, getCatalogManifest } from "../catalog/app-manifest.server";
-import { getCatalogApp } from "../catalog/index.server";
+import { findCatalogApp, type ListedApp } from "../catalog/merged.server";
 import { getCfClient } from "../cloudflare/client.server";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
@@ -43,23 +44,34 @@ export const startUpdate = createServerFn({ method: "POST" })
   .validator(startUpdateInput)
   .handler(async ({ data }): Promise<StartUpdateResult> => {
     await requireRole("admin");
+    // The listing `loadApp` found: its catalog's keys verify the new version.
+    let found: ListedApp | null = null;
+    const trustOf = (app: IndexApp) => {
+      if (found?.app !== app) {
+        throw new VersionActionError(
+          "The app's catalog listing was not loaded before its manifest.",
+        );
+      }
+      return found.trust;
+    };
     return asUserError(() =>
       startUpdateCore(
         {
           db: env.DB,
           workflows: env.JOBS,
-          async loadApp(slug) {
-            const read = await getCatalogApp(env, slug);
+          async loadApp(key) {
+            const read = await findCatalogApp(env, key);
             if (!read.ok) throw new VersionActionError(read.error);
-            return read.app;
+            found = read.listed;
+            return found?.app ?? null;
           },
           async loadManifest(app) {
-            const read = await getAppManifest(env, app);
+            const read = await getAppManifest(env, app, trustOf(app));
             if (!read.ok) throw new VersionActionError(read.error);
             return read.manifest;
           },
           async loadCatalog(app) {
-            const read = await getCatalogManifest(env, app);
+            const read = await getCatalogManifest(env, app, trustOf(app));
             if (!read.ok) throw new VersionActionError(read.error);
             return read.catalog;
           },

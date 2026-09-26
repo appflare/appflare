@@ -1,4 +1,3 @@
-import type { IndexApp } from "@appflare/schema";
 import { NEEDS_ADMIN_COPY, planUpdateAll } from "../auto-update/auto-update";
 import {
   describeNeeds,
@@ -8,6 +7,7 @@ import {
   startUnattendedUpdate,
   updateCandidates,
 } from "../auto-update/cron.server";
+import type { AppLookup } from "../catalog/merged.server";
 import { installLabel } from "./display-name";
 import type { UpdateAllInput, UpdateAllOutcome } from "./update-all";
 import { statusRefusal, VersionActionError } from "./versions.server";
@@ -23,8 +23,8 @@ import { statusRefusal, VersionActionError } from "./versions.server";
 export async function startAllUpdatesCore(
   env: ScheduledUpdatesEnv,
   deps: ScheduledUpdatesDeps,
-  /** The cached catalog index's apps, by slug. */
-  listed: ReadonlyMap<string, IndexApp>,
+  /** The enabled catalogs' apps, by app key. */
+  listed: AppLookup,
   request: UpdateAllInput,
 ): Promise<UpdateAllOutcome> {
   const wanted = new Map(request.installIds.map((id, i) => [id, i]));

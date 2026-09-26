@@ -3,8 +3,8 @@ import { accessGate } from "./access/gate";
 import { ensureAuthStorage } from "./auth/storage.server";
 import { runScheduledUpdates, scheduledUpdatesLog } from "./auto-update/cron.server";
 import { refreshCapabilitiesDaily } from "./capabilities/capabilities.server";
-import { CatalogError, refreshCatalogIndex } from "./catalog/index.server";
 import { ManagerReleasesError, refreshManagerReleases } from "./catalog/manager-releases.server";
+import { refreshEnabledCatalogs } from "./catalog/refresh.server";
 import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
@@ -95,7 +95,7 @@ export default {
   },
 
   /**
-   * Cron: refresh the catalog index into KV, then check the manager's own
+   * Cron: refresh every enabled catalog's index into KV, then check the manager's own
    * release feed. Update-available (for apps and for Appflare) is computed
    * at read time from those caches. Once a day it also re-reads the
    * account's capabilities (capabilities/). Then the anonymous usage-data report
@@ -105,12 +105,16 @@ export default {
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
+    // Every enabled catalog: one conditional fetch each (the official one also reads its stats).
     try {
-      const { index } = await refreshCatalogIndex(env);
-      console.log(`catalog refreshed: ${index.apps.length} app(s)`);
+      for (const line of await refreshEnabledCatalogs(env)) {
+        if (line.ok) console.log(`catalog ${line.id} refreshed: ${line.apps} app(s)`);
+        else console.error(`catalog ${line.id} refresh failed`, { error: line.error });
+      }
     } catch (error) {
-      if (!(error instanceof CatalogError)) throw error;
-      console.error("catalog refresh failed", { error: error.message });
+      console.error("catalog refresh failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     try {
       const latest = await refreshManagerReleases(env);

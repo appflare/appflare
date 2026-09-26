@@ -21,6 +21,7 @@ import {
   recordedRevisionFor,
   verifyRevisedCatalog,
 } from "./revisions.server";
+import { OFFICIAL_CATALOG_ID } from "./sources";
 
 /**
  * The verified artifact manifest behind a catalog entry. `index.json` carries only
@@ -34,11 +35,17 @@ import {
  * digest.
  */
 
-const MANIFEST_KEY_PREFIX = "catalog:manifest:";
-
-/** KV key of a verified `manifest.json`, addressed by its sha256 (the index `digest`). */
-export function manifestCacheKey(digest: string): string {
-  return `${MANIFEST_KEY_PREFIX}${digest}`;
+/**
+ * KV key of a verified `manifest.json`, addressed by its sha256 (the index
+ * `digest`) and by the catalog whose keys verified it: the official
+ * catalog's keep `catalog:manifest:<digest>`, a custom catalog's live under
+ * `catalog:<id>:manifest:<digest>`, so what one catalog's keys verified is
+ * never read as verified for another.
+ */
+export function manifestCacheKey(digest: string, catalogId: string = OFFICIAL_CATALOG_ID): string {
+  return catalogId === OFFICIAL_CATALOG_ID
+    ? `catalog:manifest:${digest}`
+    : `catalog:${catalogId}:manifest:${digest}`;
 }
 /** Old versions age out of KV on their own. */
 export const MANIFEST_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -52,9 +59,16 @@ export interface AppManifestEnv {
   DB?: D1Database;
 }
 
+/**
+ * `catalogId` and `signingKeys` are the entry's catalog trust
+ * (`CatalogTrust`): the keys its releases verify with (the built-in keys
+ * when omitted, which is the official catalog) and the catalog its caches
+ * belong to (the official one when omitted).
+ */
 export interface AppManifestOptions {
   fetch?: FetchLike;
   signingKeys?: readonly SigningKey[];
+  catalogId?: string;
 }
 
 export type AppManifestRead =
@@ -104,6 +118,7 @@ export async function getAppManifest(
       artifactDigest: release.digest,
       fetch: opts.fetch,
       signingKeys: opts.signingKeys,
+      catalogId: opts.catalogId,
     });
     return { ok: true, manifest: withRevisedCatalog(signed.manifest, catalog) };
   } catch (error) {
@@ -135,9 +150,10 @@ async function loadRevisedCatalog(
     artifactDigest: string;
     fetch: FetchLike | undefined;
     signingKeys: readonly SigningKey[] | undefined;
+    catalogId: string | undefined;
   },
 ): Promise<CatalogManifest> {
-  const key = catalogManifestCacheKey(file.sha256);
+  const key = catalogManifestCacheKey(file.sha256, release.catalogId);
   const expected = {
     file,
     artifact: release.artifact,
@@ -181,7 +197,7 @@ async function getSignedAppManifest(
       error: `${app.slug} ${app.version} has no prebuilt artifact; it is built in this account.`,
     };
   }
-  const key = manifestCacheKey(release.digest);
+  const key = manifestCacheKey(release.digest, opts.catalogId);
   const cached = await env.KV.get(key);
   const fromCache = cached === null ? null : parse(cached);
   if (fromCache !== null) return { ok: true, manifest: fromCache };
@@ -212,9 +228,18 @@ async function getSignedAppManifest(
   }
 }
 
-/** KV key of a verified sandbox or self-deploying tier catalog manifest, addressed by its sha256. */
-export function catalogManifestCacheKey(digest: string): string {
-  return `catalog:entry:${digest}`;
+/**
+ * KV key of a verified catalog manifest (a sandbox or self-deploying tier
+ * entry's, or a revision of a release's), addressed by its sha256 and, like
+ * {@link manifestCacheKey}, by its catalog.
+ */
+export function catalogManifestCacheKey(
+  digest: string,
+  catalogId: string = OFFICIAL_CATALOG_ID,
+): string {
+  return catalogId === OFFICIAL_CATALOG_ID
+    ? `catalog:entry:${digest}`
+    : `catalog:${catalogId}:entry:${digest}`;
 }
 
 export type CatalogManifestRead =
@@ -243,10 +268,11 @@ function parseCatalog(text: string): CatalogManifest | null {
 export async function readCachedCatalogManifest(
   env: AppManifestEnv,
   app: IndexApp,
+  catalogId: string = OFFICIAL_CATALOG_ID,
 ): Promise<Extract<CatalogManifestRead, { ok: true }> | null> {
   const release = indexAppArtifact(app);
   if (release !== null && app.tier === "artifact") {
-    const cached = await env.KV.get(manifestCacheKey(release.digest));
+    const cached = await env.KV.get(manifestCacheKey(release.digest, catalogId));
     const manifest = cached === null ? null : parse(cached);
     if (manifest === null) return null;
     if (app.catalogManifest === undefined) {
@@ -254,7 +280,9 @@ export async function readCachedCatalogManifest(
     }
     // A revision of the release: only once it is cached too (verified before
     // it was stored; the cheap check keeps it to this release).
-    const revisedText = await env.KV.get(catalogManifestCacheKey(app.catalogManifest.sha256));
+    const revisedText = await env.KV.get(
+      catalogManifestCacheKey(app.catalogManifest.sha256, catalogId),
+    );
     const revised = revisedText === null ? null : parseCatalog(revisedText);
     if (
       revised === null ||
@@ -267,7 +295,7 @@ export async function readCachedCatalogManifest(
     return { ok: true, catalog: effective.catalog, manifest: effective };
   }
   if (app.tier === "artifact" || app.build === undefined) return null;
-  const cached = await env.KV.get(catalogManifestCacheKey(app.build.manifestDigest));
+  const cached = await env.KV.get(catalogManifestCacheKey(app.build.manifestDigest, catalogId));
   const catalog = cached === null ? null : parseCatalog(cached);
   return catalog === null ? null : { ok: true, catalog, manifest: null };
 }
@@ -296,7 +324,7 @@ export async function getCatalogManifest(
       error: `${app.slug} ${app.version} lists neither a release nor a catalog manifest to install it from.`,
     };
   }
-  const key = catalogManifestCacheKey(build.manifestDigest);
+  const key = catalogManifestCacheKey(build.manifestDigest, opts.catalogId);
   const cached = await env.KV.get(key);
   const fromCache = cached === null ? null : parseCatalog(cached);
   if (fromCache !== null) return { ok: true, catalog: fromCache, manifest: null };

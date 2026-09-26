@@ -47,7 +47,7 @@ export interface PendingInstallRow {
 
 export function pendingUpdates(
   installs: readonly PendingInstallRow[],
-  /** The catalog's version of each app, by slug. */
+  /** Each catalog's version of its apps, by app key (the rows' `appSlug` is theirs). */
   catalogVersions: ReadonlyMap<string, string>,
   manager: ManagerStatus,
 ): PendingUpdates {

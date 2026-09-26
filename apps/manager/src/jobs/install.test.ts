@@ -1,6 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { MAX_WORKER_MODULES, withRevisedCatalog } from "@appflare/schema";
+import { MAX_WORKER_MODULES, type SigningKey, withRevisedCatalog } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
@@ -418,14 +418,14 @@ async function install(
   /** `local`: a manager without the `SELF` binding runs the units in the job's invocation. */
   units: "self" | "local" = "self",
   /** Runs once the install row exists, before the job starts. */
-  beforeRun?: (installId: string) => Promise<void>,
+  beforeRun?: (installId: string, fixture: ArtifactFixture) => Promise<void>,
 ) {
   const fixture = await buildArtifactFixture(options);
   const fake = fakeWorld(fixture, world);
   const started = await start(fixture, input);
   const { jobId, installId } = started;
   const params = { ...started.params, ...paramsOver };
-  await beforeRun?.(installId);
+  await beforeRun?.(installId, fixture);
   const step = fakeStep(clock === undefined ? {} : { onSleep: clock.onSleep });
   fake.state.stepOf = () => step.names.at(-1);
   const self = fakeSelf(jobEnv(), {
@@ -1290,6 +1290,46 @@ describe("install job", () => {
         "PUT /workers/scripts/cut/schedules",
       ]);
     });
+  });
+
+  it("verifies a custom catalog's release with that catalog's pinned key, never the official keys", async () => {
+    const seedCatalog = async (keys: SigningKey[]) => {
+      await env.DB.prepare(
+        `INSERT INTO catalogs (id, kind, label, colour, index_url, keys_json, enabled, added_at)
+         VALUES ('acme', 'custom', 'Acme', 'blue', 'https://acme.test/index.json', ?1, 1, 1)`,
+      )
+        .bind(JSON.stringify(keys))
+        .run();
+    };
+    // Pinned with another key: refused before anything is created, although
+    // the release verifies with what the official catalog trusts in this test.
+    const other = await buildArtifactFixture();
+    const refused = await install({}, {}, {}, { catalogId: "acme" }, undefined, "self", () =>
+      seedCatalog(other.keys),
+    );
+    expect(refused.job?.status).toBe("failed");
+    expect(refused.job?.error).toMatch(
+      /^verify artifact manifest: manifest signature does not verify with keyId "test-key"/,
+    );
+    expect(refused.fake.state.calls).toEqual([]);
+
+    await reset();
+    await createMigrator(migrations).ensure(env.DB);
+    await writeSettings(createDb(env.DB), { [SETTING.accountId]: ACC });
+    const installed = await install({}, {}, {}, { catalogId: "acme" }, undefined, "self", (_, f) =>
+      seedCatalog(f.keys),
+    );
+    expect(installed.error).toBeNull();
+    expect(installed.job?.status).toBe("succeeded");
+  });
+
+  it("fails when the custom catalog its app comes from was removed", async () => {
+    const r = await install({}, {}, {}, { catalogId: "gone" });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      'catalog keys: the catalog "gone" this app comes from was removed from Appflare; add it again to install or update its apps',
+    );
+    expect(r.fake.state.calls).toEqual([]);
   });
 
   it("rejects an artifact whose manifest does not match the catalog digest", async () => {

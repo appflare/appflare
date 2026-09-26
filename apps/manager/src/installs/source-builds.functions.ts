@@ -13,9 +13,10 @@ import { hasRole } from "../auth/roles";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import { readCapabilitiesView } from "../capabilities/capabilities.server";
 import { getAppManifest, getCatalogManifest } from "../catalog/app-manifest.server";
-import { getCatalogApp } from "../catalog/index.server";
+import { findCatalogApp } from "../catalog/merged.server";
 import type { AppPrimitives } from "../catalog/primitives";
 import { type RequirementChecks, requirementChecks } from "../catalog/requirement-checks";
+import { parseAppKey } from "../catalog/sources";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { type InstallOrigin, installs, jobs, type SourceBuildStatus } from "../db/schema";
@@ -72,13 +73,14 @@ async function sandboxState() {
   }
 }
 
-async function loadCatalogApp(slug: string) {
-  const read = await getCatalogApp(env, slug);
+/** The app an app key names, with its catalog manifest verified with its own catalog's keys. */
+async function loadCatalogApp(key: string) {
+  const read = await findCatalogApp(env, key);
   if (!read.ok) throw new SourceBuildError(read.error);
-  if (read.app === null) throw new SourceBuildError(`"${slug}" is not in the catalog.`);
-  const manifest = await getCatalogManifest(env, read.app);
+  if (read.listed === null) throw new SourceBuildError(`"${key}" is not in the catalog.`);
+  const manifest = await getCatalogManifest(env, read.listed.app, read.listed.trust);
   if (!manifest.ok) throw new SourceBuildError(manifest.error);
-  return { app: read.app, catalog: manifest.catalog };
+  return { app: read.listed.app, catalog: manifest.catalog };
 }
 
 /** Public repositories directly; private ones with the GitHub access tokens, through the sandbox Worker. */
@@ -210,10 +212,14 @@ export const getSourceBuild = createServerFn({ method: "GET" })
     let app: SourceBuildView["app"] = null;
     let release: Awaited<ReturnType<typeof getAppManifest>> | null = null;
     if (row.app_slug !== null) {
-      const read = await getCatalogApp(env, row.app_slug);
-      const listed = read.ok ? read.app : null;
-      app = { slug: row.app_slug, name: listed?.name ?? row.app_slug };
-      if (listed?.tier === "artifact") release = await getAppManifest(env, listed);
+      // A build from source records its app key (`<catalog>:<slug>` for a custom catalog).
+      const read = await findCatalogApp(env, row.app_slug);
+      const found = read.ok ? read.listed : null;
+      const listed = found?.app ?? null;
+      app = { slug: row.app_slug, name: listed?.name ?? parseAppKey(row.app_slug).slug };
+      if (found !== null && listed?.tier === "artifact") {
+        release = await getAppManifest(env, listed, found.trust);
+      }
     }
     let review: SourceBuildReview | null = null;
     if (manifest !== null && (status === "built" || status === "used")) {

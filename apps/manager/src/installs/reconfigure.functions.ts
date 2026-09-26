@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { eq } from "drizzle-orm";
 import { refreshInstalledRevision } from "../catalog/app-manifest.server";
-import { readCachedCatalogApp } from "../catalog/index.server";
+import { readCachedListing } from "../catalog/merged.server";
 import { createDb } from "../db/client";
 import { installs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -31,6 +31,7 @@ export const getInstallSettings = createServerFn({ method: "GET" })
     const [install] = await orm
       .select({
         slug: installs.app_slug,
+        catalogId: installs.catalog_id,
         origin: installs.origin,
         catalog_version: installs.catalog_version,
         artifact_digest: installs.artifact_digest,
@@ -41,11 +42,9 @@ export const getInstallSettings = createServerFn({ method: "GET" })
     // A revision of the installed release's form, listed since it was
     // installed, replaces the form below; it starts no job.
     if (install?.origin === "catalog") {
-      await refreshInstalledRevision(
-        env,
-        install,
-        await readCachedCatalogApp(env.KV, install.slug),
-      );
+      // From the install's own catalog, verified with that catalog's keys.
+      const listed = await readCachedListing(env, install.catalogId, install.slug);
+      if (listed !== null) await refreshInstalledRevision(env, install, listed.app, listed.trust);
     }
     const s = await readSettings(orm, [SETTING.accountSubdomain]);
     return readInstallSettingsCore(

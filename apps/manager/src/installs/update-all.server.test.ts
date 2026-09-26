@@ -1,8 +1,8 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import type { IndexApp } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ScheduledUpdatesEnv } from "../auto-update/cron.server";
+import { lookupOf } from "../catalog/merged.server";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import {
@@ -70,7 +70,7 @@ async function run(fixture: ArtifactFixture, installIds: string[]) {
       newId: () => ids.shift() ?? "job-x",
       now: () => new Date("2026-09-24T12:00:00.000Z"),
     },
-    new Map<string, IndexApp>([[fixture.index.slug, fixture.index]]),
+    lookupOf([fixture.index]),
     { installIds },
   );
   const rows = (

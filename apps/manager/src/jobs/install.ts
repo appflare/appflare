@@ -13,6 +13,7 @@ import {
 import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
+import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { requirementLabel, requirementSentence } from "../catalog/requirements";
 import { createDb, type Database } from "../db/client";
@@ -83,6 +84,12 @@ export const installJobParams = z.object({
   jobId: z.string().min(1),
   installId: z.string().min(1),
   slug: z.string().min(1),
+  /**
+   * The custom catalog the app comes from (`catalogs.id`), whose keys alone
+   * verify its release; absent for the official catalog (and in jobs started
+   * by an earlier manager version).
+   */
+  catalogId: z.string().min(1).max(64).optional(),
   version: z.string().min(1),
   workerName: workerNameSchema,
   /** The signed release; absent for a sandbox tier app, which is built instead. */
@@ -181,9 +188,17 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     }
 
     // 1. Fetch and verify the artifact manifest (a sandbox tier app is built
-    // first; a self-deploying one never gets here, see the top).
-    const source = await resolveArtifactPhase(steps, env, deps.signingKeys, {
+    // first; a self-deploying one never gets here, see the top), with the
+    // keys of the catalog the app comes from and no others.
+    steps.current = "catalog keys";
+    const trust = await catalogTrust(createDb(db), params.catalogId, deps.signingKeys).catch(
+      (error: unknown) => {
+        throw error instanceof CatalogTrustError ? new InstallError(error.message) : error;
+      },
+    );
+    const source = await resolveArtifactPhase(steps, env, trust.signingKeys, {
       installId: params.installId,
+      catalogId: trust.catalogId,
       slug: params.slug,
       version: params.version,
       origin,

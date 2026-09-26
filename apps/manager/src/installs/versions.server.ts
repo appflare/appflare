@@ -11,6 +11,7 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
+import { installAppKey, unsignedTierRefusal } from "../catalog/sources";
 import { createDb, type Database } from "../db/client";
 import { installs, type JobStarter, jobs, resources, snapshots } from "../db/schema";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
@@ -155,8 +156,11 @@ export async function claim<P extends { jobId: string }>(
 }
 
 export interface StartUpdateDeps extends StartJobDeps<UpdateJobParams> {
-  /** The app's entry in the catalog index, or null when it is not listed. */
-  loadApp(slug: string): Promise<IndexApp | null>;
+  /**
+   * The app's entry in its catalog's index, by app key (`sources.ts`), or
+   * null when it is not listed or its catalog is off.
+   */
+  loadApp(key: string): Promise<IndexApp | null>;
   /** The verified artifact manifest of that entry; throws `VersionActionError` when unavailable. */
   loadManifest(app: IndexApp): Promise<ArtifactManifest>;
   /**
@@ -231,8 +235,15 @@ export async function startUpdateCore(
   const install = await readInstall(deps.db, request.installId);
   const refusal = statusRefusal(install.status);
   if (refusal !== null) throw new VersionActionError(refusal);
-  const app = await deps.loadApp(install.app_slug);
-  if (app === null) throw new VersionActionError(`"${install.app_slug}" is not in the catalog.`);
+  // Only the install's own catalog: another catalog listing the same slug is another app.
+  const app = await deps.loadApp(installAppKey(install));
+  if (app === null) {
+    throw new VersionActionError(
+      `"${install.app_slug}" is not in its catalog, or its catalog is turned off in Settings, Catalogs.`,
+    );
+  }
+  const unsigned = unsignedTierRefusal(install.catalog_id, app.tier);
+  if (unsigned !== null) throw new VersionActionError(unsigned);
   const notNewer = updateRefusal({
     installedVersion: install.catalog_version,
     targetVersion: app.version,

@@ -63,6 +63,93 @@ export function decodePublicKey(key: SigningKey): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/** Key ids: lowercase letters, digits and dashes; never "unsigned". */
+export const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+/**
+ * The fingerprint of a public key, as people compare it by eye: `SHA256:`
+ * and the unpadded base64 of the sha256 of the raw 32-byte key (the form
+ * OpenSSH prints). Throws unless the key is 32 bytes.
+ */
+export async function publicKeyFingerprint(publicKeyBase64: string): Promise<string> {
+  const raw = decodePublicKey({ keyId: "fingerprint", publicKeyBase64 });
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
+  let binary = "";
+  for (const byte of digest) binary += String.fromCharCode(byte);
+  return `SHA256:${btoa(binary).replace(/=+$/, "")}`;
+}
+
+/**
+ * The line a signing key's owner publishes and a manager's admin pastes: the
+ * key in the shape this module embeds, as JSON on one line.
+ */
+export function formatPublicKey(key: SigningKey): string {
+  return JSON.stringify({ keyId: key.keyId, publicKeyBase64: key.publicKeyBase64 });
+}
+
+/** Why pasted public keys were refused; the message is safe to show. */
+export class PublicKeyFormatError extends Error {
+  override name = "PublicKeyFormatError";
+}
+
+/** Most keys one pasted key set may hold: the current key and a few for a rotation. */
+export const MAX_PASTED_KEYS = 4;
+
+function field(item: unknown, name: string): unknown {
+  return typeof item === "object" && item !== null && !Array.isArray(item)
+    ? (item as Record<string, unknown>)[name]
+    : undefined;
+}
+
+/**
+ * Reads pasted public keys: one `{"keyId": ..., "publicKeyBase64": ...}`
+ * object (what {@link formatPublicKey} writes) or an array of them, for a
+ * signer in the middle of a key rotation. Each key id must match
+ * {@link KEY_ID_PATTERN} and appear once; each key must be 32 raw bytes.
+ * Throws {@link PublicKeyFormatError}.
+ */
+export function parsePublicKeys(text: string): SigningKey[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(text.trim());
+  } catch {
+    throw new PublicKeyFormatError(
+      'Paste the public key as its catalog publishes it: {"keyId": "...", "publicKeyBase64": "..."}.',
+    );
+  }
+  const items: unknown[] = Array.isArray(json) ? json : [json];
+  if (items.length === 0) throw new PublicKeyFormatError("Paste at least one public key.");
+  if (items.length > MAX_PASTED_KEYS) {
+    throw new PublicKeyFormatError(`Paste at most ${MAX_PASTED_KEYS} public keys.`);
+  }
+  const keys: SigningKey[] = [];
+  for (const item of items) {
+    const keyId = field(item, "keyId");
+    const publicKeyBase64 = field(item, "publicKeyBase64");
+    if (typeof keyId !== "string" || typeof publicKeyBase64 !== "string") {
+      throw new PublicKeyFormatError('Each public key needs a "keyId" and a "publicKeyBase64".');
+    }
+    if (!KEY_ID_PATTERN.test(keyId) || keyId === UNSIGNED_KEY_ID) {
+      throw new PublicKeyFormatError(
+        `The key id "${keyId.slice(0, 64)}" must be lowercase letters, digits and dashes, and not "unsigned".`,
+      );
+    }
+    if (keys.some((k) => k.keyId === keyId)) {
+      throw new PublicKeyFormatError(`The key id "${keyId}" appears twice.`);
+    }
+    const key = { keyId, publicKeyBase64: publicKeyBase64.trim() };
+    try {
+      decodePublicKey(key);
+    } catch {
+      throw new PublicKeyFormatError(
+        `The public key "${keyId}" is not the base64 of a 32-byte Ed25519 public key.`,
+      );
+    }
+    keys.push(key);
+  }
+  return keys;
+}
+
 /**
  * Verifies `manifest.sig` over the exact bytes of `manifest.json`,
  * with WebCrypto, so it runs unchanged in Workers and Node >= 20.

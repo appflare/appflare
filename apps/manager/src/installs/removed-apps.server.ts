@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { installAppKey } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
@@ -164,7 +165,8 @@ export async function listRemovedAppsCore(d1: D1Database): Promise<RemovedAppVie
     const latest = own[0];
     return {
       id: row.id,
-      slug: row.app_slug,
+      // The app key, so a custom catalog's app is looked up in that catalog only.
+      slug: installAppKey(row),
       label: installLabel({ displayName: row.display_name, workerName: row.worker_name }),
       workerName: row.worker_name,
       uninstalledAt: row.uninstalled_at?.toISOString() ?? null,

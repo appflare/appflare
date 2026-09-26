@@ -141,6 +141,13 @@
       "when": 1790454798910,
       "tag": "0019_github_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1790455504200,
+      "tag": "0020_catalogs",
+      "breakpoints": true
     }
   ]
 }

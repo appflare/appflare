@@ -38,8 +38,9 @@ a count, a yes or no, a version, a duration, or a value from a fixed list.
 Once a day, the manager sends one report with:
 
 - **Manager:** its database schema version, the Workers plan set in Settings (`free`,
-  `paid` or unset), whether it uses Appflare's catalog or a custom one, days since
-  setup, and whether a newer manager release exists.
+  `paid` or unset), whether it uses Appflare's catalog or a custom one, how many
+  catalogs were added in Settings > Catalogs (a count only, never their URLs or
+  labels), days since setup, and whether a newer manager release exists.
 - **Users:** how many users and admins there are, whether passkeys are in use, and
   how many users have one.
 - **Features:** whether Cloudflare Access protection is on, whether the sandbox
@@ -53,8 +54,9 @@ Once a day, the manager sends one report with:
   self-deploying), and by version age (current, or, when the catalog has a newer
   version, how long ago the running one was installed: under 7 days, 7 to 30, 30 to
   90, over 90 days); how many have a custom domain,
-  Email Routing, or cron triggers; how many removed apps still keep data; and the
-  catalog slugs of the installed apps, only for apps in Appflare's own catalog.
+  Email Routing, or cron triggers; how many come from added catalogs; how many
+  removed apps still keep data; and the catalog slugs of the installed apps, only
+  for apps in Appflare's own catalog.
 
 ### Jobs (manager)
 

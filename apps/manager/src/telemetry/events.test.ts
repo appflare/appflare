@@ -49,6 +49,7 @@ function heartbeat(overrides: Partial<HeartbeatInput> = {}): HeartbeatInput {
     managerBehindLatest: false,
     managerSelfUpdateAuto: true,
     autoUpdateDefault: false,
+    customCatalogs: 0,
     installs: [
       {
         slug: "cut",
@@ -57,6 +58,7 @@ function heartbeat(overrides: Partial<HeartbeatInput> = {}): HeartbeatInput {
         version: "1.0.0",
         updatedAt: NOW - 10 * DAY,
         autoUpdate: "on",
+        fromCustomCatalog: false,
       },
       {
         slug: "cut",
@@ -65,6 +67,7 @@ function heartbeat(overrides: Partial<HeartbeatInput> = {}): HeartbeatInput {
         version: "1.1.0",
         updatedAt: NOW,
         autoUpdate: "inherit",
+        fromCustomCatalog: false,
       },
       {
         slug: "open-seo",
@@ -73,6 +76,7 @@ function heartbeat(overrides: Partial<HeartbeatInput> = {}): HeartbeatInput {
         version: "2.0.0",
         updatedAt: NOW - 100 * DAY,
         autoUpdate: "inherit",
+        fromCustomCatalog: false,
       },
       {
         slug: "private",
@@ -81,6 +85,7 @@ function heartbeat(overrides: Partial<HeartbeatInput> = {}): HeartbeatInput {
         version: "0.1.0",
         updatedAt: NOW,
         autoUpdate: "off",
+        fromCustomCatalog: false,
       },
     ],
     catalogVersions: new Map([
@@ -117,6 +122,8 @@ describe("heartbeatProperties", () => {
       notification_channels: { telegram: 1, slack: 0, discord: 2, webhook: 0 },
       github_tokens: 2,
       installs_total: 4,
+      custom_catalogs: 0,
+      installs_from_custom_catalogs: 0,
       installs_by_status: { installed: 2, failed: 1, installing: 0, updating: 1, uninstalling: 0 },
       installs_by_tier: { artifact: 2, sandbox: 1, self_deploying: 1 },
       installs_by_version_age: {
@@ -132,6 +139,35 @@ describe("heartbeatProperties", () => {
       removed_with_retained: 1,
       apps: ["cut", "open-seo"],
     });
+  });
+
+  it("counts custom catalogs and their installs, and never names their apps", () => {
+    const base = heartbeat();
+    const props = heartbeatProperties(
+      heartbeat({
+        customCatalogs: 2,
+        installs: [
+          ...base.installs,
+          {
+            // The same slug as an official app, from a custom catalog.
+            slug: "acme:cut",
+            status: "installed",
+            buildKind: "artifact",
+            version: "1.0.0",
+            updatedAt: NOW - 10 * DAY,
+            autoUpdate: "inherit",
+            fromCustomCatalog: true,
+          },
+        ],
+        catalogVersions: new Map([...(base.catalogVersions ?? []), ["acme:cut", "1.0.0"]]),
+      }),
+    );
+    expect(props.custom_catalogs).toBe(2);
+    expect(props.installs_from_custom_catalogs).toBe(1);
+    expect(props.apps).toEqual(["cut", "open-seo"]);
+    // Compared with its own catalog's version (current), not the official 1.1.0.
+    expect(props.installs_by_version_age).toMatchObject({ current: 3, behind_7_30d: 1 });
+    expect(JSON.stringify(props)).not.toContain("acme");
   });
 
   it("sends no slugs for a custom catalog", () => {

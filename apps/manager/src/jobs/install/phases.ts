@@ -47,6 +47,8 @@ import { createResource, findResource, RESOURCE_LABEL } from "./resources";
 
 /** Where a job finds its artifact: the index entry's URLs and the manifest digest. */
 export interface ArtifactRef {
+  /** The catalog whose keys verify the release; names its KV cache. Official when omitted. */
+  catalogId?: string;
   slug: string;
   version: string;
   artifacts: IndexArtifacts;
@@ -107,7 +109,7 @@ export async function verifyManifestPhase(
       { slug: ref.slug, version: ref.version, digest: ref.digest },
       keys,
     );
-    const key = manifestCacheKey(ref.digest);
+    const key = manifestCacheKey(ref.digest, ref.catalogId);
     if (kv !== undefined && (await kv.get(key)) === null) {
       await kv.put(key, new TextDecoder().decode(manifestFile.bytes), {
         expirationTtl: MANIFEST_TTL_SECONDS,
@@ -128,9 +130,9 @@ export async function verifyManifestPhase(
 export async function loadVerifiedManifest(
   kv: KVNamespace | undefined,
   fetchImpl: FetchLike,
-  ref: Pick<ArtifactRef, "artifacts" | "digest">,
+  ref: Pick<ArtifactRef, "artifacts" | "digest" | "catalogId">,
 ): Promise<string> {
-  const cached = await kv?.get(manifestCacheKey(ref.digest));
+  const cached = await kv?.get(manifestCacheKey(ref.digest, ref.catalogId));
   if (cached != null && (await sha256Hex(new TextEncoder().encode(cached))) === ref.digest) {
     return cached;
   }

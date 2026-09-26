@@ -83,6 +83,7 @@ import {
  */
 export function InstallForm({
   catalog,
+  appKey = catalog.slug,
   varFields,
   subdomain,
   canInstall,
@@ -100,6 +101,11 @@ export function InstallForm({
   reviewedBuildId = null,
 }: {
   catalog: CatalogManifest;
+  /**
+   * The app key the catalog page was opened with (`<catalog>:<slug>` for a
+   * custom catalog's app): the install is looked up in that catalog only.
+   */
+  appKey?: string;
   /** One per catalog var (`installVarFields`). */
   varFields: InstallVarField[];
   /** The account's workers.dev subdomain, or null when unknown. */
@@ -234,7 +240,7 @@ export function InstallForm({
           : await startInstall({
               data: {
                 ...fields,
-                slug: catalog.slug,
+                slug: appKey,
                 ...(confirmsCost === null ? {} : { buildConfirmed }),
                 ...(installer === null ? {} : { appToken: appToken.trim() }),
               },
@@ -384,7 +390,7 @@ export function InstallForm({
             {/* The zone reads are admin-only calls; a member sees no zone field. */}
             {receivesEmail && canInstall && blockedReason === null && (
               <EmailRoutingFields
-                slug={catalog.slug}
+                slug={appKey}
                 workerName={workerName}
                 disabled={disabled}
                 zoneId={emailZoneId}

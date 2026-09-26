@@ -1,8 +1,9 @@
 import type { ArtifactManifest, CatalogManifest, IndexApp } from "@appflare/schema";
 import { asc, eq, ne } from "drizzle-orm";
 import { getAppManifest, getCatalogManifest } from "../catalog/app-manifest.server";
-import { readCachedCatalogIndex } from "../catalog/index.server";
 import { isManagerUpdateAvailable, readManagerLatest } from "../catalog/manager-releases.server";
+import { type AppLookup, catalogLookup, type ListedApp } from "../catalog/merged.server";
+import { installAppKey } from "../catalog/sources";
 import { removalInProgress } from "../danger/removal-flag";
 import { createDb } from "../db/client";
 import { installs, type JobStarter } from "../db/schema";
@@ -162,6 +163,7 @@ function choiceOf(value: string): AutoUpdateChoice {
 const candidateColumns = {
   id: installs.id,
   slug: installs.app_slug,
+  catalogId: installs.catalog_id,
   displayName: installs.display_name,
   workerName: installs.worker_name,
   status: installs.status,
@@ -182,6 +184,11 @@ export function readCandidateRows(db: D1Database) {
 }
 export type CandidateRow = Awaited<ReturnType<typeof readCandidateRows>>[number];
 
+/** The app key a candidate row is listed under. */
+export function candidateKey(row: Pick<CandidateRow, "slug" | "catalogId">): string {
+  return installAppKey({ app_slug: row.slug, catalog_id: row.catalogId });
+}
+
 /**
  * What the cron and "Update all" decide on: each install with its catalog
  * entry and whether an update to that version failed or was rolled back.
@@ -189,11 +196,12 @@ export type CandidateRow = Awaited<ReturnType<typeof readCandidateRows>>[number]
 export async function updateCandidates(
   db: D1Database,
   rows: readonly CandidateRow[],
-  listed: ReadonlyMap<string, IndexApp>,
+  listed: AppLookup,
 ): Promise<AutoUpdateCandidate[]> {
   const [failed, rolledBack] = await Promise.all([failedTargets(db), rolledBackTargets(db)]);
   return rows.map((r) => {
-    const app = listed.get(r.slug);
+    // Only the install's own catalog: another catalog listing the same slug is another app.
+    const app = listed.get(candidateKey(r))?.app;
     const key = app === undefined ? null : `${r.id} ${app.version}`;
     return {
       installId: r.id,
@@ -225,10 +233,18 @@ export async function updateCandidates(
 export async function startUnattendedUpdate(
   env: ScheduledUpdatesEnv,
   deps: ScheduledUpdatesDeps,
-  listed: ReadonlyMap<string, IndexApp>,
+  listed: AppLookup,
   installId: string,
   startedBy: JobStarter,
 ): Promise<StartUpdateResult> {
+  // The listing `loadApp` found: its catalog's keys verify the new version.
+  let found: ListedApp | undefined;
+  const trustOf = (app: IndexApp) => {
+    if (found?.app !== app) {
+      throw new VersionActionError("The app's catalog listing was not loaded before its manifest.");
+    }
+    return found.trust;
+  };
   return startUpdateCore(
     {
       db: env.DB,
@@ -237,18 +253,19 @@ export async function startUnattendedUpdate(
       startedBy,
       ...(deps.now === undefined ? {} : { now: deps.now }),
       ...(deps.newId === undefined ? {} : { newId: deps.newId }),
-      async loadApp(appSlug) {
-        return listed.get(appSlug) ?? null;
+      async loadApp(key) {
+        found = listed.get(key);
+        return found?.app ?? null;
       },
       async loadManifest(app) {
         if (deps.loadManifest !== undefined) return deps.loadManifest(app);
-        const read = await getAppManifest(env, app);
+        const read = await getAppManifest(env, app, trustOf(app));
         if (!read.ok) throw new VersionActionError(read.error);
         return read.manifest;
       },
       async loadCatalog(app) {
         if (deps.loadCatalog !== undefined) return deps.loadCatalog(app);
-        const read = await getCatalogManifest(env, app);
+        const read = await getCatalogManifest(env, app, trustOf(app));
         if (!read.ok) throw new VersionActionError(read.error);
         return read.catalog;
       },
@@ -313,8 +330,8 @@ export async function runScheduledUpdates(
   if (!anyApp) return outcome;
 
   // 2. Apps.
-  const index = await readCachedCatalogIndex(env.KV);
-  const listed = new Map((index?.apps ?? []).map((a) => [a.slug, a]));
+  // Every enabled catalog's cached index (refreshed just before by the cron).
+  const listed = await catalogLookup(env, { refreshOnMiss: false });
   const slugOf = new Map(rows.map((r) => [r.id, r.slug]));
   const candidates = await updateCandidates(env.DB, rows, listed);
   let started = 0;

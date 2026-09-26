@@ -93,6 +93,60 @@ describe("startInstallCore", () => {
     });
   });
 
+  it("records the catalog an app comes from, and passes it to the job", async () => {
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    const deps = {
+      ...h.deps,
+      loadApp: async (key: string) => {
+        expect(key).toBe("acme:cut");
+        return { app: f.index, catalogId: "acme", manifest: f.manifest };
+      },
+    };
+    await startInstallCore(deps, input({ slug: "acme:cut" }));
+    const install = await env.DB.prepare(
+      "SELECT app_slug, catalog_id FROM installs WHERE id = 'id1'",
+    ).first();
+    // The plain slug, as the signed artifact names it, with its catalog beside it.
+    expect(install).toEqual({ app_slug: "cut", catalog_id: "acme" });
+    expect(h.created[0]?.params).toMatchObject({ slug: "cut", catalogId: "acme" });
+
+    // The official catalog's installs record it too, and their jobs carry no catalog id.
+    await startInstallCore(h.deps, input({ workerName: "cut-2" }));
+    const official = await env.DB.prepare(
+      "SELECT app_slug, catalog_id FROM installs WHERE id = 'id3'",
+    ).first();
+    expect(official).toEqual({ app_slug: "cut", catalog_id: "official" });
+    expect(h.created.at(-1)?.params).not.toHaveProperty("catalogId");
+  });
+
+  it("refuses an added catalog's sandbox or self-deploying entry", async () => {
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    const { artifacts: _a, digest: _d, ...rest } = f.index;
+    const build = {
+      pin: "6056400d47530aa87e4ae5764b37ffca9d00e87f",
+      manifest: "https://acme.test/apps/cut.json",
+      manifestDigest: "a".repeat(64),
+    };
+    for (const tier of ["sandbox", "self-deploying"] as const) {
+      const deps = {
+        ...h.deps,
+        loadApp: async () => ({
+          app: { ...rest, tier, build },
+          catalogId: "acme",
+          manifest: f.manifest,
+        }),
+      };
+      await expect(startInstallCore(deps, input({ slug: "acme:cut" }))).rejects.toThrow(
+        "This catalog's index is not signed; only prebuilt releases are installed from added catalogs.",
+      );
+    }
+    expect(h.created).toEqual([]);
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM installs").first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
   it("refuses a Worker name another install already uses", async () => {
     const f = await buildArtifactFixture();
     await env.DB.prepare(

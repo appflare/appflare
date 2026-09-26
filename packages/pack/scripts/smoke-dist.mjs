@@ -1,11 +1,12 @@
 // Smoke test for the built package (run by `pnpm test:dist`, which builds
 // first). Exercises dist/ exactly as an outside consumer would, with no
 // TypeScript loader: imports the library entry, then with the built CLI packs
-// fixtures/hello and verifies it, and runs the two-step flow (pack with --key-id,
-// verify --hashes-only, sign, verify --require-signed --public-key).
+// fixtures/hello and verifies it, runs the two-step flow (pack with --key-id,
+// verify --hashes-only, sign, verify --require-signed --public-key), and makes a
+// key pair with keygen (the private key lands in the file, never on stdout).
 import { spawnSync } from "node:child_process";
 import { webcrypto } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,7 @@ function run(args, env = process.env) {
 
 const outDir = mkdtempSync(path.join(tmpdir(), "appflare-smoke-"));
 const twoStepDir = mkdtempSync(path.join(tmpdir(), "appflare-smoke-2step-"));
+const keyDir = mkdtempSync(path.join(tmpdir(), "appflare-smoke-key-"));
 try {
   run(["--help"]);
   run([
@@ -72,8 +74,20 @@ try {
   const signed = run(["verify", twoStepDir, "--require-signed", "--public-key", pub]);
   if (!signed.includes("signed keyId=smoke-key")) fail(`unexpected verify output: ${signed}`);
 
-  process.stdout.write(`smoke-dist: ok (${verified.trim()}; two-step: ${signed.trim()})\n`);
+  const keyFile = path.join(keyDir, "smoke.key");
+  const keygen = run(["keygen", "--out", keyFile, "--key-id", "smoke-key"]);
+  const privateKey = readFileSync(keyFile, "utf8").trim();
+  if (keygen.includes(privateKey)) fail("keygen printed the private key");
+  if (!/^public key: +\{"keyId":"smoke-key","publicKeyBase64":"[^"]+"\}$/m.test(keygen)) {
+    fail(`unexpected keygen output: ${keygen}`);
+  }
+  if (!/^fingerprint: SHA256:\S+$/m.test(keygen)) fail(`keygen printed no fingerprint: ${keygen}`);
+
+  process.stdout.write(
+    `smoke-dist: ok (${verified.trim()}; two-step: ${signed.trim()}; keygen: ok)\n`,
+  );
 } finally {
   rmSync(outDir, { recursive: true, force: true });
   rmSync(twoStepDir, { recursive: true, force: true });
+  rmSync(keyDir, { recursive: true, force: true });
 }

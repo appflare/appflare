@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { generateSigningKeypair } from "../scripts/signing-keypair.ts";
 import {
   decodePublicKey,
+  formatPublicKey,
+  MAX_PASTED_KEYS,
+  PublicKeyFormatError,
+  parsePublicKeys,
+  publicKeyFingerprint,
   type SigningKey,
   signingKeys,
   verifyManifestSignature,
@@ -110,6 +115,93 @@ describe("verifySignature", () => {
     );
     await expect(verifySignature(bytes, "%%%", "catalog-test", keys, labels)).rejects.toThrow(
       "manifest.json.sig is not valid base64",
+    );
+  });
+});
+
+describe("publicKeyFingerprint", () => {
+  it("is SHA256: and the unpadded base64 sha256 of the raw key", async () => {
+    const pair = await generateSigningKeypair();
+    const raw = Buffer.from(pair.publicKeyBase64, "base64");
+    const expected = `SHA256:${Buffer.from(await webcrypto.subtle.digest("SHA-256", raw))
+      .toString("base64")
+      .replace(/=+$/, "")}`;
+    await expect(publicKeyFingerprint(pair.publicKeyBase64)).resolves.toBe(expected);
+    expect(expected).toMatch(/^SHA256:[A-Za-z0-9+/]{43}$/);
+  });
+
+  it("differs between keys and refuses a key that is not 32 bytes", async () => {
+    const [a, b] = await Promise.all([generateSigningKeypair(), generateSigningKeypair()]);
+    expect(await publicKeyFingerprint(a.publicKeyBase64)).not.toBe(
+      await publicKeyFingerprint(b.publicKeyBase64),
+    );
+    await expect(publicKeyFingerprint("AAAA")).rejects.toThrow("expected 32");
+  });
+});
+
+describe("parsePublicKeys", () => {
+  it("reads the line formatPublicKey writes, and a list of them", async () => {
+    const [a, b] = await Promise.all([generateSigningKeypair(), generateSigningKeypair()]);
+    const keyA = { keyId: "acme-2026-09", publicKeyBase64: a.publicKeyBase64 };
+    const keyB = { keyId: "acme-2027-01", publicKeyBase64: b.publicKeyBase64 };
+    expect(parsePublicKeys(`  ${formatPublicKey(keyA)}\n`)).toEqual([keyA]);
+    expect(parsePublicKeys(JSON.stringify([keyA, keyB]))).toEqual([keyA, keyB]);
+  });
+
+  it("refuses what is not a key set, with a message to show", async () => {
+    const { publicKeyBase64 } = await generateSigningKeypair();
+    const refused = (text: string) => {
+      expect(() => parsePublicKeys(text)).toThrow(PublicKeyFormatError);
+      try {
+        parsePublicKeys(text);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      return "";
+    };
+    expect(refused(publicKeyBase64)).toContain("Paste the public key");
+    expect(refused("[]")).toContain("at least one");
+    expect(refused(JSON.stringify({ keyId: "acme" }))).toContain('"publicKeyBase64"');
+    expect(refused(JSON.stringify({ keyId: "Acme Key", publicKeyBase64 }))).toContain(
+      "lowercase letters",
+    );
+    expect(refused(JSON.stringify({ keyId: "unsigned", publicKeyBase64 }))).toContain(
+      'not "unsigned"',
+    );
+    expect(refused(JSON.stringify({ keyId: "acme", publicKeyBase64: "AAAA" }))).toContain(
+      "32-byte",
+    );
+    expect(
+      refused(
+        JSON.stringify([
+          { keyId: "acme", publicKeyBase64 },
+          { keyId: "acme", publicKeyBase64 },
+        ]),
+      ),
+    ).toContain("appears twice");
+    const many = Array.from({ length: MAX_PASTED_KEYS + 1 }, (_, i) => ({
+      keyId: `acme-${i}`,
+      publicKeyBase64,
+    }));
+    expect(refused(JSON.stringify(many))).toContain(`at most ${MAX_PASTED_KEYS}`);
+  });
+
+  it("gives keys that verify what their private key signed, under their own id only", async () => {
+    const pair = await generateSigningKeypair();
+    const keys = parsePublicKeys(
+      formatPublicKey({ keyId: "acme-2026-09", publicKeyBase64: pair.publicKeyBase64 }),
+    );
+    const bytes = manifestBytes("acme-2026-09");
+    const sig = await signWith(pair.privateKeyPkcs8Base64, bytes);
+    await expect(verifyManifestSignature(bytes, sig, keys)).resolves.toEqual({
+      keyId: "acme-2026-09",
+    });
+    // The embedded keys never verify it, and it never verifies an embedded key id.
+    await expect(verifyManifestSignature(bytes, sig)).rejects.toThrow("no trusted signing key");
+    const official = manifestBytes("catalog-2026-09");
+    const officialSig = await signWith(pair.privateKeyPkcs8Base64, official);
+    await expect(verifyManifestSignature(official, officialSig, keys)).rejects.toThrow(
+      'no trusted signing key matches keyId "catalog-2026-09"',
     );
   });
 });

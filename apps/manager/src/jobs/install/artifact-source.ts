@@ -242,17 +242,26 @@ function tailLines(text: string, lines: number): string[] {
 /**
  * Resolves the artifact of `slug` `version` for `installId`: verifies the
  * signed release, or builds the pinned commit in the sandbox Worker and
- * verifies what it built. Every call is its own step.
+ * verifies what it built. Every call is its own step. `keys` are the keys
+ * of the catalog the app comes from (`catalogId`; the official catalog's
+ * built-in keys when undefined), and nothing else verifies its release.
  */
 export async function resolveArtifactPhase(
   steps: JobSteps,
   env: JobEnv,
   keys: readonly SigningKey[] | undefined,
-  target: { installId: string; slug: string; version: string; origin: ArtifactOrigin },
+  target: {
+    installId: string;
+    catalogId?: string;
+    slug: string;
+    version: string;
+    origin: ArtifactOrigin;
+  },
 ): Promise<ArtifactSource> {
   const { origin } = target;
   if (origin.kind === "release") {
     const ref = {
+      ...(target.catalogId === undefined ? {} : { catalogId: target.catalogId }),
       slug: target.slug,
       version: target.version,
       artifacts: origin.artifacts,

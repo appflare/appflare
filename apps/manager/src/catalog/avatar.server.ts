@@ -8,7 +8,7 @@ import {
   MAX_AVATAR_BYTES,
 } from "./avatar";
 import { type CatalogEnv, readCachedCatalogIndex } from "./index.server";
-import { readLimited } from "./media.server";
+import { readLimited } from "./read-limited";
 
 /**
  * `GET /api/catalog/avatar/<handle>`: an app author's GitHub avatar (see

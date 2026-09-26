@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
-import { getCatalogIndex } from "../catalog/index.server";
+import { listedApps, readEnabledCatalogs } from "../catalog/merged.server";
 import { requireRole } from "../server/auth.server";
 import { type UpdateAllOutcome, updateAllInput } from "./update-all";
 import { startAllUpdatesCore } from "./update-all.server";
@@ -14,8 +14,11 @@ export const startAllUpdates = createServerFn({ method: "POST" })
   .validator(updateAllInput)
   .handler(async ({ data }): Promise<UpdateAllOutcome> => {
     await requireRole("admin");
-    const read = await getCatalogIndex(env);
-    if (!read.ok) throw new Error(read.error);
-    const listed = new Map(read.index.apps.map((a) => [a.slug, a]));
+    const reads = await readEnabledCatalogs(env);
+    const failed = reads.find((r) => !r.ok);
+    if (reads.length > 0 && reads.every((r) => !r.ok) && failed !== undefined && !failed.ok) {
+      throw new Error(failed.error);
+    }
+    const listed = new Map(listedApps(reads).map((l) => [l.key, l]));
     return startAllUpdatesCore(env, {}, listed, data);
   });

@@ -37,6 +37,7 @@ import {
   listCatalog,
   refreshCatalog,
 } from "../../../catalog/catalog.functions";
+import { UNSIGNED_INDEX_REFUSAL } from "../../../catalog/sources";
 import {
   AvailabilityLegend,
   InstallCheckBadge,
@@ -46,6 +47,7 @@ import {
   TierBadge,
 } from "../../../components/catalog-badges";
 import { AppIcon, PopularityLine } from "../../../components/catalog-media";
+import { CatalogSourceBadge } from "../../../components/catalog-source-badge";
 import { FeaturedCard } from "../../../components/featured-card";
 import { PageHeader } from "../../../components/page-header";
 import { RepositoryBuildButton } from "../../../components/repository-build-dialog";
@@ -62,13 +64,16 @@ const searchSchema = z.object({
   plan: lenient(planSchema),
   tier: lenient(installTierSchema),
   category: lenient(z.string().min(1).max(60)),
+  source: lenient(z.string().min(1).max(64)),
   sort: lenient(z.enum(["popular", "name", "checked"])),
 });
 
 /**
- * `/catalog`: apps from the KV-cached `index.json`, with a search over names,
- * summaries, authors and primitives, filters for installed, plan, tier and
- * category, and a sort; all kept in the URL so a filtered list can be shared.
+ * `/catalog`: apps from every enabled catalog's KV-cached `index.json`, with
+ * a search over names, summaries, authors and primitives, filters for
+ * installed, plan, tier, category and (with more than one catalog) source,
+ * and a sort; all kept in the URL so a filtered list can be shared. Each
+ * card carries its catalog's source badge when there is more than one.
  * The sponsored item (if any) sits above the list. Every card has the same
  * slots in the same order so apps can be compared down a column.
  */
@@ -102,6 +107,8 @@ function CatalogPage() {
   const apps = browseApps(catalog.apps, query, hasStats);
   const filtered = isFiltered(query);
   const categories = categoriesOf(catalog.apps);
+  // With one catalog there is nothing to tell apart.
+  const manySources = catalog.sources.length > 1;
 
   function update(patch: Partial<BrowseQuery>) {
     void navigate({
@@ -134,6 +141,25 @@ function CatalogPage() {
       {catalog.featured !== null && (
         <FeaturedCard key={catalog.featured.id} item={catalog.featured} />
       )}
+      {catalog.error === null &&
+        catalog.failed.map(({ source, error }) => (
+          <Banner
+            key={source.id}
+            variant="secondary"
+            icon={<WarningCircleIcon weight="fill" />}
+            title={`${source.label} could not be loaded`}
+            description={`Its apps are not shown. ${error}`}
+          />
+        ))}
+      {catalog.unsigned.map(({ source, count }) => (
+        <Banner
+          key={`unsigned-${source.id}`}
+          variant="secondary"
+          icon={<WarningCircleIcon weight="fill" />}
+          title={`${count} ${count === 1 ? "app" : "apps"} from ${source.label} not shown`}
+          description={UNSIGNED_INDEX_REFUSAL}
+        />
+      ))}
       {catalog.unreadable > 0 && (
         <Banner
           variant="secondary"
@@ -205,6 +231,21 @@ function CatalogPage() {
                   update({ tier: tier.success ? tier.data : undefined });
                 }}
               />
+              {manySources && (
+                <Select
+                  aria-label="Source"
+                  value={search.source ?? ANY}
+                  items={{
+                    [ANY]: "All catalogs",
+                    ...Object.fromEntries(catalog.sources.map((s) => [s.id, s.label])),
+                  }}
+                  onValueChange={(value) =>
+                    update({
+                      source: typeof value === "string" && value !== ANY ? value : undefined,
+                    })
+                  }
+                />
+              )}
               {categories.length > 0 && (
                 <Select
                   aria-label="Category"
@@ -268,7 +309,12 @@ function CatalogPage() {
           ) : (
             <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
               {apps.map((app) => (
-                <AppCard key={app.slug} app={app} capabilities={catalog.capabilities} />
+                <AppCard
+                  key={app.key}
+                  app={app}
+                  capabilities={catalog.capabilities}
+                  showSource={manySources}
+                />
               ))}
             </div>
           )}
@@ -324,9 +370,12 @@ function useSearchText(
 function AppCard({
   app,
   capabilities,
+  showSource,
 }: {
   app: CatalogListItem;
   capabilities: CapabilitiesView | null;
+  /** Show the catalog's source badge (there is more than one catalog). */
+  showSource: boolean;
 }) {
   const authors = app.authors === undefined ? "" : authorNames(app.authors);
   return (
@@ -356,6 +405,7 @@ function AppCard({
           </Text>
         </div>
         <div className="flex min-h-7 flex-wrap items-center gap-x-4 gap-y-2">
+          {showSource && <CatalogSourceBadge source={app.source} />}
           <InstallCheckBadge lastVerified={app.lastVerified} />
           <PopularityLine popularity={app.popularity} />
         </div>
@@ -363,7 +413,7 @@ function AppCard({
         <div className="mt-auto flex items-center justify-between gap-3 pt-1">
           <InstalledBadge instances={app.instances} />
           <LinkButton
-            href={`/catalog/${app.slug}`}
+            href={`/catalog/${app.key}`}
             variant="secondary"
             icon={<ArrowRightIcon />}
             className="ml-auto"
@@ -386,12 +436,12 @@ function RefreshButton() {
   async function onRefresh() {
     setPending(true);
     try {
-      const { count } = await refreshCatalog();
+      const { count, failed } = await refreshCatalog();
       await router.invalidate();
       toasts.add({
-        title: "Catalog refreshed",
-        description: `Loaded ${count} app${count === 1 ? "" : "s"}.`,
-        variant: "success",
+        title: failed.length === 0 ? "Catalog refreshed" : "Catalog partly refreshed",
+        description: `Loaded ${count} app${count === 1 ? "" : "s"}.${failed.length === 0 ? "" : ` Could not refresh ${failed.join(", ")}.`}`,
+        variant: failed.length === 0 ? "success" : "warning",
       });
     } catch (error) {
       toasts.add({

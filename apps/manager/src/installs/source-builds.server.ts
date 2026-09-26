@@ -20,6 +20,7 @@ import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import type { AccountPlan } from "../account/plan";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
+import { appKey, installAppKey, parseAppKey } from "../catalog/sources";
 import { createDb } from "../db/client";
 import {
   type InstallOrigin,
@@ -248,7 +249,8 @@ async function planBuild(
       installId: newId(),
       purpose: "install",
       origin: "source",
-      appSlug: app.slug,
+      // The app key, so the install from this build records its catalog too.
+      appSlug: appKey(parseAppKey(request.slug).catalogId, app.slug),
       repo: catalog.repo,
       ref: refOf(request.ref, null),
       buildCommand: request.buildCommand ?? { mode: "detect" },
@@ -269,7 +271,7 @@ async function planBuild(
   let baseline: CatalogManifest | undefined;
   if (install.origin === "source") {
     try {
-      baseline = (await deps.loadCatalogApp(install.app_slug)).catalog;
+      baseline = (await deps.loadCatalogApp(installAppKey(install))).catalog;
     } catch {
       // The app left the catalog: build with the catalog manifest it was installed with.
       baseline = installedCatalog(install.manifest_json) ?? undefined;
@@ -280,7 +282,7 @@ async function planBuild(
     installId: install.id,
     purpose: "update",
     origin: install.origin,
-    appSlug: install.origin === "source" ? install.app_slug : null,
+    appSlug: install.origin === "source" ? installAppKey(install) : null,
     repo,
     ref: install.source_ref,
     buildCommand: await lastBuildCommand(deps.db, install.id),
@@ -603,13 +605,17 @@ export interface InstallSourceDeps {
   newId?: () => string;
 }
 
-/** The app slug an install from this build is recorded under. */
+/**
+ * The app slug an install from this build is recorded under, and its
+ * catalog: a catalog app built from source keeps its catalog (the build
+ * records its app key); a repository has none.
+ */
 export function installSlugOf(
   row: Pick<SourceBuildRecord["row"], "origin" | "app_slug" | "repo">,
-): string {
+): { slug: string; catalogId: string | null } {
   return row.origin === "source" && row.app_slug !== null
-    ? row.app_slug
-    : repositoryAppSlug(row.repo);
+    ? parseAppKey(row.app_slug)
+    : { slug: repositoryAppSlug(row.repo), catalogId: null };
 }
 
 /**
@@ -675,7 +681,7 @@ export async function installSourceBuildCore(
       );
     }
   }
-  const slug = installSlugOf(row);
+  const { slug, catalogId } = installSlugOf(row);
   const now = (deps.now ?? (() => new Date()))();
   const jobId = (deps.newId ?? (() => ulid()))();
   const installId = row.install_id;
@@ -709,13 +715,14 @@ export async function installSourceBuildCore(
         `INSERT INTO installs (id, app_slug, worker_name, instance_name, display_name,
            catalog_version, artifact_url, artifact_digest, pin_sha, status, config_json,
            installed_at, updated_at, build_kind, sandbox_image, built_at, origin, source_url,
-           source_ref)
+           source_ref, catalog_id)
          SELECT ?1, ?2, ?3, coalesce(?4, ?3), ?4, ?5, ?6, ?7, ?8, 'installing', ?9, ?10, ?10,
-           'sandbox', ?11, ?12, ?13, ?14, ?15
+           'sandbox', ?11, ?12, ?13, ?14, ?15, ?18
          WHERE NOT EXISTS (SELECT 1 FROM installs WHERE id = ?1)
            AND NOT EXISTS (
              SELECT 1 FROM installs
-             WHERE status != 'uninstalled' AND (worker_name = ?3 OR (?16 = 1 AND app_slug = ?2))
+             WHERE status != 'uninstalled'
+               AND (worker_name = ?3 OR (?16 = 1 AND app_slug = ?2 AND catalog_id IS ?18))
            )
            AND EXISTS (SELECT 1 FROM source_builds WHERE id = ?17 AND status = 'built')
            AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
@@ -738,6 +745,7 @@ export async function installSourceBuildCore(
         prebuilt.ref,
         fixed ? 1 : 0,
         prebuilt.buildId,
+        catalogId,
       ),
     deps.db
       .prepare(

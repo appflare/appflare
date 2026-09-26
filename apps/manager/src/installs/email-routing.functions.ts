@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getCatalogManifest } from "../catalog/app-manifest.server";
-import { getCatalogIndex } from "../catalog/index.server";
+import { findCatalogApp } from "../catalog/merged.server";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { requireRole } from "../server/auth.server";
 import {
@@ -47,13 +47,15 @@ export const previewEmailRouting = createServerFn({ method: "GET" })
   .handler(async ({ data }): Promise<EmailRoutingPreview> => {
     await requireRole("admin");
     return asUserError(async () => {
-      const read = await getCatalogIndex(env);
+      // `slug` is the app key (`<catalog>:<slug>` for a custom catalog's app).
+      const read = await findCatalogApp(env, data.slug);
       if (!read.ok) throw new EmailRoutingError(read.error);
-      const app = read.index.apps.find((a) => a.slug === data.slug);
-      if (app === undefined) throw new EmailRoutingError(`"${data.slug}" is not in the catalog.`);
+      if (read.listed === null) {
+        throw new EmailRoutingError(`"${data.slug}" is not in the catalog.`);
+      }
       // Any tier: a sandbox tier entry has no artifact until the install
       // builds it, so its bindings (and whether it sends email) are unknown.
-      const entry = await getCatalogManifest(env, app);
+      const entry = await getCatalogManifest(env, read.listed.app, read.listed.trust);
       if (!entry.ok) throw new EmailRoutingError(entry.error);
       return previewEmailRoutingCore(await getCfClient(env), {
         catalog: entry.catalog,

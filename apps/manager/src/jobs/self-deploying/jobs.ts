@@ -7,8 +7,9 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
-import { readCachedCatalogApp } from "../../catalog/index.server";
+import { readCachedListing } from "../../catalog/merged.server";
 import { requirementLabel } from "../../catalog/requirements";
+import { unsignedTierRefusal } from "../../catalog/sources";
 import { createDb } from "../../db/client";
 import { installs, jobs, resources } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
@@ -325,7 +326,10 @@ export async function runSelfDeployingUpdate(
         throw new JobError("the install was not deployed by the app's own installer");
       }
       if (env.KV === undefined) throw new JobError("the catalog cache is not available");
-      const app = await readCachedCatalogApp(env.KV, install.app_slug);
+      // Its own catalog only: another catalog listing the same slug never updates it.
+      const app =
+        (await readCachedListing({ KV: env.KV, DB: env.DB }, install.catalog_id, install.app_slug))
+          ?.app ?? null;
       const refusal = updateRefusal({
         installedVersion: install.catalog_version,
         targetVersion: params.version,
@@ -334,6 +338,8 @@ export async function runSelfDeployingUpdate(
       if (refusal !== null || app === null) {
         throw new JobError(refusal ?? "the app is no longer in the catalog");
       }
+      const unsigned = unsignedTierRefusal(install.catalog_id, app.tier);
+      if (unsigned !== null) throw new JobError(unsigned);
       if (app.tier !== "self-deploying" || app.build === undefined) {
         throw new JobError(
           `the catalog now lists ${app.slug} as a ${app.tier} tier app; uninstall it and install it again`,

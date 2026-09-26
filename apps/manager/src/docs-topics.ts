@@ -11,6 +11,7 @@ export const DOCS_TOPICS = {
   tokenPermissions: "start/install#1-connect-cloudflare",
   capabilities: "guides/install-apps#workers-free-or-workers-paid",
   requirements: "guides/catalog#requirements",
+  customCatalogs: "guides/custom-catalogs#add-a-catalog",
   customDomains: "guides/custom-domains",
   externalDomains: "guides/external-domains#add-a-domain-to-an-app",
   gateway: "guides/external-domains#what-you-need",

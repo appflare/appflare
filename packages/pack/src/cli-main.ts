@@ -1,18 +1,20 @@
 import { parseArgs } from "node:util";
 import { INSPECT_OUTPUT_PREFIX, MAX_WORKER_MODULES } from "@appflare/schema";
 import { inspectWranglerConfig } from "./inspect.ts";
+import { formatKeygenOutput, keygen } from "./keygen.ts";
 import { describeVersionOrigin, pack } from "./pack.ts";
 import { sign } from "./sign.ts";
 import { verify } from "./verify.ts";
 import { workerSizeLine } from "./worker-size.ts";
 
-const USAGE = `appflare-pack — build, sign, and verify Appflare artifacts
+const USAGE = `appflare-pack — build, sign, and verify Appflare artifacts, and make signing keys
 
 Usage:
   appflare-pack <checkoutDir> --manifest <appflare.jsonc> --out <dir> [--key-id ID [--sign-key-env NAME]] [--no-install]
   appflare-pack sign <dir> --sign-key-env NAME [--key-id ID] [--force]
   appflare-pack verify <dir> [--public-key <base64>] [--require-signed | --hashes-only] [--max-modules <n>]
   appflare-pack inspect <checkoutDir> --config <wrangler config>
+  appflare-pack keygen --out <file> --key-id <id>
 
 Pack options:
   --manifest <path>       catalog manifest (appflare.jsonc)      (required)
@@ -31,6 +33,15 @@ Sign options (signs <dir>/manifest.json as-is, writes manifest.sig, self-verifie
 Inspect options (prints the config's name, plain vars and the sections the
 packer leaves out, as JSON after "${INSPECT_OUTPUT_PREFIX.trim()}"):
   --config <path>         the wrangler config, relative to <checkoutDir> (required)
+
+Keygen options (writes a new Ed25519 private key, base64 PKCS#8, to <file> with
+mode 0600; never overwrites a file or writes where git would track it; prints the
+key id, the public key line a catalog publishes, and its fingerprint, never the
+private key):
+  --out <file>            where to write the private key; keep it outside every
+                          repository                                 (required)
+  --key-id <id>           key id recorded in each manifest signed with this key:
+                          lowercase letters, digits and dashes      (required)
 
 Verify options:
   --public-key <base64>   raw Ed25519 public key to verify against
@@ -214,6 +225,35 @@ async function runInspect(argv: string[]): Promise<number> {
   return 0;
 }
 
+async function runKeygen(argv: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      out: { type: "string" },
+      "key-id": { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  if (values.help) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+  const keyId = values["key-id"];
+  if (!values.out || !keyId) {
+    process.stderr.write(`error: --out and --key-id are required\n\n${USAGE}`);
+    return 1;
+  }
+  // A package script runs in the package's directory; pnpm and npm set
+  // INIT_CWD to where the command was typed, which a relative --out means.
+  const result = await keygen({
+    out: values.out,
+    keyId,
+    cwd: process.env.INIT_CWD ?? process.cwd(),
+  });
+  process.stdout.write(formatKeygenOutput(result));
+  return 0;
+}
+
 /** CLI entrypoint. Returns the process exit code. */
 export async function main(argv: string[]): Promise<number> {
   if (argv.length === 0) {
@@ -228,6 +268,9 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (argv[0] === "inspect") {
     return runInspect(argv.slice(1));
+  }
+  if (argv[0] === "keygen") {
+    return runKeygen(argv.slice(1));
   }
   if (argv[0] === "-h" || argv[0] === "--help") {
     process.stdout.write(USAGE);

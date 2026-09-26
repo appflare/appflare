@@ -7,10 +7,11 @@ import {
   indexAppArtifact,
   isOptionalSecret,
 } from "@appflare/schema";
-import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { requirementLabel } from "../catalog/requirements";
+import { OFFICIAL_CATALOG_ID, unsignedTierRefusal } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { checkExternalHostname } from "../gateway/gateway";
@@ -63,6 +64,11 @@ export class StartInstallError extends Error {
 export interface CatalogEntry {
   app: IndexApp;
   /**
+   * The catalog that lists it (`catalogs.id`); the official one when
+   * omitted. The install records it and its jobs verify with its keys.
+   */
+  catalogId?: string;
+  /**
    * The catalog manifest and pin: from the signed artifact manifest, or for a
    * sandbox tier app (built only once the install runs) from its verified
    * catalog manifest (whose wrangler config bindings are not known yet).
@@ -88,8 +94,11 @@ export interface StartInstallDeps {
   db: D1Database;
   /** The Workflow binding, to settle a self-update whose instance died before refusing to start. */
   workflows?: WorkflowLookup;
-  /** The index entry and its verified manifest; throws `StartInstallError` when unavailable. */
-  loadApp(slug: string): Promise<CatalogEntry>;
+  /**
+   * The index entry the app key names (`sources.ts`) and its verified
+   * manifest; throws `StartInstallError` when unavailable.
+   */
+  loadApp(key: string): Promise<CatalogEntry>;
   /** Creates the Workflow instance (`env.JOBS.create`). */
   createJob(id: string, params: InstallJobParams): Promise<{ id: string }>;
   /**
@@ -215,7 +224,11 @@ export async function startInstallCore(
   input: StartInstallInput,
 ): Promise<StartInstallResult> {
   await refuseDuringSelfUpdate(deps.db, deps.workflows, (m) => new StartInstallError(m));
-  const { app, manifest } = await deps.loadApp(input.slug);
+  const loaded = await deps.loadApp(input.slug);
+  const { app, manifest } = loaded;
+  const catalogId = loaded.catalogId ?? OFFICIAL_CATALOG_ID;
+  const unsigned = unsignedTierRefusal(catalogId, app.tier);
+  if (unsigned !== null) throw new StartInstallError(unsigned);
   // An account recorded as on Workers Paid needs no confirmation per install.
   const accountPlan = await readAccountPlan(createDb(deps.db));
   const paidConfirmed = input.paidConfirmed || accountPlan === "paid";
@@ -386,21 +399,22 @@ export async function startInstallCore(
       deps.db
         .prepare(
           `UPDATE installs SET status = 'uninstalled', uninstalled_at = ?3, updated_at = ?3
-           WHERE status = 'failed' AND (worker_name = ?1 OR (?4 = 1 AND app_slug = ?2))
+           WHERE status = 'failed' AND (worker_name = ?1 OR (?4 = 1 AND app_slug = ?2 AND coalesce(catalog_id, 'official') = ?5))
              AND NOT EXISTS (
                SELECT 1 FROM resources r WHERE r.install_id = installs.id AND r.deleted_at IS NULL
              )`,
         )
-        .bind(workerName, app.slug, now.getTime(), fixed ? 1 : 0),
+        .bind(workerName, app.slug, now.getTime(), fixed ? 1 : 0, catalogId),
       deps.db
         .prepare(
           `INSERT INTO installs (id, app_slug, worker_name, instance_name, display_name,
              catalog_version, artifact_url, artifact_digest, pin_sha, status, config_json,
-             installed_at, updated_at, build_kind)
-           SELECT ?1, ?2, ?3, coalesce(?10, ?3), ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9, ?12
+             installed_at, updated_at, build_kind, catalog_id)
+           SELECT ?1, ?2, ?3, coalesce(?10, ?3), ?10, ?4, ?5, ?6, ?7, 'installing', ?8, ?9, ?9, ?12, ?14
            WHERE NOT EXISTS (
              SELECT 1 FROM installs
-             WHERE status != 'uninstalled' AND (worker_name = ?3 OR (?11 = 1 AND app_slug = ?2))
+             WHERE status != 'uninstalled'
+               AND (worker_name = ?3 OR (?11 = 1 AND app_slug = ?2 AND coalesce(catalog_id, 'official') = ?14))
            )
              AND ${sandboxFirstGuardSql(sandbox, "?13")}
              AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
@@ -424,6 +438,7 @@ export async function startInstallCore(
           // app's destroy command instead of deleting anything itself.
           installer === null ? "artifact" : "self-deploying",
           enableJobId,
+          catalogId,
         ),
       deps.db
         .prepare(
@@ -459,7 +474,13 @@ export async function startInstallCore(
         and(
           ne(installs.status, "uninstalled"),
           fixed
-            ? or(eq(installs.worker_name, workerName), eq(installs.app_slug, app.slug))
+            ? or(
+                eq(installs.worker_name, workerName),
+                and(
+                  eq(installs.app_slug, app.slug),
+                  sql`coalesce(${installs.catalog_id}, ${OFFICIAL_CATALOG_ID}) = ${catalogId}`,
+                ),
+              )
             : eq(installs.worker_name, workerName),
         ),
       )
@@ -487,6 +508,8 @@ export async function startInstallCore(
     jobId,
     installId,
     slug: app.slug,
+    // Its releases verify with this catalog's keys; absent means the official catalog.
+    ...(catalogId === OFFICIAL_CATALOG_ID ? {} : { catalogId }),
     version: app.version,
     workerName,
     ...(installer !== null

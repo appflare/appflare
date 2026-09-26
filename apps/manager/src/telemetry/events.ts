@@ -80,9 +80,14 @@ export interface HeartbeatInput {
   managerSelfUpdateAuto: boolean;
   /** "Automatically update apps" (the default of installs that follow it) is on. */
   autoUpdateDefault: boolean;
+  /** Custom catalogs added (a count; never their URLs or labels). */
+  customCatalogs: number;
   /** Installs that are not uninstalled. */
   installs: readonly {
+    /** The app key: the plain slug for the official catalog, `<catalog>:<slug>` for a custom one. */
     slug: string;
+    /** From a custom catalog (counted, never named). */
+    fromCustomCatalog: boolean;
     status: string;
     buildKind: string;
     version: string;
@@ -91,7 +96,7 @@ export interface HeartbeatInput {
     /** The install's automatic-update choice (`inherit`, `on`, `off`). */
     autoUpdate: string;
   }[];
-  /** Latest version of each app in the cached catalog index; null when nothing is cached. */
+  /** Latest version of each app in the cached catalog indexes, by app key; null when nothing is cached. */
   catalogVersions: ReadonlyMap<string, string> | null;
   installsWithDomain: number;
   installsWithEmailRouting: number;
@@ -185,6 +190,8 @@ export function heartbeatProperties(input: HeartbeatInput): Record<string, Telem
     notification_channels: { ...input.notificationChannels },
     github_tokens: input.githubTokens,
     installs_total: input.installs.length,
+    custom_catalogs: input.customCatalogs,
+    installs_from_custom_catalogs: input.installs.filter((i) => i.fromCustomCatalog).length,
     installs_by_status: byStatus,
     installs_by_tier: byTier,
     installs_by_version_age: byAge,

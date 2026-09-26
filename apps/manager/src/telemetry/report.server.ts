@@ -7,8 +7,10 @@ import {
   telemetryBatchBody,
 } from "@appflare/schema";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
-import { DEFAULT_CATALOG_INDEX_URL, readCachedCatalogIndex } from "../catalog/index.server";
+import { DEFAULT_CATALOG_INDEX_URL } from "../catalog/index.server";
 import { managerUpdateView, readManagerLatest } from "../catalog/manager-releases.server";
+import { catalogLookup } from "../catalog/merged.server";
+import { installAppKey, OFFICIAL_CATALOG_ID } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { SCHEMA_VERSION_KEY } from "../db/migrate";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
@@ -101,9 +103,15 @@ function isOfficialCatalog(env: Pick<ReportEnv, "CATALOG_INDEX_URL">): boolean {
   return !configured || configured === DEFAULT_CATALOG_INDEX_URL;
 }
 
-async function catalogVersions(kv: KVNamespace): Promise<Map<string, string> | null> {
-  const index = await readCachedCatalogIndex(kv);
-  return index === null ? null : new Map(index.apps.map((a) => [a.slug, a.version]));
+/**
+ * The latest version of every app the enabled catalogs list, by app key: an
+ * official app under its plain slug (the only kind of slug ever sent), a
+ * custom catalog's under `<catalog>:<slug>`, which is only compared with
+ * its installs and never sent. Null when no catalog is cached.
+ */
+async function catalogVersions(env: ReportEnv): Promise<Map<string, string> | null> {
+  const listed = await catalogLookup(env, { refreshOnMiss: false });
+  return listed.size === 0 ? null : new Map([...listed].map(([key, l]) => [key, l.app.version]));
 }
 
 /** Reads the rows a heartbeat counts, in one D1 batch with any extra statements. */
@@ -118,7 +126,7 @@ function heartbeatStatements(db: D1Database): D1PreparedStatement[] {
     ),
     db.prepare("SELECT count(*) AS passkeys, count(DISTINCT user_id) AS users FROM passkey"),
     db.prepare(
-      `SELECT app_slug, status, build_kind, catalog_version, updated_at, auto_update
+      `SELECT app_slug, catalog_id, status, build_kind, catalog_version, updated_at, auto_update
        FROM installs WHERE status <> 'uninstalled'`,
     ),
     db.prepare(
@@ -133,6 +141,8 @@ function heartbeatStatements(db: D1Database): D1PreparedStatement[] {
        FROM resources r JOIN installs i ON i.id = r.install_id
        WHERE i.status = 'uninstalled' AND r.retained_at IS NOT NULL AND r.deleted_at IS NULL`,
     ),
+    // How many custom catalogs there are; never their URLs or labels.
+    db.prepare("SELECT count(*) AS custom FROM catalogs WHERE kind = 'custom'"),
   ];
 }
 
@@ -160,7 +170,7 @@ async function heartbeatInput(
   now: number,
   versions: Map<string, string> | null,
 ): Promise<HeartbeatInput> {
-  const [schema, users, passkeys, installs, features, removed] = results.map(
+  const [schema, users, passkeys, installs, features, removed, catalogRows] = results.map(
     (r) => (r.results ?? []) as Record<string, unknown>[],
   );
   const feature = (kind: string) => num(features?.find((f) => f.kind === kind)?.installs);
@@ -190,8 +200,15 @@ async function heartbeatInput(
     managerBehindLatest: managerUpdateView(env.APPFLARE_VERSION, latest).updateAvailable,
     managerSelfUpdateAuto: settings.auto_update_manager === "on",
     autoUpdateDefault: settings.auto_update_apps === "on",
+    customCatalogs: num(catalogRows?.[0]?.custom),
     installs: (installs ?? []).map((row) => ({
-      slug: String(row.app_slug),
+      // The app key: a custom catalog's app never passes for an official one.
+      slug: installAppKey({
+        app_slug: String(row.app_slug),
+        catalog_id: typeof row.catalog_id === "string" ? row.catalog_id : null,
+      }),
+      fromCustomCatalog:
+        typeof row.catalog_id === "string" && row.catalog_id !== OFFICIAL_CATALOG_ID,
       status: String(row.status),
       buildKind: String(row.build_kind),
       version: String(row.catalog_version),
@@ -231,7 +248,7 @@ export async function previewHeartbeat(
   const settings: ReportSettings = await readSettings(createDb(env.DB), REPORT_KEYS);
   const [results, versions] = await Promise.all([
     env.DB.batch(heartbeatStatements(env.DB)),
-    catalogVersions(env.KV),
+    catalogVersions(env),
   ]);
   const installId = isInstallId(settings.telemetry_install_id)
     ? settings.telemetry_install_id
@@ -246,7 +263,7 @@ function jobsStatement(db: D1Database, from: number, to: number): D1PreparedStat
     .prepare(
       `SELECT j.id, j.kind, j.status, j.input_json, j.error, j.started_at, j.finished_at,
               j.started_by,
-              i.app_slug, i.catalog_version, i.build_kind, s.target_catalog_version
+              i.app_slug, i.catalog_id, i.catalog_version, i.build_kind, s.target_catalog_version
        FROM jobs j
        LEFT JOIN installs i ON i.id = j.install_id
        LEFT JOIN snapshots s ON j.kind = 'rollback' AND json_valid(j.input_json)
@@ -268,7 +285,14 @@ function jobRows(result: D1Result | undefined): JobRow[] {
     error: typeof r.error === "string" ? r.error : null,
     startedAt: r.started_at == null ? null : num(r.started_at),
     finishedAt: r.finished_at == null ? null : num(r.finished_at),
-    appSlug: typeof r.app_slug === "string" ? r.app_slug : null,
+    // The app key: a custom catalog's app is never reported under its slug.
+    appSlug:
+      typeof r.app_slug === "string"
+        ? installAppKey({
+            app_slug: r.app_slug,
+            catalog_id: typeof r.catalog_id === "string" ? r.catalog_id : null,
+          })
+        : null,
     installVersion: typeof r.catalog_version === "string" ? r.catalog_version : null,
     buildKind: typeof r.build_kind === "string" ? r.build_kind : null,
     snapshotTargetVersion:
@@ -342,10 +366,7 @@ async function report(env: ReportEnv, opts: ReportOptions): Promise<ReportOutcom
       : []),
     ...(heartbeatDue ? heartbeatStatements(env.DB) : []),
   ];
-  const [results, versions] = await Promise.all([
-    env.DB.batch(statements),
-    catalogVersions(env.KV),
-  ]);
+  const [results, versions] = await Promise.all([env.DB.batch(statements), catalogVersions(env)]);
   const [jobs, ...rest] = results;
   const firstAdmin = setupDue ? rest.shift() : undefined;
 

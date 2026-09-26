@@ -43,6 +43,12 @@ export const SETTINGS_PAGES = {
     description:
       "Send messages about updates, jobs and health to Telegram, Slack, Discord or your own webhook.",
   },
+  catalogs: {
+    href: "/settings/catalogs",
+    label: "Catalogs",
+    description:
+      "Where apps come from: the official catalog, and catalogs you add with their signing keys.",
+  },
   removedApps: {
     href: "/settings/removed-apps",
     label: "Removed apps",

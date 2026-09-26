@@ -12,9 +12,12 @@ import { z } from "zod";
 import type { AutoUpdateChoice } from "../auto-update/auto-update";
 import { readAutoUpdateDefaults } from "../auto-update/auto-update.server";
 import { getCatalogManifest, refreshInstalledRevision } from "../catalog/app-manifest.server";
-import { catalogIndexUrl, getCatalogIndex } from "../catalog/index.server";
+import { listCatalogRecords, sourceOf } from "../catalog/catalogs.server";
+import { catalogIndexUrl } from "../catalog/index.server";
 import { mediaSrc } from "../catalog/media";
+import { catalogLookup, findCatalogApp, type ListedApp } from "../catalog/merged.server";
 import { effectiveManifest } from "../catalog/revisions.server";
+import { type CatalogSource, installAppKey, OFFICIAL_CATALOG_ID } from "../catalog/sources";
 import { isUpdateAvailable } from "../catalog/versions";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
@@ -64,14 +67,21 @@ export const startInstall = createServerFn({ method: "POST" })
         {
           db: env.DB,
           workflows: env.JOBS,
-          async loadApp(slug) {
-            const read = await getCatalogIndex(env);
+          async loadApp(key) {
+            const read = await findCatalogApp(env, key);
             if (!read.ok) throw new StartInstallError(read.error);
-            const app = read.index.apps.find((a) => a.slug === slug);
-            if (app === undefined) throw new StartInstallError(`"${slug}" is not in the catalog.`);
-            const entry = await getCatalogManifest(env, app);
+            if (read.listed === null) {
+              throw new StartInstallError(`"${key}" is not in any catalog that is turned on.`);
+            }
+            const { app, trust } = read.listed;
+            // Verified with the keys of the catalog that lists it, and no others.
+            const entry = await getCatalogManifest(env, app, trust);
             if (!entry.ok) throw new StartInstallError(entry.error);
-            return { app, manifest: entry.manifest ?? catalogOnlyManifest(entry.catalog) };
+            return {
+              app,
+              catalogId: trust.catalogId,
+              manifest: entry.manifest ?? catalogOnlyManifest(entry.catalog),
+            };
           },
           createJob: (id, params) => env.JOBS.create({ id, params }),
           sandboxConnected: sandboxBinding(env) !== undefined,
@@ -107,7 +117,10 @@ export const renameInstall = createServerFn({ method: "POST" })
 
 export interface InstallRow {
   id: string;
+  /** The app key (`sources.ts`): the catalog page of the app is `/catalog/<slug>`. */
   slug: string;
+  /** The catalog the app comes from; null for a repository, or when that catalog is gone. */
+  catalogSource: CatalogSource | null;
   /**
    * Where the code comes from: the catalog, a repository (not from the
    * catalog, not checked), or a catalog app built from source.
@@ -203,6 +216,26 @@ function healthOf(row: typeof installs.$inferSelect) {
   };
 }
 
+/** The badge of every catalog, by id (the ones turned off too: an install keeps its source). */
+async function catalogSources(): Promise<Map<string, CatalogSource>> {
+  const records = await listCatalogRecords(createDb(env.DB));
+  return new Map(records.map((r) => [r.id, sourceOf(r)]));
+}
+
+function sourceOfRow(
+  row: Pick<typeof installs.$inferSelect, "catalog_id" | "origin">,
+  sources: ReadonlyMap<string, CatalogSource>,
+): CatalogSource | null {
+  if (row.origin === "repository") return null;
+  return sources.get(row.catalog_id ?? OFFICIAL_CATALOG_ID) ?? null;
+}
+
+/** The app's icon, served by the manager for the official catalog only (others show a monogram). */
+function iconOf(found: ListedApp | undefined): string | null {
+  if (found === undefined || !found.source.official) return null;
+  return mediaSrc(found.app.media?.icon, catalogIndexUrl(env));
+}
+
 async function subdomain(): Promise<string | null> {
   const s = await readSettings(createDb(env.DB), [SETTING.accountSubdomain]);
   return s.account_subdomain || null;
@@ -222,28 +255,31 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
   async (): Promise<InstallRow[]> => {
     await requireSession();
     const db = createDb(env.DB);
-    const [rows, read, sub, domains] = await Promise.all([
+    const [rows, catalog, sub, domains] = await Promise.all([
       db
         .select()
         .from(installs)
         .where(ne(installs.status, "uninstalled"))
         .orderBy(desc(installs.installed_at)),
-      getCatalogIndex(env),
+      catalogLookup(env),
       subdomain(),
       readAddressDomains(db),
     ]);
-    const catalog = new Map(read.ok ? read.index.apps.map((a) => [a.slug, a]) : []);
+    const sources = await catalogSources();
     const addressOf = (row: (typeof rows)[number]): string | null =>
       appAddress(addressInput(row, domains.get(row.id) ?? [], sub));
     return rows.map((row) => {
-      // An install from a repository is never the catalog's app of the same name.
-      const listed = row.origin === "repository" ? undefined : catalog.get(row.app_slug);
+      // An install from a repository is never the catalog's app of the same name,
+      // and an install is only ever compared with its own catalog's listing.
+      const found = row.origin === "repository" ? undefined : catalog.get(installAppKey(row));
+      const listed = found?.app;
       return {
         id: row.id,
-        slug: row.app_slug,
+        slug: installAppKey(row),
+        catalogSource: sourceOfRow(row, sources),
         origin: row.origin,
         name: listed?.name ?? recordedName(row),
-        icon: mediaSrc(listed?.media?.icon, catalogIndexUrl(env)),
+        icon: iconOf(found),
         ...namesOf(row),
         status: row.status,
         version: row.catalog_version,
@@ -394,15 +430,14 @@ export const getInstall = createServerFn({ method: "GET" })
         // Insertion order (created_at can tie within a millisecond).
         .orderBy(sql`rowid`),
       db.select().from(jobs).where(eq(jobs.install_id, row.id)).orderBy(desc(jobs.id)),
-      getCatalogIndex(env),
+      // Only the install's own catalog: another catalog listing the same slug is another app.
+      row.origin === "repository" ? Promise.resolve(null) : findCatalogApp(env, installAppKey(row)),
       subdomain(),
       readAutoUpdateDefaults(db),
       accountId(),
     ]);
-    const listed =
-      read.ok && row.origin !== "repository"
-        ? read.index.apps.find((a) => a.slug === row.app_slug)
-        : undefined;
+    const found = read?.ok === true ? (read.listed ?? undefined) : undefined;
+    const listed = found?.app;
     const workerUrl = workersDevUrl(row.worker_name, sub);
     // Where the app is reached: its primary custom domain while workers.dev is off.
     const domain = row.workers_dev_enabled
@@ -438,7 +473,9 @@ export const getInstall = createServerFn({ method: "GET" })
       if (parsed.success) {
         // A revision of the installed release's form and copy: recorded once,
         // then read like the signed copy. No job, no update.
-        if (row.origin === "catalog") await refreshInstalledRevision(env, row, listed);
+        if (row.origin === "catalog" && found !== undefined) {
+          await refreshInstalledRevision(env, row, found.app, found.trust);
+        }
         const manifest = await effectiveManifest(db, parsed.data, row.artifact_digest);
         name = manifest.catalog.name;
         postInstall = manifest.catalog.postInstall.map((p) =>
@@ -467,14 +504,15 @@ export const getInstall = createServerFn({ method: "GET" })
     }
     return {
       id: row.id,
-      slug: row.app_slug,
+      slug: installAppKey(row),
+      catalogSource: sourceOfRow(row, await catalogSources()),
       origin: row.origin,
       source:
         row.origin === "catalog" || row.source_url === null || row.source_ref === null
           ? null
           : { url: row.source_url, ref: row.source_ref },
       name,
-      icon: mediaSrc(listed?.media?.icon, catalogIndexUrl(env)),
+      icon: iconOf(found),
       ...namesOf(row),
       status: row.status,
       version: row.catalog_version,

@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { and, eq, inArray } from "drizzle-orm";
-import { getCatalogIndex } from "../catalog/index.server";
+import { catalogLookup } from "../catalog/merged.server";
+import { parseAppKey } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs, jobs } from "../db/schema";
 import { reconcileJobs } from "../jobs/reconcile.server";
@@ -42,9 +43,11 @@ export const listRemovedApps = createServerFn({ method: "GET" }).handler(
       .innerJoin(installs, eq(installs.id, jobs.install_id))
       .where(and(eq(installs.status, "uninstalled"), inArray(jobs.status, ["queued", "running"])));
     if (active.length > 0) await reconcileJobs(env.DB, env.JOBS, active);
-    const [rows, read] = await Promise.all([listRemovedAppsCore(env.DB), getCatalogIndex(env)]);
-    const names = new Map(read.ok ? read.index.apps.map((a) => [a.slug, a.name]) : []);
-    return rows.map((row) => ({ ...row, name: names.get(row.slug) ?? row.slug }));
+    const [rows, listed] = await Promise.all([listRemovedAppsCore(env.DB), catalogLookup(env)]);
+    return rows.map((row) => ({
+      ...row,
+      name: listed.get(row.slug)?.app.name ?? parseAppKey(row.slug).slug,
+    }));
   },
 );
 

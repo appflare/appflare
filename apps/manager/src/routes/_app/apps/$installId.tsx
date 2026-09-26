@@ -20,6 +20,7 @@ import { AppCredentialsCard } from "../../../components/app-credentials-card";
 import { AppSettingsSection } from "../../../components/app-settings-section";
 import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { AppIcon } from "../../../components/catalog-media";
+import { CatalogSourceBadge } from "../../../components/catalog-source-badge";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
@@ -598,6 +599,12 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
               <Link href={`/catalog/${install.slug}`}>{install.name}</Link>
             )}
           </DescriptionItem>
+          {install.catalogSource !== null && (
+            <DescriptionItem label="Source">
+              {/* Updates, form revisions and install checks come from this catalog only. */}
+              <CatalogSourceBadge source={install.catalogSource} />
+            </DescriptionItem>
+          )}
           <DescriptionItem label="Name">
             {install.displayName ?? (
               <Text as="span" variant="secondary">

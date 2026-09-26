@@ -221,6 +221,46 @@ export const installs = sqliteTable("installs", {
    * stay as they are.
    */
   forgotten_at: timestamp("forgotten_at"),
+  /**
+   * The catalog the app comes from (`catalogs.id`): `official`, or a custom
+   * catalog an admin added. Updates, form revisions and install checks follow
+   * that catalog only, and its keys verify every release. Null for an install
+   * from a repository, which no catalog lists.
+   */
+  catalog_id: text("catalog_id"),
+});
+
+/** `official`: the catalog Appflare ships with; `custom`: one an admin added. */
+export const CATALOG_KINDS = ["official", "custom"] as const;
+export type CatalogKind = (typeof CATALOG_KINDS)[number];
+
+/**
+ * The catalogs this manager browses and installs from. The official one is
+ * seeded by its migration, can be turned off but never removed, and is always
+ * verified with the signing keys built into Appflare (its `keys_json` and
+ * `index_url` only describe them). A custom catalog is added by an admin with
+ * its index URL and the public keys its releases are signed with, pinned
+ * here: its artifacts and revised catalog manifests verify with these keys
+ * only, and no custom key ever verifies another catalog's releases.
+ */
+export const catalogs = sqliteTable("catalogs", {
+  /** `official`, or a short lowercase id derived from the label; prefixes the catalog's app keys. */
+  id: text("id").primaryKey(),
+  kind: text("kind", { enum: CATALOG_KINDS }).notNull(),
+  label: text("label").notNull(),
+  /** A Kumo badge colour (`CATALOG_COLOURS`). */
+  colour: text("colour").notNull(),
+  /** The https URL of the catalog's `index.json`. */
+  index_url: text("index_url").notNull(),
+  /** The pinned public keys, `[{ keyId, publicKeyBase64 }]`. */
+  keys_json: text("keys_json").notNull(),
+  /** Off: its apps are not browsed and its index is not refreshed. */
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  added_at: timestamp("added_at").notNull(),
+  /** When its index was last fetched (or found unchanged); null until then. */
+  refreshed_at: timestamp("refreshed_at"),
+  /** Why the last refresh failed; null after a successful one. */
+  refresh_error: text("refresh_error"),
 });
 
 /** A Cloudflare object created for an install (glossary: resource). */

@@ -22,6 +22,8 @@ export interface BrowsableApp {
   primitives: Pick<AppPrimitives, "ids">;
   instances: readonly unknown[];
   popularity: AppPopularity | null;
+  /** The catalog that lists it, for the source filter. */
+  source?: { id: string } | undefined;
 }
 
 export const SORTS = {
@@ -38,6 +40,8 @@ export interface BrowseQuery {
   plan?: Plan | undefined;
   tier?: InstallTier | undefined;
   category?: string | undefined;
+  /** A catalog id: only that catalog's apps. */
+  source?: string | undefined;
   sort?: Sort | undefined;
 }
 
@@ -77,6 +81,7 @@ export function matchesFilters(app: BrowsableApp, query: BrowseQuery): boolean {
   if (query.plan !== undefined && app.plan !== query.plan) return false;
   if (query.tier !== undefined && app.tier !== query.tier) return false;
   if (query.category !== undefined && !app.categories.includes(query.category)) return false;
+  if (query.source !== undefined && app.source?.id !== query.source) return false;
   return true;
 }
 
@@ -120,7 +125,8 @@ export function isFiltered(query: BrowseQuery): boolean {
     query.installed !== undefined ||
     query.plan !== undefined ||
     query.tier !== undefined ||
-    query.category !== undefined
+    query.category !== undefined ||
+    query.source !== undefined
   );
 }
 

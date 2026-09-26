@@ -1,6 +1,6 @@
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import { readCapabilitiesView } from "../capabilities/capabilities.server";
-import { readCachedCatalogIndex } from "../catalog/index.server";
+import { readEnabledCatalogs } from "../catalog/merged.server";
 import type { Database } from "../db/client";
 import { readSettings, SETTING } from "../db/settings";
 import { sandboxBinding } from "../sandbox/binding";
@@ -27,16 +27,19 @@ export async function readChecklistData(
   env: { KV: KVNamespace; SANDBOX?: unknown; DB: D1Database },
   db: Database,
 ): Promise<ChecklistData> {
-  const [view, row, index, sandboxJobs] = await Promise.all([
+  const [view, row, reads, sandboxJobs] = await Promise.all([
     readCapabilitiesView(db),
     readSettings(db, [SETTING.accountId]),
-    readCachedCatalogIndex(env.KV),
+    readEnabledCatalogs(env, { refreshOnMiss: false }),
     readSandboxJobState(env.DB),
   ]);
+  // What the enabled catalogs' apps need, from their cached indexes.
+  const cached = reads.filter((r) => r.ok);
+  const apps = cached.flatMap((r) => (r.ok ? r.index.apps : []));
   return {
     view,
     sandbox: sandboxBinding(env) === undefined ? "off" : "enabled",
-    needs: index === null ? null : catalogNeeds(index.apps),
+    needs: cached.length === 0 ? null : catalogNeeds(apps),
     accountId: row.account_id || null,
     sandboxJobs,
   };

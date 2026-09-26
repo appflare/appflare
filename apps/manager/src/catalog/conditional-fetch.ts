@@ -1,4 +1,5 @@
 import type { FetchLike } from "@appflare/cf-api";
+import { readLimited } from "./read-limited";
 
 /**
  * A GET of a catalog JSON file that sends the ETag of the copy already
@@ -65,6 +66,13 @@ export async function storeIfChanged(
   return unchangedBody ? "new-etag" : "stored";
 }
 
+/**
+ * The largest catalog JSON file (an index or a stats file) a manager reads.
+ * The official index is a few hundred kilobytes; an added catalog's site is
+ * not trusted to stay small, and a Worker holds the whole body in memory.
+ */
+export const MAX_CATALOG_JSON_BYTES = 4 * 1024 * 1024;
+
 export type ConditionalResult =
   | { status: "not-modified" }
   | { status: "ok"; json: unknown; etag: string | null };
@@ -84,12 +92,15 @@ export function validatorFor(metadata: unknown, url: string, format: number): st
 /**
  * Fetches `url` as JSON, sending `If-None-Match` when `etag` is given.
  * `label` names the file in error messages ("catalog", "catalog stats").
+ * A body above `maxBytes` is refused, by its declared length before
+ * anything is read, else as soon as the read passes the limit.
  */
 export async function fetchCatalogJson(
   fetchImpl: FetchLike,
   url: string,
   etag: string | null,
   label: string,
+  maxBytes: number = MAX_CATALOG_JSON_BYTES,
 ): Promise<ConditionalResult> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (etag !== null) headers["if-none-match"] = etag;
@@ -109,8 +120,29 @@ export async function fetchCatalogJson(
     await response.body?.cancel();
     throw new CatalogError(`The ${label} at ${url} answered HTTP ${response.status}.`);
   }
+  const tooLarge = () =>
+    new CatalogError(
+      `The ${label} at ${url} is larger than ${maxBytes / 1024 / 1024} MiB, the most Appflare reads.`,
+    );
+  if (Number(response.headers.get("content-length") ?? "0") > maxBytes) {
+    await response.body?.cancel();
+    throw tooLarge();
+  }
+  let bytes: Uint8Array | null;
   try {
-    return { status: "ok", json: await response.json(), etag: response.headers.get("etag") };
+    bytes = await readLimited(response.body, maxBytes);
+  } catch (error) {
+    throw new CatalogError(
+      `Could not read the ${label} at ${url}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (bytes === null) throw tooLarge();
+  try {
+    return {
+      status: "ok",
+      json: JSON.parse(new TextDecoder().decode(bytes)),
+      etag: response.headers.get("etag"),
+    };
   } catch {
     throw new CatalogError(`The ${label} at ${url} did not return JSON.`);
   }

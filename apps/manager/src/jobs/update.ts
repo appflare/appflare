@@ -9,8 +9,10 @@ import {
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
+import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
-import { readCachedCatalogApp } from "../catalog/index.server";
+import { readCachedListing } from "../catalog/merged.server";
+import { unsignedTierRefusal } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs, jobs, resources, source_builds } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -244,7 +246,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         origin = { kind: "prebuilt", build: params.prebuilt };
       } else {
         if (env.KV === undefined) throw new JobError("the catalog cache is not available");
-        const app = await readCachedCatalogApp(env.KV, install.app_slug);
+        // Its own catalog only: another catalog listing the same slug never updates it.
+        const app =
+          (
+            await readCachedListing(
+              { KV: env.KV, DB: env.DB },
+              install.catalog_id,
+              install.app_slug,
+            )
+          )?.app ?? null;
         const refusal = updateRefusal({
           installedVersion: install.catalog_version,
           targetVersion: params.version,
@@ -253,6 +263,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         if (refusal !== null || app === null) {
           throw new JobError(refusal ?? "the app is no longer in the catalog");
         }
+        const unsigned = unsignedTierRefusal(install.catalog_id, app.tier);
+        if (unsigned !== null) throw new JobError(unsigned);
         origin = artifactOriginOf(app, params.buildConfirmed === true);
       }
       const rows = await orm
@@ -293,6 +305,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
             parseStoredCapabilities(settings.account_capabilities),
           ).plan === "paid",
         slug: install.app_slug,
+        catalogId: install.catalog_id,
         workerName: install.worker_name,
         fromVersion: install.catalog_version,
         recordedVersionId: install.current_version_id,
@@ -316,9 +329,17 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     steps.setAccountId(started.accountId);
     const { workerName, workersDev } = started;
 
-    // 1. The new artifact manifest (a sandbox tier app is built first).
-    const source = await resolveArtifactPhase(steps, env, deps.signingKeys, {
+    // 1. The new artifact manifest (a sandbox tier app is built first),
+    // verified with the keys of the install's own catalog and no others.
+    steps.current = "catalog keys";
+    const trust = await catalogTrust(createDb(env.DB), started.catalogId, deps.signingKeys).catch(
+      (error: unknown) => {
+        throw error instanceof CatalogTrustError ? new JobError(error.message) : error;
+      },
+    );
+    const source = await resolveArtifactPhase(steps, env, trust.signingKeys, {
       installId: params.installId,
+      catalogId: trust.catalogId,
       slug: started.slug,
       version: params.version,
       origin: started.origin,

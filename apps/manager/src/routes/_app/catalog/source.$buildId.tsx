@@ -306,6 +306,8 @@ function Review({
       {waiting && build.purpose === "install" && (
         <InstallForm
           catalog={review.catalog}
+          // A catalog app built from source: its app key names its catalog.
+          {...(build.app === null ? {} : { appKey: build.app.slug })}
           varFields={review.varFields}
           subdomain={review.subdomain}
           canInstall={isAdmin}

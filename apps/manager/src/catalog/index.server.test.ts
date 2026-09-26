@@ -6,7 +6,6 @@ import {
   CATALOG_UPDATED_AT_KEY,
   catalogIndexUrl,
   DEFAULT_CATALOG_INDEX_URL,
-  getCatalogApp,
   getCatalogIndex,
   parseCatalogIndex,
   readCachedCatalogIndex,
@@ -116,19 +115,6 @@ describe("catalog index cache", () => {
       ok: false,
       error: `Could not reach the catalog at ${DEFAULT_CATALOG_INDEX_URL}: fetch failed`,
       updatedAt: null,
-    });
-  });
-
-  it("finds one app by slug", async () => {
-    const { kv } = fakeKv();
-    const api = serving(INDEX);
-    expect(await getCatalogApp({ KV: kv }, "cut", { fetch: api.fetch })).toMatchObject({
-      ok: true,
-      app: { slug: "cut" },
-    });
-    expect(await getCatalogApp({ KV: kv }, "nope", { fetch: api.fetch })).toEqual({
-      ok: true,
-      app: null,
     });
   });
 });

@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { desc, eq } from "drizzle-orm";
-import { getCatalogIndex } from "../catalog/index.server";
 import { managerUpdateView, readManagerLatest } from "../catalog/manager-releases.server";
+import { catalogLookup } from "../catalog/merged.server";
+import { installAppKey } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs } from "../db/schema";
 import { activeSelfUpdateJob } from "../jobs/self-update/guard";
@@ -18,12 +19,13 @@ import { type PendingUpdates, pendingUpdates } from "./pending-updates";
 export const getPendingUpdates = createServerFn({ method: "GET" }).handler(
   async (): Promise<PendingUpdates> => {
     await requireSession();
-    const [rows, read, latest, activeJobId] = await Promise.all([
+    const [rows, listed, latest, activeJobId] = await Promise.all([
       createDb(env.DB)
         .select({
           id: installs.id,
           status: installs.status,
           appSlug: installs.app_slug,
+          catalogId: installs.catalog_id,
           displayName: installs.display_name,
           workerName: installs.worker_name,
           catalogVersion: installs.catalog_version,
@@ -31,13 +33,18 @@ export const getPendingUpdates = createServerFn({ method: "GET" }).handler(
         .from(installs)
         .where(eq(installs.status, "installed"))
         .orderBy(desc(installs.installed_at)),
-      getCatalogIndex(env),
+      catalogLookup(env),
       readManagerLatest(env.KV),
       activeSelfUpdateJob(env.DB, env.JOBS),
     ]);
-    const versions = new Map(read.ok ? read.index.apps.map((a) => [a.slug, a.version]) : []);
+    const versions = new Map([...listed].map(([key, l]) => [key, l.app.version]));
     const manager = managerUpdateView(env.APPFLARE_VERSION, latest);
-    return pendingUpdates(rows, versions, {
+    // Each install is compared with its own catalog only (by app key).
+    const keyed = rows.map(({ catalogId, ...row }) => ({
+      ...row,
+      appSlug: installAppKey({ app_slug: row.appSlug, catalog_id: catalogId }),
+    }));
+    return pendingUpdates(keyed, versions, {
       current: manager.current,
       latest: manager.latest?.version ?? null,
       updateAvailable: manager.updateAvailable,

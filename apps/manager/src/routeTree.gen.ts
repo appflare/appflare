@@ -22,6 +22,7 @@ import { Route as AppJobsJobIdRouteImport } from './routes/_app/jobs/$jobId'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
 import { Route as AppSettingsAccountRouteImport } from './routes/_app/settings/account'
 import { Route as AppSettingsAppflareUpdatesRouteImport } from './routes/_app/settings/appflare-updates'
+import { Route as AppSettingsCatalogsRouteImport } from './routes/_app/settings/catalogs'
 import { Route as AppSettingsDomainsRouteImport } from './routes/_app/settings/domains'
 import { Route as AppSettingsNotificationsRouteImport } from './routes/_app/settings/notifications'
 import { Route as AppSettingsRemovedAppsRouteImport } from './routes/_app/settings/removed-apps'
@@ -99,6 +100,11 @@ const AppSettingsAppflareUpdatesRoute =
     path: '/settings/appflare-updates',
     getParentRoute: () => AppRoute,
   } as any)
+const AppSettingsCatalogsRoute = AppSettingsCatalogsRouteImport.update({
+  id: '/settings/catalogs',
+  path: '/settings/catalogs',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSettingsDomainsRoute = AppSettingsDomainsRouteImport.update({
   id: '/settings/domains',
   path: '/settings/domains',
@@ -167,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/settings/account': typeof AppSettingsAccountRoute
   '/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
+  '/settings/catalogs': typeof AppSettingsCatalogsRoute
   '/settings/domains': typeof AppSettingsDomainsRoute
   '/settings/notifications': typeof AppSettingsNotificationsRoute
   '/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
@@ -192,6 +199,7 @@ export interface FileRoutesByTo {
   '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/settings/account': typeof AppSettingsAccountRoute
   '/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
+  '/settings/catalogs': typeof AppSettingsCatalogsRoute
   '/settings/domains': typeof AppSettingsDomainsRoute
   '/settings/notifications': typeof AppSettingsNotificationsRoute
   '/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
@@ -219,6 +227,7 @@ export interface FileRoutesById {
   '/_app/jobs/$jobId': typeof AppJobsJobIdRoute
   '/_app/settings/account': typeof AppSettingsAccountRoute
   '/_app/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
+  '/_app/settings/catalogs': typeof AppSettingsCatalogsRoute
   '/_app/settings/domains': typeof AppSettingsDomainsRoute
   '/_app/settings/notifications': typeof AppSettingsNotificationsRoute
   '/_app/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
@@ -246,6 +255,7 @@ export interface FileRouteTypes {
     | '/jobs/$jobId'
     | '/settings/account'
     | '/settings/appflare-updates'
+    | '/settings/catalogs'
     | '/settings/domains'
     | '/settings/notifications'
     | '/settings/removed-apps'
@@ -271,6 +281,7 @@ export interface FileRouteTypes {
     | '/jobs/$jobId'
     | '/settings/account'
     | '/settings/appflare-updates'
+    | '/settings/catalogs'
     | '/settings/domains'
     | '/settings/notifications'
     | '/settings/removed-apps'
@@ -297,6 +308,7 @@ export interface FileRouteTypes {
     | '/_app/jobs/$jobId'
     | '/_app/settings/account'
     | '/_app/settings/appflare-updates'
+    | '/_app/settings/catalogs'
     | '/_app/settings/domains'
     | '/_app/settings/notifications'
     | '/_app/settings/removed-apps'
@@ -418,6 +430,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsAppflareUpdatesRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings/catalogs': {
+      id: '/_app/settings/catalogs'
+      path: '/settings/catalogs'
+      fullPath: '/settings/catalogs'
+      preLoaderRoute: typeof AppSettingsCatalogsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings/domains': {
       id: '/_app/settings/domains'
       path: '/settings/domains'
@@ -505,6 +524,7 @@ interface AppRouteChildren {
   AppJobsJobIdRoute: typeof AppJobsJobIdRoute
   AppSettingsAccountRoute: typeof AppSettingsAccountRoute
   AppSettingsAppflareUpdatesRoute: typeof AppSettingsAppflareUpdatesRoute
+  AppSettingsCatalogsRoute: typeof AppSettingsCatalogsRoute
   AppSettingsDomainsRoute: typeof AppSettingsDomainsRoute
   AppSettingsNotificationsRoute: typeof AppSettingsNotificationsRoute
   AppSettingsRemovedAppsRoute: typeof AppSettingsRemovedAppsRoute
@@ -523,6 +543,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppJobsJobIdRoute: AppJobsJobIdRoute,
   AppSettingsAccountRoute: AppSettingsAccountRoute,
   AppSettingsAppflareUpdatesRoute: AppSettingsAppflareUpdatesRoute,
+  AppSettingsCatalogsRoute: AppSettingsCatalogsRoute,
   AppSettingsDomainsRoute: AppSettingsDomainsRoute,
   AppSettingsNotificationsRoute: AppSettingsNotificationsRoute,
   AppSettingsRemovedAppsRoute: AppSettingsRemovedAppsRoute,

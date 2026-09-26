@@ -1,5 +1,6 @@
-import { readCachedCatalogIndex } from "../catalog/index.server";
 import { managerUpdateView, readManagerLatest } from "../catalog/manager-releases.server";
+import { catalogLookup } from "../catalog/merged.server";
+import { installAppKey } from "../catalog/sources";
 import { installLabel } from "../installs/display-name";
 import { pendingUpdates } from "../installs/pending-updates";
 import type { AppRef, NotificationFacts } from "./messages";
@@ -210,7 +211,7 @@ export async function sweepFinishedJobs(
 }
 
 const INSTALL_COLUMNS =
-  "id, app_slug, worker_name, display_name, catalog_version, manifest_json, health_status, status";
+  "id, app_slug, catalog_id, worker_name, display_name, catalog_version, manifest_json, health_status, status";
 
 /**
  * Update available (apps and Appflare) and health failing, from the caches
@@ -234,24 +235,26 @@ export async function detectConditions(
     ? (
         await db
           .prepare(`SELECT ${INSTALL_COLUMNS} FROM installs WHERE status = 'installed'`)
-          .all<InstallRow & { health_status: string | null; status: string }>()
+          .all<
+            InstallRow & { catalog_id: string | null; health_status: string | null; status: string }
+          >()
       ).results
     : [];
 
   if (wants(channels, "update_available")) {
-    const index = await readCachedCatalogIndex(env.KV);
-    if (index !== null) {
-      const apps = new Map(index.apps.map((a) => [a.slug, a]));
+    // Every enabled catalog's cached index; each install is compared with its own catalog's.
+    const apps = await catalogLookup(env, { refreshOnMiss: false });
+    if (apps.size > 0) {
       const pending = pendingUpdates(
         installs.map((r) => ({
           id: r.id,
           status: r.status,
-          appSlug: r.app_slug,
+          appSlug: installAppKey(r),
           displayName: r.display_name,
           workerName: r.worker_name,
           catalogVersion: r.catalog_version,
         })),
-        new Map(index.apps.map((a) => [a.slug, a.version])),
+        new Map([...apps].map(([key, l]) => [key, l.app.version])),
         { current: env.APPFLARE_VERSION, latest: null, updateAvailable: false, activeJobId: null },
       );
       const byId = new Map(installs.map((r) => [r.id, r]));
@@ -264,7 +267,7 @@ export async function detectConditions(
           occurredAt: now,
           facts: {
             type: "update_available",
-            app: appRefOf(row, apps.get(row.app_slug)?.name),
+            app: appRefOf(row, apps.get(installAppKey(row))?.app.name),
             from: update.version,
             to: update.latestVersion,
           },

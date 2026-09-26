@@ -7,6 +7,7 @@ import {
   getCatalogManifest,
   readCachedCatalogManifest,
 } from "./app-manifest.server";
+import { OFFICIAL_CATALOG_ID } from "./sources";
 
 /**
  * The facts of the catalog list's apps. The catalog index publishes them per
@@ -32,9 +33,13 @@ export const MANIFEST_FAILURE_TTL_SECONDS = 60 * 60;
 /** How long one background manifest fetch may take. */
 export const MANIFEST_FETCH_TIMEOUT_MS = 10_000;
 
-/** KV key remembering that `app`'s current version could not be read. */
-export function manifestFailureKey(app: Pick<IndexApp, "slug" | "version">): string {
-  return `catalog:manifest-failed:${app.slug}@${app.version}`;
+/** KV key remembering that `app`'s current version (in `catalogId`) could not be read. */
+export function manifestFailureKey(
+  app: Pick<IndexApp, "slug" | "version">,
+  catalogId: string = OFFICIAL_CATALOG_ID,
+): string {
+  const prefix = catalogId === OFFICIAL_CATALOG_ID ? "catalog" : `catalog:${catalogId}`;
+  return `${prefix}:manifest-failed:${app.slug}@${app.version}`;
 }
 
 /** `fetch` with a time limit on every call. */
@@ -64,14 +69,14 @@ async function warmManifest(
     });
   }
   if (!ok) {
-    await env.KV.put(manifestFailureKey(app), "1", {
+    await env.KV.put(manifestFailureKey(app, opts.catalogId), "1", {
       expirationTtl: MANIFEST_FAILURE_TTL_SECONDS,
     });
   }
 }
 
 /**
- * The facts of every app, by slug. A row that publishes its services and
+ * The facts of every app of one catalog (whose trust `opts` carries), by slug. A row that publishes its services and
  * categories answers alone, with no KV read. The others (rows from an index
  * written before the catalog published them) use cached manifests only, and
  * up to {@link LIST_MANIFEST_FETCHES} uncached manifests that have not failed
@@ -89,7 +94,9 @@ export async function listAppFacts(
     if (indexHasFacts(app)) facts.set(app.slug, appFacts(app, null));
     else needManifest.push(app);
   }
-  const cached = await Promise.all(needManifest.map((app) => readCachedCatalogManifest(env, app)));
+  const cached = await Promise.all(
+    needManifest.map((app) => readCachedCatalogManifest(env, app, opts.catalogId)),
+  );
   const uncached: IndexApp[] = [];
   needManifest.forEach((app, i) => {
     const read = cached[i] ?? null;
@@ -97,7 +104,9 @@ export async function listAppFacts(
     if (read === null) uncached.push(app);
   });
   const failed = await Promise.all(
-    uncached.map(async (app) => (await env.KV.get(manifestFailureKey(app))) !== null),
+    uncached.map(
+      async (app) => (await env.KV.get(manifestFailureKey(app, opts.catalogId))) !== null,
+    ),
   );
   const toFetch = uncached.filter((_, i) => !failed[i]).slice(0, LIST_MANIFEST_FETCHES);
   if (toFetch.length > 0) {

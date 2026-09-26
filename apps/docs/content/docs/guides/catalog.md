@@ -3,7 +3,8 @@ title: Browse the catalog
 description: What the catalog pages show before you install an app.
 ---
 
-Open **Catalog** in the manager. The list comes from the catalog's `index.json`,
+Open **Catalog** in the manager. The list comes from the catalog's `index.json`
+(and from any catalogs an admin added, see [Custom catalogs](/guides/custom-catalogs/)),
 which the manager fetches every 30 minutes and caches. Admins can select
 **Refresh** to fetch it now.
 
