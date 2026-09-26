@@ -19,6 +19,7 @@ import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { installDomainInput, workerNameSchema } from "../installs/install-input";
+import { varsUseWorkerUrl } from "../installs/install-vars";
 import { appSlugLabel } from "../installs/source-review";
 import { workersDevSubdomain } from "../installs/workers-dev";
 import {
@@ -582,8 +583,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // The address the admin asked for besides workers.dev, now that the
     // Worker serves; reported in the log, never a reason to fail.
+    let servedBy: string | null = null;
     if (params.domain !== undefined) {
-      await installDomainPhase(steps, {
+      ({ servedBy } = await installDomainPhase(steps, {
         db,
         installId: params.installId,
         workerName: params.workerName,
@@ -592,7 +594,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           path: appHealthPath(manifest.catalog.install),
           mode: appHealthMode(manifest.catalog.install),
         },
-      });
+        settingsUseWorkerUrl: varsUseWorkerUrl(manifest, params.vars),
+      }));
     }
 
     // 10. Record the install.
@@ -621,7 +624,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           .where(eq(jobs.id, params.jobId)),
       ]);
       log.info(
-        `Installed ${appSlugLabel(params.slug)} ${params.version} at ${url} (health: ${healthLabel(health)}).`,
+        `Installed ${appSlugLabel(params.slug)} ${params.version} at ${servedBy === null ? url : `https://${servedBy}/`} (health: ${healthLabel(health)}).`,
       );
       return {};
     });

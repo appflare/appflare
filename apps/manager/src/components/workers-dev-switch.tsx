@@ -9,7 +9,9 @@ import { setWorkersDev } from "../installs/workers-dev.functions";
 /**
  * `/apps/$installId`, "Serve on workers.dev" (admins): turns the app's
  * workers.dev URL off or on. Off is offered only while the app has a custom
- * domain, and the server checks that one of them answers as the app first.
+ * or external domain, and the server checks that one of them answers as the
+ * app first. While Appflare turned it off because a domain went live, a
+ * one-line note says so; using the switch makes it the admin's choice.
  */
 export function WorkersDevSwitch({ install }: { install: InstallDetail }) {
   const router = useRouter();
@@ -35,8 +37,11 @@ export function WorkersDevSwitch({ install }: { install: InstallDetail }) {
   }
 
   const idle = install.status === "installed" && install.activeJobId === null;
+  const domains = install.domains.length + install.externalDomains.length;
   // Turning it off needs another address; turning it back on never does.
-  const canChange = idle && (!enabled || install.domains.length > 0);
+  const canChange = idle && (!enabled || domains > 0);
+  // The note stands for the stored state; a change in flight reloads the page.
+  const note = enabled === install.workersDevEnabled ? install.workersDevNote : null;
   return (
     <LayerCard>
       <LayerCard.Primary className="grid gap-1 px-5 py-4">
@@ -46,12 +51,19 @@ export function WorkersDevSwitch({ install }: { install: InstallDetail }) {
           disabled={!canChange || pending}
           onCheckedChange={(next: boolean) => void onChange(next)}
         />
+        {note === "auto-off" && (
+          <Text as="span" size="sm">
+            {WORKERS_DEV_COPY.autoOff}
+          </Text>
+        )}
         <Text variant="secondary" size="sm">
           {!enabled
             ? WORKERS_DEV_COPY.offHelp
-            : install.domains.length === 0
-              ? WORKERS_DEV_COPY.noDomain
-              : WORKERS_DEV_COPY.onHelp(install.workersDevUrl ?? "its workers.dev URL")}
+            : note === "settings"
+              ? WORKERS_DEV_COPY.settingsKeep
+              : domains === 0
+                ? WORKERS_DEV_COPY.noDomain
+                : WORKERS_DEV_COPY.onHelp(install.workersDevUrl ?? "its workers.dev URL")}
         </Text>
         {error !== null && (
           <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />

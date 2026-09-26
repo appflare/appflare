@@ -6,7 +6,7 @@ import {
   type FetchLike,
   type Zone,
 } from "@appflare/cf-api";
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import {
   CUSTOM_DOMAINS_FEATURE,
@@ -17,8 +17,14 @@ import { createDb } from "../db/client";
 import { type HealthStatus, installs, resources } from "../db/schema";
 import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
 import { checkHostnameInZone } from "./custom-domain-input";
-import { ADDRESS_KINDS, CUSTOM_DOMAIN_KIND } from "./resource-kinds";
-import { lastAddressRefusal } from "./workers-dev.server";
+import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
+import {
+  applyDomainLive,
+  beforeDomainRemoval,
+  domainServesApp,
+  recordDomainLive,
+  WorkersDevError,
+} from "./workers-dev.server";
 
 /**
  * Custom domains of an install: a hostname in one of the account's zones that
@@ -373,8 +379,16 @@ interface InstallRow {
   status: string;
   workerName: string;
   manifestJson: string | null;
-  /** Whether the Worker answers on its workers.dev URL. */
-  workersDev: boolean;
+}
+
+/** Runs `run`, reporting a workers.dev refusal as a custom domain one. */
+async function asCustomDomainError<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof WorkersDevError) throw new CustomDomainError(error.message);
+    throw error;
+  }
 }
 
 async function readInstall(db: D1Database, installId: string): Promise<InstallRow> {
@@ -384,7 +398,6 @@ async function readInstall(db: D1Database, installId: string): Promise<InstallRo
       status: installs.status,
       workerName: installs.worker_name,
       manifestJson: installs.manifest_json,
-      workersDev: installs.workers_dev_enabled,
     })
     .from(installs)
     .where(eq(installs.id, installId))
@@ -424,22 +437,13 @@ export async function removeCustomDomainCore(
     throw new CustomDomainError("The uninstall removes this app's custom domains.");
   }
   const domain = await readDomain(deps.db, request);
-  // With workers.dev off, the last custom or external domain is the app's only address.
-  if (!install.workersDev) {
-    const others = await createDb(deps.db)
-      .select({ id: resources.id })
-      .from(resources)
-      .where(
-        and(
-          eq(resources.install_id, request.installId),
-          inArray(resources.kind, [...ADDRESS_KINDS]),
-          isNull(resources.deleted_at),
-          ne(resources.id, domain.id),
-        ),
-      );
-    const refusal = lastAddressRefusal(install.workersDev, others.length);
-    if (refusal !== null) throw new CustomDomainError(refusal);
-  }
+  // With workers.dev off, the last live domain is the app's only address.
+  await asCustomDomainError(() =>
+    beforeDomainRemoval(
+      { db: deps.db, api: async () => deps.api },
+      { installId: request.installId, resourceId: domain.id },
+    ),
+  );
   await detachCustomDomain(deps.api, {
     hostname: domain.name,
     cfId: domain.cf_id,
@@ -506,16 +510,26 @@ export interface CustomDomainCheck {
   detail: string;
   /** ISO 8601 */
   checkedAt: string;
+  /** The app answered through the domain, so this check turned workers.dev off. */
+  workersDevTurnedOff: boolean;
 }
 
 /**
  * "Check" next to a custom domain: one GET of `https://<hostname><health
- * path>`, the same probe as the install's "Check now". It is not recorded:
- * the install's health stays the check of its main address, and a new
- * domain may take a while before its certificate and DNS record are live.
+ * path>`, the same probe as the install's "Check now". The install's health
+ * stays the check of its main address, and a new domain may take a while
+ * before its certificate and DNS record are live. When the app answers, the
+ * domain is recorded as live (an address the app is opened at) and, with
+ * `api`, workers.dev may be turned off (`applyDomainLive`).
  */
 export async function checkCustomDomainCore(
-  deps: { db: D1Database; fetch: FetchLike; now?: () => Date },
+  deps: {
+    db: D1Database;
+    fetch: FetchLike;
+    /** For turning workers.dev off; without it a live domain is only recorded. */
+    api?: () => Promise<Pick<CloudflareClient, "workers">>;
+    now?: () => Date;
+  },
   request: { installId: string; resourceId: string },
 ): Promise<CustomDomainCheck> {
   const install = await readInstall(deps.db, request.installId);
@@ -527,11 +541,29 @@ export async function checkCustomDomainCore(
   const domain = await readDomain(deps.db, request);
   const check = healthCheckOfManifest(install.manifestJson);
   const url = `https://${domain.name}${check.path}`;
-  const settled = settleHealthProbe(await probeHealth(deps.fetch, url), check.mode);
+  const probe = await probeHealth(deps.fetch, url);
+  const settled = settleHealthProbe(probe, check.mode);
+  let workersDevTurnedOff = false;
+  if (domainServesApp(probe, check.mode)) {
+    const live = { installId: install.id, resourceId: domain.id, hostname: domain.name };
+    if (deps.api === undefined) {
+      await recordDomainLive(deps.db, live.resourceId, deps.now);
+    } else {
+      const { api } = deps;
+      const applied = await asCustomDomainError(() =>
+        applyDomainLive(
+          { db: deps.db, api, ...(deps.now === undefined ? {} : { now: deps.now }) },
+          live,
+        ),
+      );
+      workersDevTurnedOff = applied.turnedOff;
+    }
+  }
   return {
     hostname: domain.name,
     url,
     ...settled,
     checkedAt: (deps.now ?? (() => new Date()))().toISOString(),
+    workersDevTurnedOff,
   };
 }

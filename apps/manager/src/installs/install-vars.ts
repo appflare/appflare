@@ -197,3 +197,24 @@ export function resolveVars(
     warnings,
   };
 }
+
+/** Stands in for the Worker's URL while looking for where it ends up. */
+const WORKER_URL_MARKER = "https://worker-url.appflare.invalid";
+
+/**
+ * Whether any var the Worker gets is filled in with its URL
+ * (`{{workerUrl}}`), from the wrangler config, a catalog default, or what the
+ * admin entered.
+ */
+export function varsUseWorkerUrl(
+  manifest: VarManifest,
+  userVars: Readonly<Record<string, string>>,
+): boolean {
+  const { vars } = resolveVars(manifest, userVars, {
+    workerUrl: WORKER_URL_MARKER,
+    workerName: "",
+  });
+  return vars.some((v) =>
+    (v.type === "json" ? JSON.stringify(v.json) : v.text).includes(WORKER_URL_MARKER),
+  );
+}

@@ -33,6 +33,8 @@ import { recordedCatalog } from "../jobs/self-deploying/phases";
 import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
+import { type AddressDomain, type AppAddressInput, appAddress } from "./app-address";
+import { addressDomainOf, readAddressDomains } from "./app-address.server";
 import { displayNameInput, installLabel } from "./display-name";
 import { RenameInstallError, renameInstallCore } from "./display-name.server";
 import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
@@ -47,7 +49,8 @@ import {
 } from "./resource-kinds";
 import { REPOSITORY_SLUG_PREFIX } from "./source-review";
 import { catalogOnlyManifest, StartInstallError, startInstallCore } from "./start-install.server";
-import { domainHostnames, primaryDomain } from "./workers-dev";
+import { domainHostnames, primaryDomain, type WorkersDevChoice } from "./workers-dev";
+import { settingsUseWorkerUrl } from "./workers-dev.server";
 
 /** Installs: start one (admin), list them, and show one. Uninstall lives in `uninstall.functions.ts`. */
 
@@ -123,8 +126,8 @@ export interface InstallRow {
   version: string;
   latestVersion: string | null;
   updateAvailable: boolean;
-  /** Where the app is reached: its workers.dev URL, or its first custom domain while that is off. */
-  workerUrl: string | null;
+  /** Where "Open" takes the app (`appAddress`); null until installed, or with no address. */
+  address: string | null;
   /** ISO 8601 */
   updatedAt: string;
   /** ISO 8601; null until the install is uninstalled. */
@@ -158,6 +161,40 @@ function namesOf(row: typeof installs.$inferSelect) {
   return { ...names, label: installLabel(names) };
 }
 
+/** What `appAddress` needs of an install row. */
+function addressInput(
+  row: typeof installs.$inferSelect,
+  domains: AddressDomain[],
+  sub: string | null,
+): AppAddressInput {
+  return {
+    workerName: row.worker_name,
+    workersDevEnabled: row.workers_dev_enabled,
+    servedDomain: row.served_domain,
+    domains,
+    subdomain: sub,
+  };
+}
+
+function domainView(r: { id: string; name: string; live_at: Date | null }): CustomDomainView {
+  return { id: r.id, hostname: r.name, url: `https://${r.name}`, live: r.live_at !== null };
+}
+
+function isAddressKind(kind: string): boolean {
+  return (ADDRESS_KINDS as readonly string[]).includes(kind);
+}
+
+/** See `InstallDetail.workersDevNote`. */
+function workersDevNoteOf(
+  row: typeof installs.$inferSelect,
+  domains: readonly AddressDomain[],
+): InstallDetail["workersDevNote"] {
+  if (row.workers_dev_choice !== "auto" || row.build_kind === "self-deploying") return null;
+  if (!row.workers_dev_enabled) return "auto-off";
+  const live = domains.some((d) => d.live);
+  return live && settingsUseWorkerUrl(row.manifest_json, row.config_json) ? "settings" : null;
+}
+
 /** The health fields of an install row, for the list and the detail page. */
 function healthOf(row: typeof installs.$inferSelect) {
   return {
@@ -179,7 +216,7 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
   async (): Promise<InstallRow[]> => {
     await requireSession();
     const db = createDb(env.DB);
-    const [rows, read, sub, domainRows] = await Promise.all([
+    const [rows, read, sub, domains] = await Promise.all([
       db
         .select()
         .from(installs)
@@ -187,27 +224,11 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
         .orderBy(desc(installs.installed_at)),
       getCatalogIndex(env),
       subdomain(),
-      db
-        .select({
-          id: resources.id,
-          installId: resources.install_id,
-          kind: resources.kind,
-          name: resources.name,
-        })
-        .from(resources)
-        .where(and(inArray(resources.kind, [...ADDRESS_KINDS]), isNull(resources.deleted_at))),
+      readAddressDomains(db),
     ]);
     const catalog = new Map(read.ok ? read.index.apps.map((a) => [a.slug, a]) : []);
-    /** Where the app is reached: workers.dev, or its primary custom domain while that is off. */
-    const primaryUrl = (row: (typeof rows)[number]): string | null => {
-      const domain = row.workers_dev_enabled
-        ? null
-        : primaryDomain(
-            domainHostnames(domainRows.filter((d) => d.installId === row.id)),
-            row.served_domain,
-          );
-      return domain === null ? workersDevUrl(row.worker_name, sub) : `https://${domain}`;
-    };
+    const addressOf = (row: (typeof rows)[number]): string | null =>
+      appAddress(addressInput(row, domains.get(row.id) ?? [], sub));
     return rows.map((row) => {
       // An install from a repository is never the catalog's app of the same name.
       const listed = row.origin === "repository" ? undefined : catalog.get(row.app_slug);
@@ -223,7 +244,7 @@ export const listInstalls = createServerFn({ method: "GET" }).handler(
         latestVersion: listed?.version ?? null,
         updateAvailable:
           row.status === "installed" && isUpdateAvailable(row.catalog_version, listed?.version),
-        workerUrl: row.status === "installed" ? primaryUrl(row) : null,
+        address: row.status === "installed" ? addressOf(row) : null,
         updatedAt: row.updated_at.toISOString(),
         uninstalledAt: row.uninstalled_at?.toISOString() ?? null,
         ...healthOf(row),
@@ -249,6 +270,8 @@ export interface CustomDomainView {
   hostname: string;
   /** `https://<hostname>` */
   url: string;
+  /** A request through it has reached the app. */
+  live: boolean;
 }
 
 export interface InstallDetail extends InstallRow {
@@ -292,6 +315,14 @@ export interface InstallDetail extends InstallRow {
   activeJobId: string | null;
   /** The Worker answers on its workers.dev URL (else only on its custom domains). */
   workersDevEnabled: boolean;
+  /**
+   * Why workers.dev is where it is, when Appflare decided: `auto-off` (a
+   * domain went live), `settings` (a domain is live, but the Worker's
+   * settings hold its workers.dev URL); null otherwise.
+   */
+  workersDevNote: "auto-off" | "settings" | null;
+  /** Who sets workers.dev: Appflare, as domains go live and are removed, or an admin. */
+  workersDevChoice: WorkersDevChoice;
   /** `https://<worker>.<subdomain>.workers.dev`, whether or not it is on; null when the subdomain is unknown. */
   workersDevUrl: string | null;
   /** The install's automatic-update choice. */
@@ -374,6 +405,9 @@ export const getInstall = createServerFn({ method: "GET" })
           row.served_domain,
         );
     const primaryUrl = domain === null ? workerUrl : `https://${domain}`;
+    const addressDomains = resourceRows
+      .filter((r) => r.retained_at === null && isAddressKind(r.kind))
+      .map(addressDomainOf);
     let name = listed?.name ?? row.app_slug;
     let postInstall: string[] = [];
     let tokenPermissions: TokenPermission[] = [];
@@ -434,8 +468,11 @@ export const getInstall = createServerFn({ method: "GET" })
       latestVersion: listed?.version ?? null,
       updateAvailable:
         row.status === "installed" && isUpdateAvailable(row.catalog_version, listed?.version),
-      workerUrl: row.status === "installed" ? primaryUrl : null,
+      address:
+        row.status === "installed" ? appAddress(addressInput(row, addressDomains, sub)) : null,
       workersDevEnabled: row.workers_dev_enabled,
+      workersDevNote: workersDevNoteOf(row, addressDomains),
+      workersDevChoice: row.workers_dev_choice,
       workersDevUrl: workerUrl,
       autoUpdate: row.auto_update,
       autoUpdateDefault: autoUpdateDefaults.apps,
@@ -466,12 +503,8 @@ export const getInstall = createServerFn({ method: "GET" })
       resources: live.filter((r) => r.kind !== "secret" && r.kind !== EMAIL_ROUTE_KIND).map(view),
       retained: resourceRows.filter((r) => r.retained_at !== null).map(view),
       secretNames: live.filter((r) => r.kind === "secret").map((r) => r.name),
-      domains: live
-        .filter((r) => r.kind === CUSTOM_DOMAIN_KIND)
-        .map((r) => ({ id: r.id, hostname: r.name, url: `https://${r.name}` })),
-      externalDomains: live
-        .filter((r) => r.kind === CUSTOM_HOSTNAME_KIND)
-        .map((r) => ({ id: r.id, hostname: r.name, url: `https://${r.name}` })),
+      domains: live.filter((r) => r.kind === CUSTOM_DOMAIN_KIND).map(domainView),
+      externalDomains: live.filter((r) => r.kind === CUSTOM_HOSTNAME_KIND).map(domainView),
       emailRoutes: emailRouteViews(
         live
           .filter((r) => r.kind === EMAIL_ROUTE_KIND)

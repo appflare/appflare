@@ -20,7 +20,7 @@ import {
   WarningIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { accountTokenTemplateUrl } from "../cloudflare/token-template";
 import { checkSubdomainInZone } from "../installs/custom-domain-input";
 import {
@@ -105,9 +105,18 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
   );
 }
 
+/** Between two automatic checks of a domain that does not reach the app yet. */
+const AUTO_CHECK_MS = 10_000;
+/** Automatic checks at most per page view: about three minutes. */
+const AUTO_CHECKS = 18;
+
 /**
- * One probe of the app on this hostname, shown here and not recorded: the
- * install's health stays the check of its workers.dev URL.
+ * One probe of the app on this hostname, shown here. The install's health
+ * stays the check of its main address. A domain that has not reached the
+ * app yet (just added, its certificate on the way) is checked on its own
+ * every {@link AUTO_CHECK_MS} while the page is open; once the app answers,
+ * the server records the domain as live and may turn workers.dev off, and
+ * the page reloads to show it.
  */
 function DomainCheck({
   installId,
@@ -118,19 +127,62 @@ function DomainCheck({
   domain: CustomDomainView;
   enabled: boolean;
 }) {
+  const router = useRouter();
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<CustomDomainCheck | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function onCheck() {
+  const check = useCallback(async (): Promise<CustomDomainCheck | null> => {
     setPending(true);
     setError(null);
     try {
-      setResult(await checkCustomDomain({ data: { installId, resourceId: domain.id } }));
+      const next = await checkCustomDomain({ data: { installId, resourceId: domain.id } });
+      setResult(next);
+      return next;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not check the domain.");
+      return null;
+    } finally {
+      setPending(false);
     }
-    setPending(false);
+  }, [installId, domain.id]);
+
+  const reached = useCallback(
+    async (next: CustomDomainCheck | null) => {
+      // The domain just went live (and workers.dev may be off): show the new address.
+      if (
+        next !== null &&
+        next.status === "verified" &&
+        (!domain.live || next.workersDevTurnedOff)
+      ) {
+        await router.invalidate();
+        return true;
+      }
+      return false;
+    },
+    [router, domain.live],
+  );
+
+  useEffect(() => {
+    if (!enabled || domain.live) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    const tick = async () => {
+      attempt++;
+      const next = await check();
+      if (!live || (await reached(next))) return;
+      if (attempt < AUTO_CHECKS) timer = setTimeout(tick, AUTO_CHECK_MS);
+    };
+    void tick();
+    return () => {
+      live = false;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [enabled, domain.live, check, reached]);
+
+  async function onCheck() {
+    await reached(await check());
   }
 
   return (
@@ -317,7 +369,10 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
         <LayerDialog.Title>Add a custom domain</LayerDialog.Title>
         <LayerDialog.Description>
           Serve {install.label} on a hostname in one of your domains on Cloudflare. Cloudflare
-          creates its DNS record and certificate; the workers.dev URL keeps working.
+          creates its DNS record and certificate.{" "}
+          {install.workersDevChoice === "auto" && install.workersDevEnabled
+            ? "Once the app answers there, workers.dev is turned off; its switch turns it back on."
+            : "The workers.dev URL stays as its switch is set."}
         </LayerDialog.Description>
         <LayerDialog.Body>
           <div className="grid gap-4">
@@ -438,7 +493,7 @@ function RemoveDomainDialog({
         </Button>
       )}
       title={`Remove ${domain.hostname}`}
-      description="The app stops answering on this hostname. The workers.dev URL keeps working."
+      description="The app stops answering on this hostname. If this is its last live domain while workers.dev is off, Appflare turns workers.dev back on first, unless an admin turned it off."
       actionLabel="Remove domain"
       onConfirm={async () => {
         await removeCustomDomain({ data: { installId, resourceId: domain.id } });

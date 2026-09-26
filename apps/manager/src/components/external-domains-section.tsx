@@ -124,6 +124,7 @@ function ExternalDomainCard({
   domain: CustomDomainView;
   canRemove: boolean;
 }) {
+  const router = useRouter();
   const [status, setStatus] = useState<ExternalDomainStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -138,6 +139,13 @@ function ExternalDomainCard({
         });
         setStatus(next);
         setError(null);
+        // The domain just went live (and workers.dev may be off): show the new address.
+        if (
+          next.workersDevTurnedOff === true ||
+          (!domain.live && next.health?.status === "verified")
+        ) {
+          await router.invalidate();
+        }
         return next;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not read the domain's state.");
@@ -146,7 +154,7 @@ function ExternalDomainCard({
         setChecking(false);
       }
     },
-    [installId, domain.id],
+    [installId, domain.id, domain.live, router],
   );
 
   useEffect(() => {

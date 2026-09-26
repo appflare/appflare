@@ -55,6 +55,8 @@ export interface ExternalDomainStatus {
   health: { status: HealthStatus; detail: string; url: string } | null;
   /** ISO 8601 */
   checkedAt: string;
+  /** The app answered through the domain, so this read turned workers.dev off. */
+  workersDevTurnedOff?: boolean;
 }
 
 /** Custom hostname states in which it will not serve without someone acting. */

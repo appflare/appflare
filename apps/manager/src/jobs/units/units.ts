@@ -45,9 +45,13 @@ import {
   type AttachDomainResult,
   attachDomainInputSchema,
   runAttachDomain,
+  runWaitForCustomDomain,
   runWaitForExternalDomain,
+  type WaitForCustomDomainInput,
+  type WaitForCustomDomainResult,
   type WaitForExternalDomainInput,
   type WaitForExternalDomainResult,
+  waitForCustomDomainInputSchema,
   waitForExternalDomainInputSchema,
 } from "./domains";
 import {
@@ -228,6 +232,10 @@ export interface JobUnitsApi {
   waitForExternalDomain(
     input: WaitForExternalDomainInput,
   ): Promise<UnitResult<WaitForExternalDomainResult>>;
+  /** Asks the app through a newly attached custom domain until it answers. */
+  waitForCustomDomain(
+    input: WaitForCustomDomainInput,
+  ): Promise<UnitResult<WaitForCustomDomainResult>>;
   /** Polls the sandbox Worker's container applications until they are ready for builds. */
   waitForSandboxContainers(
     input: WaitForSandboxContainersInput,
@@ -492,6 +500,10 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
     waitForExternalDomain: (input) =>
       parsed(waitForExternalDomainInputSchema, input, "waitForExternalDomain", (request) =>
         runWaitForExternalDomain(env, deps, request),
+      ),
+    waitForCustomDomain: (input) =>
+      parsed(waitForCustomDomainInputSchema, input, "waitForCustomDomain", (request) =>
+        runWaitForCustomDomain(env, deps, request),
       ),
     waitForSandboxContainers: (input) =>
       parsed(waitForSandboxContainersInputSchema, input, "waitForSandboxContainers", (request) =>

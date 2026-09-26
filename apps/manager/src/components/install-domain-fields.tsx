@@ -12,6 +12,7 @@ import type { DomainOptions } from "../installs/custom-domains.server";
 import type { ExternalDomainOptions } from "../installs/external-domain-input";
 import { getExternalDomainOptions } from "../installs/external-domains.functions";
 import type { InstallDomainInput } from "../installs/install-input";
+import { WORKERS_DEV_COPY } from "../installs/workers-dev";
 import { ValidationChoice } from "./external-domains-section";
 import { ZoneHostnameField } from "./zone-hostname-field";
 
@@ -105,7 +106,7 @@ export function InstallDomainFields({
     <div className="grid gap-4">
       <Radio.Group
         legend="Address"
-        description="The install adds a domain once the app runs; its workers.dev URL keeps working."
+        description="The install adds a domain once the app runs."
         value={choice}
         onValueChange={(v) => {
           setChoice(v === "custom" || v === "external" ? v : "none");
@@ -131,6 +132,12 @@ export function InstallDomainFields({
           description="A hostname whose DNS is managed elsewhere. Its owner adds a CNAME to the gateway."
         />
       </Radio.Group>
+
+      {choice !== "none" && (
+        <Text variant="secondary" size="sm">
+          {WORKERS_DEV_COPY.installNote}. Serve on workers.dev on the app's page turns it back on.
+        </Text>
+      )}
 
       {loading && loadError === null && (
         <div className="flex items-center gap-2">

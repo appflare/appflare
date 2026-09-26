@@ -25,6 +25,9 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *     2 on a retried step), and on uninstall each route (1 to 4);
  *   - 1 per health or canary probe (up to 12 probes for the live check, 6 for
  *     an app's canary, 10 for Appflare's own);
+ *   - for an install that asked for a domain: the attach and the wait for
+ *     it (1 each as unit calls), and turning workers.dev off once the app
+ *     answers through it (1);
  *   - for a build or installer run in the sandbox Worker (paid tiers): the
  *     wait for the sandbox Worker to settle, 1 per attempt of the unit
  *     `settleSandbox` (at most 2), which reads the deployment and asks the

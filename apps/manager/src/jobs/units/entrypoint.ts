@@ -6,7 +6,11 @@ import type { HealthSweepReport } from "../../notifications/health-sweep.server"
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
 import type { SetSandboxBindingResult, WaitForSandboxContainersResult } from "../../sandbox/units";
 import type { CronTriggerScan } from "../install/cron-limit";
-import type { AttachDomainResult, WaitForExternalDomainResult } from "./domains";
+import type {
+  AttachDomainResult,
+  WaitForCustomDomainResult,
+  WaitForExternalDomainResult,
+} from "./domains";
 import type { UnitResult } from "./result";
 import type { SandboxSettleResult } from "./sandbox-settle";
 import {
@@ -60,6 +64,10 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   waitForExternalDomain(input: unknown): Promise<UnitResult<WaitForExternalDomainResult>> {
     return createJobUnits(this.env).waitForExternalDomain(input);
+  }
+
+  waitForCustomDomain(input: unknown): Promise<UnitResult<WaitForCustomDomainResult>> {
+    return createJobUnits(this.env).waitForCustomDomain(input);
   }
 
   waitForSandboxContainers(input: unknown): Promise<UnitResult<WaitForSandboxContainersResult>> {

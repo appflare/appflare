@@ -232,7 +232,12 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         throw new JobError("the snapshot does not belong to this install");
       }
       const recordedRows = await orm
-        .select({ id: resources.id, kind: resources.kind, name: resources.name })
+        .select({
+          id: resources.id,
+          kind: resources.kind,
+          name: resources.name,
+          live_at: resources.live_at,
+        })
         .from(resources)
         .where(
           and(

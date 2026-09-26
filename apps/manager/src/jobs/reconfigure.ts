@@ -303,6 +303,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         storedVars: parseStoredVars(install.config_json),
         workersDev: install.workers_dev_enabled,
         servedDomain: install.served_domain,
+        // The app's domains, live ones first, for where it is reached below.
+        domains: domainHostnames(rows) as string[] | undefined,
         resources: rows
           .filter((r) => r.kind !== EMAIL_ROUTE_KIND)
           .map(
@@ -466,7 +468,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       workerName,
       subdomain,
       workersDev,
-      domains: domainHostnames(started.resources),
+      // A step output recorded before `domains` existed has only the resources.
+      domains: started.domains ?? domainHostnames(started.resources),
       served: started.servedDomain,
     });
     const url = `${appBase}${healthPath}`;

@@ -386,6 +386,55 @@ describe("externalDomainStatusCore", () => {
     expect(externalDomainPhase(status)).toEqual({ label: "Active", tone: "success" });
   });
 
+  async function probeActive(applyDefaults: boolean, answer: Response) {
+    const saas = await withGateway();
+    const { resourceId } = await addExternalDomainCore(deps(saas), {
+      installId: INSTALL_ID,
+      hostname: "go.customer.test",
+      validation: "http",
+    });
+    saas.activate("go.customer.test");
+    const fetch = (async () => answer) as unknown as typeof globalThis.fetch;
+    const status = await externalDomainStatusCore(deps(saas, fetch), {
+      installId: INSTALL_ID,
+      resourceId,
+      probe: true,
+      applyDefaults,
+    });
+    const install = await env.DB.prepare(
+      "SELECT workers_dev_enabled, served_domain FROM installs",
+    ).first();
+    const domain = await env.DB.prepare("SELECT live_at FROM resources WHERE id = ?1")
+      .bind(resourceId)
+      .first();
+    return { saas, status, install, domain };
+  }
+
+  it("turns workers.dev off for an admin once the app answers through the domain", async () => {
+    const { saas, status, install, domain } = await probeActive(true, new Response("ok"));
+    expect(status.workersDevTurnedOff).toBe(true);
+    expect(saas.world.subdomain).toEqual([
+      { script: "cut", enabled: false, previews_enabled: true },
+    ]);
+    expect(install).toEqual({ workers_dev_enabled: 0, served_domain: "go.customer.test" });
+    expect(domain).toEqual({ live_at: NOW.getTime() });
+  });
+
+  it("only records the domain as live when a member reads it", async () => {
+    const { saas, status, install, domain } = await probeActive(false, new Response("ok"));
+    expect(status.workersDevTurnedOff).toBeUndefined();
+    expect(saas.world.subdomain).toEqual([]);
+    expect(install).toEqual({ workers_dev_enabled: 1, served_domain: null });
+    expect(domain).toEqual({ live_at: NOW.getTime() });
+  });
+
+  it("does not count a server error through the domain as live", async () => {
+    const { saas, status, domain } = await probeActive(true, new Response("oops", { status: 502 }));
+    expect(status.health?.status).toBe("unhealthy");
+    expect(saas.world.subdomain).toEqual([]);
+    expect(domain).toEqual({ live_at: null });
+  });
+
   it("says so when Cloudflare no longer has the custom hostname", async () => {
     const saas = await withGateway();
     const { resourceId } = await addExternalDomainCore(deps(saas), {
@@ -429,20 +478,46 @@ describe("removeExternalDomainCore", () => {
     expect((await rows()).every((r) => r.deleted_at !== null)).toBe(true);
   });
 
-  it("refuses to remove the app's only address while workers.dev is off", async () => {
+  async function onlyAddress(choice: "auto" | "manual") {
     const saas = await withGateway();
     const { resourceId } = await addExternalDomainCore(deps(saas), {
       installId: INSTALL_ID,
       hostname: "go.customer.test",
       validation: "http",
     });
-    await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0 WHERE id = ?1")
-      .bind(INSTALL_ID)
-      .run();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE resources SET live_at = 1 WHERE id = ?1").bind(resourceId),
+      env.DB.prepare(
+        "UPDATE installs SET workers_dev_enabled = 0, workers_dev_choice = ?2, served_domain = 'go.customer.test' WHERE id = ?1",
+      ).bind(INSTALL_ID, choice),
+    ]);
+    return { saas, resourceId };
+  }
+
+  it("refuses to remove the app's only address while an admin turned workers.dev off", async () => {
+    const { saas, resourceId } = await onlyAddress("manual");
     await expect(
       removeExternalDomainCore(deps(saas), { installId: INSTALL_ID, resourceId }),
     ).rejects.toThrow(ExternalDomainError);
     expect(saas.world.hostnames).toHaveLength(1);
+    expect(saas.world.subdomain).toEqual([]);
+  });
+
+  it("turns workers.dev back on first when Appflare turned it off", async () => {
+    const { saas, resourceId } = await onlyAddress("auto");
+    await removeExternalDomainCore(deps(saas), { installId: INSTALL_ID, resourceId });
+    expect(saas.world.subdomain).toEqual([
+      { script: "cut", enabled: true, previews_enabled: true },
+    ]);
+    expect(saas.world.hostnames).toEqual([]);
+    const install = await env.DB.prepare(
+      "SELECT workers_dev_enabled, workers_dev_choice, served_domain FROM installs",
+    ).first();
+    expect(install).toEqual({
+      workers_dev_enabled: 1,
+      workers_dev_choice: "auto",
+      served_domain: null,
+    });
   });
 });
 

@@ -12,7 +12,7 @@ import { fakeSelf } from "../../test/fake-self";
 import { fakeStep } from "../../test/fake-step";
 import { INSTALL_ID, seedInstall } from "../../test/seed-install";
 import { createJobSteps } from "../steps";
-import { EXTERNAL_DOMAIN_MAX_POLLS } from "../units/domains";
+import { CUSTOM_DOMAIN_MAX_PROBES, EXTERNAL_DOMAIN_MAX_POLLS } from "../units/domains";
 import { installDomainPhase } from "./domain";
 
 /**
@@ -33,13 +33,27 @@ beforeEach(async () => {
     .run();
 });
 
-async function run(domain: InstallDomainInput, saas: ReturnType<typeof fakeSaas>) {
+async function run(
+  domain: InstallDomainInput,
+  saas: ReturnType<typeof fakeSaas>,
+  opts: { settingsUseWorkerUrl?: boolean; answer?: () => Response } = {},
+) {
   const probes: string[] = [];
-  // The app answers on its external domain; everything else is the SaaS fake.
+  const subdomainCalls: unknown[] = [];
+  // The app answers on its domain; the subdomain call and the custom domains
+  // API are faked here; everything else is the SaaS fake.
   const fetch: FetchLike = async (input, init) => {
-    if (input.startsWith("https://api.cloudflare.com/")) return saas.fetch(input, init);
+    if (input.startsWith("https://api.cloudflare.com/")) {
+      const path = new URL(input).pathname;
+      if (path.endsWith("/workers/scripts/cut/subdomain")) {
+        subdomainCalls.push(JSON.parse(String(init?.body)));
+        return Response.json({ success: true, errors: [], messages: [], result: {} });
+      }
+      if (path.endsWith("/workers/domains")) return customDomains(init);
+      return saas.fetch(input, init);
+    }
     probes.push(input);
-    return new Response("<html>cut</html>");
+    return opts.answer?.() ?? new Response("<html>cut</html>");
   };
   const unitEnv = { CF_API_TOKEN: TOKEN };
   const self = fakeSelf(unitEnv, { fetch, sleep: async () => {} });
@@ -54,12 +68,13 @@ async function run(domain: InstallDomainInput, saas: ReturnType<typeof fakeSaas>
     JOB,
   );
   steps.setAccountId(ACC);
-  await installDomainPhase(steps, {
+  const { servedBy } = await installDomainPhase(steps, {
     db: env.DB,
     installId: INSTALL_ID,
     workerName: "cut",
     domain,
     health: { path: "/", mode: "default" },
+    settingsUseWorkerUrl: opts.settingsUseWorkerUrl ?? false,
   });
   const logs = (
     await env.DB.prepare("SELECT level, message FROM job_logs WHERE job_id = ?1 ORDER BY id")
@@ -73,7 +88,34 @@ async function run(domain: InstallDomainInput, saas: ReturnType<typeof fakeSaas>
       .bind(INSTALL_ID)
       .all()
   ).results;
-  return { step, self, logs, rows, probes };
+  return { step, self, logs, rows, probes, subdomainCalls, servedBy };
+}
+
+/** The Workers custom domains API: nothing attached yet, and every attach succeeds. */
+async function customDomains(init?: RequestInit): Promise<Response> {
+  const result =
+    init?.method === "PUT"
+      ? { id: "cfd-1", ...(JSON.parse(String(init.body)) as object), zone_name: "own.example" }
+      : [];
+  return Response.json({ success: true, errors: [], messages: [], result });
+}
+
+async function installRow() {
+  return env.DB.prepare(
+    "SELECT workers_dev_enabled, workers_dev_choice, served_domain FROM installs WHERE id = ?1",
+  )
+    .bind(INSTALL_ID)
+    .first();
+}
+
+async function liveDomains() {
+  return (
+    await env.DB.prepare(
+      "SELECT name FROM resources WHERE install_id = ?1 AND live_at IS NOT NULL ORDER BY rowid",
+    )
+      .bind(INSTALL_ID)
+      .all<{ name: string }>()
+  ).results.map((r) => r.name);
 }
 
 async function gateway() {
@@ -104,8 +146,18 @@ describe("installDomainPhase", () => {
     expect(r.step.names).toEqual([
       "add external domain go.customer.test",
       "wait for go.customer.test",
+      "go.customer.test is live",
     ]);
     expect(r.self.calls.map((c) => c.unit)).toEqual(["attachDomain", "waitForExternalDomain"]);
+    // The app answers through the domain: workers.dev goes off, previews stay on.
+    expect(r.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
+    expect(await installRow()).toEqual({
+      workers_dev_enabled: 0,
+      workers_dev_choice: "auto",
+      served_domain: "go.customer.test",
+    });
+    expect(await liveDomains()).toEqual(["go.customer.test"]);
+    expect(r.servedBy).toBe("go.customer.test");
     expect(r.rows).toEqual([
       {
         kind: "custom_hostname",
@@ -126,6 +178,10 @@ describe("installDomainPhase", () => {
     );
     expect(r.rows).toHaveLength(1);
     expect(r.probes).toEqual([]);
+    // Not live: workers.dev stays the app's address.
+    expect(r.subdomainCalls).toEqual([]);
+    expect(await installRow()).toMatchObject({ workers_dev_enabled: 1, served_domain: null });
+    expect(await liveDomains()).toEqual([]);
     const waited = saas.world.calls.filter((c) =>
       c.startsWith("GET /zones/z-gw/custom_hostnames/ch-"),
     );
@@ -178,6 +234,70 @@ describe("installDomainPhase", () => {
     expect(r.self.calls).toEqual([]);
     expect(saas.world.hostnames).toEqual([]);
     expect(r.logs.at(-1)?.message).toContain("already a domain of another app");
+  });
+
+  it("attaches a custom domain, waits until the app answers there, then turns workers.dev off", async () => {
+    const saas = fakeSaas();
+    let answers = 0;
+    const r = await run({ kind: "custom", zoneId: "z-own", hostname: "app.own.example" }, saas, {
+      // The certificate takes two probes to arrive.
+      answer: () =>
+        ++answers < 3
+          ? new Response("error code: 526", { status: 526 })
+          : new Response("<html>cut</html>"),
+    });
+    expect(r.step.names).toEqual([
+      "add custom domain app.own.example",
+      "wait for app.own.example",
+      "app.own.example is live",
+    ]);
+    expect(r.self.calls.map((c) => c.unit)).toEqual(["attachDomain", "waitForCustomDomain"]);
+    expect(r.probes).toEqual([
+      "https://app.own.example/",
+      "https://app.own.example/",
+      "https://app.own.example/",
+    ]);
+    expect(r.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
+    expect(await installRow()).toMatchObject({
+      workers_dev_enabled: 0,
+      served_domain: "app.own.example",
+    });
+    expect(await liveDomains()).toEqual(["app.own.example"]);
+    expect(r.logs.some((l) => l.message.startsWith("Turned off the workers.dev URL"))).toBe(true);
+  });
+
+  it("leaves workers.dev on while a custom domain never reaches the app", async () => {
+    const saas = fakeSaas();
+    const r = await run({ kind: "custom", zoneId: "z-own", hostname: "app.own.example" }, saas, {
+      answer: () => new Response("error code: 526", { status: 526 }),
+    });
+    expect(r.step.names).toEqual(["add custom domain app.own.example", "wait for app.own.example"]);
+    expect(r.probes).toHaveLength(CUSTOM_DOMAIN_MAX_PROBES);
+    expect(r.subdomainCalls).toEqual([]);
+    expect(await installRow()).toMatchObject({ workers_dev_enabled: 1 });
+    expect(await liveDomains()).toEqual([]);
+    expect(r.servedBy).toBeNull();
+  });
+
+  it("keeps workers.dev on when the app's settings use its workers.dev URL", async () => {
+    const saas = fakeSaas();
+    const r = await run({ kind: "custom", zoneId: "z-own", hostname: "app.own.example" }, saas, {
+      settingsUseWorkerUrl: true,
+    });
+    expect(r.subdomainCalls).toEqual([]);
+    expect(await installRow()).toMatchObject({ workers_dev_enabled: 1, served_domain: null });
+    // Live all the same: it is where the app opens.
+    expect(await liveDomains()).toEqual(["app.own.example"]);
+    expect(r.logs.at(-1)?.message).toContain("stays on because the app's settings use it");
+  });
+
+  it("keeps workers.dev as an admin set it", async () => {
+    await env.DB.prepare("UPDATE installs SET workers_dev_choice = 'manual'").run();
+    const saas = fakeSaas();
+    const r = await run({ kind: "custom", zoneId: "z-own", hostname: "app.own.example" }, saas);
+    expect(r.subdomainCalls).toEqual([]);
+    expect(await installRow()).toMatchObject({ workers_dev_enabled: 1 });
+    expect(r.logs.at(-1)?.message).toContain("stays as an admin set it");
   });
 
   it("skips an external domain when the gateway is gone", async () => {

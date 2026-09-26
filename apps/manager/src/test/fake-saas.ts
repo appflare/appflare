@@ -42,6 +42,8 @@ export interface SaasWorld {
   patches: Array<{ name: string; env: Record<string, unknown> }>;
   deployments: Array<{ name: string; version: string }>;
   uploads: Array<{ name: string; metadata: Record<string, unknown>; modules: string[] }>;
+  /** Bodies of `POST /workers/scripts/<name>/subdomain` (workers.dev on or off), in order. */
+  subdomain: Array<{ script: string; enabled: boolean; previews_enabled?: boolean }>;
   /** Zones with Cloudflare for SaaS off (1404/1456). */
   saasOff: Set<string>;
   /** The token lacks SSL and Certificates (403 10000 on custom hostname calls). */
@@ -71,6 +73,7 @@ export function fakeSaas(over: Partial<SaasWorld> = {}) {
     patches: [],
     deployments: [],
     uploads: [],
+    subdomain: [],
     saasOff: new Set(),
     noSsl: false,
     elsewhere: new Set(),
@@ -280,6 +283,12 @@ export function fakeSaas(over: Partial<SaasWorld> = {}) {
       });
       world.scripts[name] = metadata.bindings ?? [];
       return ok({ id: name });
+    }
+    m = /^POST \/workers\/scripts\/([^/]+)\/subdomain$/.exec(key);
+    if (m?.[1]) {
+      const body = (await request.json()) as { enabled: boolean; previews_enabled?: boolean };
+      world.subdomain.push({ script: m[1], ...body });
+      return ok(body);
     }
     m = /^GET \/workers\/scripts\/([^/]+)\/bindings$/.exec(key);
     if (m?.[1]) {

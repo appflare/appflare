@@ -17,8 +17,14 @@ import {
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
 } from "../../installs/resource-kinds";
+import { applyDomainLive, type DomainLiveResult } from "../../installs/workers-dev.server";
 import { errorMessage, type JobSteps } from "../steps";
-import { EXTERNAL_DOMAIN_MAX_POLLS, EXTERNAL_DOMAIN_MAX_POLLS_IN_PLACE } from "../units/domains";
+import {
+  CUSTOM_DOMAIN_MAX_PROBES,
+  CUSTOM_DOMAIN_MAX_PROBES_IN_PLACE,
+  EXTERNAL_DOMAIN_MAX_POLLS,
+  EXTERNAL_DOMAIN_MAX_POLLS_IN_PLACE,
+} from "../units/domains";
 import { settleUnit } from "../units/result";
 import type { HealthCheck } from "./health";
 
@@ -29,13 +35,19 @@ import type { HealthCheck } from "./health";
  * installed by then, so a domain that cannot be added is reported in the log
  * (with what to do) and can be added later from the app page.
  *
- * - Custom domain: one unit call attaches it. A hostname with DNS records of
- *   its own is not replaced here; the app page asks before replacing them.
+ * - Custom domain: one unit call attaches it, then one more asks the app
+ *   through it (in its own invocation over `SELF`) until its certificate and
+ *   record are live. A hostname with DNS records of its own is not replaced
+ *   here; the app page asks before replacing them.
  * - External domain: one unit call registers the custom hostname and routes
  *   it through the gateway, then one more waits (in its own invocation over
  *   `SELF`) for the hostname and its certificate to go active, which happens
  *   only once the owner's DNS records exist. When they do not yet, the log
  *   lists them and the app page keeps checking.
+ *
+ * Once the app answers through the domain, the domain is live and the
+ * Worker's workers.dev URL is turned off (one more call), unless the Worker's
+ * settings hold that URL; the app page's switch turns it back on.
  *
  * Each is recorded as the app page records it (kind `domain` or
  * `custom_hostname`); a hostname another app records is refused, and an
@@ -94,15 +106,25 @@ export async function installDomainPhase(
     workerName: string;
     domain: InstallDomainInput;
     health: HealthCheck;
+    /** The Worker's vars were filled in with its workers.dev URL (`{{workerUrl}}`). */
+    settingsUseWorkerUrl: boolean;
   },
-): Promise<void> {
+): Promise<{ servedBy: string | null }> {
   const { domain } = request;
   const label = domain.kind === "custom" ? "custom domain" : "external domain";
-  type Pending = { zoneId: string; customHostnameId: string; hostname: string; target: string };
+  type Pending = {
+    resourceId: string;
+    zoneId: string;
+    customHostnameId: string;
+    hostname: string;
+    target: string;
+  };
+  type Attached = { resourceId: string; hostname: string };
   let external: Pending | null = null;
+  let custom: Attached | null = null;
   try {
     const added = await steps.run(`add ${label} ${domain.hostname}`, async ({ log, orm }) => {
-      const none = { external: null as Pending | null };
+      const none = { external: null as Pending | null, custom: null as Attached | null };
       const gateway = domain.kind === "external" ? await readGateway(orm) : null;
       if (domain.kind === "external" && !isGatewayReady(gateway)) {
         log.warn(
@@ -156,11 +178,16 @@ export async function installDomainPhase(
           );
           return none;
         }
-        if (
-          (await recordedId(orm, request.installId, CUSTOM_DOMAIN_KIND, result.hostname)) === null
-        ) {
+        let resourceId = await recordedId(
+          orm,
+          request.installId,
+          CUSTOM_DOMAIN_KIND,
+          result.hostname,
+        );
+        if (resourceId === null) {
+          resourceId = `${request.installId}:${CUSTOM_DOMAIN_KIND}:${ulid(at.getTime())}`;
           await orm.insert(resources).values({
-            id: `${request.installId}:${CUSTOM_DOMAIN_KIND}:${ulid(at.getTime())}`,
+            id: resourceId,
             install_id: request.installId,
             kind: CUSTOM_DOMAIN_KIND,
             binding: null,
@@ -169,8 +196,10 @@ export async function installDomainPhase(
             created_at: at,
           });
         }
-        log.info(`https://${result.hostname} serves the app; Cloudflare issues its certificate.`);
-        return none;
+        log.info(
+          `Attached https://${result.hostname} to the app; Cloudflare issues its certificate.`,
+        );
+        return { ...none, custom: { resourceId, hostname: result.hostname } };
       }
       if (claim === null) throw new Error("an external domain is attached only under a claim");
       if (!result.ok) {
@@ -191,7 +220,9 @@ export async function installDomainPhase(
         );
       }
       return {
+        ...none,
         external: {
+          resourceId: claim.id,
           zoneId: result.zoneId,
           customHostnameId: result.customHostnameId,
           hostname: result.hostname,
@@ -200,6 +231,7 @@ export async function installDomainPhase(
       };
     });
     external = added.external;
+    custom = added.custom;
   } catch (error) {
     await steps.run(`${label} not added`, async ({ log }) => {
       log.warn(
@@ -207,14 +239,49 @@ export async function installDomainPhase(
       );
       return {};
     });
-    return;
+    return { servedBy: null };
   }
-  if (external === null) return;
+  if (custom !== null) {
+    const attached = custom;
+    let serves = false;
+    try {
+      const probed = await steps.run(`wait for ${attached.hostname}`, async ({ log }) => {
+        const result = settleUnit(
+          await steps.units.api.waitForCustomDomain({
+            accountId: steps.accountId(),
+            healthUrl: `https://${attached.hostname}${request.health.path}`,
+            healthMode: request.health.mode,
+            maxProbes: steps.units.remote
+              ? CUSTOM_DOMAIN_MAX_PROBES
+              : CUSTOM_DOMAIN_MAX_PROBES_IN_PLACE,
+          }),
+          log,
+        );
+        if (!result.serves) {
+          log.info(
+            `${attached.hostname} does not reach the app yet (${result.health.detail}); its certificate or DNS record may still be on the way. The app's Domains and email tab checks it again.`,
+          );
+        }
+        return { serves: result.serves };
+      });
+      serves = probed.serves;
+    } catch (error) {
+      await steps.run(`${attached.hostname} not checked`, async ({ log }) => {
+        log.warn(
+          `Could not check ${attached.hostname} (${errorMessage(error)}). The app's Domains and email tab checks it again.`,
+        );
+        return {};
+      });
+    }
+    return { servedBy: serves ? await domainLivePhase(steps, request, attached) : null };
+  }
+  if (external === null) return { servedBy: null };
   const waiting = external;
 
+  let serves = false;
   try {
-    await steps.run(`wait for ${waiting.hostname}`, async ({ log }) => {
-      const { status, polls } = settleUnit(
+    const waited = await steps.run(`wait for ${waiting.hostname}`, async ({ log }) => {
+      const { status, polls, serves } = settleUnit(
         await steps.units.api.waitForExternalDomain({
           accountId: steps.accountId(),
           zoneId: waiting.zoneId,
@@ -233,8 +300,9 @@ export async function installDomainPhase(
           `After ${polls} check(s), ${waiting.hostname} is still waiting for its DNS records (${[...status.errors].join(" ") || `hostname ${status.status}, certificate ${status.sslStatus ?? "unknown"}`}). Add them at the domain's DNS host: ${recordLines(status)}. The app's Domains and email tab shows its progress.`,
         );
       }
-      return {};
+      return { serves };
     });
+    serves = waited.serves;
   } catch (error) {
     await steps.run(`${waiting.hostname} not checked`, async ({ log }) => {
       log.warn(
@@ -242,5 +310,59 @@ export async function installDomainPhase(
       );
       return {};
     });
+  }
+  return { servedBy: serves ? await domainLivePhase(steps, request, waiting) : null };
+}
+
+/** The job log line for what a domain going live did to workers.dev. */
+export function domainLiveMessage(hostname: string, result: DomainLiveResult): string {
+  if (result.turnedOff) {
+    return `Turned off the workers.dev URL: https://${hostname} serves the app. Turn it back on with Serve on workers.dev on the app's Domains and email tab.`;
+  }
+  switch (result.kept) {
+    case "settings":
+      return `https://${hostname} serves the app. The workers.dev URL stays on because the app's settings use it; turn it off on the Domains and email tab, then save the app's settings.`;
+    case "manual":
+      return `https://${hostname} serves the app. The workers.dev URL stays as an admin set it.`;
+    default:
+      return `https://${hostname} serves the app.`;
+  }
+}
+
+/**
+ * The domain answered as the app: it is recorded as live and, unless an
+ * admin set the switch or the Worker's settings hold its workers.dev URL,
+ * workers.dev is turned off (version previews stay on). A failure here
+ * leaves workers.dev on, which never fails the install. Returns the hostname
+ * when workers.dev was turned off, else null.
+ */
+async function domainLivePhase(
+  steps: JobSteps,
+  request: { db: D1Database; installId: string; settingsUseWorkerUrl: boolean },
+  domain: { resourceId: string; hostname: string },
+): Promise<string | null> {
+  try {
+    const done = await steps.run(`${domain.hostname} is live`, async ({ log, cf }) => {
+      const result = await applyDomainLive(
+        { db: request.db, api: async () => cf(), now: () => new Date(steps.now()) },
+        {
+          installId: request.installId,
+          resourceId: domain.resourceId,
+          hostname: domain.hostname,
+          job: { settingsUseWorkerUrl: request.settingsUseWorkerUrl },
+        },
+      );
+      log.info(domainLiveMessage(domain.hostname, result));
+      return { turnedOff: result.turnedOff };
+    });
+    return done.turnedOff ? domain.hostname : null;
+  } catch (error) {
+    await steps.run(`workers.dev left on for ${domain.hostname}`, async ({ log }) => {
+      log.warn(
+        `https://${domain.hostname} serves the app, but the workers.dev URL could not be turned off (${errorMessage(error)}). Turn it off with Serve on workers.dev on the app's Domains and email tab.`,
+      );
+      return {};
+    });
+    return null;
   }
 }

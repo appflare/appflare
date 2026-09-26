@@ -18,6 +18,7 @@ import {
 import { createFileRoute, getRouteApi } from "@tanstack/react-router";
 import { AppIcon } from "../../components/catalog-media";
 import { HealthIcon } from "../../components/install-health";
+import { OpenAppButton } from "../../components/open-app-button";
 import { OriginBadge } from "../../components/origin-badge";
 import { PageHeader } from "../../components/page-header";
 import { PendingUpdatesBanner } from "../../components/pending-updates-banner";
@@ -37,7 +38,8 @@ import { type InstallRow, listInstalls } from "../../installs/installs.functions
  * that is not uninstalled with its icon, label, app, Worker, status (with an
  * icon when its last health check did not verify the Worker), version, and
  * update-available (for admins with a single pending update, an "Update"
- * button on its row). Appflare's own update is
+ * button on its row), and "Open" for the app's primary address (`appAddress`,
+ * a new tab). Appflare's own update is
  * offered by the sidebar's Appflare card, not here. Several
  * installs of one app are listed one by one. Uninstalled apps that kept data
  * are listed under Settings, Removed apps; the others are not listed
@@ -139,6 +141,9 @@ function InstalledTable({
             <Table.Head>Worker</Table.Head>
             <Table.Head>Status</Table.Head>
             <Table.Head>Version</Table.Head>
+            <Table.Head>
+              <span className="sr-only">Open</span>
+            </Table.Head>
           </Table.Row>
         </Table.Header>
         <Table.Body>
@@ -159,14 +164,7 @@ function InstalledTable({
                 </div>
               </Table.Cell>
               <Table.Cell>
-                {row.workerUrl !== null ? (
-                  <Link href={row.workerUrl} target="_blank" rel="noopener noreferrer">
-                    <span className={mono}>{row.workerName}</span>
-                    <Link.ExternalIcon />
-                  </Link>
-                ) : (
-                  <span className={mono}>{row.workerName}</span>
-                )}
+                <span className={mono}>{row.workerName}</span>
               </Table.Cell>
               <Table.Cell>
                 <div className="flex items-center gap-2">
@@ -194,6 +192,13 @@ function InstalledTable({
                     ) : (
                       <Badge variant="info">Update available</Badge>
                     ))}
+                </div>
+              </Table.Cell>
+              <Table.Cell>
+                <div className="flex justify-end">
+                  {row.address !== null && (
+                    <OpenAppButton href={row.address} label={row.label} size="sm" />
+                  )}
                 </div>
               </Table.Cell>
             </Table.Row>

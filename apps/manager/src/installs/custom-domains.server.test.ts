@@ -43,6 +43,8 @@ interface ZoneWorld {
   attachError: number | null;
   calls: string[];
   bodies: unknown[];
+  /** Bodies of the Worker subdomain calls (workers.dev on or off). */
+  subdomain: unknown[];
   /** Runs before an attach succeeds (to change the database meanwhile). */
   onAttach?: () => Promise<void>;
 }
@@ -62,6 +64,7 @@ function fakeZoneApi(over: Partial<ZoneWorld> = {}) {
     attachError: null,
     calls: [],
     bodies: [],
+    subdomain: [],
     ...over,
   };
   const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
@@ -134,6 +137,12 @@ function fakeZoneApi(over: Partial<ZoneWorld> = {}) {
     m = /^DELETE \/workers\/domains\/([^/]+)$/.exec(key);
     if (m?.[1]) {
       return world.domains.delete(m[1]) ? ok(null) : fail(404, 100114, "not found");
+    }
+    m = /^POST \/workers\/scripts\/([^/]+)\/subdomain$/.exec(key);
+    if (m?.[1]) {
+      const body = (await request.json()) as object;
+      world.subdomain.push({ script: m[1], ...body });
+      return ok(body);
     }
     return fail(404, 7003, `no route ${key}`);
   };
@@ -436,19 +445,108 @@ describe("removeCustomDomainCore", () => {
     });
   });
 
-  it("refuses to remove the last custom domain while workers.dev is off", async () => {
-    const { world, api } = fakeZoneApi();
-    const d = deps(api);
+  /** Two live custom domains, workers.dev off, the switch set by `choice`. */
+  async function twoLiveDomains(choice: "auto" | "manual") {
+    const zone = fakeZoneApi();
+    const d = deps(zone.api);
     await addCustomDomainCore(d, add("cut.example.com"));
     await addCustomDomainCore(d, add("www.example.com"));
-    await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0").run();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE resources SET live_at = 1 WHERE kind = 'domain'"),
+      env.DB.prepare(
+        "UPDATE installs SET workers_dev_enabled = 0, workers_dev_choice = ?1, served_domain = 'cut.example.com'",
+      ).bind(choice),
+    ]);
+    return { ...zone, d };
+  }
 
+  async function workersDev() {
+    return env.DB.prepare(
+      "SELECT workers_dev_enabled, workers_dev_choice, served_domain FROM installs",
+    ).first();
+  }
+
+  it("refuses to remove the last live domain while an admin turned workers.dev off", async () => {
+    const { world, d } = await twoLiveDomains("manual");
     const first = { installId: INSTALL_ID, resourceId: "i1:domain:id1" };
     expect(await removeCustomDomainCore(d, first)).toEqual({ hostname: "cut.example.com" });
+    expect(world.subdomain).toEqual([]);
     const last = { installId: INSTALL_ID, resourceId: "i1:domain:id2" };
     await expect(removeCustomDomainCore(d, last)).rejects.toThrow(
       "This is the app's only address: its workers.dev URL is off.",
     );
+    expect(world.calls).not.toContain("DELETE /workers/domains/cfd-2");
+    expect(world.subdomain).toEqual([]);
+  });
+
+  it("turns workers.dev back on before removing the last live domain when Appflare turned it off", async () => {
+    const { world, d } = await twoLiveDomains("auto");
+    const first = { installId: INSTALL_ID, resourceId: "i1:domain:id1" };
+    expect(await removeCustomDomainCore(d, first)).toEqual({ hostname: "cut.example.com" });
+    // Another live domain remains: workers.dev stays off.
+    expect(world.subdomain).toEqual([]);
+    expect(await workersDev()).toMatchObject({ workers_dev_enabled: 0 });
+
+    const last = { installId: INSTALL_ID, resourceId: "i1:domain:id2" };
+    expect(await removeCustomDomainCore(d, last)).toEqual({ hostname: "www.example.com" });
+    expect(world.subdomain).toEqual([{ script: "cut", enabled: true, previews_enabled: true }]);
+    expect(await workersDev()).toEqual({
+      workers_dev_enabled: 1,
+      workers_dev_choice: "auto",
+      served_domain: null,
+    });
+    // workers.dev is on before the domain goes.
+    const on = world.calls.indexOf("POST /workers/scripts/cut/subdomain");
+    expect(on).toBeGreaterThan(-1);
+    expect(world.calls.indexOf("DELETE /workers/domains/cfd-2")).toBeGreaterThan(on);
+  });
+
+  it("moves the served domain to another live one when it is removed", async () => {
+    const { world, d } = await twoLiveDomains("manual");
+    // A third domain that never reached the app is never served.
+    await addCustomDomainCore(d, add("pending.example.com"));
+    await removeCustomDomainCore(d, { installId: INSTALL_ID, resourceId: "i1:domain:id1" });
+    expect(world.subdomain).toEqual([]);
+    expect(await workersDev()).toEqual({
+      workers_dev_enabled: 0,
+      workers_dev_choice: "manual",
+      served_domain: "www.example.com",
+    });
+  });
+
+  it("drops the served domain while workers.dev is on and no other domain is live", async () => {
+    const { d } = await twoLiveDomains("auto");
+    await env.DB.batch([
+      env.DB.prepare("UPDATE installs SET workers_dev_enabled = 1"),
+      env.DB.prepare("UPDATE resources SET live_at = NULL WHERE name = 'www.example.com'"),
+    ]);
+    await removeCustomDomainCore(d, { installId: INSTALL_ID, resourceId: "i1:domain:id1" });
+    expect(await workersDev()).toMatchObject({ workers_dev_enabled: 1, served_domain: null });
+  });
+
+  it("counts only live domains as addresses when removing one", async () => {
+    const { world, d } = await twoLiveDomains("auto");
+    // The other domain never reached the app.
+    await env.DB.prepare(
+      "UPDATE resources SET live_at = NULL WHERE name = 'www.example.com'",
+    ).run();
+    const first = { installId: INSTALL_ID, resourceId: "i1:domain:id1" };
+    expect(await removeCustomDomainCore(d, first)).toEqual({ hostname: "cut.example.com" });
+    expect(world.subdomain).toEqual([{ script: "cut", enabled: true, previews_enabled: true }]);
+  });
+
+  it("does not turn workers.dev on under a running job, which would send the old value", async () => {
+    const { world, d } = await twoLiveDomains("auto");
+    await removeCustomDomainCore(d, { installId: INSTALL_ID, resourceId: "i1:domain:id1" });
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status) VALUES ('j1', ?1, 'update', 'running')",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await expect(
+      removeCustomDomainCore(d, { installId: INSTALL_ID, resourceId: "i1:domain:id2" }),
+    ).rejects.toThrow("a job of the app is running");
+    expect(world.subdomain).toEqual([]);
     expect(world.calls).not.toContain("DELETE /workers/domains/cfd-2");
   });
 
@@ -507,8 +605,73 @@ describe("checkCustomDomainCore", () => {
       status: "unverified",
       detail: "404 error code: 1042 (route not live yet)",
       checkedAt: NOW.toISOString(),
+      workersDevTurnedOff: false,
     });
-    const install = await env.DB.prepare("SELECT health_status FROM installs").first();
-    expect(install).toEqual({ health_status: null });
+    const install = await env.DB.prepare(
+      "SELECT health_status, workers_dev_enabled FROM installs",
+    ).first();
+    expect(install).toEqual({ health_status: null, workers_dev_enabled: 1 });
+    const live = await env.DB.prepare(
+      "SELECT live_at FROM resources WHERE kind = 'domain'",
+    ).first();
+    expect(live).toEqual({ live_at: null });
+  });
+
+  async function checkReaching(opts: { withApi: boolean }) {
+    const { world, api } = fakeZoneApi();
+    await addCustomDomainCore(deps(api), add("cut.example.com"));
+    const result = await checkCustomDomainCore(
+      {
+        db: env.DB,
+        now: () => NOW,
+        fetch: async () => new Response("<html>cut</html>"),
+        ...(opts.withApi ? { api: async () => api } : {}),
+      },
+      { installId: INSTALL_ID, resourceId: "i1:domain:id1" },
+    );
+    const install = await env.DB.prepare(
+      "SELECT workers_dev_enabled, served_domain FROM installs",
+    ).first();
+    const domain = await env.DB.prepare(
+      "SELECT live_at FROM resources WHERE kind = 'domain'",
+    ).first();
+    return { world, result, install, domain };
+  }
+
+  it("records the domain as live once the app answers, and turns workers.dev off", async () => {
+    const { world, result, install, domain } = await checkReaching({ withApi: true });
+    expect(result).toMatchObject({ status: "verified", workersDevTurnedOff: true });
+    expect(world.subdomain).toEqual([{ script: "cut", enabled: false, previews_enabled: true }]);
+    expect(install).toEqual({ workers_dev_enabled: 0, served_domain: "cut.example.com" });
+    expect(domain).toEqual({ live_at: NOW.getTime() });
+  });
+
+  it("leaves workers.dev alone once an admin set it", async () => {
+    await env.DB.prepare("UPDATE installs SET workers_dev_choice = 'manual'").run();
+    const { world, result, install, domain } = await checkReaching({ withApi: true });
+    expect(result).toMatchObject({ status: "verified", workersDevTurnedOff: false });
+    expect(world.subdomain).toEqual([]);
+    expect(install).toEqual({ workers_dev_enabled: 1, served_domain: null });
+    expect(domain).toEqual({ live_at: NOW.getTime() });
+  });
+
+  it("leaves workers.dev alone while a job of the app runs", async () => {
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status) VALUES ('j1', ?1, 'update', 'queued')",
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const { world, result, install } = await checkReaching({ withApi: true });
+    expect(result.workersDevTurnedOff).toBe(false);
+    expect(world.subdomain).toEqual([]);
+    expect(install).toMatchObject({ workers_dev_enabled: 1 });
+  });
+
+  it("only records the domain as live without a Cloudflare client", async () => {
+    const { world, result, install, domain } = await checkReaching({ withApi: false });
+    expect(result.workersDevTurnedOff).toBe(false);
+    expect(world.subdomain).toEqual([]);
+    expect(install).toMatchObject({ workers_dev_enabled: 1 });
+    expect(domain).toEqual({ live_at: NOW.getTime() });
   });
 });

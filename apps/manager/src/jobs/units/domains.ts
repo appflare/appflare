@@ -1,3 +1,4 @@
+import type { FetchLike } from "@appflare/cf-api";
 import { z } from "zod";
 import { gatewayHostname } from "../../gateway/gateway";
 import { GatewayError, gatewayStateSchema } from "../../gateway/gateway.server";
@@ -15,8 +16,14 @@ import {
   externalDomainStatus,
 } from "../../installs/external-domains.server";
 import { installDomainInput } from "../../installs/install-input";
+import { domainServesApp } from "../../installs/workers-dev.server";
 import { isNotFound, JobError } from "../errors";
-import { probeHealth, settleHealthProbe } from "../install/health";
+import {
+  type HealthMode,
+  type HealthSettlement,
+  probeHealth,
+  settleHealthProbe,
+} from "../install/health";
 import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result";
 
 /**
@@ -30,6 +37,9 @@ import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result"
  * - `waitForExternalDomain`: reads the custom hostname every few seconds
  *   until it and its certificate are active, then asks the app through it
  *   (up to 24 reads and 3 probes).
+ * - `waitForCustomDomain`: asks the app through a newly attached custom
+ *   domain every few seconds until it answers (up to 24 probes), since its
+ *   certificate and DNS record take a moment.
  *
  * Refusals (a name in another zone, a missing permission, Cloudflare for
  * SaaS off) end the step without retries; the install job reports them and
@@ -168,6 +178,8 @@ export const EXTERNAL_DOMAIN_MAX_POLLS = 24;
 export const EXTERNAL_DOMAIN_MAX_POLLS_IN_PLACE = 3;
 /** Probes through the domain once it is active (a new route can answer 1104 for a few seconds). */
 const HEALTH_PROBES = 3;
+/** Between two probes through a domain that does not reach the app yet. */
+const DOMAIN_PROBE_MS = 5_000;
 
 export const waitForExternalDomainInputSchema = z.object({
   accountId: z.string().min(1),
@@ -185,6 +197,28 @@ export type WaitForExternalDomainInput = z.infer<typeof waitForExternalDomainInp
 export interface WaitForExternalDomainResult {
   status: ExternalDomainStatus;
   polls: number;
+  /** The app itself answered through the domain (not an edge error page). */
+  serves: boolean;
+}
+
+/**
+ * Probes `url` until the app answers through it (`domainServesApp`), every
+ * `gapMs`, at most `max` times. A new domain answers with a TLS failure or an
+ * edge error page until its certificate and record are live.
+ */
+async function probeUntilServed(
+  fetch: FetchLike,
+  sleep: (ms: number) => Promise<void>,
+  input: { url: string; mode: HealthMode; max: number; gapMs: number },
+): Promise<{ settled: HealthSettlement; serves: boolean; probes: number }> {
+  for (let probes = 1; ; probes++) {
+    const probe = await probeHealth(fetch, input.url);
+    const serves = domainServesApp(probe, input.mode);
+    if (serves || probes >= input.max) {
+      return { settled: settleHealthProbe(probe, input.mode), serves, probes };
+    }
+    await sleep(input.gapMs);
+  }
 }
 
 export function runWaitForExternalDomain(
@@ -211,27 +245,69 @@ export function runWaitForExternalDomain(
         throw error;
       }
       if (status.active) {
-        let settled = settleHealthProbe(
-          await probeHealth(fetch, input.healthUrl),
-          input.healthMode,
-        );
-        for (let probe = 2; probe <= HEALTH_PROBES && settled.status !== "verified"; probe++) {
-          await sleep(3_000);
-          settled = settleHealthProbe(await probeHealth(fetch, input.healthUrl), input.healthMode);
-        }
+        const { settled, serves } = await probeUntilServed(fetch, sleep, {
+          url: input.healthUrl,
+          mode: input.healthMode,
+          max: HEALTH_PROBES,
+          gapMs: 3_000,
+        });
         status.health = { ...settled, url: input.healthUrl };
         log.info(
           `${status.hostname} is active with its certificate; the app answered ${settled.detail}.`,
         );
-        return { status, polls: poll };
+        return { status, polls: poll, serves };
       }
       if (poll >= input.maxPolls) {
         log.info(
           `${status.hostname} is not active yet (hostname ${status.status}, certificate ${status.sslStatus ?? "unknown"}).`,
         );
-        return { status, polls: poll };
+        return { status, polls: poll, serves: false };
       }
       await sleep(EXTERNAL_DOMAIN_POLL_MS);
     }
+  });
+}
+
+/** Probes at most, over `SELF`: about two minutes, for the certificate and DNS record. */
+export const CUSTOM_DOMAIN_MAX_PROBES = 24;
+/** Probes at most in the job's own invocation (no `SELF`). */
+export const CUSTOM_DOMAIN_MAX_PROBES_IN_PLACE = 3;
+
+export const waitForCustomDomainInputSchema = z.object({
+  accountId: z.string().min(1),
+  /** The app's health URL on the domain. */
+  healthUrl: z.string().url(),
+  healthMode: z.enum(["default", "status-only"]),
+  maxProbes: z.number().int().min(1).max(CUSTOM_DOMAIN_MAX_PROBES),
+});
+export type WaitForCustomDomainInput = z.infer<typeof waitForCustomDomainInputSchema>;
+
+export interface WaitForCustomDomainResult {
+  health: HealthSettlement & { url: string };
+  probes: number;
+  /** The app itself answered through the domain (not an edge error page). */
+  serves: boolean;
+}
+
+/** Asks the app through a newly attached custom domain until it answers. */
+export function runWaitForCustomDomain(
+  env: UnitEnv,
+  deps: UnitDeps,
+  input: WaitForCustomDomainInput,
+): Promise<UnitResult<WaitForCustomDomainResult>> {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  return runUnit(env, deps, input.accountId, async ({ log, fetch }) => {
+    const { settled, serves, probes } = await probeUntilServed(fetch, sleep, {
+      url: input.healthUrl,
+      mode: input.healthMode,
+      max: input.maxProbes,
+      gapMs: DOMAIN_PROBE_MS,
+    });
+    log.info(
+      serves
+        ? `${input.healthUrl} reached the app (${settled.detail}).`
+        : `${input.healthUrl} did not reach the app after ${probes} probe(s) (${settled.detail}).`,
+    );
+    return { health: { ...settled, url: input.healthUrl }, probes, serves };
   });
 }

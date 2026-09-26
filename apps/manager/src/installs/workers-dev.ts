@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 /**
- * An install's workers.dev URL (`<worker>.<subdomain>.workers.dev`): on by
- * default, and switchable off on the app page ("Serve on workers.dev") while
- * a custom domain serves the app. Client-safe (no bindings).
+ * An install's workers.dev URL (`<worker>.<subdomain>.workers.dev`): on for
+ * a new install, turned off by Appflare once a custom or external domain
+ * serves the app (see `WORKERS_DEV_CHOICES`), and switchable on the app page
+ * ("Serve on workers.dev") while a domain serves it. Client-safe (no bindings).
  *
  * Every call that deploys an app's Worker also sends
  * `POST /workers/scripts/{name}/subdomain`, and Cloudflare applies exactly
@@ -35,9 +36,9 @@ export function workersDevBase(workerName: string, subdomain: string): string {
 }
 
 /**
- * The custom domain the app is reached on while workers.dev is off: the one
- * that answered when the switch was turned off, while it is still attached,
- * else the first one (by the order they were added); null with none.
+ * The domain the app is reached on while workers.dev is off: the one that
+ * answered when it was turned off, while it is still attached, else the
+ * first of `domains` (live ones first, see `domainHostnames`); null with none.
  */
 export function primaryDomain(
   domains: readonly string[],
@@ -67,16 +68,91 @@ export function appBaseUrl(input: {
 
 /**
  * The hostnames of the custom domains and external domains among recorded
- * resources, oldest first. Their ids end with a ULID, so sorting by id is
- * sorting by when they were added.
+ * resources: the live ones (a request through them reached the app) first,
+ * then the others, each oldest first. Their ids end with a ULID, so sorting
+ * by id is sorting by when they were added. Rows read without `live_at`
+ * all count the same.
  */
 export function domainHostnames(
-  rows: readonly { id: string; kind: string; name: string }[],
+  rows: readonly { id: string; kind: string; name: string; live_at?: Date | number | null }[],
 ): string[] {
+  const rank = (r: { live_at?: Date | number | null }) => (r.live_at != null ? 0 : 1);
   return rows
     .filter((r) => r.kind === "domain" || r.kind === "custom_hostname")
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((r) => r.name);
+}
+
+/**
+ * Who sets an install's workers.dev switch. `auto` (every install starts so):
+ * Appflare turns workers.dev off once a custom or external domain answers as
+ * the app, and back on when the last such domain is removed, so the app
+ * always keeps an address. `manual`: an admin used the switch, and Appflare
+ * leaves it where they put it.
+ */
+export const WORKERS_DEV_CHOICES = ["auto", "manual"] as const;
+export type WorkersDevChoice = (typeof WORKERS_DEV_CHOICES)[number];
+
+/** Why a domain going live left workers.dev as it was. */
+export type WorkersDevKeptReason =
+  /** An admin set the switch on this install. */
+  | "manual"
+  /** It is off already. */
+  | "off"
+  /** The app's own installer decides where its Workers answer. */
+  | "self-deploying"
+  /** The Worker's settings hold its workers.dev URL (`{{workerUrl}}`). */
+  | "settings"
+  /** A job of the app is running; the next check through the domain tries again. */
+  | "busy";
+
+export type DomainLiveOutcome =
+  | { action: "turn-off" }
+  | { action: "keep"; reason: WorkersDevKeptReason };
+
+/**
+ * What a custom or external domain answering as the app does to workers.dev:
+ * turned off while the choice is `auto`, unless the Worker's settings were
+ * filled in with its workers.dev URL, which would then point nowhere until
+ * the settings are saved again.
+ */
+export function workersDevWhenDomainLive(state: {
+  choice: WorkersDevChoice;
+  enabled: boolean;
+  selfDeploying: boolean;
+  settingsUseWorkersDevUrl: boolean;
+}): DomainLiveOutcome {
+  if (state.selfDeploying) return { action: "keep", reason: "self-deploying" };
+  if (!state.enabled) return { action: "keep", reason: "off" };
+  if (state.choice === "manual") return { action: "keep", reason: "manual" };
+  if (state.settingsUseWorkersDevUrl) return { action: "keep", reason: "settings" };
+  return { action: "turn-off" };
+}
+
+export type DomainRemovalOutcome =
+  | { action: "keep" }
+  | { action: "turn-on" }
+  | { action: "refuse"; message: string };
+
+/**
+ * What removing a custom or external domain does to workers.dev. With
+ * workers.dev off and no other live domain left, the app would have no
+ * address: an `auto` switch is turned back on first; a `manual` one makes
+ * the removal wait for the admin.
+ */
+export function workersDevWhenDomainRemoved(state: {
+  choice: WorkersDevChoice;
+  enabled: boolean;
+  /** The install's other domains that answer as the app. */
+  otherLiveDomains: number;
+}): DomainRemovalOutcome {
+  if (state.enabled || state.otherLiveDomains > 0) return { action: "keep" };
+  if (state.choice === "auto") return { action: "turn-on" };
+  return {
+    action: "refuse",
+    message:
+      "This is the app's only address: its workers.dev URL is off. Turn on Serve on workers.dev first, or add another domain.",
+  };
 }
 
 export const setWorkersDevInput = z.object({
@@ -90,6 +166,13 @@ export const WORKERS_DEV_COPY = {
   onHelp: (url: string) => `The app also answers at ${url}.`,
   offHelp:
     "The app answers only on its custom and external domains. Update checks still use the Worker's preview URLs.",
+  /** The one-line note while Appflare turned it off. */
+  autoOff: "workers.dev turned off because a domain is live",
+  /** Why a live domain left it on: the Worker's settings hold the URL. */
+  settingsKeep:
+    "workers.dev stays on because the app's settings use its workers.dev URL. To turn it off, turn off this switch, then save the app's settings so they use the domain.",
   noDomain:
     "Add a custom or external domain and make sure it serves the app before you turn this off; the workers.dev URL is the app's only address until then.",
+  /** The install form, once a domain is chosen. */
+  installNote: "workers.dev will be turned off once the domain is live",
 } as const;

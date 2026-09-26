@@ -57,12 +57,18 @@ export const removeCustomDomain = createServerFn({ method: "POST" })
     );
   });
 
-/** One probe of the app on the custom domain; not recorded. */
+/**
+ * One probe of the app on the custom domain. When the app answers, the domain
+ * is live, and workers.dev may be turned off (unless an admin set its switch).
+ */
 export const checkCustomDomain = createServerFn({ method: "POST" })
   .validator(customDomainInput)
   .handler(async ({ data }): Promise<CustomDomainCheck> => {
     await requireRole("admin");
     return asUserError(() =>
-      checkCustomDomainCore({ db: env.DB, fetch: (input, init) => fetch(input, init) }, data),
+      checkCustomDomainCore(
+        { db: env.DB, fetch: (input, init) => fetch(input, init), api: () => getCfClient(env) },
+        data,
+      ),
     );
   });

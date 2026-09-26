@@ -4,6 +4,9 @@ import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { createDb } from "../db/client";
 import { installs, type JobStarter, job_logs, jobs } from "../db/schema";
+import { readSettings, SETTING } from "../db/settings";
+import { appAddress } from "../installs/app-address";
+import { readAddressDomains } from "../installs/app-address.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { sandboxBinding } from "../sandbox/binding";
 import {
@@ -64,6 +67,8 @@ export interface JobView {
     /** The name an admin gave the install; null when it has none. */
     displayName: string | null;
     status: string;
+    /** Where "Open" takes the app (`appAddress`); null until installed, or with no address. */
+    address: string | null;
   } | null;
   logs: JobLogRow[];
   /**
@@ -142,12 +147,34 @@ export const getJob = createServerFn({ method: "GET" })
               workerName: installs.worker_name,
               displayName: installs.display_name,
               status: installs.status,
+              workersDevEnabled: installs.workers_dev_enabled,
+              servedDomain: installs.served_domain,
             })
             .from(installs)
             .where(eq(installs.id, job.install_id))
             .limit(1),
       db.select().from(job_logs).where(eq(job_logs.job_id, job.id)).orderBy(asc(job_logs.id)),
     ]);
+    const installRow = installRows[0];
+    let install: JobView["install"] = null;
+    if (installRow !== undefined) {
+      const { workersDevEnabled, servedDomain, ...rest } = installRow;
+      let address: string | null = null;
+      if (installRow.status === "installed") {
+        const [domains, settings] = await Promise.all([
+          readAddressDomains(db, [installRow.id]),
+          readSettings(db, [SETTING.accountSubdomain]),
+        ]);
+        address = appAddress({
+          workerName: installRow.workerName,
+          workersDevEnabled,
+          servedDomain,
+          domains: domains.get(installRow.id) ?? [],
+          subdomain: settings.account_subdomain || null,
+        });
+      }
+      install = { ...rest, address };
+    }
     const building =
       job.status === "queued" || job.status === "running"
         ? sandboxBuildOfInput(job.input_json)
@@ -176,7 +203,7 @@ export const getJob = createServerFn({ method: "GET" })
       startedBy: job.started_by,
       startedAt: job.started_at?.toISOString() ?? null,
       finishedAt: job.finished_at?.toISOString() ?? null,
-      install: installRows[0] ?? null,
+      install,
       logs: logs.map((l) => ({
         id: l.id,
         ts: l.ts.toISOString(),

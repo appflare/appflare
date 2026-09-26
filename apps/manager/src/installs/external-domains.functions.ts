@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
+import { hasRole } from "../auth/roles";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { GatewayError } from "../gateway/gateway.server";
 import { requireRole, requireSession } from "../server/auth.server";
@@ -61,15 +62,19 @@ export const addExternalDomain = createServerFn({ method: "POST" })
     );
   });
 
-/** Cloudflare's view of the domain now; with `probe`, one request to the app through it. */
+/**
+ * Cloudflare's view of the domain now; with `probe`, one request to the app
+ * through it. When an admin reads it and the app answers, workers.dev may be
+ * turned off (unless an admin set its switch).
+ */
 export const getExternalDomainStatus = createServerFn({ method: "POST" })
   .validator(externalDomainStatusInput)
   .handler(async ({ data }): Promise<ExternalDomainStatus> => {
-    await requireSession();
+    const session = await requireSession();
     return asUserError(async () =>
       externalDomainStatusCore(
         { db: env.DB, api: await getCfClient(env), fetch: managerFetch },
-        data,
+        { ...data, applyDefaults: hasRole(session.user.role, "admin") },
       ),
     );
   });

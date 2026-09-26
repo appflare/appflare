@@ -5,6 +5,7 @@ import {
   installVarFields,
   missingRequiredVar,
   resolveVars,
+  varsUseWorkerUrl,
   varValueProblem,
 } from "./install-vars";
 
@@ -109,6 +110,27 @@ describe("resolveVars", () => {
     expect(resolveVars(m, {}, { workerUrl: null, workerName: "app" }).vars).toEqual([
       { type: "plain_text", name: "URL", text: "{{workerUrl}}/x" },
     ]);
+  });
+});
+
+describe("varsUseWorkerUrl", () => {
+  it("finds {{workerUrl}} in the wrangler config, a catalog default, or an entered value", () => {
+    const own = manifest([{ type: "plain_text", name: "URL", text: "{{workerUrl}}/x" }], []);
+    expect(varsUseWorkerUrl(own, {})).toBe(true);
+    const json = manifest([{ type: "json", name: "CFG", json: { base: "{{workerUrl}}" } }], []);
+    expect(varsUseWorkerUrl(json, {})).toBe(true);
+    const byDefault = manifest([], [v("BASE", { default: "{{workerUrl}}" })]);
+    expect(varsUseWorkerUrl(byDefault, {})).toBe(true);
+    // The admin replaced the default with a fixed address.
+    expect(varsUseWorkerUrl(byDefault, { BASE: "https://cut.example.com" })).toBe(false);
+    const plain = manifest([], [v("BASE")]);
+    expect(varsUseWorkerUrl(plain, {})).toBe(false);
+    expect(varsUseWorkerUrl(plain, { BASE: "{{workerUrl}}/api" })).toBe(true);
+  });
+
+  it("does not count {{workerName}}", () => {
+    const m = manifest([{ type: "plain_text", name: "NAME", text: "{{workerName}}" }], []);
+    expect(varsUseWorkerUrl(m, {})).toBe(false);
   });
 });
 

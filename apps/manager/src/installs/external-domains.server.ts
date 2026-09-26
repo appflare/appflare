@@ -33,7 +33,13 @@ import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/i
 import { listAccountZones } from "./custom-domains.server";
 import type { ExternalDomainOptions, ExternalDomainStatus } from "./external-domain-input";
 import { ADDRESS_KINDS, CUSTOM_HOSTNAME_KIND } from "./resource-kinds";
-import { lastAddressRefusal } from "./workers-dev.server";
+import {
+  applyDomainLive,
+  beforeDomainRemoval,
+  domainServesApp,
+  recordDomainLive,
+  WorkersDevError,
+} from "./workers-dev.server";
 
 /**
  * External domains of an install (gateway/gateway.ts explains the path a
@@ -403,13 +409,22 @@ async function readInstall(db: D1Database, installId: string) {
       status: installs.status,
       workerName: installs.worker_name,
       manifestJson: installs.manifest_json,
-      workersDev: installs.workers_dev_enabled,
     })
     .from(installs)
     .where(eq(installs.id, installId))
     .limit(1);
   if (row === undefined) throw new ExternalDomainError("There is no such install.");
   return row;
+}
+
+/** Runs `run`, reporting a workers.dev refusal as an external domain one. */
+async function asExternalDomainError<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof WorkersDevError) throw new ExternalDomainError(error.message);
+    throw error;
+  }
 }
 
 async function readDomain(db: D1Database, request: { installId: string; resourceId: string }) {
@@ -620,11 +635,13 @@ export async function addExternalDomainCore(
 /**
  * The domain's state as Cloudflare reports it now (one call), with the
  * records its owner still has to add; with `probe`, once it is active, one
- * request to the app through it.
+ * request to the app through it. When the app answers, the domain is
+ * recorded as live and, with `applyDefaults` (an admin is looking),
+ * workers.dev may be turned off (`applyDomainLive`).
  */
 export async function externalDomainStatusCore(
   deps: ExternalDomainDeps,
-  request: { installId: string; resourceId: string; probe?: boolean },
+  request: { installId: string; resourceId: string; probe?: boolean; applyDefaults?: boolean },
 ): Promise<ExternalDomainStatus> {
   const now = deps.now ?? (() => new Date());
   const install = await readInstall(deps.db, request.installId);
@@ -657,8 +674,26 @@ export async function externalDomainStatusCore(
   if (request.probe === true && status.active && deps.fetch !== undefined) {
     const check = healthCheckOfManifest(install.manifestJson);
     const url = `https://${domain.name}${check.path}`;
-    const settled = settleHealthProbe(await probeHealth(deps.fetch, url), check.mode);
+    const probe = await probeHealth(deps.fetch, url);
+    const settled = settleHealthProbe(probe, check.mode);
     status.health = { ...settled, url };
+    if (domainServesApp(probe, check.mode)) {
+      if (request.applyDefaults === true) {
+        const applied = await asExternalDomainError(() =>
+          applyDomainLive(
+            {
+              db: deps.db,
+              api: async () => deps.api,
+              ...(deps.now === undefined ? {} : { now: deps.now }),
+            },
+            { installId: install.id, resourceId: domain.id, hostname: domain.name },
+          ),
+        );
+        status.workersDevTurnedOff = applied.turnedOff;
+      } else {
+        await recordDomainLive(deps.db, domain.id, deps.now);
+      }
+    }
   }
   return status;
 }
@@ -689,10 +724,13 @@ export async function removeExternalDomainCore(
         ne(resources.id, domain.id),
       ),
     );
-  if (!install.workersDev) {
-    const refusal = lastAddressRefusal(install.workersDev, others.length);
-    if (refusal !== null) throw new ExternalDomainError(refusal);
-  }
+  // With workers.dev off, the last live domain is the app's only address.
+  await asExternalDomainError(() =>
+    beforeDomainRemoval(
+      { db: deps.db, api: async () => deps.api },
+      { installId: request.installId, resourceId: domain.id },
+    ),
+  );
   const gateway = await readGateway(orm);
   await detachExternalDomain(deps.api, gateway, {
     hostname: domain.name,

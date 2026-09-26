@@ -6,7 +6,92 @@ import {
   primaryDomain,
   workersDevBase,
   workersDevSubdomain,
+  workersDevWhenDomainLive,
+  workersDevWhenDomainRemoved,
 } from "./workers-dev";
+
+describe("domainHostnames with liveness", () => {
+  it("puts live domains first, so the primary domain is never a pending one", () => {
+    const rows = [
+      { id: "i1:domain:01A", kind: "domain", name: "pending.example.com", live_at: null },
+      { id: "i1:domain:01C", kind: "domain", name: "later.example.com", live_at: 9 },
+      { id: "i1:domain:01B", kind: "domain", name: "live.example.com", live_at: new Date(5) },
+    ];
+    expect(domainHostnames(rows)).toEqual([
+      "live.example.com",
+      "later.example.com",
+      "pending.example.com",
+    ]);
+    expect(primaryDomain(domainHostnames(rows), null)).toBe("live.example.com");
+    expect(
+      appBaseUrl({
+        workerName: "cut",
+        subdomain: "acme",
+        workersDev: false,
+        domains: domainHostnames(rows),
+        served: "removed.example.com",
+      }),
+    ).toBe("https://live.example.com");
+  });
+});
+
+describe("workersDevWhenDomainLive", () => {
+  const state = {
+    choice: "auto" as const,
+    enabled: true,
+    selfDeploying: false,
+    settingsUseWorkersDevUrl: false,
+  };
+
+  it("turns workers.dev off while Appflare decides", () => {
+    expect(workersDevWhenDomainLive(state)).toEqual({ action: "turn-off" });
+  });
+
+  it("keeps it once an admin used the switch", () => {
+    expect(workersDevWhenDomainLive({ ...state, choice: "manual" })).toEqual({
+      action: "keep",
+      reason: "manual",
+    });
+  });
+
+  it("keeps it when it is off already, for a self-deploying app, or when settings hold the URL", () => {
+    expect(workersDevWhenDomainLive({ ...state, enabled: false })).toEqual({
+      action: "keep",
+      reason: "off",
+    });
+    expect(workersDevWhenDomainLive({ ...state, selfDeploying: true })).toEqual({
+      action: "keep",
+      reason: "self-deploying",
+    });
+    expect(workersDevWhenDomainLive({ ...state, settingsUseWorkersDevUrl: true })).toEqual({
+      action: "keep",
+      reason: "settings",
+    });
+  });
+});
+
+describe("workersDevWhenDomainRemoved", () => {
+  it("changes nothing while workers.dev is on or another live domain remains", () => {
+    expect(
+      workersDevWhenDomainRemoved({ choice: "auto", enabled: true, otherLiveDomains: 0 }),
+    ).toEqual({ action: "keep" });
+    expect(
+      workersDevWhenDomainRemoved({ choice: "manual", enabled: false, otherLiveDomains: 1 }),
+    ).toEqual({ action: "keep" });
+  });
+
+  it("turns workers.dev back on with the last live domain when Appflare turned it off", () => {
+    expect(
+      workersDevWhenDomainRemoved({ choice: "auto", enabled: false, otherLiveDomains: 0 }),
+    ).toEqual({ action: "turn-on" });
+  });
+
+  it("refuses the removal when an admin turned it off", () => {
+    expect(
+      workersDevWhenDomainRemoved({ choice: "manual", enabled: false, otherLiveDomains: 0 }),
+    ).toMatchObject({ action: "refuse" });
+  });
+});
 
 describe("workersDevSubdomain", () => {
   it("sends the stored choice and always keeps version previews on", () => {

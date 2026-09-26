@@ -1,5 +1,6 @@
 import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { AUTO_UPDATE_CHOICES } from "../auto-update/auto-update";
+import { WORKERS_DEV_CHOICES } from "../installs/workers-dev";
 import { user } from "./auth-schema";
 
 /**
@@ -193,13 +194,21 @@ export const installs = sqliteTable("installs", {
   /**
    * Whether the Worker answers on its workers.dev URL. Every deploy sends it,
    * with version previews always on (update checks use them). Turned off only
-   * while a custom domain serves the app.
+   * while a custom or external domain serves the app.
    */
   workers_dev_enabled: integer("workers_dev_enabled", { mode: "boolean" }).notNull().default(true),
   /**
-   * The custom domain hostname that answered as the app when workers.dev was
-   * turned off: the app's address while it is off and the domain is still
-   * attached (else its first custom domain).
+   * Who sets `workers_dev_enabled` (see `WORKERS_DEV_CHOICES`): `auto` turns
+   * it off when a custom or external domain goes live and back on when the
+   * last live one is removed; `manual` once an admin used the switch.
+   */
+  workers_dev_choice: text("workers_dev_choice", { enum: WORKERS_DEV_CHOICES })
+    .notNull()
+    .default("auto"),
+  /**
+   * The custom or external domain that answered as the app when workers.dev
+   * was turned off: the app's primary address while it is still attached
+   * (else its first live domain).
    */
   served_domain: text("served_domain"),
   installed_at: timestamp("installed_at").notNull(),
@@ -233,6 +242,11 @@ export const resources = sqliteTable(
     retained_at: timestamp("retained_at"),
     /** Who deletes it: Appflare, or the app's own installer (never Appflare). */
     managed_by: text("managed_by", { enum: RESOURCE_MANAGERS }).notNull().default("appflare"),
+    /**
+     * A custom or external domain: when a request through it first reached
+     * the app. Until then it is not an address the app is opened at.
+     */
+    live_at: timestamp("live_at"),
   },
   (t) => [index("resources_install_id_idx").on(t.install_id)],
 );

@@ -12,6 +12,7 @@ import { startedByLabel } from "../../../auto-update/auto-update";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
 import { formatTime, jobKindLabel } from "../../../components/format";
+import { OpenAppButton } from "../../../components/open-app-button";
 import { PageHeader } from "../../../components/page-header";
 import { Section } from "../../../components/section";
 import { StatusBadge } from "../../../components/status-badge";
@@ -59,13 +60,18 @@ function JobPage() {
         parents={[JOBS_CRUMB]}
         actions={
           job.install !== null ? (
-            <LinkButton
-              href={`/apps/${job.install.id}`}
-              variant="secondary"
-              icon={<ArrowRightIcon />}
-            >
-              View install
-            </LinkButton>
+            <>
+              {job.install.address !== null && (
+                <OpenAppButton href={job.install.address} label={installLabel(job.install)} />
+              )}
+              <LinkButton
+                href={`/apps/${job.install.id}`}
+                variant="secondary"
+                icon={<ArrowRightIcon />}
+              >
+                View install
+              </LinkButton>
+            </>
           ) : undefined
         }
       />

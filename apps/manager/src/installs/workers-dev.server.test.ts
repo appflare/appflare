@@ -118,6 +118,13 @@ describe("setWorkersDevCore", () => {
     ]);
     expect(await stored()).toBe(0);
     expect(await servedDomain()).toBe("links.example.com");
+    // The admin decides from now on, and the domain that answered is live.
+    const after = await env.DB.prepare("SELECT workers_dev_choice FROM installs").first();
+    expect(after).toEqual({ workers_dev_choice: "manual" });
+    const live = await env.DB.prepare(
+      "SELECT name FROM resources WHERE live_at IS NOT NULL ORDER BY rowid",
+    ).all<{ name: string }>();
+    expect(live.results.map((r) => r.name)).toEqual(["links.example.com"]);
 
     // Back on: no domain check needed.
     const again = world();

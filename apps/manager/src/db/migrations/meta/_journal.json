@@ -127,6 +127,13 @@
       "when": 1790329818894,
       "tag": "0017_catalog_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1790452829025,
+      "tag": "0018_workers_dev_choice",
+      "breakpoints": true
     }
   ]
 }

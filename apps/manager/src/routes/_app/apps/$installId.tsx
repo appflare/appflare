@@ -10,13 +10,7 @@ import {
   Tabs,
   Text,
 } from "@cloudflare/kumo";
-import {
-  ArrowRightIcon,
-  ArrowSquareOutIcon,
-  InfoIcon,
-  PackageIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react";
+import { ArrowRightIcon, InfoIcon, PackageIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { z } from "zod";
@@ -33,6 +27,7 @@ import { ExternalDomainsSection } from "../../../components/external-domains-sec
 import { jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
+import { OpenAppButton } from "../../../components/open-app-button";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
 import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
@@ -150,15 +145,8 @@ function InstallPage() {
         icon={<AppIcon src={install.icon} name={install.name} size={40} />}
         titleAction={isAdmin ? <RenameInstallDialog install={install} /> : undefined}
         actions={
-          install.workerUrl !== null ? (
-            <LinkButton
-              href={install.workerUrl}
-              external
-              variant="primary"
-              icon={<ArrowSquareOutIcon />}
-            >
-              Open app
-            </LinkButton>
+          install.address !== null ? (
+            <OpenAppButton href={install.address} label={install.label} variant="primary" />
           ) : undefined
         }
       />
@@ -630,11 +618,12 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
             <span className={mono}>{install.workerName}</span>
           </DescriptionItem>
           <DescriptionItem label="URL">
-            {install.workerUrl !== null ? (
+            {install.status === "installed" &&
+            (install.address !== null || install.domains.length > 0) ? (
               <span className="grid gap-1">
-                {install.workersDevEnabled && (
-                  <Link href={install.workerUrl} target="_blank" rel="noopener noreferrer">
-                    {install.workerUrl}
+                {install.workersDevEnabled && install.workersDevUrl !== null && (
+                  <Link href={install.workersDevUrl} target="_blank" rel="noopener noreferrer">
+                    {install.workersDevUrl}
                     <Link.ExternalIcon />
                   </Link>
                 )}
