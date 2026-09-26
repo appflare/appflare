@@ -215,6 +215,21 @@ describe("self-deploying runs in the sandbox protocol", () => {
     );
   });
 
+  it("takes one build argv, or a list of them run in order", () => {
+    const several = [
+      ["pnpm", "run", "build:sphere"],
+      ["pnpm", "run", "build"],
+    ];
+    expect(
+      selfManagedRunRequestSchema.parse({ ...request, buildCommand: several }).buildCommand,
+    ).toEqual(several);
+    for (const buildCommand of [[], [[]], [["pnpm", "build;rm"]], [["CI=1", "pnpm", "build"]]]) {
+      expect(selfManagedRunRequestSchema.safeParse({ ...request, buildCommand }).success).toBe(
+        false,
+      );
+    }
+  });
+
   it("refuses install ids that could not name a secret", () => {
     expect(
       selfManagedRunRequestSchema.safeParse({ ...request, installId: "01J8-INSTALL" }).success,

@@ -230,6 +230,7 @@ export async function runSelfDeployingInstall(
       vars: installerVars(catalog, params.vars, {
         workerName: mainWorker,
         workerUrl: `https://${mainWorker}.${subdomain}.workers.dev`,
+        accountId: preflight.accountId,
       }),
       ...(input.instanceType === undefined ? {} : { instanceType: input.instanceType }),
     });
@@ -428,6 +429,7 @@ export async function runSelfDeployingUpdate(
       vars: installerVars(catalog, started.userVars, {
         workerName: started.workerName,
         workerUrl: `https://${started.workerName}.${subdomain}.workers.dev`,
+        accountId: started.accountId,
       }),
       ...(input.instanceType === undefined ? {} : { instanceType: input.instanceType }),
     });
@@ -597,6 +599,7 @@ export async function runSelfDeployingUninstall(
           vars: installerVars(catalog, started.userVars, {
             workerName: started.workerName,
             workerUrl: `https://${started.workerName}.${subdomain}.workers.dev`,
+            accountId: started.accountId,
           }),
         });
         const result = await runInstallerPhase(steps, env, "destroy", request);

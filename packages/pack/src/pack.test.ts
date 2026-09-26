@@ -21,6 +21,7 @@ import { main, parseMaxModules } from "./cli-main.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { type PackResult, pack, packWarnings } from "./pack.ts";
 import { verify } from "./verify.ts";
+import { artifactWorkerSize } from "./worker-size.ts";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const FIXTURE = path.resolve(HERE, "..", "fixtures", "hello");
@@ -521,7 +522,10 @@ describe("pack with a service binding", () => {
  * plugin does) plus a static asset. The config adds queue consumers, a rate
  * limit, Images, and a restricted send_email binding.
  */
-function buildCheckout(parent: string, buildCommand: string): { dir: string; manifest: string } {
+function buildCheckout(
+  parent: string,
+  buildCommand: string | string[],
+): { dir: string; manifest: string } {
   const dir = path.join(parent, "checkout");
   cpSync(FIXTURE, dir, { recursive: true });
   const config = parseJsonc(readFileSync(path.join(dir, "wrangler.jsonc"), "utf8")) as Record<
@@ -636,6 +640,46 @@ describe("pack with install.buildCommand", () => {
         }),
       ).rejects.toThrow(/failed \(exit 1\); last lines of its output:\nCould not resolve entry/);
       expect(existsSync(outDir)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("runs a list of build commands in order and reports the Worker's size", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-build-steps-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = buildCheckout(parent, ["node step.mjs", "node build.mjs steps"]);
+      // The second command reads what the first wrote.
+      writeFileSync(
+        path.join(checkout.dir, "step.mjs"),
+        'import { writeFileSync } from "node:fs"; writeFileSync("public/step.txt", "first");',
+      );
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      const ran = logs.filter((l) => l.startsWith("running install.buildCommand"));
+      expect(ran).toEqual([
+        "running install.buildCommand (1 of 2): node step.mjs (scrubbed environment)",
+        "running install.buildCommand (2 of 2): node build.mjs steps (scrubbed environment)",
+      ]);
+      expect(res.manifest.catalog.install.buildCommand).toEqual([
+        "node step.mjs",
+        "node build.mjs steps",
+      ]);
+      const routes = res.manifest.assets.files.map((f) => f.route);
+      expect(routes).toContain("/step.txt");
+      expect(routes).toContain("/built.txt");
+      expect(res.workerSize.size).toBe(res.manifest.worker.modules.reduce((n, m) => n + m.size, 0));
+      const zip = readdirSync(outDir).find((f) => f.endsWith(".zip")) as string;
+      expect(artifactWorkerSize(path.join(outDir, zip), res.manifest.worker.modules)).toEqual(
+        res.workerSize,
+      );
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }

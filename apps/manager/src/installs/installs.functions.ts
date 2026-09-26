@@ -208,6 +208,12 @@ async function subdomain(): Promise<string | null> {
   return s.account_subdomain || null;
 }
 
+/** The account's id, for `{{accountId}}` in post-install notes and vars; null before setup. */
+async function accountId(): Promise<string | null> {
+  const s = await readSettings(createDb(env.DB), [SETTING.accountId]);
+  return s.account_id || null;
+}
+
 /**
  * Any signed-in user: every install that is not uninstalled, newest first.
  * Uninstalled ones that kept data are listed under Settings, Removed apps.
@@ -379,7 +385,7 @@ export const getInstall = createServerFn({ method: "GET" })
     if (active.length > 0) await reconcileJobs(env.DB, env.JOBS, active);
     const [row] = await db.select().from(installs).where(eq(installs.id, data.installId)).limit(1);
     if (row === undefined) return null;
-    const [resourceRows, jobRows, read, sub, autoUpdateDefaults] = await Promise.all([
+    const [resourceRows, jobRows, read, sub, autoUpdateDefaults, account] = await Promise.all([
       // Everything not deleted: live resources, and those an uninstall kept.
       db
         .select()
@@ -391,6 +397,7 @@ export const getInstall = createServerFn({ method: "GET" })
       getCatalogIndex(env),
       subdomain(),
       readAutoUpdateDefaults(db),
+      accountId(),
     ]);
     const listed =
       read.ok && row.origin !== "repository"
@@ -405,6 +412,12 @@ export const getInstall = createServerFn({ method: "GET" })
           row.served_domain,
         );
     const primaryUrl = domain === null ? workerUrl : `https://${domain}`;
+    // What the jobs fill in, so notes and vars show the values the Worker has.
+    const placeholders = {
+      workerUrl: primaryUrl,
+      workerName: row.worker_name,
+      accountId: account,
+    };
     const addressDomains = resourceRows
       .filter((r) => r.retained_at === null && isAddressKind(r.kind))
       .map(addressDomainOf);
@@ -417,7 +430,7 @@ export const getInstall = createServerFn({ method: "GET" })
       // A self-deploying install records its catalog manifest, not an artifact's.
       name = installerCatalog.name;
       postInstall = installerCatalog.postInstall.map((p) =>
-        renderPostInstall(p.content, { workerUrl: primaryUrl, workerName: row.worker_name }),
+        renderPostInstall(p.content, placeholders),
       );
       tokenPermissions = installerCatalog.tokenPermissions;
     } else if (row.manifest_json !== null) {
@@ -429,7 +442,7 @@ export const getInstall = createServerFn({ method: "GET" })
         const manifest = await effectiveManifest(db, parsed.data, row.artifact_digest);
         name = manifest.catalog.name;
         postInstall = manifest.catalog.postInstall.map((p) =>
-          renderPostInstall(p.content, { workerUrl: primaryUrl, workerName: row.worker_name }),
+          renderPostInstall(p.content, placeholders),
         );
         if (sendsEmail(manifest.worker.bindings)) postInstall.push(SEND_EMAIL_NOTE);
         tokenPermissions = manifest.catalog.tokenPermissions;
@@ -496,7 +509,7 @@ export const getInstall = createServerFn({ method: "GET" })
       vars: Object.fromEntries(
         Object.entries(parseVars(row.config_json)).map(([name, value]) => [
           name,
-          renderPlaceholders(value, { workerUrl: primaryUrl, workerName: row.worker_name }),
+          renderPlaceholders(value, placeholders),
         ]),
       ),
       // Email routes are listed under Email; their ids carry encoded state.

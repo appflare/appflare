@@ -9,7 +9,46 @@ import {
 } from "./metadata";
 
 describe("installVars", () => {
-  const worker = { workerName: "cut-2", subdomain: "acme" };
+  const worker = {
+    workerName: "cut-2",
+    subdomain: "acme",
+    accountId: "0123456789abcdef0123456789abcdef",
+  };
+
+  it("fills in {{accountId}} in the wrangler config's vars, catalog defaults and entered values", async () => {
+    const f = await buildArtifactFixture({
+      bindings: [
+        { type: "plain_text", name: "CF_ACCOUNT_ID", text: "{{accountId}}" },
+        { type: "json", name: "ANALYTICS", json: { account: "{{ accountId }}" } },
+      ],
+      catalog: {
+        vars: [
+          {
+            name: "NUXT_CF_ACCOUNT_ID",
+            label: "Account",
+            default: "{{accountId}}",
+            required: true,
+          },
+          { name: "API_BASE", label: "API", required: false },
+        ],
+      },
+    });
+    const resolved = installVars(
+      f.manifest,
+      { API_BASE: "https://api.cloudflare.com/client/v4/accounts/{{accountId}}" },
+      worker,
+    );
+    expect(resolved.vars).toEqual([
+      { type: "plain_text", name: "CF_ACCOUNT_ID", text: worker.accountId },
+      { type: "json", name: "ANALYTICS", json: { account: worker.accountId } },
+      { type: "plain_text", name: "NUXT_CF_ACCOUNT_ID", text: worker.accountId },
+      {
+        type: "plain_text",
+        name: "API_BASE",
+        text: `https://api.cloudflare.com/client/v4/accounts/${worker.accountId}`,
+      },
+    ]);
+  });
 
   it("uses the user's value, else the catalog default, else the recorded var; blanks are omitted", async () => {
     const f = await buildArtifactFixture({

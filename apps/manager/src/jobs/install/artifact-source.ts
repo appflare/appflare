@@ -3,6 +3,8 @@ import {
   artifactManifestSchema,
   type BuildRequest,
   buildCommandArgv,
+  buildCommandList,
+  buildCommandText,
   buildKeys,
   buildRequestSchema,
   type CatalogManifest,
@@ -474,7 +476,10 @@ async function buildInSandboxPhase(
     wranglerConfigPath: catalog.install.wranglerConfig,
     ...(catalog.install.buildCommand === undefined
       ? {}
-      : { buildCommand: buildCommandArgv(catalog.install.buildCommand) }),
+      : buildCommandList(catalog.install.buildCommand).length === 1
+        ? // Only a single command is repeated; the packer runs a list from the manifest.
+          { buildCommand: buildCommandArgv(buildCommandText(catalog.install.buildCommand)) }
+        : {}),
     catalogManifest: catalog,
     instanceType: build.instanceType ?? DEFAULT_SANDBOX_INSTANCE_TYPE,
   });

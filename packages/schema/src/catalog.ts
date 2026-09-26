@@ -30,15 +30,19 @@ export const semverSchema = z
   );
 
 /**
- * Rules for a catalog manifest's `install.buildCommand`: a single command the
- * packer runs as a plain argv, without a shell. Anything a shell would
- * interpret (pipes, redirects, quotes, variables, globs, command separators,
- * environment assignments) is refused rather than passed through literally,
- * so what the manifest says is exactly what runs.
+ * Rules for a catalog manifest's `install.buildCommand`: one command, or a
+ * list of commands run in order, each of which the packer runs as a plain
+ * argv, without a shell. Anything a shell would interpret (pipes, redirects,
+ * quotes, variables, globs, command separators, environment assignments) is
+ * refused rather than passed through literally, so what the manifest says is
+ * exactly what runs.
  */
 
 /** The longest build command a manifest may declare. */
 export const MAX_BUILD_COMMAND_LENGTH = 256;
+
+/** The most commands `install.buildCommand` may list. */
+export const MAX_BUILD_COMMANDS = 8;
 
 /**
  * Characters a build command may contain: letters, digits, spaces, and
@@ -85,6 +89,37 @@ export function buildCommandProblem(command: string): string | null {
   return null;
 }
 
+/** One build command, as `install.buildCommand` or one entry of its list. */
+export const singleBuildCommandSchema = z
+  .string()
+  .max(MAX_BUILD_COMMAND_LENGTH)
+  .regex(
+    BUILD_COMMAND_PATTERN,
+    "buildCommand may contain only letters, digits, spaces, and @ % + , . / : = _ -; it runs without a shell",
+  )
+  .superRefine((command, ctx) => {
+    const problem = buildCommandProblem(command);
+    if (problem !== null) ctx.addIssue({ code: "custom", message: `buildCommand ${problem}` });
+  });
+
+/** `install.buildCommand`: one command, or up to {@link MAX_BUILD_COMMANDS} run in order. */
+export type CatalogBuildCommand = string | string[];
+
+/** The commands of `install.buildCommand`, in the order they run; empty when there is none. */
+export function buildCommandList(command: CatalogBuildCommand | undefined): string[] {
+  if (command === undefined) return [];
+  return typeof command === "string" ? [command] : [...command];
+}
+
+/**
+ * `install.buildCommand` on one line, for logs and display: the commands
+ * joined with ` && `, which is how they run (in order, stopping at the first
+ * that fails). Never run through a shell.
+ */
+export function buildCommandText(command: CatalogBuildCommand): string {
+  return buildCommandList(command).join(" && ");
+}
+
 /**
  * How an app is built: `artifact` (a signed release catalog CI built),
  * `sandbox` (built from its pinned commit in the account's sandbox Worker),
@@ -113,9 +148,53 @@ export const requirementSchema = z.enum([
 export type Requirement = z.infer<typeof requirementSchema>;
 
 /**
+ * How the manager computes a derived secret from its source secret's value.
+ * `bcrypt`: a bcrypt hash (`$2b$`, cost {@link BCRYPT_COST}, a fresh random
+ * salt each time), as apps that check a password with `bcrypt.compare` expect
+ * (Counterscale's `CF_PASSWORD_HASH`, for example).
+ */
+export const SECRET_DERIVE_METHODS = ["bcrypt"] as const;
+export type SecretDeriveMethod = (typeof SECRET_DERIVE_METHODS)[number];
+
+/** The bcrypt cost (log2 of the rounds) of a derived `bcrypt` secret. */
+export const BCRYPT_COST = 10;
+
+/**
+ * A secret the manager computes instead of asking for: `method` applied to the
+ * value of the secret named `from`. See {@link catalogSecretSchema}.
+ */
+export const catalogSecretDeriveSchema = z
+  .object({
+    from: z
+      .string()
+      .min(1)
+      .describe(
+        "The name of the secret whose value this one is computed from. It must be another secret " +
+          "of this manifest, not itself derived, not optional.",
+      ),
+    method: z
+      .enum(SECRET_DERIVE_METHODS)
+      .describe(
+        `How the value is computed. \`"bcrypt"\`: a bcrypt hash (\`$2b$\`, cost ${BCRYPT_COST}) of ` +
+          "the source value, for apps that check a password against a stored hash.",
+      ),
+  })
+  .describe(
+    "Computes this secret from another one instead of asking for it: the install form shows only " +
+      "the source secret, and the manager writes both at install, and again whenever the source " +
+      "secret gets a new value in the app's settings or an update. Neither value is ever logged. " +
+      "Not allowed with `generate` or `optional`, nor on self-deploying entries.",
+  );
+export type CatalogSecretDerive = z.infer<typeof catalogSecretDeriveSchema>;
+
+/**
  * A secret the installer prompts for. `generate: true` means the manager mints a
  * random value instead of asking the user. Defaults are seeded by catalog CI from
  * `.dev.vars.example` when the manifest omits them.
+ *
+ * `derive` makes the manager compute the secret from another secret's value
+ * instead of asking for it ({@link catalogSecretDeriveSchema}); the manifest's
+ * refinements check that the source exists and is an ordinary secret.
  *
  * `optional: true` marks a secret the app works without: the install form
  * leaves it unset unless the admin chooses to set it, updates never ask for
@@ -125,25 +204,109 @@ export type Requirement = z.infer<typeof requirementSchema>;
  * current one field by field). Refused on `self-deploying` entries, whose
  * installer run expects every declared secret ({@link catalogManifestSchema}).
  */
-export const catalogSecretSchema = z.object({
-  name: z.string().min(1),
-  label: z.string().min(1),
-  help: z.string().optional(),
-  generate: z.boolean().default(false),
-  optional: z
-    .boolean()
-    .describe(
-      "The app works without this secret. The install form leaves it unset unless the admin " +
-        'chooses "Set now", updates never ask for it, and the app\'s settings can remove it. ' +
-        "Not allowed on self-deploying entries.",
-    )
-    .optional(),
-});
+export const catalogSecretSchema = z
+  .object({
+    name: z.string().min(1),
+    label: z.string().min(1),
+    help: z.string().optional(),
+    generate: z.boolean().default(false),
+    optional: z
+      .boolean()
+      .describe(
+        "The app works without this secret. The install form leaves it unset unless the admin " +
+          'chooses "Set now", updates never ask for it, and the app\'s settings can remove it. ' +
+          "Not allowed on self-deploying entries.",
+      )
+      .optional(),
+    /**
+     * Computed from another secret instead of asked for. Optional rather than
+     * defaulted for the same reason as `optional`.
+     */
+    derive: catalogSecretDeriveSchema.optional(),
+  })
+  // The manifest-level refinement does not reach the JSON Schema; this states
+  // its per-secret half there (no `generate: true` or `optional: true` next to
+  // `derive`), so editors refuse the same secrets.
+  .meta({
+    anyOf: [
+      { not: { required: ["derive"] } },
+      {
+        properties: {
+          generate: { not: { const: true } },
+          optional: { not: { const: true } },
+        },
+      },
+    ],
+  });
 export type CatalogSecret = z.infer<typeof catalogSecretSchema>;
 
 /** Whether the app works without the secret (`optional: true`). */
 export function isOptionalSecret(secret: Pick<CatalogSecret, "optional">): boolean {
   return secret.optional === true;
+}
+
+/** Whether the manager computes the secret from another one (`derive`). */
+export function isDerivedSecret(secret: Pick<CatalogSecret, "derive">): boolean {
+  return secret.derive !== undefined;
+}
+
+/** The secrets an admin enters (or has generated): every one but the derived ones, in order. */
+export function enteredSecrets<T extends Pick<CatalogSecret, "derive">>(
+  secrets: readonly T[],
+): T[] {
+  return secrets.filter((s) => !isDerivedSecret(s));
+}
+
+/**
+ * What is wrong with the `derive` blocks of a manifest's secrets, one issue
+ * each (the Zod refinement and catalog tooling share it): the source must be
+ * another declared secret that is neither derived nor optional, and a derived
+ * secret may not also be generated or optional.
+ */
+export function derivedSecretProblems(
+  secrets: readonly Pick<CatalogSecret, "name" | "generate" | "optional" | "derive">[],
+): Array<{ path: Array<string | number>; message: string }> {
+  const byName = new Map(secrets.map((s) => [s.name, s]));
+  const problems: Array<{ path: Array<string | number>; message: string }> = [];
+  secrets.forEach((secret, i) => {
+    const derive = secret.derive;
+    if (derive === undefined) return;
+    if (secret.generate) {
+      problems.push({
+        path: [i, "generate"],
+        message: `${secret.name} is derived from ${derive.from}; it cannot also be generated`,
+      });
+    }
+    if (isOptionalSecret(secret)) {
+      problems.push({
+        path: [i, "optional"],
+        message: `${secret.name} is derived from ${derive.from}, whose presence it follows; it cannot be optional`,
+      });
+    }
+    const source = byName.get(derive.from);
+    if (derive.from === secret.name) {
+      problems.push({
+        path: [i, "derive", "from"],
+        message: `${secret.name} cannot derive from itself`,
+      });
+    } else if (source === undefined) {
+      problems.push({
+        path: [i, "derive", "from"],
+        message: `${secret.name} derives from ${derive.from}, which is not a secret of this manifest`,
+      });
+    } else if (isDerivedSecret(source)) {
+      problems.push({
+        path: [i, "derive", "from"],
+        message: `${secret.name} derives from ${derive.from}, which is itself derived; derive from the secret the admin enters`,
+      });
+    } else if (isOptionalSecret(source)) {
+      problems.push({
+        path: [i, "derive", "from"],
+        message: `${secret.name} derives from ${derive.from}, which is optional; its source must be a secret every install has`,
+      });
+    }
+  });
+  return problems;
 }
 
 /**
@@ -156,12 +319,16 @@ export function isOptionalSecret(secret: Pick<CatalogSecret, "optional">): boole
  *   trailing slash. Always the workers.dev address, even when a custom
  *   domain is attached to the install.
  * - `{{workerName}}`: the install's Worker name.
+ * - `{{accountId}}`: the id of the Cloudflare account the app is installed
+ *   in, for apps that call the Cloudflare API about their own account (the
+ *   Analytics Engine SQL API, for example).
  *
- * Vars are rendered on every install and update, so they follow the Worker
- * name the admin chose. Whitespace inside the braces is allowed
- * (`{{ workerUrl }}`); anything else in double braces is left as written.
+ * Vars are rendered on every install, update and settings change, so they
+ * follow the Worker name the admin chose. Whitespace inside the braces is
+ * allowed (`{{ workerUrl }}`); anything else in double braces is left as
+ * written.
  */
-export const INSTALL_PLACEHOLDERS = ["workerUrl", "workerName"] as const;
+export const INSTALL_PLACEHOLDERS = ["workerUrl", "workerName", "accountId"] as const;
 export type InstallPlaceholder = (typeof INSTALL_PLACEHOLDERS)[number];
 
 /** The values {@link renderPlaceholders} fills in. */
@@ -169,9 +336,17 @@ export interface PlaceholderValues {
   /** Null while the account's workers.dev subdomain is unknown; `{{workerUrl}}` is then kept. */
   workerUrl: string | null;
   workerName: string;
+  /**
+   * The account's id. Absent or null where it is not known (a form rendering
+   * a default before the install runs); `{{accountId}}` is then kept.
+   */
+  accountId?: string | null;
 }
 
-const PLACEHOLDER_PATTERN = /\{\{\s*(workerUrl|workerName)\s*\}\}/g;
+const PLACEHOLDER_PATTERN = new RegExp(
+  `\\{\\{\\s*(${INSTALL_PLACEHOLDERS.join("|")})\\s*\\}\\}`,
+  "g",
+);
 
 /** Whether `text` holds a placeholder the manager fills in. */
 export function hasPlaceholder(text: string): boolean {
@@ -180,9 +355,15 @@ export function hasPlaceholder(text: string): boolean {
 
 /** `text` with every {@link INSTALL_PLACEHOLDERS} entry filled in. */
 export function renderPlaceholders(text: string, values: PlaceholderValues): string {
-  return text.replace(PLACEHOLDER_PATTERN, (match, key: string) => {
-    if (key === "workerName") return values.workerName;
-    return values.workerUrl ?? match;
+  return text.replace(PLACEHOLDER_PATTERN, (match, key: InstallPlaceholder) => {
+    switch (key) {
+      case "workerName":
+        return values.workerName;
+      case "workerUrl":
+        return values.workerUrl ?? match;
+      case "accountId":
+        return values.accountId ?? match;
+    }
   });
 }
 
@@ -224,8 +405,8 @@ export function renderJsonPlaceholders(value: JsonValue, values: PlaceholderValu
  * as a `plain_text` binding, or as a `json` binding when the app's wrangler
  * config gives the var a value that is not a string (an array, object,
  * number, or boolean): the form then takes JSON and `default` must be JSON
- * text. `default` may hold `{{workerUrl}}` and `{{workerName}}`
- * ({@link INSTALL_PLACEHOLDERS}).
+ * text. `default` may hold `{{workerUrl}}`, `{{workerName}}` and
+ * `{{accountId}}` ({@link INSTALL_PLACEHOLDERS}).
  *
  * `type: "select"` with `options` limits the var to a fixed set of values,
  * shown as choices instead of a text field; `default`, when given, must be one
@@ -304,7 +485,8 @@ export const catalogVarSchema = z
       .describe(
         "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL " +
           "(`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and " +
-          "`{{workerName}}` its Worker name, filled in on every install and update. `{{workerUrl}}` is " +
+          "`{{workerName}}` its Worker name, and `{{accountId}}` the id of the Cloudflare account it " +
+          "is installed in, filled in on every install, update and settings change. `{{workerUrl}}` is " +
           "always the workers.dev address, even when a custom domain is attached. When the app's " +
           "wrangler config gives this var a value that is not a string (an array, object, number, or " +
           "boolean), the var reaches the Worker as JSON and `default` must be JSON text, for " +
@@ -634,29 +816,28 @@ export const catalogInstallSchema = z
      */
     healthMode: healthModeSchema.optional(),
     /**
-     * One command the packer runs in the checkout after installing
-     * dependencies and before bundling, for apps whose wrangler config has no
-     * `build.command` (Vite, React Router, OpenNext). Optional for the same
-     * reason as `fixedWorkerName`.
+     * The command, or the commands in order, the packer runs in the checkout
+     * after installing dependencies and before bundling, for apps whose
+     * wrangler config has no `build.command` (Vite, React Router, OpenNext).
+     * Optional for the same reason as `fixedWorkerName`; read it with
+     * {@link buildCommandList}.
      */
     buildCommand: z
-      .string()
-      .max(MAX_BUILD_COMMAND_LENGTH)
-      .regex(
-        BUILD_COMMAND_PATTERN,
-        "buildCommand may contain only letters, digits, spaces, and @ % + , . / : = _ -; it runs without a shell",
-      )
-      .superRefine((command, ctx) => {
-        const problem = buildCommandProblem(command);
-        if (problem !== null) ctx.addIssue({ code: "custom", message: `buildCommand ${problem}` });
-      })
+      .union([
+        singleBuildCommandSchema,
+        z.array(singleBuildCommandSchema).min(1).max(MAX_BUILD_COMMANDS),
+      ])
       .describe(
-        "One command the packer runs at the root of the checkout after installing dependencies " +
+        "The command the packer runs at the root of the checkout after installing dependencies " +
           "(with install scripts disabled) and before bundling, for example " +
-          "`pnpm --filter @scope/web build`. Use it when the wrangler config has no `build.command`. " +
-          "It runs as a plain command without a shell, with no credentials in its environment, and " +
-          "the checkout's `node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, " +
-          "and environment assignments are not allowed. At most 256 characters.",
+          "`pnpm --filter @scope/web build`, or a list of such commands run in order, for example " +
+          '`["pnpm run build:sphere", "pnpm run build"]`; the build stops at the first that fails. ' +
+          "Use it when the wrangler config has no `build.command`. Each runs as a plain command " +
+          "without a shell, with no credentials in its environment and the checkout's " +
+          "`node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, and environment " +
+          "assignments are not allowed. pnpm and npm run no pre or post hooks of package scripts " +
+          "there (`pnpm run build` skips `prebuild`), so list such a step as a command of its own. At " +
+          `most ${MAX_BUILD_COMMANDS} commands of at most 256 characters each.`,
       )
       .optional(),
     /**
@@ -926,6 +1107,13 @@ export const catalogManifestSchema = z
     revision: catalogRevisionSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
+    for (const problem of derivedSecretProblems(manifest.secrets)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["secrets", ...problem.path],
+        message: problem.message,
+      });
+    }
     if (manifest.install.tier !== "self-deploying") return;
     manifest.secrets.forEach((secret, i) => {
       if (isOptionalSecret(secret)) {
@@ -936,9 +1124,19 @@ export const catalogManifestSchema = z
             "optional secrets are not allowed for the self-deploying tier: the app's own installer runs with every secret the manifest declares",
         });
       }
+      if (isDerivedSecret(secret)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["secrets", i, "derive"],
+          message:
+            "derived secrets are not allowed for the self-deploying tier: the app's own installer reads its secrets as entered",
+        });
+      }
     });
   })
-  // The refinement does not reach the JSON Schema; `allOf` states it there.
+  // The refinements do not reach the JSON Schema; `allOf` states the
+  // self-deploying ones there (no optional and no derived secrets). Whether a
+  // `derive.from` names another secret cannot be said in JSON Schema.
   .meta({
     allOf: [
       {
@@ -950,7 +1148,12 @@ export const catalogManifestSchema = z
             properties: {
               secrets: {
                 items: {
-                  not: { required: ["optional"], properties: { optional: { const: true } } },
+                  not: {
+                    anyOf: [
+                      { required: ["optional"], properties: { optional: { const: true } } },
+                      { required: ["derive"] },
+                    ],
+                  },
                 },
               },
             },

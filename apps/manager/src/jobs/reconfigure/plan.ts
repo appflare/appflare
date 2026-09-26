@@ -46,6 +46,13 @@ export interface SecretSlot {
   optional: boolean;
   /** The Worker has it (Appflare recorded setting it). */
   present: boolean;
+  /**
+   * For a derived secret (the catalog's `derive`): the secret it is computed
+   * from. It is never entered: a new value of its source replaces it too.
+   */
+  derivedFrom?: string;
+  /** For a source of derived secrets: their names, which a new value of it replaces too. */
+  derives?: string[];
 }
 
 /**
@@ -59,15 +66,20 @@ export function secretSlots(
   recordedNames: readonly string[],
 ): SecretSlot[] {
   const recorded = new Set(recordedNames);
-  const slots: SecretSlot[] = declared.map((s) => ({
-    name: s.name,
-    label: s.label,
-    ...(s.help === undefined ? {} : { help: s.help }),
-    generate: s.generate,
-    declared: true,
-    optional: isOptionalSecret(s),
-    present: recorded.has(s.name),
-  }));
+  const slots: SecretSlot[] = declared.map((s) => {
+    const derives = declared.filter((d) => d.derive?.from === s.name).map((d) => d.name);
+    return {
+      name: s.name,
+      label: s.label,
+      ...(s.help === undefined ? {} : { help: s.help }),
+      generate: s.generate,
+      declared: true,
+      optional: isOptionalSecret(s),
+      present: recorded.has(s.name),
+      ...(s.derive === undefined ? {} : { derivedFrom: s.derive.from }),
+      ...(derives.length > 0 ? { derives } : {}),
+    };
+  });
   const names = new Set(declared.map((s) => s.name));
   for (const name of recordedNames) {
     if (names.has(name)) continue;
@@ -85,11 +97,32 @@ export function secretSlots(
 }
 
 /**
+ * Why the secrets an admin entered cannot be taken as they are, one sentence
+ * each: a derived secret is never entered, only its source. Checked on the
+ * form's values before the derived ones are computed (`withDerivedSecrets`).
+ */
+export function enteredSecretProblems(
+  set: Readonly<Record<string, string>>,
+  slots: readonly SecretSlot[],
+): string[] {
+  const byName = new Map(slots.map((s) => [s.name, s]));
+  return Object.keys(set).flatMap((name) => {
+    const from = byName.get(name)?.derivedFrom;
+    return from === undefined
+      ? []
+      : [`${name} is computed from ${from}; give ${from} a new value instead.`];
+  });
+}
+
+/**
  * Why these secret changes cannot be made, one sentence each; empty when they
  * can. A secret may get a new value when the version declares it or the
  * Worker has it; it may be removed only when the Worker has it and the
  * version does not need it (declares it optional, or not at all); a value may
- * not be empty.
+ * not be empty. A derived secret and its source change together: each new
+ * value of a source comes with a new value of every secret derived from it,
+ * and a derived secret gets one only with its source; neither is removed on
+ * its own.
  */
 export function secretChangeProblems(
   changes: SecretChanges,
@@ -104,6 +137,17 @@ export function secretChangeProblems(
       problems.push(`${name} is not a secret of this app.`);
     } else if (value.length === 0) {
       problems.push(`Enter a new value for ${slot.label} (${name}), or leave it unchanged.`);
+    }
+  }
+  for (const slot of slots) {
+    const from = slot.derivedFrom;
+    if (from === undefined) continue;
+    const setsDerived = Object.hasOwn(changes.set, slot.name);
+    const setsSource = Object.hasOwn(changes.set, from);
+    if (setsDerived && !setsSource) {
+      problems.push(`${slot.name} is computed from ${from}; give ${from} a new value instead.`);
+    } else if (setsSource && !setsDerived) {
+      problems.push(`${slot.name} is computed from ${from}, so it must change with it.`);
     }
   }
   for (const name of new Set(changes.unset)) {

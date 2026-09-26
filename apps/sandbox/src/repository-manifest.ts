@@ -2,6 +2,7 @@ import {
   type BuildCommandChoice,
   type BuildCommandSource,
   buildCommandProblem,
+  type CatalogBuildCommand,
   type CatalogManifest,
   type CatalogSecret,
   type CatalogVar,
@@ -195,8 +196,8 @@ export function chooseBuildCommand(
   choice: BuildCommandChoice,
   packageManager: PackageManager,
   pkg: PackageFacts | null,
-  catalogCommand?: string,
-): { command: string | null; from: BuildCommandSource } {
+  catalogCommand?: CatalogBuildCommand,
+): { command: CatalogBuildCommand | null; from: BuildCommandSource } {
   if (choice.mode === "command") return { command: choice.command, from: "entered" };
   if (choice.mode === "none") return { command: null, from: "none" };
   if (catalogCommand !== undefined) return { command: catalogCommand, from: "catalog" };
@@ -260,7 +261,7 @@ export interface RepositoryFacts {
   wranglerConfig: string;
   wrangler: WranglerFacts;
   pkg: PackageFacts | null;
-  buildCommand: string | null;
+  buildCommand: CatalogBuildCommand | null;
   secrets: CatalogSecret[];
 }
 
@@ -321,7 +322,7 @@ export function repositoryManifest(facts: RepositoryFacts): CatalogManifest {
  */
 export function sourceBuildManifest(
   baseline: CatalogManifest,
-  facts: { ref: string; sha: string; version: string; buildCommand: string | null },
+  facts: { ref: string; sha: string; version: string; buildCommand: CatalogBuildCommand | null },
 ): CatalogManifest {
   const { buildCommand: _catalogCommand, version: _catalogVersion, ...install } = baseline.install;
   return {

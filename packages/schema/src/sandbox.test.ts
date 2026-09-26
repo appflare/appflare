@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCommandArgvList,
+  buildCommandRequestArgv,
   buildKeys,
   buildOutcomeSchema,
   buildRequestSchema,
@@ -15,7 +17,7 @@ const SHA = "0123456789abcdef0123456789abcdef01234567";
 
 function request(
   overrides: Record<string, unknown> = {},
-  declaredBuildCommand?: string,
+  declaredBuildCommand?: string | string[],
 ): Record<string, unknown> {
   return {
     protocol: SANDBOX_PROTOCOL_VERSION,
@@ -80,6 +82,41 @@ describe("buildRequestSchema", () => {
     expect(issues(request({ buildCommand: ["pnpm", "build"] }))?.[0]).toMatch(
       /^buildCommand: is set, but the catalog manifest declares no install\.buildCommand/,
     );
+  });
+
+  it("takes a list of build commands from the manifest, never repeated in the request", () => {
+    const declared = ["pnpm run build:sphere", "pnpm run build"];
+    expect(buildRequestSchema.safeParse(request({}, declared)).success).toBe(true);
+    expect(
+      buildRequestSchema.safeParse(request({ buildCommand: ["pnpm", "build"] }, ["pnpm build"]))
+        .success,
+    ).toBe(true);
+    const refused = buildRequestSchema.safeParse(
+      request({ buildCommand: ["pnpm", "run", "build"] }, declared),
+    );
+    expect(refused.error?.issues.map((i) => i.message)).toEqual([
+      "is set, but the catalog manifest declares several build commands; leave it out, the packer runs them all",
+    ]);
+    expect(
+      buildRequestSchema.safeParse(request({}, ["pnpm build", "pnpm build | tee"])).success,
+    ).toBe(false);
+  });
+
+  it("carries one argv for a single command and a list of argvs for several", () => {
+    expect(buildCommandRequestArgv("pnpm  --filter web build")).toEqual([
+      "pnpm",
+      "--filter",
+      "web",
+      "build",
+    ]);
+    expect(buildCommandRequestArgv(["pnpm build"])).toEqual(["pnpm", "build"]);
+    const several = buildCommandRequestArgv(["pnpm run a", "pnpm run b"]);
+    expect(several).toEqual([
+      ["pnpm", "run", "a"],
+      ["pnpm", "run", "b"],
+    ]);
+    expect(buildCommandArgvList(several)).toEqual(several);
+    expect(buildCommandArgvList(["pnpm", "build"])).toEqual([["pnpm", "build"]]);
   });
 
   it("refuses shell syntax and environment assignments in either build command", () => {

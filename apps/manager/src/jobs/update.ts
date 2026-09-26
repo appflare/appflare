@@ -14,6 +14,7 @@ import { readCachedCatalogApp } from "../catalog/index.server";
 import { createDb } from "../db/client";
 import { installs, jobs, resources, source_builds } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { secretsToSet } from "../installs/derived-secrets";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
 import { appSlugLabel } from "../installs/source-review";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
@@ -49,6 +50,7 @@ import {
 } from "./install/queue-consumers";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import { RESOURCE_LABEL } from "./install/resources";
+import { secretSlots } from "./reconfigure/plan";
 import { undoSecretChangesPhase } from "./reconfigure/secrets";
 import type { JobContext } from "./run-job";
 import { runSelfDeployingUpdate } from "./self-deploying/jobs";
@@ -211,6 +213,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     workerName: string;
     servingVersionId: string;
     names: string[];
+    /** Those of `names` the serving version has too (a derived secret's source), put back rather than dropped. */
+    kept: string[];
     /** The upload's annotation, which finds its version when the upload did not name it. */
     uploadMessage: string;
   } | null = null;
@@ -332,9 +336,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const queueDiff = diffConsumerQueues(queuePlan.queues, started.resources);
     const path = updatePath(manifest, started.appliedDoTag);
     const fullDeploy = path.fullDeploy;
-    const newSecrets = missingSecrets(
+    const recordedSecrets = started.resources.filter((r) => r.kind === "secret").map((r) => r.name);
+    // A derived secret the Worker lacks comes with its source, which the
+    // update asked for again and set together with the value derived from it.
+    const newSecrets = secretsToSet(
       manifest.catalog.secrets,
-      started.resources.filter((r) => r.kind === "secret").map((r) => r.name),
+      missingSecrets(manifest.catalog.secrets, recordedSecrets),
     );
     const secretValues: Record<string, string> = {};
     for (const secret of newSecrets) {
@@ -472,6 +479,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const vars = installVars(manifest, started.userVars, {
       workerName,
       subdomain,
+      accountId: steps.accountId(),
       workerUrl: appBase,
     });
 
@@ -587,6 +595,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           workerName,
           servingVersionId: snapshot.versionId,
           names: introduced,
+          kept: introduced.filter((name) => recordedSecrets.includes(name)),
           uploadMessage: updateVersionMessage(started.slug, params.version, params.jobId),
         };
       }
@@ -776,9 +785,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           uploadedVersionId: version,
           uploadMessage: undo.uploadMessage,
           servingVersionId: undo.servingVersionId,
-          // Only the names matter: each one the serving version lacks is dropped.
+          // Only the names matter: each one the serving version lacks is
+          // dropped, each one it has gets its serving value back.
           changes: { set: {}, unset: undo.names },
-          slots: [],
+          slots: secretSlots([], undo.kept),
           carrier: "upload",
           undoneMessage: updateSecretsUndoneMessage(params.jobId),
         });

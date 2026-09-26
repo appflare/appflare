@@ -2,8 +2,11 @@ import { z } from "zod";
 import { sha256Schema } from "./artifact";
 import {
   buildCommandArgv,
+  buildCommandList,
+  type CatalogBuildCommand,
   catalogInstallSchema,
   gitShaSchema,
+  MAX_BUILD_COMMANDS,
   ownerRepoSchema,
   packageManagerSchema,
   sandboxInstanceTypeSchema,
@@ -154,6 +157,23 @@ export const buildCommandArgvSchema = z
   );
 
 /**
+ * A catalog entry's `install.buildCommand` as a request carries it: one argv
+ * for a single command (the shape every sandbox Worker version reads), a list
+ * of argvs only when the entry lists several commands.
+ */
+export function buildCommandRequestArgv(command: CatalogBuildCommand): string[] | string[][] {
+  const argvs = buildCommandList(command).map(buildCommandArgv);
+  const [only] = argvs;
+  return argvs.length === 1 && only !== undefined ? only : argvs;
+}
+
+/** The argvs of a request's `buildCommand`, in the order they run. */
+export function buildCommandArgvList(value: string[] | string[][]): string[][] {
+  // Checked by the schema: all words (one argv) or all argvs.
+  return typeof value[0] === "string" ? [value as string[]] : (value as string[][]);
+}
+
+/**
  * The fields of the catalog manifest the sandbox Worker relies on. The whole
  * manifest passes through unchanged (it is recorded verbatim in the
  * artifact); the packer inside the container validates it in full at the
@@ -168,7 +188,7 @@ export const buildCatalogManifestSchema = z.looseObject({
     packageManager: packageManagerSchema,
     wranglerConfig: z.string().min(1),
     // The same rules as the catalog manifest's: no shell syntax, no
-    // environment assignments, at most 256 characters.
+    // environment assignments, at most 256 characters per command.
     buildCommand: catalogInstallSchema.shape.buildCommand,
   }),
 });
@@ -197,7 +217,7 @@ export const buildRequestSchema = z
      * build command: the packer runs it (after the install, before bundling)
      * and the artifact records it. So this field may only repeat it: it must
      * equal the manifest's command word for word, and it is refused when the
-     * manifest declares none.
+     * manifest declares none or several.
      */
     buildCommand: buildCommandArgvSchema.optional(),
     /** Relative to the project; must equal the catalog manifest's `install.wranglerConfig`. */
@@ -235,16 +255,24 @@ export const buildRequestSchema = z
         message: `is ${request.wranglerConfigPath}, but the catalog manifest says ${manifest.install.wranglerConfig}`,
       });
     }
-    const declared = manifest.install.buildCommand;
+    const declared = buildCommandList(manifest.install.buildCommand);
     if (request.buildCommand !== undefined) {
-      if (declared === undefined) {
+      const only = declared.length === 1 ? declared[0] : undefined;
+      if (declared.length === 0) {
         ctx.addIssue({
           code: "custom",
           path: ["buildCommand"],
           message:
             "is set, but the catalog manifest declares no install.buildCommand; the build command comes from the manifest only",
         });
-      } else if (buildCommandArgv(declared).join(" ") !== request.buildCommand.join(" ")) {
+      } else if (only === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["buildCommand"],
+          message:
+            "is set, but the catalog manifest declares several build commands; leave it out, the packer runs them all",
+        });
+      } else if (buildCommandArgv(only).join(" ") !== request.buildCommand.join(" ")) {
         ctx.addIssue({
           code: "custom",
           path: ["buildCommand"],
@@ -580,8 +608,17 @@ export const selfManagedRunRequestSchema = z
     /** Where the installer's project sits inside the repository, when not at its root. */
     subdirectory: checkoutPathSchema.optional(),
     packageManager: packageManagerSchema,
-    /** The entry's `install.buildCommand`, run without credentials before the installer. */
-    buildCommand: buildCommandArgvSchema.optional(),
+    /**
+     * The entry's `install.buildCommand`, run without credentials before the
+     * installer: one argv, or for an entry that lists several commands, their
+     * argvs in the order they run.
+     */
+    buildCommand: z
+      .union([
+        buildCommandArgvSchema,
+        z.array(buildCommandArgvSchema).min(1).max(MAX_BUILD_COMMANDS),
+      ])
+      .optional(),
     /** The installer's deploy or destroy command (the method says which). */
     command: selfDeployingCommandSchema,
     /** The install's stage, appended to the command after `stageArg`. */

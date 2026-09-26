@@ -505,6 +505,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       const vars = installVars(manifest, params.vars, {
         workerName,
         subdomain,
+        accountId: steps.accountId(),
         workerUrl: appBase,
       });
 

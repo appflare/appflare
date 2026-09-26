@@ -1,7 +1,7 @@
 import {
   appSecretSecretName,
   appTokenSecretName,
-  buildCommandArgv,
+  buildCommandRequestArgv,
   type CatalogManifest,
   catalogManifestSchema,
   gitShaSchema,
@@ -212,7 +212,7 @@ export function installerRequest(input: {
     packageManager: catalog.install.packageManager,
     ...(catalog.install.buildCommand === undefined
       ? {}
-      : { buildCommand: buildCommandArgv(catalog.install.buildCommand) }),
+      : { buildCommand: buildCommandRequestArgv(catalog.install.buildCommand) }),
     command: input.action === "deploy" ? block.deployCommand : block.destroyCommand,
     stage: selfDeployingStage(input.installId),
     stageArg: selfDeployingStageArg(block),

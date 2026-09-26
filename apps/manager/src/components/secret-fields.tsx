@@ -1,4 +1,9 @@
-import { type CatalogSecret, isOptionalSecret } from "@appflare/schema";
+import {
+  type CatalogSecret,
+  enteredSecrets,
+  isDerivedSecret,
+  isOptionalSecret,
+} from "@appflare/schema";
 import { Button, Input, SensitiveInput, Switch, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { generateTemporaryPassword } from "../auth/temporary-password";
@@ -12,17 +17,19 @@ import { GENERATED_SECRET_LENGTH } from "../installs/install-input";
  * is left unset behind a "Set now" switch; turning it on opens its field.
  *
  * Values are keyed by secret name. An optional secret has no key while it is
- * left unset, so the form sends nothing for it.
+ * left unset, so the form sends nothing for it. A derived secret (the
+ * catalog's `derive`) gets no field: the server computes it from its source,
+ * whose field says so.
  */
 
 export function generatedSecret(): string {
   return generateTemporaryPassword(GENERATED_SECRET_LENGTH);
 }
 
-/** Initial values: generated for `generate: true` secrets, empty otherwise; none for optional ones. */
+/** Initial values: generated for `generate: true` secrets, empty otherwise; none for optional or derived ones. */
 export function initialSecretValues(secrets: readonly CatalogSecret[]): Record<string, string> {
   return Object.fromEntries(
-    secrets
+    enteredSecrets(secrets)
       .filter((s) => !isOptionalSecret(s))
       .map((s) => [s.name, s.generate ? generatedSecret() : ""]),
   );
@@ -44,7 +51,7 @@ export function secretsComplete(
   secrets: readonly CatalogSecret[],
   values: Readonly<Record<string, string | undefined>>,
 ): boolean {
-  return secrets.every((s) => {
+  return enteredSecrets(secrets).every((s) => {
     const value = values[s.name];
     return isOptionalSecret(s) && value === undefined ? true : (value ?? "").length > 0;
   });
@@ -63,8 +70,9 @@ export function SecretFields({
   /** What ends the chance to copy a generated value ("the install", "the update"). */
   after: string;
 }) {
-  return secrets.map((secret) => {
+  return enteredSecrets(secrets).map((secret) => {
     const value = values[secret.name];
+    const derived = derivedNote(secrets, secret.name);
     if (!isOptionalSecret(secret)) {
       return (
         <SecretField
@@ -73,6 +81,7 @@ export function SecretFields({
           value={value ?? ""}
           onChange={(next) => onChange(secret.name, next)}
           after={after}
+          note={derived}
         />
       );
     }
@@ -107,6 +116,16 @@ export function SecretFields({
   });
 }
 
+/**
+ * What the field of `name` says about the secrets derived from it, or
+ * undefined when none is.
+ */
+export function derivedNote(secrets: readonly CatalogSecret[], name: string): string | undefined {
+  const derived = secrets.filter((s) => isDerivedSecret(s) && s.derive?.from === name);
+  if (derived.length === 0) return undefined;
+  return `Appflare also sets ${derived.map((s) => s.name).join(" and ")} from it.`;
+}
+
 /** The value field of one secret: generated (copy now, regenerate) or a password field. */
 function SecretField({
   secret,
@@ -114,6 +133,7 @@ function SecretField({
   onChange,
   after,
   withHelp = true,
+  note,
 }: {
   secret: CatalogSecret;
   value: string;
@@ -121,9 +141,13 @@ function SecretField({
   after: string;
   /** Show the catalog's help under the field (off when the switch above already shows it). */
   withHelp?: boolean;
+  /** A sentence after the help, such as which secrets are derived from this one. */
+  note?: string | undefined;
 }) {
   const label = `${secret.label} (${secret.name})`;
-  const help = withHelp ? secret.help : undefined;
+  const help =
+    [withHelp ? secret.help : undefined, note].filter((t) => t !== undefined).join(" ") ||
+    undefined;
   if (secret.generate) {
     return (
       <div className="grid gap-2">

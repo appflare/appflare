@@ -1,6 +1,7 @@
 import {
   type ArtifactManifest,
   type CatalogManifest,
+  enteredSecrets,
   hasFixedWorkerName,
   type IndexApp,
   indexAppArtifact,
@@ -38,6 +39,7 @@ import {
   sandboxEnableClaim,
   sandboxFirstGuardSql,
 } from "../sandbox/auto-enable.server";
+import { withDerivedSecrets } from "./derived-secrets";
 import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { installVarFields, missingRequiredVar, varValueProblem } from "./install-vars";
@@ -125,6 +127,8 @@ export interface ResolvedInstallInput {
  * not declare are rejected, not dropped. Every secret but an optional one
  * needs a value: the form prefills `generate: true` secrets, so an empty one
  * means a broken client. An optional secret without a value is left unset.
+ * A derived secret is not taken from the form at all: the caller computes it
+ * from its source with `withDerivedSecrets`.
  */
 export function resolveInstallInput(
   manifest: Pick<EntryManifest, "catalog" | "worker">,
@@ -141,7 +145,8 @@ export function resolveInstallInput(
       `${catalog.name} needs: ${catalog.requires.map(requirementLabel).join(", ")}. Confirm that this account meets these requirements.`,
     );
   }
-  const declaredSecrets = new Set(catalog.secrets.map((s) => s.name));
+  const formSecrets = enteredSecrets(catalog.secrets);
+  const declaredSecrets = new Set(formSecrets.map((s) => s.name));
   const declaredVars = new Set(catalog.vars.map((v) => v.name));
   const unknown = [
     ...Object.keys(input.secrets).filter((name) => !declaredSecrets.has(name)),
@@ -151,7 +156,7 @@ export function resolveInstallInput(
     throw new StartInstallError(`${catalog.name} does not take: ${unknown.join(", ")}.`);
   }
   const secrets: Record<string, string> = {};
-  for (const secret of catalog.secrets) {
+  for (const secret of formSecrets) {
     const value = input.secrets[secret.name] ?? "";
     if (value.length === 0) {
       // An optional secret left out is not set at all.
@@ -214,7 +219,12 @@ export async function startInstallCore(
   // An account recorded as on Workers Paid needs no confirmation per install.
   const accountPlan = await readAccountPlan(createDb(deps.db));
   const paidConfirmed = input.paidConfirmed || accountPlan === "paid";
-  const resolved = resolveInstallInput(manifest, { ...input, paidConfirmed });
+  const checked = resolveInstallInput(manifest, { ...input, paidConfirmed });
+  // Derived secrets (a bcrypt hash of a password, say) join the job's secrets here.
+  const resolved = {
+    ...checked,
+    secrets: await withDerivedSecrets(manifest.catalog.secrets, checked.secrets),
+  };
   // Where the artifact comes from: the signed release, or a build of the pin
   // in the account's sandbox Worker, which the admin confirms paying for.
   // A self-deploying app has no artifact at all: its own installer runs in

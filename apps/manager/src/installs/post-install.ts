@@ -2,7 +2,8 @@ import { type PlaceholderValues, renderPlaceholders } from "@appflare/schema";
 
 /**
  * Post-install notes: markdown from the
- * signed catalog manifest with `{{workerUrl}}` and `{{workerName}}` filled in.
+ * signed catalog manifest with `{{workerUrl}}`, `{{workerName}}` and
+ * `{{accountId}}` filled in.
  * Unknown placeholders are left as written. Vars take the same placeholders
  * (install-vars.ts).
  */

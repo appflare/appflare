@@ -5,6 +5,7 @@ import {
   catalogManifestSchema,
   gitShaSchema,
   MAX_BUILD_COMMAND_LENGTH,
+  MAX_BUILD_COMMANDS,
   packageManagerSchema,
   sandboxInstanceTypeSchema,
 } from "./catalog";
@@ -235,8 +236,14 @@ export const repositoryDetectionSchema = z.object({
   packageManager: packageManagerSchema,
   /** The wrangler config, relative to the repository root. */
   wranglerConfig: z.string().min(1).max(256),
-  /** The build command the packer ran, or null when none. */
-  buildCommand: z.string().max(MAX_BUILD_COMMAND_LENGTH).nullable(),
+  /**
+   * The build command the packer ran, or null when none. A catalog app's
+   * list of commands is shown joined with ` && ` (`buildCommandText`).
+   */
+  buildCommand: z
+    .string()
+    .max(MAX_BUILD_COMMANDS * (MAX_BUILD_COMMAND_LENGTH + 4))
+    .nullable(),
   buildCommandFrom: buildCommandSourceSchema,
   secretsFrom: secretsSourceSchema,
   /**

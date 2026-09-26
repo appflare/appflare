@@ -4,9 +4,11 @@ import {
   type BuildKeys,
   type BuildOutcome,
   type BuildStage,
+  buildCommandText,
   buildKeys,
   buildRequestSchema,
   buildStageSchema,
+  type CatalogBuildCommand,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
   type PackageManager,
   SANDBOX_BUCKET_BINDING,
@@ -104,7 +106,7 @@ export interface PackTarget {
   catalogManifest: {
     slug: string;
     source: { ref: string };
-    install: { packageManager: PackageManager; buildCommand?: string | undefined };
+    install: { packageManager: PackageManager; buildCommand?: CatalogBuildCommand | undefined };
   };
 }
 
@@ -162,7 +164,10 @@ export class BuildSteps {
         true,
       );
     }
-    const declared = catalogManifest.install.buildCommand;
+    const declared =
+      catalogManifest.install.buildCommand === undefined
+        ? undefined
+        : buildCommandText(catalogManifest.install.buildCommand);
     if (declared !== undefined) {
       this.log.line(`appflare-pack runs install.buildCommand first: ${declared}`);
     }

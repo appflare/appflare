@@ -1,6 +1,7 @@
 import {
   type BuildCommandChoice,
   type BuildStage,
+  buildCommandText,
   buildKeys,
   type CatalogManifest,
   catalogManifestSchema,
@@ -291,7 +292,8 @@ class RepositorySteps extends CommandRunner<BuildStage> {
       const detection: RepositoryDetection = {
         packageManager,
         wranglerConfig,
-        buildCommand: build.command,
+        // Shown to the admin; a catalog app's list of commands on one line.
+        buildCommand: build.command === null ? null : buildCommandText(build.command),
         buildCommandFrom: build.from,
         secretsFrom: secretsSource(secretsFrom, baseline !== undefined),
         unsupported: wrangler.unsupported,

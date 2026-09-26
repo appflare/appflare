@@ -90,6 +90,22 @@ describe("artifactManifestSchema", () => {
     expect(parsed.catalog.slug).toBe("cut");
   });
 
+  it("keeps an observability section that turns on only logs, as wrangler uploads it", () => {
+    const withObservability = (observability: unknown) =>
+      artifactManifestSchema.safeParse({
+        ...validArtifact,
+        worker: { ...validArtifact.worker, observability },
+      });
+    const logsOnly = { logs: { enabled: true, invocation_logs: false } };
+    const parsed = withObservability(logsOnly);
+    expect(parsed.success).toBe(true);
+    // No `enabled` is added: the upload sends the section as the config has it.
+    expect(parsed.data?.worker.observability).toEqual(logsOnly);
+    expect(withObservability({ enabled: false, head_sampling_rate: 0.1 }).success).toBe(true);
+    expect(withObservability(null).success).toBe(true);
+    expect(withObservability({ enabled: "yes" }).success).toBe(false);
+  });
+
   it("rejects a manifest with a wrong format literal and a non-hex sha256", () => {
     const invalid = {
       ...validArtifact,

@@ -3,6 +3,7 @@ import {
   changedVarNames,
   emailRouteZoneId,
   emailZones,
+  enteredSecretProblems,
   nextStoredVars,
   parseStoredVars,
   secretChangeProblems,
@@ -99,6 +100,51 @@ describe("secret change problems", () => {
       secretChangeProblems({ set: {}, unset: ["OLD_TOKEN"] }, slots, { canRemove: false }),
     ).toEqual([
       "OLD_TOKEN cannot be removed here: the app's own installer sets its secrets on its Workers.",
+    ]);
+  });
+});
+
+describe("derived secrets in a settings change", () => {
+  const declared = [
+    { name: "CF_PASSWORD", label: "Admin password", generate: false },
+    {
+      name: "CF_PASSWORD_HASH",
+      label: "Admin password hash",
+      generate: false,
+      derive: { from: "CF_PASSWORD", method: "bcrypt" as const },
+    },
+  ];
+  const slots = secretSlots(declared, ["CF_PASSWORD", "CF_PASSWORD_HASH"]);
+
+  it("mark the derived slot and the source it follows", () => {
+    expect(slots.map((s) => [s.name, s.derivedFrom, s.derives])).toEqual([
+      ["CF_PASSWORD", undefined, ["CF_PASSWORD_HASH"]],
+      ["CF_PASSWORD_HASH", "CF_PASSWORD", undefined],
+    ]);
+  });
+
+  it("refuse a derived secret entered on its own", () => {
+    expect(enteredSecretProblems({ CF_PASSWORD_HASH: "$2b$10$x" }, slots)).toEqual([
+      "CF_PASSWORD_HASH is computed from CF_PASSWORD; give CF_PASSWORD a new value instead.",
+    ]);
+    expect(enteredSecretProblems({ CF_PASSWORD: "new" }, slots)).toEqual([]);
+  });
+
+  it("change a source and what is derived from it together, or neither", () => {
+    expect(
+      secretChangeProblems(
+        { set: { CF_PASSWORD: "new", CF_PASSWORD_HASH: "h" }, unset: [] },
+        slots,
+      ),
+    ).toEqual([]);
+    expect(secretChangeProblems({ set: { CF_PASSWORD: "new" }, unset: [] }, slots)).toEqual([
+      "CF_PASSWORD_HASH is computed from CF_PASSWORD, so it must change with it.",
+    ]);
+    expect(secretChangeProblems({ set: { CF_PASSWORD_HASH: "h" }, unset: [] }, slots)).toEqual([
+      "CF_PASSWORD_HASH is computed from CF_PASSWORD; give CF_PASSWORD a new value instead.",
+    ]);
+    expect(secretChangeProblems({ set: {}, unset: ["CF_PASSWORD_HASH"] }, slots)).toEqual([
+      "Admin password hash (CF_PASSWORD_HASH) is required by the installed version; it can be replaced, not removed.",
     ]);
   });
 });

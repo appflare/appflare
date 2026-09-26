@@ -1,8 +1,14 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BuildCommandError, outputTail, runBuildCommand } from "./build-command.ts";
+import {
+  BUILD_HOOKS_OFF_ENV,
+  BuildCommandError,
+  outputTail,
+  runBuildCommand,
+  runBuildCommands,
+} from "./build-command.ts";
 import { scrubEnv } from "./scrub-env.ts";
 
 let dir: string;
@@ -189,6 +195,89 @@ setTimeout(() => {}, 60000);`,
         env: scrubEnv(process.env),
       }),
     ).rejects.toThrow(/contains "&"/);
+  });
+});
+
+describe("runBuildCommands", () => {
+  it("runs every command in order", async () => {
+    script(
+      "step.mjs",
+      `import { appendFileSync } from "node:fs";
+appendFileSync("steps.txt", process.argv[2] + "\\n");`,
+    );
+    const logs: string[] = [];
+    await runBuildCommands({
+      checkoutDir: dir,
+      commands: ["node step.mjs one", "node step.mjs two", "node step.mjs three"],
+      env: scrubEnv(process.env),
+      logger: (m) => logs.push(m),
+    });
+    expect(readFileSync(path.join(dir, "steps.txt"), "utf8")).toBe("one\ntwo\nthree\n");
+    expect(logs[0]).toContain("running install.buildCommand (1 of 3): node step.mjs one");
+  });
+
+  it("stops at the first command that fails, naming it", async () => {
+    script(
+      "step.mjs",
+      `import { appendFileSync } from "node:fs";
+appendFileSync("steps.txt", process.argv[2] + "\\n");
+if (process.argv[2] === "two") process.exit(2);`,
+    );
+    const failure = runBuildCommands({
+      checkoutDir: dir,
+      commands: ["node step.mjs one", "node step.mjs two", "node step.mjs three"],
+      env: scrubEnv(process.env),
+    });
+    await expect(failure).rejects.toThrow(
+      'install.buildCommand (2 of 3) "node step.mjs two" failed (exit 2)',
+    );
+    expect(readFileSync(path.join(dir, "steps.txt"), "utf8")).toBe("one\ntwo\n");
+  });
+
+  it("checks every command before running the first", async () => {
+    script("step.mjs", `import { writeFileSync } from "node:fs"; writeFileSync("ran.txt", "x");`);
+    const failure = runBuildCommands({
+      checkoutDir: dir,
+      commands: ["node step.mjs", "pnpm build | tee log"],
+      env: scrubEnv(process.env),
+    });
+    await expect(failure).rejects.toThrow('install.buildCommand (2 of 2) contains "|"');
+    expect(existsSync(path.join(dir, "ran.txt"))).toBe(false);
+  });
+
+  it("turns off pre and post hooks of package scripts", async () => {
+    script(
+      "package.json",
+      JSON.stringify({
+        name: "hooks",
+        private: true,
+        scripts: {
+          prebuild: "node -e \"require('fs').writeFileSync('pre.txt','x')\"",
+          build: "node -e \"require('fs').writeFileSync('build.txt','x')\"",
+          postbuild: "node -e \"require('fs').writeFileSync('post.txt','x')\"",
+        },
+      }),
+    );
+    script(
+      "env.mjs",
+      `import { writeFileSync } from "node:fs";
+writeFileSync("env.json", JSON.stringify({
+  prePost: process.env.npm_config_enable_pre_post_scripts,
+  ignore: process.env.npm_config_ignore_scripts,
+}));`,
+    );
+    await runBuildCommands({
+      checkoutDir: dir,
+      commands: ["node env.mjs", "npm run build"],
+      env: scrubEnv(process.env),
+    });
+    expect(JSON.parse(readFileSync(path.join(dir, "env.json"), "utf8"))).toEqual({
+      prePost: BUILD_HOOKS_OFF_ENV.npm_config_enable_pre_post_scripts,
+      ignore: BUILD_HOOKS_OFF_ENV.npm_config_ignore_scripts,
+    });
+    expect(existsSync(path.join(dir, "build.txt"))).toBe(true);
+    expect(existsSync(path.join(dir, "pre.txt"))).toBe(false);
+    expect(existsSync(path.join(dir, "post.txt"))).toBe(false);
   });
 });
 

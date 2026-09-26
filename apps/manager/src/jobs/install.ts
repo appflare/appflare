@@ -404,7 +404,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       return {};
     });
     const upload = await run("upload Worker script", async ({ log, orm }) => {
-      const vars = installVars(manifest, params.vars, { workerName: params.workerName, subdomain });
+      const vars = installVars(manifest, params.vars, {
+        workerName: params.workerName,
+        subdomain,
+        accountId: steps.accountId(),
+      });
       for (const warning of vars.warnings) log.warn(warning);
       const metadata = buildScriptMetadata({
         manifest,

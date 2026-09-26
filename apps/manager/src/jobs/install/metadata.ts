@@ -34,18 +34,20 @@ export interface CreatedResource {
  * Every var the install's Worker gets (`resolveVars`), with `{{workerUrl}}`
  * and `{{workerName}}` filled in from its Worker name and the account's
  * workers.dev subdomain, or from `workerUrl` when the app is reached
- * elsewhere (its custom domain while workers.dev is off). The job logs the
- * warnings: a stored value the app can no longer read falls back to the
- * default instead of failing the job.
+ * elsewhere (its custom domain while workers.dev is off), and `{{accountId}}`
+ * from the account the job works in. The job logs the warnings: a stored
+ * value the app can no longer read falls back to the default instead of
+ * failing the job.
  */
 export function installVars(
   manifest: Pick<ArtifactManifest, "catalog" | "worker">,
   userVars: Readonly<Record<string, string>>,
-  worker: { workerName: string; subdomain: string; workerUrl?: string },
+  worker: { workerName: string; subdomain: string; accountId: string; workerUrl?: string },
 ): ResolvedVars {
   const placeholders: PlaceholderValues = {
     workerName: worker.workerName,
     workerUrl: worker.workerUrl ?? workersDevUrl(worker.workerName, worker.subdomain),
+    accountId: worker.accountId,
   };
   return resolveVars(manifest, userVars, placeholders);
 }

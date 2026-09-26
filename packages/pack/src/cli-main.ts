@@ -4,6 +4,7 @@ import { inspectWranglerConfig } from "./inspect.ts";
 import { describeVersionOrigin, pack } from "./pack.ts";
 import { sign } from "./sign.ts";
 import { verify } from "./verify.ts";
+import { workerSizeLine } from "./worker-size.ts";
 
 const USAGE = `appflare-pack — build, sign, and verify Appflare artifacts
 
@@ -99,6 +100,7 @@ async function runPack(argv: string[]): Promise<number> {
   process.stdout.write(
     `  modules=${result.moduleCount} assets=${result.assetCount} migrations=${result.d1MigrationCount}\n`,
   );
+  process.stdout.write(`  worker:    ${workerSizeLine(result.workerSize, result.moduleCount)}\n`);
   for (const warning of result.warnings) {
     process.stdout.write(`  warning: ${warning}\n`);
   }

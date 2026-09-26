@@ -170,6 +170,7 @@ export async function runSelfDeployingReconfigure(
       vars: installerVars(catalog, params.vars, {
         workerName: started.workerName,
         workerUrl: `https://${started.workerName}.${subdomain}.workers.dev`,
+        accountId: started.accountId,
       }),
       ...(instanceType === undefined ? {} : { instanceType }),
       // Its own log, next to the one of the deploy that put this version in place.

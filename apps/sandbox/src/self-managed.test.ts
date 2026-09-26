@@ -11,7 +11,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { type AccountReader, accountReader, discover } from "./discover";
 import { readProgress } from "./log";
-import { BUILD_ENV, selfManagedSandboxId } from "./protocol";
+import { BUILD_COMMAND_ENV, BUILD_ENV, selfManagedSandboxId } from "./protocol";
 import {
   type HeldCredentials,
   heldCredentials,
@@ -234,9 +234,17 @@ describe("deploySelfManaged", () => {
       DOTENV_REMOVAL,
       `pnpm alchemy deploy --yes --stage ${STAGE}`,
     ]);
-    // Every command but the installer's runs in the credential-free build environment.
+    // Every command but the installer's runs in the credential-free build
+    // environment; the build command with package script hooks off as well.
+    const same = (a: unknown) => (b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    expect(sandbox.envs.filter(same(BUILD_COMMAND_ENV))).toHaveLength(1);
+    expect(BUILD_COMMAND_ENV).toEqual({
+      ...BUILD_ENV,
+      npm_config_enable_pre_post_scripts: "false",
+      npm_config_ignore_scripts: "true",
+    });
     expect(
-      sandbox.envs.slice(0, -1).every((e) => JSON.stringify(e) === JSON.stringify(BUILD_ENV)),
+      sandbox.envs.slice(0, -1).every((e) => same(BUILD_ENV)(e) || same(BUILD_COMMAND_ENV)(e)),
     ).toBe(true);
     expect(sandbox.envs.at(-1)).toEqual({
       ...BUILD_ENV,
@@ -371,6 +379,26 @@ describe("deploySelfManaged", () => {
       expect(failure.message).toMatch(/enter the app's (token|secrets) again/);
       expect(opened).toEqual([]);
     }
+  });
+
+  it("runs a list of build commands in order and stops at the first that fails", async () => {
+    const steps = [
+      ["pnpm", "run", "build:sphere"],
+      ["pnpm", "run", "build"],
+    ];
+    const sandbox = fake();
+    asDeploy(await run("deploy", sandbox, { input: request({ buildCommand: steps }) }).promise);
+    const sphere = sandbox.commands.indexOf("pnpm run build:sphere");
+    expect(sphere).toBeGreaterThan(0);
+    expect(sandbox.commands[sphere + 1]).toBe("pnpm run build");
+
+    const failing = fake({ failures: [{ match: /build:sphere/, exitCode: 1, output: "no\n" }] });
+    const failure = asFailure(
+      await run("deploy", failing, { input: request({ buildCommand: steps }) }).promise,
+    );
+    expect(failure).toMatchObject({ step: "build", exitCode: 1 });
+    expect(failure.message).toContain("pnpm run build:sphere");
+    expect(failing.commands).not.toContain("pnpm run build");
   });
 
   it("reports a failing build as the build step, without running the installer", async () => {

@@ -31,6 +31,7 @@ import {
   updatePath,
   updateRefusal,
 } from "../jobs/update/plan";
+import { secretsToAskFor, withDerivedSecrets } from "./derived-secrets";
 import { snapshotHasSameCode } from "./rollback-copy";
 
 /**
@@ -283,9 +284,13 @@ export async function startUpdateCore(
         isNull(resources.deleted_at),
       ),
     );
-  const needed = missingSecrets(
+  // A derived secret the Worker lacks asks for its source.
+  const needed = secretsToAskFor(
     catalog.secrets,
-    recorded.filter((r) => r.kind === "secret").map((r) => r.name),
+    missingSecrets(
+      catalog.secrets,
+      recorded.filter((r) => r.kind === "secret").map((r) => r.name),
+    ),
   );
   const recordedCrons = recorded.filter((r) => r.kind === "cron").length;
   const accountPaid = (await readAccountPlan(createDb(deps.db))) === "paid";
@@ -312,14 +317,15 @@ export async function startUpdateCore(
   if (unknown.length > 0) {
     throw new VersionActionError(`This update does not take: ${unknown.join(", ")}.`);
   }
-  const secrets: Record<string, string> = {};
+  const entered: Record<string, string> = {};
   for (const secret of needed) {
     const value = given[secret.name] ?? "";
     if (value.length === 0) {
       throw new VersionActionError(`${secret.label} (${secret.name}) is required.`);
     }
-    secrets[secret.name] = value;
+    entered[secret.name] = value;
   }
+  const secrets = await withDerivedSecrets(catalog.secrets, entered);
   const rememberPaid =
     cronTriggers !== null && request.paidConfirmed === true && request.rememberPaidPlan === true;
   const jobId = (deps.newId ?? (() => ulid()))();
@@ -388,9 +394,13 @@ async function startSelfDeployingUpdate(
         isNull(resources.deleted_at),
       ),
     );
-  const needed = missingSecrets(
+  // A derived secret the Worker lacks asks for its source.
+  const needed = secretsToAskFor(
     catalog.secrets,
-    recordedSecrets.map((r) => r.name),
+    missingSecrets(
+      catalog.secrets,
+      recordedSecrets.map((r) => r.name),
+    ),
   );
   if ((needed.length > 0 && request.secrets === undefined) || request.buildConfirmed !== true) {
     return {
@@ -408,14 +418,15 @@ async function startSelfDeployingUpdate(
   if (unknown.length > 0) {
     throw new VersionActionError(`This update does not take: ${unknown.join(", ")}.`);
   }
-  const secrets: Record<string, string> = {};
+  const entered: Record<string, string> = {};
   for (const secret of needed) {
     const value = given[secret.name] ?? "";
     if (value.length === 0) {
       throw new VersionActionError(`${secret.label} (${secret.name}) is required.`);
     }
-    secrets[secret.name] = value;
+    entered[secret.name] = value;
   }
+  const secrets = await withDerivedSecrets(catalog.secrets, entered);
   const appToken = request.appToken?.trim();
   const jobId = (deps.newId ?? (() => ulid()))();
   return claim(deps, {

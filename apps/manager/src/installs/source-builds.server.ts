@@ -48,6 +48,7 @@ import {
 } from "../sandbox/auto-enable.server";
 import { buildsFromRepository } from "../sandbox/binding";
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
+import { secretsToAskFor, withDerivedSecrets } from "./derived-secrets";
 import { GitRefError, type RemoteRefs, resolveRef } from "./git-refs";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { repositoryAppSlug, reviewBuild } from "./source-review";
@@ -623,6 +624,10 @@ export async function installSourceBuildCore(
   } catch (error) {
     throw fail(error instanceof Error ? error.message : String(error));
   }
+  resolved = {
+    ...resolved,
+    secrets: await withDerivedSecrets(manifest.catalog.secrets, resolved.secrets),
+  };
   const workerName = input.workerName;
   const review = reviewBuild(manifest, built.detected, workerName, prebuilt.origin);
   if (review.problems.length > 0) throw fail(review.problems.join(" "));
@@ -804,9 +809,13 @@ export async function sourceUpdateNeeds(
       ),
     );
   return {
-    needsSecrets: missingSecrets(
+    // A derived secret the Worker lacks asks for its source.
+    needsSecrets: secretsToAskFor(
       manifest.catalog.secrets,
-      recorded.map((r) => r.name),
+      missingSecrets(
+        manifest.catalog.secrets,
+        recorded.map((r) => r.name),
+      ),
     ),
     skipsPreview: updatePath(
       manifest,
@@ -841,12 +850,13 @@ export async function updateFromSourceBuildCore(
   const given = input.secrets ?? {};
   const unknown = Object.keys(given).filter((n) => !needs.needsSecrets.some((s) => s.name === n));
   if (unknown.length > 0) throw fail(`This update does not take: ${unknown.join(", ")}.`);
-  const secrets: Record<string, string> = {};
+  const entered: Record<string, string> = {};
   for (const secret of needs.needsSecrets) {
     const value = given[secret.name] ?? "";
     if (value.length === 0) throw fail(`${secret.label} (${secret.name}) is required.`);
-    secrets[secret.name] = value;
+    entered[secret.name] = value;
   }
+  const secrets = await withDerivedSecrets(manifest.catalog.secrets, entered);
   const orm = createDb(deps.db);
   const now = (deps.now ?? (() => new Date()))();
   // Taken first, so two tabs cannot both update from it; given back if the update cannot start.

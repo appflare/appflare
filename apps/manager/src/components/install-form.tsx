@@ -461,7 +461,7 @@ export function VarField({
   const notes = [
     field.help,
     hasPlaceholder(value)
-      ? `{{workerUrl}} and {{workerName}} are filled in with the app's URL and Worker name ${when}.`
+      ? `{{workerUrl}}, {{workerName}} and {{accountId}} are filled in with the app's URL, Worker name and Cloudflare account id ${when}.`
       : undefined,
   ].filter((note) => note !== undefined);
   const description = notes.length > 0 ? notes.join(" ") : undefined;

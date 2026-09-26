@@ -514,6 +514,11 @@ function SecretRow({
           {slot.help}
         </Text>
       )}
+      {slot.derives !== undefined && (
+        <Text variant="secondary" size="sm">
+          A new value also replaces {slot.derives.join(" and ")}, which Appflare computes from it.
+        </Text>
+      )}
       {value !== undefined &&
         (slot.generate ? (
           <div className="grid gap-2">

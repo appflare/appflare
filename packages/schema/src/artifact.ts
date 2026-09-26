@@ -257,8 +257,19 @@ export type QueueConsumer = z.infer<typeof queueConsumerSchema>;
 export const doMigrationSchema = z.looseObject({ tag: z.string().min(1) });
 export type DoMigration = z.infer<typeof doMigrationSchema>;
 
-/** Worker observability config, or null when unset. */
-export const workerObservabilitySchema = z.looseObject({ enabled: z.boolean() }).nullable();
+/**
+ * Worker observability config as the wrangler config states it, or null when
+ * unset. Recorded and uploaded verbatim, as wrangler uploads it. `enabled` is
+ * optional because wrangler 4.136.2 accepts a config that turns on only part
+ * of it (`[observability.logs] enabled = true` alone): its validation asks for
+ * at least one of `enabled`, `logs.enabled`, `traces.enabled` or
+ * `issues.enabled`, and it sends the section unchanged, so a missing
+ * top-level `enabled` stays missing (wrangler reads it as off when comparing
+ * with the deployed Worker).
+ */
+export const workerObservabilitySchema = z
+  .looseObject({ enabled: z.boolean().optional() })
+  .nullable();
 
 /** Smart-placement config, or null. */
 export const workerPlacementSchema = z.looseObject({}).nullable();

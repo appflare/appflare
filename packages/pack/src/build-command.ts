@@ -3,21 +3,39 @@ import path from "node:path";
 import { buildCommandArgv, buildCommandProblem } from "@appflare/schema";
 
 /**
- * Runs a catalog manifest's `install.buildCommand` once in the checkout:
- * after the dependencies are installed (with install scripts disabled) and
- * before the packer reads the wrangler config and bundles the Worker, so the
- * config may name a file the build writes (for example the Cloudflare Vite
- * plugin's generated `wrangler.json`).
+ * Runs a catalog manifest's `install.buildCommand` in the checkout, each of
+ * its commands once and in order: after the dependencies are installed (with
+ * install scripts disabled) and before the packer reads the wrangler config
+ * and bundles the Worker, so the config may name a file the build writes (for
+ * example the Cloudflare Vite plugin's generated `wrangler.json`).
  *
- * The command runs as a plain argv, never through a shell, in the packer's
+ * Each command runs as a plain argv, never through a shell, in the packer's
  * scrubbed environment (no Cloudflare, signing, or CI credentials) with the
  * checkout's `node_modules/.bin` first on PATH, as a package script would
- * see it. It gets a time limit; when it runs out, or when the build ends,
- * every process the build started is stopped, so nothing outlives it.
+ * see it, and with pre and post hooks of package scripts turned off for pnpm
+ * and npm ({@link BUILD_HOOKS_OFF_ENV}). The commands share one time limit;
+ * when it runs out, or when a command ends, every process it started is
+ * stopped, so nothing outlives it. The first command that fails ends the
+ * build.
  */
 
-/** How long a build may run before the packer stops it: 15 minutes. */
+/** How long a build may run, all its commands together, before the packer stops it: 15 minutes. */
 export const DEFAULT_BUILD_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * Added to every build command's environment so that running a package
+ * script runs only that script, the way the dependency install runs with
+ * `--ignore-scripts`: pnpm skips `pre<name>` and `post<name>` hooks with
+ * `enable-pre-post-scripts` off (on by default in pnpm 10), and npm skips them,
+ * and any nested install's lifecycle scripts, with `ignore-scripts` on (an
+ * explicit `npm run <name>` still runs). A step a hook would have run is
+ * listed as a command of its own instead. Checked with pnpm 10.34.5 and
+ * npm 10; bun and classic yarn read neither setting.
+ */
+export const BUILD_HOOKS_OFF_ENV: Readonly<Record<string, string>> = {
+  npm_config_enable_pre_post_scripts: "false",
+  npm_config_ignore_scripts: "true",
+};
 
 /** Lines of the build's output quoted when it fails. */
 export const BUILD_OUTPUT_TAIL_LINES = 40;
@@ -33,6 +51,8 @@ export class BuildCommandError extends Error {
 export interface BuildCommandOptions {
   checkoutDir: string;
   command: string;
+  /** How messages name the command. Default `install.buildCommand`. */
+  label?: string;
   /** The scrubbed environment every child of the packer gets. */
   env: NodeJS.ProcessEnv;
   timeoutMs?: number;
@@ -64,22 +84,24 @@ function stopGroup(pid: number | undefined): void {
 
 export async function runBuildCommand(options: BuildCommandOptions): Promise<void> {
   const { checkoutDir, command } = options;
+  const label = options.label ?? "install.buildCommand";
   const logger = options.logger ?? (() => {});
   const timeoutMs = options.timeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
   const exitGraceMs = options.exitGraceMs ?? 5_000;
   const problem = buildCommandProblem(command);
-  if (problem !== null) throw new BuildCommandError(`install.buildCommand ${problem}`);
+  if (problem !== null) throw new BuildCommandError(`${label} ${problem}`);
   const [program, ...args] = buildCommandArgv(command);
-  if (program === undefined) throw new BuildCommandError("install.buildCommand is empty");
+  if (program === undefined) throw new BuildCommandError(`${label} is empty`);
 
   const bin = path.join(path.resolve(checkoutDir), "node_modules", ".bin");
   const inherited = options.env.PATH ?? options.env.Path ?? "";
   const env: NodeJS.ProcessEnv = {
     ...options.env,
+    ...BUILD_HOOKS_OFF_ENV,
     PATH: inherited.length > 0 ? `${bin}${path.delimiter}${inherited}` : bin,
   };
 
-  logger(`running install.buildCommand: ${command} (scrubbed environment)`);
+  logger(`running ${label}: ${command} (scrubbed environment)`);
   const started = Date.now();
   const outcome = await new Promise<{
     code: number | null;
@@ -143,9 +165,7 @@ export async function runBuildCommand(options: BuildCommandOptions): Promise<voi
     child.on("error", (error) => {
       if (settled) return;
       settle();
-      reject(
-        new BuildCommandError(`could not run install.buildCommand "${command}": ${error.message}`),
-      );
+      reject(new BuildCommandError(`could not run ${label} "${command}": ${error.message}`));
     });
     child.on("exit", (code, signal) => {
       exit = { code, signal };
@@ -160,7 +180,7 @@ export async function runBuildCommand(options: BuildCommandOptions): Promise<voi
   const quoted = tail.length > 0 ? `; last lines of its output:\n${tail}` : "; it printed nothing";
   if (outcome.timedOut) {
     throw new BuildCommandError(
-      `install.buildCommand "${command}" did not finish within ${Math.round(timeoutMs / 1000)} seconds and was stopped${quoted}`,
+      `${label} "${command}" did not finish within ${Math.round(timeoutMs / 1000)} seconds and was stopped${quoted}`,
     );
   }
   if (outcome.code !== 0) {
@@ -168,7 +188,45 @@ export async function runBuildCommand(options: BuildCommandOptions): Promise<voi
       outcome.code === null
         ? `was killed by ${outcome.signal ?? "a signal"}`
         : `failed (exit ${outcome.code})`;
-    throw new BuildCommandError(`install.buildCommand "${command}" ${how}${quoted}`);
+    throw new BuildCommandError(`${label} "${command}" ${how}${quoted}`);
   }
-  logger(`install.buildCommand finished in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+  logger(`${label} finished in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+}
+
+export interface BuildCommandsOptions extends Omit<BuildCommandOptions, "command" | "label"> {
+  /** The commands of `install.buildCommand`, in order (`buildCommandList`). */
+  commands: readonly string[];
+  /** For all the commands together. Default {@link DEFAULT_BUILD_TIMEOUT_MS}. */
+  timeoutMs?: number;
+}
+
+/**
+ * Runs every command of `install.buildCommand` in order with
+ * {@link runBuildCommand}, stopping at the first that fails. They share one
+ * time limit: each gets what the ones before it left. Every command is
+ * checked before the first runs, so a bad one later in the list fails the
+ * build before anything ran.
+ */
+export async function runBuildCommands(options: BuildCommandsOptions): Promise<void> {
+  const { commands, ...rest } = options;
+  const labels = commands.map((_, i) =>
+    commands.length === 1
+      ? "install.buildCommand"
+      : `install.buildCommand (${i + 1} of ${commands.length})`,
+  );
+  commands.forEach((command, i) => {
+    const problem = buildCommandProblem(command);
+    if (problem !== null) throw new BuildCommandError(`${labels[i]} ${problem}`);
+  });
+  const timeoutMs = options.timeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  for (const [i, command] of commands.entries()) {
+    await runBuildCommand({
+      ...rest,
+      command,
+      label: labels[i],
+      // At least a second, so a command that starts at the deadline still reports it.
+      timeoutMs: Math.max(1_000, deadline - Date.now()),
+    });
+  }
 }

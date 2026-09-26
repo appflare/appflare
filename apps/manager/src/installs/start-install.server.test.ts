@@ -1,5 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import bcrypt from "bcryptjs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { createDb } from "../db/client";
@@ -287,6 +288,43 @@ describe("startInstallCore", () => {
       input({ secrets: { ADMIN_PASSWORD: "p", API_KEY: "k" } }),
     );
     expect(resolved.secrets).toEqual({ ADMIN_PASSWORD: "p", API_KEY: "k" });
+  });
+
+  it("computes a derived secret from its source and never takes it from the form", async () => {
+    const f = await buildArtifactFixture({
+      catalog: {
+        secrets: [
+          { name: "CF_PASSWORD", label: "Admin password", generate: false },
+          {
+            name: "CF_PASSWORD_HASH",
+            label: "Admin password hash",
+            generate: false,
+            derive: { from: "CF_PASSWORD", method: "bcrypt" },
+          },
+        ],
+      },
+    });
+    expect(() =>
+      resolveInstallInput(
+        f.manifest,
+        input({ secrets: { CF_PASSWORD: "pw", CF_PASSWORD_HASH: "$2b$10$forged" } }),
+      ),
+    ).toThrow("does not take: CF_PASSWORD_HASH");
+
+    const h = harness(f);
+    await startInstallCore(h.deps, input({ secrets: { CF_PASSWORD: "correct horse" } }));
+    const secrets = h.created[0]?.params.secrets ?? {};
+    expect(Object.keys(secrets).sort()).toEqual(["CF_PASSWORD", "CF_PASSWORD_HASH"]);
+    expect(secrets.CF_PASSWORD_HASH).toMatch(/^\$2b\$10\$/);
+    expect(bcrypt.compareSync("correct horse", secrets.CF_PASSWORD_HASH ?? "")).toBe(true);
+    const job = await env.DB.prepare("SELECT input_json FROM jobs").first<{ input_json: string }>();
+    // Names only: neither value is stored outside the Workflow params.
+    expect(JSON.parse(job?.input_json ?? "{}").secrets).toEqual([
+      "CF_PASSWORD",
+      "CF_PASSWORD_HASH",
+    ]);
+    expect(job?.input_json).not.toContain("correct horse");
+    expect(job?.input_json).not.toContain("$2b$");
   });
 
   it("leaves an optional secret unset when it has no value", async () => {

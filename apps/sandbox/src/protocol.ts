@@ -172,6 +172,18 @@ export const BUILD_ENV: Readonly<Record<string, string>> = {
   YARN_ENABLE_SCRIPTS: "false",
 };
 
+/**
+ * The environment of a self-deploying entry's build commands: the build
+ * environment with pre and post hooks of package scripts off for pnpm and npm,
+ * as the packer runs a catalog entry's build commands (`BUILD_HOOKS_OFF_ENV`
+ * in `@appflare/pack`), so `pnpm run build` runs only `build`.
+ */
+export const BUILD_COMMAND_ENV: Readonly<Record<string, string>> = {
+  ...BUILD_ENV,
+  npm_config_enable_pre_post_scripts: "false",
+  npm_config_ignore_scripts: "true",
+};
+
 /** The packer, run on the checkout without a second install; it writes an unsigned artifact. */
 export function packArgv(project: string): string[] {
   return ["appflare-pack", project, "--manifest", MANIFEST_INPUT, "--out", OUT_DIR, "--no-install"];

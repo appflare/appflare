@@ -21,6 +21,7 @@ import {
   type ArtifactManifest,
   type AssetFile,
   artifactManifestSchema,
+  buildCommandList,
   type CatalogManifest,
   catalogManifestSchema,
   catalogVarProblems,
@@ -31,7 +32,7 @@ import {
 } from "@appflare/schema";
 import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
-import { DEFAULT_BUILD_TIMEOUT_MS, runBuildCommand } from "./build-command.ts";
+import { DEFAULT_BUILD_TIMEOUT_MS, runBuildCommands } from "./build-command.ts";
 import {
   checkoutRelative,
   dryRunInvocation,
@@ -43,6 +44,7 @@ import { parseJsonc } from "./jsonc.ts";
 import { scrubEnv } from "./scrub-env.ts";
 import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
 import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./version.ts";
+import { type WorkerSize, workerSize, workerTooLargeMessage } from "./worker-size.ts";
 import {
   classifyModuleType,
   collectBindings,
@@ -70,7 +72,7 @@ export interface PackOptions {
   env?: NodeJS.ProcessEnv;
   /** Optional progress logger. */
   logger?: (message: string) => void;
-  /** How long the catalog manifest's `install.buildCommand` may run. Default 15 minutes. */
+  /** How long the catalog manifest's `install.buildCommand` may run, all its commands together. Default 15 minutes. */
   buildTimeoutMs?: number;
 }
 
@@ -91,6 +93,8 @@ export interface PackResult {
   assetCount: number;
   d1MigrationCount: number;
   zipSize: number;
+  /** The Worker's size, as wrangler reports it after a dry run. */
+  workerSize: WorkerSize;
   /**
    * Problems that do not stop the pack but that the artifact's users hit
    * later, such as more Worker modules than Appflare can upload
@@ -429,12 +433,13 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     runInstall(checkoutDir, catalog.install.packageManager, childEnv, logger);
   }
 
-  // (b2) The catalog's build command, before the wrangler config is read: the
-  // config may be a file the build writes.
-  if (catalog.install.buildCommand !== undefined) {
-    await runBuildCommand({
+  // (b2) The catalog's build commands, in order, before the wrangler config is
+  // read: the config may be a file the build writes.
+  const buildCommands = buildCommandList(catalog.install.buildCommand);
+  if (buildCommands.length > 0) {
+    await runBuildCommands({
       checkoutDir,
-      command: catalog.install.buildCommand,
+      commands: buildCommands,
       env: childEnv,
       timeoutMs: options.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
       logger,
@@ -619,7 +624,8 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   }
 
   const d1MigrationCount = Object.values(d1Manifest).reduce((n, f) => n + f.length, 0);
-  const warnings = packWarnings(manifest);
+  const size = workerSize(modules.map((m) => m.bytes));
+  const warnings = packWarnings(manifest, size);
   for (const warning of warnings) {
     logger(`warning: ${warning}`);
   }
@@ -641,6 +647,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     assetCount: assetManifest.length,
     d1MigrationCount,
     zipSize: zipBytes.length,
+    workerSize: size,
     warnings,
   };
 }
@@ -658,15 +665,23 @@ export function describeVersionOrigin(origin: VersionOrigin): string {
 }
 
 /**
- * What is wrong with a packed artifact without making it invalid. Today: more
+ * What is wrong with a packed artifact without making it invalid: more
  * Worker modules than Appflare can Range-fetch for one upload
- * (`MAX_WORKER_MODULES`); such an artifact verifies but can never be
- * installed or updated. Bundling the Worker into one module fixes it.
+ * (`MAX_WORKER_MODULES`), which bundling the Worker into one module fixes,
+ * and, when `size` is given, a Worker larger than Cloudflare accepts
+ * (`MAX_WORKER_SIZE_BYTES`). Such an artifact verifies but can never be
+ * installed or updated.
  */
 export function packWarnings(
   manifest: Pick<ArtifactManifest, "app" | "version" | "worker">,
+  size?: WorkerSize,
 ): string[] {
   const warnings: string[] = [];
+  const tooLarge =
+    size === undefined ? null : workerTooLargeMessage(size, `${manifest.app}@${manifest.version}`);
+  if (tooLarge !== null) {
+    warnings.push(`${tooLarge} Appflare cannot install or update it as packed.`);
+  }
   const tooMany = tooManyModulesMessage(
     manifest.worker.modules.length,
     `${manifest.app}@${manifest.version}`,

@@ -7,10 +7,13 @@
 /** The most Worker modules Appflare can upload; `verify --max-modules` takes it. */
 export { MAX_WORKER_MODULES } from "@appflare/schema";
 export {
+  BUILD_HOOKS_OFF_ENV,
   BuildCommandError,
   type BuildCommandOptions,
+  type BuildCommandsOptions,
   DEFAULT_BUILD_TIMEOUT_MS,
   runBuildCommand,
+  runBuildCommands,
 } from "./build-command.ts";
 export {
   ConfigRedirectError,
@@ -18,6 +21,7 @@ export {
   resolveWranglerConfig,
   type WranglerConfigTarget,
 } from "./config-redirect.ts";
+export { deriveSecretValue } from "./derive-secret.ts";
 export { inspectWranglerConfig, wranglerFacts } from "./inspect.ts";
 export { parseJsonc } from "./jsonc.ts";
 export type { PackOptions, PackResult } from "./pack.ts";
@@ -35,6 +39,15 @@ export {
   semverFromRef,
   type VersionOrigin,
 } from "./version.ts";
+export {
+  artifactWorkerSize,
+  formatBytes,
+  MAX_WORKER_SIZE_BYTES,
+  type WorkerSize,
+  workerSize,
+  workerSizeLine,
+  workerTooLargeMessage,
+} from "./worker-size.ts";
 export {
   classifyModuleType,
   collectBindings,

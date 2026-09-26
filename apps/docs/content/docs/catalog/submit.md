@@ -120,9 +120,16 @@ Points that need care:
   Worker then counts as healthy. See [Health checks](/guides/health/#apps-behind-a-sign-in).
 - **`install.buildCommand`.** One command, such as `pnpm --filter @scope/web build`,
   that the packer runs at the root of the repository after installing dependencies
-  and before bundling. It runs without a shell and without credentials, with the
-  repository's `node_modules/.bin` on its PATH, so pipes, redirects, quotes,
-  variables, and `NAME=value` assignments are refused.
+  and before bundling, or a list of up to eight such commands run in order, such as
+  `["pnpm run build:sphere", "pnpm run build"]`. Each runs without a shell and
+  without credentials, with the repository's `node_modules/.bin` on its PATH, so
+  pipes, redirects, quotes, variables, and `NAME=value` assignments are refused.
+  pnpm and npm run no `pre` or `post` hooks there (`pnpm run build` skips
+  `prebuild`), just as dependencies install with `--ignore-scripts`, so list such a
+  step as a command of its own. The build stops at the first command that fails.
+- **Worker size.** `pnpm pack-app` prints the Worker's size and module count. A
+  Worker may be up to 64 MiB uncompressed on every plan, and the manager installs
+  at most 21 modules, so bundle the Worker into as few modules as you can.
 - **`install.wranglerConfig`.** Name the app's own wrangler config, the one you would
   run `wrangler deploy` next to. When the build leaves `.wrangler/deploy/config.json`
   beside it, as the Cloudflare Vite plugin does, the packer follows that redirect to
@@ -135,6 +142,15 @@ Points that need care:
   signing keys the user does not need to choose. List a var from the wrangler config
   too when admins should be able to change it; without a `default`, the form starts
   with the wrangler config's value.
+- **Derived secrets.** When the app wants a hash of a password rather than the
+  password, as Counterscale's `CF_PASSWORD_HASH` is a bcrypt hash, list the password
+  as a secret and the hash as a second one with
+  `"derive": { "from": "CF_PASSWORD", "method": "bcrypt" }`. The install form asks
+  only for the password; the manager computes the hash (bcrypt, cost 10) and sets
+  both, and again whenever the password gets a new value. The source must be an
+  ordinary secret of the same manifest, neither optional nor derived, and a derived
+  secret cannot be `generate` or `optional`. Self-deploying entries cannot derive
+  secrets.
 - **Optional secrets.** Add `"optional": true` to a secret the app works without,
   such as an SMTP password for a feature that stays off until it is set. The install
   form leaves it unset unless the admin chooses **Set now**, updates never ask for it,
@@ -152,7 +168,10 @@ Points that need care:
   `postInstall` text, in `vars[].default`, and in the values of the wrangler config's
   own `vars`. Use them for apps that need their public URL in a variable, for example
   `{ "name": "PUBLIC_URL", "label": "Public URL", "default": "{{workerUrl}}" }`.
-  Vars are filled in again on every update. `{{workerUrl}}` is always the
+  `{{accountId}}` becomes the id of the account the app is installed in, for apps
+  that query the Cloudflare API about their own account, such as the
+  Analytics Engine SQL API. Vars are filled in again on every update and settings
+  change. `{{workerUrl}}` is always the
   workers.dev address, even when a custom domain is attached to the install.
 - **JSON vars.** A wrangler config var whose value is not a string (an array, object,
   number, or boolean) reaches the Worker as that JSON value, as with `wrangler

@@ -3,6 +3,7 @@ import {
   appTokenSecretName,
   type BuildOutcome,
   type BuildProgress,
+  buildCommandText,
   buildKeys,
   buildRequestSchema,
   type CatalogManifest,
@@ -298,7 +299,10 @@ export function fakeSandbox(
         detected: {
           packageManager: fixture.manifest.catalog.install.packageManager,
           wranglerConfig: fixture.manifest.catalog.install.wranglerConfig,
-          buildCommand: fixture.manifest.catalog.install.buildCommand ?? null,
+          buildCommand:
+            fixture.manifest.catalog.install.buildCommand === undefined
+              ? null
+              : buildCommandText(fixture.manifest.catalog.install.buildCommand),
           buildCommandFrom: "package.json",
           secretsFrom: ".dev.vars.example",
           unsupported: [],

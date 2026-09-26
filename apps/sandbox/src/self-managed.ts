@@ -1,6 +1,7 @@
 import {
   appSecretSecretName,
   appTokenSecretName,
+  buildCommandArgvList,
   buildKeys,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
   SANDBOX_PROTOCOL_VERSION,
@@ -18,6 +19,7 @@ import { z } from "zod";
 import { type AccountReader, discover } from "./discover";
 import { BuildLog } from "./log";
 import {
+  BUILD_COMMAND_ENV,
   BUILD_ENV,
   commandLine,
   LOG_FLUSH_INTERVAL_MS,
@@ -244,11 +246,17 @@ export async function runSelfManaged(
     if (request.buildCommand !== undefined) {
       step = "build";
       await log.stage("build", "Building the app, without credentials");
-      await container.run("build", commandLine(request.buildCommand), {
-        cwd: container.project,
-        timeoutMs: STAGE_TIMEOUTS.build,
-        failure: `the build command \`${request.buildCommand.join(" ")}\` failed`,
-      });
+      // Each command in order; the first that fails ends the run. They share
+      // the build's time limit.
+      const deadline = Date.now() + STAGE_TIMEOUTS.build;
+      for (const argv of buildCommandArgvList(request.buildCommand)) {
+        await container.run("build", commandLine(argv), {
+          cwd: container.project,
+          timeoutMs: Math.max(1_000, deadline - Date.now()),
+          env: BUILD_COMMAND_ENV,
+          failure: `the build command \`${argv.join(" ")}\` failed`,
+        });
+      }
     }
 
     // Alchemy (and dotenv-style tools) read a `.env` in the working directory

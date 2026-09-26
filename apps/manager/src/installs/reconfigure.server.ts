@@ -14,6 +14,7 @@ import {
   changedVarNames,
   changesSecrets,
   emailZones,
+  enteredSecretProblems,
   nextStoredVars,
   parseStoredVars,
   type SecretSlot,
@@ -24,6 +25,7 @@ import { recordedCatalog, settingsRunId } from "../jobs/self-deploying/phases";
 import { lastDurableObjectTagOf, updatePath } from "../jobs/update/plan";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
 import { readAppBaseUrl } from "./app-address.server";
+import { withDerivedSecrets } from "./derived-secrets";
 import {
   type InstallVarField,
   installVarFields,
@@ -220,7 +222,8 @@ export async function readInstallSettingsCore(
       // Where the app is reached: its custom domain while workers.dev is off.
       workerUrl: await readAppBaseUrl(orm, install, deps.subdomain),
     },
-    secrets: ctx.slots,
+    // Derived secrets are never entered; their source's row says they follow it.
+    secrets: ctx.slots.filter((slot) => slot.derivedFrom === undefined),
     canRemoveSecrets: install.build_kind !== "self-deploying",
     email: ctx.email,
     skipsPreview: ctx.skipsPreview,
@@ -273,8 +276,12 @@ export async function startReconfigureCore(
   const before = parseStoredVars(install.config_json);
   const vars = nextStoredVars(before, fieldNames, entered);
 
+  const enteredSecrets = request.secrets?.set ?? {};
+  const enteredProblems = enteredSecretProblems(enteredSecrets, ctx.slots);
+  if (enteredProblems.length > 0) throw new VersionActionError(enteredProblems.join(" "));
   const secrets = {
-    set: request.secrets?.set ?? {},
+    // A new value of a source secret replaces what is derived from it too.
+    set: await withDerivedSecrets(ctx.catalog.secrets, enteredSecrets),
     unset: [...new Set(request.secrets?.unset ?? [])],
   };
   const secretProblems = secretChangeProblems(secrets, ctx.slots, { canRemove: !selfDeploying });

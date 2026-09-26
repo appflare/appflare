@@ -15,10 +15,12 @@ import {
  * The vars of an app: what the install form shows for each catalog var, and
  * what the Worker receives. A var is text (a `plain_text` binding) unless the
  * app's wrangler config gives it a value that is not a string; then it is
- * JSON (a `json` binding) and the form takes JSON text. `{{workerUrl}}` and
- * `{{workerName}}` are filled in wherever a value comes from: the wrangler
- * config, the catalog default, or what the admin entered, on every install and
- * update. Pure, so the form, the server's input checks, and the jobs share it.
+ * JSON (a `json` binding) and the form takes JSON text. `{{workerUrl}}`,
+ * `{{workerName}}` and `{{accountId}}` are filled in wherever a value comes
+ * from: the wrangler config, the catalog default, or what the admin entered,
+ * on every install, update and settings change (the form, which does not know
+ * the account id, shows `{{accountId}}` as written). Pure, so the form, the
+ * server's input checks, and the jobs share it.
  */
 
 export type VarKind = "text" | "json";

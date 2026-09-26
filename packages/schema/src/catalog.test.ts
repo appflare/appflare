@@ -4,16 +4,24 @@ import {
   appHealthMode,
   appHealthPath,
   authorsFromRepo,
+  BCRYPT_COST,
+  buildCommandList,
+  buildCommandText,
   catalogAuthors,
   catalogManifestSchema,
   catalogVarOptions,
   DEFAULT_EXPECTED_BUILD_MINUTES,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
+  derivedSecretProblems,
   EMAIL_ROUTING_MAX_RULES,
+  enteredSecrets,
   hasFixedWorkerName,
   hasPlaceholder,
+  INSTALL_PLACEHOLDERS,
   installTierSchema,
+  isDerivedSecret,
   isOptionalSecret,
+  MAX_BUILD_COMMANDS,
   MAX_VAR_OPTIONS,
   renderJsonPlaceholders,
   renderPlaceholders,
@@ -229,6 +237,37 @@ describe("catalogManifestSchema", () => {
       });
       expect(result.success, String(buildCommand)).toBe(false);
       expect(result.error?.issues.map((i) => i.message).join(" ")).toContain(why);
+    }
+  });
+
+  it("takes a list of build commands, run in order, each under the same rules", () => {
+    const buildCommand = ["pnpm run build:sphere", "pnpm run build"];
+    const parsed = catalogManifestSchema.parse({
+      ...validManifest,
+      install: { ...validManifest.install, buildCommand },
+    });
+    expect(parsed.install.buildCommand).toEqual(buildCommand);
+    expect(buildCommandList(parsed.install.buildCommand)).toEqual(buildCommand);
+    expect(buildCommandList("pnpm build")).toEqual(["pnpm build"]);
+    expect(buildCommandList(undefined)).toEqual([]);
+    expect(buildCommandText(buildCommand)).toBe("pnpm run build:sphere && pnpm run build");
+    const refused: Array<[unknown, string]> = [
+      [[], "1"],
+      [["pnpm build", "pnpm build && rm -rf /"], '"&"'],
+      [["pnpm build", "CI=1 pnpm test"], "environment"],
+      [
+        Array.from({ length: MAX_BUILD_COMMANDS + 1 }, () => "pnpm build"),
+        String(MAX_BUILD_COMMANDS),
+      ],
+      [[["pnpm", "build"]], ""],
+    ];
+    for (const [value, why] of refused) {
+      const result = catalogManifestSchema.safeParse({
+        ...validManifest,
+        install: { ...validManifest.install, buildCommand: value },
+      });
+      expect(result.success, JSON.stringify(value)).toBe(false);
+      if (result.error !== undefined) expect(z.prettifyError(result.error)).toContain(why);
     }
   });
 
@@ -456,6 +495,27 @@ describe("semverSchema", () => {
 describe("install placeholders", () => {
   const values = { workerUrl: "https://inbox.acme.workers.dev", workerName: "inbox" };
 
+  it("list the account id", () => {
+    expect(INSTALL_PLACEHOLDERS).toEqual(["workerUrl", "workerName", "accountId"]);
+  });
+
+  it("fill in the account id, and keep {{accountId}} while it is unknown", () => {
+    const account = "0123456789abcdef0123456789abcdef";
+    expect(
+      renderPlaceholders("id={{accountId}} {{ accountId }}", { ...values, accountId: account }),
+    ).toBe(`id=${account} ${account}`);
+    expect(renderPlaceholders("{{accountId}}", values)).toBe("{{accountId}}");
+    expect(renderPlaceholders("{{accountId}}", { ...values, accountId: null })).toBe(
+      "{{accountId}}",
+    );
+    expect(hasPlaceholder("{{ accountId }}")).toBe(true);
+    expect(
+      renderJsonPlaceholders({ a: ["{{accountId}}"] }, { ...values, accountId: account }),
+    ).toEqual({
+      a: [account],
+    });
+  });
+
   it("fill in the Worker URL and name, with or without spaces inside the braces", () => {
     expect(renderPlaceholders("{{workerUrl}}/api and {{ workerName }}", values)).toBe(
       "https://inbox.acme.workers.dev/api and inbox",
@@ -669,5 +729,129 @@ describe("vars[].type select", () => {
         options: { minItems: 2, maxItems: MAX_VAR_OPTIONS },
       },
     });
+  });
+});
+
+describe("derived secrets", () => {
+  const counterscale = {
+    ...validManifest,
+    secrets: [
+      { name: "CF_PASSWORD", label: "Admin password" },
+      {
+        name: "CF_PASSWORD_HASH",
+        label: "Admin password hash",
+        derive: { from: "CF_PASSWORD", method: "bcrypt" },
+      },
+      { name: "CF_JWT_SECRET", label: "Session key", generate: true },
+    ],
+  };
+
+  it("take a source secret and a method, and leave the form to the others", () => {
+    const parsed = catalogManifestSchema.parse(counterscale);
+    const hash = parsed.secrets[1];
+    expect(hash?.derive).toEqual({ from: "CF_PASSWORD", method: "bcrypt" });
+    expect(hash !== undefined && isDerivedSecret(hash)).toBe(true);
+    expect(enteredSecrets(parsed.secrets).map((s) => s.name)).toEqual([
+      "CF_PASSWORD",
+      "CF_JWT_SECRET",
+    ]);
+    expect(BCRYPT_COST).toBe(10);
+    // Secrets without `derive` keep their parsed shape.
+    expect(parsed.secrets[0]).toEqual({
+      name: "CF_PASSWORD",
+      label: "Admin password",
+      generate: false,
+    });
+  });
+
+  it("refuse a source that is missing, derived, optional or the secret itself", () => {
+    const cases: Array<[Array<Record<string, unknown>>, string]> = [
+      [
+        [{ name: "H", label: "H", derive: { from: "P", method: "bcrypt" } }],
+        "not a secret of this manifest",
+      ],
+      [[{ name: "H", label: "H", derive: { from: "H", method: "bcrypt" } }], "itself"],
+      [
+        [
+          { name: "P", label: "P" },
+          { name: "H", label: "H", derive: { from: "P", method: "bcrypt" } },
+          { name: "H2", label: "H2", derive: { from: "H", method: "bcrypt" } },
+        ],
+        "itself derived",
+      ],
+      [
+        [
+          { name: "P", label: "P", optional: true },
+          { name: "H", label: "H", derive: { from: "P", method: "bcrypt" } },
+        ],
+        "optional",
+      ],
+      [
+        [
+          { name: "P", label: "P" },
+          { name: "H", label: "H", generate: true, derive: { from: "P", method: "bcrypt" } },
+        ],
+        "generated",
+      ],
+      [
+        [
+          { name: "P", label: "P" },
+          { name: "H", label: "H", optional: true, derive: { from: "P", method: "bcrypt" } },
+        ],
+        "cannot be optional",
+      ],
+      [
+        [
+          { name: "P", label: "P" },
+          { name: "H", label: "H", derive: { from: "P", method: "sha256" } },
+        ],
+        "bcrypt",
+      ],
+    ];
+    for (const [secrets, why] of cases) {
+      const result = catalogManifestSchema.safeParse({ ...validManifest, secrets });
+      expect(result.success, why).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain(why);
+    }
+  });
+
+  it("name the secret each problem is about", () => {
+    expect(
+      derivedSecretProblems([
+        { name: "P", generate: false },
+        { name: "H", generate: false, derive: { from: "Q", method: "bcrypt" } },
+      ]),
+    ).toEqual([
+      {
+        path: [1, "derive", "from"],
+        message: "H derives from Q, which is not a secret of this manifest",
+      },
+    ]);
+  });
+
+  it("state their per-secret rule in the JSON Schema", () => {
+    const text = JSON.stringify(z.toJSONSchema(catalogManifestSchema));
+    expect(text).toContain('{"not":{"required":["derive"]}}');
+    expect(text).toContain('{"required":["derive"]}');
+  });
+
+  it("are refused on self-deploying entries", () => {
+    const result = catalogManifestSchema.safeParse({
+      ...counterscale,
+      plan: "paid",
+      install: {
+        ...validManifest.install,
+        tier: "self-deploying",
+        selfDeploying: {
+          tool: "alchemy",
+          deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
+          destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
+          stateStore: "cloudflare",
+          workers: ["cut-{{stage}}"],
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain("derived secrets are not allowed");
   });
 });

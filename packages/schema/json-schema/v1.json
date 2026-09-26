@@ -144,10 +144,24 @@
           "description": "How the health check reads the Worker's answer. `\"default\"` counts redirects and 4xx answers as verified and server errors (5xx) as unhealthy. `\"status-only\"` counts any answer from the Worker itself as verified, server errors included: use it for apps whose health path sits behind Cloudflare Access or the app's own sign-in. Either way, connection failures and Cloudflare's error pages (such as `error code: 1042` while the route goes live) are retried. Defaults to `\"default\"`."
         },
         "buildCommand": {
-          "type": "string",
-          "maxLength": 256,
-          "pattern": "^[A-Za-z0-9@%+,./:=_ -]+$",
-          "description": "One command the packer runs at the root of the checkout after installing dependencies (with install scripts disabled) and before bundling, for example `pnpm --filter @scope/web build`. Use it when the wrangler config has no `build.command`. It runs as a plain command without a shell, with no credentials in its environment, and the checkout's `node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, and environment assignments are not allowed. At most 256 characters."
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9@%+,./:=_ -]+$"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^[A-Za-z0-9@%+,./:=_ -]+$"
+              }
+            }
+          ],
+          "description": "The command the packer runs at the root of the checkout after installing dependencies (with install scripts disabled) and before bundling, for example `pnpm --filter @scope/web build`, or a list of such commands run in order, for example `[\"pnpm run build:sphere\", \"pnpm run build\"]`; the build stops at the first that fails. Use it when the wrangler config has no `build.command`. Each runs as a plain command without a shell, with no credentials in its environment and the checkout's `node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, and environment assignments are not allowed. pnpm and npm run no pre or post hooks of package scripts there (`pnpm run build` skips `prebuild`), so list such a step as a command of its own. At most 8 commands of at most 256 characters each."
         },
         "version": {
           "type": "string",
@@ -405,6 +419,29 @@
           "optional": {
             "type": "boolean",
             "description": "The app works without this secret. The install form leaves it unset unless the admin chooses \"Set now\", updates never ask for it, and the app's settings can remove it. Not allowed on self-deploying entries."
+          },
+          "derive": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The name of the secret whose value this one is computed from. It must be another secret of this manifest, not itself derived, not optional."
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "bcrypt"
+                ],
+                "description": "How the value is computed. `\"bcrypt\"`: a bcrypt hash (`$2b$`, cost 10) of the source value, for apps that check a password against a stored hash."
+              }
+            },
+            "required": [
+              "from",
+              "method"
+            ],
+            "additionalProperties": false,
+            "description": "Computes this secret from another one instead of asking for it: the install form shows only the source secret, and the manager writes both at install, and again whenever the source secret gets a new value in the app's settings or an update. Neither value is ever logged. Not allowed with `generate` or `optional`, nor on self-deploying entries."
           }
         },
         "required": [
@@ -412,7 +449,30 @@
           "label",
           "generate"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "not": {
+              "required": [
+                "derive"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "generate": {
+                "not": {
+                  "const": true
+                }
+              },
+              "optional": {
+                "not": {
+                  "const": true
+                }
+              }
+            }
+          }
+        ]
       }
     },
     "vars": {
@@ -433,7 +493,7 @@
           },
           "default": {
             "type": "string",
-            "description": "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL (`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and `{{workerName}}` its Worker name, filled in on every install and update. `{{workerUrl}}` is always the workers.dev address, even when a custom domain is attached. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{workerUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
+            "description": "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL (`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and `{{workerName}}` its Worker name, and `{{accountId}}` the id of the Cloudflare account it is installed in, filled in on every install, update and settings change. `{{workerUrl}}` is always the workers.dev address, even when a custom domain is attached. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{workerUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
           },
           "required": {
             "default": false,
@@ -662,14 +722,23 @@
             "secrets": {
               "items": {
                 "not": {
-                  "required": [
-                    "optional"
-                  ],
-                  "properties": {
-                    "optional": {
-                      "const": true
+                  "anyOf": [
+                    {
+                      "required": [
+                        "optional"
+                      ],
+                      "properties": {
+                        "optional": {
+                          "const": true
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "derive"
+                      ]
                     }
-                  }
+                  ]
                 }
               }
             }
