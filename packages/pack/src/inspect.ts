@@ -1,12 +1,9 @@
 import path from "node:path";
-import {
-  type CatalogManifest,
-  UNSUPPORTED_WRANGLER_SECTIONS,
-  type WranglerFacts,
-} from "@appflare/schema";
+import type { CatalogManifest, WranglerFacts } from "@appflare/schema";
 import { unstable_readConfig } from "wrangler";
-import { applyConfigPatches, workerSpecs } from "./config-patch.ts";
+import { applyConfigPatches, workerSpecs, writeInlineConfigs } from "./config-patch.ts";
 import { copyTemplateConfig, readConfigArgs, resolveWranglerConfig } from "./config-redirect.ts";
+import { unsupportedWranglerSections } from "./wrangler-config.ts";
 
 /**
  * `appflare-pack inspect`: what a project's wrangler config declares, read
@@ -22,26 +19,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Whether a resolved config section is absent (wrangler fills in empty defaults). */
-function isEmpty(value: unknown): boolean {
-  if (value === undefined || value === null) return true;
-  if (Array.isArray(value)) return value.length === 0;
-  if (isRecord(value)) return Object.values(value).every(isEmpty);
-  return false;
-}
-
-/**
- * The `unsafe` section without its rate limits, which the packer records as
- * the `ratelimit` bindings they are: what is left is what it refuses.
- */
-function unsafeWithoutRateLimits(unsafe: unknown): unknown {
-  if (!isRecord(unsafe) || !Array.isArray(unsafe.bindings)) return unsafe;
-  return {
-    ...unsafe,
-    bindings: unsafe.bindings.filter((b) => !(isRecord(b) && b.type === "ratelimit")),
-  };
-}
-
 /**
  * The name, plain vars, required secrets and unsupported sections of
  * `config` as wrangler resolved it. (wrangler's reader refuses a var of a
@@ -55,9 +32,7 @@ export function wranglerFacts(config: Record<string, unknown>): WranglerFacts {
       : [];
   const secrets = [...new Set(required)];
   const vars = isRecord(config.vars) ? Object.keys(config.vars) : [];
-  const unsupported = UNSUPPORTED_WRANGLER_SECTIONS.filter(
-    (key) => !isEmpty(key === "unsafe" ? unsafeWithoutRateLimits(config[key]) : config[key]),
-  );
+  const unsupported = unsupportedWranglerSections(config);
   return { name, vars, unsupported, secrets };
 }
 
@@ -76,8 +51,9 @@ export interface InspectOptions {
 /**
  * Reads the wrangler config `configPath` (relative to `checkoutDir`) the way
  * the packer does, following a redirect a build left, and returns its facts.
- * With `catalog`, the entry's config patch for `configPath` is applied first
- * and the patched config (`.appflare.wrangler.jsonc` beside it) is read.
+ * With `catalog`, the entry's inline config for `configPath` is written, or
+ * its config patch applied, first, and the config it leaves
+ * (`.appflare.wrangler.jsonc`) is read.
  */
 export function inspectWranglerConfig(
   checkoutDir: string,
@@ -93,6 +69,14 @@ export function inspectWranglerConfig(
         `the catalog manifest builds no Worker from ${configPath}; name the config as its install.wranglerConfig (or install.workers[].wranglerConfig) does`,
       );
     }
+    // An inline config is written first, as the pack writes it before the build.
+    writeInlineConfigs({
+      checkoutDir: root,
+      specs,
+      workerName: options.catalog.install.workerName,
+      only: configPath,
+      logger: options.logger,
+    });
     patched = applyConfigPatches({
       checkoutDir: root,
       specs,

@@ -4,11 +4,9 @@ import {
   boundToWorker,
   combinedWorkerFacts,
   type RepositoryDetection,
-  type UNSUPPORTED_WRANGLER_SECTIONS,
+  UNSUPPORTED_WRANGLER_SECTION_LABELS,
   workerUploadProblem,
 } from "@appflare/schema";
-
-type UnsupportedWranglerSection = (typeof UNSUPPORTED_WRANGLER_SECTIONS)[number];
 
 import { entryBindings, entryNameProblems, entryWorkers } from "../jobs/entry-workers";
 import { planBindings } from "../jobs/install/bindings";
@@ -25,24 +23,12 @@ import { planEntryQueueConsumers } from "../jobs/install/entry-worker-phases";
  */
 
 /**
- * How the review names the wrangler config sections the packer does not
- * carry into the artifact (`UNSUPPORTED_WRANGLER_SECTIONS`).
+ * The sentence for a wrangler config section Appflare cannot install, named
+ * as `UNSUPPORTED_WRANGLER_SECTION_LABELS` names it (by its key when a newer
+ * packer reports one this manager does not know).
  */
-const UNSUPPORTED_SECTIONS: Readonly<Record<UnsupportedWranglerSection, string>> = {
-  containers: "Containers",
-  dispatch_namespaces: "dispatch namespaces (Workers for Platforms)",
-  tail_consumers: "Tail Workers",
-  pipelines: "Pipelines",
-  secrets_store_secrets: "Secrets Store secrets",
-  unsafe: "unsafe bindings",
-  wasm_modules: "service-worker WebAssembly modules",
-  text_blobs: "service-worker text blobs",
-  data_blobs: "service-worker data blobs",
-};
-
-/** The sentence for a wrangler config section Appflare cannot install. */
 export function unsupportedSectionProblem(section: string): string {
-  const labels: Readonly<Record<string, string>> = UNSUPPORTED_SECTIONS;
+  const labels: Readonly<Record<string, string>> = UNSUPPORTED_WRANGLER_SECTION_LABELS;
   const label = labels[section] ?? section;
   return `The wrangler config declares ${label} (${section}), which Appflare cannot install yet.`;
 }

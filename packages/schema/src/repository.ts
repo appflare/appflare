@@ -287,27 +287,6 @@ export const repositoryDetectionSchema = z.object({
 export type RepositoryDetection = z.infer<typeof repositoryDetectionSchema>;
 
 /**
- * Sections of a wrangler config the packer does not carry into the artifact:
- * an app that relies on them would run without them. Bindings Appflare cannot
- * install (mTLS certificates, a service binding to another Worker, a
- * Hyperdrive binding the catalog manifest does not declare) are refused by
- * the packer and the install plan instead. `pipelines` is listed because a
- * stream is carried only when a catalog manifest describes it
- * (`resources.pipelines`), which a repository has no place for.
- */
-export const UNSUPPORTED_WRANGLER_SECTIONS = [
-  "containers",
-  "dispatch_namespaces",
-  "tail_consumers",
-  "pipelines",
-  "secrets_store_secrets",
-  "unsafe",
-  "wasm_modules",
-  "text_blobs",
-  "data_blobs",
-] as const;
-
-/**
  * What `appflare-pack inspect` reads from a project's wrangler config, as
  * wrangler resolves it (JSON, JSONC or TOML): the Worker's `name`, the
  * names of its plain `vars`, the {@link UNSUPPORTED_WRANGLER_SECTIONS} it

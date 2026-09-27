@@ -1,6 +1,10 @@
-import { SANDBOX_FEATURE_D1_BASELINE, SANDBOX_FEATURE_D1_SEED } from "@appflare/schema";
+import {
+  SANDBOX_FEATURE_D1_BASELINE,
+  SANDBOX_FEATURE_D1_SEED,
+  SANDBOX_FEATURE_WRANGLER_CONFIG_INLINE,
+} from "@appflare/schema";
 import { describe, expect, it } from "vitest";
-import { d1BaselineRefusal, d1SeedRefusal } from "./binding";
+import { d1BaselineRefusal, d1SeedRefusal, wranglerConfigInlineRefusal } from "./binding";
 
 describe("d1SeedRefusal", () => {
   const seeded = { resources: { d1: { DB: { seed: { statements: [] } } } } };
@@ -35,5 +39,30 @@ describe("d1BaselineRefusal", () => {
     expect(d1BaselineRefusal(current, withBaseline, "update it")).toBeNull();
     expect(d1BaselineRefusal(old, { resources: { d1: { DB: {} } } }, "update it")).toBeNull();
     expect(d1BaselineRefusal(old, undefined, "update it")).toBeNull();
+  });
+});
+
+describe("wranglerConfigInlineRefusal", () => {
+  const old = { sandboxVersion: "0.1.6", features: [] };
+  const inline = { install: { wranglerConfigInline: { compatibility_date: "2026-01-01" } } };
+
+  it("refuses an inline config on a sandbox Worker that predates it", () => {
+    expect(wranglerConfigInlineRefusal(old, inline, "update it")).toBe(
+      "the sandbox Worker 0.1.6 cannot build an app whose wrangler config the catalog carries (install.wranglerConfigInline) and would find no config to build from; to update it, update it",
+    );
+    expect(
+      wranglerConfigInlineRefusal(
+        old,
+        { install: { workers: [{}, { wranglerConfigInline: {} }] } },
+        "update it",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("allows it on a current sandbox Worker, and anything else on an old one", () => {
+    const current = { sandboxVersion: "0.1.7", features: [SANDBOX_FEATURE_WRANGLER_CONFIG_INLINE] };
+    expect(wranglerConfigInlineRefusal(current, inline, "update it")).toBeNull();
+    expect(wranglerConfigInlineRefusal(old, { install: {} }, "update it")).toBeNull();
+    expect(wranglerConfigInlineRefusal(old, undefined, "update it")).toBeNull();
   });
 });

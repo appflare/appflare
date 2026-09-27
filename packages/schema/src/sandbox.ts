@@ -196,6 +196,9 @@ export const buildCatalogManifestSchema = z.looseObject({
     // Applied by the packer; checked here too so a malformed patch fails
     // before a container starts.
     configPatch: catalogInstallSchema.shape.configPatch,
+    // Written by the packer for a repository that ships no config; checked
+    // here for the same reason as the patch.
+    wranglerConfigInline: catalogInstallSchema.shape.wranglerConfigInline,
   }),
 });
 export type BuildCatalogManifest = z.infer<typeof buildCatalogManifestSchema>;

@@ -33,6 +33,7 @@ import {
   sandboxFetch,
   sandboxInfo,
   usesGithubTokens,
+  wranglerConfigInlineRefusal,
 } from "../sandbox/binding";
 import { UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { verifySourceBuildManifest } from "../sandbox/verify";
@@ -183,6 +184,8 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
       if (dirsRefused !== null) throw new JobError(dirsRefused);
       const patchRefused = configPatchRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
       if (patchRefused !== null) throw new JobError(patchRefused);
+      const inlineRefused = wranglerConfigInlineRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
+      if (inlineRefused !== null) throw new JobError(inlineRefused);
       const seedRefused = d1SeedRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
       if (seedRefused !== null) throw new JobError(seedRefused);
       const baselineRefused = d1BaselineRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
