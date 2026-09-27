@@ -3,6 +3,8 @@ import {
   type ArtifactManifest,
   type EntryWorkerPlaceholders,
   isOptionalSecret,
+  sameDurableObjectExports,
+  type WorkerExports,
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { resources } from "../../db/schema";
@@ -18,8 +20,8 @@ import {
   activeVersionId,
   canarySkipReason,
   type DurableObjectMigrationUpload,
-  durableObjectMigrationsSince,
   NO_PREVIEW_REASON,
+  pendingDurableObjectMigrations,
   previewUrl,
   secretBindings,
   updateVersionMessage,
@@ -282,7 +284,13 @@ export interface OtherWorkerUpdate {
    * serves at once), with no version and no preview before. Null otherwise.
    */
   pending: DurableObjectMigrationUpload | null;
-  /** The uploaded version, not serving yet; null when `pending` defers the upload. */
+  /**
+   * Its Durable Object `exports` differ from the serving version's: it is deployed whole at
+   * promotion, as for `pending`. Absent in step outputs recorded before
+   * exports were compared.
+   */
+  exportsChanged?: boolean;
+  /** The uploaded version, not serving yet; null when `pending` or `exportsChanged` defers the upload. */
   versionId: string | null;
   /** The secrets this version introduces that the upload carries. */
   introduced: Record<string, string>;
@@ -321,6 +329,8 @@ export async function prepareOtherWorkerPhase(
   input: {
     /** The last Durable Object migration tag the installed version of this Worker has. */
     appliedDoTag: string | null;
+    /** The `exports` of the installed version of this Worker. */
+    servingExports: WorkerExports | undefined;
     /** Values of the secrets this version introduces, by name. */
     newSecrets: Readonly<Record<string, string>>;
     slug: string;
@@ -332,7 +342,8 @@ export async function prepareOtherWorkerPhase(
   const label = workerLabel(worker);
   const name = worker.scriptName;
   const own = worker.manifest;
-  const pending = durableObjectMigrationsSince(own.worker.migrations, input.appliedDoTag) ?? null;
+  const pending = pendingDurableObjectMigrations(own.worker, input.appliedDoTag);
+  const exportsChanged = !sameDurableObjectExports(own.worker.exports, input.servingExports);
   const assetsJwt = await uploadAssetsPhase(
     steps,
     name,
@@ -346,11 +357,20 @@ export async function prepareOtherWorkerPhase(
     const value = input.newSecrets[s.name];
     if (value !== undefined) introduced[s.name] = value;
   }
-  const update: OtherWorkerUpdate = { worker, assetsJwt, pending, versionId: null, introduced };
-  if (pending !== null) {
+  const update: OtherWorkerUpdate = {
+    worker,
+    assetsJwt,
+    pending,
+    ...(exportsChanged ? { exportsChanged } : {}),
+    versionId: null,
+    introduced,
+  };
+  if (pending !== null || exportsChanged) {
     await steps.run(`skip canary${label}`, async ({ log }) => {
       log.warn(
-        `Durable Object migrations up to "${pending.new_tag}" are pending for Worker "${name}", so it is deployed whole when the update promotes, without a preview check.`,
+        pending !== null
+          ? `Durable Object migrations up to "${pending.new_tag}" are pending for Worker "${name}", so it is deployed whole when the update promotes, without a preview check.`
+          : `The Durable Object exports of Worker "${name}" change, so it is deployed whole when the update promotes, without a preview check; the change to its classes cannot be undone.`,
       );
       return {};
     });
@@ -436,7 +456,9 @@ export async function promoteOtherWorkerPhase(
     });
     return versionId;
   }
-  if (pending === null) throw new JobError(`no version of "${name}" was uploaded`);
+  if (pending === null && update.exportsChanged !== true) {
+    throw new JobError(`no version of "${name}" was uploaded`);
+  }
   const deployed = await steps.run(`deploy Worker script${label}`, async ({ log }) => {
     const { metadata: base, warnings } = updateMetadata(ctx, update);
     for (const warning of warnings) log.warn(warning);
@@ -446,7 +468,7 @@ export async function promoteOtherWorkerPhase(
         artifact: { zipUrl: ctx.source.zipUrl, host: ctx.source.host },
         workerName: name,
         modules: update.worker.manifest.worker.modules,
-        metadata: { ...base, migrations: pending },
+        metadata: pending === null ? base : { ...base, migrations: pending },
         target: "script",
       }),
       log,
@@ -455,7 +477,9 @@ export async function promoteOtherWorkerPhase(
       throw new JobError(`Cloudflare did not report the id of the version of "${name}"`);
     }
     log.info(
-      `Deployed version ${result.versionId} of Worker "${name}" to all traffic with Durable Object migrations up to "${pending.new_tag}".`,
+      pending !== null
+        ? `Deployed version ${result.versionId} of Worker "${name}" to all traffic with Durable Object migrations up to "${pending.new_tag}".`
+        : `Deployed version ${result.versionId} of Worker "${name}" to all traffic with its new Durable Object exports.`,
       { versionId: result.versionId },
     );
     return { versionId: result.versionId };

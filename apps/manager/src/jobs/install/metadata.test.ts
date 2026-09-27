@@ -355,6 +355,51 @@ describe("buildScriptMetadata", () => {
     });
   });
 
+  it("sends exports and cache_options, and a Worker Loader as recorded", async () => {
+    const f = await buildArtifactFixture({
+      bindings: [
+        { type: "kv_namespace", name: "CUT_KV" },
+        { type: "worker_loader", name: "LOADER" },
+      ],
+      migrations: [{ tag: "v1", new_sqlite_classes: ["Legacy"] }],
+      catalog: { plan: "paid" },
+      exports: { Api: { type: "worker", cache: { enabled: true } } },
+      cacheOptions: { enabled: true, cross_version_cache: false },
+    });
+    const metadata = buildScriptMetadata({
+      manifest: f.manifest,
+      workerName: "cut",
+      resources: [{ binding: "CUT_KV", type: "kv_namespace", name: "cut-cut-kv", cfId: "kv" }],
+      vars: [],
+      assetsJwt: null,
+    });
+    expect(metadata.exports).toEqual({ Api: { type: "worker", cache: { enabled: true } } });
+    expect(metadata.cache_options).toEqual({ enabled: true, cross_version_cache: false });
+    expect(metadata.bindings).toContainEqual({ type: "worker_loader", name: "LOADER" });
+    // Entrypoint exports alone leave migrations as they are.
+    expect(metadata.migrations).toEqual({
+      new_tag: "v1",
+      steps: [{ new_sqlite_classes: ["Legacy"] }],
+    });
+  });
+
+  it("sends no migrations when exports declare Durable Objects, as wrangler does", async () => {
+    const f = await buildArtifactFixture({
+      migrations: [{ tag: "v1", new_sqlite_classes: ["Room"] }],
+      exports: { Room: { type: "durable-object", storage: "sqlite" } },
+    });
+    const metadata = buildScriptMetadata({
+      manifest: f.manifest,
+      workerName: "cut",
+      resources: [{ binding: "CUT_KV", type: "kv_namespace", name: "cut-cut-kv", cfId: "kv" }],
+      vars: [],
+      assetsJwt: null,
+    });
+    expect(metadata.exports).toEqual({ Room: { type: "durable-object", storage: "sqlite" } });
+    expect(metadata.migrations).toBeUndefined();
+    expect(metadata.cache_options).toBeUndefined();
+  });
+
   it("gives module parts wrangler's content types", () => {
     const bytes = new Uint8Array([1]);
     expect(uploadModule({ name: "a.js", type: "esm" }, bytes).contentType).toBe(

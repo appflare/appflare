@@ -3,6 +3,7 @@ import {
   classifyModuleType,
   collectBindings,
   collectQueueConsumers,
+  collectWorkerSettings,
   HyperdriveDeclarationError,
   mainModuleName,
   QueueConsumerError,
@@ -358,5 +359,37 @@ describe("mainModuleName", () => {
     expect(mainModuleName("/abs/src/worker.tsx")).toBe("worker.js");
     expect(mainModuleName("dist/index.js")).toBe("index.js");
     expect(mainModuleName("src/main.py")).toBe("main.py");
+  });
+});
+
+describe("collectWorkerSettings", () => {
+  it("keeps the durable-object and worker exports and the cache block as wrangler uploads them", () => {
+    const config = {
+      exports: {
+        Room: { type: "durable-object", storage: "sqlite" },
+        Old: { type: "durable-object", state: "deleted" },
+        Api: { type: "worker", cache: { enabled: true } },
+        Later: { type: "something-new" },
+      },
+      cache: { enabled: true, cross_version_cache: true },
+    } as ResolvedWranglerConfig;
+    expect(collectWorkerSettings(config)).toEqual({
+      exports: {
+        Room: { type: "durable-object", storage: "sqlite" },
+        Old: { type: "durable-object", state: "deleted" },
+        Api: { type: "worker", cache: { enabled: true } },
+      },
+      cacheOptions: { enabled: true, cross_version_cache: true },
+    });
+  });
+
+  it("records neither when the config has no exports and no cache block", () => {
+    expect(collectWorkerSettings({ exports: {}, cache: null })).toEqual({});
+    expect(collectWorkerSettings({})).toEqual({});
+  });
+
+  it("collects worker_loaders as worker_loader bindings", () => {
+    const bindings = collectBindings({ worker_loaders: [{ binding: "LOADER" }] });
+    expect(bindings).toEqual([{ type: "worker_loader", name: "LOADER" }]);
   });
 });

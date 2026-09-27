@@ -42,7 +42,12 @@ import { parseStoredVars } from "../jobs/reconfigure/plan";
 import { NO_ACTIVE_SELF_UPDATE_SQL, refuseDuringSelfUpdate } from "../jobs/self-update/guard";
 import { type SourceBuildJobParams, sourceBuildRunId } from "../jobs/source-build";
 import type { UpdateJobParams } from "../jobs/update";
-import { lastDurableObjectTagOf, missingSecrets, updatePath } from "../jobs/update/plan";
+import {
+  lastDurableObjectTagOf,
+  missingSecrets,
+  updatePath,
+  workerExportsOf,
+} from "../jobs/update/plan";
 import {
   afterRefusedClaim,
   launchSandboxEnable,
@@ -872,6 +877,7 @@ export async function sourceUpdateNeeds(
     skipsPreview: updatePath(
       manifest,
       install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
+      workerExportsOf(install.manifest_json),
     ).skipPreview,
   };
 }

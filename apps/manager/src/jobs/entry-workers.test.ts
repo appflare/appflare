@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import {
+  durableObjectExportsDiffer,
   entryBindings,
   entryNameProblems,
   entryPlaceholders,
@@ -232,5 +233,42 @@ describe("entry workers", () => {
     const b = JSON.stringify(after.manifest);
     expect(otherDoTagsDiffer(a, b, "links")).toBe(true);
     expect(otherDoTagsDiffer(a, a, "links")).toBe(false);
+  });
+
+  it("sees a change to the Durable Object exports of any Worker, not to entrypoints", async () => {
+    const room = { type: "durable-object", storage: "sqlite" };
+    const manifest = async (
+      primary: Record<string, { type: string; [k: string]: unknown }>,
+      jobs: Record<string, { type: string; [k: string]: unknown }>,
+    ) =>
+      JSON.stringify(
+        (
+          await buildArtifactFixture({
+            otherWorkers: [{ name: "jobs", exports: jobs }],
+            exports: primary,
+          })
+        ).manifest,
+      );
+    const base = await manifest({ Room: room }, { Lobby: room });
+    expect(durableObjectExportsDiffer(base, base, "links")).toBe(false);
+    // Entrypoint settings are not classes.
+    const entrypoint = await manifest(
+      { Room: room, Api: { type: "worker", cache: { enabled: true } } },
+      { Lobby: room },
+    );
+    expect(durableObjectExportsDiffer(base, entrypoint, "links")).toBe(false);
+    // The install's own Worker, and another Worker of the app.
+    expect(
+      durableObjectExportsDiffer(
+        base,
+        await manifest({ Room: room, Chat: room }, { Lobby: room }),
+        "links",
+      ),
+    ).toBe(true);
+    expect(durableObjectExportsDiffer(base, await manifest({ Room: room }, {}), "links")).toBe(
+      true,
+    );
+    // A manifest that does not parse has no Workers to compare.
+    expect(durableObjectExportsDiffer(null, null, "links")).toBe(false);
   });
 });

@@ -1,23 +1,31 @@
+import type { ArtifactManifest } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import { classifyHealthProbe } from "../install/health";
 import {
   activeVersionId,
+  appliedDurableObjectTag,
   bookmarksJson,
   boundHyperdriveIds,
   canarySkipReason,
   cronChanges,
   diffBindings,
   durableObjectMigrationsSince,
+  EXPORTS_DEPLOY_REASON,
+  FULL_DEPLOY_REASON,
   hyperdriveRollbackRefusal,
   lastDurableObjectTagOf,
   missingSecrets,
+  NO_PREVIEW_REASON,
   parseBookmarks,
   parseSnapshotHyperdrive,
+  pendingDurableObjectMigrations,
   previewUrl,
   type RecordedResource,
   snapshotRow,
+  updatePath,
   updateRefusal,
   vectorizeShapesOf,
+  workerExportsOf,
 } from "./plan";
 
 const row = (over: Partial<RecordedResource> & Pick<RecordedResource, "kind" | "name">) => ({
@@ -230,6 +238,98 @@ describe("durableObjectMigrationsSince", () => {
     expect(lastDurableObjectTagOf(JSON.stringify({ worker: { migrations: [] } }))).toBeNull();
     expect(lastDurableObjectTagOf("not json")).toBeNull();
     expect(lastDurableObjectTagOf(null)).toBeNull();
+  });
+});
+
+describe("updatePath", () => {
+  const worker = (fields: Partial<ArtifactManifest["worker"]>) => ({
+    worker: {
+      name: "cut",
+      mainModule: "worker.js",
+      compatibilityDate: "2024-12-30",
+      compatibilityFlags: [],
+      modules: [],
+      bindings: [],
+      migrations: [],
+      crons: [],
+      observability: null,
+      placement: null,
+      limits: null,
+      ...fields,
+    },
+  });
+  const rooms = { Room: { type: "durable-object", storage: "sqlite" } };
+
+  it("uploads a version when nothing changes the Worker's classes", () => {
+    expect(updatePath(worker({ exports: rooms }), null, rooms)).toEqual({
+      fullDeploy: null,
+      scriptUpload: false,
+      skipPreview: NO_PREVIEW_REASON,
+    });
+    expect(updatePath(worker({}), null, undefined)).toEqual({
+      fullDeploy: null,
+      scriptUpload: false,
+      skipPreview: null,
+    });
+  });
+
+  it("deploys the whole script when the exports differ from the serving version's", () => {
+    const chat = { ...rooms, Chat: { type: "durable-object", storage: "sqlite" } };
+    expect(updatePath(worker({ exports: chat }), null, rooms)).toEqual({
+      fullDeploy: null,
+      scriptUpload: true,
+      skipPreview: EXPORTS_DEPLOY_REASON,
+    });
+    // A serving version without exports (installed before they were recorded).
+    expect(updatePath(worker({ exports: rooms }), null, undefined).scriptUpload).toBe(true);
+    // Exports removed.
+    expect(updatePath(worker({}), null, rooms).scriptUpload).toBe(true);
+  });
+
+  it("uploads a version when only entrypoint exports change", () => {
+    const api = { Api: { type: "worker", cache: { enabled: true } } };
+    expect(updatePath(worker({ exports: { ...rooms, ...api } }), null, rooms)).toEqual({
+      fullDeploy: null,
+      scriptUpload: false,
+      skipPreview: NO_PREVIEW_REASON,
+    });
+    expect(updatePath(worker({ exports: api }), null, undefined).scriptUpload).toBe(false);
+  });
+
+  it("records no applied migration tag when Durable Object exports replace migrations", () => {
+    const migrations = [{ tag: "v1", new_sqlite_classes: ["Room"] }];
+    expect(appliedDurableObjectTag({ migrations, exports: undefined })).toBe("v1");
+    expect(appliedDurableObjectTag({ migrations, exports: rooms })).toBeNull();
+    expect(lastDurableObjectTagOf(JSON.stringify({ worker: { migrations } }))).toBe("v1");
+    expect(
+      lastDurableObjectTagOf(JSON.stringify({ worker: { migrations, exports: rooms } })),
+    ).toBeNull();
+    // A later version without such exports then sends every migration.
+    expect(updatePath(worker({ migrations }), null, rooms).fullDeploy).toEqual({
+      new_tag: "v1",
+      steps: [{ new_sqlite_classes: ["Room"] }],
+    });
+  });
+
+  it("applies pending migrations with a script upload, unless exports declare Durable Objects", () => {
+    const migrations = [{ tag: "v1", new_sqlite_classes: ["Room"] }];
+    expect(updatePath(worker({ migrations }), null, undefined)).toMatchObject({
+      fullDeploy: { new_tag: "v1" },
+      scriptUpload: true,
+      skipPreview: FULL_DEPLOY_REASON,
+    });
+    expect(pendingDurableObjectMigrations({ migrations, exports: rooms }, null)).toBeNull();
+    expect(updatePath(worker({ migrations, exports: rooms }), null, rooms)).toMatchObject({
+      fullDeploy: null,
+      scriptUpload: false,
+    });
+  });
+
+  it("reads the serving exports from a stored manifest", () => {
+    expect(workerExportsOf(JSON.stringify({ worker: { exports: rooms } }))).toEqual(rooms);
+    expect(workerExportsOf(JSON.stringify({ worker: {} }))).toBeUndefined();
+    expect(workerExportsOf("not json")).toBeUndefined();
+    expect(workerExportsOf(null)).toBeUndefined();
   });
 });
 

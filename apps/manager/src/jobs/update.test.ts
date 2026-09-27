@@ -458,6 +458,71 @@ describe("update job", () => {
     ).toBe(true);
   });
 
+  it("deploys a version whose exports differ from the serving one in one full upload", async () => {
+    const r = await update(
+      {
+        ...NEW_APP,
+        crons: ["*/5 * * * *"],
+        exports: {
+          Room: { type: "durable-object", storage: "sqlite" },
+          Chat: { type: "durable-object", storage: "sqlite" },
+        },
+        cacheOptions: { enabled: true },
+      },
+      {},
+      {
+        manifestJson: JSON.stringify({
+          worker: {
+            migrations: [],
+            exports: { Room: { type: "durable-object", storage: "sqlite" } },
+          },
+        }),
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.step.names).toContain("deploy Worker script");
+    expect(r.step.names).not.toContain("upload Worker version");
+    expect(r.fake.state.calls).not.toContain("POST /workers/scripts/cut/versions");
+    const metadata = r.fake.state.versions[0]?.metadata;
+    expect(metadata?.exports).toEqual({
+      Room: { type: "durable-object", storage: "sqlite" },
+      Chat: { type: "durable-object", storage: "sqlite" },
+    });
+    expect(metadata?.cache_options).toEqual({ enabled: true });
+    expect(metadata?.migrations).toBeUndefined();
+    expect(r.install?.current_version_id).toBe(NEW_VERSION);
+    // No migration ran, so no tag is recorded.
+    expect(r.install?.do_migration_tag).toBeNull();
+    expect(
+      r.logs.some(
+        (l) =>
+          l.level === "warn" &&
+          l.message.includes("changes the Durable Object classes its exports declare") &&
+          l.message.includes("cannot be undone"),
+      ),
+    ).toBe(true);
+  });
+
+  it("uploads a version when only entrypoint exports change, carrying them and the cache block", async () => {
+    const room = { type: "durable-object", storage: "sqlite" };
+    const exports = { Room: room, Api: { type: "worker", cache: { enabled: true } } };
+    const r = await update(
+      {
+        ...NEW_APP,
+        exports,
+        cacheOptions: { enabled: true, cross_version_cache: true },
+      },
+      {},
+      { manifestJson: JSON.stringify({ worker: { migrations: [], exports: { Room: room } } }) },
+    );
+    expect(r.error).toBeNull();
+    expect(r.step.names).toContain("upload Worker version");
+    expect(r.step.names).not.toContain("deploy Worker script");
+    const metadata = r.fake.state.versions[0]?.metadata;
+    expect(metadata?.exports).toEqual(exports);
+    expect(metadata?.cache_options).toEqual({ enabled: true, cross_version_cache: true });
+  });
+
   it("sets the secrets a new version introduces with the uploaded version", async () => {
     const SECRET = "new-secret-value-DO-NOT-LEAK";
     const r = await update(
@@ -1373,19 +1438,36 @@ describe("update job, an app of several Workers", () => {
     },
   });
 
+  type Exports = NonNullable<ArtifactManifest["worker"]["exports"]>;
+  /** The app with the `jobs` Worker given these exports. */
+  const withJobsExports = (
+    options: ArtifactFixtureOptions,
+    exports: Exports | undefined,
+  ): ArtifactFixtureOptions => ({
+    ...options,
+    otherWorkers: (options.otherWorkers ?? []).map((w) =>
+      w.name === "jobs" && exports !== undefined ? { ...w, exports } : w,
+    ),
+  });
+
   /** Runs the update with a second fake account for `cut-jobs`, serving `JOBS_OLD`. */
   async function updateBoth(
     world: Partial<FakeAccount> = {},
     jobsWorld: Partial<FakeAccount> = {},
+    /** The `jobs` Worker's exports in the installed and in the new version. */
+    exports: { installed?: Exports; next?: Exports } = {},
   ) {
-    const old = await buildArtifactFixture({ ...app("1.0.0", ["*/5 * * * *"]), version: "1.0.0" });
+    const old = await buildArtifactFixture({
+      ...withJobsExports(app("1.0.0", ["*/5 * * * *"]), exports.installed),
+      version: "1.0.0",
+    });
     const jobs = fakeAccount(null, {
       worker: "cut-jobs",
       deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
       ...jobsWorld,
     });
     const r = await update(
-      app("1.1.0", ["*/15 * * * *"]),
+      withJobsExports(app("1.1.0", ["*/15 * * * *"]), exports.next),
       world,
       {
         manifestJson: JSON.stringify(old.manifest),
@@ -1436,6 +1518,54 @@ describe("update job, an app of several Workers", () => {
     );
     expect(new Set(order).size).toBe(order.length);
     expect(JSON.stringify(r.logs)).not.toContain(SECRET);
+  });
+
+  it("deploys another Worker whole at promotion when its Durable Object exports change", async () => {
+    const room = { type: "durable-object", storage: "sqlite" };
+    const r = await updateBoth(
+      {},
+      {},
+      { installed: { Room: room }, next: { Room: room, Chat: room } },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const order = r.step.names;
+    // Prepared without a version or a preview, then deployed whole before the primary one.
+    expect(order).toContain('skip canary (Worker "cut-jobs")');
+    expect(order).not.toContain('upload Worker version (Worker "cut-jobs")');
+    expect(order.indexOf('deploy Worker script (Worker "cut-jobs")')).toBeLessThan(
+      order.indexOf("promote version"),
+    );
+    expect(r.jobs.state.calls).not.toContain("POST /workers/scripts/cut-jobs/versions");
+    expect(r.jobs.state.previewHosts).toEqual([]);
+    const metadata = r.jobs.state.versions[0]?.metadata;
+    expect(metadata?.exports).toEqual({ Room: room, Chat: room });
+    expect(metadata?.migrations).toBeUndefined();
+    expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual({
+      "cut-jobs": NEW_VERSION,
+    });
+    expect(
+      r.logs.some(
+        (l) =>
+          l.level === "warn" &&
+          l.message.includes('The Durable Object exports of Worker "cut-jobs" change'),
+      ),
+    ).toBe(true);
+  });
+
+  it("uploads another Worker's version when only its entrypoint exports change", async () => {
+    const room = { type: "durable-object", storage: "sqlite" };
+    const r = await updateBoth(
+      {},
+      {},
+      {
+        installed: { Room: room },
+        next: { Room: room, Api: { type: "worker", cache: { enabled: true } } },
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.step.names).toContain('upload Worker version (Worker "cut-jobs")');
+    expect(r.step.names).not.toContain('deploy Worker script (Worker "cut-jobs")');
   });
 
   it("promotes nothing when another Worker's canary fails", async () => {

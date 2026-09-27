@@ -47,6 +47,9 @@ export const PASSTHROUGH_BINDING_TYPES: ReadonlySet<string> = new Set([
   // (install/rate-limits.ts): counters are shared account-wide per id.
   "ratelimit",
   "images",
+  // `{ type, name }` only. Workers Paid only: the artifact's catalog
+  // manifest then says `plan: "paid"`, which the install and update gates ask for.
+  "worker_loader",
 ]);
 
 interface ResourcePlanFields {

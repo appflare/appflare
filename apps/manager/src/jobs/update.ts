@@ -81,10 +81,11 @@ import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError, type StepTools } from "./steps";
 import { settleUnit } from "./units/result";
 import {
+  appliedDurableObjectTag,
   canarySkipReason,
   diffBindings,
+  EXPORTS_DEPLOY_REASON,
   FULL_DEPLOY_REASON,
-  lastDurableObjectTag,
   lastDurableObjectTagOf,
   missingSecrets,
   previewUrl,
@@ -95,6 +96,7 @@ import {
   updateSecretsUndoneMessage,
   updateVersionMessage,
   vectorizeShapesOf,
+  workerExportsOf,
 } from "./update/plan";
 import { takeSnapshotPhase } from "./update/snapshot";
 
@@ -368,6 +370,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         // Installs made before the tag was recorded applied every migration
         // of the manifest they were installed from.
         appliedDoTag: install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
+        // The installed version's exports: other ones take a whole-script deploy.
+        servingExports: workerExportsOf(install.manifest_json),
         // The installed version's index shapes: a kept index cannot change shape.
         vectorizeShapes: vectorizeShapesOf(install.manifest_json),
         // The installed version's queue consumers, to tell which ones change.
@@ -375,7 +379,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         // An app of several Workers: what the installed version's other Workers have.
         previousOthers: storedOtherWorkers(install.manifest_json, install.worker_name).map((w) => ({
           scriptName: w.scriptName,
-          doTag: lastDurableObjectTag(w.manifest.worker.migrations),
+          doTag: appliedDurableObjectTag(w.manifest.worker),
+          exports: w.manifest.worker.exports,
           crons: w.manifest.worker.crons,
           consumers: consumerPlans(w.manifest.worker.queueConsumers),
         })),
@@ -435,7 +440,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     );
     const queuePlan = planEntryQueueConsumers(workerName, manifest, workers);
     const queueDiff = diffConsumerQueues(queuePlan.queues, started.resources);
-    const path = updatePath(primaryManifest, started.appliedDoTag);
+    // A step output recorded before exports were read has none: the installed
+    // version was uploaded without them.
+    const path = updatePath(primaryManifest, started.appliedDoTag, started.servingExports);
     const fullDeploy = path.fullDeploy;
     const recordedSecrets = started.resources.filter((r) => r.kind === "secret").map((r) => r.name);
     // A derived secret the Worker lacks comes with its source, which the
@@ -537,6 +544,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       if (fullDeploy !== null) {
         log.warn(
           `Durable Object migrations up to "${fullDeploy.new_tag}" are pending, so this update deploys the whole Worker at once instead of checking a preview first.`,
+        );
+      } else if (path.scriptUpload) {
+        log.warn(
+          "This version changes the Durable Object classes its exports declare, so this update deploys the whole Worker at once instead of checking a preview first.",
         );
       }
       log.info(
@@ -766,6 +777,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     for (const w of others) {
       const update = await prepareOtherWorkerPhase(steps, step, entryContext, w, {
         appliedDoTag: previousOf(w.scriptName)?.doTag ?? null,
+        servingExports: previousOf(w.scriptName)?.exports,
         newSecrets: secretValues,
         slug: started.slug,
         version: params.version,
@@ -800,7 +812,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }
     }
 
-    if (fullDeploy === null) {
+    if (!path.scriptUpload) {
       // 5. The new version: every module in ONE multipart request. From here
       // until promotion, a failure takes the secrets it introduces off the
       // newest version again, even when the upload made a version and did not
@@ -885,7 +897,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       await migrateDatabases();
       await promoteOthers();
       await run("skip canary", async ({ log }) => {
-        log.warn(`${FULL_DEPLOY_REASON}.`);
+        log.warn(`${fullDeploy !== null ? FULL_DEPLOY_REASON : EXPORTS_DEPLOY_REASON}.`);
         return {};
       });
       const deployed = await run("deploy Worker script", async ({ log }) => {
@@ -896,7 +908,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           throw new JobError("Cloudflare did not report the id of the deployed version");
         }
         log.info(
-          `Deployed version ${result.versionId} to all traffic with Durable Object migrations up to "${fullDeploy.new_tag}".`,
+          fullDeploy !== null
+            ? `Deployed version ${result.versionId} to all traffic with Durable Object migrations up to "${fullDeploy.new_tag}".`
+            : `Deployed version ${result.versionId} to all traffic with its new Durable Object exports.`,
           { versionId: result.versionId, bindings: bindingList(metadata) },
         );
         return { versionId: result.versionId };

@@ -7,6 +7,7 @@ import {
   type ArtifactManifest,
   type EntryWorkerPlaceholders,
   entryWorkerRefName,
+  hasDurableObjectExports,
   isEntryServiceBinding,
   isSelfServiceBinding,
   type JsonValue,
@@ -259,8 +260,16 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
     if (manifest.assets.binding) bindings.push({ type: "assets", name: manifest.assets.binding });
     metadata.assets = { jwt: assetsJwt, config: { ...manifest.assets.config } };
   }
-  const migrations = durableObjectMigrations(manifest.worker.migrations);
+  // Declarative Durable Object exports replace migrations: wrangler 4.136.2
+  // (`resolveDoLifecyclePayload`) sends no migrations when there are any.
+  const { exports, cacheOptions } = manifest.worker;
+  const migrations = hasDurableObjectExports(exports)
+    ? undefined
+    : durableObjectMigrations(manifest.worker.migrations);
   if (migrations !== undefined) metadata.migrations = migrations;
+  if (exports !== undefined && Object.keys(exports).length > 0) metadata.exports = { ...exports };
+  // A versioned setting: sent with every script and version upload, as wrangler does.
+  if (cacheOptions !== undefined) metadata.cache_options = { ...cacheOptions };
   if (manifest.worker.observability) {
     metadata.observability = manifest.worker.observability as ScriptMetadata["observability"];
   }

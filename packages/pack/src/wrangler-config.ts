@@ -8,7 +8,10 @@ import {
   type QueueRef,
   SELF_SERVICE,
   type SelfServiceBinding,
+  WORKER_LOADER_BINDING_TYPE,
   type WorkerBinding,
+  type WorkerCacheOptions,
+  type WorkerExports,
 } from "@appflare/schema";
 
 /**
@@ -89,6 +92,10 @@ export interface ResolvedWranglerConfig {
   observability?: { enabled?: boolean; [k: string]: unknown } | null;
   placement?: Record<string, unknown> | null;
   limits?: Record<string, unknown> | null;
+  worker_loaders?: Array<{ binding: string }>;
+  /** Declarative Durable Object and entrypoint exports, keyed by name. */
+  exports?: Record<string, unknown> | null;
+  cache?: { enabled: boolean; cross_version_cache?: boolean } | null;
 }
 
 /** One entry of wrangler's `queues.consumers`. */
@@ -408,6 +415,11 @@ export function collectBindings(
   if (config.version_metadata) {
     push("version_metadata", config.version_metadata.binding);
   }
+  for (const loader of config.worker_loaders ?? []) {
+    // Wrangler 4.136.2 uploads `{ name, type: "worker_loader" }`; nothing else
+    // is configurable. Cloudflare offers it only on Workers Paid.
+    push(WORKER_LOADER_BINDING_TYPE, loader.binding);
+  }
   // Plain (non-secret) vars, typed the way wrangler uploads them (4.136.2's
   // `toVarBinding`): a string is a `plain_text` binding, anything else a
   // `json` binding holding the value itself, so `[]` reaches the Worker as an
@@ -422,6 +434,34 @@ export function collectBindings(
   }
 
   return bindings;
+}
+
+/**
+ * The Worker settings beyond its bindings that the artifact records only when
+ * the config sets them, as wrangler 4.136.2 uploads them:
+ *
+ * - `exports`: the config's `exports` entries of type `durable-object` or
+ *   `worker` (wrangler's `partitionExports` drops any other), uploaded as
+ *   `exports`; omitted when there are none, as wrangler omits an empty block;
+ * - `cacheOptions`: the config's `cache` block, uploaded as `cache_options`.
+ *
+ * Both are the app's own code and settings, not account ids.
+ */
+export function collectWorkerSettings(config: ResolvedWranglerConfig): {
+  exports?: WorkerExports;
+  cacheOptions?: WorkerCacheOptions;
+} {
+  const out: { exports?: WorkerExports; cacheOptions?: WorkerCacheOptions } = {};
+  const kept: WorkerExports = {};
+  for (const [name, entry] of Object.entries(config.exports ?? {})) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const type = (entry as { type?: unknown }).type;
+    if (type !== "durable-object" && type !== "worker") continue;
+    kept[name] = { ...(entry as Record<string, unknown>), type };
+  }
+  if (Object.keys(kept).length > 0) out.exports = kept;
+  if (config.cache) out.cacheOptions = { ...config.cache };
+  return out;
 }
 
 /**

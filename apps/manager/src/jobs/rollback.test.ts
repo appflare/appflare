@@ -357,6 +357,38 @@ describe("rollback job", () => {
       status: "installed",
     });
   });
+
+  it("refuses to roll back across a change to the Durable Objects its exports declare", async () => {
+    const withExports = async (exports: Record<string, { type: string; [k: string]: unknown }>) =>
+      JSON.stringify((await buildArtifactFixture({ exports })).manifest);
+    const room = { type: "durable-object", storage: "sqlite" };
+    await env.DB.prepare("UPDATE installs SET do_migration_tag = NULL").run();
+    await env.DB.prepare("UPDATE snapshots SET do_migration_tag = NULL").run();
+    const seed = async (snapshot: string, current: string) => {
+      await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+        .bind(snapshot)
+        .run();
+      await env.DB.prepare("UPDATE installs SET manifest_json = ?1 WHERE id = ?2")
+        .bind(current, INSTALL_ID)
+        .run();
+    };
+
+    // An entrypoint-only change is not a class change.
+    await seed(
+      await withExports({ Room: room }),
+      await withExports({ Room: room, Api: { type: "worker", cache: { enabled: true } } }),
+    );
+    expect((await listSnapshotsCore(env.DB, INSTALL_ID))[0]?.crossesDoMigration).toBe(false);
+
+    await seed(await withExports({ Room: room }), await withExports({ Room: room, Chat: room }));
+    expect((await listSnapshotsCore(env.DB, INSTALL_ID))[0]?.crossesDoMigration).toBe(true);
+    await expect(rollback()).rejects.toThrow(
+      "This update changed the app's Durable Object classes, and Cloudflare refuses to roll a Worker back across such a change.",
+    );
+    expect(await env.DB.prepare("SELECT status FROM installs").first()).toEqual({
+      status: "installed",
+    });
+  });
 });
 
 describe("rollback job, an app of several Workers", () => {

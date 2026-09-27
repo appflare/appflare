@@ -7,6 +7,7 @@ import {
   entryWorkerNameSchema,
   gitShaSchema,
   ownerRepoSchema,
+  type Plan,
   vectorizeIndexConfigSchema,
 } from "./catalog";
 import { bindingEntryRefs, ENTRY_WORKER_REF_PATTERN, entryWorkerProblems } from "./workers";
@@ -303,6 +304,77 @@ export const workerObservabilitySchema = z
   .looseObject({ enabled: z.boolean().optional() })
   .nullable();
 
+/**
+ * The Worker's `exports` as wrangler 4.136.2 uploads them: the wrangler
+ * config's `exports` block keyed by class or entrypoint name, keeping only
+ * the entries whose `type` is `durable-object` or `worker` (wrangler's
+ * `partitionExports`). Declarative Durable Object exports replace
+ * `migrations`: with any of them, wrangler sends no migrations. Loose, since
+ * wrangler owns the shape; recorded and uploaded verbatim.
+ */
+export const workerExportsSchema = z.record(
+  z.string().min(1),
+  z.looseObject({ type: z.string().min(1) }),
+);
+export type WorkerExports = z.infer<typeof workerExportsSchema>;
+
+/** The `type` of a Durable Object entry of {@link workerExportsSchema}. */
+export const DURABLE_OBJECT_EXPORT_TYPE = "durable-object";
+
+/** Whether `exports` declares any Durable Object class. */
+export function hasDurableObjectExports(exports: WorkerExports | undefined): boolean {
+  return Object.values(exports ?? {}).some((e) => e.type === DURABLE_OBJECT_EXPORT_TYPE);
+}
+
+/** The Durable Object entries of `exports`, without the entrypoint ones. */
+export function durableObjectExports(exports: WorkerExports | null | undefined): WorkerExports {
+  return Object.fromEntries(
+    Object.entries(exports ?? {}).filter(([, e]) => e.type === DURABLE_OBJECT_EXPORT_TYPE),
+  );
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * Whether two Workers declare the same `exports`, whatever the key order. No
+ * block and an empty one are the same: wrangler uploads neither.
+ */
+export function sameWorkerExports(
+  a: WorkerExports | null | undefined,
+  b: WorkerExports | null | undefined,
+): boolean {
+  return canonicalJson(a ?? {}) === canonicalJson(b ?? {});
+}
+
+/**
+ * Whether two Workers' `exports` declare the same Durable Objects. Entrypoint
+ * entries (`type: "worker"`) do not count: a change to them is a versioned
+ * setting, not a change to the Worker's classes.
+ */
+export function sameDurableObjectExports(
+  a: WorkerExports | null | undefined,
+  b: WorkerExports | null | undefined,
+): boolean {
+  return sameWorkerExports(durableObjectExports(a), durableObjectExports(b));
+}
+
+/**
+ * The wrangler config's `cache` block (`{ enabled, cross_version_cache? }`),
+ * which wrangler uploads as the script's `cache_options`. Loose, like the
+ * other settings wrangler owns.
+ */
+export const workerCacheOptionsSchema = z.looseObject({ enabled: z.boolean() });
+export type WorkerCacheOptions = z.infer<typeof workerCacheOptionsSchema>;
+
 /** Smart-placement config, or null. */
 export const workerPlacementSchema = z.looseObject({}).nullable();
 
@@ -346,6 +418,13 @@ export const artifactWorkerSchema = z.object({
   observability: workerObservabilitySchema,
   placement: workerPlacementSchema,
   limits: workerLimitsSchema,
+  /**
+   * Durable Object and entrypoint exports ({@link workerExportsSchema}).
+   * Omitted when the config has none, so older artifacts keep their shape.
+   */
+  exports: workerExportsSchema.optional(),
+  /** The config's `cache` block, uploaded as `cache_options`. Omitted when unset. */
+  cacheOptions: workerCacheOptionsSchema.optional(),
 });
 export type ArtifactWorker = z.infer<typeof artifactWorkerSchema>;
 
@@ -433,6 +512,31 @@ export function catalogVarProblems(
     }
   }
   return problems;
+}
+
+/**
+ * The binding type of a Worker Loader (wrangler's `worker_loaders`), which
+ * loads Workers at runtime. Cloudflare offers it only on Workers Paid.
+ */
+export const WORKER_LOADER_BINDING_TYPE = "worker_loader";
+
+/**
+ * Why a Worker's bindings need the catalog manifest to say `plan: "paid"`, as
+ * a sentence, or null when they do not or it does. A Worker Loader is
+ * available only on Workers Paid, so an app that binds one is a Workers Paid
+ * app, and the install and update plan gates ask the admin to confirm it.
+ */
+export function workersPaidBindingProblem(
+  bindings: readonly WorkerBinding[],
+  plan: Plan,
+): string | null {
+  if (plan === "paid") return null;
+  const loaders = bindings.filter((b) => b.type === WORKER_LOADER_BINDING_TYPE);
+  if (loaders.length === 0) return null;
+  return (
+    `the Worker binds a Worker Loader (${loaders.map((b) => b.name).join(", ")}), which Cloudflare offers only on Workers Paid; ` +
+    'set "plan": "paid" in the catalog manifest'
+  );
 }
 
 /** Static-assets router config (wrangler `assets` shape). */
@@ -580,9 +684,17 @@ export const LATEST_ARTIFACT_FORMAT = 3;
 export type ArtifactFormat = 1 | 2 | 3;
 
 /** What decides an artifact's format, as a packer knows it before writing one. */
+/** What of one Worker decides an artifact's format. */
+export interface WorkerFormatFacts {
+  exports?: Readonly<Record<string, unknown>> | undefined;
+  cacheOptions?: unknown;
+}
+
 export interface ArtifactFormatFacts {
+  /** The primary Worker. */
+  worker?: WorkerFormatFacts | undefined;
   /** The Workers besides the primary one; several Workers need format 2 or later. */
-  workers?: readonly unknown[] | undefined;
+  workers?: ReadonlyArray<{ worker?: WorkerFormatFacts | undefined }> | undefined;
   d1Schema?: Record<string, readonly unknown[]> | undefined;
   d1PostDeploy?: Record<string, readonly unknown[]> | undefined;
 }
@@ -594,7 +706,9 @@ export interface ArtifactFormatFacts {
  *
  * - 3: it carries D1 schema files or post-deploy migrations (`d1Schema`,
  *   `d1PostDeploy`), which a manager that reads only formats 1 and 2 would
- *   drop without a word, leaving the app without its tables;
+ *   drop without a word, leaving the app without its tables; or a Worker
+ *   with `exports` or `cacheOptions`, which such a manager would not upload,
+ *   leaving the app without the Durable Objects its exports declare;
  * - 2: it has several Workers (`workers`);
  * - 1: anything else.
  *
@@ -604,7 +718,14 @@ export interface ArtifactFormatFacts {
 export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
   const has = (lists: Record<string, readonly unknown[]> | undefined) =>
     lists !== undefined && Object.values(lists).some((files) => files.length > 0);
+  const workerNeeds3 = (w: WorkerFormatFacts | undefined) =>
+    w !== undefined &&
+    ((w.exports !== undefined && Object.keys(w.exports).length > 0) ||
+      w.cacheOptions !== undefined);
   if (has(facts.d1Schema) || has(facts.d1PostDeploy)) return 3;
+  if (workerNeeds3(facts.worker) || (facts.workers ?? []).some((w) => workerNeeds3(w.worker))) {
+    return 3;
+  }
   if (facts.workers !== undefined && facts.workers.length > 0) return 2;
   return 1;
 }
@@ -613,7 +734,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
 function formatProblem(manifest: ArtifactFormatFacts & { format: number }): string | null {
   const needed = artifactFormatFor(manifest);
   if (needed <= manifest.format) return null;
-  return `the artifact needs format ${needed} for what it carries (D1 schema files or post-deploy migrations); a manager that reads only format ${manifest.format} would install it without them`;
+  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block); a manager that reads only format ${manifest.format} would install it without them`;
 }
 
 /**
@@ -645,6 +766,22 @@ function singleWorkerProblems(manifest: {
 }
 
 /**
+ * The issue when the artifact's Workers bind something only Workers Paid
+ * offers and its catalog manifest does not say `plan: "paid"`, or null.
+ */
+function planIssue(manifest: {
+  worker: ArtifactWorker;
+  workers?: ReadonlyArray<{ worker: ArtifactWorker }> | undefined;
+  catalog: Pick<CatalogManifest, "plan">;
+}): { code: "custom"; path: string[]; message: string } | null {
+  const bindings = [manifest.worker, ...(manifest.workers ?? []).map((w) => w.worker)].flatMap(
+    (w) => w.bindings,
+  );
+  const message = workersPaidBindingProblem(bindings, manifest.catalog.plan);
+  return message === null ? null : { code: "custom", path: ["catalog", "plan"], message };
+}
+
+/**
  * An artifact of one Worker. Its catalog manifest has no `install.workers`,
  * and no binding names another Worker of the entry.
  */
@@ -659,6 +796,8 @@ export const artifactManifestV1Schema = z
     for (const message of artifactD1Problems(manifest)) {
       ctx.addIssue({ code: "custom", path: ["d1Migrations"], message });
     }
+    const plan = planIssue(manifest);
+    if (plan !== null) ctx.addIssue(plan);
   });
 
 /**
@@ -682,6 +821,8 @@ export const artifactManifestV2Schema = z
     for (const message of entryWorkerProblems(manifest)) {
       ctx.addIssue({ code: "custom", path: ["workers"], message });
     }
+    const plan = planIssue(manifest);
+    if (plan !== null) ctx.addIssue(plan);
   });
 
 /**
@@ -699,6 +840,8 @@ export const artifactManifestV3Schema = z
     for (const message of artifactD1Problems(manifest)) {
       ctx.addIssue({ code: "custom", path: ["d1Migrations"], message });
     }
+    const plan = planIssue(manifest);
+    if (plan !== null) ctx.addIssue(plan);
     const workers = manifest.workers;
     if (workers === undefined) {
       for (const problem of singleWorkerProblems(manifest)) {

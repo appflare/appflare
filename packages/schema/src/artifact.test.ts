@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  artifactFormatFor,
   artifactManifestSchema,
   catalogVarProblems,
+  hasDurableObjectExports,
   isJsonVarBinding,
   isSelfServiceBinding,
   isVectorizeBinding,
   queueConsumerProblems,
+  sameDurableObjectExports,
+  sameWorkerExports,
   serviceBindingProblem,
+  workersPaidBindingProblem,
 } from "./artifact";
 
 const sha256 = "a".repeat(64);
@@ -357,5 +362,103 @@ describe("worker.wranglerConfig", () => {
       worker: { ...validArtifact.worker, wranglerConfig },
     });
     expect(parsed.worker.wranglerConfig).toEqual(wranglerConfig);
+  });
+});
+
+describe("worker.exports and worker.cacheOptions", () => {
+  it("are optional, loose, and kept as recorded", () => {
+    const plain = artifactManifestSchema.parse(validArtifact);
+    expect(plain.worker.exports).toBeUndefined();
+    expect(plain.worker.cacheOptions).toBeUndefined();
+    const exports = {
+      Room: { type: "durable-object", storage: "sqlite" },
+      Api: { type: "worker", cache: { enabled: true } },
+    };
+    const cacheOptions = { enabled: true, cross_version_cache: false };
+    const parsed = artifactManifestSchema.parse({
+      ...validArtifact,
+      format: 3,
+      worker: { ...validArtifact.worker, exports, cacheOptions },
+    });
+    expect(parsed.worker.exports).toEqual(exports);
+    expect(parsed.worker.cacheOptions).toEqual(cacheOptions);
+    expect(hasDurableObjectExports(parsed.worker.exports)).toBe(true);
+    expect(hasDurableObjectExports({ Api: { type: "worker" } })).toBe(false);
+  });
+
+  it("need format 3, so a manager that reads only formats 1 and 2 refuses the artifact", () => {
+    const room = { Room: { type: "durable-object", storage: "sqlite" } };
+    expect(artifactFormatFor({ worker: { exports: room } })).toBe(3);
+    expect(artifactFormatFor({ worker: { cacheOptions: { enabled: true } } })).toBe(3);
+    expect(artifactFormatFor({ worker: { exports: {} } })).toBe(1);
+    expect(artifactFormatFor({ worker: {}, workers: [{ worker: { exports: room } }] })).toBe(3);
+    expect(artifactFormatFor({ worker: {}, workers: [{ worker: {} }] })).toBe(2);
+    for (const extra of [{ exports: room }, { cacheOptions: { enabled: true } }]) {
+      const result = artifactManifestSchema.safeParse({
+        ...validArtifact,
+        worker: { ...validArtifact.worker, ...extra },
+      });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toEqual([
+        expect.stringMatching(/^the artifact needs format 3 for what it carries/),
+      ]);
+    }
+  });
+
+  it("compares exports whatever the key order, with none the same as an empty block", () => {
+    expect(
+      sameWorkerExports(
+        { A: { type: "durable-object", storage: "sqlite" }, B: { type: "worker" } },
+        { B: { type: "worker" }, A: { storage: "sqlite", type: "durable-object" } },
+      ),
+    ).toBe(true);
+    expect(sameWorkerExports(undefined, {})).toBe(true);
+    // Only the Durable Object entries count as a class change.
+    expect(
+      sameDurableObjectExports(
+        { A: { type: "durable-object", storage: "sqlite" } },
+        { A: { type: "durable-object", storage: "sqlite" }, B: { type: "worker" } },
+      ),
+    ).toBe(true);
+    expect(sameDurableObjectExports(undefined, { A: { type: "durable-object" } })).toBe(false);
+    expect(sameWorkerExports(undefined, { A: { type: "worker" } })).toBe(false);
+    expect(
+      sameWorkerExports(
+        { A: { type: "durable-object", storage: "sqlite" } },
+        { A: { type: "durable-object", state: "deleted" } },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("Worker Loader bindings", () => {
+  const withLoader = {
+    ...validArtifact,
+    worker: {
+      ...validArtifact.worker,
+      bindings: [...validArtifact.worker.bindings, { type: "worker_loader", name: "LOADER" }],
+    },
+  };
+
+  it("need the catalog manifest to say plan paid", () => {
+    const result = artifactManifestSchema.safeParse(withLoader);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => i.message)).toEqual([
+      expect.stringMatching(
+        /Worker Loader \(LOADER\), which Cloudflare offers only on Workers Paid/,
+      ),
+    ]);
+    const paid = { ...withLoader, catalog: { ...withLoader.catalog, plan: "paid" } };
+    expect(artifactManifestSchema.parse(paid).worker.bindings).toContainEqual({
+      type: "worker_loader",
+      name: "LOADER",
+    });
+  });
+
+  it("are a problem only on the free plan", () => {
+    const bindings = [{ type: "worker_loader", name: "LOADER" }];
+    expect(workersPaidBindingProblem(bindings, "free")).toMatch(/"plan": "paid"/);
+    expect(workersPaidBindingProblem(bindings, "paid")).toBeNull();
+    expect(workersPaidBindingProblem([{ type: "ai", name: "AI" }], "free")).toBeNull();
   });
 });

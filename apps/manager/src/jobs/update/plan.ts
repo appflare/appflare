@@ -4,10 +4,14 @@ import {
   type CatalogHyperdrive,
   type CatalogSecret,
   type DoMigration,
+  hasDurableObjectExports,
   isOptionalSecret,
+  sameDurableObjectExports,
   type VectorizeIndexConfig,
   vectorizeBindingSchema,
   type WorkerBinding,
+  type WorkerExports,
+  workerExportsSchema,
 } from "@appflare/schema";
 import { z } from "zod";
 import { isUpdateAvailable } from "../../catalog/versions";
@@ -233,11 +237,31 @@ export function lastDurableObjectTag(migrations: readonly DoMigration[]): string
   return migrations.at(-1)?.tag ?? null;
 }
 
-/** The last Durable Object migration tag in a stored artifact manifest, or null. */
+/**
+ * The last Durable Object migration tag a deploy of `worker` applies, or null.
+ * Null when its `exports` declare Durable Objects: the upload then sends no
+ * migrations ({@link pendingDurableObjectMigrations}), so none of its tags
+ * ran, and a later version without such exports must still send them.
+ */
+export function appliedDurableObjectTag(
+  worker: Pick<ArtifactManifest["worker"], "migrations" | "exports">,
+): string | null {
+  return hasDurableObjectExports(worker.exports) ? null : lastDurableObjectTag(worker.migrations);
+}
+
+/**
+ * The last Durable Object migration tag in a stored artifact manifest, or
+ * null, also when its Worker's `exports` declare Durable Objects
+ * ({@link appliedDurableObjectTag}).
+ */
 export function lastDurableObjectTagOf(manifestJson: string | null): string | null {
   if (manifestJson === null) return null;
   try {
-    const parsed = JSON.parse(manifestJson) as { worker?: { migrations?: unknown } };
+    const parsed = JSON.parse(manifestJson) as {
+      worker?: { migrations?: unknown; exports?: unknown };
+    };
+    const exports = workerExportsSchema.safeParse(parsed.worker?.exports);
+    if (exports.success && hasDurableObjectExports(exports.data)) return null;
     const migrations = parsed.worker?.migrations;
     if (!Array.isArray(migrations)) return null;
     const tag = (migrations.at(-1) as { tag?: unknown } | undefined)?.tag;
@@ -321,32 +345,89 @@ export const NO_PREVIEW_REASON =
 export const FULL_DEPLOY_REASON =
   "This version changes Durable Object classes (migrations), which Cloudflare applies only when the whole Worker is deployed at once. The update deploys it directly, without a preview check, and the change to the classes cannot be undone";
 
+export const EXPORTS_DEPLOY_REASON =
+  "This version changes the Durable Object classes its exports declare, which Cloudflare applies only when the whole Worker is deployed at once. The update deploys it directly, without a preview check, and the change to the classes cannot be undone";
+
+/**
+ * The Durable Object migrations a Worker still needs, or null. None when its
+ * `exports` declare Durable Objects: those replace migrations, and wrangler
+ * 4.136.2 (`resolveDoLifecyclePayload`) then sends none.
+ */
+export function pendingDurableObjectMigrations(
+  worker: Pick<ArtifactManifest["worker"], "migrations" | "exports">,
+  appliedDoTag: string | null,
+): DurableObjectMigrationUpload | null {
+  if (hasDurableObjectExports(worker.exports)) return null;
+  return durableObjectMigrationsSince(worker.migrations, appliedDoTag) ?? null;
+}
+
+/**
+ * The primary Worker's `exports` in a stored artifact manifest, or undefined.
+ *
+ * The update compares the new version's Durable Object exports with these,
+ * assuming the stored manifest's exports are the ones Cloudflare has. That
+ * holds for every install and update this manager makes, since each upload
+ * sends the manifest's exports. It does not hold for a version a manager
+ * older than exports support installed from an artifact that already had
+ * them: that manager stored them but never uploaded them. An update to a
+ * version with the same exports then takes the version upload, and
+ * Cloudflare refuses it ("declared in exports but not yet provisioned").
+ * Recording the uploaded exports on the install would close that gap; the
+ * stored manifest is used because no install column holds them.
+ */
+export function workerExportsOf(manifestJson: string | null): WorkerExports | undefined {
+  if (manifestJson === null) return undefined;
+  try {
+    const parsed = JSON.parse(manifestJson) as { worker?: { exports?: unknown } };
+    const exports = workerExportsSchema.safeParse(parsed.worker?.exports);
+    return exports.success ? exports.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * How an update reaches the new version. Normally it uploads the version,
  * checks its preview, and promotes it. When the version brings Durable Object
- * migrations the Worker does not have yet, Cloudflare applies them only on a
- * full script upload, which serves the new code at once (a version upload
- * refuses them), so the update deploys directly. Either way a Worker that
- * implements a Durable Object has no preview to check.
+ * migrations the Worker does not have yet, or Durable Object `exports` other
+ * than the serving version's, Cloudflare applies them only on a full script upload,
+ * which serves the new code at once, so the update deploys directly. Either
+ * way a Worker that implements a Durable Object has no preview to check.
  */
 export function updatePath(
   manifest: Pick<ArtifactManifest, "worker">,
   appliedDoTag: string | null,
+  /** The `exports` of the version serving now ({@link workerExportsOf}). */
+  servingExports: WorkerExports | undefined,
 ): {
+  /** The Durable Object migrations the script upload applies, or null. */
   fullDeploy: DurableObjectMigrationUpload | null;
+  /** Whether the update deploys the whole script instead of uploading a version. */
+  scriptUpload: boolean;
   /** Why no preview check runs, or null when one does. */
   skipPreview: string | null;
 } {
-  const pending = durableObjectMigrationsSince(manifest.worker.migrations, appliedDoTag) ?? null;
-  const implementsDurableObject = manifest.worker.bindings.some(
-    (b) =>
-      b.type === "durable_object_namespace" &&
-      (typeof b.script_name !== "string" || b.script_name.length === 0),
-  );
+  const pending = pendingDurableObjectMigrations(manifest.worker, appliedDoTag);
+  // Only Durable Object entries decide: an entrypoint's settings are versioned.
+  const exportsChanged = !sameDurableObjectExports(manifest.worker.exports, servingExports);
+  const implementsDurableObject =
+    hasDurableObjectExports(manifest.worker.exports) ||
+    manifest.worker.bindings.some(
+      (b) =>
+        b.type === "durable_object_namespace" &&
+        (typeof b.script_name !== "string" || b.script_name.length === 0),
+    );
   return {
     fullDeploy: pending,
+    scriptUpload: pending !== null || exportsChanged,
     skipPreview:
-      pending !== null ? FULL_DEPLOY_REASON : implementsDurableObject ? NO_PREVIEW_REASON : null,
+      pending !== null
+        ? FULL_DEPLOY_REASON
+        : exportsChanged
+          ? EXPORTS_DEPLOY_REASON
+          : implementsDurableObject
+            ? NO_PREVIEW_REASON
+            : null,
   };
 }
 

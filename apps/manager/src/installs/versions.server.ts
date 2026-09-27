@@ -17,7 +17,12 @@ import { cronTriggerCount } from "../catalog/cron-triggers";
 import { installAppKey, unsignedTierRefusal } from "../catalog/sources";
 import { createDb, type Database } from "../db/client";
 import { installs, type JobStarter, jobs, resources, snapshots } from "../db/schema";
-import { otherDoTagsDiffer, otherWorkersMatch, storedOtherWorkers } from "../jobs/entry-workers";
+import {
+  durableObjectExportsDiffer,
+  otherDoTagsDiffer,
+  otherWorkersMatch,
+  storedOtherWorkers,
+} from "../jobs/entry-workers";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { liveHyperdriveIds } from "../jobs/reconfigure/hyperdrive";
 import { parseStoredVars } from "../jobs/reconfigure/plan";
@@ -39,6 +44,7 @@ import {
   parseSnapshotHyperdrive,
   updatePath,
   updateRefusal,
+  workerExportsOf,
 } from "../jobs/update/plan";
 import {
   derivedVarValues,
@@ -305,6 +311,7 @@ export async function startUpdateCore(
     skipPreview = updatePath(
       manifest,
       install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
+      workerExportsOf(install.manifest_json),
     ).skipPreview;
   }
   const recorded = await createDb(deps.db)
@@ -526,7 +533,11 @@ function expectedSkipPreview(manifestJson: string | null, doTag: string | null):
   }
   const manifest = artifactManifestSchema.safeParse(parsed);
   if (!manifest.success) return null;
-  return updatePath(manifest.data, doTag ?? lastDurableObjectTagOf(manifestJson)).skipPreview;
+  return updatePath(
+    manifest.data,
+    doTag ?? lastDurableObjectTagOf(manifestJson),
+    manifest.data.worker.exports,
+  ).skipPreview;
 }
 
 /** Starts a rollback to a snapshot of this install. */
@@ -562,7 +573,8 @@ export async function startRollbackCore(
   const currentDoTag = install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json);
   if (
     snapshot.do_migration_tag !== currentDoTag ||
-    otherDoTagsDiffer(snapshot.manifest_json, install.manifest_json, install.worker_name)
+    otherDoTagsDiffer(snapshot.manifest_json, install.manifest_json, install.worker_name) ||
+    durableObjectExportsDiffer(snapshot.manifest_json, install.manifest_json, install.worker_name)
   ) {
     throw new VersionActionError(
       "This update changed the app's Durable Object classes, and Cloudflare refuses to roll a Worker back across such a change.",
@@ -851,7 +863,8 @@ export async function listSnapshotsCore(
       ),
       crossesDoMigration:
         row.do_migration_tag !== currentDoTag ||
-        otherDoTagsDiffer(row.manifest_json, install.manifestJson, install.workerName),
+        otherDoTagsDiffer(row.manifest_json, install.manifestJson, install.workerName) ||
+        durableObjectExportsDiffer(row.manifest_json, install.manifestJson, install.workerName),
       lostDatabase: hyperdriveRollbackRefusal(
         parseSnapshotHyperdrive(row.hyperdrive_json) ?? {},
         liveConfigs,

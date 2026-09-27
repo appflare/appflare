@@ -32,6 +32,7 @@ import {
   installDirList,
   type WorkerModule,
   workerManifest,
+  workersPaidBindingProblem,
   workerUploadProblem,
 } from "@appflare/schema";
 import ignore from "ignore";
@@ -58,6 +59,7 @@ import {
   classifyModuleType,
   collectBindings,
   collectQueueConsumers,
+  collectWorkerSettings,
   mainModuleName,
   queueProducerBindings,
   type ResolvedWranglerConfig,
@@ -585,6 +587,12 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       throw new Error(varProblems.join(" "));
     }
   }
+  // A Worker Loader makes the app a Workers Paid app; the catalog must say so.
+  const planProblem = workersPaidBindingProblem(
+    collected.flatMap((c) => c.bindings),
+    catalog.plan,
+  );
+  if (planProblem !== null) throw new Error(planProblem);
 
   // (c2) The D1 SQL, before bundling so a refused schema file fails fast:
   // each Worker's migrations (Workers that bind one name share one
@@ -680,6 +688,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
         observability: b.config.observability ?? null,
         placement: b.config.placement ?? null,
         limits: b.config.limits ?? null,
+        ...collectWorkerSettings(b.config),
       },
       assets: { config: b.assets.config, binding: b.assets.binding, files: assetManifest },
     };

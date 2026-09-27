@@ -436,7 +436,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       started.vectorizeShapes,
       databases,
     );
-    const path = updatePath(primaryManifest, started.appliedDoTag);
+    // The installed version itself: its exports are the serving ones.
+    const path = updatePath(primaryManifest, started.appliedDoTag, primaryManifest.worker.exports);
     const slots = secretSlots(
       manifest.catalog.secrets,
       started.resources.filter((r) => r.kind === "secret").map((r) => r.name),

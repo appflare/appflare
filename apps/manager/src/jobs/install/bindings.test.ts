@@ -140,6 +140,12 @@ describe("service bindings in catalog apps", () => {
     expect(PASSTHROUGH_BINDING_TYPES.has("service")).toBe(false);
   });
 
+  it("passes a Worker Loader through with nothing to create", () => {
+    const plan = planBindings("cut", [{ type: "worker_loader", name: "LOADER" }]);
+    expect(plan.problems).toEqual([]);
+    expect(plan.resources).toEqual([]);
+  });
+
   it("refuses one aimed at the manager's job units", () => {
     const binding = { type: "service", name: "SELF", service: "appflare", entrypoint: "JobUnits" };
     const plan = planBindings("cut", [binding]);

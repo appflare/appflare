@@ -187,6 +187,8 @@ async function settingsContext(
   const path = updatePath(
     manifest,
     install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
+    // The installed version itself: its exports are the serving ones.
+    manifest.worker.exports,
   );
   const zones = emailZones(
     rows

@@ -40,6 +40,9 @@ export interface ArtifactFixtureOptions {
   d1PostDeploy?: Record<string, Array<{ name: string; content: string }>>;
   crons?: string[];
   migrations?: ArtifactManifest["worker"]["migrations"];
+  /** The primary Worker's `exports` and `cacheOptions`; either makes the artifact format 3. */
+  exports?: ArtifactManifest["worker"]["exports"];
+  cacheOptions?: ArtifactManifest["worker"]["cacheOptions"];
   /**
    * More modules for the Worker, laid out right after `worker.js` as the
    * packer writes a Worker's modules; each is `chunk-<n>.js`.
@@ -69,6 +72,7 @@ export interface FixtureWorker {
   crons?: string[];
   migrations?: ArtifactManifest["worker"]["migrations"];
   queueConsumers?: ArtifactManifest["worker"]["queueConsumers"];
+  exports?: ArtifactManifest["worker"]["exports"];
   assets?: Array<{ route: string; content: string }>;
 }
 
@@ -186,6 +190,7 @@ export async function buildArtifactFixture(
         migrations: w.migrations ?? [],
         crons: w.crons ?? [],
         ...(w.queueConsumers === undefined ? {} : { queueConsumers: w.queueConsumers }),
+        ...(w.exports === undefined ? {} : { exports: w.exports }),
         observability: null,
         placement: null,
         limits: null,
@@ -267,6 +272,8 @@ export async function buildArtifactFixture(
       observability: null,
       placement: null,
       limits: null,
+      ...(opts.exports === undefined ? {} : { exports: opts.exports }),
+      ...(opts.cacheOptions === undefined ? {} : { cacheOptions: opts.cacheOptions }),
     },
     assets: { config: {}, binding: null, files: assets },
     d1Migrations: d1,

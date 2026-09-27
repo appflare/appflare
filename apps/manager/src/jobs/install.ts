@@ -81,7 +81,7 @@ import { selfDeployingJobInput } from "./self-deploying/phases";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 import { settleUnit } from "./units/result";
-import { lastDurableObjectTag } from "./update/plan";
+import { appliedDurableObjectTag } from "./update/plan";
 
 export { API_STEP, toStepError } from "./steps";
 export { hyphenateUuid } from "./units/units";
@@ -619,7 +619,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         .set({
           current_version_id: upload.versionId,
           // The upload applied every Durable Object migration the manifest has.
-          do_migration_tag: lastDurableObjectTag(primaryManifest.worker.migrations),
+          // None when Durable Object exports replaced the migrations.
+          do_migration_tag: appliedDurableObjectTag(primaryManifest.worker),
           updated_at: new Date(now()),
         })
         .where(eq(installs.id, params.installId));

@@ -8,6 +8,7 @@ import {
   entryScriptName,
   entryScriptNames,
   entryWorkerRefName,
+  sameDurableObjectExports,
   secondaryWorkers,
   type WorkerBinding,
   workerManifest,
@@ -219,6 +220,34 @@ export function otherDoTagsDiffer(
     (name) =>
       lastTag(then.find((w) => w.scriptName === name)) !==
       lastTag(now.find((w) => w.scriptName === name)),
+  );
+}
+
+/**
+ * Whether any Worker of the app, the install's own included, declares other
+ * Durable Object `exports` in `manifestJson` than in `currentJson` (both
+ * stored artifact manifests): a Durable Object class change made through
+ * `exports`, which Cloudflare refuses to roll a Worker back across, as for a
+ * change made with migrations. Entrypoint exports do not count.
+ */
+export function durableObjectExportsDiffer(
+  manifestJson: string | null,
+  currentJson: string | null,
+  installWorkerName: string,
+): boolean {
+  const workersOf = (json: string | null) => {
+    const manifest = parseStoredManifest(json);
+    return manifest === null ? [] : entryWorkers(manifest, installWorkerName);
+  };
+  const then = workersOf(manifestJson);
+  const now = workersOf(currentJson);
+  const names = new Set([...then, ...now].map((w) => w.scriptName));
+  return [...names].some(
+    (name) =>
+      !sameDurableObjectExports(
+        then.find((w) => w.scriptName === name)?.manifest.worker.exports,
+        now.find((w) => w.scriptName === name)?.manifest.worker.exports,
+      ),
   );
 }
 
