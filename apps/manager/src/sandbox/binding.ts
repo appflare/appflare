@@ -14,6 +14,7 @@ import {
   SANDBOX_FEATURE_INSTALL_DIRS,
   SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
+  SANDBOX_FEATURE_WRANGLER_CONFIG_INLINE,
   SANDBOX_PROTOCOL_VERSION,
   SANDBOX_URL_ORIGIN,
   type SandboxInfo,
@@ -188,6 +189,37 @@ export function configPatchRefusal(
     (catalog.install.workers ?? []).some((w) => w.configPatch !== undefined);
   if (!patched) return null;
   return `the sandbox Worker ${info.sandboxVersion} cannot apply this app's wrangler config patch (install.configPatch) and would build the config unpatched; to update it, ${updateHint}`;
+}
+
+/** Whether the sandbox Worker's packer writes an entry's inline wrangler config. */
+export function writesInlineConfig(info: Pick<SandboxInfo, "features">): boolean {
+  return info.features?.includes(SANDBOX_FEATURE_WRANGLER_CONFIG_INLINE) === true;
+}
+
+/**
+ * Why the sandbox Worker cannot build `catalog`, or null when it can: the
+ * entry carries its wrangler config inline (`install.wranglerConfigInline`,
+ * or a Worker's) and the sandbox Worker's packer predates that, so it would
+ * find no config to build from.
+ */
+export function wranglerConfigInlineRefusal(
+  info: Pick<SandboxInfo, "sandboxVersion" | "features">,
+  catalog:
+    | {
+        install: {
+          wranglerConfigInline?: unknown;
+          workers?: ReadonlyArray<{ wranglerConfigInline?: unknown }> | undefined;
+        };
+      }
+    | undefined,
+  updateHint: string,
+): string | null {
+  if (catalog === undefined || writesInlineConfig(info)) return null;
+  const inline =
+    catalog.install.wranglerConfigInline !== undefined ||
+    (catalog.install.workers ?? []).some((w) => w.wranglerConfigInline !== undefined);
+  if (!inline) return null;
+  return `the sandbox Worker ${info.sandboxVersion} cannot build an app whose wrangler config the catalog carries (install.wranglerConfigInline) and would find no config to build from; to update it, ${updateHint}`;
 }
 
 /** Whether the sandbox Worker's builds keep an entry's D1 seed statements. */

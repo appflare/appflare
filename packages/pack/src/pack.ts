@@ -42,7 +42,7 @@ import {
 import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
 import { DEFAULT_BUILD_TIMEOUT_MS, runBuildCommands } from "./build-command.ts";
-import { applyConfigPatches, workerSpecs } from "./config-patch.ts";
+import { applyConfigPatches, workerSpecs, writeInlineConfigs } from "./config-patch.ts";
 import {
   checkoutRelative,
   copyTemplateConfig,
@@ -60,6 +60,7 @@ import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
 import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./version.ts";
 import { type WorkerSize, workerSize } from "./worker-size.ts";
 import {
+  allowedSections,
   checkHyperdriveDeclarations,
   checkPipelineDeclarations,
   checkVectorizeDeclarations,
@@ -70,6 +71,8 @@ import {
   mainModuleName,
   queueProducerBindings,
   type ResolvedWranglerConfig,
+  unsupportedWranglerSections,
+  uploadPlacement,
   withoutSecretVars,
 } from "./wrangler-config.ts";
 import { ZipStore } from "./zip.ts";
@@ -97,6 +100,15 @@ export interface PackOptions {
   logger?: (message: string) => void;
   /** How long the catalog manifest's `install.buildCommand` may run, all its commands together. Default 15 minutes. */
   buildTimeoutMs?: number;
+  /**
+   * Wrangler config sections the packer refuses that these configs may
+   * declare anyway (`UNSUPPORTED_WRANGLER_SECTIONS` keys, `pipelines` and
+   * `unsafe` excepted). The artifact goes without them: this is for
+   * Appflare's own release artifacts, whose deployer supplies them (the
+   * manager deploys the sandbox Worker's `containers` from its own
+   * definition). Catalog entries are never packed with it. Default none.
+   */
+  allowSections?: readonly string[];
 }
 
 /** Result of a successful {@link pack}. */
@@ -504,6 +516,8 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       `--key-id "${UNSIGNED_KEY_ID}" is reserved for artifacts packed without a key id`,
     );
   }
+  // Checked before any work, so a misspelt section fails at once.
+  const allowSections = allowedSections(options.allowSections ?? []);
 
   // Resolve the signing key up front so a bad/empty key fails before any work or
   // any file is written (a failed pack must leave nothing behind).
@@ -542,6 +556,12 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       logger(`copied the wrangler config template ${declared} to ${real}`);
     }
   }
+  // An entry whose repository ships no config carries one inline: written
+  // now, so the install and the build see it as they would a config of the
+  // repository's, and again after the build (b4).
+  const specs = workerSpecs(catalog.install);
+  const inlineOptions = { checkoutDir, specs, workerName: catalog.install.workerName, logger };
+  writeInlineConfigs(inlineOptions);
 
   // (b) Install dependencies unless disabled.
   // Each directory of `install.installDirs` in order, the root when it lists none.
@@ -590,7 +610,9 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // (b4) The catalog's config patches, after the build (which may write the
   // config) and before wrangler reads anything: each patched config is
   // written beside its original, and wrangler reads and bundles that one.
-  const specs = workerSpecs(catalog.install);
+  // An inline config is checked again: the build may have left a config or
+  // a redirect beside it.
+  writeInlineConfigs(inlineOptions);
   const patched = applyConfigPatches({ checkoutDir, specs, logger });
 
   // (c) Read every resolved wrangler config with wrangler's own reader,
@@ -630,7 +652,15 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     const all = collectBindings(r.config, catalog.resources, {
       entryWorkers: r.name === null ? undefined : entryNames,
       checkUnboundVectorize: entry === undefined,
+      allowSections,
     });
+    for (const key of unsupportedWranglerSections(r.config)) {
+      if (allowSections.includes(key)) {
+        logger(
+          `left ${key} out of the artifact${r.name === null ? "" : ` of the Worker "${r.name}"`}, as allowed`,
+        );
+      }
+    }
     // A var of the name of a secret this Worker gets is left out. A
     // seed-only secret is never set on a Worker, so it takes no var's place.
     const secrets = boundToWorker(catalog.secrets)
@@ -823,7 +853,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
         crons: b.config.triggers?.crons ?? [],
         ...(b.queueConsumers.length > 0 ? { queueConsumers: b.queueConsumers } : {}),
         observability: assetsOnly ? null : (b.config.observability ?? null),
-        placement: assetsOnly ? null : (b.config.placement ?? null),
+        placement: assetsOnly ? null : uploadPlacement(b.config.placement),
         limits: assetsOnly ? null : (b.config.limits ?? null),
         ...settings,
       },

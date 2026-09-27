@@ -12,6 +12,7 @@ import { isSeedOnly, seedManifestProblems } from "./seed.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
 import { taglineSchema } from "./tagline.ts";
 import { isVapidPrivateKey, VAPID_PRIVATE_KEY_LENGTH } from "./vapid.ts";
+import { inlineConfigPathProblem, wranglerConfigInlineSchema } from "./wrangler-config-inline.ts";
 
 /**
  * Schemas for the human-authored catalog manifest `appflare.jsonc`.
@@ -216,6 +217,12 @@ export const catalogEntryWorkerSchema = z
       .describe(
         "Changes to this Worker's wrangler config, applied before wrangler reads it; the same " +
           "rules as `install.configPatch`.",
+      )
+      .optional(),
+    wranglerConfigInline: wranglerConfigInlineSchema
+      .describe(
+        "This Worker's wrangler config, for a repository that ships none; the same rules as " +
+          "`install.wranglerConfigInline`, and `wranglerConfig` names where it is written.",
       )
       .optional(),
     primary: z
@@ -1348,6 +1355,60 @@ export function installToolchains(
   return install.toolchains ?? [];
 }
 
+/**
+ * What is wrong with where an entry uses an inline wrangler config
+ * (`install.wranglerConfigInline`, or a Worker's), on paths inside
+ * `install`; empty when nothing is.
+ */
+export function wranglerConfigInlineProblems(install: {
+  tier: string;
+  wranglerConfig: string;
+  configPatch?: unknown;
+  wranglerConfigInline?: unknown;
+  workers?: ReadonlyArray<InlineConfigTarget> | undefined;
+}): EntryWorkersProblem[] {
+  const problems: EntryWorkersProblem[] = [];
+  const check = (at: Array<string | number>, label: string, target: InlineConfigTarget): void => {
+    if (target.wranglerConfigInline === undefined) return;
+    if (install.tier === "self-deploying") {
+      problems.push({
+        path: [...at, "wranglerConfigInline"],
+        message: `${label} is not allowed for the self-deploying tier: its installer deploys the app without the packer that writes the config`,
+      });
+    }
+    if (target.configPatch !== undefined) {
+      problems.push({
+        path: [...at, "configPatch"],
+        message: `a config patch changes the repository's own config; with ${label}, change the inline config instead`,
+      });
+    }
+    const pathProblem = inlineConfigPathProblem(target.wranglerConfig);
+    if (pathProblem !== null) {
+      problems.push({ path: [...at, "wranglerConfig"], message: pathProblem });
+    }
+  };
+  if (install.wranglerConfigInline !== undefined && install.workers !== undefined) {
+    problems.push({
+      path: ["wranglerConfigInline"],
+      message:
+        "install.wranglerConfigInline is for an app of one Worker; with install.workers, set wranglerConfigInline on the Worker whose config it is",
+    });
+  } else {
+    check([], "install.wranglerConfigInline", install);
+  }
+  (install.workers ?? []).forEach((worker, i) => {
+    check(["workers", i], "wranglerConfigInline", worker);
+  });
+  return problems;
+}
+
+/** The fields {@link wranglerConfigInlineProblems} reads of an entry or one of its Workers. */
+interface InlineConfigTarget {
+  wranglerConfig: string;
+  configPatch?: unknown;
+  wranglerConfigInline?: unknown;
+}
+
 /** How the packer builds and names the app. */
 /** The longest `install.wildcardReason`. */
 export const WILDCARD_REASON_MAX_LENGTH = 200;
@@ -1535,6 +1596,24 @@ export const catalogInstallSchema = z
      */
     configPatch: configPatchSchema.optional(),
     /**
+     * The wrangler config of an app whose repository ships none; see
+     * {@link wranglerConfigInlineSchema}. `wranglerConfig` then names where
+     * the packer writes it (`.appflare.wrangler.jsonc`, in a directory of
+     * the repository or at its root). Optional for the same reason as
+     * `fixedWorkerName`. Not beside `configPatch` (change the inline config
+     * instead), nor beside `workers` (set it per Worker), nor on a
+     * `self-deploying` entry, whose installer runs without the packer.
+     */
+    wranglerConfigInline: wranglerConfigInlineSchema
+      .describe(
+        "The wrangler config of an app whose repository ships none, which the packer writes as " +
+          "`.appflare.wrangler.jsonc` where `wranglerConfig` names (for example " +
+          "`.appflare.wrangler.jsonc`, or `server/.appflare.wrangler.jsonc`) and reads like any " +
+          "other config. Not beside `configPatch` or `workers`. Prefer a pull request upstream " +
+          "that adds a config, and link it in a comment beside this one.",
+      )
+      .optional(),
+    /**
      * Toolchains beyond Node.js the build needs; see {@link CATALOG_TOOLCHAINS}.
      * The packer records them (the artifact carries the catalog manifest) and
      * installs nothing itself. Optional for the same reason as
@@ -1623,6 +1702,9 @@ export const catalogInstallSchema = z
           "install.configPatch is for an app of one Worker; with install.workers, set configPatch on the Worker whose config it changes",
       });
     }
+    for (const problem of wranglerConfigInlineProblems(install)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
     if (install.toolchains !== undefined && runsInSandbox(install.tier)) {
       ctx.addIssue({
         code: "custom",
@@ -1647,7 +1729,8 @@ export const catalogInstallSchema = z
   // exactly when the tier is `self-deploying`; no `emailRouting` or
   // `installDirs` on a `self-deploying` entry; `workers` and `toolchains`
   // only on the `artifact` tier; `configPatch` neither beside `workers` nor
-  // on a `self-deploying` entry), so editors
+  // on a `self-deploying` entry; `wranglerConfigInline` beside neither
+  // `workers` nor `configPatch`, nor on a `self-deploying` entry), so editors
   // refuse the same manifests.
   .meta({
     allOf: [
@@ -1692,6 +1775,15 @@ export const catalogInstallSchema = z
           { not: { required: ["configPatch"] } },
           {
             not: { required: ["workers"] },
+            properties: { tier: { not: { const: "self-deploying" } } },
+          },
+        ],
+      },
+      {
+        anyOf: [
+          { not: { required: ["wranglerConfigInline"] } },
+          {
+            not: { anyOf: [{ required: ["workers"] }, { required: ["configPatch"] }] },
             properties: { tier: { not: { const: "self-deploying" } } },
           },
         ],

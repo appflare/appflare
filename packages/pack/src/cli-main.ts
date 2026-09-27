@@ -17,7 +17,7 @@ import { formatBytes, workerSizeLine } from "./worker-size.ts";
 const USAGE = `appflare-pack — build, sign, and verify Appflare artifacts, and make signing keys
 
 Usage:
-  appflare-pack <checkoutDir> --manifest <appflare.jsonc> --out <dir> [--key-id ID [--sign-key-env NAME]] [--no-install]
+  appflare-pack <checkoutDir> --manifest <appflare.jsonc> --out <dir> [--key-id ID [--sign-key-env NAME]] [--no-install] [--allow-section KEY]...
   appflare-pack sign <dir> --sign-key-env NAME [--key-id ID] [--force]
   appflare-pack verify <dir> [--public-key <base64>] [--require-signed | --hashes-only] [--check-upload]
   appflare-pack inspect <checkoutDir> --config <wrangler config> [--manifest <appflare.jsonc>]
@@ -32,6 +32,11 @@ Pack options:
                           --key-id yields an unsigned intermediate for \`sign\`.
   --no-install            skip installing the checkout's dependencies (every directory
                           of install.installDirs; the root when it lists none)
+  --allow-section <key>   a wrangler config section the packer refuses (containers,
+                          tail_consumers, ...) that the config may declare anyway;
+                          the artifact goes without it. Repeatable. Only for an
+                          artifact whose deployer supplies the section itself,
+                          never for a catalog entry.
 
 Sign options (signs <dir>/manifest.json as-is, writes manifest.sig, self-verifies):
   --sign-key-env <NAME>   env var holding the private key            (required)
@@ -81,6 +86,7 @@ async function runPack(argv: string[]): Promise<number> {
       "sign-key-env": { type: "string" },
       "key-id": { type: "string" },
       "no-install": { type: "boolean" },
+      "allow-section": { type: "string", multiple: true },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -113,6 +119,7 @@ async function runPack(argv: string[]): Promise<number> {
     install: !values["no-install"],
     signKeyEnv: values["sign-key-env"],
     keyId: values["key-id"],
+    allowSections: values["allow-section"] ?? [],
     logger: logToStderr,
   });
 

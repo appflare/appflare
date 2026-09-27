@@ -48,7 +48,13 @@ binding fails the pack, since Appflare cannot tell what it needs. Each install g
 rate limit counters of its own. A service binding to the app's own Worker is pointed
 at the installed Worker, whatever name it is installed under; set
 `install.fixedWorkerName` only when something else in the app needs one fixed name.
-Other binding types cannot be installed yet.
+Other binding types cannot be installed yet: a wrangler config that declares one
+(Workers VPC services, Secrets Store secrets, Tail Workers, dispatch namespaces,
+Containers, AI Search, Media, Stream, inbound email `addresses`, Workers Sites, and
+the rest wrangler knows) fails the pack with a message naming it, rather than
+installing an app that would run without it. When the app works without that
+section, drop it with the config patch the message names, such as
+`{ "vpc_services": null }`.
 
 An app that needs every name under one hostname, such as a tunnel that gives each
 session `<id>.<hostname>`, sets `install.wildcardHostname: true` and a one-sentence
@@ -206,13 +212,54 @@ Points that need care:
   to `null` when `install.buildCommand` builds instead; `services`, only to leave
   bindings out or to add one that points at a Worker of the same entry;
   `kv_namespaces`, `r2_buckets` and `d1_databases`, only to add bindings or to leave
-  out an `id`, `bucket_name` or `database_id` that is an empty string, so the
-  install provisions it; `vars`, only removals; and `migrations`, only to rename
-  `new_classes` to `new_sqlite_classes`, which the Free plan requires. Anything else
-  fails with a message. An app of several Workers sets `configPatch` on each Worker
+  out an `id`, `bucket_name` or `database_id` that is an empty string or a
+  placeholder the upstream deploy script fills (`$NAME`, `${NAME}`, `{{NAME}}`,
+  `<NAME>`), so the install provisions it; `vars`, only removals; and `migrations`, only to rename
+  `new_classes` to `new_sqlite_classes`, which the Free plan requires; `ratelimits`,
+  only to add a rate limit an upstream deploy script adds, keeping the config's own. A section
+  Appflare cannot install may be set to `null` to drop it, when the app works without
+  it (`"vpc_services": null`, `"unsafe": null`). Anything else fails with a message. An app of several Workers sets `configPatch` on each Worker
   in `install.workers`. The patch is part of the signed manifest.
   `appflare-pack inspect <checkout> --config <config> --manifest appflare.jsonc`
   applies it and shows what changed.
+- **`install.wranglerConfigInline`.** When the repository commits no wrangler config
+  at all (its deploy script writes one, or it relies on wrangler's automatic setup),
+  open a pull request upstream that adds one. Until it is merged, the entry may carry
+  the config itself, with a comment linking the pull request, and set `wranglerConfig`
+  to where the packer writes it: `.appflare.wrangler.jsonc` at the root, or
+  `<directory>/.appflare.wrangler.jsonc` for a Worker that lives in a directory of the
+  repository. Relative paths in the config resolve from that directory.
+
+  ```jsonc
+  "install": {
+    "wranglerConfig": ".appflare.wrangler.jsonc",
+    // Until https://github.com/<owner>/<repo>/pull/<number> is merged.
+    "wranglerConfigInline": {
+      "main": "server/src/index.ts",
+      "compatibility_date": "2026-01-20",
+      "assets": { "directory": "./dist/client", "binding": "ASSETS" },
+      "d1_databases": [{ "binding": "DB" }],
+      "triggers": { "crons": ["*/20 * * * *"] }
+    }
+  }
+  ```
+
+  The packer writes it before installing dependencies, with the install's Worker name
+  as `name`, and reads it like a config of the repository's. It may set only `main`,
+  `compatibility_date` (required), `compatibility_flags`, `assets`, `vars`,
+  `triggers`, `observability`, `placement`, `kv_namespaces`, `r2_buckets` and
+  `d1_databases` without ids (the install provisions each), `queues`,
+  `durable_objects` bindings to classes its own `migrations` create in
+  `new_sqlite_classes`, `workflows` and `services` without a `script_name`, and the
+  `ai`, `browser`, `images` and `version_metadata` bindings. A service binding to
+  another Worker of the entry names it as the install does: the primary Worker by
+  `install.workerName`, any other as `<workerName>-<name>`. The pack fails when the
+  repository has a config of its own in that directory (patch that one instead), or
+  when a build leaves a redirect to a config it generated there. The config cannot sit
+  beside a `configPatch`; an app of several Workers sets it on each Worker in
+  `install.workers`. The packer never runs wrangler's automatic configuration (what
+  `wrangler deploy` does in a project without a config): it changes `package.json`
+  and adds dependencies, so the install would no longer match the lockfile.
 - **Package manager versions.** The packer reads which version the repository
   expects from its `package.json` (the nearest one at or above each install
   directory). yarn 2 or later must be pinned with `"packageManager": "yarn@4.x.y"`; it

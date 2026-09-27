@@ -25,6 +25,15 @@ export const SANDBOX_WRANGLER_SOURCE = path.join(SANDBOX_DIR, "wrangler.jsonc");
 /** What apps/sandbox/appflare.jsonc names as its wrangler config; written at pack time. */
 export const SANDBOX_RELEASE_WRANGLER = path.join(SANDBOX_DIR, "dist", "wrangler.release.json");
 
+/**
+ * The wrangler config sections the packer refuses that the sandbox Worker's
+ * config declares, and that its pack allows (`--allow-section`): the artifact
+ * goes without them. `containers` only: the manager deploys the sandbox
+ * Worker's container applications from its own definition
+ * (`SANDBOX_CONTAINERS` in @appflare/schema), never from the artifact.
+ */
+export const SANDBOX_ALLOWED_SECTIONS: readonly string[] = ["containers"];
+
 interface ContainerConfig {
   class_name: string;
   image: string;

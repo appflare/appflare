@@ -581,6 +581,17 @@ describe("install.sandbox", () => {
             },
           ],
         },
+        // An inline wrangler config beside neither several Workers nor a config patch,
+        // nor on a self-deploying entry.
+        {
+          anyOf: [
+            { not: { required: ["wranglerConfigInline"] } },
+            {
+              not: { anyOf: [{ required: ["workers"] }, { required: ["configPatch"] }] },
+              properties: { tier: { not: { const: "self-deploying" } } },
+            },
+          ],
+        },
         // Toolchains only on the artifact tier.
         {
           anyOf: [

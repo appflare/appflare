@@ -1,11 +1,19 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pack, verify } from "@appflare/pack";
+import {
+  collectBindings,
+  pack,
+  type ResolvedWranglerConfig,
+  UnsupportedSectionError,
+  unsupportedWranglerSections,
+  verify,
+} from "@appflare/pack";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { REPO_ROOT, stampCatalogManifest, zipEntryNames } from "./manager-release.ts";
 import {
   checkSandboxArtifactDir,
+  SANDBOX_ALLOWED_SECTIONS,
   SANDBOX_CATALOG_MANIFEST,
   SANDBOX_DIR,
   SANDBOX_RELEASE_WRANGLER,
@@ -47,6 +55,20 @@ describe("sandboxReleaseWranglerConfig", () => {
       install: { wranglerConfig: "dist/wrangler.release.json", workerName: "appflare-sandbox" },
     });
   });
+
+  it("allows exactly the refused sections the release config declares", () => {
+    const config = sandboxReleaseWranglerConfig(
+      readFileSync(SANDBOX_WRANGLER_SOURCE, "utf8"),
+      VERSION,
+    ) as ResolvedWranglerConfig;
+    // A section the sandbox Worker gains must be allowed here on purpose,
+    // and an allowance it no longer needs dropped.
+    expect(unsupportedWranglerSections(config)).toEqual(SANDBOX_ALLOWED_SECTIONS);
+    expect(() => collectBindings(config)).toThrow(UnsupportedSectionError);
+    expect(() =>
+      collectBindings(config, undefined, { allowSections: SANDBOX_ALLOWED_SECTIONS }),
+    ).not.toThrow();
+  });
 });
 
 // Packs apps/sandbox exactly as `pnpm release:pack --app sandbox` does. The
@@ -74,7 +96,13 @@ describe.skipIf(!schemaBuilt)("the packed sandbox Worker artifact", () => {
     });
     writeFileSync(manifestPath, JSON.stringify(catalog));
     outDir = path.join(tmp, "out");
-    await pack({ checkoutDir: SANDBOX_DIR, manifestPath, outDir, install: false });
+    await pack({
+      checkoutDir: SANDBOX_DIR,
+      manifestPath,
+      outDir,
+      install: false,
+      allowSections: SANDBOX_ALLOWED_SECTIONS,
+    });
   });
 
   afterAll(() => {

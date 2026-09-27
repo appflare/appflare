@@ -315,6 +315,26 @@ describe("pack leaves nothing behind on failure", () => {
       rmSync(parent, { recursive: true, force: true });
     }
   }, 120_000);
+
+  it("does not create --out when an allowed section is not one it refuses", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-fail-"));
+    const outDir = path.join(parent, "artifact-out");
+    try {
+      await expect(
+        pack({
+          checkoutDir: FIXTURE,
+          manifestPath: FIXTURE_MANIFEST,
+          outDir,
+          install: false,
+          allowSections: ["unsafe"],
+        }),
+      ).rejects.toThrow(/unsafe cannot be allowed/);
+      expect(existsSync(outDir)).toBe(false);
+      expect(readdirSync(parent)).toEqual([]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("pack with a license that is not an SPDX expression", () => {

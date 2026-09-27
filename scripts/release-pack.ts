@@ -135,6 +135,7 @@ async function packSandbox(options: {
         "--out",
         outDir,
         "--no-install",
+        ...sandbox.SANDBOX_ALLOWED_SECTIONS.flatMap((key) => ["--allow-section", key]),
         ...(keyId ? ["--key-id", keyId] : []),
       ],
       env,
