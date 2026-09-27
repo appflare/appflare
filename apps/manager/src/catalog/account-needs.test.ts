@@ -58,6 +58,35 @@ describe("what an app needs on the account", () => {
     ]);
   });
 
+  it("links a missing need to the dashboard page that fixes it, and nothing else", () => {
+    const lacking = view({
+      plan: { plan: "free", source: "detected" },
+      r2: { state: "not-enabled" },
+      zone: { state: "none" },
+      emailRouting: { state: "no-zone" },
+      checkedAt: CHECKED_AT,
+    });
+    const fixes = accountNeeds(
+      { plan: "paid", requires: [] },
+      uses("r2", "zone", "email-routing", "kv"),
+      lacking,
+    ).map((n) => [n.key, n.fix?.label ?? null, n.fix?.href ?? null]);
+    expect(fixes).toEqual([
+      ["plan", "Upgrade", "https://dash.cloudflare.com/?to=/:account/workers/plans"],
+      ["r2", "Turn on", "https://dash.cloudflare.com/?to=/:account/r2/overview"],
+      ["zone", "Add a domain", "https://dash.cloudflare.com/?to=/:account/domains/overview"],
+      [
+        "email-routing",
+        "Add a domain",
+        "https://dash.cloudflare.com/?to=/:account/domains/overview",
+      ],
+      ["kv", null, null],
+    ]);
+    // Not confirmed is not missing: no fix to offer.
+    const unknown = accountNeeds({ plan: "paid", requires: [] }, uses("r2"), view());
+    expect(unknown.map((n) => n.fix)).toEqual([null, null]);
+  });
+
   it("marks what the admin brings, and keeps the probe's sentence for the tooltip", () => {
     const [database] = accountNeeds({ plan: "free", requires: [] }, uses("hyperdrive"), view());
     expect(database).toMatchObject({

@@ -19,8 +19,8 @@ import { Tooltip } from "./tooltip";
 /**
  * The top of an app's catalog page, app-store style: a large icon, the name,
  * a one-line tagline, who made it, where the build comes from (the only place
- * the page says so), and one action at the right: "Get" or "Manage", with the
- * version quietly under it.
+ * the page says so), and one action at the right: "Install" or "Manage".
+ * The version is in the stat strip below, not here.
  */
 export function AppPageHeader({
   name,
@@ -30,8 +30,7 @@ export function AppPageHeader({
   withAvatars,
   provenance,
   action,
-  version,
-  onGet,
+  onInstall,
   onManageSeveral,
 }: {
   name: string;
@@ -42,9 +41,8 @@ export function AppPageHeader({
   withAvatars: boolean;
   provenance: Provenance;
   action: HeaderAction;
-  version: string;
   /** Opens the install form. */
-  onGet: () => void;
+  onInstall: () => void;
   /** Shows the list of installs, for "Manage" with several. */
   onManageSeveral: () => void;
 }) {
@@ -71,58 +69,61 @@ export function AppPageHeader({
             <ProvenanceBadge provenance={provenance} />
           </div>
         </div>
-        <div className="col-start-2 grid justify-items-start gap-1 sm:col-start-3 sm:justify-items-center">
+        {/* At most 12rem wide, so a member's reason cannot widen the header. */}
+        <div className="col-start-2 grid min-w-0 max-w-48 justify-items-start gap-1.5 sm:col-start-3 sm:justify-items-center">
           <HeaderButton
             action={action}
             name={name}
-            onGet={onGet}
+            onInstall={onInstall}
             onManageSeveral={onManageSeveral}
           />
           {/* A member's reason stays visible here: touch screens have no hover for the tooltip. */}
-          <Text as="span" variant="secondary" size="xs">
-            {action.kind === "get" && action.reason !== null ? action.reason : `Version ${version}`}
-          </Text>
+          {action.kind === "install" && action.reason !== null && (
+            <Text as="span" variant="secondary" size="xs">
+              <span className="block sm:text-center">{action.reason}</span>
+            </Text>
+          )}
         </div>
       </div>
     </header>
   );
 }
 
+/**
+ * Kumo's standard button, sized to its label (a minimum width would leave the
+ * label off centre, since Kumo's button does not centre its content).
+ */
 function HeaderButton({
   action,
   name,
-  onGet,
+  onInstall,
   onManageSeveral,
 }: {
   action: HeaderAction;
   name: string;
-  onGet: () => void;
+  onInstall: () => void;
   onManageSeveral: () => void;
 }) {
-  if (action.kind === "get") {
+  if (action.kind === "install") {
     // Kumo's `title` on a disabled button is a tooltip on a wrapper, which gets the pointer
     // events the button does not; the reason is also in the name, since it cannot take focus.
     return (
       <Button
         variant="primary"
-        className="min-w-28"
         disabled={action.disabled}
-        onClick={onGet}
-        aria-label={action.reason === null ? `Get ${name}` : `Get ${name}. ${action.reason}.`}
+        onClick={onInstall}
+        aria-label={
+          action.reason === null ? `Install ${name}` : `Install ${name}. ${action.reason}.`
+        }
         {...(action.reason === null ? {} : { title: action.reason })}
       >
-        Get
+        Install
       </Button>
     );
   }
   if (action.href !== null) {
     return (
-      <LinkButton
-        href={action.href}
-        variant="primary"
-        className="min-w-28"
-        aria-label={`Manage ${name}`}
-      >
+      <LinkButton href={action.href} variant="primary" aria-label={`Manage ${name}`}>
         Manage
       </LinkButton>
     );
@@ -130,7 +131,6 @@ function HeaderButton({
   return (
     <Button
       variant="primary"
-      className="min-w-28"
       onClick={onManageSeveral}
       aria-label={`Manage ${name}: ${action.count} installs`}
     >

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareVersions, isUpdateAvailable } from "./versions";
+import { compareVersions, dateBuildDay, isUpdateAvailable } from "./versions";
 
 describe("isUpdateAvailable", () => {
   it("is false when the catalog lists the installed version or nothing", () => {
@@ -24,5 +24,14 @@ describe("isUpdateAvailable", () => {
   it("treats any difference as an update when a version is not semver", () => {
     expect(isUpdateAvailable("latest", "2026-09")).toBe(true);
     expect(compareVersions("latest", "1.0.0")).toBeNull();
+  });
+});
+
+describe("dateBuildDay", () => {
+  it("reads the day of a date build and nothing else", () => {
+    expect(dateBuildDay("0.0.0-20260921.4fd08b5")).toBe("2026-09-21");
+    expect(dateBuildDay("0.0.0-20260231.4fd08b5")).toBeNull();
+    expect(dateBuildDay("1.2.3")).toBeNull();
+    expect(dateBuildDay("1.0.0-20260921.4fd08b5")).toBeNull();
   });
 });

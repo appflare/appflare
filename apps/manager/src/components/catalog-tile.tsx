@@ -1,17 +1,22 @@
-import { cn, Link, LinkButton, Text } from "@cloudflare/kumo";
+import { cn, LinkButton, Text } from "@cloudflare/kumo";
 import { StarIcon } from "@phosphor-icons/react";
 import type { CatalogListItem } from "../catalog/catalog.functions";
 import { formatCount } from "../catalog/popularity";
 import { PLAN_WORDS, primaryAction } from "../catalog/storefront";
 import { AppIcon } from "./catalog-media";
+import { RouterAnchor } from "./router-anchor";
 import { Tooltip } from "./tooltip";
 
 /**
- * An app on the catalog page. A tile shows only what helps someone pick an
- * app: its icon, name and pitch, then one line with the plan and the GitHub
- * stars on the left and the one action on the right. Provenance, license
- * and the services it uses are on the app's page.
+ * An app on the catalog page, as a vertical tile: the icon on top, the name
+ * on one line, the pitch in at most two lines, then one line with the plan
+ * and the GitHub stars on the left and the one action on the right. Only
+ * what helps someone pick an app; provenance, license and the services it
+ * uses are on the app's page.
  */
+
+/** A tile's fixed width in a row (14rem); in a grid it is the narrowest a cell gets. */
+export const TILE_WIDTH_REM = 14;
 
 /** What a tile reads from a catalog app. */
 export type TileApp = Pick<
@@ -35,7 +40,9 @@ export function TileMeta({ app }: { app: Pick<TileApp, "plan" | "popularity"> })
   const plan = PLAN_WORDS[app.plan];
   const stars = app.popularity?.stars ?? null;
   return (
-    <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-kumo-subtle text-xs">
+    // `overflow-hidden` rather than wrapping: the line never runs under the
+    // action beside it, even in the narrowest tile.
+    <span className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-kumo-subtle text-xs">
       <Tooltip content={plan.tooltip} render={<span />}>
         {plan.word}
         <span className="sr-only"> ({plan.name} plan)</span>
@@ -55,9 +62,13 @@ export function TileMeta({ app }: { app: Pick<TileApp, "plan" | "popularity"> })
 }
 
 /**
- * One app as a tile: 14rem wide in a row, filling its cell in a grid. The
- * icon, name and pitch link to the app's page; "Get" goes there too (where
- * installing starts), "Manage" to the install.
+ * One app as a tile: the width of its row slot or grid cell. The icon, name
+ * and pitch link to the app's page; "Get" goes there too (where installing
+ * starts), "Manage" to the install.
+ *
+ * The main link is a plain router anchor, not Kumo's `Link`: `Link` always
+ * adds `inline-flex items-center`, which outranks the tile's own layout and
+ * put the icon beside the text instead of above it.
  */
 export function AppTile({ app, className }: { app: TileApp; className?: string }) {
   const action = primaryAction(app);
@@ -66,15 +77,14 @@ export function AppTile({ app, className }: { app: TileApp; className?: string }
       className={cn(
         // `relative` keeps screen-reader-only text inside the tile, so a tile
         // scrolled out of its row cannot widen the page.
-        "relative flex h-full flex-col gap-3 rounded-xl p-3 hover:bg-kumo-tint",
+        "relative flex h-full min-w-0 flex-col gap-3 rounded-xl p-3 hover:bg-kumo-tint",
         className,
       )}
     >
-      <Link
+      <RouterAnchor
         href={`/catalog/${app.key}`}
-        variant="plain"
         data-tile-link=""
-        className="grid gap-3 rounded-lg text-kumo-default outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand"
+        className="grid min-w-0 gap-3 rounded-lg text-kumo-default outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand"
       >
         <AppIcon src={app.images.icon} name={app.name} size={64} />
         <span className="grid min-w-0 gap-0.5">
@@ -85,8 +95,8 @@ export function AppTile({ app, className }: { app: TileApp; className?: string }
             <span className="line-clamp-2 min-h-[2lh] break-words">{app.pitch}</span>
           </Text>
         </span>
-      </Link>
-      <div className="mt-auto flex items-center justify-between gap-2">
+      </RouterAnchor>
+      <div className="mt-auto flex min-w-0 items-center justify-between gap-2">
         <TileMeta app={app} />
         <LinkButton
           href={action.href}
@@ -99,30 +109,5 @@ export function AppTile({ app, className }: { app: TileApp; className?: string }
         </LinkButton>
       </div>
     </div>
-  );
-}
-
-/** One app in the compact "All apps" list: icon, name and pitch, the whole entry a link to its page. */
-export function CompactAppLink({
-  app,
-}: {
-  app: Pick<TileApp, "key" | "name" | "pitch" | "images">;
-}) {
-  return (
-    <Link
-      href={`/catalog/${app.key}`}
-      variant="plain"
-      className="flex min-w-0 items-center gap-3 rounded-lg p-2 text-kumo-default outline-none hover:bg-kumo-tint focus-visible:ring-2 focus-visible:ring-kumo-brand"
-    >
-      <AppIcon src={app.images.icon} name={app.name} size={40} />
-      <span className="grid min-w-0">
-        <Text as="span" bold truncate>
-          {app.name}
-        </Text>
-        <Text as="span" variant="secondary" size="sm" truncate>
-          {app.pitch}
-        </Text>
-      </span>
-    </Link>
   );
 }

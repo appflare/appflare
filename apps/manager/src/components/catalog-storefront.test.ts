@@ -2,9 +2,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AppPopularity } from "../catalog/popularity";
-import { AppRow, RowHeader } from "./catalog-row";
+import { AppGrid, AppRow, RowHeader } from "./catalog-row";
 import { CatalogSearch } from "./catalog-search";
-import { AppTile, CompactAppLink, type TileApp, TileMeta } from "./catalog-tile";
+import { AppTile, type TileApp, TileMeta } from "./catalog-tile";
 import { CategoryCards } from "./category-cards";
 
 function tile(overrides: Partial<TileApp> = {}): TileApp {
@@ -93,11 +93,22 @@ describe("AppTile", () => {
     expect(text(html)).not.toMatch(/\bGet\b/);
   });
 
-  it("renders the compact entry as one link with the name and pitch", () => {
-    const html = renderToStaticMarkup(createElement(CompactAppLink, { app: tile() }));
-    expect(html.match(/<a /g)).toHaveLength(1);
-    expect(html).toContain('href="/catalog/cut"');
-    expect(text(html)).toMatch(/Cut.*Short links on your own domain$/);
+  it("stacks the icon, name, pitch and the metadata line with the action, top to bottom", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppTile, { app: tile({ popularity: popularity(647) }) }),
+    );
+    const link = openingTag(html, "data-tile-link");
+    // A grid, and nothing that lays the icon out beside the text.
+    expect(link).toMatch(/class="grid /);
+    expect(link).not.toContain("inline-flex");
+    expect(link).not.toContain("items-center");
+    // The 64px icon (a monogram here), then the name on one line and the pitch in two.
+    expect(html).toContain("width:64px");
+    expect(html).toMatch(/truncate[^>]*>Cut</);
+    expect(html).toMatch(/line-clamp-2[^>]*>Short links on your own domain</);
+    // The link closes before the metadata line, which holds "Paid · ★ 647" and the action.
+    const afterLink = html.slice(html.indexOf("</a>"));
+    expect(text(afterLink)).toBe("Paid (Workers Paid plan)·647 stars on GitHubGet");
   });
 });
 
@@ -159,6 +170,36 @@ describe("rows", () => {
     expect(html.match(/data-tile-link=""/g)).toHaveLength(2);
     // Before the row is measured nothing overflows, so no arrows.
     expect(html).not.toContain("Next apps in Email");
+  });
+
+  it("gives row tiles a fixed 14rem width, 1.5rem apart, snapping to their starts", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppRow, {
+        title: "Email",
+        apps: [tile(), tile({ key: "mail", name: "Mail" })],
+      }),
+    );
+    expect(openingTag(html, 'role="list"')).toMatch(/\bgap-6\b/);
+    expect(openingTag(html, 'role="list"')).toContain("snap-x");
+    for (const item of html.match(/<li [^>]*>/g) ?? []) {
+      expect(item).toMatch(/\bw-56\b/);
+      expect(item).toContain("snap-start");
+    }
+  });
+
+  it("puts the same tiles in a grid of cells at least 14rem wide, 1.5rem apart", () => {
+    const html = renderToStaticMarkup(
+      createElement(AppGrid, {
+        apps: [tile(), tile({ key: "mail", name: "Mail" })],
+        labelledBy: "h",
+      }),
+    );
+    const list = openingTag(html, 'role="list"');
+    expect(list).toContain('aria-labelledby="h"');
+    expect(list).toContain("minmax(14rem,1fr)");
+    expect(list).toMatch(/\bgap-6\b/);
+    expect(html.match(/data-tile-link=""/g)).toHaveLength(2);
+    expect(html.match(/aria-label="Get /g)).toHaveLength(2);
   });
 });
 

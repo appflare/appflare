@@ -26,7 +26,6 @@ import {
 } from "../../../catalog/storefront";
 import { AppGrid, AppRow, CatalogSection } from "../../../components/catalog-row";
 import { CatalogSearch, useSearchText } from "../../../components/catalog-search";
-import { CompactAppLink } from "../../../components/catalog-tile";
 import { CategoryCards } from "../../../components/category-cards";
 import { FeaturedCard } from "../../../components/featured-card";
 import { formatExactDateTime } from "../../../components/format";
@@ -199,7 +198,7 @@ function Storefront({ catalog }: { catalog: CatalogList }) {
           />
         ) : (
           <CatalogSection title={resultsTitle(query, addedDates)} titleId={resultsId}>
-            <AppGrid apps={results} label={resultsTitle(query, addedDates)} />
+            <AppGrid apps={results} labelledBy={resultsId} />
           </CatalogSection>
         )
       ) : (
@@ -217,18 +216,7 @@ function Storefront({ catalog }: { catalog: CatalogList }) {
           ))}
           {rows.length === 0 && featured}
           <CatalogSection title="All apps" titleId={allId}>
-            <ul
-              // biome-ignore lint/a11y/noRedundantRoles: list styles are removed, and Safari then drops the list role
-              role="list"
-              aria-labelledby={allId}
-              className="-mx-2 grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-x-4"
-            >
-              {byName.map((app) => (
-                <li key={app.key} className="min-w-0">
-                  <CompactAppLink app={app} />
-                </li>
-              ))}
-            </ul>
+            <AppGrid apps={byName} labelledBy={allId} />
           </CatalogSection>
         </>
       )}

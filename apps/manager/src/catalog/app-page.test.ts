@@ -10,6 +10,7 @@ import {
   provenance,
   settingsToChoose,
   shortDate,
+  shortVersion,
 } from "./app-page";
 import type { CatalogSource } from "./sources";
 
@@ -39,16 +40,24 @@ function stat(input: Partial<AppStatsInput>, id: string) {
 }
 
 describe("the header's action", () => {
-  it("is Get while the app is not installed", () => {
-    expect(headerAction([], true, true)).toEqual({ kind: "get", disabled: false, reason: null });
+  it("is Install while the app is not installed", () => {
+    expect(headerAction([], true, true)).toEqual({
+      kind: "install",
+      disabled: false,
+      reason: null,
+    });
   });
 
-  it("is a disabled Get when the install form cannot be shown", () => {
-    expect(headerAction([], false, true)).toEqual({ kind: "get", disabled: true, reason: null });
+  it("is a disabled Install when the install form cannot be shown", () => {
+    expect(headerAction([], false, true)).toEqual({
+      kind: "install",
+      disabled: true,
+      reason: null,
+    });
   });
 
-  it("is a disabled Get that says why for a member", () => {
-    const expected = { kind: "get", disabled: true, reason: "Only admins can install apps" };
+  it("is a disabled Install that says why for a member", () => {
+    const expected = { kind: "install", disabled: true, reason: "Only admins can install apps" };
     expect(headerAction([], true, false)).toEqual(expected);
     expect(headerAction([], false, false)).toEqual(expected);
     expect(ADMINS_ONLY).toBe("Only admins can install apps");
@@ -197,6 +206,26 @@ describe("the stat strip", () => {
     expect(version?.value).toBe("1.4.0");
     expect(version?.tooltip).toContain("0123456789ab");
   });
+
+  it("shows a date build by its day, the full version in the tooltip", () => {
+    const version = stat({ version: "0.0.0-20260921.4fd08b5" }, "version");
+    expect(version?.value).toBe("Sep 21");
+    expect(version?.tooltip).toContain("0.0.0-20260921.4fd08b5");
+  });
+});
+
+describe("short versions", () => {
+  it("names a date build by its day, in any time zone, with the year when it is not this year's", () => {
+    expect(shortVersion("0.0.0-20260921.4fd08b5", UTC)).toEqual({ kind: "build", text: "Sep 21" });
+    const behind = { ...UTC, timeZone: "America/Los_Angeles" };
+    expect(shortVersion("0.0.0-20260921.4fd08b5", behind).text).toBe("Sep 21");
+    expect(shortVersion("0.0.0-20251231.abc1234", UTC).text).toBe("Dec 31, 2025");
+  });
+
+  it("keeps a tagged version, and anything that is not a real day, as it is", () => {
+    expect(shortVersion("1.2.3", UTC)).toEqual({ kind: "tagged", text: "1.2.3" });
+    expect(shortVersion("0.0.0-20261345.4fd08b5", UTC).kind).toBe("tagged");
+  });
 });
 
 describe("module bytes", () => {
@@ -212,7 +241,12 @@ describe("settings you will choose", () => {
   it("lists secrets then settings by label, leaving out derived values", () => {
     const items = settingsToChoose(
       [
-        { name: "ADMIN_PASSWORD", label: "Admin password", generate: false },
+        {
+          name: "ADMIN_PASSWORD",
+          label: "Admin password",
+          help: "Signs you in to the app.",
+          generate: false,
+        },
         { name: "SESSION_KEY", label: "Session key", generate: true },
         { name: "SMTP_TOKEN", label: "Mail token", generate: false, optional: true },
         {
@@ -224,7 +258,13 @@ describe("settings you will choose", () => {
       ],
       [
         { name: "SITE_NAME", label: "Site name", required: true, shownDefault: "" },
-        { name: "THEME", label: "Theme", required: false, shownDefault: "dark" },
+        {
+          name: "THEME",
+          label: "Theme",
+          help: "light or dark",
+          required: false,
+          shownDefault: "dark",
+        },
         { name: "NOTE", label: "Note", required: false, shownDefault: "" },
         {
           name: "HASH",
@@ -235,13 +275,24 @@ describe("settings you will choose", () => {
         },
       ],
     );
+    const none = { description: null };
     expect(items).toEqual([
-      { label: "Admin password", name: "ADMIN_PASSWORD", hint: "Required" },
-      { label: "Session key", name: "SESSION_KEY", hint: "Filled in for you" },
-      { label: "Mail token", name: "SMTP_TOKEN", hint: "Optional" },
-      { label: "Site name", name: "SITE_NAME", hint: "Required" },
-      { label: "Theme", name: "THEME", hint: "Suggested value filled in" },
-      { label: "Note", name: "NOTE", hint: "Optional" },
+      {
+        label: "Admin password",
+        name: "ADMIN_PASSWORD",
+        hint: "Required",
+        description: "Signs you in to the app.",
+      },
+      { label: "Session key", name: "SESSION_KEY", hint: "Filled in for you", ...none },
+      { label: "Mail token", name: "SMTP_TOKEN", hint: "Optional", ...none },
+      { label: "Site name", name: "SITE_NAME", hint: "Required", ...none },
+      {
+        label: "Theme",
+        name: "THEME",
+        hint: "Suggested value filled in",
+        description: "light or dark",
+      },
+      { label: "Note", name: "NOTE", hint: "Optional", ...none },
     ]);
   });
 });

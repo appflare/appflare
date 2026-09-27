@@ -6,7 +6,9 @@ import { Tooltip } from "./tooltip";
 /**
  * The row of small facts under an app's header (stars, plan, license,
  * version, size, last tested, category): a plain label over each value, the
- * detail in a tooltip. One row on wider screens, two rows on phones.
+ * detail in a tooltip. One row on wider screens, two rows on phones. Every
+ * line is a single line, cut with an ellipsis when it does not fit (the full
+ * value is in the tooltip), so one long value cannot make the whole row tall.
  */
 export function AppStatStrip({ stats }: { stats: readonly AppStat[] }) {
   return (
@@ -16,8 +18,8 @@ export function AppStatStrip({ stats }: { stats: readonly AppStat[] }) {
           key={stat.id}
           className="grid min-w-0 content-start justify-items-center gap-1 px-2 text-center md:flex-1"
         >
-          <dt>
-            <Text as="span" variant="secondary" size="xs">
+          <dt className="flex min-w-0 max-w-full">
+            <Text as="span" variant="secondary" size="xs" truncate>
               {stat.label}
             </Text>
           </dt>
@@ -26,7 +28,7 @@ export function AppStatStrip({ stats }: { stats: readonly AppStat[] }) {
               <StatValue stat={stat} />
             </Tooltip>
             {stat.caption !== null && (
-              <Text as="span" variant="secondary" size="xs">
+              <Text as="span" variant="secondary" size="xs" truncate>
                 {stat.caption}
               </Text>
             )}
@@ -40,9 +42,9 @@ export function AppStatStrip({ stats }: { stats: readonly AppStat[] }) {
 function StatValue({ stat }: { stat: AppStat }) {
   if (stat.tone === "warning") return <Badge variant="warning">{stat.value}</Badge>;
   return (
-    <span className="flex min-w-0 items-center justify-center gap-1 font-semibold text-kumo-default">
+    <span className="flex min-w-0 max-w-full items-center justify-center gap-1 whitespace-nowrap font-semibold text-kumo-default">
       {stat.id === "stars" && <StarIcon aria-hidden weight="fill" className="shrink-0" />}
-      <span className="text-balance [overflow-wrap:anywhere]">{stat.value}</span>
+      <span className="min-w-0 truncate">{stat.value}</span>
     </span>
   );
 }

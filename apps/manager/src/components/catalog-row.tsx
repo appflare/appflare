@@ -10,22 +10,28 @@ import {
   useState,
 } from "react";
 import { showRowArrows, tileKeyTarget } from "../catalog/storefront";
-import { AppTile, TILE_LINK_SELECTOR, type TileApp } from "./catalog-tile";
+import { AppTile, TILE_LINK_SELECTOR, TILE_WIDTH_REM, type TileApp } from "./catalog-tile";
 import { useIsNarrow } from "./sidebar-rail";
 
 /**
  * A row of app tiles on the catalog page: a heading with "See all" and,
  * when the tiles do not fit, previous and next arrows; the tiles scroll
- * sideways, snap to tile starts and hide the native scrollbar (wheel,
- * touch, the arrows and the keyboard still move them). On a phone the
- * arrows go and the row is swiped.
+ * sideways (14rem tiles, 1.5rem apart), snap to tile starts and hide the
+ * native scrollbar (wheel, touch, the arrows and the keyboard still move
+ * them). On a phone the arrows go and the row is swiped.
  */
 
 /** Hidden native scrollbar; the row still scrolls by wheel, touch, keys and the arrows. */
 const NO_SCROLLBAR = "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
 
-/** Tiles are 14rem plus the gap; a page step keeps one tile of the last view as an anchor. */
-const TILE_STEP_PX = 14 * 16;
+/**
+ * Between tiles, in a row and in a grid: 1.5rem, so each tile reads as its
+ * own unit even when its hover tint shows.
+ */
+const TILE_GAP_REM = 1.5;
+
+/** A tile plus the gap; a page step keeps one tile of the last view as an anchor. */
+const TILE_STEP_PX = (TILE_WIDTH_REM + TILE_GAP_REM) * 16;
 
 interface ScrollEdges {
   atStart: boolean;
@@ -216,11 +222,12 @@ export function AppRow({
         aria-labelledby={titleId}
         onKeyDown={moveBetweenTiles}
         className={cn(
-          "relative -mx-3 flex snap-x snap-mandatory overflow-x-auto py-1",
+          "relative -mx-3 flex snap-x snap-mandatory gap-6 overflow-x-auto py-1",
           NO_SCROLLBAR,
         )}
       >
         {apps.map((app) => (
+          // w-56 is TILE_WIDTH_REM: every tile in a row is the same width.
           <li key={app.key} className="w-56 shrink-0 snap-start">
             <AppTile app={app} />
           </li>
@@ -230,14 +237,24 @@ export function AppRow({
   );
 }
 
-/** Tiles in a grid that fills the width: the results of a search or filter. */
-export function AppGrid({ apps, label }: { apps: readonly TileApp[]; label: string }) {
+/**
+ * The same tiles in a grid that fills the width, cells at least 14rem and
+ * 1.5rem apart: the results of a search or filter, and "All apps".
+ */
+export function AppGrid({
+  apps,
+  labelledBy,
+}: {
+  apps: readonly TileApp[];
+  /** Id of the heading that names the grid. */
+  labelledBy: string;
+}) {
   return (
     <ul
       // biome-ignore lint/a11y/noRedundantRoles: list styles are removed, and Safari then drops the list role
       role="list"
-      aria-label={label}
-      className="-mx-3 grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))]"
+      aria-labelledby={labelledBy}
+      className="-mx-3 grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-6"
     >
       {apps.map((app) => (
         <li key={app.key} className="min-w-0">

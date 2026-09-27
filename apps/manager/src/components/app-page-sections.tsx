@@ -1,4 +1,4 @@
-import { Link, Text } from "@cloudflare/kumo";
+import { Button, Link, Popover, Text } from "@cloudflare/kumo";
 import {
   CheckCircleIcon,
   GithubLogoIcon,
@@ -21,7 +21,7 @@ import { Tooltip } from "./tooltip";
 /**
  * The parts of an app's catalog page below the header and screenshots, all
  * in one pattern: a hairline, a heading, then plain rows. Technical detail
- * (what a probe found, variable names, binding names) sits in tooltips.
+ * (variable names, binding names) sits in tooltips and popovers.
  */
 
 /** One part of the page, under a hairline. */
@@ -68,8 +68,10 @@ const NEED_ICONS: Record<NeedTone, { icon: Icon; className: string }> = {
 };
 
 /**
- * "Email Routing · ready": the need's name, its state, and the probe's
- * finding on hover; `explanation`, when given, is a line under it saying what
+ * "Email Routing · ready": the need's name and its state, which say it all,
+ * so no tooltip. A need the account lacks ends in a quiet link to the
+ * dashboard page that fixes it ("R2 storage · not turned on · Turn on"),
+ * in a new tab. `explanation`, when given, is a line under it saying what
  * the need means for this app.
  */
 export function NeedRow({
@@ -83,12 +85,19 @@ export function NeedRow({
   return (
     <li className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5">
       <NeedIcon aria-hidden weight="fill" size={18} className={`shrink-0 ${className}`} />
-      <Tooltip content={need.detail} className="min-w-0 justify-self-start text-left">
-        <span>
-          <span className="font-medium text-kumo-default">{need.name}</span>
-          <span className="text-kumo-subtle"> · {need.state}</span>
-        </span>
-      </Tooltip>
+      <span className="min-w-0">
+        <span className="font-medium text-kumo-default">{need.name}</span>
+        <span className="text-kumo-subtle"> · {need.state}</span>
+        {need.fix !== null && (
+          <span className="text-kumo-subtle">
+            {" · "}
+            <Link href={need.fix.href} target="_blank" rel="noopener noreferrer" variant="current">
+              {need.fix.label}
+              <Link.ExternalIcon />
+            </Link>
+          </span>
+        )}
+      </span>
       {explanation !== null && (
         <span className="col-start-2">
           <Text as="span" variant="secondary" size="sm">
@@ -143,7 +152,48 @@ export function NeedsList({
   );
 }
 
-/** The secrets and settings the install form will ask for, by label; the name on hover. */
+/**
+ * A small "?" after a setting's label that opens its help text, with the
+ * technical name under it, on click or hover. A 20px button in a 24px line,
+ * so it shifts nothing.
+ */
+function SettingHelp({ item }: { item: SettingItem & { description: string } }) {
+  return (
+    <Popover>
+      <Popover.Trigger
+        openOnHover
+        delay={150}
+        render={
+          <Button
+            shape="square"
+            size="xs"
+            variant="ghost"
+            className="size-5 self-center text-kumo-subtle"
+            icon={<QuestionIcon aria-hidden size={16} />}
+            aria-label={`About ${item.label}`}
+          />
+        }
+      />
+      <Popover.Content>
+        <span className="grid max-w-72 gap-1.5">
+          <Popover.Description>{item.description}</Popover.Description>
+          <Text as="span" variant="mono-secondary">
+            {item.name}
+          </Text>
+        </span>
+      </Popover.Content>
+    </Popover>
+  );
+}
+
+function hasDescription(item: SettingItem): item is SettingItem & { description: string } {
+  return item.description !== null && item.description.trim() !== "";
+}
+
+/**
+ * The secrets and settings the install form will ask for, by label; the name
+ * on hover, and a "?" with the help text for a setting that has some.
+ */
 export function SettingsList({ items }: { items: readonly SettingItem[] }) {
   return (
     <ul className="m-0 grid list-none gap-x-6 gap-y-2 p-0 sm:grid-cols-2">
@@ -155,6 +205,7 @@ export function SettingsList({ items }: { items: readonly SettingItem[] }) {
           >
             {item.label}
           </Tooltip>
+          {hasDescription(item) && <SettingHelp item={item} />}
           <Text as="span" variant="secondary" size="sm">
             {item.hint}
           </Text>

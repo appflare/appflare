@@ -1,6 +1,7 @@
 import type { Plan } from "@appflare/schema";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import { resourceKindLabel } from "../components/format";
+import { DASHBOARD_LINKS } from "../onboarding/checklist";
 import {
   type AppPrimitives,
   type Availability,
@@ -16,8 +17,9 @@ import { requirementLabel } from "./requirements";
 /**
  * "What it needs on your account" on an app's catalog page: one row per
  * thing the app uses, named in plain words, with its state on this account
- * ("Email Routing · ready", "R2 storage · not turned on"). The probe's own
- * sentence is kept for the row's tooltip. Client-safe.
+ * ("Email Routing · ready", "R2 storage · not turned on"), and for a need
+ * the account lacks, where on the Cloudflare dashboard to fix it. The
+ * probe's own sentence is kept as `detail`. Client-safe.
  */
 
 /** Plain names for what an app uses; the product name stays where people know it by it. */
@@ -55,6 +57,38 @@ const UNAVAILABLE_STATES: Partial<Record<PrimitiveId, string>> = {
 
 export type NeedTone = "ready" | "missing" | "unknown" | "yours";
 
+/** Where on the Cloudflare dashboard to fix a need the account lacks ("Turn on", "Upgrade"). */
+export interface NeedFix {
+  label: string;
+  href: string;
+}
+
+const UPGRADE: NeedFix = { label: "Upgrade", href: DASHBOARD_LINKS.workersPlans };
+const ADD_DOMAIN: NeedFix = { label: "Add a domain", href: DASHBOARD_LINKS.domains };
+
+/**
+ * The fix for each need that can be missing and has a dashboard page to fix
+ * it, the same deep links as the account checklist. A need that needs Workers
+ * Paid is fixed by upgrading; Email Routing, by adding a domain first.
+ */
+const NEED_FIXES: Partial<Record<PrimitiveId | "plan", NeedFix>> = {
+  plan: UPGRADE,
+  r2: { label: "Turn on", href: DASHBOARD_LINKS.r2 },
+  "analytics-engine": { label: "Turn on", href: DASHBOARD_LINKS.analyticsEngine },
+  zone: ADD_DOMAIN,
+  "email-routing": ADD_DOMAIN,
+  containers: UPGRADE,
+  "durable-objects": UPGRADE,
+  pipelines: UPGRADE,
+  access: { label: "Set up", href: DASHBOARD_LINKS.zeroTrust },
+};
+
+/** The dashboard fix for a need, only when it is missing. */
+function fixOf(key: string, tone: NeedTone): NeedFix | null {
+  if (tone !== "missing") return null;
+  return NEED_FIXES[key as PrimitiveId | "plan"] ?? null;
+}
+
 export interface AccountNeed {
   key: string;
   name: string;
@@ -63,6 +97,8 @@ export interface AccountNeed {
   tone: NeedTone;
   /** The probe's sentence: what was checked and what it found. */
   detail: string;
+  /** Where to fix it on the dashboard; null unless the need is missing and has such a page. */
+  fix: NeedFix | null;
 }
 
 const TONES: Record<Availability, NeedTone> = {
@@ -89,12 +125,14 @@ function stateOf(id: string, availability: Availability, reason: string): string
 }
 
 function needOf(status: PrimitiveStatus): AccountNeed {
+  const tone = TONES[status.availability];
   return {
     key: status.id,
     name: NEED_NAMES[status.id],
     state: stateOf(status.id, status.availability, status.reason),
-    tone: TONES[status.availability],
+    tone,
     detail: status.reason,
+    fix: fixOf(status.id, tone),
   };
 }
 
@@ -102,6 +140,7 @@ function needOf(status: PrimitiveStatus): AccountNeed {
 const ORDER: Record<NeedTone, number> = { missing: 0, unknown: 1, yours: 2, ready: 3 };
 
 function planNeed(availability: Availability, reason: string): AccountNeed {
+  const tone = TONES[availability];
   return {
     key: "plan",
     name: "Workers Paid plan",
@@ -111,8 +150,9 @@ function planNeed(availability: Availability, reason: string): AccountNeed {
         : availability === "unavailable"
           ? "this account is on Free"
           : "not confirmed",
-    tone: TONES[availability],
+    tone,
     detail: reason,
+    fix: fixOf("plan", tone),
   };
 }
 
@@ -133,6 +173,7 @@ export function needOfCheck(check: RequirementCheck): AccountNeed {
     state: stateOf(check.key, check.availability, check.reason),
     tone: TONES[check.availability],
     detail: check.reason,
+    fix: null,
   };
 }
 
@@ -160,6 +201,7 @@ export function accountNeeds(
       state: "not confirmed",
       tone: "unknown",
       detail: "Appflare does not know how to check this on your account.",
+      fix: null,
     });
   }
   return needs

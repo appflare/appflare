@@ -11,6 +11,7 @@ import { categoryLabel } from "./browse";
 import { type AppLicense, licenseBadgeCopy, licenseFileHref, licenseHref } from "./license";
 import { type AppPopularity, formatCount } from "./popularity";
 import type { CatalogSource } from "./sources";
+import { dateBuildDay } from "./versions";
 
 /**
  * What an app's catalog page says, worked out from the catalog data so the
@@ -32,15 +33,15 @@ export function descriptionParagraphs(text: string): string[] {
 /**
  * The header's one action. "Manage" once the app is installed here: the
  * install's page when there is one install, else `href` null and the page
- * scrolls to the list of installs. "Get" otherwise, which opens the install
- * form; disabled for a member (only admins install, and the tooltip says
+ * scrolls to the list of installs. "Install" otherwise, which opens the
+ * install form; disabled for a member (only admins install, and the tooltip says
  * so) and when the form cannot be shown (the catalog manifest did not load).
  */
 export type HeaderAction =
-  | { kind: "get"; disabled: boolean; reason: string | null }
+  | { kind: "install"; disabled: boolean; reason: string | null }
   | { kind: "manage"; href: string | null; count: number };
 
-/** Why a member's Get is disabled. */
+/** Why a member's Install is disabled. */
 export const ADMINS_ONLY = "Only admins can install apps";
 
 export function headerAction(
@@ -50,8 +51,8 @@ export function headerAction(
 ): HeaderAction {
   const [first] = instances;
   if (first === undefined) {
-    if (!canInstall) return { kind: "get", disabled: true, reason: ADMINS_ONLY };
-    return { kind: "get", disabled: !installable, reason: null };
+    if (!canInstall) return { kind: "install", disabled: true, reason: ADMINS_ONLY };
+    return { kind: "install", disabled: !installable, reason: null };
   }
   return {
     kind: "manage",
@@ -159,6 +160,21 @@ export function shortDate(iso: string, options: DateOptions = {}): string {
   }).format(date);
 }
 
+/**
+ * A version in a few characters, for places one short line must hold it: a
+ * date build (`0.0.0-20260921.4fd08b5`) by its day, "Sep 21"; a tagged
+ * version as it is, "1.2.3". The full string belongs in a tooltip.
+ */
+export function shortVersion(
+  version: string,
+  options: DateOptions = {},
+): { kind: "build" | "tagged"; text: string } {
+  const day = dateBuildDay(version);
+  if (day === null) return { kind: "tagged", text: version };
+  // The day is a calendar date, not an instant: read it in UTC so no time zone moves it.
+  return { kind: "build", text: shortDate(`${day}T00:00:00Z`, { ...options, timeZone: "UTC" }) };
+}
+
 const PLAN_STATS: Record<Plan, { value: string; tooltip: string }> = {
   free: { value: "Free", tooltip: "Runs on Cloudflare's free Workers plan." },
   paid: {
@@ -235,7 +251,7 @@ export function appStats(input: AppStatsInput, options: DateOptions = {}): AppSt
   stats.push({
     id: "version",
     label: "Version",
-    value: input.version,
+    value: shortVersion(input.version, options).text,
     caption: null,
     tooltip:
       input.pin === null
@@ -299,6 +315,8 @@ export interface SettingItem {
   label: string;
   name: string;
   hint: "Required" | "Optional" | "Filled in for you" | "Suggested value filled in";
+  /** The catalog's help text for it; null when it has none. */
+  description: string | null;
 }
 
 /**
@@ -308,10 +326,10 @@ export interface SettingItem {
  */
 export function settingsToChoose(
   secrets: ReadonlyArray<
-    Pick<CatalogSecret, "name" | "label" | "generate" | "optional" | "derive">
+    Pick<CatalogSecret, "name" | "label" | "help" | "generate" | "optional" | "derive">
   >,
   vars: ReadonlyArray<
-    Pick<InstallVarField, "name" | "label" | "required" | "shownDefault" | "derivedFrom">
+    Pick<InstallVarField, "name" | "label" | "help" | "required" | "shownDefault" | "derivedFrom">
   >,
 ): SettingItem[] {
   const items: SettingItem[] = [];
@@ -326,6 +344,7 @@ export function settingsToChoose(
           : secret.optional === true
             ? "Optional"
             : "Required",
+      description: secret.help ?? null,
     });
   }
   for (const field of vars) {
@@ -339,6 +358,7 @@ export function settingsToChoose(
           : field.required
             ? "Required"
             : "Optional",
+      description: field.help ?? null,
     });
   }
   return items;

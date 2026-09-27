@@ -45,12 +45,12 @@ import { SANDBOX_CHECKLIST_HREF } from "../../../sandbox/readiness";
 /**
  * `/catalog/$slug`: an app's page, laid out like an app store's. A header
  * with the icon, name, tagline, authors, where the build comes from, and one
- * action ("Get" opens the install form; "Manage" once it is installed); a
+ * action ("Install" opens the install form; "Manage" once it is installed); a
  * strip of small facts; the screenshots; then what the app is, what it needs
  * on the account, the settings the install asks for, links, and its installs
  * here. The install form (an app may be installed several times under
  * different Worker names, unless its Worker name is fixed) opens below when
- * "Get" is pressed, or when the page is opened at `#install`. When the
+ * "Install" is pressed, or when the page is opened at `#install`. When the
  * account is not known to offer everything the app asks for, the admin
  * confirms what is left above the form before Install enables.
  */
@@ -162,8 +162,7 @@ function AppPage({
           withAvatars={detail.source?.official !== false}
           provenance={provenance(detail.source, app.tier)}
           action={action}
-          version={app.version}
-          onGet={openInstall}
+          onInstall={openInstall}
           onManageSeveral={() => reveal(installedRef.current)}
         />
         <AppStatStrip stats={stats} />
@@ -244,7 +243,7 @@ function AppPage({
   );
 }
 
-/** Scrolls `el` into view and moves focus to it, as the target of "Get" or "Manage". */
+/** Scrolls `el` into view and moves focus to it, as the target of "Install" or "Manage". */
 function reveal(el: HTMLElement | null) {
   if (el === null) return;
   const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -253,7 +252,7 @@ function reveal(el: HTMLElement | null) {
 }
 
 /**
- * What "Get" opens: what is left to confirm about the account, the token the
+ * What "Install" opens: what is left to confirm about the account, the token the
  * app needs for itself (if any), the install form, and building from source.
  */
 function InstallPanel({
