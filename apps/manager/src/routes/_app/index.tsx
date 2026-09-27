@@ -1,14 +1,4 @@
-import {
-  Badge,
-  Banner,
-  Button,
-  Empty,
-  LayerCard,
-  Link,
-  LinkButton,
-  Table,
-  Text,
-} from "@cloudflare/kumo";
+import { Badge, Banner, Button, Empty, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   PackageIcon,
@@ -23,6 +13,7 @@ import { OpenAppButton } from "../../components/open-app-button";
 import { OriginBadge } from "../../components/origin-badge";
 import { PageHeader } from "../../components/page-header";
 import { PendingUpdatesBanner } from "../../components/pending-updates-banner";
+import { ResponsiveTable } from "../../components/responsive-table";
 import { StatusBadge } from "../../components/status-badge";
 import { type StartUpdateHandle, useStartUpdate } from "../../components/update-banner";
 import {
@@ -134,81 +125,79 @@ function InstalledTable({
   update: StartUpdateHandle | null;
 }) {
   return (
-    <LayerCard className="p-0">
-      <Table>
-        <Table.Header>
-          <Table.Row>
-            <Table.Head>App</Table.Head>
-            <Table.Head>Worker</Table.Head>
-            <Table.Head>Status</Table.Head>
-            <Table.Head>Version</Table.Head>
-            <Table.Head>
-              <span className="sr-only">Open</span>
-            </Table.Head>
+    <ResponsiveTable label="Installed apps" minWidth="lg" stickyFirstColumn>
+      <Table.Header>
+        <Table.Row>
+          <Table.Head>App</Table.Head>
+          <Table.Head>Worker</Table.Head>
+          <Table.Head>Status</Table.Head>
+          <Table.Head>Version</Table.Head>
+          <Table.Head>
+            <span className="sr-only">Open</span>
+          </Table.Head>
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {rows.map((row) => (
+          <Table.Row key={row.id}>
+            <Table.Cell>
+              <div className="flex min-w-0 items-center gap-3">
+                <AppIcon src={row.icon} name={row.name} size={28} />
+                <div className="grid min-w-0 justify-items-start gap-0.5">
+                  <Link href={`/apps/${row.id}`}>{row.label}</Link>
+                  {row.name !== row.label && (
+                    <Text as="span" variant="secondary" size="sm" truncate>
+                      {row.name}
+                    </Text>
+                  )}
+                  <OriginBadge origin={row.origin} />
+                  {row.catalogSource !== null && !row.catalogSource.official && (
+                    <CatalogSourceBadge source={row.catalogSource} />
+                  )}
+                </div>
+              </div>
+            </Table.Cell>
+            <Table.Cell>
+              <span className={mono}>{row.workerName}</span>
+            </Table.Cell>
+            <Table.Cell>
+              <div className="flex items-center gap-2">
+                <StatusBadge status={row.status} of="install" />
+                {row.status === "installed" && (
+                  <HealthIcon status={row.healthStatus} checkedAt={row.healthCheckedAt} />
+                )}
+              </div>
+            </Table.Cell>
+            <Table.Cell>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={mono}>{row.version}</span>
+                {row.updateAvailable &&
+                  (update !== null ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={<ArrowCircleUpIcon />}
+                      title={`Update to ${row.latestVersion ?? "the newest version"}`}
+                      loading={update.pendingId === row.id}
+                      onClick={() => update.start({ id: row.id, label: row.label })}
+                    >
+                      Update
+                    </Button>
+                  ) : (
+                    <Badge variant="info">Update available</Badge>
+                  ))}
+              </div>
+            </Table.Cell>
+            <Table.Cell>
+              <div className="flex justify-end">
+                {row.address !== null && (
+                  <OpenAppButton href={row.address} label={row.label} size="sm" />
+                )}
+              </div>
+            </Table.Cell>
           </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {rows.map((row) => (
-            <Table.Row key={row.id}>
-              <Table.Cell>
-                <div className="flex min-w-0 items-center gap-3">
-                  <AppIcon src={row.icon} name={row.name} size={28} />
-                  <div className="grid min-w-0 justify-items-start gap-0.5">
-                    <Link href={`/apps/${row.id}`}>{row.label}</Link>
-                    {row.name !== row.label && (
-                      <Text as="span" variant="secondary" size="sm" truncate>
-                        {row.name}
-                      </Text>
-                    )}
-                    <OriginBadge origin={row.origin} />
-                    {row.catalogSource !== null && !row.catalogSource.official && (
-                      <CatalogSourceBadge source={row.catalogSource} />
-                    )}
-                  </div>
-                </div>
-              </Table.Cell>
-              <Table.Cell>
-                <span className={mono}>{row.workerName}</span>
-              </Table.Cell>
-              <Table.Cell>
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={row.status} of="install" />
-                  {row.status === "installed" && (
-                    <HealthIcon status={row.healthStatus} checkedAt={row.healthCheckedAt} />
-                  )}
-                </div>
-              </Table.Cell>
-              <Table.Cell>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={mono}>{row.version}</span>
-                  {row.updateAvailable &&
-                    (update !== null ? (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        icon={<ArrowCircleUpIcon />}
-                        title={`Update to ${row.latestVersion ?? "the newest version"}`}
-                        loading={update.pendingId === row.id}
-                        onClick={() => update.start({ id: row.id, label: row.label })}
-                      >
-                        Update
-                      </Button>
-                    ) : (
-                      <Badge variant="info">Update available</Badge>
-                    ))}
-                </div>
-              </Table.Cell>
-              <Table.Cell>
-                <div className="flex justify-end">
-                  {row.address !== null && (
-                    <OpenAppButton href={row.address} label={row.label} size="sm" />
-                  )}
-                </div>
-              </Table.Cell>
-            </Table.Row>
-          ))}
-        </Table.Body>
-      </Table>
-    </LayerCard>
+        ))}
+      </Table.Body>
+    </ResponsiveTable>
   );
 }

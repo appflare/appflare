@@ -1,5 +1,5 @@
 import type { TokenPermission } from "@appflare/schema";
-import { Badge, LayerCard, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
+import { Badge, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
 import { KeyIcon } from "@phosphor-icons/react";
 import {
   appTokenTemplateUrl,
@@ -7,6 +7,7 @@ import {
   resolveAppTokenPermissions,
   USER_API_TOKENS_URL,
 } from "../cloudflare/token-template";
+import { ResponsiveTable } from "./responsive-table";
 
 const SCOPE_LABELS: Record<NonNullable<TokenPermission["scope"]>, string> = {
   account: "Account",
@@ -61,33 +62,31 @@ export function AppTokenPermissions({
           goes.
         </Text>
       )}
-      <LayerCard className="p-0">
-        <Table>
-          <Table.Header>
-            <Table.Row>
-              <Table.Head>Permission</Table.Head>
-              <Table.Head>Scope</Table.Head>
-              <Table.Head>What the app uses it for</Table.Head>
+      <ResponsiveTable label="Token permissions" minWidth="sm" stickyFirstColumn>
+        <Table.Header>
+          <Table.Row>
+            <Table.Head>Permission</Table.Head>
+            <Table.Head>Scope</Table.Head>
+            <Table.Head>What the app uses it for</Table.Head>
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          {resolved.map((p) => (
+            <Table.Row key={p.name}>
+              <Table.Cell>
+                <span className="inline-flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-[0.9em]">{p.name}</span>
+                  {p.group === null && templateUrl !== null && (
+                    <Badge variant="outline">Add by hand</Badge>
+                  )}
+                </span>
+              </Table.Cell>
+              <Table.Cell>{p.scope !== null ? SCOPE_LABELS[p.scope] : ""}</Table.Cell>
+              <Table.Cell>{p.description ?? ""}</Table.Cell>
             </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {resolved.map((p) => (
-              <Table.Row key={p.name}>
-                <Table.Cell>
-                  <span className="inline-flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-[0.9em]">{p.name}</span>
-                    {p.group === null && templateUrl !== null && (
-                      <Badge variant="outline">Add by hand</Badge>
-                    )}
-                  </span>
-                </Table.Cell>
-                <Table.Cell>{p.scope !== null ? SCOPE_LABELS[p.scope] : ""}</Table.Cell>
-                <Table.Cell>{p.description ?? ""}</Table.Cell>
-              </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
-      </LayerCard>
+          ))}
+        </Table.Body>
+      </ResponsiveTable>
       {r2Token && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <LinkButton href={R2_API_TOKENS_URL} external variant="secondary" icon={<KeyIcon />}>

@@ -2,7 +2,6 @@ import {
   Banner,
   Button,
   Checkbox,
-  LayerCard,
   LayerDialog,
   Link,
   LinkButton,
@@ -48,6 +47,7 @@ import { DomainName } from "./domain-name";
 import { formatTime } from "./format";
 import { HealthBadge } from "./install-health";
 import { useJobStarted } from "./job-started";
+import { ResponsiveTable } from "./responsive-table";
 import { Section } from "./section";
 import { WildcardNotes } from "./wildcard-notes";
 import { ZoneHostnameField } from "./zone-hostname-field";
@@ -87,40 +87,38 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
             : `The app is served on its workers.dev URL only, and needs a hostname with every name under it. ${wildcard.reason}`}
         </Text>
       ) : (
-        <LayerCard className="p-0">
-          <Table>
-            <Table.Header>
-              <Table.Row>
-                <Table.Head>Hostname</Table.Head>
-                <Table.Head>Check</Table.Head>
-                <Table.Head>
-                  <span className="sr-only">Actions</span>
-                </Table.Head>
+        <ResponsiveTable label="Domains" minWidth="sm" stickyFirstColumn>
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Hostname</Table.Head>
+              <Table.Head>Check</Table.Head>
+              <Table.Head>
+                <span className="sr-only">Actions</span>
+              </Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {install.domains.map((domain) => (
+              <Table.Row key={domain.id}>
+                <Table.Cell>
+                  <DomainName domain={domain} />
+                </Table.Cell>
+                <Table.Cell>
+                  <DomainCheck
+                    installId={install.id}
+                    domain={domain}
+                    enabled={install.status === "installed"}
+                  />
+                </Table.Cell>
+                <Table.Cell>
+                  <div className="flex justify-end">
+                    {canRemove && <RemoveDomainDialog installId={install.id} domain={domain} />}
+                  </div>
+                </Table.Cell>
               </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {install.domains.map((domain) => (
-                <Table.Row key={domain.id}>
-                  <Table.Cell>
-                    <DomainName domain={domain} />
-                  </Table.Cell>
-                  <Table.Cell>
-                    <DomainCheck
-                      installId={install.id}
-                      domain={domain}
-                      enabled={install.status === "installed"}
-                    />
-                  </Table.Cell>
-                  <Table.Cell>
-                    <div className="flex justify-end">
-                      {canRemove && <RemoveDomainDialog installId={install.id} domain={domain} />}
-                    </div>
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table>
-        </LayerCard>
+            ))}
+          </Table.Body>
+        </ResponsiveTable>
       )}
     </Section>
   );

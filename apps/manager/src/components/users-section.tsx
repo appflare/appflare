@@ -5,7 +5,6 @@ import {
   ClipboardText,
   DropdownMenu,
   Input,
-  LayerCard,
   LayerDialog,
   Radio,
   Table,
@@ -33,6 +32,7 @@ import {
   type UserRow,
 } from "../server/users.functions";
 import { ConfirmDialog } from "./confirm-dialog";
+import { ResponsiveTable } from "./responsive-table";
 import { Timestamp } from "./timestamp";
 import { readOnlyNote, type UserAction, userActions } from "./user-actions";
 
@@ -78,53 +78,51 @@ export function UsersSection({
           {readOnlyNote(owner)}
         </Text>
       )}
-      <LayerCard className="p-0">
-        <Table>
-          <Table.Header>
-            <Table.Row>
-              <Table.Head>Email</Table.Head>
-              <Table.Head>Name</Table.Head>
-              <Table.Head>Role</Table.Head>
-              <Table.Head>Created</Table.Head>
+      <ResponsiveTable label="Users" stickyFirstColumn>
+        <Table.Header>
+          <Table.Row>
+            <Table.Head>Email</Table.Head>
+            <Table.Head>Name</Table.Head>
+            <Table.Head>Role</Table.Head>
+            <Table.Head>Created</Table.Head>
+            {viewerIsOwner && (
+              <Table.Head>
+                <span className="sr-only">Actions</span>
+              </Table.Head>
+            )}
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          {users.map((u) => (
+            <Table.Row key={u.id}>
+              <Table.Cell>
+                {u.email}
+                {u.id === viewerId && (
+                  <Text as="span" variant="secondary" size="sm">
+                    {" "}
+                    (you)
+                  </Text>
+                )}
+              </Table.Cell>
+              <Table.Cell>{u.name}</Table.Cell>
+              <Table.Cell>
+                <span className="inline-flex gap-1">
+                  <Badge variant={u.role === "admin" ? "primary" : "neutral"}>{u.role}</Badge>
+                  {u.isOwner && <Badge variant="outline">owner</Badge>}
+                </span>
+              </Table.Cell>
+              <Table.Cell>
+                <Timestamp iso={u.createdAt} dateOnly />
+              </Table.Cell>
               {viewerIsOwner && (
-                <Table.Head>
-                  <span className="sr-only">Actions</span>
-                </Table.Head>
+                <Table.Cell className="text-right">
+                  <UserRowMenu user={u} actions={userActions(true, u)} onPick={pick} />
+                </Table.Cell>
               )}
             </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {users.map((u) => (
-              <Table.Row key={u.id}>
-                <Table.Cell>
-                  {u.email}
-                  {u.id === viewerId && (
-                    <Text as="span" variant="secondary" size="sm">
-                      {" "}
-                      (you)
-                    </Text>
-                  )}
-                </Table.Cell>
-                <Table.Cell>{u.name}</Table.Cell>
-                <Table.Cell>
-                  <span className="inline-flex gap-1">
-                    <Badge variant={u.role === "admin" ? "primary" : "neutral"}>{u.role}</Badge>
-                    {u.isOwner && <Badge variant="outline">owner</Badge>}
-                  </span>
-                </Table.Cell>
-                <Table.Cell>
-                  <Timestamp iso={u.createdAt} dateOnly />
-                </Table.Cell>
-                {viewerIsOwner && (
-                  <Table.Cell className="text-right">
-                    <UserRowMenu user={u} actions={userActions(true, u)} onPick={pick} />
-                  </Table.Cell>
-                )}
-              </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
-      </LayerCard>
+          ))}
+        </Table.Body>
+      </ResponsiveTable>
       {picked !== null && (
         <UserActionDialog
           user={picked.user}

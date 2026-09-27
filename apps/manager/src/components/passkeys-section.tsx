@@ -1,14 +1,4 @@
-import {
-  Badge,
-  Banner,
-  Button,
-  Empty,
-  Input,
-  LayerCard,
-  LayerDialog,
-  Table,
-  Text,
-} from "@cloudflare/kumo";
+import { Badge, Banner, Button, Empty, Input, LayerDialog, Table, Text } from "@cloudflare/kumo";
 import { FingerprintIcon, PlusIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
@@ -21,6 +11,7 @@ import {
 import { type PasskeyRow, removePasskey } from "../server/passkeys.functions";
 import { passkeyNameInput } from "../server/schemas";
 import { ConfirmDialog } from "./confirm-dialog";
+import { ResponsiveTable } from "./responsive-table";
 import { Timestamp } from "./timestamp";
 
 /**
@@ -55,48 +46,46 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
           contents={supported ? <AddPasskeyDialog /> : undefined}
         />
       ) : (
-        <LayerCard className="p-0">
-          <Table>
-            <Table.Header>
-              <Table.Row>
-                <Table.Head>Name</Table.Head>
-                <Table.Head>Kind</Table.Head>
-                <Table.Head>Added</Table.Head>
-                <Table.Head>
-                  <span className="sr-only">Actions</span>
-                </Table.Head>
+        <ResponsiveTable label="Passkeys" minWidth="sm" stickyFirstColumn>
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Name</Table.Head>
+              <Table.Head>Kind</Table.Head>
+              <Table.Head>Added</Table.Head>
+              <Table.Head>
+                <span className="sr-only">Actions</span>
+              </Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {passkeys.map((p) => (
+              <Table.Row key={p.id}>
+                <Table.Cell>
+                  {passkeyLabel(p)}
+                  {p.name !== null && p.provider !== null && (
+                    <Text as="span" variant="secondary" size="sm">
+                      {" "}
+                      ({p.provider})
+                    </Text>
+                  )}
+                </Table.Cell>
+                <Table.Cell>
+                  <Badge variant={p.synced ? "primary" : "neutral"}>
+                    {p.synced ? "Synced" : "This device only"}
+                  </Badge>
+                </Table.Cell>
+                <Table.Cell>
+                  <Timestamp iso={p.createdAt} dateOnly fallback="Unknown" />
+                </Table.Cell>
+                <Table.Cell>
+                  <div className="flex justify-end">
+                    <RemovePasskeyDialog passkey={p} />
+                  </div>
+                </Table.Cell>
               </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {passkeys.map((p) => (
-                <Table.Row key={p.id}>
-                  <Table.Cell>
-                    {passkeyLabel(p)}
-                    {p.name !== null && p.provider !== null && (
-                      <Text as="span" variant="secondary" size="sm">
-                        {" "}
-                        ({p.provider})
-                      </Text>
-                    )}
-                  </Table.Cell>
-                  <Table.Cell>
-                    <Badge variant={p.synced ? "primary" : "neutral"}>
-                      {p.synced ? "Synced" : "This device only"}
-                    </Badge>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <Timestamp iso={p.createdAt} dateOnly fallback="Unknown" />
-                  </Table.Cell>
-                  <Table.Cell>
-                    <div className="flex justify-end">
-                      <RemovePasskeyDialog passkey={p} />
-                    </div>
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table>
-        </LayerCard>
+            ))}
+          </Table.Body>
+        </ResponsiveTable>
       )}
     </div>
   );

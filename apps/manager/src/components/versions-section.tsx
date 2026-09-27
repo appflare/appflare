@@ -3,7 +3,6 @@ import {
   Button,
   ClipboardText,
   Input,
-  LayerCard,
   LayerDialog,
   Link,
   Table,
@@ -25,6 +24,7 @@ import { restoreDatabase, startRollback } from "../installs/versions.functions";
 import type { RestoreDatabaseResult, SnapshotView } from "../installs/versions.server";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useJobStarted } from "./job-started";
+import { ResponsiveTable } from "./responsive-table";
 import { Section } from "./section";
 import { StatusBadge } from "./status-badge";
 import { Timestamp } from "./timestamp";
@@ -69,85 +69,79 @@ export function VersionsSection({
         </Text>
       ) : (
         <>
-          <LayerCard className="p-0">
-            <Table>
-              <Table.Header>
-                <Table.Row>
-                  <Table.Head>Snapshot taken</Table.Head>
-                  <Table.Head>Catalog version</Table.Head>
-                  <Table.Head>Worker version</Table.Head>
-                  <Table.Head>Job</Table.Head>
-                  {canAct && <Table.Head />}
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {snapshots.map((s) => (
-                  <Table.Row key={s.id}>
-                    <Table.Cell className="align-top whitespace-nowrap">
-                      <Timestamp iso={s.takenAt} />
-                    </Table.Cell>
-                    <Table.Cell className="align-top">
-                      <span className={mono}>{s.fromCatalogVersion ?? "unknown"}</span>
-                      {s.jobKind === "reconfigure" ? (
-                        <Text as="span" variant="secondary" size="sm">
-                          {" "}
-                          (settings change)
-                        </Text>
-                      ) : (
-                        <>
-                          {" → "}
-                          <span className={mono}>{s.toCatalogVersion ?? "unknown"}</span>
-                        </>
-                      )}
-                    </Table.Cell>
-                    <Table.Cell className="align-top">
-                      <span className={mono}>{shortVersion(s.fromVersionId)}</span>
-                      {/* isCurrent means the version before the change serves again (rolled back). */}
-                      {s.isCurrent && (
-                        <Text as="span" variant="secondary" size="sm">
-                          {" "}
-                          (serving now)
-                        </Text>
-                      )}
-                      {" → "}
-                      <span className={mono}>{shortVersion(s.toVersionId)}</span>
-                    </Table.Cell>
-                    <Table.Cell className="align-top">
-                      <Link href={`/jobs/${s.jobId}`}>
-                        {s.jobStatus === null ? (
-                          "Log"
-                        ) : (
-                          <StatusBadge status={s.jobStatus} of="job" />
-                        )}
-                      </Link>
-                    </Table.Cell>
-                    {canAct && (
-                      <Table.Cell className="align-top">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          {!s.isCurrent &&
-                            (s.crossesDoMigration ? (
-                              <RollbackUnavailable reason={DO_MIGRATION_REASON} />
-                            ) : s.lostDatabase !== null ? (
-                              <RollbackUnavailable reason={s.lostDatabase} />
-                            ) : (
-                              <RollbackDialog install={install} snapshot={s} />
-                            ))}
-                          {s.databases.map((d) => (
-                            <RestoreDatabaseDialog
-                              key={d.resourceId}
-                              install={install}
-                              snapshot={s}
-                              database={d}
-                            />
-                          ))}
-                        </div>
-                      </Table.Cell>
+          <ResponsiveTable label="Versions" minWidth="lg" stickyFirstColumn>
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>Snapshot taken</Table.Head>
+                <Table.Head>Catalog version</Table.Head>
+                <Table.Head>Worker version</Table.Head>
+                <Table.Head>Job</Table.Head>
+                {canAct && <Table.Head />}
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {snapshots.map((s) => (
+                <Table.Row key={s.id}>
+                  <Table.Cell className="align-top whitespace-nowrap">
+                    <Timestamp iso={s.takenAt} />
+                  </Table.Cell>
+                  <Table.Cell className="align-top">
+                    <span className={mono}>{s.fromCatalogVersion ?? "unknown"}</span>
+                    {s.jobKind === "reconfigure" ? (
+                      <Text as="span" variant="secondary" size="sm">
+                        {" "}
+                        (settings change)
+                      </Text>
+                    ) : (
+                      <>
+                        {" → "}
+                        <span className={mono}>{s.toCatalogVersion ?? "unknown"}</span>
+                      </>
                     )}
-                  </Table.Row>
-                ))}
-              </Table.Body>
-            </Table>
-          </LayerCard>
+                  </Table.Cell>
+                  <Table.Cell className="align-top">
+                    <span className={mono}>{shortVersion(s.fromVersionId)}</span>
+                    {/* isCurrent means the version before the change serves again (rolled back). */}
+                    {s.isCurrent && (
+                      <Text as="span" variant="secondary" size="sm">
+                        {" "}
+                        (serving now)
+                      </Text>
+                    )}
+                    {" → "}
+                    <span className={mono}>{shortVersion(s.toVersionId)}</span>
+                  </Table.Cell>
+                  <Table.Cell className="align-top">
+                    <Link href={`/jobs/${s.jobId}`}>
+                      {s.jobStatus === null ? "Log" : <StatusBadge status={s.jobStatus} of="job" />}
+                    </Link>
+                  </Table.Cell>
+                  {canAct && (
+                    <Table.Cell className="align-top">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {!s.isCurrent &&
+                          (s.crossesDoMigration ? (
+                            <RollbackUnavailable reason={DO_MIGRATION_REASON} />
+                          ) : s.lostDatabase !== null ? (
+                            <RollbackUnavailable reason={s.lostDatabase} />
+                          ) : (
+                            <RollbackDialog install={install} snapshot={s} />
+                          ))}
+                        {s.databases.map((d) => (
+                          <RestoreDatabaseDialog
+                            key={d.resourceId}
+                            install={install}
+                            snapshot={s}
+                            database={d}
+                          />
+                        ))}
+                      </div>
+                    </Table.Cell>
+                  )}
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </ResponsiveTable>
           <Text variant="secondary" size="sm">
             A rollback redeploys the Worker version that served before an update; it never changes
             data. Restoring a database is a separate action. D1 keeps Time Travel history for 7 days

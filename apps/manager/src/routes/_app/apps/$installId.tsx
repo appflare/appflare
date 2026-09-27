@@ -34,6 +34,7 @@ import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
 import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
 import { RenameInstallDialog } from "../../../components/rename-install-dialog";
+import { ResponsiveTable } from "../../../components/responsive-table";
 import { Section } from "../../../components/section";
 import { SourceChangesCard } from "../../../components/source-changes-card";
 import { StatusBadge } from "../../../components/status-badge";
@@ -362,38 +363,36 @@ function JobsTab({
         <VersionsSection install={install} snapshots={snapshots} isAdmin={isAdmin} />
       )}
       <Section title="Job history">
-        <LayerCard className="p-0">
-          <Table>
-            <Table.Header>
-              <Table.Row>
-                <Table.Head>Job</Table.Head>
-                <Table.Head>Status</Table.Head>
-                <Table.Head>Started by</Table.Head>
-                <Table.Head>Started</Table.Head>
-                <Table.Head>Finished</Table.Head>
+        <ResponsiveTable label="Job history" stickyFirstColumn>
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Job</Table.Head>
+              <Table.Head>Status</Table.Head>
+              <Table.Head>Started by</Table.Head>
+              <Table.Head>Started</Table.Head>
+              <Table.Head>Finished</Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {install.jobs.map((job) => (
+              <Table.Row key={job.id}>
+                <Table.Cell>
+                  <Link href={`/jobs/${job.id}`}>{jobKindLabel(job)}</Link>
+                </Table.Cell>
+                <Table.Cell>
+                  <StatusBadge status={job.status} of="job" />
+                </Table.Cell>
+                <Table.Cell>{startedByLabel(job.startedBy)}</Table.Cell>
+                <Table.Cell className="whitespace-nowrap">
+                  <Timestamp iso={job.startedAt} />
+                </Table.Cell>
+                <Table.Cell className="whitespace-nowrap">
+                  <Timestamp iso={job.finishedAt} />
+                </Table.Cell>
               </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {install.jobs.map((job) => (
-                <Table.Row key={job.id}>
-                  <Table.Cell>
-                    <Link href={`/jobs/${job.id}`}>{jobKindLabel(job)}</Link>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <StatusBadge status={job.status} of="job" />
-                  </Table.Cell>
-                  <Table.Cell>{startedByLabel(job.startedBy)}</Table.Cell>
-                  <Table.Cell className="whitespace-nowrap">
-                    <Timestamp iso={job.startedAt} />
-                  </Table.Cell>
-                  <Table.Cell className="whitespace-nowrap">
-                    <Timestamp iso={job.finishedAt} />
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table>
-        </LayerCard>
+            ))}
+          </Table.Body>
+        </ResponsiveTable>
       </Section>
     </>
   );
@@ -478,50 +477,44 @@ function DangerZone({ install }: { install: InstallDetail }) {
 function ResourceTable({ rows }: { rows: ResourceView[] }) {
   const managedColumn = rows.some((r) => r.managedByApp);
   return (
-    <LayerCard className="p-0">
-      <Table>
-        <Table.Header>
-          <Table.Row>
-            <Table.Head>Kind</Table.Head>
-            <Table.Head>Binding</Table.Head>
-            <Table.Head>Name</Table.Head>
-            <Table.Head>ID</Table.Head>
-            {managedColumn && <Table.Head>Managed by</Table.Head>}
-          </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {rows.map((r) => (
-            <Table.Row key={r.id}>
-              <Table.Cell>{resourceKindLabel(r.kind)}</Table.Cell>
-              <Table.Cell>
-                <span className={mono}>{r.binding ?? ""}</span>
-              </Table.Cell>
-              <Table.Cell>
-                <span className={mono}>{r.name}</span>
-              </Table.Cell>
-              <Table.Cell>
-                {r.cfId !== null && (
-                  <InlineCopyText
-                    labels={{ copyAction: `Copy the ID of ${r.name}`, copied: "ID copied" }}
-                  >
-                    {r.cfId}
-                  </InlineCopyText>
-                )}
-              </Table.Cell>
-              {managedColumn && (
-                <Table.Cell>
-                  {r.managedByApp ? (
-                    <Badge variant="outline">The app's installer</Badge>
-                  ) : (
-                    "Appflare"
-                  )}
-                </Table.Cell>
+    <ResponsiveTable label="Resources" minWidth="lg">
+      <Table.Header>
+        <Table.Row>
+          <Table.Head>Kind</Table.Head>
+          <Table.Head>Binding</Table.Head>
+          <Table.Head>Name</Table.Head>
+          <Table.Head>ID</Table.Head>
+          {managedColumn && <Table.Head>Managed by</Table.Head>}
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {rows.map((r) => (
+          <Table.Row key={r.id}>
+            <Table.Cell>{resourceKindLabel(r.kind)}</Table.Cell>
+            <Table.Cell>
+              <span className={mono}>{r.binding ?? ""}</span>
+            </Table.Cell>
+            <Table.Cell>
+              <span className={mono}>{r.name}</span>
+            </Table.Cell>
+            <Table.Cell>
+              {r.cfId !== null && (
+                <InlineCopyText
+                  labels={{ copyAction: `Copy the ID of ${r.name}`, copied: "ID copied" }}
+                >
+                  {r.cfId}
+                </InlineCopyText>
               )}
-            </Table.Row>
-          ))}
-        </Table.Body>
-      </Table>
-    </LayerCard>
+            </Table.Cell>
+            {managedColumn && (
+              <Table.Cell>
+                {r.managedByApp ? <Badge variant="outline">The app's installer</Badge> : "Appflare"}
+              </Table.Cell>
+            )}
+          </Table.Row>
+        ))}
+      </Table.Body>
+    </ResponsiveTable>
   );
 }
 

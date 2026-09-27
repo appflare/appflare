@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, LayerCard, Link, Table, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Link, Table, Text } from "@cloudflare/kumo";
 import {
   ArrowCounterClockwiseIcon,
   ArrowsClockwiseIcon,
@@ -15,6 +15,7 @@ import { type ManagerVersionsState, rollBackManager } from "../jobs/self-update/
 import type { RollBackManagerResult } from "../jobs/self-update/rollback.server";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
+import { ResponsiveTable } from "./responsive-table";
 import { Section } from "./section";
 import { Timestamp } from "./timestamp";
 
@@ -172,56 +173,54 @@ export function ManagerVersionsSection({
       ) : state.versions.length === 0 ? (
         <Text variant="secondary">Cloudflare lists no versions of Appflare's Worker.</Text>
       ) : (
-        <LayerCard className="p-0">
-          <Table>
-            <Table.Header>
-              <Table.Row>
-                <Table.Head>Appflare version</Table.Head>
-                <Table.Head>Worker version</Table.Head>
-                <Table.Head>Created</Table.Head>
-                <Table.Head>Made by</Table.Head>
-                {isAdmin && <Table.Head />}
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {state.versions.map((row) => (
-                <Table.Row key={row.id}>
+        <ResponsiveTable label="Appflare versions" stickyFirstColumn>
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Appflare version</Table.Head>
+              <Table.Head>Worker version</Table.Head>
+              <Table.Head>Created</Table.Head>
+              <Table.Head>Made by</Table.Head>
+              {isAdmin && <Table.Head />}
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {state.versions.map((row) => (
+              <Table.Row key={row.id}>
+                <Table.Cell className="align-top">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={mono}>{row.appflareVersion ?? "unknown"}</span>
+                    {row.serving && <Badge variant="success">Serving</Badge>}
+                  </div>
+                </Table.Cell>
+                <Table.Cell className="align-top">
+                  <span className={mono} title={row.id}>
+                    {row.id.slice(0, 8)}
+                  </span>
+                </Table.Cell>
+                <Table.Cell className="align-top whitespace-nowrap">
+                  <Timestamp iso={row.createdOn} fallback="Unknown" />
+                </Table.Cell>
+                <Table.Cell className="align-top">
+                  <Text as="span">{triggerLabel(row)}</Text>
+                </Table.Cell>
+                {isAdmin && (
                   <Table.Cell className="align-top">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={mono}>{row.appflareVersion ?? "unknown"}</span>
-                      {row.serving && <Badge variant="success">Serving</Badge>}
+                    <div className="flex justify-end">
+                      {row.older && (
+                        <RollbackDialog
+                          row={row}
+                          current={current}
+                          disabled={result !== null}
+                          onRolledBack={onRolledBack}
+                        />
+                      )}
                     </div>
                   </Table.Cell>
-                  <Table.Cell className="align-top">
-                    <span className={mono} title={row.id}>
-                      {row.id.slice(0, 8)}
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell className="align-top whitespace-nowrap">
-                    <Timestamp iso={row.createdOn} fallback="Unknown" />
-                  </Table.Cell>
-                  <Table.Cell className="align-top">
-                    <Text as="span">{triggerLabel(row)}</Text>
-                  </Table.Cell>
-                  {isAdmin && (
-                    <Table.Cell className="align-top">
-                      <div className="flex justify-end">
-                        {row.older && (
-                          <RollbackDialog
-                            row={row}
-                            current={current}
-                            disabled={result !== null}
-                            onRolledBack={onRolledBack}
-                          />
-                        )}
-                      </div>
-                    </Table.Cell>
-                  )}
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table>
-        </LayerCard>
+                )}
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </ResponsiveTable>
       )}
     </Section>
   );

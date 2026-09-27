@@ -14,6 +14,7 @@ import { DocsLink } from "../../../components/docs-link";
 import { formatTime, jobKindLabel } from "../../../components/format";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { PageHeader } from "../../../components/page-header";
+import { ResponsiveTable } from "../../../components/responsive-table";
 import { Section } from "../../../components/section";
 import { SeedCredentialsCard } from "../../../components/seed-credentials-card";
 import { StatusBadge } from "../../../components/status-badge";
@@ -169,22 +170,20 @@ function JobPage() {
             {isActive(job) ? "Waiting for the first step…" : "No log lines were written."}
           </Text>
         ) : (
-          <LayerCard className="p-0">
-            <Table>
-              <Table.Header>
-                <Table.Row>
-                  <Table.Head>Time</Table.Head>
-                  <Table.Head>Level</Table.Head>
-                  <Table.Head>Message</Table.Head>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {job.logs.map((line) => (
-                  <LogRow key={line.id} line={line} />
-                ))}
-              </Table.Body>
-            </Table>
-          </LayerCard>
+          <ResponsiveTable label="Log">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>Time</Table.Head>
+                <Table.Head>Level</Table.Head>
+                <Table.Head>Message</Table.Head>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {job.logs.map((line) => (
+                <LogRow key={line.id} line={line} />
+              ))}
+            </Table.Body>
+          </ResponsiveTable>
         )}
       </Section>
     </>

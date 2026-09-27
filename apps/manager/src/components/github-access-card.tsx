@@ -31,6 +31,7 @@ import {
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
+import { ResponsiveTable } from "./responsive-table";
 import { Timestamp } from "./timestamp";
 
 /**
@@ -156,43 +157,41 @@ function TokenTable({
   onChanged: () => Promise<void>;
 }) {
   return (
-    <LayerCard className="p-0">
-      <Table>
-        <Table.Header>
-          <Table.Row>
-            <Table.Head>Label</Table.Head>
-            <Table.Head>Repositories</Table.Head>
-            <Table.Head>Last used</Table.Head>
-            <Table.Head>
-              <span className="sr-only">Actions</span>
-            </Table.Head>
+    <ResponsiveTable label="GitHub tokens" stickyFirstColumn>
+      <Table.Header>
+        <Table.Row>
+          <Table.Head>Label</Table.Head>
+          <Table.Head>Repositories</Table.Head>
+          <Table.Head>Last used</Table.Head>
+          <Table.Head>
+            <span className="sr-only">Actions</span>
+          </Table.Head>
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {tokens.map((token) => (
+          <Table.Row key={token.id}>
+            <Table.Cell>
+              <span className="flex flex-wrap items-center gap-2">
+                {token.label}
+                {token.forReleases && <Badge variant="info">Release downloads</Badge>}
+              </span>
+            </Table.Cell>
+            <Table.Cell>
+              <span className="break-words">{token.repositories}</span>
+            </Table.Cell>
+            <Table.Cell>
+              <Timestamp iso={token.lastUsedAt} fallback="Never" />
+            </Table.Cell>
+            <Table.Cell>
+              <div className="flex justify-end">
+                <DeleteTokenDialog token={token} onDeleted={onChanged} />
+              </div>
+            </Table.Cell>
           </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {tokens.map((token) => (
-            <Table.Row key={token.id}>
-              <Table.Cell>
-                <span className="flex flex-wrap items-center gap-2">
-                  {token.label}
-                  {token.forReleases && <Badge variant="info">Release downloads</Badge>}
-                </span>
-              </Table.Cell>
-              <Table.Cell>
-                <span className="break-words">{token.repositories}</span>
-              </Table.Cell>
-              <Table.Cell>
-                <Timestamp iso={token.lastUsedAt} fallback="Never" />
-              </Table.Cell>
-              <Table.Cell>
-                <div className="flex justify-end">
-                  <DeleteTokenDialog token={token} onDeleted={onChanged} />
-                </div>
-              </Table.Cell>
-            </Table.Row>
-          ))}
-        </Table.Body>
-      </Table>
-    </LayerCard>
+        ))}
+      </Table.Body>
+    </ResponsiveTable>
   );
 }
 

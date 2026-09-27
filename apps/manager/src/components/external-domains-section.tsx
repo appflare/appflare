@@ -46,6 +46,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
 import { HealthBadge } from "./install-health";
+import { ResponsiveTable } from "./responsive-table";
 import { Section } from "./section";
 
 /** How often a pending domain is read again while the page is open. */
@@ -272,37 +273,35 @@ function DomainState({ status }: { status: ExternalDomainStatus }) {
 
 function RecordsTable({ records }: { records: ExternalDomainStatus["records"] }) {
   return (
-    <LayerCard className="p-0">
-      <Table>
-        <Table.Header>
-          <Table.Row>
-            <Table.Head>Type</Table.Head>
-            <Table.Head>Name</Table.Head>
-            <Table.Head>Value</Table.Head>
+    <ResponsiveTable label="DNS records">
+      <Table.Header>
+        <Table.Row>
+          <Table.Head>Type</Table.Head>
+          <Table.Head>Name</Table.Head>
+          <Table.Head>Value</Table.Head>
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {records.map((r) => (
+          <Table.Row key={`${r.type} ${r.name} ${r.value}`}>
+            <Table.Cell>
+              <span className={mono}>{r.type}</span>
+            </Table.Cell>
+            <Table.Cell>
+              <InlineCopyText value={r.name}>{r.name}</InlineCopyText>
+            </Table.Cell>
+            <Table.Cell>
+              <div className="grid gap-1">
+                <InlineCopyText value={r.value}>{r.value}</InlineCopyText>
+                <Text variant="secondary" size="sm">
+                  {r.purpose}
+                </Text>
+              </div>
+            </Table.Cell>
           </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {records.map((r) => (
-            <Table.Row key={`${r.type} ${r.name} ${r.value}`}>
-              <Table.Cell>
-                <span className={mono}>{r.type}</span>
-              </Table.Cell>
-              <Table.Cell>
-                <InlineCopyText value={r.name}>{r.name}</InlineCopyText>
-              </Table.Cell>
-              <Table.Cell>
-                <div className="grid gap-1">
-                  <InlineCopyText value={r.value}>{r.value}</InlineCopyText>
-                  <Text variant="secondary" size="sm">
-                    {r.purpose}
-                  </Text>
-                </div>
-              </Table.Cell>
-            </Table.Row>
-          ))}
-        </Table.Body>
-      </Table>
-    </LayerCard>
+        ))}
+      </Table.Body>
+    </ResponsiveTable>
   );
 }
 

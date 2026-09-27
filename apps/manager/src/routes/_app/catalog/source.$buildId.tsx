@@ -36,6 +36,7 @@ import { InstallForm } from "../../../components/install-form";
 import { useJobStarted } from "../../../components/job-started";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
+import { ResponsiveTable } from "../../../components/responsive-table";
 import {
   initialSecretValues,
   SecretFields,
@@ -512,28 +513,26 @@ function WhatItDeclares({ review }: { review: SourceBuildReview }) {
         </LayerCard.Primary>
       </LayerCard>
       {review.bindings.length > 0 && (
-        <LayerCard className="p-0">
-          <Table>
-            <Table.Header>
-              <Table.Row>
-                <Table.Head>Binding</Table.Head>
-                <Table.Head>Type</Table.Head>
+        <ResponsiveTable label="Bindings" minWidth="sm">
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Binding</Table.Head>
+              <Table.Head>Type</Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {review.bindings.map((b) => (
+              <Table.Row key={`${b.type} ${b.name}`}>
+                <Table.Cell>
+                  <span className={mono}>{b.name}</span>
+                </Table.Cell>
+                <Table.Cell>
+                  <span className={mono}>{b.type}</span>
+                </Table.Cell>
               </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {review.bindings.map((b) => (
-                <Table.Row key={`${b.type} ${b.name}`}>
-                  <Table.Cell>
-                    <span className={mono}>{b.name}</span>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <span className={mono}>{b.type}</span>
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table>
-        </LayerCard>
+            ))}
+          </Table.Body>
+        </ResponsiveTable>
       )}
     </Section>
   );
