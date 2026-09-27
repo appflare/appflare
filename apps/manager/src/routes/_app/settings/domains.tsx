@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { GatewayCard } from "../../../components/gateway-card";
-import { SETTINGS_CRUMB, SETTINGS_PAGES } from "../../../components/navigation";
-import { PageHeader } from "../../../components/page-header";
-import { Section } from "../../../components/section";
+import { SETTINGS_PAGES } from "../../../components/navigation";
+import { DomainsSettingsView } from "../../../components/settings-pages";
 import { getGatewayView } from "../../../gateway/gateway.functions";
 
 /**
@@ -19,16 +17,5 @@ export const Route = createFileRoute("/_app/settings/domains")({
 function DomainsSettingsPage() {
   const view = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
-  return (
-    <>
-      <PageHeader
-        title={SETTINGS_PAGES.domains.label}
-        description={SETTINGS_PAGES.domains.description}
-        parents={[SETTINGS_CRUMB]}
-      />
-      <Section title="External domains">
-        <GatewayCard view={view} isAdmin={viewer.role === "admin"} />
-      </Section>
-    </>
-  );
+  return <DomainsSettingsView view={view} isAdmin={viewer.role === "admin"} />;
 }

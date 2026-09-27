@@ -34,15 +34,16 @@ import {
 } from "../server/users.functions";
 import { ConfirmDialog } from "./confirm-dialog";
 import { ResetPasswordDialog } from "./reset-password-dialog";
-import { ResponsiveTable } from "./responsive-table";
+import { Section, SectionBody, SectionTable } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 import { readOnlyNote, type UserAction, userActions } from "./user-actions";
 
 /**
- * Settings, Users and access: the users. `users` is null for members, who
- * see a read-only note. The page puts {@link AddUserDialog} beside the title.
- * Admins get "Reset password" on the rows of other users but the owner; the
- * owner also changes roles, transfers ownership to an admin, and deletes.
+ * The users settings' Users section. `users` is null for members, who see a
+ * read-only note. Admins get "Add user" at the right of the header, and
+ * "Reset password" on the rows of other users but the owner; the owner also
+ * changes roles, transfers ownership to an admin, and deletes.
  */
 export function UsersSection({
   users,
@@ -56,19 +57,46 @@ export function UsersSection({
   /** Password reset emails are on, so a reset can be a link. */
   emailReset: boolean;
 }) {
+  return (
+    <Section
+      {...settingsSection("users", "users")}
+      description="Who can sign in to this manager, and what each of them can change."
+      action={users !== null ? <AddUserDialog /> : null}
+    >
+      {users === null ? (
+        <SectionBody>
+          <Banner
+            variant="secondary"
+            icon={<InfoIcon weight="fill" />}
+            title="Only admins can view and add users."
+            description="Ask an admin if you need an account for someone else."
+          />
+        </SectionBody>
+      ) : (
+        <UsersTable
+          users={users}
+          viewerId={viewerId}
+          viewerIsOwner={viewerIsOwner}
+          emailReset={emailReset}
+        />
+      )}
+    </Section>
+  );
+}
+
+function UsersTable({
+  users,
+  viewerId,
+  viewerIsOwner,
+  emailReset,
+}: {
+  users: UserRow[];
+  viewerId: string;
+  viewerIsOwner: boolean;
+  emailReset: boolean;
+}) {
   const [picked, setPicked] = useState<{ user: UserRow; action: UserAction } | null>(null);
   const [open, setOpen] = useState(false);
-
-  if (users === null) {
-    return (
-      <Banner
-        variant="secondary"
-        icon={<InfoIcon weight="fill" />}
-        title="Only admins can view and add users."
-        description="Ask an admin if you need an account for someone else."
-      />
-    );
-  }
 
   function pick(user: UserRow, action: UserAction) {
     setPicked({ user, action });
@@ -79,13 +107,15 @@ export function UsersSection({
   // Only admins get the list (`users` is null for members).
   const viewer = { id: viewerId, isAdmin: true, isOwner: viewerIsOwner };
   return (
-    <div className="grid gap-3">
+    <>
       {!viewerIsOwner && (
-        <Text variant="secondary" size="sm">
-          {readOnlyNote(owner)}
-        </Text>
+        <SectionBody>
+          <Text variant="secondary" size="sm">
+            {readOnlyNote(owner)}
+          </Text>
+        </SectionBody>
       )}
-      <ResponsiveTable label="Users" stickyFirstColumn>
+      <SectionTable label="Users" stickyFirstColumn>
         <Table.Header>
           <Table.Row>
             <Table.Head>Email</Table.Head>
@@ -125,7 +155,7 @@ export function UsersSection({
             </Table.Row>
           ))}
         </Table.Body>
-      </ResponsiveTable>
+      </SectionTable>
       {picked !== null && (
         <UserActionDialog
           user={picked.user}
@@ -135,7 +165,7 @@ export function UsersSection({
           emailReset={emailReset}
         />
       )}
-    </div>
+    </>
   );
 }
 

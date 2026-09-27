@@ -8,6 +8,7 @@ import {
 import { constantTimeEquals } from "../auth/constant-time";
 import { type TokenVerification, verifyCloudflareToken } from "../cloudflare/verify-token";
 import { discoverWorkerName } from "../cloudflare/worker-name";
+import { settingsPlace } from "../components/settings-links";
 import { AUTH_SECRET_NAME, generateAuthSecret } from "../danger/auth-secret.server";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
@@ -58,7 +59,7 @@ export class TokenStepError extends Error {
 }
 
 export const TOKEN_STEP_MESSAGES = {
-  alreadyConfigured: "A Cloudflare token is already configured. Rotate it from Settings instead.",
+  alreadyConfigured: `A Cloudflare token is already configured. Rotate it in ${settingsPlace("account", "connection", "the Cloudflare connection settings")} instead.`,
   notConfigured: "No Cloudflare token is configured yet. Finish setup first.",
   busy: "Another token change is in progress. Try again in a minute.",
   needsScripts:

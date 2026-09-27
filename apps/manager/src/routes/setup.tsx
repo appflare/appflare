@@ -7,6 +7,7 @@ import { authClient } from "../auth/client";
 import { serverErrorMessage } from "../auth/sign-in-errors";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { SetupTokenForm, type SetupTokenSaved } from "../components/cloudflare-token-form";
+import { MessageText } from "../components/message-text";
 import { PasswordInput } from "../components/password-input";
 import { getChecklistData } from "../onboarding/checklist.functions";
 import type { ChecklistData } from "../onboarding/checklist.server";
@@ -99,7 +100,7 @@ function SetupPage() {
       placement="top"
       {...(step === null ? {} : { step })}
       title={copy.title}
-      description={copy.description}
+      description={<MessageText message={copy.description} newTab />}
       version={loaded.version}
     >
       <StepContent state={state} dispatch={dispatch} resync={resync} />

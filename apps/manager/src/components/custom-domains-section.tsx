@@ -47,8 +47,9 @@ import { DomainName } from "./domain-name";
 import { formatTime } from "./format";
 import { HealthBadge } from "./install-health";
 import { useJobStarted } from "./job-started";
+import { PageSection } from "./page-section";
 import { ResponsiveTable } from "./responsive-table";
-import { Section } from "./section";
+import { settingsLink } from "./settings-links";
 import { useAccountId } from "./use-account-id";
 import { WildcardNotes } from "./wildcard-notes";
 import { ZoneHostnameField } from "./zone-hostname-field";
@@ -70,7 +71,7 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
     (wildcard === null || !install.domains.some((d) => d.wildcard));
   const canRemove = install.status !== "uninstalling" && install.status !== "uninstalled";
   return (
-    <Section
+    <PageSection
       title={wildcard === null ? "Custom domains" : "Wildcard domain"}
       titleAction={<DocsLink topic="customDomains" />}
       actions={
@@ -121,7 +122,7 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
           </Table.Body>
         </ResponsiveTable>
       )}
-    </Section>
+    </PageSection>
   );
 }
 
@@ -260,9 +261,11 @@ function TokenPermissionsBanner({ options }: { options: DomainOptions }) {
           <span>
             To add them, open API Tokens in the Cloudflare dashboard, edit the Appflare token, add
             these permissions for the domains you want to use, and save. An edited token keeps its
-            value, so nothing changes here. Or create a new token and replace the old one under{" "}
-            <Link href="/settings/account">Settings, Account and capabilities</Link> with Rotate
-            token.
+            value, so nothing changes here. Or create a new token and replace the old one in the{" "}
+            <Link href={settingsLink("account", "connection")} target="_blank" rel="noopener">
+              Cloudflare connection settings
+            </Link>{" "}
+            with Rotate token.
           </span>
         </span>
       }

@@ -4,6 +4,7 @@ import {
   FREE_PLAN_CRON_TRIGGERS,
   PAID_PLAN_CRON_TRIGGERS,
 } from "../../catalog/cron-triggers";
+import { settingsPlace } from "../../components/settings-links";
 import { errorMessage, isNotFound, JobError } from "../errors";
 import type { JobSteps } from "../steps";
 import { settleUnit } from "../units/result";
@@ -114,12 +115,11 @@ export interface CronLimitCheck {
 
 /**
  * The way out for an account that is on Workers Paid but not recorded as
- * such. It names Settings rather than a form field: a form shows the cron
+ * such. It links to the account capabilities rather than naming a form field: a form shows the cron
  * trigger confirmation only when it knows the app's triggers, which a sandbox
  * tier app's page does not before the build.
  */
-const PAID_ALREADY =
-  "If it is already on Workers Paid, record that in Settings under Workers plan.";
+const PAID_ALREADY = `If it is already on Workers Paid, record that under Workers plan in ${settingsPlace("account", "capabilities", "the account capabilities")}.`;
 
 /**
  * Why the triggers would not fit a Workers Free account, or null when they

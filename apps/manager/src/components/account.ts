@@ -1,5 +1,5 @@
 import type { Viewer } from "../server/session.functions";
-import { SETTINGS_PAGES } from "./navigation";
+import { settingsLink } from "./settings-links";
 
 /** The signed-in user as the sidebar's account menu shows them. Client-safe. */
 export type AccountViewer = Pick<Viewer, "name" | "email" | "role" | "isOwner">;
@@ -24,6 +24,6 @@ export function accountRoleLabel(viewer: AccountViewer): string {
 
 /** Where the menu's links go: the Users and access page, and its passkeys section. */
 export const ACCOUNT_LINKS = {
-  users: SETTINGS_PAGES.users.href,
-  passkeys: `${SETTINGS_PAGES.users.href}#passkeys`,
+  users: settingsLink("users"),
+  passkeys: settingsLink("users", "passkeys"),
 } as const;

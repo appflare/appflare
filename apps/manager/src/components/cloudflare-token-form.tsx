@@ -33,23 +33,25 @@ import { connectCloudflare } from "../server/setup.functions";
 import { rotateToken, saveToken, verifyToken } from "../server/token.functions";
 import { DocsLink } from "./docs-link";
 import { formatDate } from "./format";
+import { ErrorMessageBanner, MessageText } from "./message-text";
+import { settingsPlace } from "./settings-links";
 import { useAccountId } from "./use-account-id";
 
 const { required } = splitPermissionGroups();
 const optional = optionalGroupsByFeature();
 
-/** Where each optional feature lives, for the list of what its permissions are for. */
+/**
+ * Where each optional feature lives, for the list of what its permissions
+ * are for; places in Settings are links (`message-links.ts`).
+ */
 const FEATURE_PLACES: Readonly<Record<string, string>> = {
-  [ACCESS_FEATURE]: `"${ACCESS_FEATURE}" in Settings > Users and access`,
+  [ACCESS_FEATURE]: `"${ACCESS_FEATURE}" in ${settingsPlace("users", "access", "Cloudflare Access settings")}`,
   [CUSTOM_DOMAINS_FEATURE]: "Custom domains on an installed app's Domains and email tab",
-  [EXTERNAL_DOMAINS_FEATURE]:
-    "External domains (Settings > Domains, then an installed app's Domains and email tab)",
+  [EXTERNAL_DOMAINS_FEATURE]: `External domains (${settingsPlace("domains", "external-domains", "the domains settings")}, then an installed app's Domains and email tab)`,
   [EMAIL_ROUTING_FEATURE]:
     "Installing an app that receives email (it also needs Zone: Read and DNS: Edit from the custom domains list)",
-  [PLAN_DETECTION_FEATURE]:
-    "Reading this account's Workers plan for Settings > Account and capabilities, instead of asking you. Appflare only reads the plan names from the account's subscriptions; it never reads invoices or payment details",
-  [SANDBOX_BUILDS_FEATURE]:
-    "Enabling, updating and disabling sandbox builds in Settings > Account and capabilities (Workers Paid): Appflare creates, rolls out and deletes the sandbox Worker's container applications",
+  [PLAN_DETECTION_FEATURE]: `Reading this account's Workers plan for ${settingsPlace("account", "capabilities", "the account capabilities")}, instead of asking you. Appflare only reads the plan names from the account's subscriptions; it never reads invoices or payment details`,
+  [SANDBOX_BUILDS_FEATURE]: `Enabling, updating and disabling ${settingsPlace("account", "sandbox", "sandbox builds")} (Workers Paid): Appflare creates, rolls out and deletes the sandbox Worker's container applications`,
   [DATABASE_ELSEWHERE_FEATURE]:
     "Installing an app that keeps its data in a PostgreSQL or MySQL database outside Cloudflare: Appflare creates a Hyperdrive configuration from the connection string you enter, replaces it when you change the string, and deletes it on uninstall",
   [PIPELINES_FEATURE]:
@@ -149,7 +151,7 @@ export function CloudflareTokenForm({
                 {optional.map(({ feature, groups }) => (
                   <li key={feature}>
                     <Text as="span" variant="secondary">
-                      {FEATURE_PLACES[feature] ?? `"${feature}"`}:{" "}
+                      <MessageText message={FEATURE_PLACES[feature] ?? `"${feature}"`} newTab />:{" "}
                       {groups.map(permissionName).join(", ")}
                     </Text>
                   </li>
@@ -213,9 +215,7 @@ export function CloudflareTokenForm({
         </div>
       </form>
 
-      {error !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-      )}
+      {error !== null && <ErrorMessageBanner message={error} newTab />}
       {result !== null && !result.ok && (
         <Banner
           variant="error"

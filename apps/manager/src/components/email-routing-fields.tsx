@@ -12,6 +12,7 @@ import { EMAIL_ROUTING_PERMISSIONS } from "../installs/email-routing";
 import { getEmailZoneOptions, previewEmailRouting } from "../installs/email-routing.functions";
 import type { EmailRoutingPreview, EmailZoneOptions } from "../installs/email-routing.server";
 import { WORKER_NAME_PATTERN } from "../installs/install-input";
+import { settingsLink } from "./settings-links";
 import { useAccountId } from "./use-account-id";
 
 /** The records Cloudflare adds when it turns Email Routing on for a zone. */
@@ -180,9 +181,11 @@ function PermissionsBanner({
           <span>
             Needed: {missing.join(", ")}. Edit the Appflare token under API Tokens in the Cloudflare
             dashboard, add them for the zones you want to use, and save; an edited token keeps its
-            value. Or create a new token and replace the old one under{" "}
-            <Link href="/settings/account">Settings, Account and capabilities</Link> with Rotate
-            token.
+            value. Or create a new token and replace the old one in the{" "}
+            <Link href={settingsLink("account", "connection")} target="_blank" rel="noopener">
+              Cloudflare connection settings
+            </Link>{" "}
+            with Rotate token.
           </span>
         </span>
       }

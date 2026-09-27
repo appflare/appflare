@@ -1,10 +1,6 @@
-import { Banner } from "@cloudflare/kumo";
-import { InfoIcon } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
-import { SETTINGS_CRUMB, SETTINGS_PAGES } from "../../../components/navigation";
-import { AddChannelDialog, NotificationChannels } from "../../../components/notification-channels";
-import { PageHeader } from "../../../components/page-header";
-import { NOTIFICATION_COPY } from "../../../notifications/channels";
+import { SETTINGS_PAGES } from "../../../components/navigation";
+import { NotificationsSettingsView } from "../../../components/settings-pages";
 import { listNotificationChannels } from "../../../notifications/channels.functions";
 
 /**
@@ -19,23 +15,5 @@ export const Route = createFileRoute("/_app/settings/notifications")({
 
 function NotificationsPage() {
   const channels = Route.useLoaderData();
-  return (
-    <>
-      <PageHeader
-        title={SETTINGS_PAGES.notifications.label}
-        description={SETTINGS_PAGES.notifications.description}
-        parents={[SETTINGS_CRUMB]}
-        actions={channels === null ? undefined : <AddChannelDialog />}
-      />
-      {channels === null ? (
-        <Banner
-          variant="secondary"
-          icon={<InfoIcon weight="fill" />}
-          title={NOTIFICATION_COPY.membersOnly}
-        />
-      ) : (
-        <NotificationChannels channels={channels} />
-      )}
-    </>
-  );
+  return <NotificationsSettingsView channels={channels} />;
 }

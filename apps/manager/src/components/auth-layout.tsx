@@ -2,6 +2,7 @@ import { Banner, cn, LayerCard, Link, Meter, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
+import { MessageText } from "./message-text";
 
 /** Where the footer's version line leads. */
 export const DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/";
@@ -106,11 +107,18 @@ export function AuthLayout({
   );
 }
 
-/** An error on an auth screen: a plain sentence, announced when it appears. */
+/**
+ * An error on an auth screen: a plain sentence, announced when it appears.
+ * A link in it (to a settings page) opens in a new tab, keeping the screen.
+ */
 export function AuthError({ message }: { message: string }) {
   return (
     <div role="alert">
-      <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} description={message} />
+      <Banner
+        variant="error"
+        icon={<WarningCircleIcon weight="fill" />}
+        description={<MessageText message={message} newTab />}
+      />
     </div>
   );
 }

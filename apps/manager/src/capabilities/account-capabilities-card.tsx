@@ -1,5 +1,5 @@
-import { Badge, Banner, Button, LayerCard, Link, Radio, Text } from "@cloudflare/kumo";
-import { ArrowClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Badge, Button, Link, Radio, Text } from "@cloudflare/kumo";
+import { ArrowClockwiseIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import {
@@ -12,6 +12,8 @@ import { setAccountPlan } from "../account/plan.functions";
 import { dashboardUrl } from "../cloudflare/dashboard-links";
 import { DescriptionItem, DescriptionList } from "../components/description-list";
 import { DocsLink } from "../components/docs-link";
+import { Section, SectionBody } from "../components/section";
+import { settingsSection } from "../components/settings-links";
 import { Timestamp } from "../components/timestamp";
 import {
   type CapabilitiesView,
@@ -257,7 +259,7 @@ function EmailRoutingRow({ view }: { view: CapabilitiesView }) {
 }
 
 /**
- * Settings, Account capabilities: what the Cloudflare token can tell about
+ * The account capabilities section: what the Cloudflare token can tell about
  * the account (R2 enabled, Containers available, Workers plan, a domain,
  * Email Routing on it), each marked
  * "Detected" or "Set by you", and the Workers plan an admin sets for when it
@@ -307,25 +309,25 @@ export function AccountCapabilitiesCard({
   }
 
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-1">
-          Account capabilities
-          <DocsLink topic="capabilities" />
-        </span>
-        {isAdmin && (
+    <Section
+      {...settingsSection("account", "capabilities")}
+      titleAction={<DocsLink topic="capabilities" />}
+      description="What the account can run, as Appflare's Cloudflare token reads it."
+      action={
+        isAdmin ? (
           <Button
             variant="secondary"
-            size="sm"
             icon={<ArrowClockwiseIcon />}
             loading={checking}
             onClick={onRecheck}
           >
             Re-check
           </Button>
-        )}
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+        ) : null
+      }
+      error={error}
+    >
+      <SectionBody>
         <Text variant="secondary">
           Appflare reads these with its Cloudflare token when the token is saved, once a day, and
           when an admin chooses Re-check.{" "}
@@ -351,10 +353,7 @@ export function AccountCapabilitiesCard({
           disabled={!isAdmin || saving}
           isAdmin={isAdmin}
         />
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }

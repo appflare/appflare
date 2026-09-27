@@ -35,7 +35,7 @@ import {
   usesGithubTokens,
   wranglerConfigInlineRefusal,
 } from "../sandbox/binding";
-import { UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
+import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { verifySourceBuildManifest } from "../sandbox/verify";
 import { fetchWhole } from "./install/artifact";
 import { BUILD_LOG_LINES, SANDBOX_BUILD_STEP } from "./install/artifact-source";
@@ -165,7 +165,7 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
       const binding = sandboxBinding(env);
       if (binding === undefined) {
         throw new JobError(
-          "Appflare is not connected to a sandbox Worker; enable sandbox builds (Settings, Sandbox builds) and try again",
+          `Appflare is not connected to a sandbox Worker; enable sandbox builds in ${ENABLE_SANDBOX_PLACE} and try again`,
         );
       }
       let info: Awaited<ReturnType<typeof sandboxInfo>>;

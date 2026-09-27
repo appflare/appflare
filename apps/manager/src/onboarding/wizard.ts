@@ -1,3 +1,4 @@
+import { settingsPlace } from "../components/settings-links";
 import type { SetupStep as GateStep } from "../server/gate";
 import type { ChecklistData } from "./checklist.server";
 
@@ -132,8 +133,7 @@ export function wizardCopy(state: WizardState): WizardCopy {
     case "checklist":
       return {
         title: "Check your account",
-        description:
-          "What this Cloudflare account has that apps rely on. This list stays in Settings › Account and capabilities.",
+        description: `What this Cloudflare account has that apps rely on. This list stays in ${settingsPlace("account", "checklist", "the account settings")}.`,
       };
     case "cloudflare-token":
       return {

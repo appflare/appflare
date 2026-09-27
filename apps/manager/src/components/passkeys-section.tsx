@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, Empty, Input, LayerDialog, Table, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Input, LayerDialog, Table, Text } from "@cloudflare/kumo";
 import { FingerprintIcon, PlusIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
@@ -11,42 +11,45 @@ import {
 import { type PasskeyRow, removePasskey } from "../server/passkeys.functions";
 import { passkeyNameInput } from "../server/schemas";
 import { ConfirmDialog } from "./confirm-dialog";
-import { ResponsiveTable } from "./responsive-table";
+import { Section, SectionBody, SectionEmpty, SectionTable } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
- * Settings → Passkeys: the signed-in user's own passkeys. Adding one runs the
- * browser's passkey prompt; removing one only deletes it here, so the device or
+ * The users settings' "Your passkeys" section: the signed-in user's own
+ * passkeys (the account menu links here). Adding one runs the browser's
+ * passkey prompt; removing one only deletes it here, so the device or
  * password manager keeps an unusable copy until the user deletes it there too.
  */
 export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
   const supported = passkeysSupported();
   return (
-    // The account menu links here; the margin keeps the section title above in view.
-    <div id="passkeys" className="grid scroll-mt-16 gap-3">
-      <div className="flex items-center justify-between gap-4">
-        <Text variant="secondary">
-          Sign in with your fingerprint, face, screen lock, or a security key instead of your
-          password. Your password keeps working.
-        </Text>
-        {supported && passkeys.length > 0 && <AddPasskeyDialog />}
-      </div>
+    <Section
+      {...settingsSection("users", "passkeys")}
+      description="Sign in with your fingerprint, face, screen lock, or a security key instead of your password. Your password keeps working."
+      // With no passkey yet, the empty state offers it instead.
+      action={supported && passkeys.length > 0 ? <AddPasskeyDialog /> : null}
+    >
       {!supported && (
-        <Banner
-          icon={<WarningCircleIcon weight="fill" />}
-          title={PASSKEY_MESSAGES.registerUnsupported}
-          description="Open Settings in a current browser to add a passkey."
-        />
+        <SectionBody>
+          <Banner
+            icon={<WarningCircleIcon weight="fill" />}
+            title={PASSKEY_MESSAGES.registerUnsupported}
+            description="Open Settings in a current browser to add a passkey."
+          />
+        </SectionBody>
       )}
       {passkeys.length === 0 ? (
-        <Empty
-          icon={<FingerprintIcon size={48} className="text-kumo-inactive" />}
-          title="No passkeys yet"
-          description="Add a passkey to sign in without typing your password."
-          contents={supported ? <AddPasskeyDialog /> : undefined}
-        />
+        <SectionBody>
+          <SectionEmpty
+            icon={<FingerprintIcon size={48} className="text-kumo-inactive" />}
+            title="No passkeys yet"
+            description="Add a passkey to sign in without typing your password."
+            contents={supported ? <AddPasskeyDialog /> : undefined}
+          />
+        </SectionBody>
       ) : (
-        <ResponsiveTable label="Passkeys" minWidth="sm" stickyFirstColumn>
+        <SectionTable label="Passkeys" minWidth="sm" stickyFirstColumn>
           <Table.Header>
             <Table.Row>
               <Table.Head>Name</Table.Head>
@@ -85,9 +88,9 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
               </Table.Row>
             ))}
           </Table.Body>
-        </ResponsiveTable>
+        </SectionTable>
       )}
-    </div>
+    </Section>
   );
 }
 

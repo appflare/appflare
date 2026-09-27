@@ -1,8 +1,9 @@
-import { Banner, Button, LayerCard, Link, Loader, Text } from "@cloudflare/kumo";
+import { Banner, Button, Link, Loader, Text } from "@cloudflare/kumo";
 import { KeyIcon, TrashIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { type ReactNode, useState } from "react";
 import { ConfirmDialog } from "../components/confirm-dialog";
-import { Section } from "../components/section";
+import { Section, SectionRow, SectionRows } from "../components/section";
+import { settingsSection } from "../components/settings-links";
 import { Timestamp } from "../components/timestamp";
 import {
   deletesBuildBucket,
@@ -16,10 +17,11 @@ import { getRemovalReview } from "./danger.functions";
 import type { RemovalReview } from "./removal-plan.server";
 
 /**
- * Settings > General, danger zone: rotating the auth secret and removing
- * Appflare from the account. Owner only; other users see the actions
- * disabled. Both confirm in a dialog, then post a plain form, so the browser
- * leaves the app for the static page each action answers with.
+ * The general settings' danger zone, the page's last section: rotating the
+ * auth secret and removing Appflare from the account. Owner only; other
+ * users see the actions disabled. Both confirm in a dialog, then post a
+ * plain form, so the browser leaves the app for the static page each action
+ * answers with.
  */
 
 /**
@@ -43,55 +45,34 @@ function submitForm(path: string, confirm: string): Promise<void> {
   });
 }
 
-/** One action of the danger zone: what it does, and its button. */
-function DangerAction({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-4">
-      <div className="grid max-w-prose gap-1">
-        <Text bold>{title}</Text>
-        <Text variant="secondary">{description}</Text>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">{children}</div>
-    </div>
-  );
-}
-
 export function DangerZone({ isOwner, state }: { isOwner: boolean; state: DangerZoneState }) {
   return (
     <Section
-      title="Danger zone"
-      description={isOwner ? undefined : "Only the owner can use these actions."}
+      {...settingsSection("general", "danger-zone")}
+      description={
+        isOwner
+          ? "Actions that cannot be undone. Each asks you to type a confirmation first."
+          : "Only the owner can use these actions."
+      }
     >
-      <LayerCard>
-        <LayerCard.Primary className="grid gap-5 px-5 py-4">
-          <DangerAction
-            title="Rotate the auth secret"
-            description={
-              <>
-                Signs everyone out and makes stored notification credentials unreadable until they
-                are entered again. Last rotated:{" "}
-                <Timestamp iso={state.authSecretRotatedAt} fallback="never from here" />.
-              </>
-            }
-          >
-            <RotateAuthSecretDialog disabled={!isOwner} />
-          </DangerAction>
-          <DangerAction
-            title="Remove Appflare from this account"
-            description="Deletes Appflare and everything it runs on. The apps it installed stay and keep running, unmanaged."
-          >
-            <RemoveAppflareDialog disabled={!isOwner} />
-          </DangerAction>
-        </LayerCard.Primary>
-      </LayerCard>
+      <SectionRows>
+        <SectionRow
+          title="Rotate the auth secret"
+          description={
+            <>
+              Signs everyone out and makes stored notification credentials unreadable until they are
+              entered again. Last rotated:{" "}
+              <Timestamp iso={state.authSecretRotatedAt} fallback="never from here" />.
+            </>
+          }
+          action={<RotateAuthSecretDialog disabled={!isOwner} />}
+        />
+        <SectionRow
+          title="Remove Appflare from this account"
+          description="Deletes Appflare and everything it runs on. The apps it installed stay and keep running, unmanaged."
+          action={<RemoveAppflareDialog disabled={!isOwner} />}
+        />
+      </SectionRows>
     </Section>
   );
 }
@@ -100,7 +81,7 @@ function RotateAuthSecretDialog({ disabled }: { disabled: boolean }) {
   return (
     <ConfirmDialog
       trigger={(p) => (
-        <Button {...p} variant="secondary-destructive" icon={<KeyIcon />} disabled={disabled}>
+        <Button {...p} variant="destructive" icon={<KeyIcon />} disabled={disabled}>
           Rotate auth secret
         </Button>
       )}
@@ -155,7 +136,7 @@ function RemoveAppflareDialog({ disabled }: { disabled: boolean }) {
     <ConfirmDialog
       size="lg"
       trigger={(p) => (
-        <Button {...p} variant="secondary-destructive" icon={<TrashIcon />} disabled={disabled}>
+        <Button {...p} variant="destructive" icon={<TrashIcon />} disabled={disabled}>
           Remove Appflare
         </Button>
       )}

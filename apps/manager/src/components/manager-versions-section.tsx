@@ -15,8 +15,8 @@ import { type ManagerVersionsState, rollBackManager } from "../jobs/self-update/
 import type { RollBackManagerResult } from "../jobs/self-update/rollback.server";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
-import { ResponsiveTable } from "./responsive-table";
-import { Section } from "./section";
+import { Section, SectionBody, SectionTable } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
@@ -118,62 +118,28 @@ export function ManagerVersionsSection({
   const pending = result !== null && result.version !== current && !stalled;
   return (
     <Section
-      title="Versions"
+      {...settingsSection("appflareUpdates", "versions")}
       titleAction={<DocsLink topic="appflareRollback" />}
       description="Appflare's newest versions on its Worker. A rollback redeploys an older one to all traffic; the database is not rolled back."
+      error={state.ok ? null : state.error}
+      empty={
+        state.ok && state.versions.length === 0 ? (
+          <Text variant="secondary">Cloudflare lists no versions of Appflare's Worker.</Text>
+        ) : undefined
+      }
     >
-      {notice !== null && (
-        <Banner
-          variant="secondary"
-          icon={<CheckCircleIcon weight="fill" className="text-kumo-success" />}
-          title={`Appflare rolled back to ${notice.version}`}
-          description={
-            <Link href={`/jobs/${notice.jobId}`} variant="inline">
-              View log
-            </Link>
-          }
-        />
+      {(notice !== null || pending || stalled) && (
+        <SectionBody>
+          <RollbackNotices
+            notice={notice}
+            switchingTo={pending && result !== null ? result.version : null}
+            switching={switching}
+            stalledAt={stalled && result !== null ? result.version : null}
+          />
+        </SectionBody>
       )}
-      {pending && result !== null && (
-        <Banner
-          variant="secondary"
-          icon={<ArrowsClockwiseIcon />}
-          title={`Switching to Appflare ${result.version}…`}
-          description={
-            switching
-              ? "Cloudflare is moving traffic to it. This page reloads once it answers."
-              : "This page reloads once it answers."
-          }
-        />
-      )}
-      {stalled && result !== null && (
-        <Banner
-          variant="alert"
-          icon={<WarningCircleIcon weight="fill" />}
-          title={`Rolled back to ${result.version}`}
-          description={
-            <>
-              It did not answer here yet.{" "}
-              <Link
-                href="#"
-                variant="inline"
-                onClick={(event) => {
-                  event.preventDefault();
-                  window.location.reload();
-                }}
-              >
-                Reload
-              </Link>
-            </>
-          }
-        />
-      )}
-      {!state.ok ? (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={state.error} />
-      ) : state.versions.length === 0 ? (
-        <Text variant="secondary">Cloudflare lists no versions of Appflare's Worker.</Text>
-      ) : (
-        <ResponsiveTable label="Appflare versions" stickyFirstColumn>
+      {state.ok && state.versions.length > 0 && (
+        <SectionTable label="Appflare versions" stickyFirstColumn>
           <Table.Header>
             <Table.Row>
               <Table.Head>Appflare version</Table.Head>
@@ -220,9 +186,73 @@ export function ManagerVersionsSection({
               </Table.Row>
             ))}
           </Table.Body>
-        </ResponsiveTable>
+        </SectionTable>
       )}
     </Section>
+  );
+}
+
+/** What the last rollback did: finished, switching traffic, or not answering here yet. */
+function RollbackNotices({
+  notice,
+  switchingTo,
+  switching,
+  stalledAt,
+}: {
+  notice: RolledBack | null;
+  switchingTo: string | null;
+  switching: boolean;
+  stalledAt: string | null;
+}) {
+  return (
+    <>
+      {notice !== null && (
+        <Banner
+          variant="secondary"
+          icon={<CheckCircleIcon weight="fill" className="text-kumo-success" />}
+          title={`Appflare rolled back to ${notice.version}`}
+          description={
+            <Link href={`/jobs/${notice.jobId}`} variant="inline">
+              View log
+            </Link>
+          }
+        />
+      )}
+      {switchingTo !== null && (
+        <Banner
+          variant="secondary"
+          icon={<ArrowsClockwiseIcon />}
+          title={`Switching to Appflare ${switchingTo}…`}
+          description={
+            switching
+              ? "Cloudflare is moving traffic to it. This page reloads once it answers."
+              : "This page reloads once it answers."
+          }
+        />
+      )}
+      {stalledAt !== null && (
+        <Banner
+          variant="alert"
+          icon={<WarningCircleIcon weight="fill" />}
+          title={`Rolled back to ${stalledAt}`}
+          description={
+            <>
+              It did not answer here yet.{" "}
+              <Link
+                href="#"
+                variant="inline"
+                onClick={(event) => {
+                  event.preventDefault();
+                  window.location.reload();
+                }}
+              >
+                Reload
+              </Link>
+            </>
+          }
+        />
+      )}
+    </>
   );
 }
 

@@ -257,7 +257,7 @@ export const AUTO_UPDATE_COPY = {
     on: "On",
     off: "Off",
   },
-  inheritDescription: 'Follows "Automatically update apps" in Settings, General.',
+  inheritDescription: 'Follows "Automatically update apps", the default for every app.',
   needsApproval:
     "Updates of this app build it in your account or run its own installer, which you approve each time, so Appflare never starts them on its own.",
   installOn:

@@ -1,6 +1,6 @@
-import { Banner, Input, LayerDialog } from "@cloudflare/kumo";
-import { WarningCircleIcon } from "@phosphor-icons/react";
+import { Input, LayerDialog } from "@cloudflare/kumo";
 import { type ComponentProps, type FormEvent, type ReactNode, useId, useState } from "react";
+import { ErrorMessageBanner } from "./message-text";
 
 type TriggerRender = ComponentProps<typeof LayerDialog.Trigger>["render"];
 
@@ -131,9 +131,7 @@ export function ConfirmDialog({
                 disabled={pending}
               />
             )}
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">

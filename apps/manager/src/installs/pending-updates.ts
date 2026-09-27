@@ -1,4 +1,5 @@
 import { isUpdateAvailable } from "../catalog/versions";
+import { settingsLink } from "../components/settings-links";
 import { installLabel } from "./display-name";
 
 /**
@@ -84,5 +85,5 @@ export function sidebarUpdateBadge(
   return { count: pending.apps.length, label: pendingUpdatesTitle(pending.apps.length) };
 }
 
-/** Settings, Appflare updates: the running version, the release feed, and automatic self-updates. */
-export const MANAGER_UPDATES_HREF = "/settings/appflare-updates";
+/** The Appflare updates settings page: the running version, the release feed, and automatic self-updates. */
+export const MANAGER_UPDATES_HREF = settingsLink("appflareUpdates");

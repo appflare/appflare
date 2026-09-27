@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { ulid } from "ulidx";
 import type { Database } from "../../db/client";
 import { resources } from "../../db/schema";
-import { gatewayBindingName, gatewayHostname } from "../../gateway/gateway";
+import { GATEWAY_SETUP_PLACE, gatewayBindingName, gatewayHostname } from "../../gateway/gateway";
 import { isGatewayReady, readGateway } from "../../gateway/gateway.server";
 import type { ExternalDomainStatus } from "../../installs/external-domain-input";
 import {
@@ -140,7 +140,7 @@ export async function installDomainPhase(
       const gateway = domain.kind === "external" ? await readGateway(orm) : null;
       if (domain.kind === "external" && !isGatewayReady(gateway)) {
         log.warn(
-          `${domain.hostname} was not added: the external domains gateway is not set up any more. Set it up in Settings, Domains, then add the domain on the app's Domains and email tab.`,
+          `${domain.hostname} was not added: the external domains gateway is not set up any more. Set it up in ${GATEWAY_SETUP_PLACE}, then add the domain on the app's Domains and email tab.`,
         );
         return none;
       }

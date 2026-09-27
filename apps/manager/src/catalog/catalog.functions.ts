@@ -14,6 +14,7 @@ import { hasRole } from "../auth/roles";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import { readCapabilitiesView } from "../capabilities/capabilities.server";
 import { getCfClient } from "../cloudflare/client.server";
+import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
 import { installs } from "../db/schema";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
@@ -224,7 +225,7 @@ export const listCatalog = createServerFn({ method: "GET" }).handler(
         updatedAt: reads[0]?.updatedAt ?? null,
         error:
           reads.length === 0
-            ? "Every catalog is turned off. Turn one on in Settings, Catalogs."
+            ? `Every catalog is turned off. Turn one on in ${settingsPlace("catalogs", "catalogs", "the catalog settings")}.`
             : (failed[0]?.error ?? "The catalog is unavailable."),
         unreadable: 0,
         featured: null,

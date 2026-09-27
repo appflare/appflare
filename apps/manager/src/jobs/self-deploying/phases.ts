@@ -39,7 +39,7 @@ import {
   sandboxInfo,
 } from "../../sandbox/binding";
 import { activeSandboxJob, sandboxBusyMessage } from "../../sandbox/busy";
-import { UPDATE_SANDBOX_HINT } from "../../sandbox/connect-copy";
+import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../../sandbox/connect-copy";
 import { verifyCatalogManifest } from "../../sandbox/verify";
 import { fetchWhole } from "../install/artifact";
 import { resourceId } from "../install/phases";
@@ -235,7 +235,7 @@ function binding(env: JobEnv): SandboxBuildsBinding {
   const found = sandboxBinding(env);
   if (found === undefined) {
     throw new JobError(
-      "this app's installer runs in the account's sandbox Worker, and Appflare is not connected to one; enable sandbox builds (Settings, Sandbox builds) and try again",
+      `this app's installer runs in the account's sandbox Worker, and Appflare is not connected to one; enable sandbox builds in ${ENABLE_SANDBOX_PLACE} and try again`,
     );
   }
   return found;

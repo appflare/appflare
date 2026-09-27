@@ -9,6 +9,8 @@
  * prompt" both surface as the same `NotAllowedError`, so the wording covers both.
  */
 
+import { settingsPlace } from "../components/settings-links";
+
 export interface PasskeyError {
   code?: string | undefined;
   message?: string | undefined;
@@ -22,8 +24,7 @@ export function passkeysSupported(): boolean {
 
 export const PASSKEY_MESSAGES = {
   unsupported: "This browser does not support passkeys. Sign in with your email and password.",
-  noPasskeyUsed:
-    "No passkey was used. This device may not have a passkey for this manager, or the prompt was closed. Sign in with your email and password, then add a passkey in Settings.",
+  noPasskeyUsed: `No passkey was used. This device may not have a passkey for this manager, or the prompt was closed. Sign in with your email and password, then add a passkey in ${settingsPlace("users", "passkeys", "your passkey settings")}.`,
   unknownPasskey:
     "That passkey is not registered with this manager; it may have been removed. Sign in with your email and password.",
   expired: "The passkey prompt timed out. Try again.",

@@ -1,91 +1,118 @@
-import { Banner, LayerCard, Switch, Text } from "@cloudflare/kumo";
-import { WarningCircleIcon } from "@phosphor-icons/react";
+import { Switch, Text } from "@cloudflare/kumo";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { DocsLink } from "../components/docs-link";
+import { ErrorMessageBanner } from "../components/message-text";
+import { Section, SectionBody } from "../components/section";
+import { settingsSection } from "../components/settings-links";
 import { AUTO_UPDATE_COPY, type AutoUpdateSettings } from "./auto-update";
 import { setAutoUpdateDefaults } from "./auto-update.functions";
 
 /**
- * Settings, "Automatic updates": "Automatically update apps" (the default of
- * every app that follows it) on General, or "Automatically update Appflare"
- * on Appflare updates, as `which` says. Admins change them; members see them.
+ * The automatic update switches: "Automatically update apps" (the default of
+ * every app that follows it), a section of the general settings, and
+ * "Automatically update Appflare", a row of the Appflare section on the
+ * Appflare updates page. Admins change them; members see them. A switch
+ * saves on change.
  */
-export function AutomaticUpdatesCard({
-  settings,
-  isAdmin,
-  which,
-}: {
-  settings: AutoUpdateSettings;
-  isAdmin: boolean;
-  which: "apps" | "manager";
-}) {
+
+/** Saves one switch at once; the switch goes back when the save fails. */
+function useAutoUpdateSwitch(initial: boolean, key: "apps" | "manager") {
   const router = useRouter();
-  const [apps, setApps] = useState(settings.apps);
-  const [manager, setManager] = useState(settings.manager);
+  const [checked, setChecked] = useState(initial);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function save(change: { apps?: boolean; manager?: boolean }) {
-    const previous = { apps, manager };
-    if (change.apps !== undefined) setApps(change.apps);
-    if (change.manager !== undefined) setManager(change.manager);
+  async function save(next: boolean) {
+    const previous = checked;
+    setChecked(next);
     setPending(true);
     setError(null);
     try {
-      await setAutoUpdateDefaults({ data: change });
+      await setAutoUpdateDefaults({ data: key === "apps" ? { apps: next } : { manager: next } });
       await router.invalidate();
     } catch (err) {
-      setApps(previous.apps);
-      setManager(previous.manager);
+      setChecked(previous);
       setError(err instanceof Error ? err.message : "Could not save the setting.");
     }
     setPending(false);
   }
 
+  return { checked, pending, error, save };
+}
+
+function MembersNote({ isAdmin }: { isAdmin: boolean }) {
+  if (isAdmin) return null;
   return (
-    <LayerCard>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
-        {which === "apps" ? (
-          <div className="grid gap-1">
-            <Switch
-              label={AUTO_UPDATE_COPY.appsLabel}
-              checked={apps}
-              disabled={!isAdmin || pending}
-              onCheckedChange={(next: boolean) => void save({ apps: next })}
-            />
-            <Text variant="secondary" size="sm">
-              {AUTO_UPDATE_COPY.appsHelp} <DocsLink topic="automaticUpdates" variant="inline" />
-            </Text>
-          </div>
-        ) : (
-          <div className="grid gap-1">
-            <Switch
-              label={AUTO_UPDATE_COPY.managerLabel}
-              checked={manager}
-              disabled={!isAdmin || pending}
-              onCheckedChange={(next: boolean) => void save({ manager: next })}
-            />
-            <Text variant="secondary" size="sm">
-              {AUTO_UPDATE_COPY.managerHelp}{" "}
-              <DocsLink topic="appflareAutomaticUpdates" variant="inline" />
-            </Text>
-            {settings.devBuild && (
-              <Text variant="secondary" size="sm">
-                {AUTO_UPDATE_COPY.devBuild}
-              </Text>
-            )}
-          </div>
-        )}
-        {!isAdmin && (
+    <Text variant="secondary" size="sm">
+      {AUTO_UPDATE_COPY.membersOnly}
+    </Text>
+  );
+}
+
+/** The general settings' automatic updates section. */
+export function AppsAutomaticUpdatesSection({
+  settings,
+  isAdmin,
+}: {
+  settings: AutoUpdateSettings;
+  isAdmin: boolean;
+}) {
+  const { checked, pending, error, save } = useAutoUpdateSwitch(settings.apps, "apps");
+  return (
+    <Section
+      {...settingsSection("general", "automatic-updates")}
+      description="Whether apps update on their own when a new version needs nothing from you."
+      error={error}
+    >
+      <SectionBody>
+        <div className="grid gap-1">
+          <Switch
+            label={AUTO_UPDATE_COPY.appsLabel}
+            checked={checked}
+            disabled={!isAdmin || pending}
+            onCheckedChange={(next: boolean) => void save(next)}
+          />
           <Text variant="secondary" size="sm">
-            {AUTO_UPDATE_COPY.membersOnly}
+            {AUTO_UPDATE_COPY.appsHelp} <DocsLink topic="automaticUpdates" variant="inline" />
+          </Text>
+        </div>
+        <MembersNote isAdmin={isAdmin} />
+      </SectionBody>
+    </Section>
+  );
+}
+
+/** "Automatically update Appflare", for the Appflare section of the Appflare updates page. */
+export function AppflareAutomaticUpdates({
+  settings,
+  isAdmin,
+}: {
+  settings: AutoUpdateSettings;
+  isAdmin: boolean;
+}) {
+  const { checked, pending, error, save } = useAutoUpdateSwitch(settings.manager, "manager");
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-1">
+        <Switch
+          label={AUTO_UPDATE_COPY.managerLabel}
+          checked={checked}
+          disabled={!isAdmin || pending}
+          onCheckedChange={(next: boolean) => void save(next)}
+        />
+        <Text variant="secondary" size="sm">
+          {AUTO_UPDATE_COPY.managerHelp}{" "}
+          <DocsLink topic="appflareAutomaticUpdates" variant="inline" />
+        </Text>
+        {settings.devBuild && (
+          <Text variant="secondary" size="sm">
+            {AUTO_UPDATE_COPY.devBuild}
           </Text>
         )}
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-      </LayerCard.Primary>
-    </LayerCard>
+      </div>
+      <MembersNote isAdmin={isAdmin} />
+      {error !== null && <ErrorMessageBanner message={error} />}
+    </div>
   );
 }

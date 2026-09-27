@@ -119,7 +119,9 @@ describe("addExternalDomainCore", () => {
         hostname: "go.customer.test",
         validation: "http",
       }),
-    ).rejects.toThrow("Set it up in Settings, Domains first");
+    ).rejects.toThrow(
+      "Set it up in [the domains settings](/settings/domains#external-domains) first",
+    );
     await withGateway(saas);
     await expect(
       addExternalDomainCore(deps(saas), {

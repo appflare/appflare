@@ -1,4 +1,4 @@
-import { Banner, Button, Empty, Text, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, Empty, Link, Text, useKumoToastManager } from "@cloudflare/kumo";
 import {
   ArrowsClockwiseIcon,
   MagnifyingGlassIcon,
@@ -29,8 +29,11 @@ import { CatalogSearch, useSearchText } from "../../../components/catalog-search
 import { CategoryCards } from "../../../components/category-cards";
 import { FeaturedCard } from "../../../components/featured-card";
 import { formatExactDateTime } from "../../../components/format";
+import { plainMessage } from "../../../components/message-links";
+import { MessageLinkButtons } from "../../../components/message-text";
 import { PageHeader } from "../../../components/page-header";
 import { RepositoryBuildButton } from "../../../components/repository-build-dialog";
+import { settingsLink } from "../../../components/settings-links";
 import { Tooltip } from "../../../components/tooltip";
 
 /**
@@ -92,14 +95,25 @@ function CatalogPage() {
           variant="secondary"
           icon={<WarningCircleIcon weight="fill" />}
           title={`${catalog.unreadable} ${catalog.unreadable === 1 ? "app" : "apps"} could not be shown`}
-          description="The catalog lists apps this version of Appflare does not understand yet. Update Appflare in Settings to see them."
+          description={
+            <>
+              The catalog lists apps this version of Appflare does not understand yet. Update
+              Appflare in the{" "}
+              <Link href={settingsLink("appflareUpdates", "appflare")}>
+                Appflare updates settings
+              </Link>{" "}
+              to see them.
+            </>
+          }
         />
       )}
       {catalog.error !== null ? (
         <Empty
           icon={<WarningCircleIcon size={48} className="text-kumo-inactive" />}
           title="The catalog is unavailable"
-          description={catalog.error}
+          // Kumo's empty state takes plain text; a place the message names becomes its button.
+          description={plainMessage(catalog.error)}
+          contents={<MessageLinkButtons message={catalog.error} />}
         />
       ) : catalog.apps.length === 0 ? (
         <Empty

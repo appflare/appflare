@@ -19,6 +19,7 @@ import {
 } from "../installs/wildcard-domain-input";
 import { WORKERS_DEV_COPY } from "../installs/workers-dev";
 import { ValidationChoice } from "./external-domains-section";
+import { settingsLink } from "./settings-links";
 import { WildcardNotes } from "./wildcard-notes";
 import { ZoneHostnameField } from "./zone-hostname-field";
 
@@ -263,8 +264,15 @@ export function InstallDomainFields({
           title="The gateway for external domains is not set up"
           description={
             <span>
-              Set it up once in <Link href="/settings/domains">Settings, Domains</Link>, or install
-              with workers.dev only and add the domain later.
+              Set it up once in the{" "}
+              <Link
+                href={settingsLink("domains", "external-domains")}
+                target="_blank"
+                rel="noopener"
+              >
+                domains settings
+              </Link>
+              , or install with workers.dev only and add the domain later.
             </span>
           }
         />

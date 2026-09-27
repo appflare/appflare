@@ -15,6 +15,7 @@ import { ulid } from "ulidx";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { installAppKey, unsignedTierRefusal } from "../catalog/sources";
+import { settingsPlace } from "../components/settings-links";
 import { createDb, type Database } from "../db/client";
 import { installs, type JobStarter, jobs, resources, snapshots } from "../db/schema";
 import {
@@ -46,6 +47,7 @@ import {
   updateRefusal,
   workerExportsOf,
 } from "../jobs/update/plan";
+import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
 import {
   derivedVarValues,
   heldSecrets,
@@ -267,7 +269,7 @@ export async function startUpdateCore(
   const app = await deps.loadApp(installAppKey(install));
   if (app === null) {
     throw new VersionActionError(
-      `"${install.app_slug}" is not in its catalog, or its catalog is turned off in Settings, Catalogs.`,
+      `"${install.app_slug}" is not in its catalog, or its catalog is turned off in ${settingsPlace("catalogs", "catalogs", "the catalog settings")}.`,
     );
   }
   const unsigned = unsignedTierRefusal(install.catalog_id, app.tier);
@@ -292,7 +294,7 @@ export async function startUpdateCore(
   if (sandbox !== null) {
     if (deps.sandboxConnected !== true) {
       throw new VersionActionError(
-        `${app.name} is built in this account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in Settings first.`,
+        `${app.name} is built in this account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in ${ENABLE_SANDBOX_PLACE} first.`,
       );
     }
     if (deps.loadCatalog === undefined) {
@@ -440,7 +442,7 @@ async function startSelfDeployingUpdate(
   }
   if (deps.sandboxConnected !== true) {
     throw new VersionActionError(
-      `${app.name} is deployed by its own installer in this account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in Settings first.`,
+      `${app.name} is deployed by its own installer in this account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in ${ENABLE_SANDBOX_PLACE} first.`,
     );
   }
   if (deps.loadCatalog === undefined) {

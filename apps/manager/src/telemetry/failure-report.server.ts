@@ -8,6 +8,7 @@ import {
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { DEFAULT_CATALOG_INDEX_URL } from "../catalog/index.server";
 import { installAppKey } from "../catalog/sources";
+import { plainMessage } from "../components/message-links";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, type SettingKey, writeSettings } from "../db/settings";
 import { classifyJobError, cloudflareErrorCodes, splitJobError } from "./classify";
@@ -129,7 +130,8 @@ async function readFailedJob(db: D1Database, jobId: string): Promise<FailedJob |
       kind: String(r.kind),
       status: String(r.status),
       inputJson: typeof r.input_json === "string" ? r.input_json : null,
-      error: typeof r.error === "string" ? r.error : null,
+      // Errors and log lines can carry links to manager pages; the report is read elsewhere.
+      error: typeof r.error === "string" ? plainMessage(r.error) : null,
       startedAt: r.started_at == null ? null : num(r.started_at),
       finishedAt: r.finished_at == null ? null : num(r.finished_at),
       // The app key: a custom catalog's app is never reported under its slug.
@@ -151,7 +153,7 @@ async function readFailedJob(db: D1Database, jobId: string): Promise<FailedJob |
     logs: ((logs?.results ?? []) as Record<string, unknown>[]).map((l) => ({
       ts: num(l.ts),
       level: String(l.level),
-      message: String(l.message),
+      message: plainMessage(String(l.message)),
       dataJson: typeof l.data_json === "string" ? l.data_json : null,
     })),
     hostnames: names(hostnames),

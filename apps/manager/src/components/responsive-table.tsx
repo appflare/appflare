@@ -104,6 +104,7 @@ export function ResponsiveTable({
   label,
   minWidth = "md",
   stickyFirstColumn = false,
+  card = true,
   children,
 }: {
   /** Names the scroll region for screen readers, such as "Users". */
@@ -111,29 +112,30 @@ export function ResponsiveTable({
   minWidth?: ResponsiveTableWidth;
   /** Pin the first column; for tables whose first column names the row. */
   stickyFirstColumn?: boolean;
+  /** False inside a card that is already there, such as a settings section's. */
+  card?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLElement>(null);
   const edges = useScrollEdges(ref);
   const scrollable = edges.start || edges.end;
   const mask = edgeFadeMask(edges, stickyFirstColumn);
-  return (
-    <LayerCard className="p-0">
-      {/* Focusable only while it scrolls, so keyboard users can scroll it too. */}
-      <section
-        ref={ref}
-        aria-label={label}
-        tabIndex={scrollable ? 0 : undefined}
-        data-overflow-start={edges.start ? "" : undefined}
-        className={cn(
-          "overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]",
-          "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-brand",
-          stickyFirstColumn && STICKY_FIRST_COLUMN_CLASSES,
-        )}
-        style={mask === undefined ? undefined : { maskImage: mask, WebkitMaskImage: mask }}
-      >
-        <Table className={MIN_WIDTH_CLASSES[minWidth]}>{children}</Table>
-      </section>
-    </LayerCard>
+  const table = (
+    // Focusable only while it scrolls, so keyboard users can scroll it too.
+    <section
+      ref={ref}
+      aria-label={label}
+      tabIndex={scrollable ? 0 : undefined}
+      data-overflow-start={edges.start ? "" : undefined}
+      className={cn(
+        "overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]",
+        "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-brand",
+        stickyFirstColumn && STICKY_FIRST_COLUMN_CLASSES,
+      )}
+      style={mask === undefined ? undefined : { maskImage: mask, WebkitMaskImage: mask }}
+    >
+      <Table className={MIN_WIDTH_CLASSES[minWidth]}>{children}</Table>
+    </section>
   );
+  return card ? <LayerCard className="p-0">{table}</LayerCard> : table;
 }

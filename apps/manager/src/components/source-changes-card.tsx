@@ -1,16 +1,12 @@
 import { Banner, Button, LayerCard, LayerDialog, Link, Text } from "@cloudflare/kumo";
-import {
-  ArrowsClockwiseIcon,
-  GitBranchIcon,
-  MagnifyingGlassIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, GitBranchIcon, MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { type FormEvent, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { checkSourceChanges, startSourceBuild } from "../installs/source-builds.functions";
 import type { SourceChanges } from "../installs/source-builds.server";
 import { DocsLink } from "./docs-link";
 import { useJobStarted } from "./job-started";
+import { ErrorMessageBanner } from "./message-text";
 import { OriginBadge } from "./origin-badge";
 import { SourceBuildCostConfirmation } from "./source-build-fields";
 
@@ -98,9 +94,7 @@ export function SourceChangesCard({
             }
           />
         )}
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
+        {error !== null && <ErrorMessageBanner message={error} newTab />}
         {isAdmin && (
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
@@ -188,9 +182,7 @@ function RebuildDialog({
               disabled={pending}
               what={`${install.name} again`}
             />
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">

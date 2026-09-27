@@ -1,17 +1,12 @@
 import { Banner, Button, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
-import {
-  ArrowCircleUpIcon,
-  ArrowRightIcon,
-  InfoIcon,
-  WarningCircleIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowCircleUpIcon, ArrowRightIcon, InfoIcon, WarningIcon } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { startUpdate } from "../installs/versions.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
 import { CronTriggersField } from "./cron-triggers-field";
 import { useJobStarted } from "./job-started";
+import { ErrorMessageBanner } from "./message-text";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import {
   initialSecretValues,
@@ -90,13 +85,7 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
           ) : undefined
         }
       />
-      {update.error !== null && (
-        <Banner
-          variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
-          title={update.error.message}
-        />
-      )}
+      {update.error !== null && <ErrorMessageBanner message={update.error.message} />}
       {update.dialog}
     </div>
   );
@@ -299,9 +288,7 @@ function UpdateDialog({
                 />
               </div>
             )}
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">

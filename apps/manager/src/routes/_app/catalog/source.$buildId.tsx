@@ -34,8 +34,10 @@ import { DocsLink } from "../../../components/docs-link";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { useJobStarted } from "../../../components/job-started";
+import { ErrorMessageBanner, MessageText } from "../../../components/message-text";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
+import { PageSection } from "../../../components/page-section";
 import { ResponsiveTable } from "../../../components/responsive-table";
 import {
   initialSecretValues,
@@ -43,7 +45,6 @@ import {
   secretsComplete,
   withSecretValue,
 } from "../../../components/secret-fields";
-import { Section } from "../../../components/section";
 import { Timestamp } from "../../../components/timestamp";
 import {
   discardSourceBuild,
@@ -197,7 +198,13 @@ function BuildState({ build, isAdmin }: { build: SourceBuildView; isAdmin: boole
           title="The build failed"
           description={
             <span className="grid gap-2">
-              <span>{build.error ?? "The build did not finish."}</span>
+              <span>
+                {build.error === null ? (
+                  "The build did not finish."
+                ) : (
+                  <MessageText message={build.error} />
+                )}
+              </span>
               <span>
                 Nothing was deployed. Fix what the log names, or choose another branch or build
                 command, and build again. <DocsLink topic="sourceBuildJob" variant="inline" />
@@ -478,7 +485,7 @@ function WhatItDeclares({ review }: { review: SourceBuildReview }) {
   ];
   const { secrets, vars } = review.catalog;
   return (
-    <Section
+    <PageSection
       title="What it declares"
       description="Read from the built Worker, as the install will use it."
     >
@@ -534,7 +541,7 @@ function WhatItDeclares({ review }: { review: SourceBuildReview }) {
           </Table.Body>
         </ResponsiveTable>
       )}
-    </Section>
+    </PageSection>
   );
 }
 
@@ -554,7 +561,7 @@ function Requirements({
       ? null
       : `Available on this account: ${checks.met.map((c) => c.label).join(", ")}.`;
   return (
-    <Section title="Runs on" titleAction={<DocsLink topic="requirements" />}>
+    <PageSection title="Runs on" titleAction={<DocsLink topic="requirements" />}>
       <LayerCard>
         <LayerCard.Primary className="grid gap-4 px-5 py-4">
           <PrimitiveBadges
@@ -609,7 +616,7 @@ function Requirements({
           )}
         </LayerCard.Primary>
       </LayerCard>
-    </Section>
+    </PageSection>
   );
 }
 
@@ -701,9 +708,7 @@ function UpdateFromBuild({
               />
             </div>
           )}
-          {error !== null && (
-            <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-          )}
+          {error !== null && <ErrorMessageBanner message={error} newTab />}
           <div className="flex justify-end">
             <Button
               type="submit"

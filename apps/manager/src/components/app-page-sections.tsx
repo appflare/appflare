@@ -14,7 +14,7 @@ import type { AccountNeed, NeedTone } from "../catalog/account-needs";
 import type { AppLink, SettingItem } from "../catalog/app-page";
 import { maintainerProfile } from "../catalog/authors";
 import type { InstalledRef } from "../catalog/catalog.functions";
-import { Section } from "./section";
+import { PageSection } from "./page-section";
 import { StatusBadge } from "./status-badge";
 import { Tooltip } from "./tooltip";
 
@@ -40,9 +40,9 @@ export function AppSection({
 }) {
   return (
     <div className="border-kumo-hairline border-t pt-6">
-      <Section id={id} title={title} titleAction={titleAction} actions={actions}>
+      <PageSection id={id} title={title} titleAction={titleAction} actions={actions}>
         {children}
-      </Section>
+      </PageSection>
     </div>
   );
 }

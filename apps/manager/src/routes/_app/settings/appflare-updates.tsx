@@ -1,11 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getAutoUpdateSettings } from "../../../auto-update/auto-update.functions";
-import { AutomaticUpdatesCard } from "../../../auto-update/automatic-updates-card";
 import { getManagerUpdate } from "../../../catalog/manager-releases.functions";
-import { AppflareUpdatesCard } from "../../../components/appflare-updates-card";
-import { ManagerVersionsSection } from "../../../components/manager-versions-section";
-import { SETTINGS_CRUMB, SETTINGS_PAGES } from "../../../components/navigation";
-import { PageHeader } from "../../../components/page-header";
+import { SETTINGS_PAGES } from "../../../components/navigation";
+import { AppflareUpdatesSettingsView } from "../../../components/settings-pages";
 import { getManagerVersions } from "../../../jobs/self-update/rollback.functions";
 
 /**
@@ -28,19 +25,7 @@ export const Route = createFileRoute("/_app/settings/appflare-updates")({
 });
 
 function AppflareUpdatesPage() {
-  const { managerUpdate, autoUpdate, versions } = Route.useLoaderData();
+  const data = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
-  const isAdmin = viewer.role === "admin";
-  return (
-    <>
-      <PageHeader
-        title={SETTINGS_PAGES.appflareUpdates.label}
-        description={SETTINGS_PAGES.appflareUpdates.description}
-        parents={[SETTINGS_CRUMB]}
-      />
-      <AppflareUpdatesCard state={managerUpdate} isAdmin={isAdmin} />
-      <AutomaticUpdatesCard settings={autoUpdate} isAdmin={isAdmin} which="manager" />
-      <ManagerVersionsSection state={versions} isAdmin={isAdmin} current={managerUpdate.current} />
-    </>
-  );
+  return <AppflareUpdatesSettingsView {...data} isAdmin={viewer.role === "admin"} />;
 }

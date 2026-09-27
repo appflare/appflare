@@ -2,6 +2,7 @@ import type { FetchLike } from "@appflare/cf-api";
 import { indexArtifactsSchema } from "@appflare/schema";
 import { z } from "zod";
 import { releaseTokenOptions, releaseTokenSecret } from "../github/release-access.server";
+import { GITHUB_ACCESS_PLACE } from "../github/tokens";
 import { pickReleaseNotes } from "../whats-new/release-notes";
 import { storeReleaseNotes } from "../whats-new/release-notes.server";
 import { releaseFetch, releaseFetchAuthenticated } from "./release-fetch";
@@ -190,7 +191,7 @@ export async function refreshManagerReleases(
     await response.body?.cancel();
     const hint =
       response.status === 404 && !authenticated
-        ? " While the repository is private, the feed needs a GitHub access token marked for release downloads (Settings > Account and capabilities > GitHub access) or a GITHUB_TOKEN secret."
+        ? ` While the repository is private, the feed needs a GitHub access token marked for release downloads (in ${GITHUB_ACCESS_PLACE}) or a GITHUB_TOKEN secret.`
         : "";
     throw new ManagerReleasesError(
       `The release feed at ${where} answered HTTP ${response.status}.${hint}`,

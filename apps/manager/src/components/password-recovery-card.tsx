@@ -4,11 +4,10 @@ import {
   Button,
   ClipboardText,
   Input,
-  LayerCard,
   Text,
   useKumoToastManager,
 } from "@cloudflare/kumo";
-import { EnvelopeSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { EnvelopeSimpleIcon, InfoIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import type { RecoveryMethod } from "../auth/recovery.server";
@@ -21,6 +20,9 @@ import {
 } from "../server/recovery.functions";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
+import { ErrorMessageBanner } from "./message-text";
+import { Section, SectionBody, SectionFormActions, SectionRow, SectionRows } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 const METHOD_LABELS: Record<RecoveryMethod, string> = {
@@ -30,36 +32,41 @@ const METHOD_LABELS: Record<RecoveryMethod, string> = {
 };
 
 /**
- * Settings > Users, "Forgotten passwords": how someone who forgot their
- * password gets back in, the last time that happened, and (owner only)
- * turning password reset emails on or off.
+ * The users settings' "Forgotten passwords" section: how someone who forgot
+ * their password gets back in, the last time that happened, and (owner only)
+ * turning password reset emails on or off, as a row of its own.
  */
 export function PasswordRecoveryCard({ settings }: { settings: PasswordRecoverySettings }) {
   const { email, viewerIsOwner, lastRecovery } = settings;
   return (
-    <div className="grid gap-3">
-      <LayerCard className="grid gap-3 p-4">
-        <Text>
-          On the sign-in page, choose "Forgot your password?".{" "}
-          {email.enabled
-            ? "Appflare emails a link to choose a new one. "
-            : "With password reset emails on, Appflare emails a link to choose a new one. "}
-          Without email, the owner resets anyone's from the user's menu above, and admins a
-          member's. Whoever manages this Cloudflare account can get a one-time recovery code for any
-          admin, the owner included, by running this on their computer:{" "}
-          <DocsLink topic="forgotPassword" variant="inline" />
-        </Text>
-        <ClipboardText text={RECOVER_COMMAND} />
-        {lastRecovery !== null && (
-          <Text variant="secondary" size="sm">
-            Last reset without the old password: <Timestamp iso={lastRecovery.at} />,{" "}
-            {lastRecovery.email ?? "a user who was deleted since"}, with{" "}
-            {METHOD_LABELS[lastRecovery.method]}.
+    <Section
+      {...settingsSection("users", "forgotten-passwords")}
+      description="How someone who forgot their password gets back in."
+    >
+      <SectionRows>
+        <SectionBody className="gap-3">
+          <Text>
+            On the sign-in page, choose "Forgot your password?".{" "}
+            {email.enabled
+              ? "Appflare emails a link to choose a new one. "
+              : "With password reset emails on, Appflare emails a link to choose a new one. "}
+            Without email, the owner resets anyone's from the user's menu above, and admins a
+            member's. Whoever manages this Cloudflare account can get a one-time recovery code for
+            any admin, the owner included, by running this on their computer:{" "}
+            <DocsLink topic="forgotPassword" variant="inline" />
           </Text>
-        )}
-      </LayerCard>
-      <PasswordEmailCard status={email} viewerIsOwner={viewerIsOwner} />
-    </div>
+          <ClipboardText text={RECOVER_COMMAND} />
+          {lastRecovery !== null && (
+            <Text variant="secondary" size="sm">
+              Last reset without the old password: <Timestamp iso={lastRecovery.at} />,{" "}
+              {lastRecovery.email ?? "a user who was deleted since"}, with{" "}
+              {METHOD_LABELS[lastRecovery.method]}.
+            </Text>
+          )}
+        </SectionBody>
+        <PasswordEmailCard status={email} viewerIsOwner={viewerIsOwner} />
+      </SectionRows>
+    </Section>
   );
 }
 
@@ -111,22 +118,20 @@ function PasswordEmailCard({
   }
 
   return (
-    <LayerCard className="grid gap-4 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+    <SectionRow
+      id="password-reset-emails"
+      title={
+        <span className="flex flex-wrap items-center gap-2">
           <EnvelopeSimpleIcon size={18} />
-          <Text variant="heading" as="h3">
-            Password reset emails
-          </Text>
+          Password reset emails
           <DocsLink topic="passwordResetEmails" />
-        </div>
-        <Badge variant={status.enabled ? "primary" : "neutral"}>
-          {status.enabled ? "On" : "Off"}
-        </Badge>
-      </div>
-      {error !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-      )}
+          <Badge variant={status.enabled ? "primary" : "neutral"}>
+            {status.enabled ? "On" : "Off"}
+          </Badge>
+        </span>
+      }
+    >
+      {error !== null && <ErrorMessageBanner message={error} />}
       {restarting && (
         <Banner
           variant="secondary"
@@ -178,17 +183,17 @@ function PasswordEmailCard({
             required
             defaultValue={status.sender ?? undefined}
           />
-          <div>
+          <SectionFormActions>
             <Button type="submit" variant="primary" loading={pending === "on"}>
               Turn on
             </Button>
-          </div>
+          </SectionFormActions>
         </form>
       ) : (
         !restarting && (
           <Text variant="secondary">Off. Only the owner can turn on reset emails.</Text>
         )
       )}
-    </LayerCard>
+    </SectionRow>
   );
 }

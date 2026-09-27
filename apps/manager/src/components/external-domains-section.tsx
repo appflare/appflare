@@ -46,8 +46,10 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
 import { HealthBadge } from "./install-health";
+import { ErrorMessageBanner } from "./message-text";
+import { PageSection } from "./page-section";
 import { ResponsiveTable } from "./responsive-table";
-import { Section } from "./section";
+import { settingsLink } from "./settings-links";
 
 /** How often a pending domain is read again while the page is open. */
 const POLL_MS = 10_000;
@@ -79,24 +81,24 @@ export function ExternalDomainsSection({
   // custom hostnames are Enterprise only.
   if (install.wildcard !== null && install.externalDomains.length === 0) {
     return (
-      <Section
+      <PageSection
         title="External domains"
         description="Hostnames in DNS outside this account, such as a customer's domain."
       >
         <Text variant="secondary">{WILDCARD_EXTERNAL_REFUSAL}</Text>
-      </Section>
+      </PageSection>
     );
   }
   return (
-    <Section
+    <PageSection
       title="External domains"
       description="Hostnames in DNS outside this account, such as a customer's domain."
       actions={canAdd ? <AddExternalDomainDialog install={install} /> : undefined}
     >
       {install.externalDomains.length === 0 ? (
         <Text variant="secondary">
-          None yet. An external domain needs the gateway, set up once in{" "}
-          <Link href="/settings/domains">Settings, Domains</Link>.
+          None yet. An external domain needs the gateway, set up once in the{" "}
+          <Link href={settingsLink("domains", "external-domains")}>domains settings</Link>.
         </Text>
       ) : (
         <div className="grid gap-3">
@@ -110,7 +112,7 @@ export function ExternalDomainsSection({
           ))}
         </div>
       )}
-    </Section>
+    </PageSection>
   );
 }
 
@@ -438,7 +440,15 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
                 description={
                   <span>
                     External domains go through a gateway on one domain of this account. Set it up
-                    in <Link href="/settings/domains">Settings, Domains</Link>, then come back.
+                    in the{" "}
+                    <Link
+                      href={settingsLink("domains", "external-domains")}
+                      target="_blank"
+                      rel="noopener"
+                    >
+                      domains settings
+                    </Link>
+                    , then come back.
                   </span>
                 }
               />
@@ -467,13 +477,7 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
                   Visitors reach it through <span className={mono}>{gateway.hostname}</span>.{" "}
                   {EXTERNAL_DOMAIN_COST}
                 </Text>
-                {error !== null && (
-                  <Banner
-                    variant="error"
-                    icon={<WarningCircleIcon weight="fill" />}
-                    title={error}
-                  />
-                )}
+                {error !== null && <ErrorMessageBanner message={error} newTab />}
               </form>
             )}
           </div>

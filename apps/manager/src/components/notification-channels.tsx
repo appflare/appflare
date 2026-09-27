@@ -4,9 +4,7 @@ import {
   Button,
   Checkbox,
   ClipboardText,
-  Empty,
   Input,
-  LayerCard,
   LayerDialog,
   Radio,
   SensitiveInput,
@@ -15,6 +13,7 @@ import {
 import {
   BellSimpleIcon,
   CheckCircleIcon,
+  InfoIcon,
   KeyIcon,
   PaperPlaneTiltIcon,
   PencilSimpleIcon,
@@ -52,6 +51,8 @@ import {
 import { ChannelKindLogo } from "./channel-logos";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
+import { Section, SectionBody, SectionEmpty, SectionRow, SectionRows } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /** What a webhook's signing secret is for, with the docs on checking it. */
@@ -64,10 +65,11 @@ function SigningSecretDescription() {
 }
 
 /**
- * Settings, Notification channels (admins only): the channels, each with
- * its target, events, delivery health, "Send test", edit, and remove; a
- * generic webhook also replaces its signing secret. Credentials are entered
- * here and never shown again.
+ * The notifications settings' Channels section: the channels, one row each
+ * with its target, events, delivery health, "Send test", edit, and remove; a
+ * generic webhook also replaces its signing secret. "Add channel" sits at the
+ * right of the header. Credentials are entered here and never shown again.
+ * Admins only: members (`channels` null) see a note.
  */
 
 const mono = "font-mono text-[0.9em]";
@@ -76,25 +78,43 @@ function errorText(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-/** "Add channel", which the page puts beside its title. */
-export function AddChannelDialog() {
+function AddChannelDialog() {
   return <ChannelDialog mode={{ kind: "add" }} />;
 }
 
-export function NotificationChannels({ channels }: { channels: ChannelView[] }) {
+export function NotificationChannels({ channels }: { channels: ChannelView[] | null }) {
   return (
-    <div className="grid gap-3">
-      <Text variant="secondary">{NOTIFICATION_COPY.privacy}</Text>
-      {channels.length === 0 ? (
-        <Empty
-          icon={<BellSimpleIcon size={48} className="text-kumo-inactive" />}
-          title="No notification channels"
-          description={NOTIFICATION_COPY.empty}
-        />
+    <Section
+      {...settingsSection("notifications", "channels")}
+      description={NOTIFICATION_COPY.privacy}
+      // With no channel yet, the empty state offers it instead.
+      action={channels !== null && channels.length > 0 ? <AddChannelDialog /> : null}
+    >
+      {channels === null ? (
+        <SectionBody>
+          <Banner
+            variant="secondary"
+            icon={<InfoIcon weight="fill" />}
+            title={NOTIFICATION_COPY.membersOnly}
+          />
+        </SectionBody>
+      ) : channels.length === 0 ? (
+        <SectionBody>
+          <SectionEmpty
+            icon={<BellSimpleIcon size={48} className="text-kumo-inactive" />}
+            title="No notification channels"
+            description={NOTIFICATION_COPY.empty}
+            contents={<AddChannelDialog />}
+          />
+        </SectionBody>
       ) : (
-        channels.map((channel) => <ChannelCard key={channel.id} channel={channel} />)
+        <SectionRows>
+          {channels.map((channel) => (
+            <ChannelRow key={channel.id} channel={channel} />
+          ))}
+        </SectionRows>
       )}
-    </div>
+    </Section>
   );
 }
 
@@ -111,7 +131,7 @@ function statusBadge(channel: ChannelView) {
   return <Badge variant="neutral">Nothing sent yet</Badge>;
 }
 
-function ChannelCard({ channel }: { channel: ChannelView }) {
+function ChannelRow({ channel }: { channel: ChannelView }) {
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<TestResult | null>(null);
   const router = useRouter();
@@ -130,20 +150,22 @@ function ChannelCard({ channel }: { channel: ChannelView }) {
 
   const events = channel.events.map((e) => EVENT_LABELS[e]);
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
-        <span className="flex min-w-0 items-center gap-2">
+    <SectionRow
+      id={`channel-${channel.id}`}
+      title={
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
           <ChannelKindLogo kind={channel.kind} size={18} />
-          <span className="flex flex-wrap items-baseline gap-x-2">
-            <span>{channel.label}</span>
-            <Text as="span" variant="secondary" size="sm">
-              {CHANNEL_KIND_LABELS[channel.kind]}, <span className={mono}>{channel.target}</span>
-            </Text>
-          </span>
+          <span>{channel.label}</span>
+          {statusBadge(channel)}
         </span>
-        {statusBadge(channel)}
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+      }
+      description={
+        <>
+          {CHANNEL_KIND_LABELS[channel.kind]}, <span className={mono}>{channel.target}</span>
+        </>
+      }
+    >
+      <div className="grid gap-4">
         <div className="grid gap-1.5">
           <Text bold>Events</Text>
           <Text variant="secondary">
@@ -196,8 +218,8 @@ function ChannelCard({ channel }: { channel: ChannelView }) {
           )}
           <RemoveChannelDialog channel={channel} />
         </div>
-      </LayerCard.Primary>
-    </LayerCard>
+      </div>
+    </SectionRow>
   );
 }
 

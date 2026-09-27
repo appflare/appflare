@@ -20,6 +20,7 @@ import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND } from "../installs/resource-kinds";
 import { wildcardHostnameOf } from "../installs/wildcard-domain-input";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
 import { sandboxBinding } from "../sandbox/binding";
+import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
 import {
   entryBindings,
   entryPlaceholders,
@@ -554,7 +555,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       }
       if (started.sandboxBuild && sandboxBinding(env) === undefined) {
         problems.push(
-          "This app was built in the account's sandbox Worker, and Appflare is not connected to it; connect sandbox builds in Settings to read the stored build.",
+          `This app was built in the account's sandbox Worker, and Appflare is not connected to it; connect sandbox builds in ${ENABLE_SANDBOX_PLACE} to read the stored build.`,
         );
       }
       if (params.emailRouting !== undefined && emailConfig === undefined) {

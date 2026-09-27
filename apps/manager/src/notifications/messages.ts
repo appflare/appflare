@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { settingsLink } from "../components/settings-links";
 import type { NOTIFICATION_EVENTS } from "./schema";
 
 /**
@@ -145,7 +146,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: "Appflare update available",
         lines: [`Appflare ${facts.to} is available. This manager runs ${facts.from}.`],
-        url: managerLink(managerUrl, "/settings/appflare-updates"),
+        url: managerLink(managerUrl, settingsLink("appflareUpdates", "appflare")),
       };
     case "domain_active":
       return {
@@ -167,7 +168,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: "Test message from Appflare",
         lines: ["This channel works. Appflare sends the events you picked for it here."],
-        url: managerLink(managerUrl, "/settings/notifications"),
+        url: managerLink(managerUrl, settingsLink("notifications", "channels")),
       };
   }
 }

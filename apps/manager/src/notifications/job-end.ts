@@ -1,3 +1,4 @@
+import { settingsPlace } from "../components/settings-links";
 import type { JobContext, StepConfig } from "../jobs/run-job";
 import { StepLog } from "../jobs/step-log";
 import { jobEventOf, NOTIFIED_JOB_KINDS } from "./events.server";
@@ -82,7 +83,9 @@ export async function notifyJobEnd(ctx: JobContext): Promise<void> {
           ];
           if (sent.value.retrying > 0) parts.push(`${sent.value.retrying} will be retried.`);
           if (sent.value.failed > 0) {
-            parts.push(`${sent.value.failed} failed; Settings, Notification channels says why.`);
+            parts.push(
+              `${sent.value.failed} failed; ${settingsPlace("notifications", "channels", "the notification settings")} say why.`,
+            );
           }
           log.log(sent.value.failed > 0 ? "warn" : "info", parts.join(" "));
         } else {

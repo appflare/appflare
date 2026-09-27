@@ -30,7 +30,9 @@ describe("settingsPageForAnchor", () => {
     expect(settingsPageForAnchor("#appflare-updates")).toBe("/settings/appflare-updates");
     expect(settingsPageForAnchor("#notifications")).toBe("/settings/notifications");
     expect(settingsPageForAnchor("#usage-data")).toBe("/settings/usage-data");
-    expect(settingsPageForAnchor("#automatic-updates")).toBe("/settings");
+    // Still a section of General: the page scrolls to it.
+    expect(settingsPageForAnchor("#automatic-updates")).toBeNull();
+    expect(settingsPageForAnchor("#danger-zone")).toBeNull();
     expect(settingsPageForAnchor("")).toBeNull();
     expect(settingsPageForAnchor("#other")).toBeNull();
   });

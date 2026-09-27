@@ -1,12 +1,9 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { getAutoUpdateSettings } from "../../../auto-update/auto-update.functions";
-import { AutomaticUpdatesCard } from "../../../auto-update/automatic-updates-card";
-import { SETTINGS_PAGES, settingsPageForAnchor } from "../../../components/navigation";
-import { PageHeader } from "../../../components/page-header";
-import { Section } from "../../../components/section";
+import { settingsPageForAnchor } from "../../../components/navigation";
+import { GeneralSettingsView } from "../../../components/settings-pages";
 import { getDangerZoneState } from "../../../danger/danger.functions";
-import { DangerZone } from "../../../danger/danger-zone";
 
 /**
  * `/settings` (General): whether apps update on their own by default, and
@@ -33,17 +30,5 @@ function GeneralSettingsPage() {
     const page = settingsPageForAnchor(window.location.hash);
     if (page !== null) void router.navigate({ href: page, replace: true });
   }, [router]);
-  return (
-    <>
-      <PageHeader title="Settings" description={SETTINGS_PAGES.general.description} />
-      <Section title="Automatic updates">
-        <AutomaticUpdatesCard
-          settings={autoUpdate}
-          isAdmin={viewer.role === "admin"}
-          which="apps"
-        />
-      </Section>
-      <DangerZone isOwner={viewer.isOwner} state={danger} />
-    </>
-  );
+  return <GeneralSettingsView autoUpdate={autoUpdate} danger={danger} viewer={viewer} />;
 }

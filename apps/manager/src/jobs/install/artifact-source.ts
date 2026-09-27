@@ -49,7 +49,7 @@ import {
   sandboxInfo,
   wranglerConfigInlineRefusal,
 } from "../../sandbox/binding";
-import { UPDATE_SANDBOX_HINT } from "../../sandbox/connect-copy";
+import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../../sandbox/connect-copy";
 import {
   verifyBuiltManifest,
   verifyCatalogManifest,
@@ -364,7 +364,7 @@ async function prebuiltArtifactPhase(
   await steps.run("verify built manifest", async ({ log }) => {
     if (sandboxBinding(env) === undefined) {
       throw new JobError(
-        "this app was built in the account's sandbox Worker, and Appflare is not connected to it any more; enable sandbox builds (Settings, Sandbox builds) and try again",
+        `this app was built in the account's sandbox Worker, and Appflare is not connected to it any more; enable sandbox builds in ${ENABLE_SANDBOX_PLACE} and try again`,
       );
     }
     if (build.version !== target.version) {
@@ -444,7 +444,7 @@ async function buildInSandboxPhase(
     const binding = sandboxBinding(env);
     if (binding === undefined) {
       throw new JobError(
-        "this app is built in the account's sandbox Worker, and Appflare is not connected to one; enable sandbox builds (Settings, Sandbox builds) and try again",
+        `this app is built in the account's sandbox Worker, and Appflare is not connected to one; enable sandbox builds in ${ENABLE_SANDBOX_PLACE} and try again`,
       );
     }
     let info: Awaited<ReturnType<typeof sandboxInfo>>;

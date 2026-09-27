@@ -1,6 +1,6 @@
 import { parseRepositoryInput } from "@appflare/schema";
-import { Banner, Button, Input, LayerDialog, Text } from "@cloudflare/kumo";
-import { GitBranchIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Button, Input, LayerDialog, Text } from "@cloudflare/kumo";
+import { GitBranchIcon } from "@phosphor-icons/react";
 import { type FormEvent, useId, useState } from "react";
 import { GITHUB_ACCESS_PLACE } from "../github/tokens";
 import { NOT_FROM_CATALOG } from "../installs/source-build-input";
@@ -8,6 +8,7 @@ import { startSourceBuild } from "../installs/source-builds.functions";
 import type { SandboxReadiness } from "../sandbox/readiness";
 import { DocsLink } from "./docs-link";
 import { useJobStarted } from "./job-started";
+import { ErrorMessageBanner, MessageText } from "./message-text";
 import { SandboxMissingBanner } from "./sandbox-first";
 import {
   BuildCommandField,
@@ -110,7 +111,12 @@ function RepositoryBuildDialog({
               required
               disabled={pending}
               error={repositoryError ?? undefined}
-              description={`Repositories on github.com. A private one needs a GitHub access token in ${GITHUB_ACCESS_PLACE}.`}
+              description={
+                <MessageText
+                  message={`Repositories on github.com. A private one needs a GitHub access token in ${GITHUB_ACCESS_PLACE}.`}
+                  newTab
+                />
+              }
             />
             <Input
               label="Branch, tag or commit"
@@ -148,9 +154,7 @@ function RepositoryBuildDialog({
               The build log opens once the build starts; its review opens from there when it
               finishes.
             </Text>
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">

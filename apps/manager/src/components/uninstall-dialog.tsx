@@ -15,6 +15,8 @@ import { domainLabel } from "../installs/wildcard-domain-input";
 import { ConfirmDialog } from "./confirm-dialog";
 import { formatBytes, resourceKindLabel } from "./format";
 import { useJobStarted } from "./job-started";
+import { MessageText } from "./message-text";
+import { settingsPlace } from "./settings-links";
 
 function usageText(usage: ResourceUsage | undefined): string | null {
   if (usage?.kvKeys !== undefined) {
@@ -146,9 +148,14 @@ export function UninstallDialog({
         icon={<WarningIcon weight="fill" />}
         title="Deleting data is permanent"
         description={
-          selfDeploying
-            ? "The installer's destroy command deletes the app's databases, buckets and namespaces with everything in them. It runs in a container on Workers Paid, like an install."
-            : "Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare then lists it on this app's page and under Settings, Removed apps, until you delete it or forget the app."
+          selfDeploying ? (
+            "The installer's destroy command deletes the app's databases, buckets and namespaces with everything in them. It runs in a container on Workers Paid, like an install."
+          ) : (
+            <MessageText
+              message={`Ticked resources are deleted with everything in them, including every object in an R2 bucket. Untick a resource to keep it in the account; Appflare then lists it on this app's page and under ${settingsPlace("removedApps", "removed-apps", "Removed apps")}, until you delete it or forget the app.`}
+              newTab
+            />
+          )
         }
       />
       {selfDeploying && install.resources.length > 0 && (

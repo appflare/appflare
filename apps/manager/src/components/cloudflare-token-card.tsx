@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, LayerCard, LayerDialog, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, LayerDialog, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, CheckCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
@@ -6,9 +6,14 @@ import type { TokenStatus } from "../server/token.functions";
 import { CloudflareTokenForm, type SavedToken } from "./cloudflare-token-form";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
+import { Section, SectionBody } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
-/** Settings, "Cloudflare token": what the manager is connected to, and rotation. */
+/**
+ * The account settings' Cloudflare connection: the account and Worker the
+ * manager runs as, the token's state, and (admins) rotating the token.
+ */
 export function CloudflareTokenCard({
   status,
   canRotate,
@@ -17,19 +22,20 @@ export function CloudflareTokenCard({
   canRotate: boolean;
 }) {
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-1">
-          Cloudflare API token
-          <DocsLink topic="tokenPermissions" />
-        </span>
-        {status.hasSecret ? (
+    <Section
+      {...settingsSection("account", "connection")}
+      titleAction={<DocsLink topic="tokenPermissions" />}
+      badge={
+        status.hasSecret ? (
           <Badge variant="success">Active</Badge>
         ) : (
           <Badge variant="warning">Waiting for redeploy</Badge>
-        )}
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+        )
+      }
+      description="The Cloudflare account Appflare manages, and the API token it uses there."
+      action={canRotate ? <RotateTokenDialog /> : null}
+    >
+      <SectionBody>
         <DescriptionList>
           <DescriptionItem label="Account">{status.accountName ?? "Unknown"}</DescriptionItem>
           <DescriptionItem label="Account ID">
@@ -51,13 +57,8 @@ export function CloudflareTokenCard({
               : "The token is saved; the running version does not have it yet."}
           </DescriptionItem>
         </DescriptionList>
-        {canRotate && (
-          <div className="flex justify-end">
-            <RotateTokenDialog />
-          </div>
-        )}
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }
 

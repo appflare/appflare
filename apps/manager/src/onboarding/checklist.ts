@@ -1,6 +1,7 @@
 import { type IndexApp, isServiceId, requirementService, type ServiceId } from "@appflare/schema";
 import { type CapabilitiesView, PLAN_LABELS, unknownSentence } from "../capabilities/capabilities";
 import { dashboardUrl, zeroTrustDashboardUrl } from "../cloudflare/dashboard-links";
+import { settingsLink } from "../components/settings-links";
 import {
   NO_SANDBOX_JOBS,
   SANDBOX_CHECKLIST_ROW_ID,
@@ -564,7 +565,7 @@ export function groupChecklist(rows: readonly ChecklistRow[]): {
 
 /** The account checklist's Analytics Engine row, where a refused install points. */
 export const ANALYTICS_ENGINE_CHECKLIST_LINK: ChecklistLink = {
-  href: "/settings/account#checklist-analytics-engine",
+  href: settingsLink("account", "checklist-analytics-engine"),
   label: "Analytics Engine in the account checklist",
   external: false,
 };

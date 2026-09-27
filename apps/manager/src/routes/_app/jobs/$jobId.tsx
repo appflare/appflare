@@ -13,10 +13,11 @@ import { DescriptionItem, DescriptionList } from "../../../components/descriptio
 import { DocsLink } from "../../../components/docs-link";
 import { formatTime, jobKindLabel } from "../../../components/format";
 import { SendReportButton } from "../../../components/job-report-dialog";
+import { MessageText } from "../../../components/message-text";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { PageHeader } from "../../../components/page-header";
+import { PageSection } from "../../../components/page-section";
 import { ResponsiveTable } from "../../../components/responsive-table";
-import { Section } from "../../../components/section";
 import { SeedCredentialsCard } from "../../../components/seed-credentials-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
@@ -139,7 +140,7 @@ function JobPage() {
           variant="error"
           icon={<WarningCircleIcon weight="fill" />}
           title="The job failed"
-          description={job.error ?? undefined}
+          description={job.error === null ? undefined : <MessageText message={job.error} />}
           action={
             failureTopic === null && !isAdmin ? undefined : (
               <div className="flex flex-wrap items-center gap-3">
@@ -172,7 +173,7 @@ function JobPage() {
         />
       )}
       {job.build !== null && <BuildProgress build={job.build} />}
-      <Section title="Log">
+      <PageSection title="Log">
         {job.logs.length === 0 ? (
           <Text variant="secondary">
             {isActive(job) ? "Waiting for the first step…" : "No log lines were written."}
@@ -193,7 +194,7 @@ function JobPage() {
             </Table.Body>
           </ResponsiveTable>
         )}
-      </Section>
+      </PageSection>
     </>
   );
 }
@@ -257,7 +258,9 @@ function LogRow({ line }: { line: JobLogRow }) {
       </Table.Cell>
       <Table.Cell className="align-top">
         <div className="grid gap-1">
-          <Text>{line.message}</Text>
+          <Text>
+            <MessageText message={line.message} />
+          </Text>
           {line.requests.map((r, i) => (
             // Request lines are not unique (the same call may repeat).
             // biome-ignore lint/suspicious/noArrayIndexKey: display-only list in log order

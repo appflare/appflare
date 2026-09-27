@@ -1,5 +1,6 @@
 import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { SANDBOX_ENTRYPOINT, SANDBOX_WORKER_NAME, type SandboxInfo } from "@appflare/schema";
+import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { MANAGER_SUBDOMAIN } from "../installs/workers-dev";
@@ -218,7 +219,7 @@ export async function changeSandboxBinding(
   const latest = [...versions].sort((a, b) => (b.number ?? 0) - (a.number ?? 0))[0];
   if (latest === undefined || (latest.id !== serving && !isConnectAttempt(latest, serving))) {
     throw fail(
-      `The newest uploaded version of Appflare's Worker (${latest?.id ?? "unknown"}) is not the one serving (${serving}), and ${connect ? "connecting" : "disconnecting"} would deploy it too. If it is a version you want, deploy it from the Worker's Deployments page in the Cloudflare dashboard; otherwise update Appflare in Settings, which uploads and deploys a new version. Then try again.`,
+      `The newest uploaded version of Appflare's Worker (${latest?.id ?? "unknown"}) is not the one serving (${serving}), and ${connect ? "connecting" : "disconnecting"} would deploy it too. If it is a version you want, deploy it from the Worker's Deployments page in the Cloudflare dashboard; otherwise update Appflare in ${settingsPlace("appflareUpdates", "appflare", "the Appflare updates settings")}, which uploads and deploys a new version. Then try again.`,
     );
   }
 

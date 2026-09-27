@@ -110,7 +110,7 @@ describe("connectSandboxCore", () => {
   it("refuses when the account has no sandbox Worker, and changes nothing", async () => {
     const r = await connect({ otherScripts: [] });
     expect(String(r.error)).toMatch(
-      /There is no sandbox Worker .*Settings > Account and capabilities > Sandbox builds/,
+      /There is no sandbox Worker .*\[Sandbox builds settings\]\(\/settings\/account#sandbox\)/,
     );
     expect(r.account.state.versionPatches).toEqual([]);
   });

@@ -32,6 +32,7 @@ import {
 import { recordedCatalog, settingsRunId } from "../jobs/self-deploying/phases";
 import { lastDurableObjectTagOf, updatePath } from "../jobs/update/plan";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
+import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
 import { readAppBaseUrl } from "./app-address.server";
 import { appTokenSecret } from "./app-token-secret";
 import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
@@ -195,7 +196,7 @@ async function settingsContext(
       },
       problem: sandboxConnected
         ? null
-        : "This app is deployed by its own installer in the account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in Settings to change its settings.",
+        : `This app is deployed by its own installer in the account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in ${ENABLE_SANDBOX_PLACE} to change its settings.`,
     };
   }
   const signed = parseManifest(install.manifest_json);
@@ -216,8 +217,7 @@ async function settingsContext(
   const zone = zones.current;
   let problem: string | null = null;
   if (install.build_kind === "sandbox" && !sandboxConnected) {
-    problem =
-      "This app was built in the account's sandbox Worker, which holds its build, and Appflare is not connected to one. Connect sandbox builds in Settings to change its settings.";
+    problem = `This app was built in the account's sandbox Worker, which holds its build, and Appflare is not connected to one. Connect sandbox builds in ${ENABLE_SANDBOX_PLACE} to change its settings.`;
   } else if (path.fullDeploy !== null) {
     problem =
       "The Worker lacks Durable Object migrations its version declares. Update or reinstall the app to change its settings.";

@@ -1,5 +1,7 @@
 import { dashboardUrl } from "../cloudflare/dashboard-links";
 import { COLOR_MODE_SCRIPT, COLOR_MODE_SCRIPT_SHA256 } from "../components/color-mode";
+import { plainMessage } from "../components/message-links";
+import { settingsLink } from "../components/settings-links";
 import type { RemovalStep } from "./removal.server";
 
 /**
@@ -73,8 +75,8 @@ export const PAGE_HEADERS = {
 /** A refused or failed action, with the way back. */
 export function errorPage(title: string, message: string): string {
   return `${head(title)}<h1>${escapeHtml(title)}</h1>
-<p>${escapeHtml(message)}</p>
-<p><a href="/settings">Back to Settings</a></p>
+<p>${escapeHtml(plainMessage(message))}</p>
+<p><a href="${settingsLink("general")}">Back to Settings</a></p>
 ${TAIL}`;
 }
 
@@ -84,7 +86,7 @@ export function rotationPage(result: { rotatedAt: string; channels: number }): s
   const channels =
     result.channels === 0
       ? "<p>No notification channel is set up, so there are no credentials to enter again.</p>"
-      : `<p>The credentials of ${result.channels === 1 ? "your notification channel" : `your ${result.channels} notification channels`} were encrypted with a key derived from the old secret and can no longer be read. Settings, Notifications shows ${result.channels === 1 ? "it" : "them"} as <strong>Credentials unreadable</strong>: edit ${result.channels === 1 ? "it" : "each one"} and enter the bot token or webhook URL again. Until then Appflare sends nothing there.</p>`;
+      : `<p>The credentials of ${result.channels === 1 ? "your notification channel" : `your ${result.channels} notification channels`} were encrypted with a key derived from the old secret and can no longer be read. The <a href="${settingsLink("notifications", "channels")}">notification settings</a> show ${result.channels === 1 ? "it" : "them"} as <strong>Credentials unreadable</strong>: edit ${result.channels === 1 ? "it" : "each one"} and enter the bot token or webhook URL again. Until then Appflare sends nothing there.</p>`;
   return `${head("Auth secret rotated")}<h1>The auth secret was rotated</h1>
 <p class="muted">Rotated on ${escapeHtml(when)}.</p>
 <p>Appflare now runs with a new <code>BETTER_AUTH_SECRET</code>. Everyone is signed out, you included: every session ended, and cookies signed with the old secret no longer work. Passwords and passkeys are unchanged.</p>
@@ -150,7 +152,7 @@ export function removalPageEnd(summary: RemovalSummary): string {
 <h2>The removal stopped</h2>
 <p>What was deleted stays deleted. The manager Worker <code>${worker}</code>, its database and everything after the failed step are still in the account, so Appflare keeps working and jobs can start again.</p>
 ${accessStatus(summary)}
-<p>Fix the cause if the message names one, then run <strong>Remove Appflare from this account</strong> again from <a href="/settings">Settings</a>. Steps that are already done are skipped.</p>
+<p>Fix the cause if the message names one, then run <strong>Remove Appflare from this account</strong> again from the <a href="${settingsLink("general", "danger-zone")}">danger zone</a>. Steps that are already done are skipped.</p>
 </div>
 ${TAIL}`;
   }

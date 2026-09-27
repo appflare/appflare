@@ -16,7 +16,9 @@ import { AccountMenu } from "./account-menu";
 import { AppflareCard, AppflareVersion } from "./appflare-card";
 import { Logo, LogoMark } from "./logo";
 import { isCurrentPage, SETTINGS_PAGE_LIST } from "./navigation";
+import { settingsLink } from "./settings-links";
 import { MOBILE_BREAKPOINT, useIsNarrow, useSidebarRail } from "./sidebar-rail";
+import { useHashTarget } from "./use-hash-target";
 
 interface NavItem {
   href: string;
@@ -30,7 +32,7 @@ const NAV: readonly NavItem[] = [
   { href: "/", label: "Home", icon: HouseIcon, covers: ["/apps"] },
   { href: "/catalog", label: "Catalog", icon: StorefrontIcon },
   { href: "/jobs", label: "Jobs", icon: ListChecksIcon },
-  { href: "/settings", label: "Settings", icon: GearIcon },
+  { href: settingsLink("general"), label: "Settings", icon: GearIcon },
 ];
 
 function isCurrent(pathname: string, item: NavItem): boolean {
@@ -138,7 +140,9 @@ function ShellSidebar({ viewer, pending }: { viewer: Viewer; pending: PendingUpd
               const current = isCurrent(pathname, item);
               const badge = sidebarUpdateBadge(item.href, pending);
               const subPages =
-                item.href === "/settings" && current && !folded ? SETTINGS_PAGE_LIST : [];
+                item.href === settingsLink("general") && current && !folded
+                  ? SETTINGS_PAGE_LIST
+                  : [];
               // Only the innermost current entry is highlighted: a settings
               // page, or Settings itself when no page in the list matches.
               const subActive = subPages.some((page) => isCurrentPage(pathname, page.href, true));
@@ -226,6 +230,7 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [rail, setRail] = useSidebarRail();
+  useHashTarget();
   const narrow = useIsNarrow(MOBILE_BREAKPOINT);
   // The deepest page decides; see `StaticDataRouteOption.width`.
   const wide =

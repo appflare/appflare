@@ -1,10 +1,11 @@
-import { Banner, Button, Collapsible, Input, LayerCard, Text } from "@cloudflare/kumo";
-import { GitBranchIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Button, Collapsible, Input, LayerCard, Text } from "@cloudflare/kumo";
+import { GitBranchIcon } from "@phosphor-icons/react";
 import { type FormEvent, useState } from "react";
 import { startSourceBuild } from "../installs/source-builds.functions";
 import type { SandboxReadiness } from "../sandbox/readiness";
 import { DocsLink } from "./docs-link";
 import { useJobStarted } from "./job-started";
+import { ErrorMessageBanner } from "./message-text";
 import { SandboxMissingBanner } from "./sandbox-first";
 import {
   BuildCommandField,
@@ -119,9 +120,7 @@ export function BuildFromSourceCard({
                   sandboxFirst={sandbox.state === "ready-auto"}
                 />
               )}
-              {error !== null && (
-                <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-              )}
+              {error !== null && <ErrorMessageBanner message={error} newTab />}
               <div className="flex justify-end">
                 <Button
                   type="submit"

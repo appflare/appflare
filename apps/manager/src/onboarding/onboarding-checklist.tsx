@@ -1,9 +1,11 @@
-import { Banner, Button, LayerCard, Link, Text } from "@cloudflare/kumo";
+import { Banner, Button, Link, Text } from "@cloudflare/kumo";
 import { ArrowClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { useJobStarted } from "../components/job-started";
+import { Section, SectionBody } from "../components/section";
+import { settingsSection } from "../components/settings-links";
 import { Timestamp } from "../components/timestamp";
 import { buildCostLine, CONTAINERS_PRICING_URL, estimateBuild } from "../sandbox/cost";
 import { startSandboxJob } from "../server/sandbox.functions";
@@ -12,9 +14,9 @@ import type { ChecklistData } from "./checklist.server";
 import { ChecklistBody, EnablingStatus } from "./checklist-view";
 
 /**
- * The onboarding checklist's two places, the last setup step and Settings ›
- * Account and capabilities, with Re-check and the sandbox row's "Enable now"
- * (admins only). The rows themselves are drawn by `checklist-view.tsx`.
+ * The onboarding checklist's two places, the last setup step and the account
+ * settings, with Re-check and the sandbox row's "Enable now" (admins only).
+ * The rows themselves are drawn by `checklist-view.tsx`.
  */
 
 /**
@@ -77,11 +79,20 @@ function useRecheck(onDone: (data: ChecklistData) => Promise<void> | void) {
   return { checking, error, recheck };
 }
 
-function RecheckButton({ checking, onClick }: { checking: boolean; onClick(): void }) {
+function RecheckButton({
+  checking,
+  onClick,
+  variant = "ghost",
+}: {
+  checking: boolean;
+  onClick(): void;
+  variant?: "ghost" | "secondary";
+}) {
   return (
     <Button
-      variant="ghost"
-      size="sm"
+      variant={variant}
+      // Small beside the wizard's Finish; full size as a section's header action.
+      size={variant === "ghost" ? "sm" : "base"}
       icon={<ArrowClockwiseIcon />}
       loading={checking}
       onClick={onClick}
@@ -135,9 +146,9 @@ export function SetupChecklist({
 }
 
 /**
- * Settings › Account and capabilities: the same checklist as a card.
- * Re-check reloads the page, so every card that reads the same probes shows
- * the new values.
+ * The account settings' onboarding checklist section: the same checklist,
+ * with Re-check (admins) at the right of its header. Re-check reloads the
+ * page, so every section that reads the same probes shows the new values.
  */
 export function OnboardingChecklistCard({
   data,
@@ -149,19 +160,23 @@ export function OnboardingChecklistCard({
   const router = useRouter();
   const { checking, error, recheck } = useRecheck(() => router.invalidate());
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Onboarding checklist</span>
-        {isAdmin && <RecheckButton checking={checking} onClick={() => void recheck()} />}
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid min-w-0 gap-3 px-5 py-4">
+    <Section
+      {...settingsSection("account", "checklist")}
+      description="What this Cloudflare account has that apps rely on."
+      action={
+        isAdmin ? (
+          <RecheckButton checking={checking} onClick={() => void recheck()} variant="secondary" />
+        ) : null
+      }
+      error={error}
+    >
+      <SectionBody className="gap-3">
         <ChecklistBody
           data={data}
           enableNow={isAdmin ? <EnableSandboxNow stayInPlace={false} /> : null}
         />
-        {error !== null && <ErrorBanner message={error} />}
         <CheckedAt iso={data.view.checkedAt} />
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }

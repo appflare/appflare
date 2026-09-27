@@ -20,6 +20,7 @@ import {
   UPDATED_TO_KEY,
 } from "./appflare-card-state";
 import { SendReportButton } from "./job-report-dialog";
+import { MessageText } from "./message-text";
 
 /** Log lines and errors can hold long URLs: wrap anywhere, and show at most four lines. */
 const clamp = "line-clamp-4 [overflow-wrap:anywhere]";
@@ -323,7 +324,11 @@ function CardBody({
               </div>
               <div className={clamp}>
                 <Text size="sm" variant="secondary">
-                  {state.error ?? "The current version keeps serving."}
+                  {state.error === null ? (
+                    "The current version keeps serving."
+                  ) : (
+                    <MessageText message={state.error} />
+                  )}
                 </Text>
               </div>
               {logLink}

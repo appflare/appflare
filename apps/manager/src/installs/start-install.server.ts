@@ -23,7 +23,7 @@ import { OFFICIAL_CATALOG_ID, unsignedTierRefusal } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { checkExternalHostname } from "../gateway/gateway";
+import { checkExternalHostname, GATEWAY_SETUP_PLACE } from "../gateway/gateway";
 import { isGatewayReady, readGateway } from "../gateway/gateway.server";
 import type { InstallJobParams } from "../jobs/install";
 import { revisedCatalogOf, sandboxBuildOf } from "../jobs/install/artifact-source";
@@ -50,6 +50,7 @@ import {
   sandboxEnableClaim,
   sandboxFirstGuardSql,
 } from "../sandbox/auto-enable.server";
+import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
 import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
 import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
@@ -359,7 +360,7 @@ export async function startInstallCore(
   const sandboxFirstNeeded = inSandbox && deps.sandboxConnected !== true;
   if (sandboxFirstNeeded && deps.sandboxAutoEnable === undefined) {
     throw new StartInstallError(
-      `${manifest.catalog.name} ${installer !== null ? "is deployed by its own installer in" : "is built in"} this account's sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in Settings first.`,
+      `${manifest.catalog.name} ${installer !== null ? "is deployed by its own installer in" : "is built in"} this account's sandbox Worker, and Appflare is not connected to one. Set up sandbox builds in ${ENABLE_SANDBOX_PLACE} first.`,
     );
   }
   if (inSandbox && input.buildConfirmed !== true) {
@@ -406,7 +407,7 @@ export async function startInstallCore(
     !isGatewayReady(await readGateway(createDb(deps.db)))
   ) {
     throw new StartInstallError(
-      "External domains need the gateway. Set it up in Settings, Domains, or install without a domain.",
+      `External domains need the gateway. Set it up in ${GATEWAY_SETUP_PLACE}, or install without a domain.`,
     );
   }
   const now = (deps.now ?? (() => new Date()))();

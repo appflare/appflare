@@ -1,13 +1,14 @@
-import { Badge, Banner, Button, LayerCard, LinkButton, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, LinkButton, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   ArrowRightIcon,
   ArrowsClockwiseIcon,
   InfoIcon,
-  WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import type { AutoUpdateSettings } from "../auto-update/auto-update";
+import { AppflareAutomaticUpdates } from "../auto-update/automatic-updates-card";
 import {
   checkManagerUpdates,
   type ManagerUpdateState,
@@ -16,18 +17,24 @@ import {
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { useJobStarted } from "./job-started";
+import { Section, SectionBody, SectionFormActions, SectionRows } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
- * Settings, "Appflare updates": the running version, the newest release the
- * release feed reported, "Check now", and "Update Appflare to <version>"
- * (admins). The update opens a confirmation, then the job's log.
+ * The Appflare section of the Appflare updates page: the running version,
+ * the newest release the release feed reported, and "Update Appflare to
+ * <version>" at the right of the header when there is one (admins; else
+ * "Check now" is there). The update opens a confirmation, then the job's log.
+ * Below, whether Appflare updates itself.
  */
 export function AppflareUpdatesCard({
   state,
+  autoUpdate,
   isAdmin,
 }: {
   state: ManagerUpdateState;
+  autoUpdate: AutoUpdateSettings;
   isAdmin: boolean;
 }) {
   const router = useRouter();
@@ -50,78 +57,89 @@ export function AppflareUpdatesCard({
   }
 
   const { latest } = state;
+  const update =
+    isAdmin && state.updateAvailable && latest !== null && state.activeJobId === null
+      ? latest
+      : null;
+  const checkNow = isAdmin ? (
+    <Button variant="secondary" icon={<ArrowsClockwiseIcon />} loading={checking} onClick={onCheck}>
+      Check now
+    </Button>
+  ) : null;
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Appflare</span>
-        {state.activeJobId !== null ? (
+    <Section
+      {...settingsSection("appflareUpdates", "appflare")}
+      badge={
+        state.activeJobId !== null ? (
           <Badge variant="info">Updating</Badge>
         ) : state.updateAvailable ? (
           <Badge variant="warning">Update available</Badge>
         ) : latest !== null ? (
           <Badge variant="success">Up to date</Badge>
-        ) : null}
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
-        <DescriptionList>
-          <DescriptionItem label="Running version">
-            <Text variant="mono" as="span">
-              {state.current}
-            </Text>
-          </DescriptionItem>
-          <DescriptionItem label="Latest release">
-            {latest === null ? (
-              "None found yet"
-            ) : (
-              <>
-                <Text variant="mono" as="span">
-                  {latest.version}
-                </Text>
-                {latest.publishedAt !== null && (
-                  <Text variant="secondary" as="span">
-                    {" "}
-                    published <Timestamp iso={latest.publishedAt} />
+        ) : null
+      }
+      description="The version of Appflare running here, its newest release, and whether it updates itself."
+      action={
+        update !== null ? (
+          <SelfUpdateDialog from={state.current} version={update.version} />
+        ) : (
+          checkNow
+        )
+      }
+      error={error}
+    >
+      <SectionRows>
+        <SectionBody>
+          <DescriptionList>
+            <DescriptionItem label="Running version">
+              <Text variant="mono" as="span">
+                {state.current}
+              </Text>
+            </DescriptionItem>
+            <DescriptionItem label="Latest release">
+              {latest === null ? (
+                "None found yet"
+              ) : (
+                <>
+                  <Text variant="mono" as="span">
+                    {latest.version}
                   </Text>
-                )}
-              </>
-            )}
-          </DescriptionItem>
-          <DescriptionItem label="Last checked">
-            <Timestamp iso={state.checkedAt} />
-          </DescriptionItem>
-        </DescriptionList>
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-        {notice !== null && (
-          <Banner variant="secondary" icon={<InfoIcon weight="fill" />} title={notice} />
-        )}
-        <div className="flex flex-wrap justify-end gap-2">
-          {state.activeJobId !== null && (
-            <LinkButton
-              href={`/jobs/${state.activeJobId}`}
-              variant="secondary"
-              icon={<ArrowRightIcon />}
-            >
-              View update log
-            </LinkButton>
+                  {latest.publishedAt !== null && (
+                    <Text variant="secondary" as="span">
+                      {" "}
+                      published <Timestamp iso={latest.publishedAt} />
+                    </Text>
+                  )}
+                </>
+              )}
+            </DescriptionItem>
+            <DescriptionItem label="Last checked">
+              <Timestamp iso={state.checkedAt} />
+            </DescriptionItem>
+          </DescriptionList>
+          {notice !== null && (
+            <Banner variant="secondary" icon={<InfoIcon weight="fill" />} title={notice} />
           )}
-          {isAdmin && (
-            <Button
-              variant="secondary"
-              icon={<ArrowsClockwiseIcon />}
-              loading={checking}
-              onClick={onCheck}
-            >
-              Check now
-            </Button>
+          {(state.activeJobId !== null || update !== null) && (
+            <SectionFormActions>
+              {state.activeJobId !== null && (
+                <LinkButton
+                  href={`/jobs/${state.activeJobId}`}
+                  variant="secondary"
+                  icon={<ArrowRightIcon />}
+                >
+                  View update log
+                </LinkButton>
+              )}
+              {update !== null && checkNow}
+            </SectionFormActions>
           )}
-          {isAdmin && state.updateAvailable && latest !== null && state.activeJobId === null && (
-            <SelfUpdateDialog from={state.current} version={latest.version} />
-          )}
-        </div>
-      </LayerCard.Primary>
-    </LayerCard>
+        </SectionBody>
+        <SectionBody>
+          <AppflareAutomaticUpdates settings={autoUpdate} isAdmin={isAdmin} />
+        </SectionBody>
+      </SectionRows>
+    </Section>
   );
 }
 

@@ -7,7 +7,7 @@ import {
   isSeedOnly,
 } from "@appflare/schema";
 import { Banner, Button, Input, InputGroup, LayerCard, Link, Text } from "@cloudflare/kumo";
-import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { DownloadSimpleIcon, InfoIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useState } from "react";
 import type { AccountPlan } from "../account/plan";
 import { appTokenSecret } from "../installs/app-token-secret";
@@ -34,6 +34,7 @@ import { EmailRoutingFields } from "./email-routing-fields";
 import { TechnicalNamesProvider, TechnicalNamesSwitch } from "./field-label";
 import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
+import { ErrorMessageBanner } from "./message-text";
 import { placeholderOptions } from "./placeholder-chips";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import {
@@ -521,9 +522,7 @@ export function InstallForm({
             </fieldset>
           </TechnicalNamesProvider>
 
-          {error !== null && (
-            <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-          )}
+          {error !== null && <ErrorMessageBanner message={error} newTab />}
           <div className="flex justify-end">
             <Button
               type="submit"

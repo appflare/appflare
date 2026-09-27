@@ -3,7 +3,6 @@ import {
   Banner,
   Button,
   Checkbox,
-  LayerCard,
   LayerDialog,
   LinkButton,
   Loader,
@@ -32,6 +31,8 @@ import {
 } from "../server/access.functions";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
+import { Section, SectionBody } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 import { useAccountId } from "./use-account-id";
 
@@ -39,10 +40,11 @@ import { useAccountId } from "./use-account-id";
 const ZERO_TRUST_DASHBOARD_PATH = "home";
 
 /**
- * Settings → Cloudflare Access: whether the manager sits behind Cloudflare
- * Access, and (admins) turning that on or off and re-syncing the allow policy
- * with the current admins. Adding an admin in Users updates the policy by
- * itself; "Re-sync admins" covers changes made anywhere else.
+ * The users settings' Cloudflare Access section: whether the manager sits
+ * behind Cloudflare Access, and (admins) turning that on (the header's
+ * action) or off and re-syncing the allow policy with the current admins.
+ * Adding an admin in Users updates the policy by itself; "Re-sync admins"
+ * covers changes made anywhere else.
  */
 export function AccessCard({
   status,
@@ -54,16 +56,15 @@ export function AccessCard({
   viewerEmail: string;
 }) {
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Protect with Cloudflare Access</span>
-        {status.enabled ? (
-          <Badge variant="success">On</Badge>
-        ) : (
-          <Badge variant="neutral">Off</Badge>
-        )}
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+    <Section
+      {...settingsSection("users", "access")}
+      badge={
+        status.enabled ? <Badge variant="success">On</Badge> : <Badge variant="neutral">Off</Badge>
+      }
+      description="Protect this manager with Cloudflare Access, in front of its sign-in page."
+      action={!status.enabled && isAdmin ? <TurnOnDialog viewerEmail={viewerEmail} /> : null}
+    >
+      <SectionBody>
         {status.enabled ? (
           <EnabledDetails status={status} isAdmin={isAdmin} />
         ) : (
@@ -74,19 +75,15 @@ export function AccessCard({
               token on every request and refuses the rest. The health check at /api/health stays
               open.
             </Text>
-            {isAdmin ? (
-              <div className="flex justify-end">
-                <TurnOnDialog viewerEmail={viewerEmail} />
-              </div>
-            ) : (
+            {!isAdmin && (
               <Text variant="secondary" size="sm">
                 Only admins can turn this on.
               </Text>
             )}
           </>
         )}
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }
 

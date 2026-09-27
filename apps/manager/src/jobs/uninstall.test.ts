@@ -275,7 +275,7 @@ async function uninstall(
   return execute(jobId, params, fake, units);
 }
 
-/** Starts deleting what install `i1` kept (Settings, Removed apps), then runs the job. */
+/** Starts deleting what install `i1` kept (the removed apps settings), then runs the job. */
 async function deleteRetained(
   fake: ReturnType<typeof fakeWorld>,
   units: "self" | "local" = "self",

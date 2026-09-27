@@ -1,5 +1,5 @@
 import { SANDBOX_BUCKET_NAME } from "@appflare/schema";
-import { Badge, Banner, Button, LayerCard, Link, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Link, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   CheckCircleIcon,
@@ -26,14 +26,17 @@ import { DocsLink } from "./docs-link";
 import { jobKindLabel } from "./format";
 import { SendReportButton } from "./job-report-dialog";
 import { useJobStarted } from "./job-started";
+import { ErrorMessageBanner, MessageText } from "./message-text";
+import { Section, SectionBody } from "./section";
+import { settingsSection } from "./settings-links";
 
 /** The sandbox Worker's name, typed to confirm disabling. */
 const SANDBOX_WORKER = "appflare-sandbox";
 
 /**
- * Settings, Sandbox builds: whether this manager can install apps that have
- * no prebuilt release (the `sandbox` tier), which the account's sandbox
- * Worker builds on Workers Paid.
+ * The account settings' sandbox builds section: whether this manager can
+ * install apps that have no prebuilt release (the `sandbox` tier), which the
+ * account's sandbox Worker builds on Workers Paid.
  *
  * - Off, on an account where Workers Paid is detected: "Enable sandbox
  *   builds" asks for confirmation (what it creates, and what builds cost),
@@ -59,20 +62,13 @@ export function SandboxCard({
   isAdmin: boolean;
 }) {
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-1">
-          Sandbox builds
-          <DocsLink topic="sandboxBuilds" />
-        </span>
-        <StateBadge status={status} />
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
-        <Text variant="secondary">
-          Some catalog apps have no prebuilt release. Appflare can build them from their pinned
-          commit in a container in your own account, with the optional sandbox Worker. Builds need
-          Workers Paid and are not signed.
-        </Text>
+    <Section
+      {...settingsSection("account", "sandbox")}
+      titleAction={<DocsLink topic="sandboxBuilds" />}
+      badge={<StateBadge status={status} />}
+      description="Some catalog apps have no prebuilt release. Appflare can build them from their pinned commit in a container in your own account, with the optional sandbox Worker. Builds need Workers Paid and are not signed."
+    >
+      <SectionBody>
         {status.activeJob !== null && <RunningJob job={status.activeJob} />}
         {status.activeJob === null && status.lastFailure !== null && (
           <LastFailure failure={status.lastFailure} isAdmin={isAdmin} />
@@ -82,8 +78,8 @@ export function SandboxCard({
         ) : (
           <NotConnected status={status} capabilities={capabilities} isAdmin={isAdmin} />
         )}
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }
 
@@ -124,7 +120,9 @@ function LastFailure({
       title={`${jobKindLabel(failure)} failed`}
       description={
         <span className="grid gap-1">
-          <span className="break-words">{failure.message}</span>
+          <span className="break-words">
+            <MessageText message={failure.message} />
+          </span>
           <span>
             See <Link href={`/jobs/${failure.id}`}>its job log</Link> for what happened.
           </span>
@@ -285,9 +283,7 @@ function ActionButton({
       >
         {label}
       </Button>
-      {error !== null && (
-        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-      )}
+      {error !== null && <ErrorMessageBanner message={error} />}
     </div>
   );
 }
@@ -301,7 +297,9 @@ function Connected({ status, isAdmin }: { status: SandboxCardState; isAdmin: boo
           variant="error"
           icon={<WarningCircleIcon weight="fill" />}
           title="The sandbox Worker does not answer as expected"
-          description={status.problem ?? undefined}
+          description={
+            status.problem === null ? undefined : <MessageText message={status.problem} />
+          }
         />
       ) : (
         <DescriptionList>

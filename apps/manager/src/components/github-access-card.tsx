@@ -3,9 +3,7 @@ import {
   Banner,
   Button,
   Checkbox,
-  Empty,
   Input,
-  LayerCard,
   LayerDialog,
   Link,
   Loader,
@@ -20,7 +18,7 @@ import {
   TrashIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
-import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from "react";
 import { addGithubTokenInput, type GithubTokenView, newTokenUrl } from "../github/tokens";
 import {
   addGithubToken,
@@ -31,16 +29,18 @@ import {
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
-import { ResponsiveTable } from "./responsive-table";
+import { ErrorMessageBanner, MessageText } from "./message-text";
+import { Section, SectionBody, SectionEmpty, SectionTable } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
- * Settings, GitHub access: fine-grained, read-only GitHub tokens for
- * installing from private repositories (and, while Appflare's own releases
- * are private, reading them). Each token is stored as a secret on the
- * sandbox Worker and never shown again; the list shows its label, the
- * repositories the admin says it covers, and when it was last used. The card
- * loads its own data, so the page only places it.
+ * The account settings' GitHub access section: fine-grained, read-only
+ * GitHub tokens for installing from private repositories (and, while
+ * Appflare's own releases are private, reading them). Each token is stored
+ * as a secret on the sandbox Worker and never shown again; the list shows
+ * its label, the repositories the admin says it covers, and when it was
+ * last used. The section loads its own data, so the page only places it.
  */
 export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
   // undefined: loading; null: the server says this user is not an admin.
@@ -64,65 +64,64 @@ export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
   const state = access ?? null;
   const canAdd = state?.sandboxConnected === true && state.sandboxSupportsTokens === true;
 
+  const addToken =
+    state !== null && canAdd ? (
+      <AddTokenDialog hasReleaseToken={state.tokens.some((t) => t.forReleases)} onAdded={load} />
+    ) : null;
+  const hasTokens = state !== null && state.tokens.length > 0;
+  const notice = state === null ? null : accessNotice(state);
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-1">
-          GitHub access
-          <DocsLink topic="githubAccess" />
-        </span>
-        {state !== null && (
-          <Badge variant={state.tokens.length > 0 ? "primary" : "neutral"}>
+    <Section
+      {...settingsSection("account", "github-access")}
+      titleAction={<DocsLink topic="githubAccess" />}
+      badge={
+        state !== null && (
+          <Badge variant={hasTokens ? "primary" : "neutral"}>
             {state.tokens.length === 1 ? "1 token" : `${state.tokens.length} tokens`}
           </Badge>
-        )}
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <Text variant="secondary">
-            Install from private GitHub repositories with fine-grained, read-only tokens. Each token
-            is kept as a secret on the sandbox Worker and is never shown again.
-          </Text>
-          {state !== null && canAdd && (
-            <AddTokenDialog
-              hasReleaseToken={state.tokens.some((t) => t.forReleases)}
-              onAdded={load}
-            />
-          )}
-        </div>
-        {loadError !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={loadError} />
-        )}
-        {state === null && loadError === null && (
+        )
+      }
+      description="Install from private GitHub repositories with fine-grained, read-only tokens. Each token is kept as a secret on the sandbox Worker and is never shown again."
+      // With no token yet, the empty state offers it instead.
+      action={hasTokens ? addToken : null}
+      error={loadError}
+    >
+      {state === null && loadError === null && (
+        <SectionBody>
           <div className="flex items-center gap-2">
             <Loader size="sm" />
             <Text variant="secondary">Loading the tokens…</Text>
           </div>
-        )}
-        {state !== null && <Notice state={state} />}
-        {state !== null && state.tokens.length > 0 && (
-          <TokenTable tokens={state.tokens} onChanged={load} />
-        )}
-        {state !== null && state.tokens.length === 0 && state.sandboxConnected && (
-          <Empty
+        </SectionBody>
+      )}
+      {notice !== null && <SectionBody>{notice}</SectionBody>}
+      {state !== null && hasTokens && <TokenTable tokens={state.tokens} onChanged={load} />}
+      {state !== null && !hasTokens && state.sandboxConnected && (
+        <SectionBody>
+          <SectionEmpty
             icon={<GithubLogoIcon size={48} className="text-kumo-inactive" />}
             title="No GitHub access tokens"
             description="Public repositories need none. Add a token to install from a private one."
+            contents={addToken ?? undefined}
           />
-        )}
-      </LayerCard.Primary>
-    </LayerCard>
+        </SectionBody>
+      )}
+    </Section>
   );
 }
 
-/** Why tokens cannot be added right now, when that is so. */
-function Notice({ state }: { state: GithubAccessState }) {
+/** Why tokens cannot be added right now, when that is so; null when they can. */
+function accessNotice(state: GithubAccessState): ReactNode {
   if (!state.sandboxConnected) {
     return (
       <Banner
         variant="secondary"
         title="Sandbox builds are off"
-        description={`Tokens are kept on the sandbox Worker, which also clones the repositories. Enable sandbox builds in ${ENABLE_SANDBOX_PLACE} to add one. Disabling sandbox builds removes every token.`}
+        description={
+          <MessageText
+            message={`Tokens are kept on the sandbox Worker, which also clones the repositories. Enable sandbox builds in ${ENABLE_SANDBOX_PLACE} to add one. Disabling sandbox builds removes every token.`}
+          />
+        }
       />
     );
   }
@@ -132,7 +131,7 @@ function Notice({ state }: { state: GithubAccessState }) {
         variant="alert"
         icon={<WarningCircleIcon weight="fill" />}
         title="The sandbox Worker cannot use tokens yet"
-        description={`To update it, ${UPDATE_SANDBOX_HINT}.`}
+        description={<MessageText message={`To update it, ${UPDATE_SANDBOX_HINT}.`} />}
       />
     );
   }
@@ -157,7 +156,7 @@ function TokenTable({
   onChanged: () => Promise<void>;
 }) {
   return (
-    <ResponsiveTable label="GitHub tokens" stickyFirstColumn>
+    <SectionTable label="GitHub tokens" stickyFirstColumn>
       <Table.Header>
         <Table.Row>
           <Table.Head>Label</Table.Head>
@@ -191,7 +190,7 @@ function TokenTable({
           </Table.Row>
         ))}
       </Table.Body>
-    </ResponsiveTable>
+    </SectionTable>
   );
 }
 
@@ -314,9 +313,7 @@ function AddTokenDialog({
                   : "Use for Appflare release downloads"
               }
             />
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">

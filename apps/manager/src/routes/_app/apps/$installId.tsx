@@ -31,10 +31,10 @@ import { Markdown } from "../../../components/markdown";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
+import { PageSection } from "../../../components/page-section";
 import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
 import { RenameInstallDialog } from "../../../components/rename-install-dialog";
 import { ResponsiveTable } from "../../../components/responsive-table";
-import { Section } from "../../../components/section";
 import { SourceChangesCard } from "../../../components/source-changes-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
@@ -187,7 +187,7 @@ function OverviewTab({ install, isAdmin }: { install: InstallDetail; isAdmin: bo
       <Details install={install} isAdmin={isAdmin} />
       {!gone && <SourceChangesCard install={install} isAdmin={isAdmin} />}
       {!gone && install.postInstall.length > 0 && (
-        <Section title="Next steps">
+        <PageSection title="Next steps">
           <LayerCard>
             <LayerCard.Primary className="grid gap-4 px-5 py-4">
               {install.postInstall.map((content) => (
@@ -195,7 +195,7 @@ function OverviewTab({ install, isAdmin }: { install: InstallDetail; isAdmin: bo
               ))}
             </LayerCard.Primary>
           </LayerCard>
-        </Section>
+        </PageSection>
       )}
       {!gone && install.build.kind === "self-deploying" && (
         <AppCredentialsCard
@@ -231,7 +231,7 @@ function SettingsTab({
           isAdmin={isAdmin}
         />
       ) : (
-        <Section title="Secrets">
+        <PageSection title="Secrets">
           {install.secretNames.length === 0 ? (
             <Text variant="secondary">No secrets are set.</Text>
           ) : (
@@ -248,18 +248,18 @@ function SettingsTab({
               </Text>
             </div>
           )}
-        </Section>
+        </PageSection>
       )}
       {install.origin === "catalog" ? (
         <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />
       ) : (
-        <Section title="Automatic updates">
+        <PageSection title="Automatic updates">
           <Text variant="secondary">
             {install.origin === "repository"
               ? "Never: this app is not from the catalog. Check for changes on the Overview tab, then rebuild and review the update."
               : "Never: this app was built from source at a commit you chose. Update it from the catalog, or rebuild it from the Overview tab."}
           </Text>
-        </Section>
+        </PageSection>
       )}
     </>
   );
@@ -269,14 +269,14 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
   return (
     <>
       {isAdmin && install.build.kind !== "self-deploying" && (
-        <Section title="workers.dev URL">
+        <PageSection title="workers.dev URL">
           <WorkersDevSwitch install={install} />
-        </Section>
+        </PageSection>
       )}
       {isAdmin ? (
         <CustomDomainsSection install={install} />
       ) : (
-        <Section
+        <PageSection
           title={install.wildcard === null ? "Custom domains" : "Wildcard domain"}
           titleAction={<DocsLink topic="customDomains" />}
         >
@@ -285,10 +285,10 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
           ) : (
             <DomainNameList domains={install.domains} />
           )}
-        </Section>
+        </PageSection>
       )}
       <ExternalDomainsSection install={install} isAdmin={isAdmin} />
-      <Section title="Email">
+      <PageSection title="Email">
         {install.emailRoutes.length === 0 ? (
           <Text variant="secondary">This app does not receive email through Email Routing.</Text>
         ) : (
@@ -307,7 +307,7 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
             </LayerCard.Primary>
           </LayerCard>
         )}
-      </Section>
+      </PageSection>
     </>
   );
 }
@@ -317,21 +317,21 @@ function ResourcesTab({ install }: { install: InstallDetail }) {
   return (
     <>
       {install.retained.length > 0 && (
-        <Section
+        <PageSection
           title="Kept in the account"
           description="These were kept when the app was uninstalled. Appflare no longer uses them. When you no longer need the data, an admin can delete them from the danger zone on the Overview tab, or you can delete them in the Cloudflare dashboard."
         >
           <ResourceTable rows={install.retained} />
-        </Section>
+        </PageSection>
       )}
       {!gone && (
-        <Section title="Resources" description="What the install created in this account.">
+        <PageSection title="Resources" description="What the install created in this account.">
           {install.resources.length === 0 ? (
             <Text variant="secondary">No resources have been created yet.</Text>
           ) : (
             <ResourceTable rows={install.resources} />
           )}
-        </Section>
+        </PageSection>
       )}
       {gone && install.retained.length === 0 && (
         <Text variant="secondary">
@@ -356,7 +356,7 @@ function JobsTab({
       {install.status !== "uninstalled" && (
         <VersionsSection install={install} snapshots={snapshots} isAdmin={isAdmin} />
       )}
-      <Section title="Job history">
+      <PageSection title="Job history">
         <ResponsiveTable label="Job history" stickyFirstColumn>
           <Table.Header>
             <Table.Row>
@@ -387,7 +387,7 @@ function JobsTab({
             ))}
           </Table.Body>
         </ResponsiveTable>
-      </Section>
+      </PageSection>
     </>
   );
 }
@@ -426,7 +426,7 @@ function DangerZone({ install }: { install: InstallDetail }) {
   const selfDeploying = install.build.kind === "self-deploying";
   const busy = install.activeJobId !== null;
   return (
-    <Section title="Danger zone">
+    <PageSection title="Danger zone">
       <LayerCard>
         <LayerCard.Primary className="grid gap-4 px-5 py-4">
           {install.uninstall === "start" && (
@@ -464,7 +464,7 @@ function DangerZone({ install }: { install: InstallDetail }) {
           )}
         </LayerCard.Primary>
       </LayerCard>
-    </Section>
+    </PageSection>
   );
 }
 

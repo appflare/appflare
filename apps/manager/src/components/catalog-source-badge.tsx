@@ -14,7 +14,7 @@ export function CatalogSourceBadge({ source }: { source: CatalogSource }) {
       content={
         source.official
           ? "From the official Appflare catalog, verified with the keys built into Appflare."
-          : `From ${source.label}, a catalog an admin added. Its releases are verified with the key pinned for it in Settings, Catalogs.`
+          : `From ${source.label}, a catalog an admin added. Its releases are verified with the key pinned for it in the catalog settings.`
       }
     >
       <Badge variant={source.colour} icon={<BookOpenIcon aria-hidden />}>

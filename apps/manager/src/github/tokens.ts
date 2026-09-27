@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { settingsPlace } from "../components/settings-links";
 
 /**
  * GitHub access tokens, the client-safe part: what the "Add token" form
@@ -35,8 +36,8 @@ export interface GithubTokenView {
   lastUsedAt: string | null;
 }
 
-/** Where the GitHub access tokens are listed and added in the manager. */
-export const GITHUB_ACCESS_PLACE = "Settings > Account and capabilities > GitHub access";
+/** Where the GitHub access tokens are listed and added in the manager, as a link inside a message. */
+export const GITHUB_ACCESS_PLACE = settingsPlace("account", "github-access");
 
 /** GitHub's page for a new fine-grained personal access token. */
 export const NEW_FINE_GRAINED_TOKEN_URL = "https://github.com/settings/personal-access-tokens/new";

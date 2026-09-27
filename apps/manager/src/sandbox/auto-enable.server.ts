@@ -2,6 +2,7 @@ import type { CloudflareClient } from "@appflare/cf-api";
 import { probeContainers, probeR2 } from "@appflare/cf-api/capabilities";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { AccountPlan } from "../account/plan";
+import { messageLink } from "../components/message-links";
 import { NO_REMOVAL_IN_PROGRESS_SQL } from "../danger/removal-flag";
 import { createDb } from "../db/client";
 import { jobs } from "../db/schema";
@@ -44,7 +45,7 @@ export class SandboxAutoEnableError extends Error {
 }
 
 /** Where a refusal sends the admin. */
-export const SANDBOX_CHECKLIST_POINTER = `See Sandbox builds in the account checklist: ${SANDBOX_CHECKLIST_HREF}`;
+export const SANDBOX_CHECKLIST_POINTER = `See ${messageLink("Sandbox builds in the account checklist", SANDBOX_CHECKLIST_HREF)}.`;
 
 const BUSY =
   "Sandbox builds are off, and Appflare turns them on first only while no other job is queued or running. Wait for it to finish, then try again.";

@@ -3,7 +3,6 @@ import {
   Banner,
   Button,
   InlineCopyText,
-  LayerCard,
   LinkButton,
   Loader,
   Select,
@@ -34,13 +33,15 @@ import type { GatewayView } from "../gateway/gateway.server";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
+import { Section, SectionBody } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 import { useAccountId } from "./use-account-id";
 
 const mono = "font-mono text-[0.9em]";
 
 /**
- * Settings > Domains > External domains: the gateway zone, chosen once per
+ * The domains settings' external domains section: the gateway zone, chosen once per
  * account. Before it exists: pick one of the account's zones, see whether
  * Cloudflare for SaaS is on for it and whether the token may use it (and
  * what to do when not), and set it up. Afterwards: where external domains
@@ -53,41 +54,53 @@ export function GatewayCard({
   view: GatewayView | { error: string };
   isAdmin: boolean;
 }) {
-  if ("error" in view) {
-    return <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={view.error} />;
-  }
-  const gateway = view.gateway;
+  const gateway = "error" in view ? null : view.gateway;
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-1">
-          Gateway for external domains
-          <DocsLink topic="gateway" />
-        </span>
-        {gateway === null ? (
+    <Section
+      {...settingsSection("domains", "external-domains")}
+      titleAction={<DocsLink topic="gateway" />}
+      badge={
+        "error" in view ? null : gateway === null ? (
           <Badge variant="neutral">Not set up</Badge>
         ) : gateway.ready && gateway.check.kind === "ready" ? (
           <Badge variant="success">Ready</Badge>
         ) : (
           <Badge variant="warning">Needs attention</Badge>
-        )}
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
-        <Text variant="secondary">
-          An external domain is a hostname in DNS you do not manage in this Cloudflare account, such
-          as a customer's or a domain at another registrar. The gateway runs on one domain of this
-          account, which keeps serving its own sites as before.
-        </Text>
-        {gateway === null ? (
-          <ChooseZone zones={view.zones} isAdmin={isAdmin} />
-        ) : (
-          <GatewayDetails gateway={gateway} isAdmin={isAdmin} />
-        )}
-        <Text variant="secondary" size="sm">
-          {EXTERNAL_DOMAIN_COST}
-        </Text>
-      </LayerCard.Primary>
-    </LayerCard>
+        )
+      }
+      description="The gateway that serves apps on hostnames in other people's DNS, set up once on one of your domains."
+      error={"error" in view ? view.error : null}
+    >
+      {!("error" in view) && <GatewayBody view={view} gateway={gateway} isAdmin={isAdmin} />}
+    </Section>
+  );
+}
+
+function GatewayBody({
+  view,
+  gateway,
+  isAdmin,
+}: {
+  view: GatewayView;
+  gateway: GatewayView["gateway"];
+  isAdmin: boolean;
+}) {
+  return (
+    <SectionBody>
+      <Text variant="secondary">
+        An external domain is a hostname in DNS you do not manage in this Cloudflare account, such
+        as a customer's or a domain at another registrar. The gateway runs on one domain of this
+        account, which keeps serving its own sites as before.
+      </Text>
+      {gateway === null ? (
+        <ChooseZone zones={view.zones} isAdmin={isAdmin} />
+      ) : (
+        <GatewayDetails gateway={gateway} isAdmin={isAdmin} />
+      )}
+      <Text variant="secondary" size="sm">
+        {EXTERNAL_DOMAIN_COST}
+      </Text>
+    </SectionBody>
   );
 }
 

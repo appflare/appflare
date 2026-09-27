@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { listCatalogs } from "../../../catalog/catalogs.functions";
-import { AddCatalogDialog, CatalogsList } from "../../../components/catalogs-settings";
-import { SETTINGS_CRUMB, SETTINGS_PAGES } from "../../../components/navigation";
-import { PageHeader } from "../../../components/page-header";
+import { SETTINGS_PAGES } from "../../../components/navigation";
+import { CatalogsSettingsView } from "../../../components/settings-pages";
 
 /**
  * `/settings/catalogs`: the catalogs apps come from. Admins add, edit,
@@ -17,20 +16,5 @@ export const Route = createFileRoute("/_app/settings/catalogs")({
 function CatalogsPage() {
   const catalogs = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
-  const isAdmin = viewer.role === "admin";
-  return (
-    <>
-      <PageHeader
-        title={SETTINGS_PAGES.catalogs.label}
-        description={SETTINGS_PAGES.catalogs.description}
-        parents={[SETTINGS_CRUMB]}
-        actions={
-          isAdmin ? (
-            <AddCatalogDialog customCount={catalogs.filter((c) => !c.official).length} />
-          ) : undefined
-        }
-      />
-      <CatalogsList catalogs={catalogs} isAdmin={isAdmin} />
-    </>
-  );
+  return <CatalogsSettingsView catalogs={catalogs} isAdmin={viewer.role === "admin"} />;
 }

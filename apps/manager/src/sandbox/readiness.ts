@@ -1,6 +1,7 @@
 import type { ContainersCapability, R2Capability } from "@appflare/cf-api/capabilities";
 import type { AccountPlan } from "../account/plan";
 import type { CapabilitiesView } from "../capabilities/capabilities";
+import { settingsLink } from "../components/settings-links";
 import {
   NO_CONTAINERS_PERMISSION_REASON,
   NO_R2_PERMISSION_REASON,
@@ -87,8 +88,8 @@ export function withSandboxJobs(base: SandboxReadiness, jobs: SandboxJobState): 
 /** The id of the sandbox builds row in the account checklist, for links to it. */
 export const SANDBOX_CHECKLIST_ROW_ID = "checklist-sandbox";
 
-/** The account checklist's sandbox builds row (Settings, Account and capabilities). */
-export const SANDBOX_CHECKLIST_HREF = `/settings/account#${SANDBOX_CHECKLIST_ROW_ID}`;
+/** The account checklist's sandbox builds row. */
+export const SANDBOX_CHECKLIST_HREF = settingsLink("account", SANDBOX_CHECKLIST_ROW_ID);
 
 /** The line an install or build confirmation adds when it turns sandbox builds on first. */
 export const SANDBOX_FIRST_NOTE = "Sandbox builds will be turned on first (about two minutes).";

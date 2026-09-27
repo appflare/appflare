@@ -1,6 +1,6 @@
 import type { FetchLike } from "@appflare/cf-api";
 import { z } from "zod";
-import { gatewayHostname } from "../../gateway/gateway";
+import { GATEWAY_SETUP_PLACE, gatewayHostname } from "../../gateway/gateway";
 import { GatewayError, gatewayStateSchema } from "../../gateway/gateway.server";
 import { checkHostnameInZone } from "../../installs/custom-domain-input";
 import {
@@ -172,7 +172,7 @@ export function runAttachDomain(
       }
       if (input.gateway === null || input.claimedAt === undefined) {
         throw new ExternalDomainError(
-          "External domains need the gateway and a claimed name; it is not set up (Settings, Domains).",
+          `External domains need the gateway and a claimed name; it is not set up (see ${GATEWAY_SETUP_PLACE}).`,
         );
       }
       let attached: Awaited<ReturnType<typeof attachExternalDomain>>;

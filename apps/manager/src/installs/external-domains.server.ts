@@ -11,6 +11,7 @@ import { createDb } from "../db/client";
 import { installs, resources } from "../db/schema";
 import {
   checkExternalHostname,
+  GATEWAY_SETUP_PLACE,
   gatewayBindingName,
   gatewayHostname,
   type OwnerRecord,
@@ -450,7 +451,7 @@ async function readyGateway(db: D1Database): Promise<ReadyGateway> {
   const gateway = await readGateway(createDb(db));
   if (!isGatewayReady(gateway)) {
     throw new ExternalDomainError(
-      "External domains need the gateway. Set it up in Settings, Domains first.",
+      `External domains need the gateway. Set it up in ${GATEWAY_SETUP_PLACE} first.`,
     );
   }
   return gateway;

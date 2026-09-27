@@ -13,7 +13,6 @@ import {
   CheckCircleIcon,
   DatabaseIcon,
   InfoIcon,
-  WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
@@ -24,8 +23,9 @@ import { restoreDatabase, startRollback } from "../installs/versions.functions";
 import type { RestoreDatabaseResult, SnapshotView } from "../installs/versions.server";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useJobStarted } from "./job-started";
+import { ErrorMessageBanner } from "./message-text";
+import { PageSection } from "./page-section";
 import { ResponsiveTable } from "./responsive-table";
-import { Section } from "./section";
 import { StatusBadge } from "./status-badge";
 import { Timestamp } from "./timestamp";
 
@@ -55,7 +55,7 @@ export function VersionsSection({
   // Actions need an installed app with no job running.
   const canAct = isAdmin && install.status === "installed" && install.activeJobId === null;
   return (
-    <Section title="Versions">
+    <PageSection title="Versions">
       {install.build.kind === "self-deploying" ? (
         <Text variant="secondary">
           This app's own installer changes it in place on every update, so Appflare takes no
@@ -152,7 +152,7 @@ export function VersionsSection({
           </Text>
         </>
       )}
-    </Section>
+    </PageSection>
   );
 }
 
@@ -335,9 +335,7 @@ function RestoreDatabaseDialog({
                 spellCheck={false}
                 disabled={pending}
               />
-              {error !== null && (
-                <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-              )}
+              {error !== null && <ErrorMessageBanner message={error} newTab />}
             </form>
           ) : (
             <div className="grid gap-5">

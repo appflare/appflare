@@ -117,10 +117,10 @@ describe("cronLimitRefusal", () => {
         wanted: 2,
       }),
     ).toBe(
-      "this app needs 2 cron triggers and the account's other Workers already use 4 (second-brain: 2, appflare: 1, flaremo: 1); Workers Free allows 5 per account, so this would make 6. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account). If it is already on Workers Paid, record that in Settings under Workers plan. Then try again.",
+      "this app needs 2 cron triggers and the account's other Workers already use 4 (second-brain: 2, appflare: 1, flaremo: 1); Workers Free allows 5 per account, so this would make 6. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account). If it is already on Workers Paid, record that under Workers plan in [the account capabilities](/settings/account#capabilities). Then try again.",
     );
     expect(cronLimitRefusal({ ...check, others: others([]), wanted: 7 })).toBe(
-      "this app needs 7 cron triggers and the account's other Workers already use 0; Workers Free allows 5 per account, so this would make 7. Remove 2 cron triggers from other Workers (for example by uninstalling an app that uses them), or upgrade the account to Workers Paid (1,000 per account). If it is already on Workers Paid, record that in Settings under Workers plan. Then try again.",
+      "this app needs 7 cron triggers and the account's other Workers already use 0; Workers Free allows 5 per account, so this would make 7. Remove 2 cron triggers from other Workers (for example by uninstalling an app that uses them), or upgrade the account to Workers Paid (1,000 per account). If it is already on Workers Paid, record that under Workers plan in [the account capabilities](/settings/account#capabilities). Then try again.",
     );
   });
 

@@ -10,7 +10,6 @@ import {
   Button,
   Input,
   InputArea,
-  LayerCard,
   LayerDialog,
   Select,
   Switch,
@@ -45,12 +44,15 @@ import { CatalogSourceBadge } from "./catalog-source-badge";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
+import { Section, SectionRow, SectionRows } from "./section";
+import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
- * Settings, Catalogs: the official catalog (turned off and on, never
- * removed) and the catalogs admins added, each with the public keys its
- * releases are verified with. Members see the list read-only.
+ * The catalogs settings' one section: the official catalog (turned off and
+ * on, never removed) and the catalogs admins added, one row each with the
+ * public keys its releases are verified with, and "Add a catalog" at the
+ * right of the header. Members see the list read-only.
  */
 
 const mono = "font-mono text-[0.9em]";
@@ -61,15 +63,25 @@ function errorText(err: unknown, fallback: string): string {
 
 export function CatalogsList({ catalogs, isAdmin }: { catalogs: CatalogView[]; isAdmin: boolean }) {
   return (
-    <div className="grid gap-3">
-      {catalogs.map((catalog) => (
-        <CatalogCard key={catalog.id} catalog={catalog} isAdmin={isAdmin} />
-      ))}
-    </div>
+    <Section
+      {...settingsSection("catalogs", "catalogs")}
+      description="Each catalog lists apps, and Appflare checks every release it installs from one with that catalog's keys."
+      action={
+        isAdmin ? (
+          <AddCatalogDialog customCount={catalogs.filter((c) => !c.official).length} />
+        ) : null
+      }
+    >
+      <SectionRows>
+        {catalogs.map((catalog) => (
+          <CatalogRow key={catalog.id} catalog={catalog} isAdmin={isAdmin} />
+        ))}
+      </SectionRows>
+    </Section>
   );
 }
 
-function CatalogCard({ catalog, isAdmin }: { catalog: CatalogView; isAdmin: boolean }) {
+function CatalogRow({ catalog, isAdmin }: { catalog: CatalogView; isAdmin: boolean }) {
   const router = useRouter();
   const [enabled, setEnabled] = useState(catalog.enabled);
   const [pending, setPending] = useState(false);
@@ -91,20 +103,24 @@ function CatalogCard({ catalog, isAdmin }: { catalog: CatalogView; isAdmin: bool
   }
 
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
+    <SectionRow
+      id={`catalog-${catalog.id}`}
+      title={
         <span className="flex min-w-0 items-center gap-2">
           <CatalogSourceBadge source={catalog} />
           {!enabled && <Badge variant="neutral">Off</Badge>}
         </span>
+      }
+      action={
         <Switch
           label={enabled ? "On" : "Off"}
           checked={enabled}
           disabled={!isAdmin || pending}
           onCheckedChange={(next: boolean) => void onToggle(next)}
         />
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+      }
+    >
+      <div className="grid gap-4">
         <Text variant="secondary">
           {catalog.official
             ? "The catalog Appflare ships with. Its releases are verified with the keys built into Appflare. It can be turned off, not removed."
@@ -164,8 +180,8 @@ function CatalogCard({ catalog, isAdmin }: { catalog: CatalogView; isAdmin: bool
             <RemoveCatalogDialog catalog={catalog} />
           </div>
         )}
-      </LayerCard.Primary>
-    </LayerCard>
+      </div>
+    </SectionRow>
   );
 }
 
@@ -213,8 +229,8 @@ function pasteText(keys: readonly { keyId: string; publicKeyBase64: string }[]):
   return JSON.stringify(shaped.length === 1 ? shaped[0] : shaped);
 }
 
-/** "Add a catalog", which the page puts beside its title. */
-export function AddCatalogDialog({ customCount }: { customCount: number }) {
+/** "Add a catalog", at the right of the section's header. */
+function AddCatalogDialog({ customCount }: { customCount: number }) {
   if (customCount >= MAX_CUSTOM_CATALOGS) {
     return (
       <Button variant="primary" icon={<PlusIcon />} disabled title="Remove a catalog first.">

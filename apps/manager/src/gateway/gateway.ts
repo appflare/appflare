@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { zoneDashboardUrl } from "../cloudflare/dashboard-links";
+import { settingsPlace } from "../components/settings-links";
 
 /**
  * External domains: hostnames in someone else's DNS that serve an installed
@@ -15,6 +16,13 @@ import { zoneDashboardUrl } from "../cloudflare/dashboard-links";
  * are not used because they do not match when the owner's CNAME is proxied
  * from another Cloudflare account; the catch-all route does.
  */
+
+/** Where the gateway is set up, as a link inside a message ("Set it up in <link> first"). */
+export const GATEWAY_SETUP_PLACE = settingsPlace(
+  "domains",
+  "external-domains",
+  "the domains settings",
+);
 
 /** The gateway Worker the manager deploys into the account. */
 export const GATEWAY_WORKER_NAME = "appflare-gateway";

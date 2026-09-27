@@ -20,7 +20,6 @@ import {
   InfoIcon,
   KeyIcon,
   TrashIcon,
-  WarningCircleIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useState } from "react";
@@ -41,6 +40,7 @@ import {
   useTechnicalNames,
 } from "./field-label";
 import { useJobStarted } from "./job-started";
+import { ErrorMessageBanner } from "./message-text";
 import { placeholderOptions } from "./placeholder-chips";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { generatedSecret, MultilineSecretInput } from "./secret-fields";
@@ -493,9 +493,7 @@ export function AppSettingsSection({
               </fieldset>
             </TechnicalNamesProvider>
 
-            {error !== null && (
-              <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-            )}
+            {error !== null && <ErrorMessageBanner message={error} newTab />}
             {canEdit && !nothingToEdit && (
               <div className="flex flex-wrap justify-end gap-2">
                 <Button

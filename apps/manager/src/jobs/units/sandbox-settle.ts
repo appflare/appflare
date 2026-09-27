@@ -2,6 +2,7 @@ import { CloudflareApiError } from "@appflare/cf-api";
 import { SANDBOX_WORKER_NAME } from "@appflare/schema";
 import { z } from "zod";
 import { SandboxProtocolError, sandboxBinding, sandboxInfo } from "../../sandbox/binding";
+import { ENABLE_SANDBOX_PLACE } from "../../sandbox/connect-copy";
 import { errorMessage, JobError } from "../errors";
 import { activeVersionId } from "../update/plan";
 import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result";
@@ -87,7 +88,7 @@ export function runSandboxSettle(
     const binding = sandboxBinding(env);
     if (binding === undefined) {
       throw new JobError(
-        "Appflare is not connected to the sandbox Worker; enable sandbox builds (Settings, Sandbox builds) and try again",
+        `Appflare is not connected to the sandbox Worker; enable sandbox builds in ${ENABLE_SANDBOX_PLACE} and try again`,
       );
     }
     let deployed: string | null = null;

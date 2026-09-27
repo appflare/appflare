@@ -1,14 +1,10 @@
-import { Badge, Banner, Button, Empty, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
-import {
-  ArrowCircleUpIcon,
-  PackageIcon,
-  StorefrontIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react";
+import { Badge, Button, Empty, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
+import { ArrowCircleUpIcon, PackageIcon, StorefrontIcon } from "@phosphor-icons/react";
 import { createFileRoute, getRouteApi } from "@tanstack/react-router";
 import { AppIcon } from "../../components/catalog-media";
 import { CatalogSourceBadge } from "../../components/catalog-source-badge";
 import { HealthIcon } from "../../components/install-health";
+import { ErrorMessageBanner } from "../../components/message-text";
 import { OpenAppButton } from "../../components/open-app-button";
 import { OriginBadge } from "../../components/origin-badge";
 import { PageHeader } from "../../components/page-header";
@@ -83,13 +79,7 @@ function HomePage() {
         <DeployCopyCard cleanup={deployCopy} onDismiss={() => dismissDeployCopy()} />
       )}
       <PendingUpdatesBanner apps={pending.apps} isAdmin={isAdmin} update={update} />
-      {update.error !== null && (
-        <Banner
-          variant="error"
-          icon={<WarningCircleIcon weight="fill" />}
-          title={update.error.message}
-        />
-      )}
+      {update.error !== null && <ErrorMessageBanner message={update.error.message} />}
       {update.dialog}
       {rows.length > 0 ? (
         <InstalledTable

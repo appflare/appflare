@@ -1,13 +1,15 @@
-import { Banner, CodeBlock, Collapsible, LayerCard, Loader, Text } from "@cloudflare/kumo";
+import { Banner, CodeBlock, Collapsible, Loader, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 import { previewTelemetry, setTelemetry } from "../telemetry/telemetry.functions";
+import { Section, SectionBody } from "./section";
+import { settingsSection } from "./settings-links";
 import { UsageDataBenefits, UsageDataSummary, UsageDataSwitch } from "./usage-data-parts";
 
 /**
- * Settings, Usage data: what it is for, the switch (admins change it,
+ * The usage data settings' one section: what it is for, the switch (admins change it,
  * members see it; off and disabled while a Worker variable turns usage data
  * off), what is and is not sent, and a preview of the next daily report,
  * built on request.
@@ -46,10 +48,14 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
   }
 
   return (
-    // The switch shows the choice; the page title names the card. What is sent in the end
-    // (nothing from a development build, whatever the switch says) is spelled out below it.
-    <LayerCard>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+    // The switch shows the choice. What is sent in the end (nothing from a
+    // development build, whatever the switch says) is spelled out below it.
+    <Section
+      {...settingsSection("usageData", "usage-data")}
+      description="What the report is for, what it holds, and the switch that turns it off."
+      error={error}
+    >
+      <SectionBody>
         <UsageDataBenefits />
         <UsageDataSwitch
           status={status}
@@ -61,9 +67,6 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
           <Text variant="secondary" size="sm">
             {TELEMETRY_COPY.membersOnly}
           </Text>
-        )}
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
         )}
         <UsageDataSummary />
         <Collapsible.Root onOpenChange={(open) => void onPreviewOpen(open)}>
@@ -85,7 +88,7 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
             )}
           </Collapsible.DefaultPanel>
         </Collapsible.Root>
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }
