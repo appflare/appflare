@@ -189,6 +189,8 @@ The token template requests:
 | Email Routing Addresses | Read | Only for [apps that receive email](/guides/email-apps/): showing which destination addresses are verified. |
 | Billing | Read | Only for detecting the account's [Workers plan](/guides/install-apps/#workers-free-or-workers-paid): Appflare lists the account's subscriptions and reads their plan names, never invoices or payment details. |
 | Hyperdrive | Edit | Only for [apps with a database elsewhere](/guides/install-apps/#apps-with-a-database-elsewhere): creating a Hyperdrive configuration from the connection string you enter, replacing it when you change the string, and deleting it on uninstall. |
+| Pipelines | Edit | Only for [apps that stream events](/guides/install-apps/#apps-that-stream-events): creating a Pipelines stream, sink and pipeline for each stream the app uses, and deleting them on uninstall. |
+| Workers R2 Data Catalog | Edit | Only for [apps that stream events](/guides/install-apps/#apps-that-stream-events), and added by hand (the template link cannot select it): removing a bucket's R2 Data Catalog when an uninstall deletes the bucket. Without it the bucket is still deleted. |
 | Workers Tail | Read | Not used by the current version. |
 
 The permissions marked "Only for" are optional: you can remove them from the form if

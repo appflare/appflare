@@ -10,6 +10,7 @@ import {
   type Plan,
   vectorizeIndexConfigSchema,
 } from "./catalog";
+import { PIPELINES_BINDING_TYPE } from "./pipelines";
 import { bindingEntryRefs, ENTRY_WORKER_REF_PATTERN, entryWorkerProblems } from "./workers";
 
 /**
@@ -523,22 +524,36 @@ export function catalogVarProblems(
 export const WORKER_LOADER_BINDING_TYPE = "worker_loader";
 
 /**
+ * Binding types Cloudflare offers only on Workers Paid, with what the
+ * message calls them: a Worker Loader, and a Pipelines stream (Pipelines is
+ * in open beta for Workers Paid accounts, developers.cloudflare.com/pipelines).
+ */
+const PAID_ONLY_BINDINGS: ReadonlyArray<readonly [string, string]> = [
+  [WORKER_LOADER_BINDING_TYPE, "a Worker Loader"],
+  [PIPELINES_BINDING_TYPE, "a Pipelines stream"],
+];
+
+/**
  * Why a Worker's bindings need the catalog manifest to say `plan: "paid"`, as
- * a sentence, or null when they do not or it does. A Worker Loader is
- * available only on Workers Paid, so an app that binds one is a Workers Paid
- * app, and the install and update plan gates ask the admin to confirm it.
+ * a sentence, or null when they do not or it does. A Worker Loader and a
+ * Pipelines stream are available only on Workers Paid, so an app that binds
+ * one is a Workers Paid app, and the install and update plan gates ask the
+ * admin to confirm it.
  */
 export function workersPaidBindingProblem(
   bindings: readonly WorkerBinding[],
   plan: Plan,
 ): string | null {
   if (plan === "paid") return null;
-  const loaders = bindings.filter((b) => b.type === WORKER_LOADER_BINDING_TYPE);
-  if (loaders.length === 0) return null;
-  return (
-    `the Worker binds a Worker Loader (${loaders.map((b) => b.name).join(", ")}), which Cloudflare offers only on Workers Paid; ` +
-    'set "plan": "paid" in the catalog manifest'
-  );
+  for (const [type, what] of PAID_ONLY_BINDINGS) {
+    const bound = bindings.filter((b) => b.type === type);
+    if (bound.length === 0) continue;
+    return (
+      `the Worker binds ${what} (${bound.map((b) => b.name).join(", ")}), which Cloudflare offers only on Workers Paid; ` +
+      'set "plan": "paid" in the catalog manifest'
+    );
+  }
+  return null;
 }
 
 /** Static-assets router config (wrangler `assets` shape). */

@@ -1481,6 +1481,167 @@
           },
           "description": "The Hyperdrive bindings of the wrangler config, each with the database it connects to (`postgres` or `mysql`). The database runs outside Cloudflare: the install form asks for its connection string, and Appflare creates a Hyperdrive configuration of the install's own from it. Every Hyperdrive binding must be listed, each once. Not allowed on self-deploying entries."
         },
+        "pipelines": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "fields": {
+                    "minItems": 1,
+                    "maxItems": 256,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "description": "The field's name in each event."
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "int32",
+                            "int64",
+                            "float32",
+                            "float64",
+                            "bool",
+                            "string",
+                            "binary",
+                            "timestamp",
+                            "json"
+                          ],
+                          "description": "The field's type."
+                        },
+                        "required": {
+                          "type": "boolean",
+                          "description": "Every event carries the field. Cloudflare drops an event that lacks it."
+                        },
+                        "unit": {
+                          "type": "string",
+                          "enum": [
+                            "second",
+                            "millisecond",
+                            "microsecond",
+                            "nanosecond"
+                          ],
+                          "description": "For a `timestamp` field sent as a number: what the number counts."
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "description": "The fields of each event, in order. Pipelines adds `__ingest_ts` itself; do not list it."
+                  }
+                },
+                "required": [
+                  "fields"
+                ],
+                "additionalProperties": false,
+                "description": "The stream's schema. Cloudflare drops events that do not match it. Omitted: the stream is unstructured and every event lands in one `value` column."
+              },
+              "sink": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "r2_data_catalog",
+                    "description": "An Apache Iceberg table in R2 Data Catalog, the only sink Appflare sets up."
+                  },
+                  "bucket": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "description": "The bucket the table lives in. The name of an R2 binding of the app's wrangler config uses that binding's bucket; any other name gets a bucket of the install's own, named `<worker name>-<name lowercased, _ as ->` like every resource Appflare creates, which no Worker binds (the app reaches it through R2 SQL, for example)."
+                  },
+                  "namespace": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "description": "The table's namespace in the bucket's catalog."
+                  },
+                  "table": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                    "description": "The table's name in the namespace."
+                  },
+                  "tokenSecret": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The catalog secret that holds a Cloudflare API token with R2 Data Catalog and R2 Storage write access (the dashboard's R2 token with Admin Read & Write). Cloudflare keeps it as the sink's credential, and as the catalog's for table maintenance; Appflare's own token never leaves the manager. The secret must be asked for (no `generate`, `optional`, `derive` or `seedOnly`)."
+                  },
+                  "rollIntervalSeconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 86400,
+                    "description": "How often the sink writes a file, in seconds: at least 60 for a catalog sink. Cloudflare's default is 300."
+                  },
+                  "compression": {
+                    "type": "string",
+                    "enum": [
+                      "zstd",
+                      "snappy",
+                      "gzip",
+                      "lz4",
+                      "uncompressed"
+                    ],
+                    "description": "The Parquet compression. Cloudflare's default is zstd."
+                  },
+                  "compaction": {
+                    "type": "boolean",
+                    "description": "Turn on the catalog's automatic compaction, which merges the sink's small files."
+                  },
+                  "snapshotExpiration": {
+                    "type": "object",
+                    "properties": {
+                      "maxAge": {
+                        "type": "string",
+                        "pattern": "^\\d+[dhms]$",
+                        "description": "Snapshots older than this are expired, such as `\"30d\"` (d, h, m or s)."
+                      },
+                      "minSnapshotsToKeep": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991,
+                        "description": "Snapshots kept however old they are."
+                      }
+                    },
+                    "required": [
+                      "maxAge"
+                    ],
+                    "additionalProperties": false,
+                    "description": "Turn on the catalog's snapshot expiration, which deletes old snapshots' files."
+                  }
+                },
+                "required": [
+                  "type",
+                  "bucket",
+                  "namespace",
+                  "table",
+                  "tokenSecret"
+                ],
+                "additionalProperties": false,
+                "description": "Where the stream's events land: an Iceberg table in an R2 bucket's Data Catalog, written with the API token the admin enters for the app."
+              }
+            },
+            "required": [
+              "sink"
+            ],
+            "additionalProperties": false
+          },
+          "description": "The Pipelines bindings of the wrangler config, keyed by binding name: each stream's schema and the Iceberg table its events land in. Appflare creates the stream, an R2 Data Catalog sink and a pass-through pipeline for each, and binds the stream. Needs `plan: \"paid\"` (Pipelines is on Workers Paid only). Not allowed on self-deploying entries."
+        },
         "d1": {
           "type": "object",
           "propertyNames": {
@@ -1781,6 +1942,56 @@
   ],
   "additionalProperties": false,
   "allOf": [
+    {
+      "anyOf": [
+        {
+          "properties": {
+            "install": {
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "resources": {
+              "not": {
+                "required": [
+                  "pipelines"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "properties": {
+            "plan": {
+              "const": "paid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "resources": {
+              "not": {
+                "required": [
+                  "pipelines"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
     {
       "anyOf": [
         {

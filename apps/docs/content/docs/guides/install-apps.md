@@ -73,6 +73,49 @@ have no database. Uninstalling deletes all of the
 app's Hyperdrive configurations; the databases themselves are yours and stay as they
 are.
 
+## Apps that stream events
+
+Some apps, such as analytics, send events through Cloudflare Pipelines into an Apache
+Iceberg table in R2, which they then query with R2 SQL. Pipelines is in open beta and
+only on Workers Paid, so these apps need Workers Paid, and the catalog lists
+**Pipelines** among what they use.
+
+Their install form asks for an API token the app's data lives behind: create an R2 API
+token with **Admin Read & Write** (it carries Workers R2 Data Catalog and Workers R2
+Storage write access, and R2 SQL read), and paste it into the field the app names. The
+app's page lists these permissions with a link to the dashboard's R2 API tokens page.
+Cloudflare keeps that token as the sink's credential, and the app receives it as a
+secret, usually to query its tables with R2 SQL. By the app's own design this token
+reaches every R2 bucket in the account, not only the app's: Cloudflare offers no R2
+SQL or Data Catalog token narrower than the account's buckets that a sink accepts.
+Appflare's own token never leaves the manager.
+
+Changing that secret later in the app's **Settings** gives the app the new token and
+stores it as the catalog's maintenance credential, but the sink keeps writing with the
+token it was created with: Cloudflare cannot change a sink, and a new sink cannot write
+to a table that already exists. Keep the original token valid while the app is
+installed; the job log says so when the secret changes.
+
+For each stream the app binds, the install job:
+
+1. Creates the R2 bucket the events land in, `<worker-name>-<name>`, unless it is a
+   bucket the app already binds.
+2. Turns on R2 Data Catalog for the bucket with the app's token and, when the app
+   asks for them, compaction and snapshot expiration.
+3. Creates the stream (`<worker_name>_<binding>_stream`, with the schema the app
+   declares and no HTTP endpoint), an R2 Data Catalog sink that writes to the app's
+   table, and a pipeline between them, then binds the stream to the Worker.
+
+The stream, sink and pipeline cannot be changed once created, so updates keep them.
+An update to a version that changes a stream's schema or the table it writes to is
+refused with a message, and so is one that adds a stream (its sink needs the token
+entered at install, which the manager cannot read back): such a version needs a fresh
+install. Uninstalling deletes the pipeline, the sink and the stream;
+the bucket is listed with the app's other data, and keeping it keeps its Data Catalog
+and the table. Appflare's token needs the optional **Pipelines: Edit** permission, and
+**Workers R2 Data Catalog: Edit** (added by hand) for an uninstall to remove the Data
+Catalog of a bucket it deletes.
+
 ## Several installs of one app
 
 You can install an app more than once, each under its own Worker name. The form
@@ -119,7 +162,9 @@ fails for a moment. The log shows every API call as `METHOD path -> status`.
 3. Creates each KV namespace, D1 database, R2 bucket, queue, and Vectorize index the
    app binds, named `<worker-name>-<binding>` (lower case, `_` becomes `-`). It
    records each one as it goes. If a resource with that name already exists in the
-   account, the install stops instead of adopting it.
+   account, the install stops instead of adopting it. Hyperdrive configurations come
+   first, and each Pipelines stream last, with its sink, pipeline and bucket (see
+   [apps that stream events](#apps-that-stream-events)).
 4. Uploads the app's static assets, then the Worker with every binding filled in.
    Every file is read from the signed release and checked against its sha256 first.
 5. Applies the app's D1 migrations, in the same `d1_migrations` table wrangler uses.

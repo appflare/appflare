@@ -59,6 +59,7 @@ import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./
 import { type WorkerSize, workerSize } from "./worker-size.ts";
 import {
   checkHyperdriveDeclarations,
+  checkPipelineDeclarations,
   checkVectorizeDeclarations,
   classifyModuleType,
   collectBindings,
@@ -631,6 +632,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       catalog.resources,
     );
     checkHyperdriveDeclarations(
+      collected.flatMap((c) => c.bindings),
+      catalog.resources,
+    );
+    checkPipelineDeclarations(
       collected.flatMap((c) => c.bindings),
       catalog.resources,
     );

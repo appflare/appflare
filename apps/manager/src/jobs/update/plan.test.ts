@@ -1,4 +1,4 @@
-import type { ArtifactManifest } from "@appflare/schema";
+import type { ArtifactManifest, CatalogPipeline } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import { classifyHealthProbe } from "../install/health";
 import {
@@ -20,6 +20,7 @@ import {
   parseBookmarks,
   parseSnapshotHyperdrive,
   pendingDurableObjectMigrations,
+  pipelineShapesOf,
   previewUrl,
   type RecordedResource,
   snapshotRow,
@@ -201,6 +202,78 @@ describe("diffBindings", () => {
         /Binding NEW_DB connects to a database elsewhere and is new in this version/,
       ),
     ]);
+  });
+
+  describe("Pipelines streams", () => {
+    const sink = {
+      type: "r2_data_catalog" as const,
+      bucket: "WAREHOUSE",
+      namespace: "cut",
+      table: "events",
+      tokenSecret: "CATALOG_TOKEN",
+    };
+    const schema = { fields: [{ name: "ts", type: "timestamp" as const, required: true }] };
+    const recorded = [
+      row({ kind: "pipeline_stream", binding: "EVENTS", name: "cut_events_stream", cfId: "s1" }),
+      row({ kind: "pipeline_sink", binding: null, name: "cut_events_sink", cfId: "k1" }),
+    ];
+    const installed = pipelineShapesOf(
+      JSON.stringify({ catalog: { resources: { pipelines: { EVENTS: { schema, sink } } } } }),
+    );
+    const diffWith = (events: CatalogPipeline, extra: Record<string, CatalogPipeline> = {}) =>
+      diffBindings(
+        "cut",
+        [
+          { type: "pipelines", name: "EVENTS" },
+          ...Object.keys(extra).map((name) => ({ type: "pipelines", name })),
+        ],
+        recorded,
+        {},
+        [],
+        { EVENTS: events, ...extra },
+        installed,
+      );
+
+    it("reads the installed version's stream shapes from its stored manifest", () => {
+      expect(installed).toEqual({
+        EVENTS: { schema, bucket: "WAREHOUSE", namespace: "cut", table: "events" },
+      });
+      expect(pipelineShapesOf(null)).toEqual({});
+      expect(pipelineShapesOf("{not json")).toEqual({});
+    });
+
+    it("keeps a recorded stream whose schema and table stay, whatever else of the sink changes", () => {
+      const diff = diffWith({ schema, sink: { ...sink, rollIntervalSeconds: 120 } });
+      expect(diff.problems).toEqual([]);
+      expect(diff.existing).toEqual([
+        { binding: "EVENTS", type: "pipelines", name: "cut_events_stream", cfId: "s1" },
+      ]);
+    });
+
+    it("refuses a version that changes a kept stream's schema or table", () => {
+      expect(
+        diffWith({ schema: { fields: [{ name: "other", type: "string" }] }, sink }).problems,
+      ).toEqual([
+        expect.stringMatching(
+          /^Binding EVENTS sends events to the Pipelines stream "cut_events_stream"; this version changes its schema\. .* needs a fresh install\.$/,
+        ),
+      ]);
+      expect(diffWith({ schema, sink: { ...sink, table: "events_v2" } }).problems).toEqual([
+        expect.stringMatching(
+          /changes the table its events land in \(from WAREHOUSE cut\.events to WAREHOUSE cut\.events_v2\)/,
+        ),
+      ]);
+    });
+
+    it("refuses a stream new in this version", () => {
+      const diff = diffWith({ schema, sink }, { CLICKS: { sink: { ...sink, table: "clicks" } } });
+      expect(diff.toCreate).toEqual([]);
+      expect(diff.problems).toEqual([
+        expect.stringMatching(
+          /^Binding CLICKS sends events to a Pipelines stream and is new in this version; .* needs a fresh install\.$/,
+        ),
+      ]);
+    });
   });
 });
 

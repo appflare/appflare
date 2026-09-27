@@ -27,12 +27,21 @@ import {
   type DataResourceKind,
   EMAIL_ROUTE_KIND,
   HYPERDRIVE_KINDS,
+  PIPELINE_KINDS,
+  R2_CATALOG_KIND,
   WORKER_BOUND_KINDS,
 } from "../installs/resource-kinds";
 import { sandboxBuildOfInput } from "../sandbox/progress";
 import { cleanupSandboxBuildsPhase } from "./install/artifact-source";
 import { type EmailRouteRecord, removeEmailRoutesPhase } from "./install/email-routing";
 import { deleteOtherWorkersPhase } from "./install/entry-worker-phases";
+import {
+  deletePipelineObject,
+  type PipelineTarget,
+  pipelineObjectLabel,
+  pipelineTargets,
+  removeBucketCatalog,
+} from "./install/pipelines";
 import { consumerTargets, removeQueueConsumersPhase } from "./install/queue-consumers";
 import { deleteResource, RESOURCE_LABEL } from "./install/resources";
 import type { JobContext } from "./run-job";
@@ -131,6 +140,27 @@ interface Target {
   kind: DataResourceKind;
   name: string;
   cfId: string | null;
+  /**
+   * For an R2 bucket a Pipelines sink wrote to: the `resources` id of its
+   * Data Catalog, removed before the bucket is emptied. Absent in a run
+   * started before catalogs were recorded.
+   */
+  catalogId?: string;
+}
+
+/**
+ * The data targets with each bucket's Data Catalog attached (the recorded
+ * `r2_catalog` row of the same name), so it goes with its bucket.
+ */
+function withCatalogs(
+  targets: readonly Target[],
+  catalogs: ReadonlyArray<{ id: string; name: string }>,
+): Target[] {
+  return targets.map((t) => {
+    if (t.kind !== "r2") return t;
+    const catalog = catalogs.find((c) => c.name === t.name);
+    return catalog === undefined ? t : { ...t, catalogId: catalog.id };
+  });
 }
 
 /** A recorded Workflow of the app's Worker, deleted by name after the Worker. */
@@ -260,7 +290,37 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           (r) => (HYPERDRIVE_KINDS as readonly string[]).includes(r.kind) && r.managed_by !== "app",
         )
         .map((r) => ({ id: r.id, name: r.name, cfId: r.cf_id }));
-      const kept = live.filter((r) => r.retained_at !== null).map((r) => r.name);
+      // Pipelines streams, sinks and pipelines are never kept: they hold no
+      // data (the sink holds the admin's token). They go after the Worker
+      // that sends to the stream, pipeline first.
+      const pipelines: PipelineTarget[] = pipelineTargets(
+        live
+          .filter(
+            (r) => (PIPELINE_KINDS as readonly string[]).includes(r.kind) && r.managed_by !== "app",
+          )
+          .map((r) => ({ id: r.id, kind: r.kind, name: r.name, cfId: r.cf_id })),
+      );
+      // A bucket's Data Catalog goes with the bucket: removed when the bucket
+      // is deleted, kept (and listed as kept) when the bucket is.
+      const catalogs = live.filter((r) => r.kind === R2_CATALOG_KIND && r.managed_by !== "app");
+      for (const catalog of catalogs) {
+        const bucket = live.find(
+          (r) => r.kind === "r2" && r.name === catalog.name && r.retained_at !== null,
+        );
+        if (bucket === undefined || catalog.retained_at !== null) continue;
+        await orm
+          .update(resources)
+          .set({ retained_at: bucket.retained_at })
+          .where(eq(resources.id, catalog.id));
+        catalog.retained_at = bucket.retained_at;
+      }
+      const dataTargets = withCatalogs(
+        targets,
+        catalogs.filter((c) => c.retained_at === null),
+      );
+      const kept = live
+        .filter((r) => r.retained_at !== null && r.kind !== R2_CATALOG_KIND)
+        .map((r) => r.name);
       // "live": recorded and not deleted yet; "deleted": an earlier run deleted
       // it; "none": this install never recorded a Worker.
       let worker: "live" | "deleted" | "none" = "none";
@@ -292,8 +352,11 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           (hyperdrive.length > 0
             ? `Removing Hyperdrive configurations: ${hyperdrive.map((h) => h.name).join(", ")} (the databases stay as they are). `
             : "") +
+          (pipelines.length > 0
+            ? `Removing Pipelines: ${pipelines.map((p) => p.name).join(", ")}. `
+            : "") +
           (targets.length > 0
-            ? `Deleting: ${targets.map((t) => `${RESOURCE_LABEL[t.kind]} ${t.name}`).join(", ")}. `
+            ? `Deleting: ${dataTargets.map((t) => `${RESOURCE_LABEL[t.kind]} ${t.name}${t.catalogId === undefined ? "" : " with its R2 Data Catalog"}`).join(", ")}. `
             : "No data resources to delete. ") +
           (kept.length > 0 ? `Keeping: ${kept.join(", ")}.` : "Keeping nothing."),
       );
@@ -304,7 +367,8 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           .filter((r) => r.kind === "worker" && r.name !== install.workerName)
           .map((r) => ({ id: r.id, name: r.name })),
         accountId: settings.account_id,
-        targets,
+        targets: dataTargets,
+        pipelines,
         domains,
         externalDomains,
         gatewayBindings,
@@ -485,6 +549,21 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       });
     }
 
+    // A run started before Pipelines were listed deletes none.
+    for (const target of started.pipelines ?? []) {
+      await run(
+        `delete ${pipelineObjectLabel(target.kind)} ${target.name}`,
+        async ({ log, cf, orm }) => {
+          log.info(await deletePipelineObject(cf(), target));
+          await orm
+            .update(resources)
+            .set({ deleted_at: new Date(now()) })
+            .where(eq(resources.id, target.id));
+          return {};
+        },
+      );
+    }
+
     await deleteDataResourcesPhase(steps, started.targets, "uninstall");
 
     // The install's builds in the sandbox Worker's bucket (every version).
@@ -568,6 +647,21 @@ export async function deleteDataResourcesPhase(
     const label = RESOURCE_LABEL[target.kind];
     if (target.kind === "r2") {
       const bucket = target.cfId ?? target.name;
+      const catalogId = target.catalogId;
+      if (catalogId !== undefined) {
+        // Before the bucket is emptied: the catalog's table maintenance
+        // writes files into it, and its records outlive the bucket otherwise.
+        await run(`remove R2 Data Catalog ${target.name}`, async ({ log, cf, orm }) => {
+          const outcome = await removeBucketCatalog(cf(), bucket);
+          if (outcome.level === "warn") log.warn(outcome.message);
+          else log.info(outcome.message);
+          await orm
+            .update(resources)
+            .set({ deleted_at: new Date(now()) })
+            .where(eq(resources.id, catalogId));
+          return {};
+        });
+      }
       // Deleted objects drop out of the listing, so every page lists from the
       // start again. A first key seen twice means a delete did not take.
       let previousFirst: string | null = null;
@@ -678,7 +772,13 @@ async function runDeleteRetained(ctx: JobContext, params: UninstallJobParams): P
       // the kept one was deleted by hand), it is that install's: never call
       // the API for it, and record it as gone from this app only.
       const held = await namesHeldElsewhere(env.DB, params.installId, candidates);
-      const targets = candidates.filter((t) => !held.has(t.id));
+      // A kept bucket's Data Catalog was kept with it and goes with it now.
+      const targets = withCatalogs(
+        candidates.filter((t) => !held.has(t.id)),
+        kept
+          .filter((r) => r.kind === R2_CATALOG_KIND && r.managed_by !== "app")
+          .map((r) => ({ id: r.id, name: r.name })),
+      );
       for (const t of candidates) {
         const owner = held.get(t.id);
         if (owner === undefined) continue;
@@ -689,6 +789,16 @@ async function runDeleteRetained(ctx: JobContext, params: UninstallJobParams): P
           .update(resources)
           .set({ deleted_at: new Date(now()) })
           .where(eq(resources.id, t.id));
+        // Its Data Catalog is that install's business too.
+        for (const catalog of kept) {
+          if (catalog.kind !== R2_CATALOG_KIND || catalog.name !== t.name || t.kind !== "r2") {
+            continue;
+          }
+          await orm
+            .update(resources)
+            .set({ deleted_at: new Date(now()) })
+            .where(eq(resources.id, catalog.id));
+        }
       }
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");

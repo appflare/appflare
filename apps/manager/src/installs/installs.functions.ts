@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import {
+  appTokenPermissions,
   artifactManifestSchema,
   combinedWorkerFacts,
   type EntryWorkerPlaceholders,
@@ -493,7 +494,8 @@ export const getInstall = createServerFn({ method: "GET" })
           renderPostInstall(p.content, placeholders, entry),
         );
         if (sendsEmail(combinedWorkerFacts(manifest).bindings)) postInstall.push(SEND_EMAIL_NOTE);
-        tokenPermissions = manifest.catalog.tokenPermissions;
+        // With the permissions of each Pipelines sink's token.
+        tokenPermissions = appTokenPermissions(manifest.catalog);
       }
     }
     const view = (r: (typeof resourceRows)[number]): ResourceView => ({

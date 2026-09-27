@@ -5,6 +5,7 @@ import { configPatchSchema } from "./config-patch.ts";
 import { catalogD1Schema } from "./d1.ts";
 import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
 import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
+import { catalogPipelinesSchema, pipelineManifestProblems } from "./pipelines.ts";
 import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
 import { isSeedOnly, seedManifestProblems } from "./seed.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
@@ -998,8 +999,10 @@ export type VectorizeIndexConfig = z.infer<typeof vectorizeIndexConfigSchema>;
  * behind it: the database lives outside Cloudflare, so the install form asks
  * for its connection string, and the packer refuses a Hyperdrive binding the
  * list does not declare. `d1` says where a D1 binding's SQL lives when the
- * wrangler config's migrations folder does not (see `d1.ts`). All optional so
- * manifests written before them keep the same parsed shape.
+ * wrangler config's migrations folder does not (see `d1.ts`). `pipelines`
+ * describes the stream behind each Pipelines binding and the Iceberg table
+ * its events land in (see `pipelines.ts`). All optional so manifests written
+ * before them keep the same parsed shape.
  */
 export const catalogResourcesSchema = z.object({
   vectorize: z.record(z.string().min(1), vectorizeIndexConfigSchema).optional(),
@@ -1015,6 +1018,7 @@ export const catalogResourcesSchema = z.object({
         "self-deploying entries.",
     )
     .optional(),
+  pipelines: catalogPipelinesSchema.optional(),
   d1: z
     .record(z.string().min(1), catalogD1Schema)
     .describe(
@@ -1818,6 +1822,11 @@ export const catalogManifestSchema = z
     }
   })
   .superRefine((manifest, ctx) => {
+    for (const problem of pipelineManifestProblems(manifest)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
+  })
+  .superRefine((manifest, ctx) => {
     const hyperdrive = manifest.resources?.hyperdrive ?? [];
     const seen = new Set<string>();
     hyperdrive.forEach((decl, i) => {
@@ -1894,11 +1903,27 @@ export const catalogManifestSchema = z
   })
   // The refinements do not reach the JSON Schema; `allOf` states the
   // self-deploying ones there (no optional, derived or seed-only secrets, no
-  // derived or seed-only vars, no Hyperdrive declarations, no D1 layout). Whether a `derive.from`
-  // names another secret, or a Hyperdrive binding is declared twice, cannot
-  // be said in JSON Schema.
+  // derived or seed-only vars, no Hyperdrive declarations, no D1 layout, no
+  // Pipelines), and that Pipelines needs `plan: "paid"`. Whether a
+  // `derive.from` names another secret, a Hyperdrive binding is declared
+  // twice, or a sink's `tokenSecret` names a secret the install form asks
+  // for, cannot be said in JSON Schema.
   .meta({
     allOf: [
+      {
+        anyOf: [
+          {
+            properties: { install: { properties: { tier: { not: { const: "self-deploying" } } } } },
+          },
+          { properties: { resources: { not: { required: ["pipelines"] } } } },
+        ],
+      },
+      {
+        anyOf: [
+          { properties: { plan: { const: "paid" } } },
+          { properties: { resources: { not: { required: ["pipelines"] } } } },
+        ],
+      },
       {
         anyOf: [
           {

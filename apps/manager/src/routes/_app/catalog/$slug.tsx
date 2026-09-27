@@ -1,4 +1,9 @@
-import { type CatalogAuthor, type IndexBuild, SELF_DEPLOYING_TOOLS } from "@appflare/schema";
+import {
+  appTokenPermissions,
+  type CatalogAuthor,
+  type IndexBuild,
+  SELF_DEPLOYING_TOOLS,
+} from "@appflare/schema";
 import {
   Badge,
   Banner,
@@ -196,7 +201,7 @@ function CatalogEntryPage() {
       {catalog !== null && (
         <AppTokenPermissions
           appName={app.name}
-          permissions={catalog.tokenPermissions}
+          permissions={appTokenPermissions(catalog)}
           custody={installer !== null ? "sandbox" : "app"}
         />
       )}

@@ -6,6 +6,7 @@ import {
   collectWorkerSettings,
   HyperdriveDeclarationError,
   mainModuleName,
+  PipelineDeclarationError,
   QueueConsumerError,
   type ResolvedWranglerConfig,
   ServiceBindingError,
@@ -184,6 +185,51 @@ describe("collectBindings", () => {
     ).toThrow(
       /declares the Hyperdrive binding DB in resources\.hyperdrive, but the wrangler config/,
     );
+  });
+
+  it("records a Pipelines binding by name only, without the author's stream id", () => {
+    const sink = {
+      type: "r2_data_catalog" as const,
+      bucket: "WAREHOUSE",
+      namespace: "traks",
+      table: "events",
+      tokenSecret: "CATALOG_TOKEN",
+    };
+    // `stream` since June 2026; `pipeline` is the name before it.
+    const config = {
+      pipelines: [
+        { binding: "EVENTS", stream: "f0ee6ab42aa7462094f374857e996b47" },
+        { binding: "LEGACY", pipeline: "old-pipeline-name" },
+      ],
+    } as unknown as ResolvedWranglerConfig;
+    const bindings = collectBindings(config, {
+      pipelines: { EVENTS: { sink }, LEGACY: { sink: { ...sink, table: "legacy" } } },
+    });
+    expect(bindings).toEqual([
+      { type: "pipelines", name: "EVENTS" },
+      { type: "pipelines", name: "LEGACY" },
+    ]);
+    expect(JSON.stringify(bindings)).not.toMatch(/f0ee6ab4|old-pipeline-name/);
+  });
+
+  it("refuses a Pipelines binding the catalog manifest does not describe, and the reverse", () => {
+    const sink = {
+      type: "r2_data_catalog" as const,
+      bucket: "W",
+      namespace: "n",
+      table: "t",
+      tokenSecret: "T",
+    };
+    const config = {
+      pipelines: [{ binding: "EVENTS", stream: "abc" }],
+    } as unknown as ResolvedWranglerConfig;
+    expect(() => collectBindings(config)).toThrow(PipelineDeclarationError);
+    expect(() => collectBindings(config)).toThrow(
+      /binds a Pipelines stream as EVENTS, .*add resources\.pipelines\.EVENTS/,
+    );
+    expect(() =>
+      collectBindings({} as ResolvedWranglerConfig, { pipelines: { CLICKS: { sink } } }),
+    ).toThrow(/declares resources\.pipelines\.CLICKS, but the wrangler config has no Pipelines/);
   });
 
   it("passes the Workers AI binding through with no resource settings", () => {

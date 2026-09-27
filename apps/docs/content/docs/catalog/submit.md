@@ -35,8 +35,8 @@ app's own repository.
   of up to 64 MiB uncompressed on every plan, and Appflare installs a Worker whose
   modules add up to at most 32 MiB on either.
 
-The manager creates KV namespaces, D1 databases, R2 buckets, queues, and Vectorize
-indexes for an app, attaches the app's Worker to the queues it consumes (dead-letter
+The manager creates KV namespaces, D1 databases, R2 buckets, queues, Vectorize
+indexes, and Pipelines streams with their sinks and pipelines for an app, attaches the app's Worker to the queues it consumes (dead-letter
 queues included), and passes through Workers AI, Browser Rendering, Analytics Engine,
 email sending (with its address restrictions), rate limits, Images, version metadata,
 and plain variables. A rate limit declared the older way, in `unsafe.bindings` with
@@ -233,6 +233,26 @@ Points that need care:
   manifest does not declare, and a declaration the config does not bind. The
   database is the admin's: an uninstall deletes the Hyperdrive configuration, never
   the database. Self-deploying entries cannot declare databases.
+- **Streams (Pipelines).** A stream's id in the wrangler config
+  (`"pipelines": [{ "binding": "EVENTS", "stream": "<id>" }]`) belongs to the author's
+  account, so describe the stream under `resources.pipelines`, keyed by the binding:
+  `"resources": { "pipelines": { "EVENTS": { "schema": { "fields": [{ "name": "ts", "type": "timestamp", "required": true }] }, "sink": { "type": "r2_data_catalog", "bucket": "WAREHOUSE", "namespace": "app", "table": "events", "tokenSecret": "CATALOG_TOKEN", "rollIntervalSeconds": 60, "compaction": true } } } }`.
+  The manager creates the stream (`<worker_name>_<binding>_stream`, schema as given,
+  no HTTP endpoint), an R2 Data Catalog sink that writes to `namespace.table`, and a
+  pass-through pipeline (`INSERT INTO <sink> SELECT * FROM <stream>`), and binds the
+  stream. `bucket` names an R2 binding of the app, or any other name for a bucket of
+  the install's own (`<worker name>-<name>`), which no Worker binds; a var such as
+  `"{{workerName}}-warehouse"` tells the app its name. `tokenSecret` names a secret
+  the form asks for (no `generate`, `optional`, `derive` or `seedOnly`): an R2 API
+  token with Admin Read & Write, which Cloudflare keeps as the sink's credential and
+  which the app may also use for R2 SQL. `compaction` and `snapshotExpiration`
+  (`{ "maxAge": "30d", "minSnapshotsToKeep": 5 }`) turn on the catalog's table
+  maintenance. Pipelines is on Workers Paid only, so the entry needs `"plan": "paid"`.
+  Streams, sinks and pipelines cannot be changed once created: a new version that
+  changes the schema or the table keeps what the install created, and a version that
+  adds a stream needs a fresh install. The packer refuses a Pipelines binding the
+  manifest does not describe, and a description the config does not bind.
+  Self-deploying entries cannot declare streams.
 - **D1 SQL outside the migrations folder.** The packer reads each D1 binding's
   `migrations_dir` and `migrations_pattern` as `wrangler d1 migrations apply` does,
   relative to the config you name in `install.wranglerConfig`. When the app's D1 SQL

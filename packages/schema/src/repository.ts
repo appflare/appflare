@@ -291,7 +291,9 @@ export type RepositoryDetection = z.infer<typeof repositoryDetectionSchema>;
  * an app that relies on them would run without them. Bindings Appflare cannot
  * install (mTLS certificates, a service binding to another Worker, a
  * Hyperdrive binding the catalog manifest does not declare) are refused by
- * the packer and the install plan instead.
+ * the packer and the install plan instead. `pipelines` is listed because a
+ * stream is carried only when a catalog manifest describes it
+ * (`resources.pipelines`), which a repository has no place for.
  */
 export const UNSUPPORTED_WRANGLER_SECTIONS = [
   "containers",

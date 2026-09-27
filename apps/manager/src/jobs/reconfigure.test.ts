@@ -613,6 +613,91 @@ describe("settings change job", () => {
   });
 });
 
+describe("a new token for a Pipelines sink", () => {
+  const NEW_TOKEN = "new-r2-token-DO-NOT-LEAK";
+  const app: ArtifactFixtureOptions = {
+    ...APP,
+    bindings: [...(APP.bindings ?? []), { type: "pipelines", name: "EVENTS" }],
+    catalog: {
+      ...APP.catalog,
+      plan: "paid",
+      secrets: [
+        ...baseCatalog().secrets,
+        { name: "CATALOG_TOKEN", label: "R2 API token", generate: false },
+      ],
+      resources: {
+        pipelines: {
+          EVENTS: {
+            sink: {
+              type: "r2_data_catalog",
+              bucket: "WAREHOUSE",
+              namespace: "cut",
+              table: "events",
+              tokenSecret: "CATALOG_TOKEN",
+              compaction: true,
+            },
+          },
+        },
+      },
+    },
+  };
+  const resources: SeedResource[] = [
+    ...RESOURCES,
+    { kind: "secret", binding: "CATALOG_TOKEN", name: "CATALOG_TOKEN" },
+    { kind: "r2", name: "cut-warehouse", cfId: "cut-warehouse" },
+    { kind: "r2_catalog", name: "cut-warehouse", cfId: "cat-1" },
+    { kind: "pipeline_stream", binding: "EVENTS", name: "cut_events_stream", cfId: "s1" },
+    { kind: "pipeline_sink", name: "cut_events_sink", cfId: "k1" },
+    { kind: "pipeline", name: "cut_events_pipeline", cfId: "p1" },
+  ];
+
+  it("keeps the stream bound, stores the new token as the maintenance credential, and leaves the sink", async () => {
+    const catalogCalls: Array<{ call: string; auth: string | null; body: unknown }> = [];
+    const r = await reconfigure({
+      app,
+      resources,
+      request: { secrets: { set: { CATALOG_TOKEN: NEW_TOKEN }, unset: [] } },
+      front: async (request) => {
+        const path = new URL(request.url).pathname.replace(`/client/v4/accounts/${ACC}`, "");
+        if (path.startsWith("/pipelines/")) {
+          throw new Error(`the sink must not be touched: ${request.method} ${path}`);
+        }
+        if (!path.startsWith("/r2-catalog/")) return null;
+        catalogCalls.push({
+          call: `${request.method} ${path}`,
+          auth: request.headers.get("authorization"),
+          body: await request.json(),
+        });
+        return Response.json({ success: true, errors: [], messages: [], result: null });
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    // The stream keeps its id: nothing to bind anew.
+    expect(r.fake.state.versions[0]?.metadata.bindings).toContainEqual({
+      type: "pipelines",
+      name: "EVENTS",
+      stream: "s1",
+    });
+    expect(catalogCalls).toEqual([
+      {
+        call: "POST /r2-catalog/cut-warehouse/credential",
+        auth: `Bearer ${NEW_TOKEN}`,
+        body: { token: NEW_TOKEN },
+      },
+    ]);
+    expect(r.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: expect.stringMatching(
+          /^The Pipelines sink "cut_events_sink" keeps writing with the token it was created with/,
+        ),
+      }),
+    );
+    expect(JSON.stringify(r.logs)).not.toContain(NEW_TOKEN);
+  });
+});
+
 describe("replacing a database's connection string", () => {
   const NEW_PASSWORD = "new-db-pass-DO-NOT-LEAK";
   const CONNECTION = `postgres://app:${NEW_PASSWORD}@db2.example.com/feedlog`;

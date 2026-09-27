@@ -8,6 +8,7 @@ import {
   EMAIL_ROUTING_FEATURE,
   EXTERNAL_DOMAINS_FEATURE,
   optionalGroupsByFeature,
+  PIPELINES_FEATURE,
   PLAN_DETECTION_FEATURE,
   permissionName,
   resolveAppTokenPermissions,
@@ -22,11 +23,16 @@ function groupsOf(url: string) {
 }
 
 describe("token template URLs", () => {
-  it("prefill the account token form with every permission group", () => {
+  it("prefill the account token form with every permission group that has a template key", () => {
     const url = accountTokenTemplateUrl();
     expect(url.startsWith("https://dash.cloudflare.com/?to=/:account/api-tokens&")).toBe(true);
     expect(new URL(url).searchParams.get("name")).toBe("Appflare");
-    expect(groupsOf(url)).toEqual(TOKEN_PERMISSION_GROUPS.map(({ key, type }) => ({ key, type })));
+    expect(groupsOf(url)).toEqual(
+      TOKEN_PERMISSION_GROUPS.filter((g) => !("manual" in g)).map(({ key, type }) => ({
+        key,
+        type,
+      })),
+    );
   });
 
   it("prefill the user token form for all accounts and zones", () => {
@@ -36,7 +42,9 @@ describe("token template URLs", () => {
     ).toBe(true);
     expect(params.get("accountId")).toBe("*");
     expect(params.get("zoneId")).toBe("all");
-    expect(groupsOf(userTokenTemplateUrl())).toHaveLength(TOKEN_PERMISSION_GROUPS.length);
+    expect(groupsOf(userTokenTemplateUrl())).toHaveLength(
+      TOKEN_PERMISSION_GROUPS.filter((g) => !("manual" in g)).length,
+    );
   });
 
   it("asks for edit on resource groups and read on account settings, billing, tail, Access organizations, and zones", () => {
@@ -131,7 +139,32 @@ describe("token template URLs", () => {
       { feature: PLAN_DETECTION_FEATURE, names: ["Billing: Read"] },
       { feature: SANDBOX_BUILDS_FEATURE, names: ["Containers: Edit"] },
       { feature: DATABASE_ELSEWHERE_FEATURE, names: ["Hyperdrive: Edit"] },
+      {
+        feature: PIPELINES_FEATURE,
+        names: ["Pipelines: Edit", "Workers R2 Data Catalog: Edit (add by hand)"],
+      },
     ]);
+  });
+
+  it("asks for Pipelines: Edit only as optional, for apps that stream events, under the dashboard's key", () => {
+    const { required, optional } = splitPermissionGroups();
+    expect(required.some((g) => g.key === "pipelines")).toBe(false);
+    expect(optional.filter((g) => g.onlyFor === PIPELINES_FEATURE)).toEqual([
+      { key: "pipelines", type: "edit", label: "Pipelines", onlyFor: PIPELINES_FEATURE },
+      {
+        key: "workers_r2_data_catalog",
+        type: "edit",
+        label: "Workers R2 Data Catalog",
+        onlyFor: PIPELINES_FEATURE,
+        manual: true,
+      },
+    ]);
+    expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key: "pipelines", type: "edit" });
+    // No template key is known for R2 Data Catalog: it never goes into a link.
+    expect(JSON.stringify(groupsOf(accountTokenTemplateUrl()))).not.toContain("data_catalog");
+    expect(
+      resolveAppTokenPermissions([{ name: "Account.Pipelines:Edit" }]).map((p) => p.group?.key),
+    ).toEqual(["pipelines"]);
   });
 
   it("asks for Hyperdrive: Edit only as optional, for apps with a database elsewhere, under the dashboard's key", () => {

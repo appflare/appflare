@@ -105,8 +105,20 @@ export type {
   HyperdriveConfig,
   HyperdriveOriginInput,
 } from "./namespaces/hyperdrive";
+export type {
+  CreateCatalogSinkArgs,
+  CreatePipelineArgs,
+  CreateStreamArgs,
+  Pipeline,
+  PipelineSink,
+  PipelineStream,
+  R2DataCatalogSinkConfig,
+  StreamSchemaField,
+} from "./namespaces/pipelines";
 export type { CreateBucketArgs } from "./namespaces/r2";
 export { isAddressableObjectKey } from "./namespaces/r2";
+export type { CatalogMaintenanceUpdate, R2Catalog } from "./namespaces/r2-catalog";
+export { R2_CATALOG_NOT_FOUND_CODE } from "./namespaces/r2-catalog";
 export type {
   CreateVectorizeIndexArgs,
   VectorizeConfig,

@@ -4,6 +4,7 @@ import {
   entryWorkerRef,
   type JsonValue,
   type ModuleType,
+  PIPELINES_BINDING_TYPE,
   type QueueConsumer,
   type QueueRef,
   SELF_SERVICE,
@@ -43,6 +44,11 @@ export interface ResolvedWranglerConfig {
   };
   vectorize?: Array<{ binding: string }>;
   hyperdrive?: Array<{ binding: string }>;
+  /**
+   * Pipelines streams: `stream` is the stream's id (`pipeline`, its name
+   * before June 2026, still works), which belongs to one account.
+   */
+  pipelines?: Array<{ binding: string; stream?: string; pipeline?: string }>;
   analytics_engine_datasets?: Array<{ binding: string; dataset?: string }>;
   mtls_certificates?: Array<{ binding: string }>;
   durable_objects?: {
@@ -140,6 +146,15 @@ export class VectorizeDeclarationError extends Error {
  */
 export class HyperdriveDeclarationError extends Error {
   override name = "HyperdriveDeclarationError";
+}
+
+/**
+ * The wrangler config binds a Pipelines stream the catalog manifest's
+ * `resources.pipelines` does not describe, or the manifest describes one the
+ * config does not bind. The message names the binding and the field to fix.
+ */
+export class PipelineDeclarationError extends Error {
+  override name = "PipelineDeclarationError";
 }
 
 /**
@@ -359,6 +374,26 @@ export function checkHyperdriveDeclarations(
 }
 
 /**
+ * Throws {@link PipelineDeclarationError} when the catalog manifest describes
+ * a stream in `resources.pipelines` for a binding none of `bindings` has.
+ */
+export function checkPipelineDeclarations(
+  bindings: readonly WorkerBinding[],
+  resources?: CatalogResources,
+): void {
+  const bound = new Set(
+    bindings.filter((b) => b.type === PIPELINES_BINDING_TYPE).map((b) => b.name),
+  );
+  const unbound = Object.keys(resources?.pipelines ?? {}).filter((binding) => !bound.has(binding));
+  if (unbound.length > 0) {
+    throw new PipelineDeclarationError(
+      `the catalog manifest declares resources.pipelines.${unbound.join(", resources.pipelines.")}, ` +
+        "but the wrangler config has no Pipelines binding by that name; remove it from appflare.jsonc or fix the binding name",
+    );
+  }
+}
+
+/**
  * Converts wrangler's per-kind binding arrays into the artifact manifest's flat
  * `bindings` array, keeping only the binding NAME, its TYPE, and fields that are
  * not account-specific.
@@ -452,6 +487,22 @@ export function collectBindings(
   }
   if (checkUnboundVectorize) {
     checkHyperdriveDeclarations(bindings, resources);
+  }
+  // A stream's id belongs to the account it was created in, so only the
+  // binding's name is recorded; the manager creates a stream per install
+  // from the catalog manifest's description and binds its id.
+  const streams = resources?.pipelines ?? {};
+  for (const p of config.pipelines ?? []) {
+    if (!Object.hasOwn(streams, p.binding)) {
+      throw new PipelineDeclarationError(
+        `the wrangler config binds a Pipelines stream as ${p.binding}, but the catalog manifest does not describe it; ` +
+          `add resources.pipelines.${p.binding} with the stream's schema and its sink to appflare.jsonc`,
+      );
+    }
+    push(PIPELINES_BINDING_TYPE, p.binding);
+  }
+  if (checkUnboundVectorize) {
+    checkPipelineDeclarations(bindings, resources);
   }
   for (const ae of config.analytics_engine_datasets ?? []) {
     push("analytics_engine", ae.binding, { dataset: ae.dataset });

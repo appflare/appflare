@@ -51,6 +51,7 @@ import {
   resourceId,
   uploadAssetsPhase,
 } from "./install/phases";
+import { newSinkTokenPhase } from "./install/pipelines";
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import {
   type ConnectionReplacement,
@@ -435,6 +436,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       started.resources,
       started.vectorizeShapes,
       databases,
+      manifest.catalog.resources?.pipelines,
     );
     // The installed version itself: its exports are the serving ones.
     const path = updatePath(primaryManifest, started.appliedDoTag, primaryManifest.worker.exports);
@@ -857,6 +859,13 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       // This change's snapshot is the latest now: configurations an earlier
       // change superseded are bound only by older versions.
       await deleteSupersededPhase(steps, supersededAtStart);
+
+      // A new token for a Pipelines sink: the version that has it serves now.
+      for (const res of diff.plan.resources) {
+        if (res.type !== "pipelines") continue;
+        const token = params.secrets.set[res.pipeline.declared.sink.tokenSecret];
+        if (token !== undefined) await newSinkTokenPhase(steps, res, token);
+      }
     }
 
     // Email Routing: the new zone's routes first, so mail is never unrouted,

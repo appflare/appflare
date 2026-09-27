@@ -10,6 +10,7 @@ export * from "./install-dirs";
 export * from "./jsonc";
 export * from "./keys";
 export * from "./limits";
+export * from "./pipelines";
 export * from "./random-key";
 export * from "./repository";
 export * from "./revision";

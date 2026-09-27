@@ -6,6 +6,7 @@ import {
   HYPERDRIVE_KIND,
   HYPERDRIVE_SUPERSEDED_KIND,
   isDataResourceKind,
+  PIPELINE_STREAM_KIND,
   QUEUE_CONSUMER_KIND,
 } from "../installs/resource-kinds";
 import type { ResourceUsage } from "../installs/resource-usage.server";
@@ -38,6 +39,10 @@ function workerBoundSummary(install: InstallDetail): string[] {
   // The database itself is the admin's and stays as it is.
   for (const r of [...byKind(HYPERDRIVE_KIND), ...byKind(HYPERDRIVE_SUPERSEDED_KIND)]) {
     out.push(`the Hyperdrive configuration ${r.name}`);
+  }
+  // What a sink wrote stays in its bucket, which is listed with the data.
+  for (const r of byKind(PIPELINE_STREAM_KIND)) {
+    out.push(`the Pipelines stream ${r.name} with its sink and pipeline`);
   }
   const crons = byKind("cron").length;
   if (crons > 0) out.push(`${crons} cron trigger${crons === 1 ? "" : "s"}`);

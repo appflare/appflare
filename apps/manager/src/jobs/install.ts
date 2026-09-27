@@ -80,6 +80,11 @@ import {
   resourceId,
   uploadAssetsPhase,
 } from "./install/phases";
+import {
+  checkPipelinesPhase,
+  pipelineTokenProblems,
+  provisionPipelinePhase,
+} from "./install/pipelines";
 import { attachQueueConsumersPhase } from "./install/queue-consumers";
 import { explainR2Refusal } from "./install/r2-enablement";
 import { assignRateLimitsPhase } from "./install/rate-limits";
@@ -258,17 +263,27 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const entryNames = entryScriptNamesOf(manifest, params.workerName);
     // Resources are the app's, shared by binding name across its Workers.
     const databases = manifest.catalog.resources?.hyperdrive ?? [];
-    const plan = planBindings(params.workerName, entryBindings(manifest), databases);
+    const plan = planBindings(
+      params.workerName,
+      entryBindings(manifest),
+      databases,
+      manifest.catalog.resources?.pipelines,
+    );
     const queuePlan = planEntryQueueConsumers(params.workerName, manifest, workers);
     const primaryConsumers = queuePlan.consumers.get(params.workerName) ?? [];
     // Hyperdrive configurations first: Cloudflare connects to the database
     // when one is created, so an unreachable database stops the install
-    // before anything else exists in the account.
+    // before anything else exists in the account. Pipelines streams last:
+    // each comes with a sink that writes to a bucket, which may be one of
+    // the app's R2 bindings created before it.
     const toCreate = [
       ...plan.resources.filter((r) => r.type === "hyperdrive"),
-      ...plan.resources.filter((r) => r.type !== "hyperdrive"),
+      ...plan.resources.filter((r) => r.type !== "hyperdrive" && r.type !== "pipelines"),
       ...queuePlan.queues,
     ];
+    const streams = plan.resources.filter(
+      (r): r is Extract<typeof r, { type: "pipelines" }> => r.type === "pipelines",
+    );
 
     // 2. Preflight.
     const preflight = await run("preflight checks", async ({ log, orm }) => {
@@ -299,6 +314,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         ...entryNameProblems(manifest, params.workerName),
         // Messages name the binding and the part at fault, never the string.
         ...connectionStringProblems(databases, params.hyperdrive ?? {}),
+        // Each Pipelines sink needs the token the admin entered for it.
+        ...pipelineTokenProblems(streams, params.secrets),
       ];
       if (problems.length > 0) throw new InstallError(problems.join(" "));
       // The upload reads and sends every module in one invocation; refuse
@@ -409,7 +426,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         log.info(entryBudgetLine(cost, paid, workers.length));
       }
       log.info(
-        `Preflight passed: plan ${manifest.catalog.plan}, ${toCreate.length} resource(s) to create.`,
+        `Preflight passed: plan ${manifest.catalog.plan}, ${toCreate.length + streams.length} resource(s) to create.`,
       );
       return { accountId: settings.account_id, accountPaid, accountFree };
     });
@@ -463,7 +480,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // An account without R2 refuses every R2 call. Ask once before creating
     // anything, so that failure leaves nothing behind to clean up.
-    const firstBucket = toCreate.find((r) => r.kind === "r2");
+    const firstBucket =
+      toCreate.find((r) => r.kind === "r2") ??
+      streams
+        .map((s) => s.pipeline.bucket)
+        .filter((b) => b.create)
+        .map((b) => ({ name: b.name }))[0];
     if (firstBucket !== undefined) {
       await run("check R2 is enabled", async ({ log, cf }) => {
         await explainR2Refusal(firstBucket.name, () =>
@@ -490,6 +512,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       subject: "this app",
     });
 
+    // Pipelines too: a token without its permission, or an account without
+    // it, is refused before anything is created.
+    if (streams.length > 0) {
+      await checkPipelinesPhase(steps, { accountPaid: preflight.accountPaid });
+    }
+
     // Email Routing is checked before anything is created, like R2.
     const emailRouting = manifest.catalog.install.emailRouting;
     if (emailRouting !== undefined && params.emailRouting === undefined) {
@@ -511,6 +539,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       created.push(
         await provisionResourcePhase(steps, params.installId, res, params.hyperdrive ?? {}),
       );
+    }
+    for (const res of streams) {
+      // The preflight checked the token is there.
+      const token = params.secrets[res.pipeline.declared.sink.tokenSecret] ?? "";
+      created.push(await provisionPipelinePhase(steps, params.installId, res, token));
     }
 
     if (plan.durableObjects.length > 0) {

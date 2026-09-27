@@ -35,6 +35,12 @@ export interface PermissionGroup {
    * The token works without it; that feature then says what is missing.
    */
   onlyFor?: string;
+  /**
+   * The group has no known template key, so the dashboard form cannot be
+   * prefilled with it: it is left out of the template links, and its name
+   * says to add it by hand. `key` is then only an id within Appflare.
+   */
+  manual?: true;
 }
 
 /** The settings feature that puts the manager behind Cloudflare Access. */
@@ -84,6 +90,15 @@ export const SANDBOX_BUILDS_FEATURE = "Sandbox builds";
  * uninstall.
  */
 export const DATABASE_ELSEWHERE_FEATURE = "Apps with a database elsewhere";
+
+/**
+ * Installing an app that streams events into R2 (its catalog manifest's
+ * `resources.pipelines`): Appflare creates a Pipelines stream, sink and
+ * pipeline per stream the app binds, and deletes them on uninstall. The
+ * sink's R2 Data Catalog calls use a token the admin creates for the app,
+ * not this one.
+ */
+export const PIPELINES_FEATURE = "Apps that stream events";
 
 export const TOKEN_PERMISSION_GROUPS = [
   // Upload, version, deploy, and delete app Workers and the manager itself; their
@@ -166,6 +181,26 @@ export const TOKEN_PERMISSION_GROUPS = [
   // `token_permission_groups_dash.json`), so the key is `query_cache` by the
   // label rule above.
   { key: "query_cache", type: "edit", label: "Hyperdrive", onlyFor: DATABASE_ELSEWHERE_FEATURE },
+  // Create, list and delete the Pipelines streams, sinks and pipelines of
+  // apps that stream events into R2 ("Pipelines Write" in the API's group
+  // list; every `/pipelines/v1` call Appflare makes needs it or its Read
+  // half). Not in the template page's table either: the dashboard labels the
+  // group `pipelines_write` (the same published list as Hyperdrive's), so the
+  // key is `pipelines` by the label rule above.
+  { key: "pipelines", type: "edit", label: "Pipelines", onlyFor: PIPELINES_FEATURE },
+  // Remove the R2 Data Catalog of a bucket such an app wrote to when an
+  // uninstall deletes the bucket (`POST /r2-catalog/{bucket}/delete` needs
+  // "Workers R2 Data Catalog Write" in the API's group list); without it the
+  // bucket is still deleted and the catalog's records stay until a bucket of
+  // that name is made again. Neither the template page's table nor the
+  // dashboard's published group list has a key for it, so it is added by hand.
+  {
+    key: "workers_r2_data_catalog",
+    type: "edit",
+    label: "Workers R2 Data Catalog",
+    onlyFor: PIPELINES_FEATURE,
+    manual: true,
+  },
   // Find the account id and name the token belongs to (`GET /accounts`).
   { key: "account_settings", type: "read", label: "Account Settings" },
   // Stream a Worker's live logs while diagnosing an install or update.
@@ -204,11 +239,14 @@ export function optionalGroupsByFeature(
 
 /** `Label: Edit` / `Label: Read`, the wording of the dashboard's picker. */
 export function permissionName(group: PermissionGroup): string {
-  return `${group.label}: ${group.type === "edit" ? "Edit" : "Read"}`;
+  const name = `${group.label}: ${group.type === "edit" ? "Edit" : "Read"}`;
+  return group.manual === true ? `${name} (add by hand)` : name;
 }
 
 function encodedGroups(groups: readonly PermissionGroup[]): string {
-  return encodeURIComponent(JSON.stringify(groups.map(({ key, type }) => ({ key, type }))));
+  return encodeURIComponent(
+    JSON.stringify(groups.filter((g) => g.manual !== true).map(({ key, type }) => ({ key, type }))),
+  );
 }
 
 /**
@@ -238,6 +276,13 @@ export function userTokenTemplateUrl(
 export const USER_API_TOKENS_URL = "https://dash.cloudflare.com/profile/api-tokens";
 
 /**
+ * The account's R2 API tokens page. Its account token with Admin Read &
+ * Write carries R2 storage, R2 Data Catalog and R2 SQL; wrangler 4.136.2's
+ * `pipelines setup` sends people to the same page for a sink's catalog token.
+ */
+export const R2_API_TOKENS_URL = "https://dash.cloudflare.com/?to=/:account/r2/api-tokens";
+
+/**
  * Permission names an app's catalog manifest may use, `<Scope>.<Group>` in the
  * dashboard's wording, mapped to template keys. Keys are from the permission
  * reference on Cloudflare's "API token template URLs" page (linked above).
@@ -259,6 +304,8 @@ const APP_PERMISSION_KEYS: Readonly<Record<string, Omit<PermissionGroup, "type">
   "account.queues": { key: "queues", label: "Account: Queues" },
   // The dashboard's key for Hyperdrive (see TOKEN_PERMISSION_GROUPS above).
   "account.hyperdrive": { key: "query_cache", label: "Account: Hyperdrive" },
+  // The dashboard's key for Pipelines (see TOKEN_PERMISSION_GROUPS above).
+  "account.pipelines": { key: "pipelines", label: "Account: Pipelines" },
   // The same two groups the manager asks for to put itself behind Access; apps
   // that create their own Access application (self-deploying ones) need them.
   "account.access: apps and policies": { key: "access", label: "Access: Apps and Policies" },

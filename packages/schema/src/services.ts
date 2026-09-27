@@ -18,6 +18,7 @@ export const SERVICE_IDS = [
   "vectorize",
   "analytics-engine",
   "queues",
+  "pipelines",
   "workflows",
   "cron",
   "workers-ai",
@@ -47,6 +48,7 @@ const BINDING_SERVICES: Readonly<Record<string, ServiceId>> = {
   vectorize: "vectorize",
   analytics_engine: "analytics-engine",
   queue: "queues",
+  pipelines: "pipelines",
   workflow: "workflows",
   ai: "workers-ai",
   browser: "browser-rendering",
@@ -84,6 +86,7 @@ const PERMISSION_SERVICES: ReadonlyArray<readonly [RegExp, ServiceId]> = [
   [/\bhyperdrive\b/i, "hyperdrive"],
   [/\bvectorize\b/i, "vectorize"],
   [/\bqueues?\b/i, "queues"],
+  [/\bpipelines?\b/i, "pipelines"],
   [/\bworkflows?\b/i, "workflows"],
   [/\bworkers ai\b/i, "workers-ai"],
   [/\bbrowser rendering\b/i, "browser-rendering"],
@@ -109,6 +112,11 @@ export interface ServiceSources {
   vectorizeIndexes?: readonly string[];
   /** Databases the catalog manifest declares behind Hyperdrive (`resources.hyperdrive`), by binding name. */
   hyperdriveBindings?: readonly string[];
+  /**
+   * Streams the catalog manifest describes (`resources.pipelines`), by
+   * binding name. Each sink writes to an R2 bucket, so R2 comes with them.
+   */
+  pipelineBindings?: readonly string[];
 }
 
 /** What an app uses, as {@link deriveServices} works it out. */
@@ -138,6 +146,10 @@ export function deriveServices(sources: ServiceSources): AppServices {
   if ((sources.crons ?? []).length > 0) found.add("cron");
   if ((sources.vectorizeIndexes ?? []).length > 0) found.add("vectorize");
   if ((sources.hyperdriveBindings ?? []).length > 0) found.add("hyperdrive");
+  if ((sources.pipelineBindings ?? []).length > 0) {
+    found.add("pipelines");
+    found.add("r2");
+  }
   for (const requirement of sources.requires ?? []) {
     const id = REQUIREMENT_SERVICES[requirement];
     if (id !== undefined) found.add(id);
@@ -161,7 +173,9 @@ export function deriveServices(sources: ServiceSources): AppServices {
 export type ServiceCatalogFacts = Pick<CatalogManifest, "requires" | "tokenPermissions"> & {
   install: Pick<CatalogManifest["install"], "emailRouting">;
   resources?:
-    | Partial<Pick<NonNullable<CatalogManifest["resources"]>, "vectorize" | "hyperdrive">>
+    | Partial<
+        Pick<NonNullable<CatalogManifest["resources"]>, "vectorize" | "hyperdrive" | "pipelines">
+      >
     | undefined;
 };
 
@@ -176,8 +190,8 @@ export type ServiceWorkerFacts = Pick<
  * its artifact's Worker. Without a Worker (a `sandbox` or `self-deploying`
  * entry, whose bindings exist only once it runs) the answer is what the
  * catalog manifest declares: `requires`, `install.emailRouting`, the Vectorize
- * indexes it sizes, the databases it reaches through Hyperdrive and its
- * token's permissions.
+ * indexes it sizes, the databases it reaches through Hyperdrive, the streams
+ * it describes and its token's permissions.
  */
 export function appServices(
   catalog: ServiceCatalogFacts,
@@ -193,5 +207,6 @@ export function appServices(
     emailRouting: catalog.install.emailRouting !== undefined,
     vectorizeIndexes: Object.keys(catalog.resources?.vectorize ?? {}),
     hyperdriveBindings: (catalog.resources?.hyperdrive ?? []).map((h) => h.binding),
+    pipelineBindings: Object.keys(catalog.resources?.pipelines ?? {}),
   });
 }

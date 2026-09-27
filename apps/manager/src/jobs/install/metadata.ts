@@ -114,6 +114,10 @@ function resourceBinding(binding: WorkerBinding, created: CreatedResource): Uplo
     case "hyperdrive":
       // `workers_binding_kind_hyperdrive`: `{ type, name, id }`, the configuration's id.
       return { type: "hyperdrive", name: binding.name, id: created.cfId };
+    case "pipelines":
+      // Wrangler 4.136.2 uploads `{ name, type: "pipelines", stream: <stream id> }`
+      // for a config's `stream` (`pipeline` is the name before June 2026).
+      return { type: "pipelines", name: binding.name, stream: created.cfId };
   }
 }
 

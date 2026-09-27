@@ -12,6 +12,7 @@ import {
   type D1MigrationFile,
   hyperdriveDeclarationProblems,
   isVectorizeBinding,
+  pipelineDeclarationProblems,
   queueConsumerProblems,
   schemaFileProblems,
   serviceBindingProblem,
@@ -125,6 +126,19 @@ function checkHyperdriveBindings(manifest: ArtifactManifest): void {
   if (problems.length > 0) throw new Error(problems.join(" "));
 }
 
+/**
+ * Throws unless every Pipelines binding is described in the embedded catalog
+ * manifest's `resources.pipelines` and every description is bound: the
+ * manager creates one stream per description and binds one per binding.
+ */
+function checkPipelineBindings(manifest: ArtifactManifest): void {
+  const problems = pipelineDeclarationProblems(
+    appWorkers(manifest).flatMap((w) => w.worker.bindings),
+    manifest.catalog.resources?.pipelines ?? {},
+  );
+  if (problems.length > 0) throw new Error(problems.join(" "));
+}
+
 function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
   const named = path.join(dir, `${manifest.app}-${manifest.version}.zip`);
   if (existsSync(named)) {
@@ -202,6 +216,7 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
 
   checkVectorizeBindings(manifest);
   checkHyperdriveBindings(manifest);
+  checkPipelineBindings(manifest);
   const workers = appWorkers(manifest);
   // A queue a Worker consumes may be one another Worker of the app sends to.
   const allBindings = combinedWorkerFacts(manifest).bindings;

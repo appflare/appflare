@@ -46,6 +46,12 @@ interface World {
   vectorize: Set<string>;
   /** Hyperdrive configuration ids. */
   hyperdrive: Set<string>;
+  /** Pipelines objects as `<streams|sinks|pipelines>/<id>`. */
+  pipelines: Set<string>;
+  /** Buckets with an R2 Data Catalog. */
+  catalogs: Set<string>;
+  /** The token cannot remove a catalog (no Workers R2 Data Catalog: Edit). */
+  catalogRefused?: boolean;
   /** Workflow names; deleting a Worker leaves them, as Cloudflare does. */
   workflows: Set<string>;
   /** Custom domains by id: hostname and the Worker it serves. */
@@ -70,6 +76,8 @@ function fakeWorld(over: Partial<World> = {}) {
     queues: new Set(["q-1"]),
     vectorize: new Set(["cut-vectors"]),
     hyperdrive: new Set(),
+    pipelines: new Set(),
+    catalogs: new Set(),
     workflows: new Set(["cut-jobs"]),
     domains: new Map(),
     calls: [],
@@ -130,6 +138,19 @@ function fakeWorld(over: Partial<World> = {}) {
     if (m?.[1]) return world.vectorize.delete(m[1]) ? ok(null) : gone();
     m = /^DELETE \/hyperdrive\/configs\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.hyperdrive.delete(m[1]) ? ok(null) : gone();
+    m = /^DELETE \/pipelines\/v1\/((?:streams|sinks|pipelines)\/[^/]+)$/.exec(key);
+    if (m?.[1]) return world.pipelines.delete(m[1]) ? ok({}) : gone();
+    m = /^POST \/r2-catalog\/([^/]+)\/delete$/.exec(key);
+    if (m?.[1]) {
+      if (world.catalogRefused === true) return fail(403, "Forbidden");
+      if (!world.catalogs.delete(m[1])) {
+        return Response.json(
+          { success: false, errors: [{ code: 40401, message: "Catalog not found" }] },
+          { status: 404 },
+        );
+      }
+      return new Response(null, { status: 204 });
+    }
     m = /^GET \/r2\/buckets\/([^/]+)\/objects$/.exec(key);
     if (m?.[1]) {
       const objects = world.r2.get(m[1]);
@@ -563,6 +584,113 @@ describe("uninstall job: Hyperdrive configurations", () => {
     );
     // Never offered as data to keep.
     expect(r.state("kv")).toBe("retained");
+  });
+});
+
+describe("uninstall job: Pipelines", () => {
+  /** A stream with its sink, pipeline, own bucket and that bucket's Data Catalog. */
+  async function seedPipelines(): Promise<void> {
+    const r = (id: string, kind: string, name: string, cfId: string, binding: string | null) =>
+      env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES (?1, 'i1', ?2, ?3, ?4, ?5, 1)`,
+      ).bind(id, kind, binding, name, cfId);
+    await env.DB.batch([
+      r("wh", "r2", "cut-warehouse", "cut-warehouse", null),
+      r("cat", "r2_catalog", "cut-warehouse", "cat-1", null),
+      r("stream", "pipeline_stream", "cut_events_stream", "s1", "EVENTS"),
+      r("sink", "pipeline_sink", "cut_events_sink", "k1", null),
+      r("pipe", "pipeline", "cut_events_pipeline", "p1", null),
+    ]);
+  }
+  const world = () =>
+    fakeWorld({
+      r2: new Map([
+        ["cut-files", []],
+        ["cut-warehouse", ["__r2_data_catalog/x/data.parquet"]],
+      ]),
+      pipelines: new Set(["streams/s1", "sinks/k1", "pipelines/p1"]),
+      catalogs: new Set(["cut-warehouse"]),
+    });
+
+  it("deletes the pipeline, sink and stream after the Worker, then the bucket with its catalog", async () => {
+    await seedInstall();
+    await seedPipelines();
+    const fake = world();
+    const r = await uninstall({ installId: "i1", deleteResources: [...ALL_DATA, "wh"] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    const calls = fake.world.calls;
+    const at = (call: string) => calls.indexOf(call);
+    expect(at("DELETE /pipelines/v1/pipelines/p1")).toBeGreaterThan(
+      at("DELETE /workers/scripts/cut?force=true"),
+    );
+    expect(at("DELETE /pipelines/v1/pipelines/p1")).toBeLessThan(
+      at("DELETE /pipelines/v1/sinks/k1"),
+    );
+    expect(at("DELETE /pipelines/v1/sinks/k1")).toBeLessThan(at("DELETE /pipelines/v1/streams/s1"));
+    // The catalog goes before the bucket is emptied.
+    expect(at("POST /r2-catalog/cut-warehouse/delete?force=true")).toBeGreaterThan(
+      at("DELETE /pipelines/v1/streams/s1"),
+    );
+    expect(at("POST /r2-catalog/cut-warehouse/delete?force=true")).toBeLessThan(
+      calls.findIndex((c) => c.startsWith("GET /r2/buckets/cut-warehouse/objects")),
+    );
+    expect(fake.world.pipelines.size).toBe(0);
+    expect(fake.world.catalogs.size).toBe(0);
+    expect(fake.world.r2.has("cut-warehouse")).toBe(false);
+    for (const id of ["stream", "sink", "pipe", "cat", "wh"]) expect(r.state(id)).toBe("deleted");
+  });
+
+  it("keeps a kept bucket's catalog with it, listed as kept, and deletes both later", async () => {
+    await seedInstall();
+    await seedPipelines();
+    const fake = world();
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    // Streams, sinks and pipelines are never kept.
+    for (const id of ["stream", "sink", "pipe"]) expect(r.state(id)).toBe("deleted");
+    expect(r.state("wh")).toBe("retained");
+    expect(r.state("cat")).toBe("retained");
+    expect(fake.world.calls.some((c) => c.startsWith("POST /r2-catalog/"))).toBe(false);
+
+    const later = await deleteRetained(fake);
+    expect(later.error).toBeNull();
+    expect(later.state("wh")).toBe("deleted");
+    expect(later.state("cat")).toBe("deleted");
+    expect(fake.world.catalogs.size).toBe(0);
+  });
+
+  it("deletes the bucket anyway, with a warning, when the token cannot remove its catalog", async () => {
+    await seedInstall();
+    await seedPipelines();
+    const fake = world();
+    fake.world.catalogRefused = true;
+    const r = await uninstall({ installId: "i1", deleteResources: [...ALL_DATA, "wh"] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.state("wh")).toBe("deleted");
+    expect(r.state("cat")).toBe("deleted");
+    expect(r.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: expect.stringMatching(
+          /^Cloudflare refused to remove the R2 Data Catalog of "cut-warehouse" \(Forbidden\); the bucket is deleted anyway/,
+        ),
+      }),
+    );
+  });
+
+  it("counts a pipeline object that is already gone as deleted", async () => {
+    await seedInstall();
+    await seedPipelines();
+    const fake = world();
+    fake.world.pipelines.delete("sinks/k1");
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    expect(r.state("sink")).toBe("deleted");
+    expect(r.logs.map((l) => l.message)).toContain(
+      'The Pipelines sink "cut_events_sink" was already gone.',
+    );
   });
 });
 

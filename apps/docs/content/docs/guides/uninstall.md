@@ -31,6 +31,16 @@ Then the Worker itself, and everything that only exists with it:
 - its Workflows,
 - its Durable Object classes and everything they stored.
 
+After the Worker, an [app that streams events](/guides/install-apps/#apps-that-stream-events)
+loses its pipelines, sinks and streams, in that order. They hold no data: what a sink
+wrote is in its R2 bucket, which you choose to keep or delete below. A bucket that is
+kept keeps its R2 Data Catalog, so its tables stay readable. For a bucket that is
+deleted, Appflare first removes its R2 Data Catalog, which needs the optional
+**Workers R2 Data Catalog: Edit** permission on Appflare's token (no template link can
+add it; add it by hand). Without it the bucket is still deleted, but Cloudflare keeps
+the catalog's records of its tables; the uninstall log warns, and a later install
+that creates a bucket of the same name clears them with the app's own token.
+
 For an [app of several Workers](/guides/install-apps/#apps-of-several-workers), the
 uninstall deletes every Worker of the app this way, each with its queue consumers
 detached first, before it deletes any resource.

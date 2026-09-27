@@ -3,6 +3,7 @@ import { Badge, LayerCard, Link, LinkButton, Table, Text } from "@cloudflare/kum
 import { KeyIcon } from "@phosphor-icons/react";
 import {
   appTokenTemplateUrl,
+  R2_API_TOKENS_URL,
   resolveAppTokenPermissions,
   USER_API_TOKENS_URL,
 } from "../cloudflare/token-template";
@@ -37,6 +38,9 @@ export function AppTokenPermissions({
   const resolved = resolveAppTokenPermissions(permissions);
   const templateUrl = appTokenTemplateUrl(appName, resolved);
   const unmapped = resolved.some((p) => p.group === null);
+  // R2 Data Catalog has no template key; the R2 API token form's Admin Read &
+  // Write grants it together with R2 storage and R2 SQL.
+  const r2Token = resolved.some((p) => /\br2 data catalog\b/i.test(p.name));
   return (
     <section className="grid gap-3">
       <Text variant="heading" as="h2">
@@ -84,6 +88,17 @@ export function AppTokenPermissions({
           </Table.Body>
         </Table>
       </LayerCard>
+      {r2Token && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <LinkButton href={R2_API_TOKENS_URL} external variant="secondary" icon={<KeyIcon />}>
+            Create R2 API token
+          </LinkButton>
+          <Text variant="secondary" size="sm">
+            Opens the account's R2 API tokens. Create an account API token with Admin Read &amp;
+            Write: it has every R2 permission listed here. It reaches every bucket in the account.
+          </Text>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         {templateUrl !== null ? (
           <>

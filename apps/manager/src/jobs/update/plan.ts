@@ -2,7 +2,10 @@ import type { WorkerDeployment } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
   type CatalogHyperdrive,
+  type CatalogPipeline,
+  type CatalogPipelines,
   type CatalogSecret,
+  catalogPipelinesSchema,
   type DoMigration,
   durableObjectExports,
   hasDurableObjectExports,
@@ -124,6 +127,65 @@ export function vectorizeShapesOf(
   return shapes;
 }
 
+/** What of a stream the install created cannot change: its schema and where its sink writes. */
+export interface PipelineShape {
+  schema: CatalogPipeline["schema"] | null;
+  bucket: string;
+  namespace: string;
+  table: string;
+}
+
+/** Stream shapes by binding name. */
+export type PipelineShapes = Readonly<Record<string, PipelineShape>>;
+
+function shapeOf(declared: CatalogPipeline): PipelineShape {
+  return {
+    schema: declared.schema ?? null,
+    bucket: declared.sink.bucket,
+    namespace: declared.sink.namespace,
+    table: declared.sink.table,
+  };
+}
+
+/**
+ * The stream shape of each Pipelines binding the catalog manifest of a stored
+ * artifact manifest (the installed version's) describes, by binding name. A
+ * manifest that does not parse, or describes none, contributes nothing.
+ */
+export function pipelineShapesOf(manifestJson: string | null): Record<string, PipelineShape> {
+  const shapes: Record<string, PipelineShape> = {};
+  if (manifestJson === null) return shapes;
+  let declared: unknown;
+  try {
+    declared = (JSON.parse(manifestJson) as { catalog?: { resources?: { pipelines?: unknown } } })
+      .catalog?.resources?.pipelines;
+  } catch {
+    return shapes;
+  }
+  const parsed = catalogPipelinesSchema.safeParse(declared);
+  if (!parsed.success) return shapes;
+  for (const [binding, decl] of Object.entries(parsed.data)) shapes[binding] = shapeOf(decl);
+  return shapes;
+}
+
+/**
+ * What a new version's description of a kept stream changes, as words for a
+ * message, or null when nothing that was created changes. Settings that
+ * apply only when a sink is made (roll interval, compression, maintenance)
+ * are not compared: the kept sink goes on as it was made.
+ */
+export function pipelineShapeChange(was: PipelineShape, now: CatalogPipeline): string | null {
+  const next = shapeOf(now);
+  const changes: string[] = [];
+  if (JSON.stringify(was.schema) !== JSON.stringify(next.schema)) changes.push("its schema");
+  if (was.bucket !== next.bucket || was.namespace !== next.namespace || was.table !== next.table) {
+    changes.push(
+      `the table its events land in (from ${was.bucket} ${was.namespace}.${was.table} to ${next.bucket} ${next.namespace}.${next.table})`,
+    );
+  }
+  return changes.length === 0 ? null : changes.join(" and ");
+}
+
 /**
  * Compares the new version's bindings with the install's recorded resources.
  * A binding whose resource is recorded keeps it (same id, same name); a new
@@ -141,8 +203,12 @@ export function diffBindings(
   installedShapes: VectorizeShapes = {},
   /** The version's `resources.hyperdrive` (the catalog manifest's database declarations). */
   databases: readonly CatalogHyperdrive[] = [],
+  /** The version's `resources.pipelines` (the catalog manifest's stream descriptions). */
+  streams: CatalogPipelines = {},
+  /** The installed version's `resources.pipelines` ({@link pipelineShapesOf}). */
+  installedStreams: PipelineShapes = {},
 ): BindingDiff {
-  const plan = planBindings(workerName, bindings, databases);
+  const plan = planBindings(workerName, bindings, databases, streams);
   const byBinding = new Map<string, RecordedResource[]>();
   for (const row of recorded) {
     if (row.binding === null || !BOUND_KINDS.has(row.kind)) continue;
@@ -170,6 +236,18 @@ export function diffBindings(
           `The ${res.kind} resource of binding ${res.binding} (${same.name}) is recorded without a Cloudflare id, so the update cannot bind it.`,
         );
         continue;
+      }
+      if (res.type === "pipelines") {
+        const was = Object.hasOwn(installedStreams, res.binding)
+          ? installedStreams[res.binding]
+          : undefined;
+        const change = was === undefined ? null : pipelineShapeChange(was, res.pipeline.declared);
+        if (change !== null) {
+          diff.problems.push(
+            `Binding ${res.binding} sends events to the Pipelines stream "${same.name}"; this version changes ${change}. Cloudflare cannot change a stream or a sink once created, nor point a new sink at an existing table, so this version needs a fresh install.`,
+          );
+          continue;
+        }
       }
       if (res.type === "vectorize") {
         const was = Object.hasOwn(installedShapes, res.binding)
@@ -205,6 +283,16 @@ export function diffBindings(
       // is installed fresh.
       diff.problems.push(
         `Binding ${res.binding} connects to a database elsewhere and is new in this version; Appflare cannot ask for its connection string during an update yet, so this version needs a fresh install.`,
+      );
+      continue;
+    }
+    if (res.type === "pipelines") {
+      // TODO: create the stream, sink and pipeline during an update; the sink
+      // needs the token the admin entered at install, which Cloudflare keeps
+      // write-only as a secret, so the update form would have to ask for it
+      // again. Until then such a version is installed fresh.
+      diff.problems.push(
+        `Binding ${res.binding} sends events to a Pipelines stream and is new in this version; its sink needs the API token entered at install, which an update cannot read back, so this version needs a fresh install.`,
       );
       continue;
     }

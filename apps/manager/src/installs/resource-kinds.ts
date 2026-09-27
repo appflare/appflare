@@ -96,6 +96,42 @@ export const HYPERDRIVE_SUPERSEDED_KIND = "hyperdrive_superseded" as const;
 /** Both Hyperdrive kinds: what an uninstall deletes after the Worker. */
 export const HYPERDRIVE_KINDS = [HYPERDRIVE_KIND, HYPERDRIVE_SUPERSEDED_KIND] as const;
 
+/**
+ * A Pipelines stream: what a Worker's Pipelines binding sends events to.
+ * `binding` is the binding, `cf_id` the stream's id (what the binding
+ * carries). It buffers events only until the pipeline has moved them to the
+ * sink, so it holds no data of its own.
+ */
+export const PIPELINE_STREAM_KIND = "pipeline_stream" as const;
+
+/**
+ * A Pipelines sink: writes the stream's events to an Iceberg table of an R2
+ * bucket's Data Catalog. No binding. It holds the API token the admin gave for
+ * it (Cloudflare keeps it), never data: the table lives in the bucket.
+ */
+export const PIPELINE_SINK_KIND = "pipeline_sink" as const;
+
+/** A pipeline: the SQL that moves a stream's events into its sink. No binding, no data. */
+export const PIPELINE_KIND = "pipeline" as const;
+
+/**
+ * Everything of a Pipelines binding, in the order an uninstall deletes it,
+ * always and after the Worker: the pipeline first (it reads the stream and
+ * writes the sink), then the sink, then the stream. Events already written
+ * stay in the bucket, which is a data resource of its own.
+ */
+export const PIPELINE_KINDS = [PIPELINE_KIND, PIPELINE_SINK_KIND, PIPELINE_STREAM_KIND] as const;
+
+/**
+ * An R2 bucket's Data Catalog, turned on for a Pipelines sink: `name` is the
+ * bucket's name. It goes with its bucket: an uninstall that deletes the bucket
+ * removes the catalog first, with its tables' records (Cloudflare keeps them
+ * after the bucket is gone otherwise, and a sink cannot create a table of the
+ * same name again), and one that keeps the bucket keeps the catalog, so the
+ * table stays readable.
+ */
+export const R2_CATALOG_KIND = "r2_catalog" as const;
+
 export function isDataResourceKind(kind: string): kind is DataResourceKind {
   return (DATA_RESOURCE_KINDS as readonly string[]).includes(kind);
 }

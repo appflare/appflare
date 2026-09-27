@@ -512,6 +512,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
             install.workerName,
             entryBindings(manifest.manifest),
             manifest.catalog.resources?.hyperdrive ?? [],
+            manifest.catalog.resources?.pipelines,
           );
     return {
       ...empty,
@@ -523,7 +524,14 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
         app.tier !== "self-deploying" && sourceBuildsOffered(session.user.role, sandbox),
       authors: appAuthors(app, manifest.catalog),
       createsKnown: plan !== null,
-      creates: plan?.resources.map((r) => ({ kind: r.kind, binding: r.binding })) ?? [],
+      creates:
+        plan?.resources.flatMap((r) => [
+          // A Pipelines sink's bucket that no R2 binding has is created with the stream.
+          ...(r.type === "pipelines" && r.pipeline.bucket.create
+            ? [{ kind: "r2" as const, binding: r.pipeline.bucket.key }]
+            : []),
+          { kind: r.kind, binding: r.binding },
+        ]) ?? [],
       durableObjects: plan?.durableObjects.map((d) => d.className) ?? [],
       cronTriggers:
         manifest.manifest === null

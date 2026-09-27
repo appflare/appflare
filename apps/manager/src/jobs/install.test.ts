@@ -36,6 +36,8 @@ import type { JobEnv } from "./run-job";
 const ACC = "acc0000000000000000000000000000a";
 const TOKEN = "cf-test-token-DO-NOT-LEAK";
 const PASSWORD = "admin-password-DO-NOT-LEAK";
+/** The R2 API token an admin enters for a Pipelines sink. */
+const SINK_TOKEN = "sink-token-DO-NOT-LEAK";
 const HEALTH_URL = "https://cut.appflare-dev.workers.dev/";
 const WORKER_ORIGIN = "https://cut.appflare-dev.workers.dev";
 const VERSION_HEX = "0123456789abcdef0123456789abcdef";
@@ -86,6 +88,18 @@ interface FakeState {
   hyperdriveRefusal?: string;
   /** The token lacks Hyperdrive: every Hyperdrive call answers 403. */
   hyperdriveTokenRefused?: boolean;
+  /** Pipelines streams, sinks and pipelines, each with the body it was created from. */
+  streams: Array<{ id: string; name: string; body: Record<string, unknown> }>;
+  sinks: Array<{ id: string; name: string; body: Record<string, unknown> }>;
+  pipelines: Array<{ id: string; name: string; body: Record<string, unknown> }>;
+  /** The manager's token lacks Pipelines: every Pipelines call answers 403, code 100. */
+  pipelinesTokenRefused?: boolean;
+  /** R2 Data Catalogs by bucket. */
+  catalogs: Record<string, { id: string; status: string }>;
+  /** Each R2 Data Catalog call as `METHOD /path as <sink|manager>`, with its body when it has one. */
+  catalogCalls: Array<{ call: string; body?: unknown }>;
+  /** The catalog refuses the maintenance settings with this status. */
+  maintenanceStatus?: number;
   /** The zip answers like a GitHub release asset: a 302 to a signed storage URL. */
   artifactRedirect: boolean;
   /** Files per upload bucket the session asks for (default: one bucket for all). */
@@ -144,6 +158,11 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     r2Enabled: true,
     vectorize: [],
     hyperdrive: [],
+    streams: [],
+    sinks: [],
+    pipelines: [],
+    catalogs: {},
+    catalogCalls: [],
     artifactRedirect: false,
     singleUploads: false,
     requestsByStep: {},
@@ -177,12 +196,69 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     return response;
   }
 
+  /** R2 Data Catalog, which takes the app's catalog token as well as the manager's. */
+  async function catalog(request: Request, path: string, auth: string | null) {
+    const who =
+      auth === `Bearer ${SINK_TOKEN}` ? "sink" : auth === `Bearer ${TOKEN}` ? "manager" : null;
+    if (who === null) {
+      return Response.json(
+        { success: false, errors: [{ code: 10000, message: "auth" }] },
+        { status: 403 },
+      );
+    }
+    const text = await request.text();
+    const url = new URL(request.url);
+    const call = `${request.method} ${path}${url.search} as ${who}`;
+    state.catalogCalls.push(text.length > 0 ? { call, body: JSON.parse(text) } : { call });
+    const [, bucket = "", action] = /^\/r2-catalog\/([^/]+)(?:\/(.+))?$/.exec(path) ?? [];
+    const notFound = () =>
+      Response.json(
+        { success: false, errors: [{ code: 40401, message: "Catalog not found" }] },
+        { status: 404 },
+      );
+    switch (`${request.method} ${action ?? ""}`) {
+      case "GET ": {
+        const found = state.catalogs[bucket];
+        return found === undefined ? notFound() : ok({ bucket, ...found });
+      }
+      case "POST enable": {
+        const id = `cat-${Object.keys(state.catalogs).length + 1}`;
+        state.catalogs[bucket] = { id, status: "active" };
+        return ok({ id, name: `${ACC}_${bucket}` });
+      }
+      case "POST delete": {
+        if (state.catalogs[bucket] === undefined) return notFound();
+        delete state.catalogs[bucket];
+        return new Response(null, { status: 204 });
+      }
+      case "POST credential":
+        return ok(null);
+      case "POST maintenance-configs":
+        if (state.maintenanceStatus !== undefined) {
+          return Response.json(
+            { success: false, errors: [{ code: 40000, message: "bad maintenance" }] },
+            { status: state.maintenanceStatus },
+          );
+        }
+        return ok(null);
+      default:
+        return Response.json({ success: false, errors: [] }, { status: 404 });
+    }
+  }
+
   async function route(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.replace(`/client/v4/accounts/${ACC}`, "");
     const key = `${request.method} ${path}`;
     state.calls.push(key);
     const auth = request.headers.get("authorization");
+    if (path.startsWith("/r2-catalog/")) return catalog(request, path, auth);
+    if (path.startsWith("/pipelines/") && state.pipelinesTokenRefused === true) {
+      return Response.json(
+        { success: false, errors: [{ code: 100, message: "Forbidden" }] },
+        { status: 403 },
+      );
+    }
     if (!path.startsWith("/workers/assets/upload") && auth !== `Bearer ${TOKEN}`) {
       return Response.json(
         { success: false, errors: [{ code: 10000, message: "auth" }] },
@@ -247,6 +323,33 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         const { name } = (await request.json()) as { name: string };
         state.r2.push(name);
         return ok({ name });
+      }
+      case "GET /pipelines/v1/streams":
+      case "GET /pipelines/v1/sinks":
+      case "GET /pipelines/v1/pipelines": {
+        const list =
+          state[path.slice("/pipelines/v1/".length) as "streams" | "sinks" | "pipelines"];
+        const perPage = Number(url.searchParams.get("per_page") ?? "20");
+        return ok(
+          list.slice(0, perPage).map(({ id, name }) => ({ id, name })),
+          {
+            result_info: {
+              page: 1,
+              per_page: perPage,
+              count: list.length,
+              total_count: list.length,
+            },
+          },
+        );
+      }
+      case "POST /pipelines/v1/streams":
+      case "POST /pipelines/v1/sinks":
+      case "POST /pipelines/v1/pipelines": {
+        const what = path.slice("/pipelines/v1/".length) as "streams" | "sinks" | "pipelines";
+        const body = (await request.json()) as Record<string, unknown> & { name: string };
+        const id = `${what}-${state[what].length + 1}`;
+        state[what].push({ id, name: body.name, body });
+        return ok({ id, name: body.name });
       }
       case "GET /hyperdrive/configs":
         return ok(
@@ -1023,6 +1126,279 @@ describe("install job", () => {
       await expect(
         install(options, {}, { hyperdrive: { HYPERDRIVE: `mysql://a:${DB_PASSWORD}@h/db` } }),
       ).rejects.toThrow(/This app needs a PostgreSQL database/);
+    });
+  });
+
+  describe("an app that streams events", () => {
+    const options = {
+      bindings: [
+        { type: "pipelines", name: "EVENTS" },
+        { type: "kv_namespace", name: "CUT_KV" },
+      ],
+      catalog: {
+        plan: "paid" as const,
+        secrets: [
+          { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+          { name: "CATALOG_TOKEN", label: "R2 token", generate: false },
+        ],
+        resources: {
+          pipelines: {
+            EVENTS: {
+              schema: {
+                fields: [
+                  { name: "ts", type: "timestamp" as const, required: true },
+                  { name: "site", type: "string" as const },
+                ],
+              },
+              sink: {
+                type: "r2_data_catalog" as const,
+                bucket: "WAREHOUSE",
+                namespace: "cut",
+                table: "events",
+                tokenSecret: "CATALOG_TOKEN",
+                rollIntervalSeconds: 60,
+                compaction: true,
+                snapshotExpiration: { maxAge: "30d", minSnapshotsToKeep: 5 },
+              },
+            },
+          },
+        },
+      },
+    };
+    const input = {
+      paidConfirmed: true,
+      secrets: { ADMIN_PASSWORD: PASSWORD, CATALOG_TOKEN: SINK_TOKEN },
+    };
+
+    it("creates the bucket, its catalog, the stream, the sink and the pipeline, and binds the stream", async () => {
+      const r = await install(options, {}, input);
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      const names = r.step.names;
+      expect(
+        names.slice(names.indexOf("check Pipelines"), names.indexOf("check Pipelines") + 1),
+      ).toEqual(["check Pipelines"]);
+      expect(names.slice(names.indexOf("check Pipelines names for EVENTS"))).toEqual(
+        expect.arrayContaining([
+          "check Pipelines names for EVENTS",
+          "create R2 bucket cut-warehouse",
+          "record R2 bucket cut-warehouse",
+          "turn on R2 Data Catalog for cut-warehouse",
+          "record R2 Data Catalog cut-warehouse",
+          "turn on table maintenance for cut-warehouse",
+          "create Pipelines stream cut_events_stream",
+          "record Pipelines stream cut_events_stream",
+          "create Pipelines sink cut_events_sink",
+          "record Pipelines sink cut_events_sink",
+          "create pipeline cut_events_pipeline",
+          "record pipeline cut_events_pipeline",
+        ]),
+      );
+      // The probe runs before anything is created; the streams after the other resources.
+      expect(names.indexOf("check Pipelines")).toBeLessThan(
+        names.indexOf("check KV namespace cut-cut-kv"),
+      );
+      expect(names.indexOf("record KV namespace cut-cut-kv")).toBeLessThan(
+        names.indexOf("check Pipelines names for EVENTS"),
+      );
+
+      expect(r.fake.state.r2).toEqual(["cut-warehouse"]);
+      expect(r.fake.state.streams).toEqual([
+        {
+          id: "streams-1",
+          name: "cut_events_stream",
+          body: {
+            name: "cut_events_stream",
+            format: { type: "json" },
+            schema: {
+              fields: [
+                { name: "ts", type: "timestamp", required: true },
+                { name: "site", type: "string" },
+              ],
+            },
+            http: { enabled: false, authentication: false },
+            worker_binding: { enabled: true },
+          },
+        },
+      ]);
+      expect(r.fake.state.sinks[0]?.body).toEqual({
+        name: "cut_events_sink",
+        type: "r2_data_catalog",
+        format: { type: "parquet" },
+        config: {
+          account_id: ACC,
+          bucket: "cut-warehouse",
+          namespace: "cut",
+          table_name: "events",
+          token: SINK_TOKEN,
+          rolling_policy: { interval_seconds: 60 },
+        },
+      });
+      expect(r.fake.state.pipelines[0]?.body).toEqual({
+        name: "cut_events_pipeline",
+        sql: "INSERT INTO cut_events_sink SELECT * FROM cut_events_stream",
+      });
+      // The catalog calls use the app's token, never the manager's.
+      expect(r.fake.state.catalogCalls).toEqual([
+        { call: "GET /r2-catalog/cut-warehouse as sink" },
+        { call: "POST /r2-catalog/cut-warehouse/enable as sink" },
+        { call: "POST /r2-catalog/cut-warehouse/credential as sink", body: { token: SINK_TOKEN } },
+        {
+          call: "POST /r2-catalog/cut-warehouse/maintenance-configs as sink",
+          body: {
+            compaction: { state: "enabled" },
+            snapshot_expiration: {
+              state: "enabled",
+              max_snapshot_age: "30d",
+              min_snapshots_to_keep: 5,
+            },
+          },
+        },
+      ]);
+      expect(r.resources).toEqual(
+        expect.arrayContaining([
+          { kind: "r2", binding: null, name: "cut-warehouse", cf_id: "cut-warehouse" },
+          { kind: "r2_catalog", binding: null, name: "cut-warehouse", cf_id: "cat-1" },
+          {
+            kind: "pipeline_stream",
+            binding: "EVENTS",
+            name: "cut_events_stream",
+            cf_id: "streams-1",
+          },
+          { kind: "pipeline_sink", binding: null, name: "cut_events_sink", cf_id: "sinks-1" },
+          { kind: "pipeline", binding: null, name: "cut_events_pipeline", cf_id: "pipelines-1" },
+        ]),
+      );
+      // Wrangler's upload shape: the stream by id.
+      expect(r.fake.state.metadata?.bindings).toContainEqual({
+        type: "pipelines",
+        name: "EVENTS",
+        stream: "streams-1",
+      });
+      // The token is the app's secret: set on the Worker, never logged or recorded.
+      expect(r.fake.state.secrets.CATALOG_TOKEN).toBe(SINK_TOKEN);
+      expect(JSON.stringify(r.logs)).not.toContain(SINK_TOKEN);
+      expect(JSON.stringify(r.resources)).not.toContain(SINK_TOKEN);
+      expect(r.job?.error ?? "").not.toContain(SINK_TOKEN);
+    });
+
+    it("clears a catalog an earlier bucket of the same name left before turning it on", async () => {
+      const r = await install(
+        options,
+        { catalogs: { "cut-warehouse": { id: "old-cat", status: "active" } } },
+        input,
+      );
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.catalogCalls.slice(0, 3).map((c) => c.call)).toEqual([
+        "GET /r2-catalog/cut-warehouse as sink",
+        "POST /r2-catalog/cut-warehouse/delete?force=true as sink",
+        "POST /r2-catalog/cut-warehouse/enable as sink",
+      ]);
+    });
+
+    it("goes on with a warning when the catalog refuses the maintenance settings", async () => {
+      const r = await install(options, { maintenanceStatus: 400 }, input);
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.logs).toContainEqual(
+        expect.objectContaining({
+          level: "warn",
+          message: expect.stringMatching(
+            /^Could not turn on table maintenance for "cut-warehouse"/,
+          ),
+        }),
+      );
+    });
+
+    it("names Pipelines: Edit and Workers Paid when Cloudflare refuses the probe, before creating anything", async () => {
+      const r = await install(options, { pipelinesTokenRefused: true }, input);
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(
+        /^check Pipelines: Cloudflare refused the Pipelines call \(Forbidden\)\. The API token needs Pipelines: Edit, .* Workers Paid/,
+      );
+      expect(r.fake.state.kv).toEqual([]);
+      expect(r.fake.state.r2).toEqual([]);
+    });
+
+    it("picks up the stream its own failed attempt created, then creates the sink it lacks", async () => {
+      const r = await install(
+        options,
+        { failAfter: new Set(["POST /pipelines/v1/streams", "POST /pipelines/v1/sinks"]) },
+        input,
+      );
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.step.retried).toMatchObject({
+        "create Pipelines stream cut_events_stream": 2,
+        "create Pipelines sink cut_events_sink": 2,
+      });
+      // One of each: the retries found what the failed attempts made.
+      expect(r.fake.state.streams.map((s) => s.id)).toEqual(["streams-1"]);
+      expect(r.fake.state.sinks.map((s) => s.id)).toEqual(["sinks-1"]);
+      expect(r.fake.state.pipelines).toHaveLength(1);
+      expect(r.logs.map((l) => l.message)).toContain(
+        'Found the Pipelines stream "cut_events_stream" an earlier attempt created.',
+      );
+      expect(r.resources).toContainEqual({
+        kind: "pipeline_sink",
+        binding: null,
+        name: "cut_events_sink",
+        cf_id: "sinks-1",
+      });
+    });
+
+    it("names only the permission when the account is known to be on Workers Paid", async () => {
+      const r = await install(
+        options,
+        { pipelinesTokenRefused: true },
+        input,
+        {},
+        undefined,
+        "self",
+        async () => {
+          await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "paid" });
+        },
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(/The API token needs Pipelines: Edit, an optional permission/);
+      expect(r.job?.error).not.toMatch(/Workers Paid/);
+    });
+
+    it("refuses a stream name the account already has instead of adopting it", async () => {
+      const r = await install(
+        options,
+        { streams: [{ id: "theirs", name: "cut_events_stream", body: {} }] },
+        input,
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(
+        /^check Pipelines names for EVENTS: a Pipelines stream named cut_events_stream already exists/,
+      );
+      expect(r.fake.state.sinks).toEqual([]);
+      expect(r.fake.state.r2).toEqual([]);
+    });
+
+    it("writes to the app's own R2 binding when the sink names it, without a second bucket", async () => {
+      const r = await install(
+        {
+          ...options,
+          bindings: [...options.bindings, { type: "r2_bucket", name: "WAREHOUSE" }],
+        },
+        {},
+        { ...input, requirementsConfirmed: true },
+      );
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.r2).toEqual(["cut-warehouse"]);
+      // Created once, by the binding's own resource steps.
+      expect(r.step.names.filter((n) => n === "create R2 bucket cut-warehouse")).toHaveLength(1);
+      expect(r.step.names.indexOf("create R2 bucket cut-warehouse")).toBeLessThan(
+        r.step.names.indexOf("check Pipelines names for EVENTS"),
+      );
+      expect(r.resources).toContainEqual({
+        kind: "r2",
+        binding: "WAREHOUSE",
+        name: "cut-warehouse",
+        cf_id: "cut-warehouse",
+      });
+      expect(r.fake.state.sinks[0]?.body).toMatchObject({ config: { bucket: "cut-warehouse" } });
     });
   });
 

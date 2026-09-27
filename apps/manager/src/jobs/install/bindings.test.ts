@@ -1,5 +1,93 @@
 import { describe, expect, it } from "vitest";
-import { PASSTHROUGH_BINDING_TYPES, planBindings, resourceName } from "./bindings";
+import { PASSTHROUGH_BINDING_TYPES, pipelineNames, planBindings, resourceName } from "./bindings";
+
+describe("Pipelines bindings", () => {
+  const sink = (bucket: string, table = "events") => ({
+    type: "r2_data_catalog" as const,
+    bucket,
+    namespace: "traks",
+    table,
+    tokenSecret: "CATALOG_TOKEN",
+  });
+
+  it("names the stream, sink and pipeline after the binding with underscores", () => {
+    expect(pipelineNames("traks-2", "EVENTS")).toEqual({
+      stream: "traks_2_events_stream",
+      sink: "traks_2_events_sink",
+      pipeline: "traks_2_events_pipeline",
+    });
+  });
+
+  it("plans a stream per described binding, with a bucket of its own unless an R2 binding has it", () => {
+    const plan = planBindings(
+      "traks",
+      [
+        { type: "pipelines", name: "EVENTS" },
+        { type: "pipelines", name: "CLICKS" },
+        { type: "pipelines", name: "LOGS" },
+        { type: "r2_bucket", name: "FILES" },
+      ],
+      [],
+      {
+        EVENTS: { sink: sink("WAREHOUSE") },
+        CLICKS: { sink: sink("WAREHOUSE", "clicks") },
+        LOGS: { sink: sink("FILES", "logs") },
+      },
+    );
+    expect(plan.problems).toEqual([]);
+    const streams = plan.resources.filter((r) => r.type === "pipelines");
+    expect(
+      streams.map((r) => [r.binding, r.kind, r.name, r.type === "pipelines" && r.pipeline.bucket]),
+    ).toEqual([
+      [
+        "EVENTS",
+        "pipeline_stream",
+        "traks_events_stream",
+        { key: "WAREHOUSE", name: "traks-warehouse", create: true, setUpCatalog: true },
+      ],
+      // The same bucket: created and set up once.
+      [
+        "CLICKS",
+        "pipeline_stream",
+        "traks_clicks_stream",
+        { key: "WAREHOUSE", name: "traks-warehouse", create: false, setUpCatalog: false },
+      ],
+      // The app's own R2 binding: created with the other resources.
+      [
+        "LOGS",
+        "pipeline_stream",
+        "traks_logs_stream",
+        { key: "FILES", name: "traks-files", create: false, setUpCatalog: true },
+      ],
+    ]);
+  });
+
+  it("refuses an undescribed binding, a description without a binding, and a leading digit", () => {
+    expect(planBindings("traks", [{ type: "pipelines", name: "EVENTS" }]).problems).toEqual([
+      expect.stringMatching(/^Pipelines binding EVENTS is not declared/),
+    ]);
+    expect(planBindings("traks", [], [], { EVENTS: { sink: sink("W") } }).problems).toEqual([
+      expect.stringMatching(/declares EVENTS, but the Worker has no Pipelines binding/),
+    ]);
+    expect(
+      planBindings("2traks", [{ type: "pipelines", name: "EVENTS" }], [], {
+        EVENTS: { sink: sink("W") },
+      }).problems,
+    ).toEqual([expect.stringMatching(/starts with a digit; choose a Worker name/)]);
+  });
+
+  it("refuses names past Cloudflare's 128 characters, the pipeline's being the longest", () => {
+    const binding = `EVENTS_${"X".repeat(107)}`;
+    const problems = planBindings("traks", [{ type: "pipelines", name: binding }], [], {
+      [binding]: { sink: sink("W") },
+    }).problems;
+    // `traks_events_x…x` is 120 characters: the stream (127) fits, the pipeline (129) does not.
+    expect(pipelineNames("traks", binding).stream).toHaveLength(127);
+    expect(problems).toEqual([
+      expect.stringMatching(/^The pipeline name "traks_events_x+_pipeline" is longer than 128/),
+    ]);
+  });
+});
 
 describe("resourceName", () => {
   it("is <workerName>-<binding lowercased, _ -> ->", () => {

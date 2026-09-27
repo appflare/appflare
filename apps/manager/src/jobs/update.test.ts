@@ -1121,6 +1121,70 @@ describe("update job", () => {
     expect(r.snapshot).toBeNull();
   });
 
+  describe("Pipelines streams", () => {
+    const sink = {
+      type: "r2_data_catalog" as const,
+      bucket: "WAREHOUSE",
+      namespace: "cut",
+      table: "events",
+      tokenSecret: "CATALOG_TOKEN",
+    };
+    const schema = { fields: [{ name: "ts", type: "timestamp" as const, required: true }] };
+    const withStream = (events: { schema?: typeof schema; sink: typeof sink }) => ({
+      ...NEW_APP,
+      bindings: [...(NEW_APP.bindings ?? []), { type: "pipelines", name: "EVENTS" }],
+      catalog: {
+        plan: "paid" as const,
+        secrets: [
+          ...baseCatalog().secrets,
+          { name: "CATALOG_TOKEN", label: "R2 API token", generate: false },
+        ],
+        resources: { pipelines: { EVENTS: events } },
+      },
+    });
+    const request = { paidConfirmed: true, secrets: { CATALOG_TOKEN: "r2-token" } };
+
+    it("refuses a version that adds a stream, before snapshotting", async () => {
+      const r = await update(withStream({ schema, sink }), {}, {}, request);
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(
+        /^plan update: .*Binding EVENTS sends events to a Pipelines stream and is new in this version; its sink needs the API token entered at install, which an update cannot read back, so this version needs a fresh install\./,
+      );
+      expect(r.fake.state.calls).toEqual([]);
+      expect(r.snapshot).toBeNull();
+    });
+
+    it("refuses a version that changes a kept stream's schema, before snapshotting", async () => {
+      const r = await update(
+        withStream({
+          schema: { fields: [{ name: "other", type: "timestamp", required: true }] },
+          sink,
+        }),
+        {},
+        {
+          resources: [
+            ...RESOURCES,
+            { kind: "pipeline_stream", binding: "EVENTS", name: "cut_events_stream", cfId: "s1" },
+            { kind: "pipeline_sink", name: "cut_events_sink", cfId: "k1" },
+            { kind: "pipeline", name: "cut_events_pipeline", cfId: "p1" },
+          ],
+          manifestJson: JSON.stringify({
+            version: "1.0.0",
+            worker: { migrations: [], bindings: [{ type: "pipelines", name: "EVENTS" }] },
+            catalog: { resources: { pipelines: { EVENTS: { schema, sink } } } },
+          }),
+        },
+        request,
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(
+        /^plan update: .*Binding EVENTS sends events to the Pipelines stream "cut_events_stream"; this version changes its schema\./,
+      );
+      expect(r.fake.state.calls).toEqual([]);
+      expect(r.snapshot).toBeNull();
+    });
+  });
+
   it("keeps each rate limit's namespace across updates and gives a new one its own", async () => {
     const limit = { simple: { limit: 20, period: 60 }, namespace_id: "1001" };
     const r = await update(

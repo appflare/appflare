@@ -30,6 +30,11 @@ export interface StepTools {
   fetch: FetchLike;
   /** A cf-api client for this step (logs `METHOD path -> status`). */
   cf(): CloudflareClient;
+  /**
+   * A cf-api client that calls with another API token, one an admin created
+   * for an app (a Pipelines sink's catalog token), logged the same way.
+   */
+  cfAs(token: string): CloudflareClient;
   /** Drizzle over the manager's D1. */
   orm: Database;
   /** 1-based attempt of this step (Workflows retries a failed step). */
@@ -73,8 +78,8 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
     return accountId;
   }
 
-  function client(log: StepLog): CloudflareClient {
-    const token = env.CF_API_TOKEN;
+  function client(log: StepLog, other?: string): CloudflareClient {
+    const token = other ?? env.CF_API_TOKEN;
     if (token === undefined || token.length === 0) {
       throw new JobError("the Cloudflare API token is not configured; finish setup first");
     }
@@ -110,6 +115,10 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
             log,
             fetch: baseFetch,
             cf: () => client(log),
+            cfAs: (token) => {
+              if (token.length === 0) throw new JobError("no API token was given for this call");
+              return client(log, token);
+            },
             orm: createDb(db),
             attempt: stepCtx?.attempt ?? 1,
           });

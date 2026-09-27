@@ -98,6 +98,7 @@ export function reviewBuild(
     workerName,
     entryBindings(manifest),
     manifest.catalog.resources?.hyperdrive ?? [],
+    manifest.catalog.resources?.pipelines,
   );
   const queues = planEntryQueueConsumers(workerName, manifest, workers);
   const facts = combinedWorkerFacts(manifest);

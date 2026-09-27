@@ -11,7 +11,10 @@ import {
   HYPERDRIVE_KINDS,
   HYPERDRIVE_SUPERSEDED_KIND,
   isDataResourceKind,
+  PIPELINE_KINDS,
+  PIPELINE_STREAM_KIND,
   QUEUE_CONSUMER_KIND,
+  R2_CATALOG_KIND,
   WORKER_BOUND_KINDS,
 } from "./resource-kinds";
 
@@ -35,6 +38,8 @@ describe("resource kinds", () => {
         kind === QUEUE_CONSUMER_KIND,
         kind === EMAIL_ROUTE_KIND,
         (HYPERDRIVE_KINDS as readonly string[]).includes(kind),
+        (PIPELINE_KINDS as readonly string[]).includes(kind),
+        kind === R2_CATALOG_KIND,
       ].filter(Boolean);
       expect(treatments, kind).toHaveLength(1);
     }
@@ -60,6 +65,16 @@ describe("resource kinds", () => {
     expect(RESOURCE_KINDS).toContain(HYPERDRIVE_SUPERSEDED_KIND);
     expect(resourceKindLabel(HYPERDRIVE_SUPERSEDED_KIND)).toBe("Replaced Hyperdrive configuration");
     expect(isDataResourceKind(HYPERDRIVE_SUPERSEDED_KIND)).toBe(false);
+  });
+
+  it("records Pipelines objects and a bucket's Data Catalog as their own kinds, never data to keep", () => {
+    for (const kind of [...PIPELINE_KINDS, R2_CATALOG_KIND]) {
+      expect(RESOURCE_KINDS).toContain(kind);
+      expect(isDataResourceKind(kind)).toBe(false);
+    }
+    // The pipeline reads the stream and writes the sink, so it goes first.
+    expect(PIPELINE_KINDS).toEqual(["pipeline", "pipeline_sink", PIPELINE_STREAM_KIND]);
+    expect(resourceKindLabel(R2_CATALOG_KIND)).toBe("R2 Data Catalog");
   });
 
   it("records email routes as their own kind, never data to keep", () => {

@@ -35,6 +35,7 @@ export const PRIMITIVE_LABELS: Record<PrimitiveId, string> = {
   vectorize: "Vectorize",
   "analytics-engine": "Analytics Engine",
   queues: "Queues",
+  pipelines: "Pipelines",
   workflows: "Workflows",
   cron: "Cron triggers",
   "workers-ai": "Workers AI",
@@ -247,6 +248,8 @@ export function primitiveStatus(
   if (id === "zone") return zoneStatus(view);
   if (id === "email-routing") return emailRoutingStatus(view);
   if (id === "analytics-engine") return analyticsEngineStatus(view);
+  // Pipelines is in open beta for Workers Paid accounts only.
+  if (id === "pipelines") return paidPlanStatus(id, view);
   if (id === "durable-objects") {
     if (!app.keyValueDurableObjects) {
       return {

@@ -1,9 +1,13 @@
 import {
   type CatalogHyperdrive,
+  type CatalogPipeline,
+  type CatalogPipelines,
   entryWorkerRefName,
   type HyperdriveProtocol,
   hyperdriveDeclarationProblems,
   isVectorizeBinding,
+  PIPELINES_BINDING_TYPE,
+  pipelineDeclarationProblems,
   serviceBindingProblem,
   type VectorizeIndexConfig,
   type WorkerBinding,
@@ -24,6 +28,8 @@ export const RESOURCE_BINDINGS = {
   queue: "queue",
   vectorize: "vectorize",
   hyperdrive: "hyperdrive",
+  // The binding's stream; its sink and pipeline are recorded without a binding.
+  pipelines: "pipeline_stream",
 } as const;
 
 export type ResourceBindingType = keyof typeof RESOURCE_BINDINGS;
@@ -66,16 +72,47 @@ interface ResourcePlanFields {
 }
 
 /**
+ * What a Pipelines binding gets: a stream (the binding's resource, `name`),
+ * an R2 Data Catalog sink and the pipeline between them, named after the
+ * binding with underscores (Pipelines names allow letters, digits and `_`
+ * only), and the bucket the sink writes to.
+ */
+export interface PipelinePlan {
+  streamName: string;
+  sinkName: string;
+  pipelineName: string;
+  /** The catalog manifest's description of the stream and its sink. */
+  declared: CatalogPipeline;
+  bucket: {
+    /** The R2 binding whose bucket it is, or the key a bucket of the stream's own is recorded under. */
+    key: string;
+    name: string;
+    /**
+     * True when no R2 binding has this bucket, so the stream's provisioning
+     * creates it (unbound); only the first stream that names the key does.
+     */
+    create: boolean;
+    /** True for the first stream that writes to this bucket: it turns the bucket's catalog on. */
+    setUpCatalog: boolean;
+  };
+}
+
+/**
  * A resource to create for a binding. A Vectorize index always carries the
  * dimensions and metric the artifact records, since Cloudflare cannot create
  * one without them. A Hyperdrive configuration carries the protocol the
  * catalog manifest declares; its origin comes from the connection string the
- * admin entered, which only the job's input holds.
+ * admin entered, which only the job's input holds. A Pipelines stream
+ * carries the plan of its sink and pipeline; the sink's token comes from a
+ * secret the admin entered.
  */
 export type ResourceBindingPlan =
   | (ResourcePlanFields & { type: "vectorize"; vectorize: VectorizeIndexConfig })
   | (ResourcePlanFields & { type: "hyperdrive"; protocol: HyperdriveProtocol })
-  | (ResourcePlanFields & { type: Exclude<ResourceBindingType, "vectorize" | "hyperdrive"> });
+  | (ResourcePlanFields & { type: "pipelines"; pipeline: PipelinePlan })
+  | (ResourcePlanFields & {
+      type: Exclude<ResourceBindingType, "vectorize" | "hyperdrive" | "pipelines">;
+    });
 
 /**
  * A `workflow` binding. Workflow names are account-wide, and uploading a script
@@ -126,7 +163,23 @@ const MAX_NAME_LENGTH: Record<ProvisionedKind, number> = {
   vectorize: 64,
   // Cloudflare allows 2048; the Worker name (at most 54) keeps these far shorter.
   hyperdrive: 2048,
+  // Stream, sink and pipeline names allow 128.
+  pipeline_stream: 128,
 };
+
+/**
+ * The names of a Pipelines binding's stream, sink and pipeline:
+ * `<workerName>_<binding lowercased>` with `_stream`, `_sink` and
+ * `_pipeline`, every `-` as `_` (Pipelines names allow letters, digits and
+ * underscores only).
+ */
+export function pipelineNames(
+  workerName: string,
+  binding: string,
+): { stream: string; sink: string; pipeline: string } {
+  const base = resourceName(workerName, binding).replace(/-/g, "_");
+  return { stream: `${base}_stream`, sink: `${base}_sink`, pipeline: `${base}_pipeline` };
+}
 
 /**
  * Resource binding types created from the name alone. Vectorize is not one:
@@ -135,24 +188,36 @@ const MAX_NAME_LENGTH: Record<ProvisionedKind, number> = {
  */
 function isNamedResourceType(
   type: string,
-): type is Exclude<ResourceBindingType, "vectorize" | "hyperdrive"> {
-  return type !== "vectorize" && type !== "hyperdrive" && Object.hasOwn(RESOURCE_BINDINGS, type);
+): type is Exclude<ResourceBindingType, "vectorize" | "hyperdrive" | "pipelines"> {
+  return (
+    type !== "vectorize" &&
+    type !== "hyperdrive" &&
+    type !== PIPELINES_BINDING_TYPE &&
+    Object.hasOwn(RESOURCE_BINDINGS, type)
+  );
 }
 
 /**
  * Classifies every recorded binding; `problems` lists what blocks the install.
  * `databases` is the catalog manifest's `resources.hyperdrive`: each
  * Hyperdrive binding must be declared there (the packer refuses one that is
- * not, and an artifact from before that rule is refused here).
+ * not, and an artifact from before that rule is refused here). `streams` is
+ * its `resources.pipelines`, which must describe each Pipelines binding the
+ * same way.
  */
 export function planBindings(
   workerName: string,
   bindings: readonly WorkerBinding[],
   databases: readonly CatalogHyperdrive[] = [],
+  streams: CatalogPipelines = {},
 ): BindingPlan {
   const plan: BindingPlan = { resources: [], durableObjects: [], workflows: [], problems: [] };
   plan.problems.push(...hyperdriveDeclarationProblems(bindings, databases));
+  plan.problems.push(...pipelineDeclarationProblems(bindings, streams));
   const protocols = new Map(databases.map((d) => [d.binding, d.protocol]));
+  const r2Bindings = new Set(bindings.filter((b) => b.type === "r2_bucket").map((b) => b.name));
+  /** Bucket keys an earlier stream of this plan already writes to. */
+  const sinkBuckets = new Set<string>();
   const addResource = (entry: ResourceBindingPlan): void => {
     const limit = MAX_NAME_LENGTH[entry.kind];
     if (entry.name.length > limit) {
@@ -184,6 +249,46 @@ export function planBindings(
           protocol,
         });
       }
+    } else if (binding.type === PIPELINES_BINDING_TYPE) {
+      // An undescribed one is a problem above; it gets no stream.
+      const declared = Object.hasOwn(streams, binding.name) ? streams[binding.name] : undefined;
+      if (declared === undefined) continue;
+      const names = pipelineNames(workerName, binding.name);
+      // `_pipeline` is the longest suffix; stream, sink and pipeline names share the limit.
+      if (names.pipeline.length > MAX_NAME_LENGTH.pipeline_stream) {
+        plan.problems.push(
+          `The pipeline name "${names.pipeline}" is longer than ${MAX_NAME_LENGTH.pipeline_stream} characters; choose a shorter Worker name.`,
+        );
+      }
+      if (/^[0-9]/.test(names.stream)) {
+        // The pipeline's SQL names the stream and the sink unquoted.
+        plan.problems.push(
+          `The Pipelines stream of ${binding.name} would be named "${names.stream}", and a pipeline's SQL cannot name a stream that starts with a digit; choose a Worker name that starts with a letter.`,
+        );
+      }
+      const key = declared.sink.bucket;
+      const bucketName = resourceName(workerName, key);
+      const own = !r2Bindings.has(key);
+      if (own && bucketName.length > MAX_NAME_LENGTH.r2) {
+        plan.problems.push(
+          `The r2 name "${bucketName}" is longer than ${MAX_NAME_LENGTH.r2} characters; choose a shorter Worker name.`,
+        );
+      }
+      const first = !sinkBuckets.has(key);
+      sinkBuckets.add(key);
+      addResource({
+        binding: binding.name,
+        type: "pipelines",
+        kind: RESOURCE_BINDINGS.pipelines,
+        name: names.stream,
+        pipeline: {
+          streamName: names.stream,
+          sinkName: names.sink,
+          pipelineName: names.pipeline,
+          declared,
+          bucket: { key, name: bucketName, create: own && first, setUpCatalog: first },
+        },
+      });
     } else if (isNamedResourceType(binding.type)) {
       addResource({
         binding: binding.name,

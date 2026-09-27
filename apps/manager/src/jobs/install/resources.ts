@@ -15,6 +15,7 @@ export const RESOURCE_LABEL: Record<ResourceBindingPlan["kind"], string> = {
   queue: "queue",
   vectorize: "Vectorize index",
   hyperdrive: "Hyperdrive configuration",
+  pipeline_stream: "Pipelines stream",
 };
 
 /** The id of the resource with this name, or null when there is none. */
@@ -40,6 +41,8 @@ export async function findResource(
       return (await api.vectorize.listIndexes()).find((i) => i.name === res.name)?.name ?? null;
     case "hyperdrive":
       return (await api.hyperdrive.listConfigs()).find((c) => c.name === res.name)?.id ?? null;
+    case "pipelines":
+      return (await api.pipelines.listStreams()).find((s) => s.name === res.name)?.id ?? null;
   }
 }
 
@@ -75,6 +78,10 @@ export async function createResource(
       // connects to the database before it answers. Query caching keeps its
       // default (on), as `wrangler hyperdrive create` leaves it.
       return (await api.hyperdrive.createConfig({ name: res.name, origin })).id;
+    case "pipelines":
+      // A stream comes with its sink and pipeline, and the sink needs the
+      // admin's token: `provisionPipelinePhase` (./pipelines.ts) creates all three.
+      throw new Error(`the stream of ${res.binding} is created with its sink and pipeline`);
   }
 }
 
@@ -118,6 +125,10 @@ export async function deleteResource(
     case "hyperdrive":
       if (res.cfId === null) return false;
       await api.hyperdrive.deleteConfig(res.cfId);
+      return true;
+    case "pipeline_stream":
+      if (res.cfId === null) return false;
+      await api.pipelines.deleteStream(res.cfId);
       return true;
   }
 }

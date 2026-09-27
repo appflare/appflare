@@ -91,6 +91,7 @@ import {
   FULL_DEPLOY_REASON,
   lastDurableObjectTagOf,
   missingSecrets,
+  pipelineShapesOf,
   previewUrl,
   type RecordedResource,
   secretBindings,
@@ -384,6 +385,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         servingExports: workerExportsOf(install.manifest_json),
         // The installed version's index shapes: a kept index cannot change shape.
         vectorizeShapes: vectorizeShapesOf(install.manifest_json),
+        // The installed version's streams: a kept stream and its sink cannot change.
+        pipelineShapes: pipelineShapesOf(install.manifest_json),
         // The installed version's queue consumers, to tell which ones change.
         previousConsumers: consumerPlansOf(install.manifest_json),
         // An app of several Workers: what the installed version's other Workers have.
@@ -448,6 +451,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       started.resources,
       started.vectorizeShapes,
       manifest.catalog.resources?.hyperdrive ?? [],
+      manifest.catalog.resources?.pipelines,
+      // A step output recorded before streams were compared has none.
+      started.pipelineShapes ?? {},
     );
     const queuePlan = planEntryQueueConsumers(workerName, manifest, workers);
     const queueDiff = diffConsumerQueues(queuePlan.queues, started.resources);
