@@ -114,10 +114,79 @@ describe("uploadWorker", () => {
     expect(w.account.state.versions).toEqual([]);
   });
 
+  it("uploads a Worker of static assets only as wrangler does: metadata, no module parts", async () => {
+    const w = await world({ assetsOnly: true, assets: [{ route: "/index.html", content: "hi" }] });
+    const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch: w.fetch });
+    const assets = { jwt: "completion-jwt", config: { not_found_handling: "404-page" } };
+    for (const target of ["version", "script"] as const) {
+      const result = await units.uploadWorker(
+        uploadInput(w.fixture, {
+          modules: [],
+          // What the jobs add to every upload, which such a Worker has none of.
+          metadata: {
+            assets,
+            compatibility_date: "2024-12-30",
+            compatibility_flags: ["nodejs_compat"],
+            bindings: [],
+            keep_bindings: ["secret_text"],
+            ...(target === "version" ? { annotations: { "workers/tag": "1.1.0" } } : {}),
+          },
+          target,
+        }),
+      );
+      // The upload; a script upload then reads the deployment it made.
+      expect(result).toMatchObject({
+        ok: true,
+        value: { modules: 0 },
+        subrequests: target === "version" ? 1 : 2,
+      });
+    }
+    // Nothing is read from the artifact; each upload is its metadata alone.
+    expect(w.requests.filter((r) => r.startsWith("https://artifacts.test"))).toEqual([]);
+    expect(w.account.state.versions.map((v) => v.modules)).toEqual([[], []]);
+    expect(w.account.state.versions.map((v) => v.metadata)).toEqual([
+      {
+        assets,
+        compatibility_date: "2024-12-30",
+        compatibility_flags: ["nodejs_compat"],
+        annotations: { "workers/tag": "1.1.0" },
+      },
+      { assets, compatibility_date: "2024-12-30", compatibility_flags: ["nodejs_compat"] },
+    ]);
+  });
+
+  it("refuses an upload without modules that carries anything needing code", async () => {
+    const w = await world();
+    const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch: w.fetch });
+    const result = await units.uploadWorker(
+      uploadInput(w.fixture, {
+        modules: [],
+        metadata: {
+          main_module: "worker.js",
+          assets: { jwt: "completion-jwt" },
+          bindings: [{ type: "kv_namespace", name: "CUT_KV", namespace_id: "kv-1" }],
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "final",
+        message:
+          "an upload without modules cannot carry bindings, main_module: the Worker has no code",
+      },
+    });
+    const noAssets = await units.uploadWorker(
+      uploadInput(w.fixture, { modules: [], metadata: { compatibility_date: "2024-12-30" } }),
+    );
+    expect(noAssets).toMatchObject({ ok: false, failure: { kind: "final" } });
+    expect(w.account.state.versions).toEqual([]);
+  });
+
   it("refuses an input it does not understand", async () => {
     const w = await world();
     const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch: w.fetch });
-    const result = await units.uploadWorker({ ...uploadInput(w.fixture), modules: [] });
+    const result = await units.uploadWorker({ ...uploadInput(w.fixture), target: "deploy" });
     expect(result).toMatchObject({ ok: false, subrequests: 0, failure: { kind: "final" } });
     if (result.ok) return;
     expect(result.failure).toMatchObject({

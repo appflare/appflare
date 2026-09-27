@@ -62,6 +62,19 @@ describe("verifyArtifactManifest", () => {
     expect(five.format).toBe(5);
     expect(five.d1Baseline?.DB?.[0]?.name).toBe("schema.sql");
 
+    const assetsOnly = await buildArtifactFixture({
+      assetsOnly: true,
+      assets: [{ route: "/index.html", content: "<h1>hi</h1>" }],
+    });
+    const fiveAssets = await verifyArtifactManifest(
+      assetsOnly.manifestBytes,
+      assetsOnly.signature,
+      expected(assetsOnly),
+      assetsOnly.keys,
+    );
+    expect(fiveAssets.format).toBe(5);
+    expect(fiveAssets.worker.mainModule).toBeUndefined();
+
     const future = await buildArtifactFixture({
       tweak: (m) => {
         (m as { format: number }).format = 6;

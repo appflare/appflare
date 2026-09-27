@@ -156,6 +156,9 @@ export async function unpackArtifact(
 ): Promise<UnpackedArtifact> {
   const workerDir = path.join(outDir, UNPACKED_WORKER_DIR);
   const assetsDir = path.join(outDir, UNPACKED_ASSETS_DIR);
+  if (manifest.worker.mainModule === undefined) {
+    throw new Error("the release has no Worker code (it serves static assets only)");
+  }
   if (!manifest.worker.modules.some((m) => m.name === manifest.worker.mainModule)) {
     throw new Error(
       `the main module ${manifest.worker.mainModule} is not among the Worker modules`,

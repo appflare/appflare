@@ -51,6 +51,12 @@ export interface ArtifactFixtureOptions {
    */
   extraModules?: Array<{ content: string }>;
   /**
+   * A Worker of static assets only (format 5): no modules and no
+   * `mainModule`, no bindings, and a catalog manifest without secrets or vars
+   * unless `bindings` or `catalog` say otherwise. Give it `assets`.
+   */
+  assetsOnly?: boolean;
+  /**
    * Makes the app one of several Workers (format 2): the fixture's Worker is
    * the primary one, named `app` in the entry, and these are the others, in
    * the entry's order. Their modules and assets are laid out under
@@ -153,12 +159,12 @@ export async function buildArtifactFixture(
     return entry;
   };
 
-  const worker = await place(
-    "worker/worker.js",
-    "export default { fetch() { return new Response('ok') } };",
-  );
+  const assetsOnly = opts.assetsOnly === true;
+  const worker = assetsOnly
+    ? null
+    : await place("worker/worker.js", "export default { fetch() { return new Response('ok') } };");
   const extraModules = [];
-  for (const [i, m] of (opts.extraModules ?? []).entries()) {
+  for (const [i, m] of (assetsOnly ? [] : (opts.extraModules ?? [])).entries()) {
     const name = `chunk-${i + 1}.js`;
     extraModules.push({
       name,
@@ -238,7 +244,9 @@ export async function buildArtifactFixture(
     at += c.byteLength;
   }
 
-  const catalog = baseCatalog(opts.catalog);
+  const catalog = baseCatalog(
+    assetsOnly ? { secrets: [], vars: [], ...opts.catalog } : opts.catalog,
+  );
   if (
     opts.catalog?.resources === undefined &&
     (opts.d1Schema ?? opts.d1PostDeploy ?? opts.d1Baseline) !== undefined
@@ -287,11 +295,15 @@ export async function buildArtifactFixture(
     keyId: opts.keyId ?? "test-key",
     worker: {
       name: "cut",
-      mainModule: "worker.js",
+      ...(worker === null ? {} : { mainModule: "worker.js" }),
       compatibilityDate: "2024-12-30",
       compatibilityFlags: ["nodejs_compat"],
-      modules: [{ name: "worker.js", type: "esm" as const, ...worker }, ...extraModules],
-      bindings: opts.bindings ?? [{ type: "kv_namespace", name: "CUT_KV" }],
+      modules:
+        worker === null
+          ? []
+          : [{ name: "worker.js", type: "esm" as const, ...worker }, ...extraModules],
+      bindings:
+        opts.bindings ?? (assetsOnly ? [] : [{ type: "kv_namespace" as const, name: "CUT_KV" }]),
       migrations: opts.migrations ?? [],
       crons: opts.crons ?? [],
       observability: null,

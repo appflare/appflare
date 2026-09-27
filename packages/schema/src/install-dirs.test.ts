@@ -108,7 +108,13 @@ describe("install.installDirs", () => {
     }
   });
 
-  it("refuses a directory listed twice, an empty list, and too many directories", () => {
+  it("takes an empty list to install nothing, for a repository without a package.json", () => {
+    const parsed = withInstall({ installDirs: [] });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data && installDirList(parsed.data.install)).toEqual([]);
+  });
+
+  it("refuses a directory listed twice and too many directories", () => {
     const twice = withInstall({ installDirs: [{ path: "." }, { path: "site" }, { path: "." }] });
     expect(twice.error?.issues).toEqual([
       expect.objectContaining({
@@ -116,7 +122,6 @@ describe("install.installDirs", () => {
         message: 'path "." is listed twice; each directory is installed once',
       }),
     ]);
-    expect(withInstall({ installDirs: [] }).success).toBe(false);
     const many = Array.from({ length: MAX_INSTALL_DIRS + 1 }, (_, i) => ({ path: `d${i}` }));
     expect(withInstall({ installDirs: many }).success).toBe(false);
     expect(catalogInstallDirsSchema.safeParse(many.slice(1)).success).toBe(true);

@@ -8,6 +8,7 @@ import {
   type EntryWorkerPlaceholders,
   entryWorkerRefName,
   hasDurableObjectExports,
+  isAssetsOnlyWorker,
   isEntryServiceBinding,
   isSelfServiceBinding,
   type JsonValue,
@@ -18,6 +19,7 @@ import {
 } from "@appflare/schema";
 import { type ResolvedVars, resolveVars, type VarBinding } from "../../installs/install-vars";
 import { workersDevUrl } from "../../installs/post-install";
+import { JobError } from "../errors";
 import { PASSTHROUGH_BINDING_TYPES, type ResourceBindingType } from "./bindings";
 
 /**
@@ -203,6 +205,9 @@ export interface ScriptMetadataInput {
  * Every binding is sent explicitly with ids filled in from `resources`; vars
  * come from `vars` only (`plain_text` or `json`, placeholders filled in); the `assets` binding and `assets: { jwt, config }` go
  * together (`keep_bindings` is not used for installs; the script is new).
+ *
+ * A Worker without code (assets-only, no modules) gets the metadata wrangler
+ * sends for one ({@link assetsOnlyMetadata}).
  */
 export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata {
   const {
@@ -215,6 +220,23 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
     rateLimitIds = {},
     entryWorkers = {},
   } = input;
+  if (isAssetsOnlyWorker(manifest.worker)) {
+    if (assetsJwt === null) {
+      throw new JobError(
+        "the Worker serves static assets only, but no assets were uploaded for it",
+      );
+    }
+    if (vars.length > 0 || manifest.worker.bindings.length > 0) {
+      throw new JobError(
+        "the Worker serves static assets only, so it cannot have bindings or vars",
+      );
+    }
+    return {
+      assets: { jwt: assetsJwt, config: { ...manifest.assets.config } },
+      compatibility_date: manifest.worker.compatibilityDate,
+      compatibility_flags: manifest.worker.compatibilityFlags,
+    };
+  }
   const byBinding = new Map(resources.map((r) => [r.binding, r]));
   const bindings: UploadBinding[] = [];
 
@@ -255,7 +277,9 @@ export function buildScriptMetadata(input: ScriptMetadataInput): ScriptMetadata 
   for (const v of vars) bindings.push({ ...v });
 
   const metadata: ScriptMetadata = {
-    main_module: manifest.worker.mainModule,
+    ...(manifest.worker.mainModule === undefined
+      ? {}
+      : { main_module: manifest.worker.mainModule }),
     compatibility_date: manifest.worker.compatibilityDate,
     compatibility_flags: manifest.worker.compatibilityFlags,
     bindings,
@@ -302,4 +326,47 @@ export function uploadModule(
   content: Uint8Array,
 ): WorkerModule {
   return { name: module.name, content, contentType: MODULE_CONTENT_TYPE[module.type] };
+}
+
+/**
+ * The metadata of an upload without module parts, for a Worker that serves
+ * its static assets only: exactly what wrangler 4.136.2's
+ * `createWorkerUploadForm` sends when the assets router has no user Worker
+ * (`assets: { jwt, config }`, `compatibility_date`, `compatibility_flags`, and
+ * a version's `annotations`), with no `main_module`. What the jobs add to
+ * every upload and that such a Worker has none of (an empty `bindings` list,
+ * `keep_bindings`) is left out. Throws when the metadata carries anything
+ * that needs code: a binding, Durable Object migrations or exports, or a
+ * main module, or has no assets to serve.
+ */
+export function assetsOnlyMetadata(metadata: ScriptMetadata): ScriptMetadata {
+  const {
+    assets,
+    compatibility_date,
+    compatibility_flags,
+    annotations,
+    bindings,
+    keep_bindings: _keep,
+    ...rest
+  } = metadata;
+  if (assets?.jwt === undefined) {
+    throw new JobError("an upload without modules must carry the Worker's static assets");
+  }
+  const needsCode = [
+    ...(bindings !== undefined && bindings.length > 0 ? ["bindings"] : []),
+    ...Object.keys(rest).filter((key) =>
+      ["main_module", "body_part", "migrations", "exports"].includes(key),
+    ),
+  ];
+  if (needsCode.length > 0) {
+    throw new JobError(
+      `an upload without modules cannot carry ${needsCode.join(", ")}: the Worker has no code`,
+    );
+  }
+  return {
+    assets,
+    ...(compatibility_date === undefined ? {} : { compatibility_date }),
+    ...(compatibility_flags === undefined ? {} : { compatibility_flags }),
+    ...(annotations === undefined ? {} : { annotations }),
+  };
 }

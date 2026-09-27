@@ -15,6 +15,13 @@ import { z } from "zod";
  * the pack log records the sha256 of the lockfile it wrote. Everywhere else
  * the install is frozen to the lockfile.
  *
+ * An empty list installs nothing, for a repository without a `package.json`:
+ * wrangler still bundles the Worker's entry and every relative import, but a
+ * bare import (a package) cannot resolve, and build commands run with no
+ * dependencies installed. `lockfile: "none"` is no substitute there: pnpm and
+ * bun refuse a directory without a `package.json`, and npm looks for one in
+ * the directories above the checkout.
+ *
  * This module imports nothing but zod: `catalog.ts` imports it, and the JSON
  * Schema export runs `catalog.ts` directly under Node's type stripping.
  */
@@ -148,10 +155,12 @@ export const catalogInstallDirSchema = z.object({
 });
 export type CatalogInstallDir = z.infer<typeof catalogInstallDirSchema>;
 
-/** `install.installDirs`: the directories to install, in order, each once. */
+/**
+ * `install.installDirs`: the directories to install, in order, each once.
+ * Empty installs nothing (a repository without a `package.json`).
+ */
 export const catalogInstallDirsSchema = z
   .array(catalogInstallDirSchema)
-  .min(1)
   .max(MAX_INSTALL_DIRS)
   .superRefine((dirs, ctx) => {
     const seen = new Set<string>();
@@ -170,7 +179,10 @@ export const catalogInstallDirsSchema = z
 /** The install directories when an entry lists none: the root of the checkout. */
 export const DEFAULT_INSTALL_DIRS: readonly CatalogInstallDir[] = [{ path: "." }];
 
-/** The directories the packer installs, in order: `installDirs`, or the root when omitted. */
+/**
+ * The directories the packer installs, in order: `installDirs`, or the root
+ * when omitted. Empty when the entry lists none (`installDirs: []`).
+ */
 export function installDirList(install: {
   installDirs?: readonly CatalogInstallDir[] | undefined;
 }): readonly CatalogInstallDir[] {

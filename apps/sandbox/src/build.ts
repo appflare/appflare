@@ -170,7 +170,9 @@ export class BuildSteps {
     if (dirs === undefined) return this.container.install();
     await this.log.stage("install", "Dependencies are installed by appflare-pack");
     this.log.line(
-      `appflare-pack installs ${dirs.map((d) => d.path).join(", ")} in that order, install scripts disabled, before the build.`,
+      dirs.length === 0
+        ? "The entry installs nothing (install.installDirs is empty): the build runs with no dependencies installed."
+        : `appflare-pack installs ${dirs.map((d) => d.path).join(", ")} in that order, install scripts disabled, before the build.`,
     );
   }
 

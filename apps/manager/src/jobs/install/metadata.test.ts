@@ -326,6 +326,32 @@ describe("buildScriptMetadata", () => {
     expect(none.assets).toBeUndefined();
   });
 
+  it("sends a Worker of static assets only what wrangler sends: assets and compatibility, no main module", async () => {
+    const f = await buildArtifactFixture({
+      assetsOnly: true,
+      assets: [{ route: "/index.html", content: "<h1>hi</h1>" }],
+      tweak: (m) => {
+        m.assets.config = { not_found_handling: "single-page-application" };
+      },
+    });
+    const input = { manifest: f.manifest, workerName: "cut", resources: [], vars: [] };
+    expect(buildScriptMetadata({ ...input, assetsJwt: "jwt" })).toEqual({
+      assets: { jwt: "jwt", config: { not_found_handling: "single-page-application" } },
+      compatibility_date: "2024-12-30",
+      compatibility_flags: ["nodejs_compat"],
+    });
+    expect(() => buildScriptMetadata({ ...input, assetsJwt: null })).toThrow(
+      /serves static assets only, but no assets were uploaded/,
+    );
+    expect(() =>
+      buildScriptMetadata({
+        ...input,
+        vars: [{ type: "plain_text", name: "MODE", text: "prod" }],
+        assetsJwt: "jwt",
+      }),
+    ).toThrow(/cannot have bindings or vars/);
+  });
+
   it("refuses a resource binding that was not created", async () => {
     const f = await buildArtifactFixture();
     expect(() =>

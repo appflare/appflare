@@ -469,10 +469,17 @@ function resolvedLockfileLine(
 /**
  * Installs every listed directory in order. Every directory is checked
  * before the first install runs; throws {@link InstallError} for a directory
- * that cannot be installed, or at the first install that fails.
+ * that cannot be installed, or at the first install that fails. An empty
+ * list installs nothing (a repository without a `package.json`).
  */
 export function installDependencies(options: InstallOptions): void {
   const { checkoutDir, logger } = options;
+  if (options.installDirs.length === 0) {
+    logger(
+      "install.installDirs is empty: no dependencies are installed; wrangler bundles the entry and its relative imports",
+    );
+    return;
+  }
   const run = options.run ?? spawnInstall;
   const planned = options.installDirs.map((entry) =>
     planInstall(checkoutDir, entry, options.packageManager),

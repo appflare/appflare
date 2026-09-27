@@ -165,7 +165,12 @@ Points that need care:
   directory: the packer then resolves the dependencies itself, still with
   `--ignore-scripts`, and prints the sha256 of the lockfile it wrote. A directory
   that holds a lockfile always installs from it, and any other directory needs one in
-  it or above it (a workspace's), or the pack fails.
+  it or above it (a workspace's), or the pack fails. For a repository without a
+  `package.json`, set `"installDirs": []` to install nothing: wrangler still bundles
+  the entry and every file it imports by a relative path, an import of a package fails
+  the pack, and any build command runs with no dependencies installed.
+  `"lockfile": "none"` is no substitute there: pnpm and bun refuse a directory without
+  a `package.json`, and npm looks for one in the directories above the checkout.
 - **`install.configPatch`.** When the app's wrangler config needs a change before it
   installs from its pinned commit, open a pull request upstream first. Until it is
   merged, the entry may carry the change as a JSON merge patch (RFC 7386: an object
@@ -397,6 +402,26 @@ Points that need care:
 
 Every field is described in the [manifest reference](/catalog/manifest-reference/).
 Add an optional `apps/<slug>/README.md` for notes.
+
+## Static sites without Worker code
+
+A wrangler config with `assets` and no `main` is a Worker that only serves its static
+assets, and Appflare installs it the way `wrangler deploy` uploads one: the artifact
+carries the assets and no Worker modules, and the manager uploads the Worker with its
+assets and compatibility settings alone. A build that writes the asset directory runs
+as usual, from the config's `build.command` or `install.buildCommand`; a repository
+without a `package.json` sets `"installDirs": []`.
+
+Such a Worker has no code to use anything else, so the pack fails when it has
+bindings (`vars` included), catalog `secrets` or `vars`, Durable Objects, cron
+triggers, queue consumers, an `assets.binding`, or `assets.run_worker_first`.
+Observability, placement, limits and `cache` settings are left out, as wrangler
+leaves them out, and the pack log says so. The health check requests `healthPath`
+(default `/`) as for any app, so the site should answer there. When the asset
+directory is the repository root, it needs an `.assetsignore` that leaves out
+everything that is not part of the site (`.git`, `.wrangler`, the wrangler config),
+as `wrangler deploy` would upload it too. Such an artifact is written in format 5,
+which an earlier version of Appflare refuses with a message to update it first.
 
 ## Seeding a first admin
 

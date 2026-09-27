@@ -126,6 +126,11 @@ export function buildWranglerConfig(
 ): GeneratedWranglerConfig {
   const { worker } = manifest;
   const { name } = options;
+  if (worker.mainModule === undefined) {
+    throw new Error(
+      `the manager release ${manifest.version} has no Worker code (it serves static assets only)`,
+    );
+  }
 
   const d1: { binding: string; database_name: string }[] = [];
   const kv: { binding: string }[] = [];

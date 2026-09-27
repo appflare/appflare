@@ -380,7 +380,7 @@ class RepositorySteps extends CommandRunner<BuildStage> {
           ...(installDirs === undefined
             ? []
             : [
-                `Install directories: ${installDirs.map((d) => `${d.path}${d.lockfile === "none" ? " (no lockfile upstream)" : ""}`).join(", ")} (from the catalog).`,
+                `Install directories: ${installDirs.map((d) => `${d.path}${d.lockfile === "none" ? " (no lockfile upstream)" : ""}`).join(", ") || "none, nothing is installed"} (from the catalog).`,
               ]),
           `Wrangler config: ${wranglerConfig}.`,
           `Build command: ${build.command ?? "none"}${build.from === "none" ? "" : ` (${build.from})`}.`,
@@ -397,7 +397,8 @@ class RepositorySteps extends CommandRunner<BuildStage> {
         manifest: parsed.data,
         version,
         detection,
-        // Listed directories are installed even without a root package.json.
+        // Listed directories are installed even without a root package.json
+        // (an empty list goes through the same step, which says it installs nothing).
         installs: pkg !== null || installDirs !== undefined,
       };
     } catch (error) {

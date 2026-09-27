@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assetsOnlyWorkerProblems, isAssetsOnlyWorker } from "./assets-only";
 import {
   type CatalogManifest,
   type CatalogVar,
@@ -11,7 +12,13 @@ import {
   vectorizeIndexConfigSchema,
 } from "./catalog";
 import { PIPELINES_BINDING_TYPE } from "./pipelines";
-import { bindingEntryRefs, ENTRY_WORKER_REF_PATTERN, entryWorkerProblems } from "./workers";
+import {
+  appWorkers,
+  bindingEntryRefs,
+  ENTRY_WORKER_REF_PATTERN,
+  entryWorkerProblems,
+  workerManifest,
+} from "./workers";
 
 /**
  * Schemas for the machine-generated artifact manifest `manifest.json`.
@@ -406,7 +413,13 @@ export const artifactWorkerSchema = z.object({
    * predate it, so older artifacts keep the shape they always had.
    */
   wranglerConfig: artifactWranglerConfigSchema.optional(),
-  mainModule: z.string().min(1),
+  /**
+   * The module the Worker starts from, one of `modules`. Omitted, with
+   * `modules` empty, for a Worker that serves its static assets only (a
+   * wrangler config with `assets` and no `main`; see `assets-only.ts`), which
+   * only format 5 carries.
+   */
+  mainModule: z.string().min(1).optional(),
   compatibilityDate: z.iso.date(),
   compatibilityFlags: z.array(z.string()),
   modules: z.array(workerModuleSchema),
@@ -744,6 +757,8 @@ export type ArtifactFormat = 1 | 2 | 3 | 4 | 5;
 export interface WorkerFormatFacts {
   exports?: Readonly<Record<string, unknown>> | undefined;
   cacheOptions?: unknown;
+  /** The Worker's modules; none (an assets-only Worker) needs format 5. */
+  modules?: readonly unknown[] | undefined;
 }
 
 export interface ArtifactFormatFacts {
@@ -777,6 +792,9 @@ export interface ArtifactFormatFacts {
  * - 5: it carries a D1 baseline (`d1Baseline`), which a manager that reads
  *   only formats 1 to 4 would drop, running the migrations on an empty
  *   database instead, where they fail or leave the app without its tables;
+ *   or a Worker has no code of its own and serves static assets only
+ *   (no modules and no `mainModule`), which such a manager would fail to
+ *   upload after creating the app's resources;
  * - 4: its catalog manifest keeps a Worker off workers.dev
  *   (`install.workers[].workersDev: false`), which a manager that reads only
  *   formats 1 to 3 would not know and would put on its workers.dev URL,
@@ -803,6 +821,11 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
     ((w.exports !== undefined && Object.keys(w.exports).length > 0) ||
       w.cacheOptions !== undefined);
   if (has(facts.d1Baseline)) return 5;
+  const assetsOnly = (w: WorkerFormatFacts | undefined) =>
+    w?.modules !== undefined && isAssetsOnlyWorker({ modules: w.modules });
+  if (assetsOnly(facts.worker) || (facts.workers ?? []).some((w) => assetsOnly(w.worker))) {
+    return 5;
+  }
   if (facts.catalog?.install?.workers?.some((w) => w.workersDev === false) === true) return 4;
   const d1 = facts.catalog?.resources?.d1 ?? {};
   if (Object.values(d1).some((layout) => layout.seed !== undefined)) return 4;
@@ -818,7 +841,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
 function formatProblem(manifest: ArtifactFormatFacts & { format: number }): string | null {
   const needed = artifactFormatFor(manifest);
   if (needed <= manifest.format) return null;
-  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline); a manager that reads only format ${manifest.format} would install it without them`;
+  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline, a Worker of static assets only); a manager that reads only format ${manifest.format} would install it without them`;
 }
 
 /**
@@ -866,6 +889,25 @@ function planIssue(manifest: {
 }
 
 /**
+ * The issues of every Worker that cannot be uploaded as recorded
+ * ({@link assetsOnlyWorkerProblems}), each checked against the catalog
+ * secrets and vars that go to it.
+ */
+function assetsOnlyIssues(
+  manifest: ArtifactManifest,
+): Array<{ code: "custom"; path: Array<string | number>; message: string }> {
+  return appWorkers(manifest).flatMap((w, index) => {
+    const { catalog } = workerManifest(manifest, w);
+    const subject = w.name === null ? "The Worker" : `The Worker "${w.name}"`;
+    return assetsOnlyWorkerProblems(w.worker, w.assets, catalog, subject).map((message) => ({
+      code: "custom" as const,
+      path: w.primary ? ["worker"] : ["workers", index - 1],
+      message,
+    }));
+  });
+}
+
+/**
  * An artifact of one Worker. Its catalog manifest has no `install.workers`,
  * and no binding names another Worker of the entry.
  */
@@ -882,6 +924,7 @@ export const artifactManifestV1Schema = z
     }
     const plan = planIssue(manifest);
     if (plan !== null) ctx.addIssue(plan);
+    for (const issue of assetsOnlyIssues(manifest)) ctx.addIssue(issue);
   });
 
 /**
@@ -907,6 +950,7 @@ export const artifactManifestV2Schema = z
     }
     const plan = planIssue(manifest);
     if (plan !== null) ctx.addIssue(plan);
+    for (const issue of assetsOnlyIssues(manifest)) ctx.addIssue(issue);
   });
 
 /**
@@ -930,6 +974,7 @@ export const artifactManifestV3Schema = z
     }
     const plan = planIssue(manifest);
     if (plan !== null) ctx.addIssue(plan);
+    for (const issue of assetsOnlyIssues(manifest)) ctx.addIssue(issue);
     const workers = manifest.workers;
     if (workers === undefined) {
       for (const problem of singleWorkerProblems(manifest)) {
@@ -946,7 +991,7 @@ export const artifactManifestV3Schema = z
  * The full artifact manifest, `manifest.json`: format 1 (one Worker), 2
  * (several), 3 (either, with D1 files older managers do not know), 4 (as
  * 3, with a Worker kept off workers.dev or D1 seed statements), or 5 (as 4,
- * with a D1 baseline).
+ * with a D1 baseline or a Worker of static assets only).
  */
 export const artifactManifestSchema = z.discriminatedUnion("format", [
   artifactManifestV1Schema,

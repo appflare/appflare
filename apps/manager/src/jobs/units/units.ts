@@ -39,7 +39,7 @@ import {
   unappliedMigrations,
   unshippedMigrations,
 } from "../install/d1-migrations";
-import { uploadModule } from "../install/metadata";
+import { assetsOnlyMetadata, uploadModule } from "../install/metadata";
 import { assetContentType } from "../install/mime";
 import { activeVersionId } from "../update/plan";
 import {
@@ -151,7 +151,12 @@ export const workerUploadInputSchema = z.object({
   accountId: accountIdSchema,
   artifact: artifactSchema,
   workerName: z.string().min(1),
-  modules: z.array(workerModuleSchema).min(1),
+  /**
+   * The modules to read from the artifact and upload. None for a Worker that
+   * serves its static assets only: the upload is then its metadata alone,
+   * trimmed to what wrangler sends for such a Worker (`assetsOnlyMetadata`).
+   */
+  modules: z.array(workerModuleSchema),
   /**
    * Upload metadata. For an update it may carry the values of secrets the new
    * version introduces; it is never logged.
@@ -450,10 +455,13 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
           const modules = refs.map((module, i) =>
             uploadModule(module, contents[i] ?? new Uint8Array(0)),
           );
+          // No modules: a Worker of static assets only, uploaded as wrangler uploads one.
+          const metadata =
+            refs.length === 0 ? assetsOnlyMetadata(upload.metadata) : upload.metadata;
           const api = cf();
           if (upload.target === "version") {
             const result = await api.versions.uploadVersion(upload.workerName, {
-              metadata: upload.metadata,
+              metadata,
               modules,
             });
             return {
@@ -465,7 +473,7 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
             };
           }
           const result = await api.workers.uploadScript(upload.workerName, {
-            metadata: upload.metadata,
+            metadata,
             modules,
             excludeScript: true,
           });

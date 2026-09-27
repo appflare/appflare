@@ -296,6 +296,24 @@ describe("runBuild", () => {
     );
   });
 
+  it("installs nothing for an entry whose install directories are an empty list", async () => {
+    const sandbox = fake();
+    const manifest = {
+      ...catalogManifest,
+      install: { ...catalogManifest.install, installDirs: [] },
+    };
+    const result = asResult(await build(sandbox, request({ catalogManifest: manifest })).promise);
+    expect(sandbox.commands.some((c) => c.startsWith("pnpm install"))).toBe(false);
+    // The packer runs its own (empty) install rather than being told to skip one.
+    expect(sandbox.commands).toContain(
+      "appflare-pack /workspace/appflare-build/source --manifest /workspace/appflare-build/appflare.json --out /workspace/appflare-build/out",
+    );
+    const progress = await readProgress(env.BUILDS, result.logKey as string);
+    expect(progress?.log).toContain(
+      "The entry installs nothing (install.installDirs is empty): the build runs with no dependencies installed.",
+    );
+  });
+
   it("hands the packer an entry's D1 seed statements and seed-only values as declared", async () => {
     const sandbox = fake();
     const manifest = {

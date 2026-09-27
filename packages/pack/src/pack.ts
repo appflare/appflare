@@ -23,6 +23,7 @@ import {
   appWorkers,
   artifactFormatFor,
   artifactManifestSchema,
+  assetsOnlyWorkerProblems,
   boundToWorker,
   buildCommandList,
   type CatalogManifest,
@@ -219,8 +220,13 @@ function walkFiles(dir: string): string[] {
   return files;
 }
 
-/** Collects the emitted worker modules from the dry-run outdir. */
+/**
+ * Collects the emitted worker modules from the dry-run outdir. None for a
+ * config without `main` (a Worker of static assets only): wrangler still
+ * writes its no-op placeholder Worker there, which it never uploads for one.
+ */
 function collectModules(outdir: string, config: ResolvedWranglerConfig): CollectedModule[] {
+  if (!config.main) return [];
   const all = walkFiles(outdir);
   // Skip wrangler's own README.md description and every sourcemap.
   const candidates = all.filter(
@@ -337,7 +343,12 @@ interface ReadWorkerConfig {
   target: WranglerConfigTarget;
   /** The declared and effective config, relative to the checkout. */
   wranglerConfig: { declared: string; effective: string };
-  config: ResolvedWranglerConfig & { main: string; name: string; compatibility_date: string };
+  /** `main` is undefined for a Worker of static assets only (`assets` and no `main`). */
+  config: ResolvedWranglerConfig & {
+    main: string | undefined;
+    name: string;
+    compatibility_date: string;
+  };
   configDir: string;
 }
 
@@ -345,8 +356,9 @@ interface ReadWorkerConfig {
  * Reads the resolved wrangler config at `declared` (relative to the
  * checkout) with wrangler's own reader, following a redirect the build left,
  * as `wrangler deploy` would, or the config a catalog config patch wrote in
- * its place (`patched`). Throws when it lacks `main`, `name` or
- * `compatibility_date`.
+ * its place (`patched`). Throws when it lacks `name` or `compatibility_date`,
+ * or has neither `main` nor an assets directory. A config with assets and no
+ * `main` is a Worker of static assets only, packed without modules.
  */
 function readWorkerConfig(
   checkoutDir: string,
@@ -377,9 +389,17 @@ function readWorkerConfig(
         "a wrangler config or redirect in a parent directory of the declared config is in the way",
     );
   }
-  const { main, name, compatibility_date } = config;
-  if (!main) {
-    throw new Error(`wrangler config ${wranglerConfig.declared} has no \`main\` entrypoint`);
+  const { name, compatibility_date } = config;
+  const main = config.main || undefined;
+  if (main === undefined && !config.assets?.directory) {
+    throw new Error(
+      `wrangler config ${wranglerConfig.declared} has no \`main\` entrypoint and no \`assets.directory\``,
+    );
+  }
+  if (main === undefined) {
+    logger(
+      `wrangler config ${wranglerConfig.declared} has no \`main\`: the Worker serves its static assets only`,
+    );
   }
   if (!name) {
     throw new Error(`wrangler config ${wranglerConfig.declared} has no \`name\``);
@@ -538,6 +558,9 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // (b2) The catalog's build commands, in order, before the wrangler config is
   // read: the config may be a file the build writes.
   const buildCommands = buildCommandList(catalog.install.buildCommand);
+  if (buildCommands.length > 0 && installDirList(catalog.install).length === 0) {
+    logger("the build commands run with no dependencies installed (install.installDirs is empty)");
+  }
   if (buildCommands.length > 0) {
     await runBuildCommands({
       checkoutDir,
@@ -655,6 +678,38 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       throw new Error(varProblems.join(" "));
     }
   }
+  // A Worker of static assets only has no code to use bindings, secrets,
+  // vars, crons or Durable Objects: refused before anything is built.
+  for (const c of collected) {
+    if (c.config.main !== undefined) continue;
+    const secrets = boundToWorker(catalog.secrets).filter(
+      (s) => c.name === null || secretTargets(s, catalog).includes(c.name),
+    );
+    // Vars of an entry of several Workers go where `varTargets` sends them,
+    // which the artifact's own check holds once the manifest is assembled.
+    const vars = boundToWorker(catalog.vars).filter(
+      (v) => c.name === null || v.workers?.includes(c.name) === true,
+    );
+    const { exports } = collectWorkerSettings(c.config);
+    const problems = assetsOnlyWorkerProblems(
+      {
+        modules: [],
+        bindings: c.bindings,
+        migrations: c.config.migrations ?? [],
+        crons: c.config.triggers?.crons ?? [],
+        queueConsumers: c.queueConsumers,
+        exports,
+      },
+      {
+        binding: c.config.assets?.binding ?? null,
+        config: { run_worker_first: c.config.assets?.run_worker_first },
+      },
+      { secrets, vars },
+      c.name === null ? "The Worker" : `The Worker "${c.name}"`,
+    );
+    if (problems.length > 0) throw new Error(problems.join(" "));
+  }
+
   // A Worker Loader makes the app a Workers Paid app; the catalog must say so.
   const planProblem = workersPaidBindingProblem(
     collected.flatMap((c) => c.bindings),
@@ -732,8 +787,22 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     });
     // (h) Record the stripped worker config.
     const mainModule = b.modules.find((m) => m.isMain)?.name;
-    if (!mainModule) {
+    const assetsOnly = b.config.main === undefined;
+    if (!mainModule && !assetsOnly) {
       throw new Error("internal error: no main module identified");
+    }
+    // Wrangler uploads a Worker of static assets only with its assets and
+    // compatibility settings alone; what it leaves out is not recorded.
+    const settings = assetsOnly ? {} : collectWorkerSettings(b.config);
+    const unsent = assetsOnly
+      ? (["observability", "placement", "limits", "cache"] as const).filter(
+          (key) => b.config[key] != null,
+        )
+      : [];
+    if (unsent.length > 0) {
+      logger(
+        `the wrangler config sets ${unsent.join(", ")}, which a Worker of static assets only is uploaded without; left out`,
+      );
     }
     return {
       name: b.name,
@@ -745,7 +814,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       worker: {
         name: b.config.name,
         wranglerConfig: b.wranglerConfig,
-        mainModule,
+        ...(mainModule === undefined ? {} : { mainModule }),
         compatibilityDate: b.config.compatibility_date,
         compatibilityFlags: b.config.compatibility_flags ?? [],
         modules: moduleManifest,
@@ -753,10 +822,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
         migrations: (b.config.migrations ?? []) as DoMigration[],
         crons: b.config.triggers?.crons ?? [],
         ...(b.queueConsumers.length > 0 ? { queueConsumers: b.queueConsumers } : {}),
-        observability: b.config.observability ?? null,
-        placement: b.config.placement ?? null,
-        limits: b.config.limits ?? null,
-        ...collectWorkerSettings(b.config),
+        observability: assetsOnly ? null : (b.config.observability ?? null),
+        placement: assetsOnly ? null : (b.config.placement ?? null),
+        limits: assetsOnly ? null : (b.config.limits ?? null),
+        ...settings,
       },
       assets: { config: b.assets.config, binding: b.assets.binding, files: assetManifest },
     };
@@ -794,7 +863,8 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // (`artifactFormatFor`): 1 for one Worker, 2 for several (the primary
   // Worker as `worker`, the others in `workers`), 3 once it has D1 files
   // older managers would skip, 4 once the entry keeps a Worker off workers.dev
-  // or has seed statements, 5 once it has a D1 baseline.
+  // or has seed statements, 5 once it has a D1 baseline or a Worker that
+  // serves static assets only.
   const primarySection = sections[0];
   if (primarySection === undefined) {
     throw new Error("internal error: no Worker was packed");

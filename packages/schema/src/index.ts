@@ -1,4 +1,5 @@
 export * from "./artifact";
+export * from "./assets-only";
 export * from "./catalog";
 export * from "./catalog-index";
 export * from "./catalog-stats";

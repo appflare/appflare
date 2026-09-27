@@ -1348,7 +1348,9 @@ export const catalogInstallSchema = z
           "root of the checkout; list `.` as well when the root still needs its install. Use it " +
           "when the Worker's `package.json` sits in a directory of its own (a template " +
           `repository), or for a second install beside the root one. At most 8 directories. ` +
-          "An entry of several Workers lists them once for all its Workers.",
+          "An empty list installs nothing, for a repository without a `package.json`: wrangler " +
+          "bundles the entry and its relative imports, and any build command runs with no " +
+          "dependencies installed. An entry of several Workers lists them once for all its Workers.",
       )
       .optional(),
     /**
