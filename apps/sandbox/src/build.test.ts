@@ -6,6 +6,7 @@ import {
   type BuildResult,
   buildOutcomeSchema,
   SANDBOX_FEATURE_CONFIG_PATCH,
+  SANDBOX_FEATURE_D1_SEED,
   SANDBOX_FEATURE_GITHUB_TOKENS,
   SANDBOX_FEATURE_INSTALL_DIRS,
   SANDBOX_FEATURE_REPOSITORY,
@@ -294,6 +295,35 @@ describe("runBuild", () => {
     );
   });
 
+  it("hands the packer an entry's D1 seed statements and seed-only values as declared", async () => {
+    const sandbox = fake();
+    const manifest = {
+      ...catalogManifest,
+      secrets: [
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true, seedOnly: true },
+      ],
+      resources: {
+        d1: {
+          DB: {
+            seed: {
+              hashes: { admin: { from: "ADMIN_PASSWORD", method: "bcrypt" } },
+              statements: [
+                {
+                  sql: "INSERT OR IGNORE INTO admins (name, hash) VALUES ('admin', ?)",
+                  params: [{ hash: "admin" }],
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    asResult(await build(sandbox, request({ catalogManifest: manifest })).promise);
+    const written = JSON.parse(sandbox.written.get(MANIFEST_INPUT) ?? "null");
+    expect(written.resources).toEqual(manifest.resources);
+    expect(written.secrets[0].seedOnly).toBe(true);
+  });
+
   it("reports a failed install in the packer as the install step", async () => {
     const sandbox = fake({
       failures: [
@@ -509,6 +539,7 @@ describe("cleanup and progress", () => {
         SANDBOX_FEATURE_GITHUB_TOKENS,
         SANDBOX_FEATURE_INSTALL_DIRS,
         SANDBOX_FEATURE_CONFIG_PATCH,
+        SANDBOX_FEATURE_D1_SEED,
       ],
       // The version metadata binding's id (vitest.config.ts).
       versionId: "version-under-test",

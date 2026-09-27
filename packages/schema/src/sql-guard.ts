@@ -1,16 +1,20 @@
 /**
- * Checks that a D1 schema file is safe to run on every install and update.
+ * Checks on the SQL a catalog entry runs against an app's D1 database, shared
+ * by the catalog manifest's schema, the packer, catalog CI and the manager.
  *
- * A schema file is not recorded in `d1_migrations`, so it runs again against
- * a database that already has everything it creates, and its data. It
- * passes only when every CREATE TABLE, INDEX, TRIGGER and VIEW says
- * IF NOT EXISTS, no statement drops or alters anything, and no statement
- * changes rows a second run would change again: `UPDATE`, `DELETE`,
- * `REPLACE` (also after `WITH`) and every `INSERT` but `INSERT OR IGNORE`
- * and `INSERT ... ON CONFLICT DO NOTHING` are refused. Seed rows, PRAGMAs
- * and SELECTs pass.
+ * Schema files ({@link schemaFileProblems}) are not recorded in
+ * `d1_migrations`, so each runs again against a database that already has
+ * everything it creates, and its data. A file passes only when every CREATE
+ * TABLE, INDEX, TRIGGER and VIEW says IF NOT EXISTS, no statement drops or
+ * alters anything, and no statement changes rows a second run would change
+ * again: `UPDATE`, `DELETE`, `REPLACE` (also after `WITH`) and every `INSERT`
+ * but `INSERT OR IGNORE` and `INSERT ... ON CONFLICT DO NOTHING` are refused.
+ * Seed rows, PRAGMAs and SELECTs pass.
  *
- * The check reads SQLite's syntax only as far as it must: comments are
+ * Seed statements ({@link seedStatementProblems}) are stricter: one `INSERT`
+ * that only adds a missing row, whose values arrive as bound `?` parameters.
+ *
+ * The checks read SQLite's syntax only as far as they must: comments are
  * stripped, strings and quoted identifiers are skipped whole, and statements
  * end at `;`, except inside a trigger's `BEGIN ... END` body.
  */
@@ -119,6 +123,13 @@ export function splitSqlStatements(sql: string): SqlStatement[] {
       while (j < sql.length && WORD_PART.test(sql[j] as string)) j += 1;
       const text = sql.slice(i, j);
       push({ kind: "word", value: text.toUpperCase(), text });
+      i = j;
+    } else if (c === "?") {
+      // A parameter: `?` alone, or numbered (`?1`), kept as one token.
+      let j = i + 1;
+      while (j < sql.length && /[0-9]/.test(sql[j] as string)) j += 1;
+      const text = sql.slice(i, j);
+      push({ kind: "punct", value: text, text });
       i = j;
     } else if (c === ";") {
       if (depth === 0) end();
@@ -232,4 +243,140 @@ export function schemaFileProblems(sql: string): string[] {
   const statements = splitSqlStatements(sql);
   if (statements.length === 0) return ["it has no SQL statements"];
   return statements.map(statementProblem).filter((p): p is string => p !== null);
+}
+
+/** Most statements one D1 binding's seed runs. */
+export const MAX_SEED_STATEMENTS = 10;
+/** Most parameters one seed statement binds. */
+export const MAX_SEED_PARAMS = 20;
+/** Longest seed statement, in characters. */
+export const MAX_SEED_SQL_LENGTH = 4096;
+
+/**
+ * Words a seed statement may not hold outside strings and quoted names: every
+ * statement kind but INSERT, and what would reach past the one row it adds.
+ */
+const SEED_BANNED_WORDS = new Set([
+  "WITH",
+  "CREATE",
+  "DROP",
+  "ALTER",
+  "PRAGMA",
+  "ATTACH",
+  "DETACH",
+  "VACUUM",
+  "REINDEX",
+  "ANALYZE",
+  "UPDATE",
+  "DELETE",
+  "BEGIN",
+  "COMMIT",
+  "ROLLBACK",
+  "SAVEPOINT",
+  "RELEASE",
+]);
+
+/** Whether `name` is a table a seed may not touch: D1's own, or SQLite's. */
+function isInternalTable(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower === "d1_migrations" || lower.startsWith("sqlite_") || lower.startsWith("_cf_");
+}
+
+/** A quoted name without its quotes (doubled quotes undone); a word as written. */
+function unquoted(token: Token): string {
+  if (token.kind !== "quoted") return token.text;
+  const open = token.text[0] ?? "";
+  const close = open === "[" ? "]" : open;
+  const inner = token.text.slice(1, token.text.endsWith(close) ? -1 : undefined);
+  return open === "[" ? inner : inner.split(`${close}${close}`).join(close);
+}
+
+/**
+ * Why `sql` cannot be a seed statement with `paramCount` parameters, as
+ * sentences; empty when it can. A seed runs once, at install, with values
+ * from the install form (a user name, a password hash), so it must:
+ *
+ * - be exactly one statement;
+ * - be an `INSERT OR IGNORE` or an `INSERT ... ON CONFLICT ... DO NOTHING`,
+ *   so running it again (a retried step) keeps the row the first run added;
+ * - hold no `WITH`, no `DO UPDATE` and no other statement kind (`CREATE`,
+ *   `DROP`, `ALTER`, `UPDATE`, `DELETE`, `PRAGMA`, `ATTACH` and the like);
+ * - name neither `d1_migrations` nor a `sqlite_` or `_cf_` table;
+ * - take its values only as anonymous `?` parameters, exactly as many as it
+ *   declares params: no `?1`, `:name`, `@name` or `$name`.
+ *
+ * Values never become part of the SQL: the statement is signed as written,
+ * and D1 binds the values.
+ */
+export function seedStatementProblems(sql: string, paramCount: number): string[] {
+  if (sql.length > MAX_SEED_SQL_LENGTH) {
+    return [`it is longer than ${MAX_SEED_SQL_LENGTH} characters`];
+  }
+  const statements = splitSqlStatements(sql);
+  const only = statements[0];
+  if (only === undefined) return ["it has no SQL statement"];
+  if (statements.length > 1) {
+    return [
+      `it holds ${statements.length} statements; a seed statement is exactly one INSERT, so list each as a statement of its own`,
+    ];
+  }
+  const { tokens } = only;
+  const problems: string[] = [];
+  const first = tokens[0];
+  const why =
+    "a seed only adds a row that is missing (INSERT OR IGNORE, or ON CONFLICT DO NOTHING)";
+  if (!isWord(first, "INSERT")) {
+    problems.push(`it starts with ${first?.text ?? "nothing"}; ${why}`);
+  } else if (isWord(tokens[1], "OR")) {
+    const resolution = tokens[2]?.value ?? "";
+    if (resolution !== "IGNORE") {
+      problems.push(`INSERT OR ${resolution} changes a row that is already there; ${why}`);
+    }
+  } else if (!(hasPair(tokens, "ON", "CONFLICT") && hasPair(tokens, "DO", "NOTHING"))) {
+    problems.push(
+      `an INSERT without OR IGNORE or ON CONFLICT DO NOTHING fails or adds a second row when it runs again; ${why}`,
+    );
+  }
+  const doUpdate = hasPair(tokens, "DO", "UPDATE");
+  if (doUpdate) {
+    problems.push(`ON CONFLICT DO UPDATE changes a row that is already there; ${why}`);
+  }
+  const banned = [
+    ...new Set(
+      tokens
+        .filter((t) => t.kind === "word" && SEED_BANNED_WORDS.has(t.value))
+        .map((t) => t.value)
+        .filter((w) => !(w === "UPDATE" && doUpdate)),
+    ),
+  ];
+  if (banned.length > 0) {
+    problems.push(`it uses ${banned.join(", ")}; a seed statement is one INSERT and nothing else`);
+  }
+  const internal = [
+    ...new Set(
+      tokens
+        .filter((t) => t.kind === "word" || t.kind === "quoted")
+        .map(unquoted)
+        .filter(isInternalTable),
+    ),
+  ];
+  if (internal.length > 0) {
+    problems.push(
+      `it names ${internal.join(", ")}; a seed may not touch d1_migrations or the sqlite_ and _cf_ tables`,
+    );
+  }
+  const numbered = tokens.some((t) => t.kind === "punct" && /^\?[0-9]+$/.test(t.value));
+  const named = tokens.some((t) => t.kind === "punct" && [":", "@", "$"].includes(t.value));
+  if (numbered || named) {
+    problems.push(
+      "it uses numbered or named parameters; a seed statement takes anonymous ? parameters, bound in the order of its params",
+    );
+  }
+  const placeholders = tokens.filter((t) => t.kind === "punct" && t.value === "?").length;
+  if (placeholders !== paramCount) {
+    problems.push(
+      `it has ${placeholders} ? placeholder(s) and ${paramCount} param(s); give one param per ?, in order`,
+    );
+  }
+  return problems;
 }

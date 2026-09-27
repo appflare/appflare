@@ -1,5 +1,6 @@
 import type { EnvBinding } from "@appflare/cf-api";
 import {
+  boundToWorker,
   type CatalogHyperdrive,
   type CatalogSecret,
   type CatalogVar,
@@ -93,7 +94,9 @@ export function secretSlots(
   vars: readonly Pick<CatalogVar, "name" | "derive">[] = [],
 ): SecretSlot[] {
   const recorded = new Set(recordedNames);
-  const slots: SecretSlot[] = declared.map((s) => {
+  // A seed-only secret was used once by the install and is kept nowhere, so
+  // settings neither show nor take it.
+  const slots: SecretSlot[] = boundToWorker(declared).map((s) => {
     const derives = declared.filter((d) => d.derive?.from === s.name).map((d) => d.name);
     const derivesVars = vars.filter((v) => v.derive?.from === s.name).map((v) => v.name);
     return {

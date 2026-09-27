@@ -66,7 +66,7 @@ export interface JobFailure {
  * record).
  */
 const PHASE_PATTERNS: readonly [RegExp, FailedPhase][] = [
-  [/^D1 .*: apply |migration/i, "d1_migrations"],
+  [/^D1 .*: (apply |seed$)|migration/i, "d1_migrations"],
   [/^canary (check|wait)|^skip canary$|version previews/i, "canary"],
   [/^health check|^skip health check$/i, "health"],
   [/build in sandbox|built manifest|clean up sandbox builds|^prepare build request$/i, "sandbox"],

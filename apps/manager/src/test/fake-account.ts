@@ -28,6 +28,8 @@ export interface FakeAccount {
   /** Applied D1 migration names per database id. */
   applied: Record<string, string[]>;
   queries: string[];
+  /** The `params` sent with each of `queries`, in order; null for a query sent without. */
+  queryParams: Array<unknown[] | null>;
   /** Current bookmark per database id. */
   bookmarks: Record<string, string>;
   restores: Array<{ databaseId: string; bookmark: string }>;
@@ -102,6 +104,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     d1: [],
     applied: {},
     queries: [],
+    queryParams: [],
     bookmarks: {},
     restores: [],
     uploadedAssets: new Set(),
@@ -399,7 +402,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     if (m?.[1] !== undefined) {
       const applied = state.applied[m[1]] ?? [];
       state.applied[m[1]] = applied;
-      const { sql } = (await request.json()) as { sql: string };
+      const { sql, params } = (await request.json()) as { sql: string; params?: unknown[] };
       const failing = state.failMigration;
       const failNow =
         failing !== undefined && failing.times > 0 && sql.endsWith(`values ('${failing.file}');`);
@@ -407,6 +410,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       if (failNow && failing.after !== true)
         return fail(failing.status, 'near "BROKEN": syntax error');
       state.queries.push(sql);
+      state.queryParams.push(params ?? null);
       if (sql.startsWith("SELECT")) {
         return ok([
           { results: applied.map((name, i) => ({ id: i + 1, name })), success: true, meta: {} },
@@ -415,7 +419,8 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       const inserted = /values \('([^']+)'\);$/.exec(sql);
       if (inserted?.[1] !== undefined) applied.push(inserted[1]);
       if (failNow) return fail(failing.status, "internal error");
-      return ok([{ results: [], success: true, meta: {} }]);
+      // A statement with bound values (a seed's INSERT) adds its row.
+      return ok([{ results: [], success: true, meta: params === undefined ? {} : { changes: 1 } }]);
     }
     return fail(404, `no route ${key}`);
   }

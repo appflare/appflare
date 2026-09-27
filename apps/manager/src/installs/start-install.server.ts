@@ -1,5 +1,7 @@
 import {
   type ArtifactManifest,
+  bcryptInputProblem,
+  bcryptSeedSources,
   type CatalogManifest,
   connectionStringProblems,
   enteredSecrets,
@@ -7,6 +9,7 @@ import {
   type IndexApp,
   indexAppArtifact,
   isOptionalSecret,
+  isSeedOnly,
   secretValueProblem,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
@@ -23,6 +26,7 @@ import { checkExternalHostname } from "../gateway/gateway";
 import { isGatewayReady, readGateway } from "../gateway/gateway.server";
 import type { InstallJobParams } from "../jobs/install";
 import { revisedCatalogOf, sandboxBuildOf } from "../jobs/install/artifact-source";
+import type { SeedOnlyValues } from "../jobs/install/d1-seed";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import {
   expectedWorkers,
@@ -134,7 +138,14 @@ export interface StartInstallResult {
 }
 
 export interface ResolvedInstallInput {
+  /** The secrets the Worker gets. */
   secrets: Record<string, string>;
+  /**
+   * Seed-only secrets and vars (the catalog's `seedOnly`), for the app's D1
+   * seed statements: they go to the install job alone, never into
+   * `jobs.input_json`, the install's settings, or the Worker.
+   */
+  seed: SeedOnlyValues;
   /** Connection strings by Hyperdrive binding (trimmed); empty for an app without databases elsewhere. */
   hyperdrive: Record<string, string>;
   vars: Record<string, string>;
@@ -150,7 +161,9 @@ export interface ResolvedInstallInput {
  * needs a value: the form prefills `generate: true` secrets, so an empty one
  * means a broken client. An optional secret without a value is left unset.
  * A derived secret is not taken from the form at all: the caller computes it
- * from its source with `withDerivedSecrets`.
+ * from its source with `withDerivedSecrets`. Seed-only secrets and vars are
+ * checked like the others and set apart in `seed`; a secret a bcrypt seed
+ * hash reads may be at most 72 bytes, since bcrypt ignores the rest.
  */
 export function resolveInstallInput(
   manifest: Pick<EntryManifest, "catalog" | "worker">,
@@ -178,6 +191,8 @@ export function resolveInstallInput(
     throw new StartInstallError(`${catalog.name} does not take: ${unknown.join(", ")}.`);
   }
   const secrets: Record<string, string> = {};
+  const seed: SeedOnlyValues = { secrets: {}, vars: {} };
+  const bcryptSources = new Set(bcryptSeedSources(catalog.resources ?? {}));
   for (const secret of formSecrets) {
     const value = input.secrets[secret.name] ?? "";
     if (value.length === 0) {
@@ -185,9 +200,14 @@ export function resolveInstallInput(
       if (isOptionalSecret(secret)) continue;
       throw new StartInstallError(`${secret.label} (${secret.name}) is required.`);
     }
-    const problem = secretValueProblem(secret, value);
+    const problem =
+      secretValueProblem(secret, value) ??
+      (bcryptSources.has(secret.name)
+        ? bcryptInputProblem(`${secret.label} (${secret.name})`, value)
+        : null);
     if (problem !== null) throw new StartInstallError(problem);
-    secrets[secret.name] = value;
+    if (isSeedOnly(secret)) seed.secrets[secret.name] = value;
+    else secrets[secret.name] = value;
   }
   // One connection string per database the app reaches through Hyperdrive.
   // Problems name the binding and the part at fault, never the string.
@@ -214,7 +234,10 @@ export function resolveInstallInput(
     }
     const problem = varValueProblem(field, value);
     if (problem !== null) throw new StartInstallError(problem);
-    if (value.length > 0) vars[field.name] = value;
+    if (value.length === 0) continue;
+    // Left empty, a seed-only var takes its default when the seed runs.
+    if (field.seedOnly === true) seed.vars[field.name] = value;
+    else vars[field.name] = value;
   }
   if (catalog.install.emailRouting !== undefined && input.emailRouting === undefined) {
     throw new StartInstallError(
@@ -243,6 +266,7 @@ export function resolveInstallInput(
   }
   return {
     secrets,
+    seed,
     hyperdrive,
     vars,
     ...(input.emailRouting === undefined ? {} : { emailRouting: input.emailRouting }),
@@ -264,6 +288,11 @@ export async function withDerivedValues(
     secrets: await withDerivedSecrets(catalog.secrets, resolved.secrets),
     vars: { ...resolved.vars, ...(await derivedVarValues(catalog.vars, resolved.secrets)) },
   };
+}
+
+/** The install job's `seed`, when there are seed-only values: never stored anywhere else. */
+export function seedParams(seed: SeedOnlyValues): { seed?: SeedOnlyValues } {
+  return Object.keys(seed.secrets).length + Object.keys(seed.vars).length === 0 ? {} : { seed };
 }
 
 export async function startInstallCore(
@@ -588,6 +617,7 @@ export async function startInstallCore(
     secrets: resolved.secrets,
     ...(Object.keys(resolved.hyperdrive).length === 0 ? {} : { hyperdrive: resolved.hyperdrive }),
     vars: resolved.vars,
+    ...seedParams(resolved.seed),
     paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),

@@ -13,6 +13,7 @@ import {
   installVarFields,
   missingRequiredVar,
   resolveVars,
+  settingsVarFields,
   varsUseWorkerUrl,
   varValueProblem,
 } from "./install-vars";
@@ -170,6 +171,25 @@ describe("resolveVars", () => {
     expect(
       resolveVars(m, { PASSWORD: "entered" }, { workerUrl: null, workerName: "app" }).vars,
     ).toEqual([{ type: "plain_text", name: "GREETING", text: "hi" }]);
+  });
+
+  it("never sends a seed-only var, nor drops a config var for a seed-only secret", () => {
+    const m = manifest(
+      [{ type: "plain_text", name: "SITE_NAME", text: "Chat" }],
+      [v("ADMIN_NAME", { required: true, seedOnly: true }), v("GREETING", { default: "hi" })],
+    );
+    m.catalog.secrets.push({ name: "SITE_NAME", label: "x", generate: true, seedOnly: true });
+    const placeholders = { workerUrl: null, workerName: "app" };
+    expect(resolveVars(m, { ADMIN_NAME: "root", GREETING: "hello" }, placeholders).vars).toEqual([
+      { type: "plain_text", name: "SITE_NAME", text: "Chat" },
+      { type: "plain_text", name: "GREETING", text: "hello" },
+    ]);
+    const fields = installVarFields(m);
+    expect(fields.map((f) => [f.name, f.seedOnly ?? false])).toEqual([
+      ["ADMIN_NAME", true],
+      ["GREETING", false],
+    ]);
+    expect(settingsVarFields(fields).map((f) => f.name)).toEqual(["GREETING"]);
   });
 
   it("leaves {{workerUrl}} as written while the URL is unknown", () => {

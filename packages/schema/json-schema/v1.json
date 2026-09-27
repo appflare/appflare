@@ -1059,7 +1059,7 @@
           },
           "generate": {
             "default": false,
-            "description": "`true`: the install form fills in a random value the admin can copy, regenerate, or replace. `\"vapid-private-key\"`: it fills in a new Web Push (VAPID) private key, a P-256 private key as the unpadded base64url of its raw 32 bytes (the form web-push libraries take), and the manager refuses a value that is not one. Pair it with a `derive: { method: \"vapid-public-key\" }` var for the public key.",
+            "description": "`true`: the install form fills in a random value the admin can copy, regenerate, or replace. `\"vapid-private-key\"`: it fills in a new Web Push (VAPID) private key, a P-256 private key as the unpadded base64url of its raw 32 bytes (the form web-push libraries take), and the manager refuses a value that is not one. Pair it with a `derive: { method: \"vapid-public-key\" }` var for the public key. `\"base64-key-32\"`: 32 random bytes as padded base64 (44 characters), for an app that reads a raw 256-bit key; the manager refuses a value that does not decode to 32 bytes.",
             "anyOf": [
               {
                 "type": "boolean"
@@ -1067,7 +1067,8 @@
               {
                 "type": "string",
                 "enum": [
-                  "vapid-private-key"
+                  "vapid-private-key",
+                  "base64-key-32"
                 ]
               }
             ]
@@ -1110,6 +1111,10 @@
               "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
             },
             "description": "For an entry that installs several Workers (`install.workers`): the names of the Workers that get this value. Omitted means every Worker for a secret, and for a var the Workers whose wrangler config declares it (every Worker when none does)."
+          },
+          "seedOnly": {
+            "type": "boolean",
+            "description": "The secret exists only for `resources.d1[binding].seed`: the install form asks for it once, the seed uses it (as a param or the source of a hash), and it is never set on the Worker, stored, or asked for again by updates or settings. For a first admin's password, so the plaintext never sits in the app's environment. Not allowed with `optional`, `derive` or `workers`, nor on self-deploying entries."
           }
         },
         "required": [
@@ -1118,25 +1123,68 @@
           "generate"
         ],
         "additionalProperties": false,
-        "anyOf": [
+        "allOf": [
           {
-            "not": {
-              "required": [
-                "derive"
-              ]
-            }
-          },
-          {
-            "properties": {
-              "generate": {
-                "const": false
-              },
-              "optional": {
+            "anyOf": [
+              {
                 "not": {
-                  "const": true
+                  "required": [
+                    "derive"
+                  ]
+                }
+              },
+              {
+                "properties": {
+                  "generate": {
+                    "const": false
+                  },
+                  "optional": {
+                    "not": {
+                      "const": true
+                    }
+                  }
                 }
               }
-            }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "not": {
+                  "required": [
+                    "seedOnly"
+                  ],
+                  "properties": {
+                    "seedOnly": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "derive"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "workers"
+                      ]
+                    }
+                  ]
+                },
+                "properties": {
+                  "optional": {
+                    "not": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            ]
           }
         ]
       }
@@ -1234,6 +1282,10 @@
               "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
             },
             "description": "For an entry that installs several Workers (`install.workers`): the names of the Workers that get this value. Omitted means every Worker for a secret, and for a var the Workers whose wrangler config declares it (every Worker when none does)."
+          },
+          "seedOnly": {
+            "type": "boolean",
+            "description": "The var exists only for `resources.d1[binding].seed`, such as a first admin's user name: the install form asks for it once, a seed statement binds it, and it is never set on the Worker, stored, or shown in settings. Must be required or have a default. Not allowed with `derive` or `workers`, nor on self-deploying entries."
           }
         },
         "required": [
@@ -1464,6 +1516,214 @@
                 "maxLength": 256,
                 "pattern": "^(?!(?:.*\\/)?\\.{1,2}(?:\\/|$))[0-9A-Za-z.@+_-]+(?:\\/[0-9A-Za-z.@+_-]+)*$",
                 "description": "A folder of migrations that run once the new version serves all traffic, for changes the previous version's code would break on. Recorded in `d1_migrations` like the others, so their file names must differ from the migrations'. Rolling back does not undo them."
+              },
+              "seed": {
+                "type": "object",
+                "properties": {
+                  "hashes": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+                    },
+                    "additionalProperties": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "from": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "description": "The secret whose value is hashed: a secret of this manifest, neither optional nor derived."
+                            },
+                            "method": {
+                              "type": "string",
+                              "const": "pbkdf2-sha256"
+                            },
+                            "iterations": {
+                              "type": "integer",
+                              "minimum": 1000,
+                              "maximum": 100000,
+                              "description": "PBKDF2 iterations, as the app checks them. At most 100000: Cloudflare Workers refuse to derive more."
+                            },
+                            "saltBytes": {
+                              "type": "integer",
+                              "minimum": 16,
+                              "maximum": 64,
+                              "description": "Bytes of random salt; `{ salt }` params write it with `encoding`."
+                            },
+                            "keyBytes": {
+                              "type": "integer",
+                              "minimum": 16,
+                              "maximum": 64,
+                              "description": "Bytes of derived key; `{ hash }` params write it with `encoding`."
+                            },
+                            "encoding": {
+                              "type": "string",
+                              "enum": [
+                                "base64url",
+                                "base64",
+                                "hex"
+                              ],
+                              "description": "How the hash and salt are written: `base64url` (unpadded), `base64` (padded) or `hex` (lower case)."
+                            }
+                          },
+                          "required": [
+                            "from",
+                            "method",
+                            "iterations",
+                            "saltBytes",
+                            "keyBytes",
+                            "encoding"
+                          ],
+                          "additionalProperties": false,
+                          "description": "A PBKDF2-SHA-256 hash of a secret with a fresh random salt, as the app stores it."
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "from": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128,
+                              "description": "The secret whose value is hashed: a secret of this manifest, neither optional nor derived. Values longer than 72 bytes are refused at install."
+                            },
+                            "method": {
+                              "type": "string",
+                              "const": "bcrypt"
+                            },
+                            "cost": {
+                              "type": "integer",
+                              "minimum": 4,
+                              "maximum": 10,
+                              "description": "The bcrypt cost (log2 of the rounds); 10 when omitted."
+                            }
+                          },
+                          "required": [
+                            "from",
+                            "method"
+                          ],
+                          "additionalProperties": false,
+                          "description": "A bcrypt hash (`$2b$`) of a secret; its salt is part of the hash."
+                        }
+                      ]
+                    },
+                    "description": "Values derived from secrets, by name, for `{ hash }` and `{ salt }` params: a `pbkdf2-sha256` hash with explicit parameters, or a `bcrypt` hash. Each is computed once per install, so a hash and its salt match. Never logged or stored by Appflare."
+                  },
+                  "statements": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "sql": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096,
+                          "description": "Exactly one `INSERT OR IGNORE` or `INSERT ... ON CONFLICT ... DO NOTHING` statement, with an anonymous `?` placeholder for each param. No `WITH`, `DO UPDATE`, other statement kinds, numbered or named parameters, and no `d1_migrations`, `sqlite_` or `_cf_` tables."
+                        },
+                        "params": {
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "var": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "description": "A var of this manifest."
+                                  }
+                                },
+                                "required": [
+                                  "var"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "secret": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "description": "A secret of this manifest, not optional."
+                                  }
+                                },
+                                "required": [
+                                  "secret"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "hash": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+                                    "description": "A hash of this seed's `hashes`."
+                                  }
+                                },
+                                "required": [
+                                  "hash"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "salt": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+                                    "description": "The salt of a `pbkdf2-sha256` hash of this seed's `hashes`."
+                                  }
+                                },
+                                "required": [
+                                  "salt"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "string",
+                                    "maxLength": 1024,
+                                    "description": "Literal text, bound as it is."
+                                  }
+                                },
+                                "required": [
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          "description": "The values bound to the placeholders, in order: one object per `?`."
+                        }
+                      },
+                      "required": [
+                        "sql",
+                        "params"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "description": "The statements, run in order, each once, at install only. Updates never run them, even when they change."
+                  },
+                  "beforeSchema": {
+                    "type": "boolean",
+                    "description": "Run the statements before the binding's schema files instead of after them (the default), so a seeded row wins over a default row a schema file adds with INSERT OR IGNORE. The binding's migrations always run first; post-deploy migrations run after the seed when `beforeSchema` is set."
+                  }
+                },
+                "required": [
+                  "statements"
+                ],
+                "additionalProperties": false,
+                "description": "Rows the app needs before anyone can sign in (a first admin account), added once at install with values from the install form, bound as D1 parameters. Not allowed on self-deploying entries."
               }
             },
             "additionalProperties": false,
@@ -1612,6 +1872,16 @@
                       "required": [
                         "derive"
                       ]
+                    },
+                    {
+                      "required": [
+                        "seedOnly"
+                      ],
+                      "properties": {
+                        "seedOnly": {
+                          "const": true
+                        }
+                      }
                     }
                   ]
                 }
@@ -1620,8 +1890,22 @@
             "vars": {
               "items": {
                 "not": {
-                  "required": [
-                    "derive"
+                  "anyOf": [
+                    {
+                      "required": [
+                        "derive"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "seedOnly"
+                      ],
+                      "properties": {
+                        "seedOnly": {
+                          "const": true
+                        }
+                      }
+                    }
                   ]
                 }
               }

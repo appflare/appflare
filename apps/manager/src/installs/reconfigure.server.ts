@@ -38,6 +38,7 @@ import {
   type InstallVarField,
   installVarFields,
   missingRequiredVar,
+  settingsVarFields,
   varValueProblem,
 } from "./install-vars";
 import type { StartReconfigureInput } from "./reconfigure-input";
@@ -162,7 +163,7 @@ async function settingsContext(
     const sandbox = catalog.install.sandbox;
     return {
       catalog,
-      fields: installVarFields(catalogOnlyManifest(catalog)),
+      fields: settingsVarFields(installVarFields(catalogOnlyManifest(catalog))),
       slots: secretSlots(catalog.secrets, secretNames),
       // A self-deploying entry declares no databases (the schema refuses them).
       databases: [],
@@ -206,7 +207,8 @@ async function settingsContext(
   }
   return {
     catalog: manifest.catalog,
-    fields: installVarFields(manifest),
+    // A seed-only var was used once by the install and is kept nowhere.
+    fields: settingsVarFields(installVarFields(manifest)),
     slots: secretSlots(manifest.catalog.secrets, secretNames, manifest.catalog.vars),
     databases: databaseSlots(
       manifest.catalog.resources?.hyperdrive ?? [],

@@ -7,6 +7,7 @@ import {
   durableObjectExports,
   hasDurableObjectExports,
   isOptionalSecret,
+  isSeedOnly,
   sameDurableObjectExports,
   type VectorizeIndexConfig,
   vectorizeBindingSchema,
@@ -483,7 +484,8 @@ export function missingSecrets(
   recordedNames: Iterable<string>,
 ): CatalogSecret[] {
   const have = new Set(recordedNames);
-  return declared.filter((s) => !isOptionalSecret(s) && !have.has(s.name));
+  // A seed-only secret is never on the Worker: the install used it once.
+  return declared.filter((s) => !isOptionalSecret(s) && !isSeedOnly(s) && !have.has(s.name));
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   entryPlaceholderValues,
   hasPlaceholder,
   type IndexBuild,
+  isSeedOnly,
   renderEntryWorkerPlaceholders,
   renderPlaceholders,
 } from "@appflare/schema";
@@ -46,10 +47,12 @@ import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import {
   initialSecretValues,
+  SEED_ONLY_VAR_NOTE,
   SecretFields,
   secretsComplete,
   withSecretValue,
 } from "./secret-fields";
+import { generatedSeedCredentials, holdSeedCredentials } from "./seed-credentials";
 import { tooltipContent } from "./tooltip";
 import {
   WorkersPaidConfirmation,
@@ -66,7 +69,9 @@ import {
  * (`generate`) are prefilled with a fresh value the admin can copy now; it is
  * shown only here. A derived var is shown read-only: the install computes it
  * from its source secret. Optional secrets stay unset unless the admin turns on
- * "Set now". An app that receives email (`install.emailRouting`) also
+ * "Set now". Seed-only secrets and vars (a first admin's account) say they
+ * are used once and not kept; a generated one is shown once more on the
+ * install's job page (./seed-credentials.ts). An app that receives email (`install.emailRouting`) also
  * asks for a zone and previews what the install sets up there. An app with
  * cron triggers says how many it uses against the free plan's 5 per account;
  * if it does not need Workers Paid itself, the Workers Paid confirmation is
@@ -262,6 +267,8 @@ export function InstallForm({
                 ...(installer === null ? {} : { appToken: appToken.trim() }),
               },
             });
+      // A generated first-admin password, shown once more on the job page.
+      holdSeedCredentials(jobId, generatedSeedCredentials(catalog.secrets, secrets));
       await jobStarted(jobId, "Install started");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start the install.");
@@ -372,6 +379,9 @@ export function InstallForm({
                     {installer !== null
                       ? "Stored as encrypted secrets on your sandbox Worker for the app's installer, which sets them on the app's Workers. Appflare keeps only their names."
                       : "Stored as encrypted secrets on the app's Worker. Appflare keeps only their names."}
+                    {catalog.secrets.some(isSeedOnly)
+                      ? " Those used to create the first admin account are not stored at all."
+                      : ""}
                   </Text>
                 </div>
                 <SecretFields
@@ -495,6 +505,7 @@ export function VarField({
   }
   const notes = [
     field.help,
+    field.seedOnly === true ? SEED_ONLY_VAR_NOTE : undefined,
     hasPlaceholder(value)
       ? `{{workerUrl}}, {{workerName}} and {{accountId}} are filled in with the app's URL, Worker name and Cloudflare account id ${when}.`
       : undefined,

@@ -3,6 +3,7 @@ import {
   type ArtifactManifest,
   type EntryWorkerPlaceholders,
   isOptionalSecret,
+  isSeedOnly,
   sameDurableObjectExports,
   type WorkerExports,
 } from "@appflare/schema";
@@ -220,6 +221,8 @@ export async function deployOtherWorkerPhase(
   // never turns it on); saying so explicitly guards a Worker kept private.
   if (!worker.workersDev) await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
   for (const secret of own.catalog.secrets) {
+    // A seed-only secret serves the install's seed statements, never a Worker.
+    if (isSeedOnly(secret)) continue;
     const value = input.secrets[secret.name];
     if (isOptionalSecret(secret) && (value ?? "").length === 0) continue;
     await run(`set secret ${secret.name}${label}`, async ({ log, cf, orm }) => {

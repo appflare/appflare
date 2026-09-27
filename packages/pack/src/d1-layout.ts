@@ -1,7 +1,11 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { type CatalogD1, compareMigrationNames, migrationsGlobBase } from "@appflare/schema";
-import { schemaFileProblems } from "./sql-guard.ts";
+import {
+  type CatalogD1,
+  compareMigrationNames,
+  migrationsGlobBase,
+  schemaFileProblems,
+} from "@appflare/schema";
 import type { ResolvedWranglerConfig } from "./wrangler-config.ts";
 
 /**
@@ -249,7 +253,7 @@ export interface D1Extras {
 /**
  * Reads the schema files and post-deploy migrations of `resources.d1`.
  * Refuses a declaration for a name no Worker binds as D1, a schema file that
- * is not safe to run on every install and update (see sql-guard.ts), and a
+ * is not safe to run on every install and update (`schemaFileProblems` from `@appflare/schema`), and a
  * post-deploy migration named like one of the binding's migrations: both are
  * recorded in `d1_migrations` by name, so one of the two would never run.
  */

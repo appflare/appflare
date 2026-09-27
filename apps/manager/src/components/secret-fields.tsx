@@ -2,9 +2,11 @@ import {
   type CatalogSecret,
   type CatalogVar,
   enteredSecrets,
+  generateBase64Key32,
   generateVapidPrivateKey,
   isDerivedSecret,
   isOptionalSecret,
+  isSeedOnly,
 } from "@appflare/schema";
 import { Button, Input, SensitiveInput, Switch, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
@@ -21,18 +23,28 @@ import { GENERATED_SECRET_LENGTH } from "../installs/install-input";
  * Values are keyed by secret name. An optional secret has no key while it is
  * left unset, so the form sends nothing for it. A derived secret (the
  * catalog's `derive`) gets no field: the server computes it from its source,
- * whose field says so.
+ * whose field says so. A seed-only secret (the catalog's `seedOnly`) is only
+ * ever in the install form, whose field says it is used once and not kept.
  */
+
+/** What the field of a seed-only secret says (the catalog's `seedOnly`). */
+export const SEED_ONLY_SECRET_NOTE =
+  "Used once to create the first admin account. Appflare does not keep it; copy it before you install.";
+
+/** What the field of a seed-only var says. */
+export const SEED_ONLY_VAR_NOTE =
+  "Used once to create the first admin account. Appflare does not keep it.";
 
 /**
  * A fresh value for a secret the catalog generates: a random password for
- * `generate: true`, a new VAPID private key for `"vapid-private-key"`
- * (WebCrypto's `getRandomValues`, in the browser).
+ * `generate: true`, a new VAPID private key for `"vapid-private-key"`, 32
+ * random bytes as padded base64 for `"base64-key-32"` (WebCrypto's
+ * `getRandomValues`, in the browser).
  */
 export function generatedSecret(generate: CatalogSecret["generate"]): string {
-  return generate === "vapid-private-key"
-    ? generateVapidPrivateKey()
-    : generateTemporaryPassword(GENERATED_SECRET_LENGTH);
+  if (generate === "vapid-private-key") return generateVapidPrivateKey();
+  if (generate === "base64-key-32") return generateBase64Key32();
+  return generateTemporaryPassword(GENERATED_SECRET_LENGTH);
 }
 
 /**
@@ -116,7 +128,11 @@ export function SecretFields({
           onChange={(next) => onChange(secret.name, next)}
           after={after}
           note={
-            [derived, isHeld ? heldSecretNote(secret) : undefined]
+            [
+              derived,
+              isHeld ? heldSecretNote(secret) : undefined,
+              isSeedOnly(secret) ? SEED_ONLY_SECRET_NOTE : undefined,
+            ]
               .filter((t) => t !== undefined)
               .join(" ") || undefined
           }
@@ -210,7 +226,9 @@ function SecretField({
           description={
             held && value.length === 0
               ? help
-              : `${help ? `${help} ` : ""}Generated for you. Copy it now: it is shown only here and cannot be read back after ${after}.`
+              : isSeedOnly(secret)
+                ? `${help ? `${help} ` : ""}Generated for you; the install's page shows it once more.`
+                : `${help ? `${help} ` : ""}Generated for you. Copy it now: it is shown only here and cannot be read back after ${after}.`
           }
         />
         <div>

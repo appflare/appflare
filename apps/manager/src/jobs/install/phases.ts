@@ -8,6 +8,7 @@ import {
 import {
   type ArtifactManifest,
   type AssetFile,
+  type CatalogD1Seed,
   type D1MigrationFile,
   type IndexArtifacts,
   parseConnectionString,
@@ -402,6 +403,12 @@ export interface D1Target {
   schema: readonly D1MigrationFile[];
   /** Migrations applied once the new code serves all traffic, recorded like the others. */
   postDeploy: readonly D1MigrationFile[];
+  /**
+   * Statements run once, at install only, with values from the install form
+   * (the catalog manifest's `resources.d1[binding].seed`); undefined when
+   * the binding has none. Updates ignore it.
+   */
+  seed?: CatalogD1Seed | undefined;
 }
 
 /**
@@ -564,7 +571,7 @@ export async function applyD1SchemaPhase(
 
 /**
  * The D1 targets of a manifest: every database resource whose binding ships
- * migrations, schema files or post-deploy migrations.
+ * migrations, schema files, post-deploy migrations or seed statements.
  */
 export function d1Targets(
   manifest: ArtifactManifest,
@@ -572,6 +579,7 @@ export function d1Targets(
 ): D1Target[] {
   const of = (lists: ArtifactManifest["d1Migrations"] | undefined, binding: string) =>
     lists !== undefined && Object.hasOwn(lists, binding) ? (lists[binding] ?? []) : [];
+  const layouts = manifest.catalog.resources?.d1 ?? {};
   return databases
     .filter((r) => r.type === "d1")
     .map((r) => ({
@@ -581,8 +589,11 @@ export function d1Targets(
       files: of(manifest.d1Migrations, r.binding),
       schema: of(manifest.d1Schema, r.binding),
       postDeploy: of(manifest.d1PostDeploy, r.binding),
+      seed: Object.hasOwn(layouts, r.binding) ? layouts[r.binding]?.seed : undefined,
     }))
-    .filter((t) => t.files.length + t.schema.length + t.postDeploy.length > 0);
+    .filter(
+      (t) => t.files.length + t.schema.length + t.postDeploy.length > 0 || t.seed !== undefined,
+    );
 }
 
 /** Step "look up workers.dev subdomain": cached in settings after the first lookup. */

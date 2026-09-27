@@ -60,6 +60,7 @@ export function fakeSelf(
     uploadWorker: (input) => call("uploadWorker", input),
     applyD1Migrations: (input) => call("applyD1Migrations", input),
     applyD1Schema: (input) => call("applyD1Schema", input),
+    seedD1: (input) => call("seedD1", input),
     emptyR2Page: (input) => call("emptyR2Page", input),
     inspectEmailRouting: (input) => call("inspectEmailRouting", input),
     countCronTriggers: (input) => call("countCronTriggers", input),

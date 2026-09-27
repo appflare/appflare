@@ -8,6 +8,7 @@ import {
   type RepositoryBuildOutcome,
   repositoryBuildOutcomeSchema,
   SANDBOX_FEATURE_CONFIG_PATCH,
+  SANDBOX_FEATURE_D1_SEED,
   SANDBOX_FEATURE_GITHUB_TOKENS,
   SANDBOX_FEATURE_INSTALL_DIRS,
   SANDBOX_FEATURE_REPOSITORY,
@@ -186,6 +187,30 @@ export function configPatchRefusal(
     (catalog.install.workers ?? []).some((w) => w.configPatch !== undefined);
   if (!patched) return null;
   return `the sandbox Worker ${info.sandboxVersion} cannot apply this app's wrangler config patch (install.configPatch) and would build the config unpatched; to update it, ${updateHint}`;
+}
+
+/** Whether the sandbox Worker's builds keep an entry's D1 seed statements. */
+export function keepsD1Seeds(info: Pick<SandboxInfo, "features">): boolean {
+  return info.features?.includes(SANDBOX_FEATURE_D1_SEED) === true;
+}
+
+/**
+ * Why the sandbox Worker cannot build `catalog`, or null when it can: the
+ * entry seeds a D1 database (`resources.d1[binding].seed`) and the sandbox
+ * Worker predates seeds, so its build would carry the catalog manifest
+ * without them.
+ */
+export function d1SeedRefusal(
+  info: Pick<SandboxInfo, "sandboxVersion" | "features">,
+  catalog:
+    | { resources?: { d1?: Readonly<Record<string, { seed?: unknown }>> | undefined } | undefined }
+    | undefined,
+  updateHint: string,
+): string | null {
+  if (catalog === undefined || keepsD1Seeds(info)) return null;
+  const seeded = Object.values(catalog.resources?.d1 ?? {}).some((d1) => d1.seed !== undefined);
+  if (!seeded) return null;
+  return `the sandbox Worker ${info.sandboxVersion} cannot build an app that seeds its database (resources.d1 seed) and would build it without the seed; to update it, ${updateHint}`;
 }
 
 /** Whether the sandbox Worker holds GitHub access tokens and reads GitHub with them. */

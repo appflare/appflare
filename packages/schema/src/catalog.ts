@@ -5,6 +5,8 @@ import { configPatchSchema } from "./config-patch.ts";
 import { catalogD1Schema } from "./d1.ts";
 import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
 import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
+import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
+import { isSeedOnly, seedManifestProblems } from "./seed.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
 import { isVapidPrivateKey, VAPID_PRIVATE_KEY_LENGTH } from "./vapid.ts";
 
@@ -311,8 +313,10 @@ export type Requirement = z.infer<typeof requirementSchema>;
  * random password of `generate: true`. `vapid-private-key`: a Web Push
  * (VAPID) private key, a P-256 private key as the unpadded base64url of its
  * raw 32 bytes, the form web-push libraries take (see ./vapid.ts).
+ * `base64-key-32`: 32 random bytes as padded base64, 44 characters, for apps
+ * that read a raw 256-bit key (see ./random-key.ts).
  */
-export const SECRET_GENERATE_KINDS = ["vapid-private-key"] as const;
+export const SECRET_GENERATE_KINDS = ["vapid-private-key", "base64-key-32"] as const;
 export type SecretGenerateKind = (typeof SECRET_GENERATE_KINDS)[number];
 
 /**
@@ -432,7 +436,9 @@ export const catalogSecretSchema = z
           'replace. `"vapid-private-key"`: it fills in a new Web Push (VAPID) private key, a ' +
           "P-256 private key as the unpadded base64url of its raw 32 bytes (the form web-push " +
           "libraries take), and the manager refuses a value that is not one. Pair it with a " +
-          '`derive: { method: "vapid-public-key" }` var for the public key.',
+          '`derive: { method: "vapid-public-key" }` var for the public key. `"base64-key-32"`: 32 ' +
+          "random bytes as padded base64 (44 characters), for an app that reads a raw 256-bit key; " +
+          "the manager refuses a value that does not decode to 32 bytes.",
       ),
     optional: z
       .boolean()
@@ -452,18 +458,46 @@ export const catalogSecretSchema = z
      * Omitted means every Worker of the entry.
      */
     workers: entryWorkerTargetsSchema.optional(),
+    /**
+     * Only for seed statements. Optional rather than defaulted for the same
+     * reason as `optional`.
+     */
+    seedOnly: z
+      .boolean()
+      .describe(
+        "The secret exists only for `resources.d1[binding].seed`: the install form asks for it once, " +
+          "the seed uses it (as a param or the source of a hash), and it is never set on the Worker, " +
+          "stored, or asked for again by updates or settings. For a first admin's password, so the " +
+          "plaintext never sits in the app's environment. Not allowed with `optional`, `derive` or " +
+          "`workers`, nor on self-deploying entries.",
+      )
+      .optional(),
   })
   // The manifest-level refinement does not reach the JSON Schema; this states
   // its per-secret half there (no `generate` but false and no `optional: true`
-  // next to `derive`), so editors refuse the same secrets.
+  // next to `derive`; no `optional: true`, `derive` or `workers` next to
+  // `seedOnly: true`), so editors refuse the same secrets.
   .meta({
-    anyOf: [
-      { not: { required: ["derive"] } },
+    allOf: [
       {
-        properties: {
-          generate: { const: false },
-          optional: { not: { const: true } },
-        },
+        anyOf: [
+          { not: { required: ["derive"] } },
+          {
+            properties: {
+              generate: { const: false },
+              optional: { not: { const: true } },
+            },
+          },
+        ],
+      },
+      {
+        anyOf: [
+          { not: { required: ["seedOnly"], properties: { seedOnly: { const: true } } } },
+          {
+            not: { anyOf: [{ required: ["derive"] }, { required: ["workers"] }] },
+            properties: { optional: { not: { const: true } } },
+          },
+        ],
       },
     ],
   });
@@ -491,6 +525,9 @@ export function secretValueProblem(
 ): string | null {
   if (secret.generate === "vapid-private-key" && !isVapidPrivateKey(value)) {
     return `${secret.label} (${secret.name}) must be a VAPID private key: the unpadded base64url of a 32-byte P-256 private key (${VAPID_PRIVATE_KEY_LENGTH} characters), as web-push libraries generate it.`;
+  }
+  if (secret.generate === "base64-key-32" && !isBase64Key32(value)) {
+    return `${secret.label} (${secret.name}) must be a 256-bit key: 32 bytes as padded base64 (${BASE64_KEY_32_LENGTH} characters).`;
   }
   return null;
 }
@@ -820,6 +857,16 @@ export const catalogVarSchema = z
      * Omitted means the Workers whose wrangler config declares it, else every Worker.
      */
     workers: entryWorkerTargetsSchema.optional(),
+    /** Only for seed statements. Optional rather than defaulted for the same reason as `type`. */
+    seedOnly: z
+      .boolean()
+      .describe(
+        "The var exists only for `resources.d1[binding].seed`, such as a first admin's user name: " +
+          "the install form asks for it once, a seed statement binds it, and it is never set on the " +
+          "Worker, stored, or shown in settings. Must be required or have a default. Not allowed " +
+          "with `derive` or `workers`, nor on self-deploying entries.",
+      )
+      .optional(),
   })
   .superRefine((v, ctx) => {
     for (const problem of selectVarProblems(v)) {
@@ -1656,6 +1703,9 @@ export const catalogManifestSchema = z
     revision: catalogRevisionSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
+    for (const problem of seedManifestProblems(manifest)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
     for (const problem of derivedSecretProblems(manifest.secrets)) {
       ctx.addIssue({
         code: "custom",
@@ -1779,6 +1829,14 @@ export const catalogManifestSchema = z
             "derived secrets are not allowed for the self-deploying tier: the app's own installer reads its secrets as entered",
         });
       }
+      if (isSeedOnly(secret)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["secrets", i, "seedOnly"],
+          message:
+            "seed-only secrets are not allowed for the self-deploying tier: the app's own installer sets up its databases",
+        });
+      }
     });
     manifest.vars.forEach((v, i) => {
       if (isDerivedVar(v)) {
@@ -1789,11 +1847,19 @@ export const catalogManifestSchema = z
             "derived vars are not allowed for the self-deploying tier: the app's own installer reads its variables as entered",
         });
       }
+      if (isSeedOnly(v)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["vars", i, "seedOnly"],
+          message:
+            "seed-only vars are not allowed for the self-deploying tier: the app's own installer sets up its databases",
+        });
+      }
     });
   })
   // The refinements do not reach the JSON Schema; `allOf` states the
-  // self-deploying ones there (no optional and no derived secrets, no derived
-  // vars, no Hyperdrive declarations, no D1 layout). Whether a `derive.from`
+  // self-deploying ones there (no optional, derived or seed-only secrets, no
+  // derived or seed-only vars, no Hyperdrive declarations, no D1 layout). Whether a `derive.from`
   // names another secret, or a Hyperdrive binding is declared twice, cannot
   // be said in JSON Schema.
   .meta({
@@ -1827,11 +1893,21 @@ export const catalogManifestSchema = z
                     anyOf: [
                       { required: ["optional"], properties: { optional: { const: true } } },
                       { required: ["derive"] },
+                      { required: ["seedOnly"], properties: { seedOnly: { const: true } } },
                     ],
                   },
                 },
               },
-              vars: { items: { not: { required: ["derive"] } } },
+              vars: {
+                items: {
+                  not: {
+                    anyOf: [
+                      { required: ["derive"] },
+                      { required: ["seedOnly"], properties: { seedOnly: { const: true } } },
+                    ],
+                  },
+                },
+              },
             },
           },
         ],

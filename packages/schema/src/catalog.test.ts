@@ -1040,7 +1040,7 @@ describe("VAPID keys", () => {
     const text = JSON.stringify(z.toJSONSchema(catalogManifestSchema));
     expect(text).toContain('"vapid-private-key"');
     expect(text).toContain('"vapid-public-key"');
-    expect(text).toContain('"vars":{"items":{"not":{"required":["derive"]}}}');
+    expect(text).toContain('"vars":{"items":{"not":{"anyOf":[{"required":["derive"]}');
   });
 
   it("are refused on self-deploying entries as derived vars", () => {

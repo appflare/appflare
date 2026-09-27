@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { catalogD1SeedSchema } from "./seed.ts";
 
 /**
  * Where an app keeps its D1 SQL when wrangler's migrations folder does not
@@ -24,6 +25,8 @@ import { z } from "zod";
  * - `postDeployMigrationsDir` holds migrations that run only once the new
  *   version serves all traffic (cleanups the previous code still depends
  *   on), tracked in `d1_migrations` like the others.
+ * - `seed` holds statements that run once, at install only, with values
+ *   from the install form bound as parameters (see `seed.ts`).
  *
  * The catalog decides these because they are part of the build: a revision
  * cannot change `resources`, so a released version always runs the SQL it
@@ -154,6 +157,7 @@ export const catalogD1Schema = z
           "their file names must differ from the migrations'. Rolling back does not undo them.",
       )
       .optional(),
+    seed: catalogD1SeedSchema.optional(),
   })
   .superRefine((d1, ctx) => {
     if (d1.migrationsDir !== undefined && d1.migrations !== undefined) {
@@ -177,7 +181,8 @@ export const catalogD1Schema = z
     if (Object.values(d1).every((v) => v === undefined)) {
       ctx.addIssue({
         code: "custom",
-        message: "say at least one of migrationsDir, migrations, schema, postDeployMigrationsDir",
+        message:
+          "say at least one of migrationsDir, migrations, schema, postDeployMigrationsDir, seed",
       });
     }
   })

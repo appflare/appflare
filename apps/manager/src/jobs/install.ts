@@ -8,6 +8,7 @@ import {
   hasFixedWorkerName,
   indexArtifactsSchema,
   isOptionalSecret,
+  isSeedOnly,
   sha256Schema,
   workerUploadProblem,
 } from "@appflare/schema";
@@ -22,6 +23,7 @@ import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { installDomainInput, workerNameSchema } from "../installs/install-input";
 import { varsUseWorkerUrl } from "../installs/install-vars";
+import { workersDevUrl } from "../installs/post-install";
 import { appSlugLabel } from "../installs/source-review";
 import { workersDevSubdomain } from "../installs/workers-dev";
 import {
@@ -44,6 +46,7 @@ import {
 } from "./install/artifact-source";
 import { planBindings } from "./install/bindings";
 import { checkCronLimitPhase, putSchedulesChecked } from "./install/cron-limit";
+import { seedD1Phase, seedOnlyValuesSchema, seedValues } from "./install/d1-seed";
 import { installDomainPhase } from "./install/domain";
 import {
   checkEmailRoutingPhase,
@@ -141,6 +144,13 @@ export const installJobParams = z.object({
    */
   hyperdrive: z.record(z.string(), z.string()).optional(),
   vars: z.record(z.string(), z.string()),
+  /**
+   * The seed-only secrets and vars the admin entered, for the app's D1 seed
+   * statements. Like secret values, they live only here: `jobs.input_json`,
+   * the install's settings and the Worker never get them. Optional because
+   * only an app with seed-only values has them.
+   */
+  seed: seedOnlyValuesSchema.optional(),
   paidConfirmed: z.boolean(),
   /**
    * The admin confirmed the account meets the app's `requires`. Optional
@@ -646,18 +656,47 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // 6. D1 migrations, wrangler-style, once for every Worker of the app,
     // then each database's schema files.
     const d1Databases = d1Targets(manifest, created);
+    // The seed statements read the vars the Worker got and the secrets set
+    // below, besides the seed-only values; each seed runs once, here.
+    const seedInput = (seed: NonNullable<(typeof d1Databases)[number]["seed"]>) =>
+      seedValues(seed, {
+        catalog: manifest.catalog,
+        workerVars: installVars(primaryManifest, params.vars, {
+          workerName: params.workerName,
+          subdomain,
+          accountId: steps.accountId(),
+          ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
+        }).vars,
+        secrets: params.secrets,
+        seedOnly: params.seed,
+        placeholders: {
+          workerName: params.workerName,
+          workerUrl: workersDevUrl(params.workerName, subdomain),
+          accountId: steps.accountId(),
+        },
+      });
     for (const target of d1Databases) {
       await applyD1MigrationsPhase(steps, source.zipUrl, target, undefined, source.host);
+      // A seed that claims a row before a schema file adds its default one.
+      if (target.seed?.beforeSchema === true) {
+        await seedD1Phase(steps, { ...target, seed: target.seed }, seedInput(target.seed));
+      }
       await applyD1SchemaPhase(steps, source.zipUrl, target, source.host);
     }
     // The upload above already put the Worker in front of all traffic, so
-    // the post-deploy migrations follow at once, recorded like the others.
+    // the post-deploy migrations follow at once, recorded like the others,
+    // then every other seed, once each database has all its tables.
     for (const target of d1Databases) {
       await applyD1PostDeployPhase(steps, source.zipUrl, target, source.host);
+      if (target.seed !== undefined && target.seed.beforeSchema !== true) {
+        await seedD1Phase(steps, { ...target, seed: target.seed }, seedInput(target.seed));
+      }
     }
 
-    // 7. Secrets. An optional secret the admin left unset gets no step.
+    // 7. Secrets. An optional secret the admin left unset gets no step, and
+    // a seed-only one (used by the seed above) is never set on the Worker.
     for (const secret of primaryManifest.catalog.secrets) {
+      if (isSeedOnly(secret)) continue;
       if (isOptionalSecret(secret) && (params.secrets[secret.name] ?? "").length === 0) continue;
       await run(`set secret ${secret.name}`, async ({ log, cf, orm }) => {
         const value = params.secrets[secret.name];

@@ -1,9 +1,11 @@
 import {
   type ArtifactManifest,
+  boundToWorker,
   type CatalogVar,
   type CatalogVarOption,
   catalogVarOptions,
   isJsonVarBinding,
+  isSeedOnly,
   type JsonValue,
   jsonTextProblem,
   type PlaceholderValues,
@@ -46,6 +48,19 @@ export interface InstallVarField {
    * from. The forms show it read-only; the manager sets it, never the admin.
    */
   derivedFrom?: string;
+  /**
+   * A seed-only var (the catalog's `seedOnly`): the install form asks for it
+   * once, for the app's D1 seed statements; the Worker never gets it, and
+   * neither settings nor updates show it ({@link settingsVarFields}).
+   */
+  seedOnly?: true;
+}
+
+/** The fields a settings form or an update shows: every one but the seed-only ones. */
+export function settingsVarFields<T extends Pick<InstallVarField, "seedOnly">>(
+  fields: readonly T[],
+): T[] {
+  return fields.filter((f) => f.seedOnly !== true);
 }
 
 /** The fields the admin fills in: every one but the derived ones. */
@@ -148,6 +163,7 @@ export function installVarFields(
         v.derive !== undefined ? "" : (v.default ?? (isVarOption(v, ownText) ? ownText : "")),
       options: options === null ? null : [...options],
       ...(v.derive === undefined ? {} : { derivedFrom: v.derive.from }),
+      ...(isSeedOnly(v) ? { seedOnly: true as const } : {}),
     };
   });
 }
@@ -204,7 +220,9 @@ export function resolveVars(
   const vars = recordedVars(manifest);
   const warnings: string[] = [];
   const jsonNames = new Set([...vars.values()].filter((v) => v.type === "json").map((v) => v.name));
-  for (const v of manifest.catalog.vars) {
+  // A seed-only var is for the install's seed statements alone: whatever was
+  // entered for it never reaches the Worker.
+  for (const v of boundToWorker(manifest.catalog.vars)) {
     let entered = userVars[v.name];
     if (entered !== undefined && entered.length > 0 && !isVarOption(v, entered)) {
       // A choice stored for another version, which offered other choices.
@@ -242,7 +260,8 @@ export function resolveVars(
       );
     }
   }
-  for (const secret of manifest.catalog.secrets) vars.delete(secret.name);
+  // A seed-only secret is never set on the Worker, so it takes no var's place.
+  for (const secret of boundToWorker(manifest.catalog.secrets)) vars.delete(secret.name);
   return {
     vars: [...vars.values()].map((v) =>
       v.type === "json"

@@ -288,6 +288,14 @@ Points that need care:
   `options` or `required: true`, and its source is a `vapid-private-key` secret of
   the same manifest that is not optional. The same `derive` works on a secret, for
   an app that reads the public key as one. Self-deploying entries cannot derive vars.
+- **Raw 256-bit keys.** For an app that reads an encryption key as base64 of 32
+  bytes (it runs `atob` and expects 32 bytes back), give the secret
+  `"generate": "base64-key-32"`: the install form fills in 32 random bytes as padded
+  base64 (44 characters), and the manager refuses a value that does not decode to
+  32 bytes.
+- **A first admin.** An app that has no sign-up page and expects its first admin
+  account in the database can have Appflare add it at install. See
+  [Seeding a first admin](#seeding-a-first-admin).
 - **Optional secrets.** Add `"optional": true` to a secret the app works without,
   such as an SMTP password for a feature that stays off until it is set. The install
   form leaves it unset unless the admin chooses **Set now**, updates never ask for it,
@@ -335,6 +343,92 @@ Points that need care:
 
 Every field is described in the [manifest reference](/catalog/manifest-reference/).
 Add an optional `apps/<slug>/README.md` for notes.
+
+## Seeding a first admin
+
+Some apps store their users in D1 and only let an existing admin create others,
+so upstream tells you to insert the first admin by hand, or ships a seed file with
+a default password. A catalog entry can instead have Appflare insert that row once,
+at install, from values the admin enters in the install form. Declare it under
+`resources.d1[binding].seed`:
+
+```jsonc
+"secrets": [
+  { "name": "ADMIN_PASSWORD", "label": "Admin password", "generate": true, "seedOnly": true }
+],
+"vars": [
+  { "name": "ADMIN_USERNAME", "label": "Admin user name", "required": true, "seedOnly": true }
+],
+"resources": {
+  "d1": {
+    "DB": {
+      "schema": ["worker/schema.sql"],
+      "seed": {
+        "hashes": {
+          "admin": {
+            "from": "ADMIN_PASSWORD",
+            "method": "pbkdf2-sha256",
+            "iterations": 100000,
+            "saltBytes": 16,
+            "keyBytes": 32,
+            "encoding": "base64url"
+          }
+        },
+        "statements": [
+          {
+            "sql": "INSERT OR IGNORE INTO users (username, password_hash, password_salt, is_admin) VALUES (?, ?, ?, 1)",
+            "params": [{ "var": "ADMIN_USERNAME" }, { "hash": "admin" }, { "salt": "admin" }]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+- **Statements.** Each is exactly one `INSERT OR IGNORE`, or one `INSERT ... ON
+  CONFLICT ... DO NOTHING`, so a retried step keeps the row the first attempt added.
+  `WITH`, `DO UPDATE`, other statement kinds (`CREATE`, `UPDATE`, `DELETE`, `PRAGMA`,
+  `ATTACH` and the like), and the `d1_migrations`, `sqlite_` and `_cf_` tables are
+  refused. At most 10 statements per binding.
+- **Params.** Values are never written into the SQL. Put an anonymous `?` wherever a
+  value goes and list one param per `?`, in order (at most 20): `{ "var": NAME }` or
+  `{ "secret": NAME }` for a var or secret of the manifest, `{ "hash": ID }` or
+  `{ "salt": ID }` for a hash of `hashes`, or `{ "value": "text" }` for literal text.
+  D1 binds them. Numbered (`?1`) and named (`:name`) parameters are refused, as is a
+  count of `?` that differs from the params.
+- **Hashes.** Hash a password the way the app checks it. `pbkdf2-sha256` takes
+  explicit `iterations` (at most 100,000, the most Cloudflare Workers derive),
+  `saltBytes` and `keyBytes` (16 to 64) and an `encoding` for both the hash and the
+  fresh random salt: `base64url` (unpadded), `base64` or `hex`. `bcrypt` gives a
+  `$2b$` hash with its salt inside, at `cost` 10 unless you set 4 to 10; a bcrypt
+  source longer than 72 bytes is refused at install, since bcrypt ignores the rest.
+  Each hash is computed once per install, so a hash and its salt match. Its `from`
+  must be a secret of the manifest, neither optional nor derived.
+- **Seed-only values.** `"seedOnly": true` on a secret or var means it exists for the
+  seed alone: the install form asks for it once and says so, and it is never set on
+  the Worker, stored in the app's settings, or asked for again by updates or
+  settings. Use it for the admin's password, so the plaintext never sits in the
+  app's environment. A generated seed-only password is shown once more, with a copy
+  button, on the install's job page. A seed-only value must be used by a seed, cannot
+  be optional, derived or limited to some Workers, and no derived value may come
+  from it. A var a seed uses must be required, have a default, or be derived. Name
+  the user in `postInstall`, never the password.
+- **When it runs.** Only the install job seeds, after the binding's migrations,
+  schema files and post-deploy migrations. With `"beforeSchema": true` it runs
+  before the schema files instead, so the seeded row wins over a default row a
+  schema file adds with `INSERT OR IGNORE` (claim the default admin's user name, and
+  the upstream default password never lands). Updates never run a seed, even a
+  changed one, and never ask for seed-only values. A rollback restores the Worker
+  only.
+- **What it cannot protect.** If an upstream schema file inserts a default admin and
+  the seeded row is later deleted, the next update's schema file adds the default
+  again. Say so in the app's `README.md`, and prefer an upstream change that drops
+  the default row.
+
+Seeds are not allowed on self-deploying entries. An artifact with a seed is format
+4, which older managers refuse with a message to update Appflare instead of
+installing the app without its first admin.
 
 ## Apps of several Workers
 

@@ -23,6 +23,7 @@ import {
   appWorkers,
   artifactFormatFor,
   artifactManifestSchema,
+  boundToWorker,
   buildCommandList,
   type CatalogManifest,
   catalogManifestSchema,
@@ -52,6 +53,7 @@ import { collectD1Extras, collectD1Migrations, type D1Files } from "./d1-layout.
 import { installDependencies } from "./install.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { scrubEnv } from "./scrub-env.ts";
+import { seedOnlyConfigProblems, seedStatementCount } from "./seed.ts";
 import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
 import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./version.ts";
 import { type WorkerSize, workerSize } from "./worker-size.ts";
@@ -114,6 +116,12 @@ export interface PackResult {
   d1SchemaCount: number;
   /** Post-deploy migrations (`resources.d1[binding].postDeployMigrationsDir`), every binding together. */
   d1PostDeployCount: number;
+  /**
+   * Seed statements (`resources.d1[binding].seed`), every binding together.
+   * The artifact carries them in its embedded catalog manifest, and any
+   * makes it format 4.
+   */
+  d1SeedCount: number;
   zipSize: number;
   /** The Worker's size, as wrangler reports it after a dry run; the primary Worker's for an app of several. */
   workerSize: WorkerSize;
@@ -589,12 +597,19 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       entryWorkers: r.name === null ? undefined : entryNames,
       checkUnboundVectorize: entry === undefined,
     });
-    // A var of the name of a secret this Worker gets is left out.
-    const secrets = catalog.secrets
+    // A var of the name of a secret this Worker gets is left out. A
+    // seed-only secret is never set on a Worker, so it takes no var's place.
+    const secrets = boundToWorker(catalog.secrets)
       .filter((s) => r.name === null || secretTargets(s, catalog).includes(r.name))
       .map((s) => s.name);
-    const { bindings, dropped } = withoutSecretVars(all, secrets);
     const of = r.name === null ? "" : ` of the Worker "${r.name}"`;
+    const seedOnly = seedOnlyConfigProblems(
+      catalog,
+      { bindings: all, requiredSecrets: r.config.secrets?.required ?? [] },
+      of,
+    );
+    if (seedOnly.length > 0) throw new Error(seedOnly.join("; "));
+    const { bindings, dropped } = withoutSecretVars(all, secrets);
     for (const name of dropped) {
       logger(
         `var ${name} is provided as a secret: the catalog manifest declares ${name} as a secret, ` +
@@ -762,7 +777,8 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // (i) Assemble + validate the manifest in the oldest format that carries it
   // (`artifactFormatFor`): 1 for one Worker, 2 for several (the primary
   // Worker as `worker`, the others in `workers`), 3 once it has D1 files
-  // older managers would skip, 4 once the entry keeps a Worker off workers.dev.
+  // older managers would skip, 4 once the entry keeps a Worker off workers.dev
+  // or has seed statements.
   const primarySection = sections[0];
   if (primarySection === undefined) {
     throw new Error("internal error: no Worker was packed");
@@ -862,6 +878,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   const d1MigrationCount = count(d1Manifest);
   const d1SchemaCount = count(d1SchemaManifest);
   const d1PostDeployCount = count(d1PostDeployManifest);
+  const d1SeedCount = seedStatementCount(catalog);
   const size = primarySection.size;
   const workers: PackedWorker[] = sections.map((s) => ({
     name: s.name,
@@ -878,6 +895,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       `${assetCount} assets, ${d1MigrationCount} migrations, ` +
       (d1SchemaCount > 0 ? `${d1SchemaCount} schema files, ` : "") +
       (d1PostDeployCount > 0 ? `${d1PostDeployCount} post-deploy migrations, ` : "") +
+      (d1SeedCount > 0 ? `${d1SeedCount} seed statements (run once at install), ` : "") +
       `${zipBytes.length} bytes`,
   );
 
@@ -894,6 +912,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     d1MigrationCount,
     d1SchemaCount,
     d1PostDeployCount,
+    d1SeedCount,
     zipSize: zipBytes.length,
     workerSize: size,
     workers,

@@ -1,6 +1,7 @@
 import {
   type ArtifactManifest,
   appServices,
+  boundToWorker,
   combinedWorkerFacts,
   type RepositoryDetection,
   type UNSUPPORTED_WRANGLER_SECTIONS,
@@ -124,7 +125,8 @@ export function reviewBuild(
         .filter((b) => b.type === "plain_text" || b.type === "json")
         .map((b) => b.name),
     );
-    for (const secret of w.manifest.catalog.secrets) {
+    // A seed-only secret is never set on the Worker, so a var may share its name.
+    for (const secret of boundToWorker(w.manifest.catalog.secrets)) {
       if (plain.has(secret.name)) {
         problems.push(
           `${secret.name} is both a secret and a plain var of the wrangler config${w.primary ? "" : ` of the Worker "${w.name}"`}; a Worker cannot have both. Remove it from one of them.`,

@@ -43,6 +43,7 @@ import {
   cronTriggerCountInputSchema,
   runCronTriggerCount,
 } from "./cron-triggers";
+import { type D1SeedInput, type D1SeedResult, d1SeedInputSchema, runD1Seed } from "./d1-seed";
 import {
   type AttachDomainInput,
   type AttachDomainResult,
@@ -255,6 +256,8 @@ export interface JobUnitsApi {
   applyD1Migrations(input: D1MigrationsInput): Promise<UnitResult<D1MigrationsResult>>;
   /** Runs the next D1 schema files, which are never recorded, in the order given. */
   applyD1Schema(input: D1SchemaInput): Promise<UnitResult<D1SchemaResult>>;
+  /** Derives a D1 binding's seed hashes and runs its seed statements with bound params (install only). */
+  seedD1(input: D1SeedInput): Promise<UnitResult<D1SeedResult>>;
   /** Lists one page of an R2 bucket's objects and deletes them. */
   emptyR2Page(input: R2PageInput): Promise<UnitResult<R2PageResult>>;
   /** Reads a zone's Email Routing state before an email app is installed there. */
@@ -516,6 +519,9 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
           return { applied, remaining: rest.length, next: rest[0]?.name ?? null, failed };
         }),
       ),
+
+    seedD1: (input) =>
+      parsed(d1SeedInputSchema, input, "seedD1", (request) => runD1Seed(env, deps, request)),
 
     emptyR2Page: (input) =>
       parsed(r2PageInputSchema, input, "emptyR2Page", (page) =>

@@ -127,6 +127,7 @@ async function runPack(argv: string[]): Promise<number> {
     `  modules=${result.moduleCount} assets=${result.assetCount} migrations=${result.d1MigrationCount}` +
       (result.d1SchemaCount > 0 ? ` schemaFiles=${result.d1SchemaCount}` : "") +
       (result.d1PostDeployCount > 0 ? ` postDeployMigrations=${result.d1PostDeployCount}` : "") +
+      (result.d1SeedCount > 0 ? ` seedStatements=${result.d1SeedCount}` : "") +
       "\n",
   );
   if (result.workers.length > 1) {

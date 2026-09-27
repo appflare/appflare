@@ -1,0 +1,7 @@
+---
+"@appflare/manager": minor
+---
+
+Apps that need a first admin account in their database install without a manual step. The install job runs a D1 binding's seed statements once, through a new `seedD1` job unit: after the binding's migrations, schema files and post-deploy migrations, or before the schema files when the entry says `beforeSchema`, and before the workers.dev route is turned on. The unit derives the seed's hashes itself (PBKDF2-SHA-256 through WebCrypto with the entry's parameters, or bcrypt), checks each statement again, and sends each as its own D1 query with the values as bound params. Its log and step output hold statement numbers and row counts only. Updates never seed.
+
+Seed-only secrets and vars are asked for once in the install form, which says they are used once and not kept. They travel in the install job's parameters alone: never set on the Worker, stored in the install's settings or the job's recorded input, or asked for again by updates or settings. A generated one, such as the first admin's password, is shown once more with a copy button on the install's job page, and forgotten when the page is left. A bcrypt source longer than 72 bytes is refused before the install starts. Secrets can generate a 256-bit key as padded base64. Artifacts of format 4 are read, and a sandbox Worker that predates seeds is asked to update before it builds an entry that has one.

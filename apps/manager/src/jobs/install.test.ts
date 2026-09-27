@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { type SigningKey, withRevisedCatalog } from "@appflare/schema";
+import { type CatalogD1Seed, type SigningKey, withRevisedCatalog } from "@appflare/schema";
+import bcrypt from "bcryptjs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
@@ -12,6 +13,7 @@ import { startInstallCore } from "../installs/start-install.server";
 import {
   type ArtifactFixture,
   type ArtifactFixtureOptions,
+  baseCatalog,
   buildArtifactFixture,
   REVISED_URL,
   ZIP_URL,
@@ -42,6 +44,8 @@ interface FakeState {
   d1: Array<{ uuid: string; name: string }>;
   applied: string[];
   queries: string[];
+  /** The `params` sent with each of `queries`; null for a query sent without. */
+  queryParams: Array<unknown[] | null>;
   uploaded: Set<string>;
   bucketHashes: string[];
   bucketUploads: number;
@@ -114,6 +118,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     d1: [],
     applied: [],
     queries: [],
+    queryParams: [],
     uploaded: new Set(),
     bucketHashes: fixture.manifest.assets.files.map((f) => f.hash),
     bucketUploads: 0,
@@ -387,7 +392,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     }
     const d1Query = /^POST \/d1\/database\/([^/]+)\/query$/.exec(key);
     if (d1Query) {
-      const { sql } = (await request.json()) as { sql: string };
+      const { sql, params } = (await request.json()) as { sql: string; params?: unknown[] };
       const failing = state.failMigration;
       if (
         failing !== undefined &&
@@ -401,6 +406,7 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         );
       }
       state.queries.push(sql);
+      state.queryParams.push(params ?? null);
       if (sql.startsWith("SELECT")) {
         return ok([
           {
@@ -710,6 +716,144 @@ describe("install job", () => {
     expect(r.logs.map((l) => l.message)).toContain(
       "Ran the schema file src/db/indexes.sql on cut-db.",
     );
+  });
+
+  describe("an app that seeds its first admin", () => {
+    const ADMIN_NAME = "first-admin-DO-NOT-LEAK";
+    const SEED_PASSWORD = "seed-password-DO-NOT-LEAK";
+    const SEED_SQL = "INSERT OR IGNORE INTO admins (name, password_hash) VALUES (?, ?)";
+    const seedApp = (beforeSchema: boolean): ArtifactFixtureOptions => {
+      const seed: CatalogD1Seed = {
+        hashes: { admin: { from: "FIRST_ADMIN_PASSWORD", method: "bcrypt" } },
+        statements: [{ sql: SEED_SQL, params: [{ var: "FIRST_ADMIN_NAME" }, { hash: "admin" }] }],
+        ...(beforeSchema ? { beforeSchema: true } : {}),
+      };
+      const base = baseCatalog();
+      return {
+        bindings: [{ type: "d1", name: "DB" }],
+        d1: { DB: [{ name: "20240101_init", content: "CREATE TABLE admins (name TEXT);" }] },
+        d1Schema: {
+          DB: [{ name: "schema.sql", content: "CREATE TABLE IF NOT EXISTS s (id TEXT);" }],
+        },
+        d1PostDeploy: { DB: [{ name: "0001_after.sql", content: "DROP TABLE legacy;" }] },
+        catalog: {
+          secrets: [
+            ...base.secrets,
+            {
+              name: "FIRST_ADMIN_PASSWORD",
+              label: "Admin password",
+              generate: true,
+              seedOnly: true,
+            },
+          ],
+          vars: [
+            ...base.vars,
+            { name: "FIRST_ADMIN_NAME", label: "Admin name", required: true, seedOnly: true },
+          ],
+          resources: {
+            d1: {
+              DB: { schema: ["schema.sql"], postDeployMigrationsDir: "after-deploy", seed },
+            },
+          },
+        },
+      };
+    };
+    const seedInput: Partial<StartInstallInput> = {
+      secrets: { ADMIN_PASSWORD: PASSWORD, FIRST_ADMIN_PASSWORD: SEED_PASSWORD },
+      vars: { HOME_PAGE: "admin", FIRST_ADMIN_NAME: ADMIN_NAME },
+    };
+    const d1Steps = (names: readonly string[]) =>
+      names.slice(
+        names.indexOf("record Worker script") + 1,
+        names.indexOf("set secret ADMIN_PASSWORD"),
+      );
+
+    it("seeds once the migrations, schema files and post-deploy migrations ran, with bound params", async () => {
+      const r = await install(seedApp(false), {}, seedInput);
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(d1Steps(r.step.names)).toEqual([
+        "D1 DB: apply migrations",
+        "D1 DB: apply schema",
+        "D1 DB: apply post-deploy migrations",
+        "D1 DB: seed",
+      ]);
+      expect(r.self.calls.filter((c) => c.unit === "seedD1")).toHaveLength(1);
+      // The statement as signed, the values bound: the name and a bcrypt hash of the password.
+      const at = r.fake.state.queries.indexOf(SEED_SQL);
+      expect(at).toBe(r.fake.state.queries.length - 1);
+      const [name, hash] = r.fake.state.queryParams[at] as [string, string];
+      expect(name).toBe(ADMIN_NAME);
+      expect(bcrypt.compareSync(SEED_PASSWORD, hash)).toBe(true);
+      for (const sql of r.fake.state.queries) {
+        expect(sql).not.toContain(ADMIN_NAME);
+        expect(sql).not.toContain(SEED_PASSWORD);
+      }
+      expect(r.logs.map((l) => l.message)).toContain(
+        "Seeded cut-db: 1 statement(s), 0 row(s) added. Seed statements run only at install.",
+      );
+    });
+
+    it("seeds before the schema files with beforeSchema", async () => {
+      const r = await install(seedApp(true), {}, seedInput);
+      expect(r.error).toBeNull();
+      expect(d1Steps(r.step.names)).toEqual([
+        "D1 DB: apply migrations",
+        "D1 DB: seed",
+        "D1 DB: apply schema",
+        "D1 DB: apply post-deploy migrations",
+      ]);
+      expect(r.fake.state.queries.filter((q) => !/d1_migrations/.test(q))).toEqual([
+        SEED_SQL,
+        "CREATE TABLE IF NOT EXISTS s (id TEXT);",
+      ]);
+    });
+
+    it("never binds, stores or logs the seed-only values", async () => {
+      const r = await install(seedApp(false), {}, seedInput);
+      expect(r.error).toBeNull();
+      // Only the Worker's own secret is set and recorded.
+      expect(Object.keys(r.fake.state.secrets)).toEqual(["ADMIN_PASSWORD"]);
+      const secretRows = r.resources.filter((row) => (row as { kind: string }).kind === "secret");
+      expect(secretRows.map((row) => (row as { name: string }).name)).toEqual(["ADMIN_PASSWORD"]);
+      const bindings = (r.fake.state.metadata?.bindings ?? []) as Array<{ name: string }>;
+      expect(bindings.map((b) => b.name)).not.toContain("FIRST_ADMIN_NAME");
+      expect(bindings.map((b) => b.name)).not.toContain("FIRST_ADMIN_PASSWORD");
+      // Neither the job's recorded input nor the install's settings hold them.
+      const rows = await env.DB.prepare(
+        "SELECT i.config_json AS config, j.input_json AS input FROM installs i JOIN jobs j ON j.install_id = i.id",
+      ).first<{ config: string; input: string }>();
+      for (const text of [rows?.config ?? "", rows?.input ?? ""]) {
+        expect(text).not.toContain("FIRST_ADMIN");
+        expect(text).not.toContain(ADMIN_NAME);
+        expect(text).not.toContain(SEED_PASSWORD);
+      }
+      const everything = JSON.stringify(r.logs);
+      expect(everything).not.toContain(ADMIN_NAME);
+      expect(everything).not.toContain(SEED_PASSWORD);
+    });
+
+    it("carries the seed-only values in the Workflow params alone", async () => {
+      const fixture = await buildArtifactFixture(seedApp(false));
+      expect(fixture.manifest.format).toBe(4);
+      const started = await start(fixture, seedInput);
+      expect(started.params.seed).toEqual({
+        secrets: { FIRST_ADMIN_PASSWORD: SEED_PASSWORD },
+        vars: { FIRST_ADMIN_NAME: ADMIN_NAME },
+      });
+      expect(started.params.secrets).toEqual({ ADMIN_PASSWORD: PASSWORD });
+      expect(started.params.vars).toEqual({ HOME_PAGE: "admin" });
+    });
+
+    it("refuses a password bcrypt would cut short before anything is created", async () => {
+      const fixture = await buildArtifactFixture(seedApp(false));
+      await expect(
+        start(fixture, {
+          ...seedInput,
+          secrets: { ADMIN_PASSWORD: PASSWORD, FIRST_ADMIN_PASSWORD: "x".repeat(73) },
+        }),
+      ).rejects.toThrow("Admin password (FIRST_ADMIN_PASSWORD) is 73 bytes long");
+    });
   });
 
   it("sends the install's stored workers.dev choice, keeping version previews on", async () => {

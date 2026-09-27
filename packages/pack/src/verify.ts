@@ -13,13 +13,13 @@ import {
   hyperdriveDeclarationProblems,
   isVectorizeBinding,
   queueConsumerProblems,
+  schemaFileProblems,
   serviceBindingProblem,
   signingKeys,
   workerManifest,
   workerUploadProblem,
 } from "@appflare/schema";
 import { UNSIGNED_KEY_ID } from "./signing.ts";
-import { schemaFileProblems } from "./sql-guard.ts";
 
 /** Options for {@link verify}. */
 export interface VerifyOptions {
@@ -146,7 +146,7 @@ function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
  * the zip for every recorded worker module, asset, and D1 SQL file and checks
  * its size and sha256 — never by unzipping. D1 schema files, which run on
  * every install and update, must still pass the packer's check that they
- * create only what is missing (sql-guard.ts). Also checks that each Vectorize
+ * create only what is missing (`schemaFileProblems` from `@appflare/schema`). Also checks that each Vectorize
  * binding records the index shape the embedded catalog manifest declares, and
  * that no service binding points anywhere but the app's own Worker. With
  * `checkUpload`, also fails an artifact whose Worker Appflare could not upload.

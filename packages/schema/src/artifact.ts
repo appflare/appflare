@@ -699,12 +699,16 @@ export interface ArtifactFormatFacts {
   workers?: ReadonlyArray<{ worker?: WorkerFormatFacts | undefined }> | undefined;
   d1Schema?: Record<string, readonly unknown[]> | undefined;
   d1PostDeploy?: Record<string, readonly unknown[]> | undefined;
-  /** The catalog manifest: a Worker it keeps off workers.dev needs format 4. */
+  /**
+   * The catalog manifest: a Worker it keeps off workers.dev, or a D1 seed,
+   * needs format 4.
+   */
   catalog?:
     | {
-        install: {
+        install?: {
           workers?: ReadonlyArray<{ workersDev?: boolean | undefined }> | undefined;
         };
+        resources?: { d1?: Readonly<Record<string, { seed?: unknown }>> | undefined } | undefined;
       }
     | undefined;
 }
@@ -717,7 +721,10 @@ export interface ArtifactFormatFacts {
  * - 4: its catalog manifest keeps a Worker off workers.dev
  *   (`install.workers[].workersDev: false`), which a manager that reads only
  *   formats 1 to 3 would not know and would put on its workers.dev URL,
- *   reachable from the internet;
+ *   reachable from the internet; or it seeds a D1 database
+ *   (`resources.d1[binding].seed`), which such a manager's schema strips,
+ *   leaving the app without its first admin, or with the default admin an
+ *   upstream seed file adds;
  * - 3: it carries D1 schema files or post-deploy migrations (`d1Schema`,
  *   `d1PostDeploy`), which a manager that reads only formats 1 and 2 would
  *   drop without a word, leaving the app without its tables; or a Worker
@@ -736,7 +743,9 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
     w !== undefined &&
     ((w.exports !== undefined && Object.keys(w.exports).length > 0) ||
       w.cacheOptions !== undefined);
-  if (facts.catalog?.install.workers?.some((w) => w.workersDev === false) === true) return 4;
+  if (facts.catalog?.install?.workers?.some((w) => w.workersDev === false) === true) return 4;
+  const d1 = facts.catalog?.resources?.d1 ?? {};
+  if (Object.values(d1).some((layout) => layout.seed !== undefined)) return 4;
   if (has(facts.d1Schema) || has(facts.d1PostDeploy)) return 3;
   if (workerNeeds3(facts.worker) || (facts.workers ?? []).some((w) => workerNeeds3(w.worker))) {
     return 3;
@@ -749,7 +758,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
 function formatProblem(manifest: ArtifactFormatFacts & { format: number }): string | null {
   const needed = artifactFormatFor(manifest);
   if (needed <= manifest.format) return null;
-  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev); a manager that reads only format ${manifest.format} would install it without them`;
+  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements); a manager that reads only format ${manifest.format} would install it without them`;
 }
 
 /**
@@ -876,7 +885,7 @@ export const artifactManifestV3Schema = z
 /**
  * The full artifact manifest, `manifest.json`: format 1 (one Worker), 2
  * (several), 3 (either, with D1 files older managers do not know), or 4 (as
- * 3, with a Worker kept off workers.dev).
+ * 3, with a Worker kept off workers.dev or D1 seed statements).
  */
 export const artifactManifestSchema = z.discriminatedUnion("format", [
   artifactManifestV1Schema,

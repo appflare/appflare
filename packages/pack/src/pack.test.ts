@@ -688,6 +688,159 @@ describe("pack with resources.d1", () => {
 });
 
 /**
+ * A copy of the hello fixture whose catalog manifest seeds a first admin into
+ * its D1 database, from a seed-only user name and password. `edit` changes
+ * the catalog manifest before it is written.
+ */
+function seedCheckout(
+  parent: string,
+  edit: (catalog: Record<string, unknown>) => void = () => {},
+): { dir: string; manifest: string } {
+  const dir = path.join(parent, "checkout");
+  cpSync(FIXTURE, dir, { recursive: true });
+  const catalog = parseJsonc(readFileSync(path.join(dir, "appflare.jsonc"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  catalog.secrets = [
+    ...(catalog.secrets as unknown[]),
+    { name: "FIRST_ADMIN_PASSWORD", label: "Admin password", generate: true, seedOnly: true },
+  ];
+  catalog.vars = [
+    ...(catalog.vars as unknown[]),
+    { name: "FIRST_ADMIN_NAME", label: "Admin user name", required: true, seedOnly: true },
+  ];
+  catalog.resources = {
+    d1: {
+      DB: {
+        seed: {
+          hashes: { admin: { from: "FIRST_ADMIN_PASSWORD", method: "bcrypt" } },
+          statements: [
+            {
+              sql: "INSERT OR IGNORE INTO admins (name, password_hash) VALUES (?, ?)",
+              params: [{ var: "FIRST_ADMIN_NAME" }, { hash: "admin" }],
+            },
+          ],
+        },
+      },
+    },
+  };
+  edit(catalog);
+  const manifest = path.join(parent, "appflare.jsonc");
+  writeFileSync(manifest, JSON.stringify(catalog));
+  return { dir, manifest };
+}
+
+describe("pack with D1 seed statements", () => {
+  it("carries the seed in the signed catalog manifest and writes format 4", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-seed-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = seedCheckout(parent);
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      // Managers that read only formats 1 to 3 would strip the seed; they must refuse it.
+      expect(res.manifest.format).toBe(4);
+      expect(res.d1SeedCount).toBe(1);
+      expect(res.manifest.catalog.resources?.d1?.DB?.seed?.statements[0]?.params).toEqual([
+        { var: "FIRST_ADMIN_NAME" },
+        { hash: "admin" },
+      ]);
+      expect(logs.at(-1)).toMatch(/1 seed statements \(run once at install\)/);
+      // The seed-only secret takes no var's place and binds nothing.
+      const bindings = res.manifest.worker.bindings.map((b) => b.name);
+      expect(bindings).not.toContain("FIRST_ADMIN_PASSWORD");
+      expect(bindings).not.toContain("FIRST_ADMIN_NAME");
+      await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true });
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("refuses a seed that names an unknown secret or miscounts its params, before building", async () => {
+    for (const [edit, why] of [
+      [
+        (c: Record<string, unknown>) => {
+          const seed = (
+            c.resources as { d1: { DB: { seed: { hashes: Record<string, { from: string }> } } } }
+          ).d1.DB.seed;
+          (seed.hashes.admin as { from: string }).from = "NOPE";
+        },
+        /NOPE, which is not a secret of this manifest/,
+      ],
+      [
+        (c: Record<string, unknown>) => {
+          const seed = (
+            c.resources as { d1: { DB: { seed: { statements: Array<{ sql: string }> } } } }
+          ).d1.DB.seed;
+          (seed.statements[0] as { sql: string }).sql =
+            "INSERT OR IGNORE INTO admins (name, password_hash, role) VALUES (?, ?, ?)";
+        },
+        /3 \? placeholder\(s\) and 2 param\(s\)/,
+      ],
+    ] as const) {
+      const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-seed-refused-"));
+      const outDir = path.join(parent, "out");
+      const logs: string[] = [];
+      try {
+        const checkout = seedCheckout(parent, edit);
+        await expect(
+          pack({
+            checkoutDir: checkout.dir,
+            manifestPath: checkout.manifest,
+            outDir,
+            install: false,
+            logger: (m) => logs.push(m),
+          }),
+        ).rejects.toThrow(why);
+        expect(existsSync(outDir)).toBe(false);
+        expect(logs.some((l) => l.includes("dry-run"))).toBe(false);
+      } finally {
+        rmSync(parent, { recursive: true, force: true });
+      }
+    }
+  }, 120_000);
+
+  it("refuses a seed-only var the wrangler config also declares", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-seed-var-"));
+    try {
+      const checkout = seedCheckout(parent, (c) => {
+        const vars = c.vars as Array<Record<string, unknown>>;
+        vars.splice(0, vars.length, {
+          name: "GREETING",
+          label: "Greeting",
+          required: true,
+          seedOnly: true,
+        });
+        const seed = (
+          c.resources as { d1: { DB: { seed: { statements: Array<{ params: unknown[] }> } } } }
+        ).d1.DB.seed;
+        (seed.statements[0] as { params: unknown[] }).params = [
+          { var: "GREETING" },
+          { hash: "admin" },
+        ];
+      });
+      await expect(
+        pack({
+          checkoutDir: checkout.dir,
+          manifestPath: checkout.manifest,
+          outDir: path.join(parent, "out"),
+          install: false,
+        }),
+      ).rejects.toThrow(/declares the var GREETING, which the catalog manifest marks seedOnly/);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+/**
  * A copy of the hello fixture whose wrangler config adds `services`, each
  * pointing at the config's own name unless it says otherwise.
  */

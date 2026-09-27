@@ -6,6 +6,7 @@ import type { HealthSweepReport } from "../../notifications/health-sweep.server"
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
 import type { SetSandboxBindingResult, WaitForSandboxContainersResult } from "../../sandbox/units";
 import type { CronTriggerScan } from "../install/cron-limit";
+import type { D1SeedResult } from "./d1-seed";
 import type {
   AttachDomainResult,
   WaitForCustomDomainResult,
@@ -45,6 +46,10 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   applyD1Schema(input: unknown): Promise<UnitResult<D1SchemaResult>> {
     return createJobUnits(this.env).applyD1Schema(input);
+  }
+
+  seedD1(input: unknown): Promise<UnitResult<D1SeedResult>> {
+    return createJobUnits(this.env).seedD1(input);
   }
 
   emptyR2Page(input: unknown): Promise<UnitResult<R2PageResult>> {

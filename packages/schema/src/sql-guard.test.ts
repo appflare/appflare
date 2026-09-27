@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { schemaFileProblems, splitSqlStatements } from "./sql-guard.ts";
+import { schemaFileProblems, splitSqlStatements } from "./sql-guard";
 
 /**
  * Shaped like the schema files of apps that keep one idempotent schema.sql:

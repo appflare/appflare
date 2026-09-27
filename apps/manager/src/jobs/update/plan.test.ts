@@ -528,4 +528,9 @@ describe("missingSecrets", () => {
     expect(missingSecrets(declared, ["A"]).map((s) => s.name)).toEqual(["B", "C"]);
     expect(missingSecrets(declared, ["A", "B", "C"])).toEqual([]);
   });
+
+  it("never asks for a seed-only secret, which only the install used", () => {
+    const declared = [secret("A"), { ...secret("FIRST_ADMIN_PASSWORD"), seedOnly: true }];
+    expect(missingSecrets(declared, [])).toEqual([secret("A")]);
+  });
 });

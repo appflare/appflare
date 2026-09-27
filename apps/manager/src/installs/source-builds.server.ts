@@ -70,7 +70,7 @@ import {
 import { GitRefError, type RemoteRefs, resolveRef } from "./git-refs";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { repositoryAppSlug, reviewBuild } from "./source-review";
-import { resolveInstallInput, withDerivedValues } from "./start-install.server";
+import { resolveInstallInput, seedParams, withDerivedValues } from "./start-install.server";
 import {
   claim,
   readInstall,
@@ -806,6 +806,7 @@ export async function installSourceBuildCore(
     secrets: resolved.secrets,
     ...(Object.keys(resolved.hyperdrive).length === 0 ? {} : { hyperdrive: resolved.hyperdrive }),
     vars: resolved.vars,
+    ...seedParams(resolved.seed),
     paidConfirmed,
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),

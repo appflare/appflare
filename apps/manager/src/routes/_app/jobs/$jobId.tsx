@@ -15,6 +15,7 @@ import { formatTime, jobKindLabel } from "../../../components/format";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { PageHeader } from "../../../components/page-header";
 import { Section } from "../../../components/section";
+import { SeedCredentialsCard } from "../../../components/seed-credentials-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
 import { jobFailureTopic } from "../../../docs-topics";
@@ -116,6 +117,7 @@ function JobPage() {
           </DescriptionList>
         </LayerCard.Primary>
       </LayerCard>
+      {job.kind === "install" && <SeedCredentialsCard jobId={job.id} />}
       {switching && (
         <Banner
           variant="secondary"

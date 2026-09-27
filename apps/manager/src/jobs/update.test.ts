@@ -15,6 +15,7 @@ import { migrations } from "../db/migrations/index";
 import { listSnapshotsCore, startRollbackCore, startUpdateCore } from "../installs/versions.server";
 import {
   type ArtifactFixtureOptions,
+  baseCatalog,
   buildArtifactFixture,
   ZIP_URL,
 } from "../test/artifact-fixture";
@@ -901,6 +902,51 @@ describe("update job", () => {
       // The database is not "ahead of the code": the new code serves.
       expect(r.logs.some((l) => l.message.startsWith("The D1 database"))).toBe(false);
     });
+  });
+
+  it("never seeds, nor asks for or sets a seed-only secret, even when the version adds a seed", async () => {
+    const base = baseCatalog();
+    const seeded: ArtifactFixtureOptions = {
+      ...NEW_APP,
+      catalog: {
+        secrets: [
+          ...base.secrets,
+          { name: "FIRST_ADMIN_PASSWORD", label: "Admin password", generate: true, seedOnly: true },
+        ],
+        vars: [
+          ...base.vars,
+          { name: "FIRST_ADMIN_NAME", label: "Admin name", required: true, seedOnly: true },
+        ],
+        resources: {
+          d1: {
+            DB: {
+              seed: {
+                hashes: { admin: { from: "FIRST_ADMIN_PASSWORD", method: "bcrypt" } },
+                statements: [
+                  {
+                    sql: "INSERT OR IGNORE INTO admins (name, password_hash) VALUES (?, ?)",
+                    params: [{ var: "FIRST_ADMIN_NAME" }, { hash: "admin" }],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    };
+    // No value for the seed-only secret: the update does not need one.
+    const r = await update(seeded);
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.self.calls.some((c) => c.unit === "seedD1")).toBe(false);
+    expect(r.step.names.some((n) => n.endsWith(": seed"))).toBe(false);
+    expect(r.fake.state.queries.some((q) => q.includes("admins"))).toBe(false);
+    const uploaded = r.fake.state.versions.at(-1)?.metadata as {
+      bindings?: Array<{ name: string }>;
+    };
+    const names = (uploaded.bindings ?? []).map((b) => b.name);
+    expect(names).not.toContain("FIRST_ADMIN_PASSWORD");
+    expect(names).not.toContain("FIRST_ADMIN_NAME");
   });
 
   it("names the migrated databases when the promotion fails after D1 migrations", async () => {

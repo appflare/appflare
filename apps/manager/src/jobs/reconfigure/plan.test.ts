@@ -23,6 +23,19 @@ const DECLARED = [
   { name: "SMTP_PASSWORD", label: "SMTP password", generate: false, optional: true },
 ];
 
+describe("secret slots with a seed-only secret", () => {
+  it("leaves it out: the install used it once and kept it nowhere", () => {
+    const slots = secretSlots(
+      [
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+        { name: "FIRST_ADMIN_PASSWORD", label: "First admin", generate: true, seedOnly: true },
+      ],
+      ["ADMIN_PASSWORD"],
+    );
+    expect(slots.map((s) => s.name)).toEqual(["ADMIN_PASSWORD"]);
+  });
+});
+
 describe("secret slots", () => {
   it("lists declared secrets first, then leftovers the version no longer declares", () => {
     expect(secretSlots(DECLARED, ["OLD_TOKEN", "ADMIN_PASSWORD"])).toEqual([
