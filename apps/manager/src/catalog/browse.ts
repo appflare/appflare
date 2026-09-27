@@ -204,10 +204,64 @@ export function categoryCounts(
     );
 }
 
-const CATEGORY_WORDS: Readonly<Record<string, string>> = { ai: "AI", dns: "DNS", seo: "SEO" };
+/** The label of every category the catalog uses, written as a person would write it. */
+const CATEGORY_LABELS: Readonly<Record<string, string>> = {
+  ai: "AI",
+  analytics: "Analytics",
+  blogging: "Blogging",
+  bots: "Bots",
+  business: "Business",
+  chat: "Chat",
+  cms: "CMS",
+  community: "Community",
+  "developer-tools": "Developer tools",
+  dns: "DNS",
+  ecommerce: "E-commerce",
+  education: "Education",
+  email: "Email",
+  family: "Family",
+  files: "Files",
+  finance: "Finance",
+  games: "Games",
+  // The catalog is folding "gaming" into "games". Until it has, both can be
+  // listed at once, and two cards both named "Games" could not be told apart.
+  gaming: "Gaming",
+  "link-shortener": "Link shortener",
+  marketing: "Marketing",
+  media: "Media",
+  monitoring: "Monitoring",
+  networking: "Networking",
+  notes: "Notes",
+  notifications: "Notifications",
+  passwords: "Passwords",
+  privacy: "Privacy",
+  productivity: "Productivity",
+  "remote-access": "Remote access",
+  scheduling: "Scheduling",
+  security: "Security",
+  sharing: "Sharing",
+  social: "Social",
+  storage: "Storage",
+  sync: "Sync",
+  utilities: "Utilities",
+};
 
-/** A category slug as a label: `ai` → "AI", `link-shortener` → "Link shortener". */
+/** Words kept in capitals when a category without a label is spelled out from its slug. */
+const CATEGORY_WORDS: Readonly<Record<string, string>> = {
+  ai: "AI",
+  cms: "CMS",
+  dns: "DNS",
+  seo: "SEO",
+};
+
+/**
+ * A category slug as a label: `cms` → "CMS", `developer-tools` → "Developer
+ * tools". A category without a label of its own is spelled out from its slug
+ * in sentence case, keeping known acronyms: `dns-tools` → "DNS tools".
+ */
 export function categoryLabel(category: string): string {
+  const label = CATEGORY_LABELS[category];
+  if (label !== undefined) return label;
   const words = category.split(/[-_\s]+/).filter((w) => w.length > 0);
   return words
     .map((word, i) => {
