@@ -110,7 +110,8 @@ fails for a moment. The log shows every API call as `METHOD path -> status`.
 
 1. Fetches the app's signed manifest from the catalog release and verifies its
    signature.
-2. Checks the plan, the requirements, and the Worker name. For apps that bind R2, it
+2. Checks the plan, the requirements, the Worker name, and that the account has room
+   for the app's Workers (100 on Workers Free, 500 on Workers Paid). For apps that bind R2, it
    checks that R2 is enabled. For apps with cron triggers, it counts the cron
    triggers your other Workers use and stops if the app's own would take the account
    past the 5 Workers Free allows. The count is skipped when the account is on
@@ -146,7 +147,10 @@ address at all and is not reachable from the internet.
 
 On Workers Free an app may have at most three Workers: each one adds requests
 to the install job, which the free plan limits to 50, so the manager refuses a
-larger app there before creating anything.
+larger app there before creating anything. On Workers Paid an app may have up to
+24. Each Worker counts toward the account's limit (100 Workers on Workers Free, 500
+on Workers Paid), and the install stops before creating anything when the account
+has no room for all of them.
 
 The form asks for each secret and setting once. The manager sets it on the Workers
 of the app that use it. Post-install steps and settings can mention any of the

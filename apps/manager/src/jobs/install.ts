@@ -27,6 +27,12 @@ import { workersDevUrl } from "../installs/post-install";
 import { appSlugLabel } from "../installs/source-review";
 import { workersDevSubdomain } from "../installs/workers-dev";
 import {
+  accountWorkersProblem,
+  entryBudgetLine,
+  entryBudgetProblem,
+  entryJobCost,
+} from "./entry-budget";
+import {
   type EntryWorker,
   entryBindings,
   entryNameProblems,
@@ -379,20 +385,33 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         throw new InstallError("the Cloudflare API token is not configured; finish setup first");
       }
       // The detected plan first, then the one an admin set.
-      const accountPaid =
-        resolveAccountPlan(
-          settings.account_plan,
-          parseStoredCapabilities(settings.account_capabilities),
-        ).plan === "paid";
+      const resolved = resolveAccountPlan(
+        settings.account_plan,
+        parseStoredCapabilities(settings.account_capabilities),
+      );
+      const accountPaid = resolved.plan === "paid";
+      // Free only when detected or set so, not by default: the account's
+      // Worker limit is checked against the free plan's only then.
+      const accountFree = resolved.plan === "free" && resolved.source !== "default";
       const tooManyWorkers = workerCountProblem(
         workers.length,
         accountPaid || params.paidConfirmed,
       );
       if (tooManyWorkers !== null) throw new InstallError(tooManyWorkers);
+      // Every step of the job shares one Workflow instance's step and
+      // subrequest limits, so the app's Workers are counted against them
+      // before anything is created.
+      if (workers.length > 1) {
+        const paid = accountPaid || params.paidConfirmed;
+        const cost = entryJobCost(workers, "install", 0);
+        const overBudget = entryBudgetProblem(cost, paid, workers.length);
+        if (overBudget !== null) throw new InstallError(overBudget);
+        log.info(entryBudgetLine(cost, paid, workers.length));
+      }
       log.info(
         `Preflight passed: plan ${manifest.catalog.plan}, ${toCreate.length} resource(s) to create.`,
       );
-      return { accountId: settings.account_id, accountPaid };
+      return { accountId: settings.account_id, accountPaid, accountFree };
     });
     steps.setAccountId(preflight.accountId);
 
@@ -421,6 +440,17 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           );
         }
       }
+      // The same list counts the account's Workers against its plan's limit:
+      // the free plan's only when the account is known to be on it (a step
+      // output recorded before the field existed is not), else Workers Paid's.
+      const noRoom = accountWorkersProblem(
+        scripts.length,
+        workers.length,
+        preflight.accountFree === true && !preflight.accountPaid && !params.paidConfirmed
+          ? "free"
+          : "paid",
+      );
+      if (noRoom !== null) throw new InstallError(noRoom);
       log.info(
         workers.length === 1
           ? `No Worker named "${params.workerName}" exists yet.`

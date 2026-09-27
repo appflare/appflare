@@ -6,7 +6,7 @@ import {
   isEntryServiceBinding,
   serviceBindingProblem,
 } from "./artifact";
-import { catalogManifestSchema } from "./catalog";
+import { catalogManifestSchema, MAX_ENTRY_WORKERS, MAX_FREE_PLAN_ENTRY_WORKERS } from "./catalog";
 import {
   appWorkerCount,
   appWorkers,
@@ -132,6 +132,51 @@ function parsed(input: unknown): ArtifactManifest {
 describe("install.workers in the catalog manifest", () => {
   it("accepts an entry of several Workers with one primary", () => {
     expect(catalogManifestSchema.safeParse(catalog()).success).toBe(true);
+  });
+
+  it(`accepts up to ${MAX_ENTRY_WORKERS} Workers and refuses more`, () => {
+    const entry = (count: number) =>
+      catalog(
+        {
+          workers: [
+            { name: "app", wranglerConfig: "packages/api/wrangler.jsonc", primary: true },
+            ...Array.from({ length: count - 1 }, (_, i) => ({
+              name: `gk-${i + 1}`,
+              wranglerConfig: `gatekeepers/${i + 1}/wrangler.jsonc`,
+            })),
+          ],
+        },
+        { plan: "paid" },
+      );
+    expect(MAX_ENTRY_WORKERS).toBe(24);
+    expect(catalogManifestSchema.safeParse(entry(18)).success).toBe(true);
+    expect(catalogManifestSchema.safeParse(entry(MAX_ENTRY_WORKERS)).success).toBe(true);
+    expect(JSON.stringify(catalogManifestSchema.safeParse(entry(25)).error?.issues)).toContain(
+      "an entry installs at most 24 Workers",
+    );
+  });
+
+  it(`needs "plan": "paid" for more than ${MAX_FREE_PLAN_ENTRY_WORKERS} Workers`, () => {
+    const entry = (count: number, plan: string) =>
+      catalog(
+        {
+          workers: [
+            { name: "app", wranglerConfig: "packages/api/wrangler.jsonc", primary: true },
+            ...Array.from({ length: count - 1 }, (_, i) => ({
+              name: `w-${i + 1}`,
+              wranglerConfig: `w/${i + 1}/wrangler.jsonc`,
+            })),
+          ],
+        },
+        { plan },
+      );
+    expect(catalogManifestSchema.safeParse(entry(3, "free")).success).toBe(true);
+    const issues = catalogManifestSchema.safeParse(entry(4, "free")).error?.issues;
+    expect(issues?.map((i) => i.path)).toEqual([["plan"]]);
+    expect(issues?.[0]?.message).toBe(
+      'an entry of 4 Workers needs "plan": "paid": on Workers Free one job installs or updates at most 3 Workers, within the 50 subrequests the free plan allows it',
+    );
+    expect(catalogManifestSchema.safeParse(entry(4, "paid")).success).toBe(true);
   });
 
   it("needs exactly one primary Worker whose config is install.wranglerConfig", () => {

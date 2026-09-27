@@ -20,6 +20,31 @@ import { planSpans, type SpanFile } from "./spans";
 /** Subrequests one Workers Free invocation may make. */
 export const FREE_PLAN_SUBREQUESTS = 50;
 
+/**
+ * Subrequests one Workers Paid invocation may make by default (a Worker may
+ * raise it in its `limits`; the manager does not). For a Workflow the limit
+ * is per instance, not per step: every step of a job shares it
+ * (developers.cloudflare.com/workflows/reference/limits).
+ */
+export const PAID_PLAN_SUBREQUESTS = 10_000;
+
+/**
+ * Steps one Workflow instance may run: 1,024 on Workers Free, 10,000 by
+ * default on Workers Paid (developers.cloudflare.com/workflows/reference/limits).
+ * Every job is one instance, so this bounds how many Workers one job can
+ * install or update.
+ */
+export const FREE_PLAN_WORKFLOW_STEPS = 1_024;
+export const PAID_PLAN_WORKFLOW_STEPS = 10_000;
+
+/**
+ * Workers one account may have: 100 on Workers Free, 500 on Workers Paid
+ * (developers.cloudflare.com/workers/platform/limits, "Number of Workers").
+ * An app of several Workers takes one per Worker.
+ */
+export const FREE_PLAN_ACCOUNT_WORKERS = 100;
+export const PAID_PLAN_ACCOUNT_WORKERS = 500;
+
 /** Worst-case subrequests of the first artifact Range fetch: the redirect plus the real request. */
 export const ARTIFACT_FETCH_SUBREQUESTS = 2;
 

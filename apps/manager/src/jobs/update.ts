@@ -20,6 +20,7 @@ import { secretsToSet } from "../installs/derived-secrets";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
 import { appSlugLabel } from "../installs/source-review";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
+import { entryBudgetLine, entryBudgetProblem, entryJobCost } from "./entry-budget";
 import {
   entryBindings,
   entryPlaceholders,
@@ -517,11 +518,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         );
         if (dropped !== null) problems.push(dropped);
       }
-      const tooManyWorkers = workerCountProblem(
-        workers.length,
-        started.accountPaid || params.paidConfirmed === true || manifest.catalog.plan === "paid",
-      );
+      const paid =
+        started.accountPaid || params.paidConfirmed === true || manifest.catalog.plan === "paid";
+      const tooManyWorkers = workerCountProblem(workers.length, paid);
       if (tooManyWorkers !== null) problems.push(tooManyWorkers);
+      // Every step of the job shares one Workflow instance's limits.
+      const budget =
+        workers.length > 1 ? entryJobCost(workers, "update", CANARY_MAX_ATTEMPTS) : null;
+      const overBudget = budget === null ? null : entryBudgetProblem(budget, paid, workers.length);
+      if (overBudget !== null) problems.push(overBudget);
       // A Worker new in this version would need every secret it gets, and
       // Appflare keeps no secret values to give it.
       for (const w of addedOthers) {
@@ -530,6 +535,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         );
       }
       if (problems.length > 0) throw new JobError(problems.join(" "));
+      if (budget !== null) log.info(entryBudgetLine(budget, paid, workers.length));
       for (const p of droppedOthers) {
         log.warn(
           `This version no longer has the Worker "${p.scriptName}"; it is left in place and removed when the app is uninstalled.`,

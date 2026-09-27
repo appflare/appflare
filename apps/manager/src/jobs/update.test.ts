@@ -30,10 +30,12 @@ import {
   type SeedResource,
   seedInstall,
 } from "../test/seed-install";
+import { entryJobCost, otherWorkerCost } from "./entry-budget";
+import { entryWorkers } from "./entry-workers";
 import { type RollbackJobParams, runRollback } from "./rollback";
 import type { JobEnv } from "./run-job";
 import { API_STEP } from "./steps";
-import { runUpdate, type UpdateJobParams } from "./update";
+import { CANARY_MAX_ATTEMPTS, runUpdate, type UpdateJobParams } from "./update";
 
 /**
  * End-to-end test of the update job against a stateful fake of the
@@ -1823,5 +1825,129 @@ describe("update job, an app of several Workers, failing between promotions", ()
         { installId: INSTALL_ID, snapshotId: "job1" },
       ),
     ).rejects.toThrow(/already runs the version/);
+  });
+});
+
+describe("update job, an app of many Workers", () => {
+  /** A router Worker (the primary one) bound to 17 others, as Cloudflare OS is. */
+  const OTHER_NAMES = [
+    "backend",
+    ...Array.from({ length: 16 }, (_, i) => `gk-${String(i + 1).padStart(2, "0")}`),
+  ];
+  const oldVersionOf = (i: number) => `22222222-0000-4000-8000-${String(i).padStart(12, "0")}`;
+  const app = (version: string): ArtifactFixtureOptions => ({
+    ...NEW_APP,
+    version,
+    bindings: [
+      ...(NEW_APP.bindings ?? []),
+      ...OTHER_NAMES.map((name) => ({
+        type: "service",
+        name: name.toUpperCase().replace(/-/g, "_"),
+        service: `{{workerName:${name}}}`,
+      })),
+    ],
+    otherWorkers: OTHER_NAMES.map((name) => ({
+      name,
+      bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+    })),
+    catalog: { plan: "paid" },
+  });
+
+  /** Runs the update with a fake account per other Worker, each serving its old version. */
+  async function updateMany(world: Partial<FakeAccount> = {}) {
+    const old = await buildArtifactFixture(app("1.0.0"));
+    const accounts = new Map(
+      OTHER_NAMES.map((name, i) => [
+        `cut-${name}`,
+        fakeAccount(null, {
+          worker: `cut-${name}`,
+          deployments: [
+            { id: `dep-${i}`, versions: [{ version_id: oldVersionOf(i), percentage: 100 }] },
+          ],
+        }),
+      ]),
+    );
+    const oldVersions = Object.fromEntries(
+      OTHER_NAMES.map((name, i) => [`cut-${name}`, oldVersionOf(i)]),
+    );
+    const r = await update(
+      app("1.1.0"),
+      world,
+      {
+        manifestJson: JSON.stringify(old.manifest),
+        resources: [
+          ...RESOURCES,
+          ...OTHER_NAMES.map((name) => ({
+            kind: "worker",
+            name: `cut-${name}`,
+            cfId: `cut-${name}`,
+          })),
+        ],
+      },
+      { paidConfirmed: true },
+      "self",
+      async () => {
+        await env.DB.prepare("UPDATE installs SET worker_versions_json = ?1 WHERE id = ?2")
+          .bind(JSON.stringify(oldVersions), INSTALL_ID)
+          .run();
+      },
+      (fake) => async (input, init) => {
+        const name =
+          /\/workers\/scripts\/(cut-[a-z0-9-]+)/.exec(input)?.[1] ??
+          /^https:\/\/[0-9a-f]{8}-(cut-[a-z0-9-]+)\./.exec(input)?.[1];
+        return ((name === undefined ? undefined : accounts.get(name)) ?? fake).fetch(input, init);
+      },
+    );
+    return { ...r, accounts, oldVersions };
+  }
+
+  it("updates 18 Workers, each in steps of its own, within the job's planned budget", async () => {
+    const r = await updateMany();
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const names = r.step.names;
+    expect(new Set(names).size).toBe(names.length);
+    const workers = entryWorkers(r.fixture.manifest, "cut");
+    for (const w of workers.filter((w) => !w.primary)) {
+      const label = ` (Worker "${w.scriptName}")`;
+      const own = names.filter((n) => n.includes(label));
+      // Its own upload, canary and promotion, each a step; promoted before the primary.
+      expect(own).toContain(`upload Worker version${label}`);
+      expect(own).toContain(`canary${label} check 1`);
+      expect(own).toContain(`promote version${label}`);
+      expect(names.indexOf(`promote version${label}`)).toBeLessThan(
+        names.indexOf("promote version"),
+      );
+      const sleeps = r.step.sleeps.filter((s) => s.includes(label));
+      expect(own.length + sleeps.length).toBeLessThanOrEqual(
+        otherWorkerCost(w, "update", CANARY_MAX_ATTEMPTS).steps,
+      );
+      expect(r.accounts.get(w.scriptName)?.state.deployments[0]?.versions[0]?.version_id).toBe(
+        NEW_VERSION,
+      );
+    }
+    const planned = entryJobCost(workers, "update", CANARY_MAX_ATTEMPTS);
+    expect(names.length + r.step.sleeps.length).toBeLessThanOrEqual(planned.steps);
+    const recorded = JSON.parse(String(r.install?.worker_versions_json)) as Record<string, string>;
+    expect(Object.values(recorded)).toEqual(OTHER_NAMES.map(() => NEW_VERSION));
+    expect(JSON.parse(String(r.snapshot?.worker_versions_json))).toEqual(r.oldVersions);
+  });
+
+  it("puts all 17 other Workers back when the primary one is not promoted", async () => {
+    const r = await updateMany({
+      failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]),
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^promote version:/);
+    for (const [i, name] of OTHER_NAMES.entries()) {
+      const account = r.accounts.get(`cut-${name}`);
+      expect(account?.state.deployments.map((d) => d.versions[0]?.version_id)).toEqual([
+        oldVersionOf(i),
+        NEW_VERSION,
+        oldVersionOf(i),
+      ]);
+    }
+    expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual(r.oldVersions);
+    expect(r.install?.current_version_id).toBe(OLD_VERSION);
   });
 });

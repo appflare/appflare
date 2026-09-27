@@ -186,6 +186,20 @@ export async function runRollback(ctx: JobContext): Promise<void> {
   const steps = createJobSteps(ctx, params.jobId);
   const { run, now } = steps;
   let deployed = false;
+  // The app's other Workers whose return to the snapshot's version started,
+  // and those taken off workers.dev for it: a failure before the primary
+  // Worker's deployment puts them back, so the app runs one version again.
+  const movedOthers: string[] = [];
+  const deployedOthers: string[] = [];
+  const takenOffWorkersDev: string[] = [];
+  let startedOthers: Array<{
+    scriptName: string;
+    versionId: string;
+    /** Absent in a job started before it was recorded. */
+    versionIdNow?: string | null;
+  }> = [];
+  let fromVersionLabel: string | null = null;
+  let knownSubdomainForUndo: string | undefined;
 
   /**
    * The install's record once the snapshot's version serves: that version and
@@ -330,6 +344,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       const otherNow = storedOtherWorkers(install.manifest_json, install.worker_name);
       const otherThen = storedOtherWorkers(snapshot.manifest_json, install.worker_name);
       const otherVersions = parseWorkerVersions(snapshot.worker_versions_json);
+      const servingVersions = parseWorkerVersions(install.worker_versions_json);
       return {
         accountId: settings.account_id,
         workerName: install.worker_name,
@@ -340,6 +355,9 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           return {
             scriptName,
             versionId,
+            // What it serves now, to return to if the rollback fails before
+            // the primary Worker's; null when the install's record has none.
+            versionIdNow: servingVersions[scriptName] ?? null,
             // Whether the snapshot's version and the serving one keep the
             // Worker on workers.dev; null when the snapshot's is not known.
             workersDev: then?.workersDev ?? null,
@@ -407,30 +425,36 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     // kept; the primary Worker last. A snapshot taken before other Workers
     // were recorded has none.
     const otherWorkers = started.otherWorkers ?? [];
+    startedOthers = otherWorkers;
+    fromVersionLabel = started.fromVersion;
     // Looked up once, when first needed.
-    let knownSubdomain: string | undefined;
     const subdomainOf = async () => {
-      knownSubdomain ??= await lookupSubdomainPhase(steps);
-      return knownSubdomain;
+      knownSubdomainForUndo ??= await lookupSubdomainPhase(steps);
+      return knownSubdomainForUndo;
     };
     for (const other of otherWorkers) {
       // A Worker the snapshot's version keeps off workers.dev goes off it
       // before that version serves; one it puts back on, after (below).
       // Absent in a job started before the flag existed.
       if (other.workersDev === false) {
+        const subdomain = await subdomainOf();
+        // Listed before the step: a step that fails may still have turned it off.
+        if (other.workersDevNow) takenOffWorkersDev.push(other.scriptName);
         await otherWorkerRoutePhase(
           steps,
           params.installId,
           { primary: false, scriptName: other.scriptName, workersDev: false },
-          await subdomainOf(),
+          subdomain,
         );
       }
+      movedOthers.push(other.scriptName);
       await deployOtherWorkerVersionPhase(
         steps,
         { primary: false, scriptName: other.scriptName },
         other.versionId,
         started.toVersion ?? started.versionId,
       );
+      deployedOthers.push(other.scriptName);
     }
 
     // The API call is a step of its own, so the moment it returns the job
@@ -604,6 +628,55 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     const reason = `${steps.current}: ${errorMessage(error)}`;
     const failedAt = steps.current;
     const wasDeployed = deployed;
+    // The primary Worker still serves the version the rollback started from:
+    // the other Workers already moved go back to the versions they served,
+    // most recent first, so the app runs one version again. A Worker that
+    // cannot go back serves the snapshot's version, and the record says so.
+    const returned: string[] = [];
+    // Serving the snapshot's version still, by Worker name; null when its
+    // deployment did not finish either, so which version serves is unknown.
+    const stranded: Record<string, string | null> = {};
+    const routesBack: string[] = [];
+    if (!wasDeployed) {
+      for (const name of [...movedOthers].reverse()) {
+        const other = startedOthers.find((o) => o.scriptName === name);
+        if (other === undefined) continue;
+        try {
+          const back = other.versionIdNow ?? null;
+          if (back === null) throw new Error("the install's record has no version of it");
+          await deployOtherWorkerVersionPhase(
+            steps,
+            { primary: false, scriptName: name },
+            back,
+            fromVersionLabel ?? back,
+            true,
+          );
+          returned.push(name);
+        } catch {
+          stranded[name] = deployedOthers.includes(name) ? other.versionId : null;
+        }
+      }
+      // A Worker taken off workers.dev for the snapshot's version gets its
+      // address back, since the version it serves wants it: every one whose
+      // step to turn it off started, unless it is left on the snapshot's
+      // version (or on a version not known).
+      const subdomain = knownSubdomainForUndo;
+      for (const name of takenOffWorkersDev) {
+        if (name in stranded) continue;
+        try {
+          if (subdomain === undefined) throw new Error("the workers.dev subdomain is not known");
+          await otherWorkerRoutePhase(
+            steps,
+            params.installId,
+            { primary: false, scriptName: name, workersDev: true },
+            subdomain,
+          );
+        } catch {
+          routesBack.push(name);
+        }
+      }
+    }
+    const strandedNames = Object.keys(stranded);
     await step.do("mark rollback failed", async () => {
       const orm = createDb(env.DB);
       const at = new Date(now());
@@ -616,14 +689,41 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       if (wasDeployed) await recordServing(orm, at);
       await orm
         .update(installs)
-        .set({ status: "installed", updated_at: at })
+        .set({
+          status: "installed",
+          // Other Workers that could not go back serve the snapshot's version.
+          ...(strandedNames.length === 0
+            ? {}
+            : { worker_versions_json: mergedWorkerVersions(stranded) }),
+          updated_at: at,
+        })
         .where(and(eq(installs.id, params.installId), eq(installs.status, "updating")));
       const log = new StepLog(now);
       log.error(
         wasDeployed
           ? `Rollback failed at "${failedAt}" after the snapshot's version was deployed; it serves all traffic and is recorded as the install's version.`
-          : `Rollback failed at "${failedAt}". Nothing was deployed; the current version keeps serving all traffic.`,
+          : movedOthers.length === 0
+            ? `Rollback failed at "${failedAt}". Nothing was deployed; the current version keeps serving all traffic.`
+            : `Rollback failed at "${failedAt}" before the app's own Worker was rolled back; it keeps serving the current version.`,
       );
+      if (returned.length > 0) {
+        log.error(
+          `The app's Workers ${returned.map((n) => `"${n}"`).join(", ")} are back on the versions they served before the rollback, as the app's own Worker still serves the current version.`,
+          { returned },
+        );
+      }
+      if (strandedNames.length > 0) {
+        log.error(
+          `The app's Workers ${strandedNames.map((n) => `"${n}"`).join(", ")} may still serve the snapshot's version while the app's own Worker serves the current one. Roll back to this snapshot again from the install page.`,
+          { stranded: strandedNames },
+        );
+      }
+      if (routesBack.length > 0) {
+        log.error(
+          `Appflare could not turn the workers.dev URL of ${routesBack.map((n) => `"${n}"`).join(", ")} back on for the version it serves; roll back again, or change the address on the install page.`,
+          { routesBack },
+        );
+      }
       await log.flush(env.DB, params.jobId);
       return {};
     });

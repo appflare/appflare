@@ -456,12 +456,19 @@ as one app:
 "vars": [{ "name": "API_URL", "label": "API URL", "default": "{{workerUrl:api}}" }]
 ```
 
-- **Two to five Workers**, on the artifact tier only. Each has a `name` within the
+- **Two to 24 Workers**, on the artifact tier only. Each has a `name` within the
   entry: up to 24 lowercase letters, digits, and hyphens, not starting or ending
-  with a hyphen. Each wrangler config must have a `name` of its own. On Workers Free
-  the manager installs and updates at most three Workers per app, since each Worker
-  adds requests to the one job and the free plan allows 50 per job; an entry of four
-  or five Workers needs Workers Paid (`"plan": "paid"`).
+  with a hyphen. Each wrangler config must have a `name` of its own.
+- **Workers Free takes at most three.** The manager installs and updates all of an
+  app's Workers in one job, and each Worker adds requests to it; the free plan
+  allows 50 per job. An entry of four or more Workers must set `"plan": "paid"`;
+  the schema refuses it otherwise. On Workers Paid a job may make 10,000 requests and run
+  10,000 steps, and each Worker's upload runs in a request of its own, so 24 Workers
+  fit with room to spare; the manager totals the job's steps before it starts and
+  refuses a job that would not fit.
+- **Every Worker counts toward the account's limit**: 100 Workers on Workers Free,
+  500 on Workers Paid. The install counts the account's Workers first and stops
+  before creating anything when the app's Workers would not fit.
 - **Exactly one is `primary`.** It is the app: it runs under the install's Worker
   name and serves the app's address, its custom domains, and the health check
   (`install.healthPath` is a path on it). Its `wranglerConfig` must equal

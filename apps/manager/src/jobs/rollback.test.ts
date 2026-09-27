@@ -446,7 +446,16 @@ describe("rollback job, an app of several Workers", () => {
   });
 
   /** Rolls back from a version with `jobs` on workers.dev as `now` says to one as `then` says. */
-  async function rollbackAcross(then: boolean, now: boolean) {
+  async function rollbackAcross(
+    then: boolean,
+    now: boolean,
+    worlds: {
+      primary?: Partial<FakeAccount>;
+      jobs?: Partial<FakeAccount>;
+      /** Refuses turning `jobs`'s workers.dev URL on. */
+      refuseEnable?: boolean;
+    } = {},
+  ) {
     const jobsWorker = (workersDev: boolean) => ({
       name: "jobs",
       bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
@@ -457,8 +466,10 @@ describe("rollback job, an app of several Workers", () => {
       version: "1.1.0",
       otherWorkers: [jobsWorker(now)],
     });
-    await env.DB.prepare("UPDATE installs SET manifest_json = ?1 WHERE id = ?2")
-      .bind(JSON.stringify(after.manifest), INSTALL_ID)
+    await env.DB.prepare(
+      "UPDATE installs SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = ?3",
+    )
+      .bind(JSON.stringify(after.manifest), JSON.stringify({ "cut-jobs": JOBS_NEW }), INSTALL_ID)
       .run();
     await env.DB.prepare(
       "UPDATE snapshots SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = 'upd1'",
@@ -471,14 +482,72 @@ describe("rollback job, an app of several Workers", () => {
         { id: "dep-j2", versions: [{ version_id: JOBS_NEW, percentage: 100 }] },
         { id: "dep-j1", versions: [{ version_id: JOBS_OLD, percentage: 100 }] },
       ],
+      ...worlds.jobs,
     });
-    const r = await rollback(
-      {},
-      (fake) => async (input, init) =>
-        (input.includes("/workers/scripts/cut-jobs") ? jobs : fake).fetch(input, init),
-    );
+    const r = await rollback(worlds.primary ?? {}, (fake) => async (input, init) => {
+      if (
+        worlds.refuseEnable === true &&
+        input.endsWith("/workers/scripts/cut-jobs/subdomain") &&
+        String(init?.body).includes('"enabled":true')
+      ) {
+        return Response.json(
+          { success: false, errors: [{ code: 10000, message: "injected refusal" }] },
+          { status: 400 },
+        );
+      }
+      return (input.includes("/workers/scripts/cut-jobs") ? jobs : fake).fetch(input, init);
+    });
     return { ...r, jobs };
   }
+
+  it("puts a Worker's address back when turning it off fails", async () => {
+    const r = await rollbackAcross(false, true, {
+      jobs: { failOnce: new Map([["POST /workers/scripts/cut-jobs/subdomain", 400]]) },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^turn off workers\.dev route \(Worker "cut-jobs"\):/);
+    // Never moved; its address is turned back on for the version it serves.
+    expect(r.jobs.state.deployments[0]?.versions[0]?.version_id).toBe(JOBS_NEW);
+    expect(r.jobs.state.subdomainCalls).toEqual([{ enabled: true, previews_enabled: true }]);
+    expect(r.step.names).toContain('enable workers.dev route (Worker "cut-jobs")');
+  });
+
+  it("returns a Worker it moved, with its address, when the primary Worker's rollback fails", async () => {
+    const r = await rollbackAcross(false, true, {
+      primary: { failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]) },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^deploy snapshot version:/);
+    expect(r.jobs.state.deployments.map((d) => d.versions[0]?.version_id)).toEqual([
+      JOBS_NEW,
+      JOBS_OLD,
+      JOBS_NEW,
+      JOBS_OLD,
+    ]);
+    expect(r.jobs.state.subdomainCalls).toEqual([
+      { enabled: false, previews_enabled: false },
+      { enabled: true, previews_enabled: true },
+    ]);
+    expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual({ "cut-jobs": JOBS_NEW });
+  });
+
+  it("reports a Worker whose address it could not put back", async () => {
+    const r = await rollbackAcross(false, true, {
+      primary: { failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]) },
+      refuseEnable: true,
+    });
+    expect(r.job?.status).toBe("failed");
+    // Back on its version; only its address stays off.
+    expect(r.jobs.state.deployments[0]?.versions[0]?.version_id).toBe(JOBS_NEW);
+    const logs = (
+      await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'rb1'").all<{
+        message: string;
+      }>()
+    ).results.map((l) => l.message);
+    expect(
+      logs.some((m) => m.includes('could not turn the workers.dev URL of "cut-jobs" back on')),
+    ).toBe(true);
+  });
 
   it("takes a Worker off workers.dev before the snapshot version that keeps it private serves", async () => {
     const r = await rollbackAcross(false, true);
@@ -488,6 +557,120 @@ describe("rollback job, an app of several Workers", () => {
     expect(names.indexOf('turn off workers.dev route (Worker "cut-jobs")')).toBeLessThan(
       names.indexOf('deploy snapshot version (Worker "cut-jobs")'),
     );
+  });
+
+  describe("of 18 Workers", () => {
+    const OTHER_NAMES = [
+      "backend",
+      ...Array.from({ length: 16 }, (_, i) => `gk-${String(i + 1).padStart(2, "0")}`),
+    ];
+    const oldOf = (i: number) => `22222222-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const newOf = (i: number) => `33333333-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const others = OTHER_NAMES.map((name) => ({
+      name,
+      bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+    }));
+
+    /**
+     * Rolls back 18 Workers, a fake account per other Worker serving its new
+     * version; `refuse` answers 400 to the n-th deployment call of a Worker.
+     */
+    async function rollbackMany(refuse: Record<string, number> = {}) {
+      const before = await buildArtifactFixture({ otherWorkers: others });
+      const after = await buildArtifactFixture({ version: "1.1.0", otherWorkers: others });
+      const versions = (of: (i: number) => string) =>
+        JSON.stringify(Object.fromEntries(OTHER_NAMES.map((n, i) => [`cut-${n}`, of(i)])));
+      await env.DB.prepare(
+        "UPDATE installs SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = ?3",
+      )
+        .bind(JSON.stringify(after.manifest), versions(newOf), INSTALL_ID)
+        .run();
+      await env.DB.prepare(
+        "UPDATE snapshots SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = 'upd1'",
+      )
+        .bind(JSON.stringify(before.manifest), versions(oldOf))
+        .run();
+      const accounts = new Map(
+        OTHER_NAMES.map((name, i) => [
+          `cut-${name}`,
+          fakeAccount(null, {
+            worker: `cut-${name}`,
+            deployments: [
+              { id: `dep-${i}-2`, versions: [{ version_id: newOf(i), percentage: 100 }] },
+              { id: `dep-${i}-1`, versions: [{ version_id: oldOf(i), percentage: 100 }] },
+            ],
+          }),
+        ]),
+      );
+      const deploys = new Map<string, number>();
+      const r = await rollback({}, (fake) => async (input, init) => {
+        const name = /\/workers\/scripts\/(cut-[a-z0-9-]+)/.exec(input)?.[1];
+        const account = name === undefined ? undefined : accounts.get(name);
+        if (name !== undefined && init?.method === "POST" && input.includes("/deployments")) {
+          const n = (deploys.get(name) ?? 0) + 1;
+          deploys.set(name, n);
+          if (refuse[name] === n) {
+            return Response.json(
+              { success: false, errors: [{ code: 10000, message: "injected refusal" }] },
+              { status: 400 },
+            );
+          }
+        }
+        return (account ?? fake).fetch(input, init);
+      });
+      const serving = (name: string) =>
+        accounts.get(name)?.state.deployments[0]?.versions[0]?.version_id;
+      return { ...r, serving };
+    }
+
+    it("puts all 17 other Workers back on their snapshot versions, then the primary one", async () => {
+      const r = await rollbackMany();
+      expect(r.error).toBeNull();
+      const names = r.step.names;
+      expect(new Set(names).size).toBe(names.length);
+      for (const [i, name] of OTHER_NAMES.entries()) {
+        expect(r.serving(`cut-${name}`)).toBe(oldOf(i));
+        expect(names.indexOf(`deploy snapshot version (Worker "cut-${name}")`)).toBeLessThan(
+          names.indexOf("deploy snapshot version"),
+        );
+      }
+      // Each Worker is one deployment step; nothing else of it runs when its
+      // workers.dev address, crons and consumers are unchanged.
+      expect(names.filter((n) => n.includes('(Worker "cut-'))).toHaveLength(17);
+      expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual(
+        Object.fromEntries(OTHER_NAMES.map((n, i) => [`cut-${n}`, oldOf(i)])),
+      );
+    });
+
+    it("returns the Workers it moved when one fails midway, and records one it cannot return", async () => {
+      // gk-08 refuses its rollback; backend then refuses its return.
+      const r = await rollbackMany({ "cut-gk-08": 1, "cut-backend": 2 });
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toMatch(/^deploy snapshot version \(Worker "cut-gk-08"\):/);
+      const moved = OTHER_NAMES.slice(0, OTHER_NAMES.indexOf("gk-08") + 1);
+      for (const [i, name] of OTHER_NAMES.entries()) {
+        const expected = name === "backend" ? oldOf(i) : newOf(i);
+        expect(r.serving(`cut-${name}`)).toBe(expected);
+        if (moved.includes(name)) {
+          expect(r.step.names).toContain(`return to serving version (Worker "cut-${name}")`);
+        }
+      }
+      // The primary Worker was never touched.
+      expect(r.fake.state.deployments[0]?.versions[0]?.version_id).toBe(NEW_VERSION);
+      expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual(
+        Object.fromEntries(
+          OTHER_NAMES.map((n, i) => [`cut-${n}`, n === "backend" ? oldOf(i) : newOf(i)]),
+        ),
+      );
+      expect(r.install).toMatchObject({ status: "installed", catalog_version: "1.1.0" });
+      const logs = (
+        await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = 'rb1'").all<{
+          message: string;
+        }>()
+      ).results.map((l) => l.message);
+      expect(logs.some((m) => m.includes("are back on the versions they served"))).toBe(true);
+      expect(logs.some((m) => m.includes('"cut-backend" may still serve the snapshot'))).toBe(true);
+    });
   });
 
   it("puts a Worker back on workers.dev once the snapshot version that wants it serves", async () => {

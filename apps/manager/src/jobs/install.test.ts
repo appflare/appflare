@@ -21,6 +21,8 @@ import {
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { redirectingArtifactHost, STORAGE_URL } from "../test/redirecting-host";
+import { entryJobCost, otherWorkerCost } from "./entry-budget";
+import { entryWorkers } from "./entry-workers";
 import { API_STEP, type InstallJobParams, runInstall } from "./install";
 import type { JobEnv } from "./run-job";
 
@@ -2242,12 +2244,12 @@ describe("install job, an app of several Workers", () => {
     expect(r.step.names).not.toContain('enable workers.dev route (Worker "cut-jobs")');
   });
 
-  it("refuses more Workers than the free plan's request budget allows, before creating anything", async () => {
+  it("refuses an entry of more than three Workers not marked paid, before creating anything", async () => {
     const r = await install({
       otherWorkers: [{ name: "a" }, { name: "b" }, { name: "c" }],
     });
     expect(r.job?.status).toBe("failed");
-    expect(r.job?.error).toContain("This app has 4 Workers; more than 3 Workers exceed");
+    expect(r.job?.error).toContain('an entry of 4 Workers needs \\"plan\\": \\"paid\\"');
     expect(r.fake.state.kv).toEqual([]);
   });
 
@@ -2256,5 +2258,118 @@ describe("install job, an app of several Workers", () => {
     expect(r.job?.status).toBe("failed");
     expect(r.job?.error).toContain("a Worker named cut-jobs already exists");
     expect(r.fake.state.kv).toEqual([]);
+  });
+});
+
+describe("install job, an app of many Workers", () => {
+  /** A router Worker (the primary one) bound to 17 others, as Cloudflare OS is. */
+  const OTHER_NAMES = [
+    "backend",
+    ...Array.from({ length: 16 }, (_, i) => `gk-${String(i + 1).padStart(2, "0")}`),
+  ];
+  const manyWorkers = (): ArtifactFixtureOptions => ({
+    bindings: [
+      { type: "kv_namespace", name: "CUT_KV" },
+      ...OTHER_NAMES.map((name) => ({
+        type: "service",
+        name: name.toUpperCase().replace(/-/g, "_"),
+        service: `{{workerName:${name}}}`,
+      })),
+    ],
+    otherWorkers: OTHER_NAMES.map((name) => ({
+      name,
+      bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+      assets: [{ route: `/${name}.js`, content: `console.log(${JSON.stringify(name)})` }],
+    })),
+    catalog: { plan: "paid" },
+  });
+
+  it("installs 18 Workers, each in steps of its own, within the job's planned budget", async () => {
+    const r = await install(manyWorkers(), {}, { paidConfirmed: true });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const calls = r.fake.state.calls;
+    const primaryAt = calls.indexOf("PUT /workers/scripts/cut");
+    for (const name of OTHER_NAMES) {
+      // Deployed before the primary Worker, which binds every one of them.
+      expect(calls.indexOf(`PUT /workers/scripts/cut-${name}`)).toBeGreaterThan(-1);
+      expect(calls.indexOf(`PUT /workers/scripts/cut-${name}`)).toBeLessThan(primaryAt);
+      expect(r.fake.state.others[`cut-${name}`]?.secrets).toEqual({ ADMIN_PASSWORD: PASSWORD });
+    }
+    expect(r.resources.filter((row) => row.kind === "worker")).toHaveLength(18);
+    const recorded = await env.DB.prepare("SELECT worker_versions_json FROM installs").first<{
+      worker_versions_json: string;
+    }>();
+    expect(Object.keys(JSON.parse(recorded?.worker_versions_json ?? "{}"))).toHaveLength(17);
+
+    // Every Worker's upload is a step of its own, as are its assets and address.
+    const names = r.step.names;
+    expect(new Set(names).size).toBe(names.length);
+    const workers = entryWorkers(r.fixture.manifest, "cut");
+    for (const w of workers.filter((w) => !w.primary)) {
+      const label = ` (Worker "${w.scriptName}")`;
+      const own = names.filter((n) => n.includes(label));
+      expect(own).toEqual([
+        `open assets upload session${label}`,
+        `record Worker name${label}`,
+        `upload Worker script${label}`,
+        `record Worker script${label}`,
+        `set secret ADMIN_PASSWORD${label}`,
+        `enable workers.dev route${label}`,
+      ]);
+      expect(own.length).toBeLessThanOrEqual(otherWorkerCost(w, "install", 0).steps);
+    }
+    // The whole job stays inside what the plan totalled for it.
+    const planned = entryJobCost(workers, "install", 0);
+    expect(names.length + r.step.sleeps.length).toBeLessThanOrEqual(planned.steps);
+    // Every unit call the job made was counted: here one upload per Worker
+    // (the fake already stores every asset, so no asset parts).
+    expect(r.self.calls.filter((c) => c.unit === "uploadWorker")).toHaveLength(18);
+    expect(r.self.calls.length).toBeLessThanOrEqual(planned.unitCalls);
+    expect(r.logs.some((l) => l.message.startsWith("The app's 18 Workers: an estimated"))).toBe(
+      true,
+    );
+  });
+
+  it("refuses when the account has no room for the app's Workers, before creating anything", async () => {
+    const existing = Array.from({ length: 489 }, (_, i) => `other-${i}`);
+    const r = await install(
+      manyWorkers(),
+      { scripts: ["appflare", ...existing] },
+      { paidConfirmed: true },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain(
+      "check Worker name: This app installs 18 Workers, and the account already has 490; Workers Paid allows 500 Workers per account.",
+    );
+    expect(r.fake.state.kv).toEqual([]);
+    expect(r.fake.state.calls.filter((c) => c.startsWith("PUT /workers/scripts/"))).toEqual([]);
+  });
+
+  it("counts the account's Workers against the free plan's 100 when the account is set to Workers Free", async () => {
+    const existing = Array.from({ length: 99 }, (_, i) => `other-${i}`);
+    const r = await install(
+      {},
+      { scripts: ["appflare", ...existing] },
+      {},
+      {},
+      undefined,
+      "self",
+      async () => {
+        await writeSettings(createDb(env.DB), { [SETTING.accountPlan]: "free" });
+      },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain(
+      "This app installs one Worker, and the account already has 100; Workers Free allows 100 Workers per account.",
+    );
+    expect(r.fake.state.kv).toEqual([]);
+  });
+
+  it("holds an account of unknown plan to Workers Paid's 500: 100 Workers or more means it is on Workers Paid", async () => {
+    const existing = Array.from({ length: 149 }, (_, i) => `other-${i}`);
+    const r = await install({}, { scripts: ["appflare", ...existing] });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
   });
 });

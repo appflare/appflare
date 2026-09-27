@@ -740,18 +740,28 @@ export async function readOtherWorkerVersionsPhase(
   return versions;
 }
 
-/** Rollback: puts one other Worker back on the version the snapshot recorded. */
+/**
+ * Rollback: puts one other Worker back on the version the snapshot recorded.
+ * A failed rollback also uses it to return a Worker to the version it served
+ * before, under another step name and annotation (`undo`).
+ */
 export async function deployOtherWorkerVersionPhase(
   steps: JobSteps,
   worker: Pick<EntryWorker, "primary" | "scriptName">,
   versionId: string,
   toVersion: string,
+  undo = false,
 ): Promise<void> {
-  await steps.run(`deploy snapshot version${workerLabel(worker)}`, async ({ log, cf }) => {
+  const name = `${undo ? "return to serving version" : "deploy snapshot version"}${workerLabel(worker)}`;
+  await steps.run(name, async ({ log, cf }) => {
     // Forced for the same reason as the primary Worker's rollback.
     await cf().versions.createDeployment(worker.scriptName, {
       versions: [{ version_id: versionId, percentage: 100 }],
-      annotations: { "workers/message": `Appflare: roll back to ${toVersion}` },
+      annotations: {
+        "workers/message": undo
+          ? `Appflare: back on ${toVersion} after a failed rollback`
+          : `Appflare: roll back to ${toVersion}`,
+      },
       force: true,
     });
     log.info(`Version ${versionId} of Worker "${worker.scriptName}" now serves all traffic.`);

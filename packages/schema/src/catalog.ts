@@ -134,8 +134,28 @@ export function buildCommandText(command: CatalogBuildCommand): string {
  * `<install Worker name>-<name>`, so the name must fit in a Worker name.
  */
 
-/** The most Workers one catalog entry may declare. */
-export const MAX_ENTRY_WORKERS = 5;
+/**
+ * The most Workers one catalog entry may declare: 24, room for the largest
+ * app the catalog knows (18 Workers) with some to spare. What bounds it is
+ * the one Workflow instance that installs or updates them all: every Worker
+ * adds its own steps (about 25 at an update, a canary of six probes with a
+ * sleep after each included) and its own requests (about 50, counting each
+ * step's database writes), and one instance may run 10,000 steps and make
+ * 10,000 subrequests on Workers Paid (1,024 steps and 50 subrequests on
+ * Workers Free, where Appflare installs at most three Workers per app). Each
+ * Worker's upload is checked on its own (`workerUploadProblem`). 24 Workers
+ * also leave most of an account's Workers free: 100 on Workers Free, 500 on
+ * Workers Paid (`FREE_PLAN_ACCOUNT_WORKERS`, `PAID_PLAN_ACCOUNT_WORKERS`).
+ */
+export const MAX_ENTRY_WORKERS = 24;
+
+/**
+ * The most Workers an entry with `"plan": "free"` may declare. On Workers
+ * Free one job may make 50 subrequests, and every Worker besides the primary
+ * one adds about seven to an update; three Workers leave room for the app's
+ * resources and its health check. An entry of more sets `"plan": "paid"`.
+ */
+export const MAX_FREE_PLAN_ENTRY_WORKERS = 3;
 
 /** The longest name of one of an entry's Workers. */
 export const MAX_ENTRY_WORKER_NAME_LENGTH = 24;
@@ -1394,14 +1414,18 @@ export const catalogInstallSchema = z
     workers: z
       .array(catalogEntryWorkerSchema)
       .min(2)
-      .max(MAX_ENTRY_WORKERS)
+      .max(
+        MAX_ENTRY_WORKERS,
+        `an entry installs at most ${MAX_ENTRY_WORKERS} Workers: one job installs or updates them all, within one Workflow's step and request limits`,
+      )
       .describe(
-        "For an app that installs as several Workers deployed together (for example an API and a " +
-          "web front end): each Worker's name, wrangler config and optional build command. Exactly " +
+        `For an app that installs as several Workers deployed together (for example an API and a web front end), 2 to ${MAX_ENTRY_WORKERS} of them: ` +
+          "each Worker's name, wrangler config and optional build command. Exactly " +
           "one is `primary`: it answers the app's address and health check, and its " +
           "`wranglerConfig` is `install.wranglerConfig`. Service bindings between these Workers, " +
           "and Durable Object bindings to a class in another of them, are pointed at the installed " +
-          "Workers; bindings of the same name share one resource. Artifact tier only.",
+          "Workers; bindings of the same name share one resource. Artifact tier only. On Workers " +
+          'Free the manager installs at most three Workers per app, so an entry of more must set `"plan": "paid"`.',
       )
       .optional(),
   })
@@ -1730,6 +1754,17 @@ export const catalogManifestSchema = z
     });
     // `workers` on a secret or var names Workers of `install.workers`.
     const declared = manifest.install.workers;
+    if (
+      declared !== undefined &&
+      declared.length > MAX_FREE_PLAN_ENTRY_WORKERS &&
+      manifest.plan !== "paid"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["plan"],
+        message: `an entry of ${declared.length} Workers needs "plan": "paid": on Workers Free one job installs or updates at most ${MAX_FREE_PLAN_ENTRY_WORKERS} Workers, within the 50 subrequests the free plan allows it`,
+      });
+    }
     const names = new Set((declared ?? []).map((w) => w.name));
     const check = (
       field: "secrets" | "vars",

@@ -72,7 +72,10 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  * but the same app must also update). Hence at most 3 Workers per app on
  * Workers Free (`MAX_FREE_PLAN_WORKERS`);
  * the install and update plans refuse more there before anything changes.
- * Workers Paid allows 1,000 subrequests per invocation, and has no cap.
+ * Workers Paid allows 10,000 subrequests and 10,000 steps per Workflow
+ * instance by default; there the plans total what the app's Workers add
+ * (../entry-budget.ts) and refuse a job that would not fit, which no entry
+ * of up to `MAX_ENTRY_WORKERS` Workers comes near.
  */
 
 /**
