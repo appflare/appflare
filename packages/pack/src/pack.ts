@@ -64,6 +64,7 @@ import {
   allowedSections,
   checkHyperdriveDeclarations,
   checkPipelineDeclarations,
+  checkR2Declarations,
   checkVectorizeDeclarations,
   classifyModuleType,
   collectBindings,
@@ -285,6 +286,40 @@ function buildAssetIgnore(dir: string): ReturnType<typeof ignore> {
   return ignore().add(patterns);
 }
 
+/**
+ * Directories never collected as static assets, at any depth, whatever
+ * `.assetsignore` says: git's data, wrangler's state and the installed
+ * dependencies. An assets directory of `.` (the project root) would
+ * otherwise publish the repository's history and every installed package,
+ * as wrangler itself does unless `.assetsignore` lists them.
+ */
+export const NEVER_ASSET_DIRS = [".git", ".wrangler", "node_modules"] as const;
+
+/**
+ * Every entry under `dir` (relative, platform separators, as `readdirSync`'s
+ * recursive listing gives them), without descending into a
+ * {@link NEVER_ASSET_DIRS} directory, and the relative paths of those it
+ * left out.
+ */
+function walkAssetDirectory(dir: string): { entries: string[]; excluded: string[] } {
+  const never = new Set<string>(NEVER_ASSET_DIRS);
+  const entries: string[] = [];
+  const excluded: string[] = [];
+  const queue = [""];
+  for (let rel = queue.shift(); rel !== undefined; rel = queue.shift()) {
+    for (const entry of readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+      const child = rel === "" ? entry.name : path.join(rel, entry.name);
+      if (never.has(entry.name) && (entry.isDirectory() || entry.isSymbolicLink())) {
+        excluded.push(child.split(path.sep).join("/"));
+        continue;
+      }
+      entries.push(child);
+      if (entry.isDirectory()) queue.push(child);
+    }
+  }
+  return { entries, excluded };
+}
+
 interface CollectedAssets {
   config: Record<string, unknown>;
   binding: string | null;
@@ -310,7 +345,12 @@ function collectAssets(
     throw new Error(`assets.directory does not exist: ${dir}`);
   }
   const matcher = buildAssetIgnore(dir);
-  const entries = readdirSync(dir, { recursive: true }) as string[];
+  const { entries, excluded } = walkAssetDirectory(dir);
+  if (excluded.length > 0) {
+    logger(
+      `left ${excluded.join(", ")} out of the static assets: a project's own ${NEVER_ASSET_DIRS.join(", ")} directories are never served`,
+    );
+  }
   const files: CollectedAssets["files"] = [];
   for (const rel of entries) {
     const relPosix = rel.split(path.sep).join("/");
@@ -630,7 +670,19 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   }
 
   // (b2) The catalog's build commands, in order, before the wrangler config is
-  // read: the config may be a file the build writes.
+  // read: the config may be a file the build writes. The build-time
+  // constants reach them and wrangler's bundling (a wrangler config's own
+  // `build.command` runs there); the artifact carries them in its catalog
+  // manifest, so a later pack of the same pin builds with the same ones.
+  const buildEnv = catalog.install.buildEnv;
+  const buildChildEnv: NodeJS.ProcessEnv =
+    buildEnv === undefined ? childEnv : { ...childEnv, ...buildEnv };
+  if (buildEnv !== undefined) {
+    logger(
+      `build-time constants from install.buildEnv: ${Object.keys(buildEnv).join(", ")} ` +
+        "(set for the build commands and the bundling; the artifact's catalog manifest records their values)",
+    );
+  }
   const buildCommands = buildCommandList(catalog.install.buildCommand);
   if (buildCommands.length > 0 && installDirList(catalog.install).length === 0) {
     logger("the build commands run with no dependencies installed (install.installDirs is empty)");
@@ -640,6 +692,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       checkoutDir,
       commands: buildCommands,
       env: childEnv,
+      buildEnv,
       timeoutMs: options.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
       logger,
     });
@@ -656,6 +709,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       checkoutDir,
       commands,
       env: childEnv,
+      buildEnv,
       timeoutMs: options.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
       logger,
     });
@@ -756,6 +810,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       collected.flatMap((c) => c.bindings),
       catalog.resources,
     );
+    checkR2Declarations(
+      collected.flatMap((c) => c.bindings),
+      catalog.resources,
+    );
   } else {
     const varProblems = catalogVarProblems(collected[0]?.bindings ?? [], catalog.vars);
     if (varProblems.length > 0) {
@@ -829,10 +887,12 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   const built = collected.map((c) => {
     if (c.name !== null) logger(`bundling the Worker "${c.name}"`);
     const prefix = c.primary || c.name === null ? "" : `workers/${c.name}/`;
-    const modules = bundleWorker(c.target, checkoutDir, c.config, childEnv, logger).map((m) => ({
-      ...m,
-      path: `${prefix}${m.path}`,
-    }));
+    const modules = bundleWorker(c.target, checkoutDir, c.config, buildChildEnv, logger).map(
+      (m) => ({
+        ...m,
+        path: `${prefix}${m.path}`,
+      }),
+    );
     return {
       ...c,
       modules,

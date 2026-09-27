@@ -11,6 +11,7 @@ import {
   type CatalogD1Seed,
   type D1MigrationFile,
   type IndexArtifacts,
+  mergeR2LifecycleRules,
   parseConnectionString,
   type SigningKey,
 } from "@appflare/schema";
@@ -225,7 +226,77 @@ export async function provisionResourcePhase(
     );
     return {};
   });
+  // Recorded first, so a failure below leaves a resource the job's cleanup knows.
+  // TODO: an update applies these settings only to resources it creates. It
+  // should also apply newly declared ones to the install's existing index and
+  // bucket: create missing metadata indexes (never delete one), and merge
+  // lifecycle rules by id under an Appflare-managed id prefix (never remove a
+  // rule the admin added). Not done yet because the update plan does not
+  // compare settings between versions.
+  await configureResourcePhase(steps, res, explain);
   return { binding: res.binding, type: res.type, name: res.name, cfId: made.cfId };
+}
+
+/**
+ * Sets what the artifact records for a resource the job just created and
+ * wrangler's config cannot say: a Vectorize index's metadata indexes (one
+ * step and one call each, before the app writes a vector, since vectors
+ * written earlier are never indexed) and an R2 bucket's lifecycle rules (a
+ * read of the bucket's rules and a write of them with the declared ones,
+ * keeping Cloudflare's default rule for unfinished multipart uploads).
+ * Nothing to do for any other resource, or when none are declared.
+ */
+export async function configureResourcePhase(
+  steps: JobSteps,
+  res: ResourceBindingPlan,
+  explain: <T>(call: () => Promise<T>) => Promise<T> = (call) => call(),
+): Promise<void> {
+  if (res.type === "vectorize") {
+    for (const index of res.metadataIndexes ?? []) {
+      await steps.run(
+        `create metadata index ${index.propertyName} on Vectorize index ${res.name}`,
+        async ({ log, cf, attempt }) => {
+          const api = cf();
+          // A retry may follow an attempt whose call Cloudflare took.
+          if (attempt > 1) {
+            const existing = await api.vectorize.listMetadataIndexes(res.name);
+            if (existing.some((m) => m.propertyName === index.propertyName)) {
+              log.info(
+                `The metadata index on "${index.propertyName}" an earlier attempt created is there.`,
+              );
+              return {};
+            }
+          }
+          await api.vectorize.createMetadataIndex(res.name, {
+            propertyName: index.propertyName,
+            indexType: index.type,
+          });
+          log.info(
+            `Created a ${index.type} metadata index on "${index.propertyName}" for Vectorize index "${res.name}".`,
+          );
+          return {};
+        },
+      );
+    }
+    return;
+  }
+  if (res.type !== "r2_bucket" || res.lifecycle === undefined || res.lifecycle.length === 0) {
+    return;
+  }
+  const declared = res.lifecycle;
+  const current = await steps.run(
+    `read lifecycle rules of R2 bucket ${res.name}`,
+    async ({ cf }) => ({ rules: await explain(() => cf().r2.getLifecycleRules(res.name)) }),
+  );
+  await steps.run(`set lifecycle rules of R2 bucket ${res.name}`, async ({ log, cf }) => {
+    // Rules of the declared ids are replaced, so a retry puts the same rules.
+    const rules = mergeR2LifecycleRules(current.rules, declared);
+    await explain(() => cf().r2.putLifecycleRules(res.name, rules));
+    log.info(
+      `Set ${declared.length === 1 ? "the lifecycle rule" : `${declared.length} lifecycle rules`} ${declared.map((r) => `"${r.id}"`).join(", ")} on R2 bucket "${res.name}".`,
+    );
+    return {};
+  });
 }
 
 /**

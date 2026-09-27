@@ -1,5 +1,6 @@
 import {
   SANDBOX_FEATURE_ASSETS_ONLY,
+  SANDBOX_FEATURE_BUILD_ENV,
   SANDBOX_FEATURE_D1_BASELINE,
   SANDBOX_FEATURE_D1_SEED,
   SANDBOX_FEATURE_INSTALL_DIRS,
@@ -9,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   assetsOnlyBuildFailure,
   assetsOnlyRefusal,
+  buildEnvRefusal,
   d1BaselineRefusal,
   d1SeedRefusal,
   wranglerConfigInlineRefusal,
@@ -94,6 +96,42 @@ describe("d1BaselineRefusal", () => {
     expect(d1BaselineRefusal(current, withBaseline, "update it")).toBeNull();
     expect(d1BaselineRefusal(old, { resources: { d1: { DB: {} } } }, "update it")).toBeNull();
     expect(d1BaselineRefusal(old, undefined, "update it")).toBeNull();
+  });
+});
+
+describe("buildEnvRefusal", () => {
+  const old = { sandboxVersion: "0.1.7", features: [SANDBOX_FEATURE_ASSETS_ONLY] };
+  const current = { sandboxVersion: "0.1.8", features: [SANDBOX_FEATURE_BUILD_ENV] };
+  const plain = { install: {} };
+
+  it("refuses each setting an older sandbox Worker's packer would drop, in plain words", () => {
+    expect(buildEnvRefusal(old, { install: { buildEnv: { VITE_X: "1" } } }, "update it")).toBe(
+      "the sandbox Worker 0.1.7 cannot set this app's build-time constants (install.buildEnv) and would build it without them; to update it, update it",
+    );
+    expect(
+      buildEnvRefusal(old, { install: { installDirs: [{ devDependencies: false }] } }, "update it"),
+    ).toMatch(/cannot install this app without its devDependencies/);
+    expect(
+      buildEnvRefusal(
+        old,
+        { install: {}, resources: { vectorize: { V: { metadataIndexes: [] } } } },
+        "update it",
+      ),
+    ).toMatch(/Vectorize metadata indexes .* to update it, update it$/);
+    expect(
+      buildEnvRefusal(old, { install: {}, resources: { r2: { FILES: {} } } }, "update it"),
+    ).toMatch(/R2 lifecycle rules \(resources\.r2\)/);
+  });
+
+  it("lets a current sandbox Worker build them, and any Worker build an entry without them", () => {
+    expect(
+      buildEnvRefusal(current, { install: { buildEnv: { VITE_X: "1" } } }, "update it"),
+    ).toBeNull();
+    expect(buildEnvRefusal(old, plain, "update it")).toBeNull();
+    expect(
+      buildEnvRefusal(old, { install: { installDirs: [{ devDependencies: true }] } }, "update it"),
+    ).toBeNull();
+    expect(buildEnvRefusal(old, undefined, "update it")).toBeNull();
   });
 });
 

@@ -152,6 +152,16 @@ export const catalogInstallDirSchema = z.object({
         "for this directory.",
     )
     .optional(),
+  devDependencies: z
+    .boolean()
+    .describe(
+      "`false` installs this directory's dependencies without its devDependencies (pnpm " +
+        "`--prod`, npm `--omit=dev`, classic yarn and bun `--production`), for a project whose " +
+        "devDependencies cannot be installed (one from a private registry, say) and are not " +
+        "needed to bundle the Worker. Omitted or `true` installs them all. yarn 2 and later " +
+        "have no such frozen install, so they refuse it.",
+    )
+    .optional(),
 });
 export type CatalogInstallDir = z.infer<typeof catalogInstallDirSchema>;
 

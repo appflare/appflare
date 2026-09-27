@@ -10,8 +10,10 @@ import {
   ownerRepoSchema,
   type Plan,
   vectorizeIndexConfigSchema,
+  vectorizeMetadataIndexesSchema,
 } from "./catalog";
 import { PIPELINES_BINDING_TYPE } from "./pipelines";
+import { r2LifecycleRuleSchema } from "./r2-lifecycle";
 import {
   appWorkers,
   bindingEntryRefs,
@@ -97,14 +99,28 @@ export type D1MigrationFile = z.infer<typeof d1MigrationFileSchema>;
  * A Vectorize binding. Besides its name it carries the index's dimensions and
  * metric, which the packer copies from the catalog manifest's
  * `resources.vectorize`: the manager creates the index before binding it, and
- * Cloudflare cannot create one without them.
+ * Cloudflare cannot create one without them. The metadata indexes declared
+ * there come along too, so the manager creates them with the index.
  */
 export const vectorizeBindingSchema = z.looseObject({
   type: z.literal("vectorize"),
   name: z.string().min(1),
   ...vectorizeIndexConfigSchema.shape,
+  metadataIndexes: vectorizeMetadataIndexesSchema.optional(),
 });
 export type VectorizeBinding = z.infer<typeof vectorizeBindingSchema>;
+
+/**
+ * An R2 binding. Besides its name it may carry the lifecycle rules the
+ * packer copies from the catalog manifest's `resources.r2`, which the
+ * manager sets on the bucket when it creates it.
+ */
+export const r2BucketBindingSchema = z.looseObject({
+  type: z.literal("r2_bucket"),
+  name: z.string().min(1),
+  lifecycle: z.array(r2LifecycleRuleSchema).min(1).optional(),
+});
+export type R2BucketBinding = z.infer<typeof r2BucketBindingSchema>;
 
 /**
  * A wrangler config var whose value is not a string (an array, object,
@@ -154,6 +170,7 @@ const exactSelfServiceBindingSchema = z.strictObject(selfServiceBindingShape);
 const STRICT_BINDING_TYPES: Readonly<Record<string, string>> = {
   vectorize: "a vectorize binding must record the index's dimensions and metric",
   json: "a json binding must record its value in `json`",
+  r2_bucket: "an r2_bucket binding's lifecycle rules must be well formed",
 };
 
 /**
@@ -181,6 +198,7 @@ const otherBindingSchema = z.looseObject({
 /** A binding recorded in the artifact manifest. */
 export const workerBindingSchema = z.union([
   vectorizeBindingSchema,
+  r2BucketBindingSchema,
   jsonVarBindingSchema,
   selfServiceBindingSchema,
   otherBindingSchema,
@@ -257,6 +275,15 @@ export function isJsonVarBinding(binding: WorkerBinding): binding is JsonVarBind
  */
 export function isVectorizeBinding(binding: WorkerBinding): binding is VectorizeBinding {
   return binding.type === "vectorize";
+}
+
+/**
+ * Whether a parsed binding is an R2 binding, with its lifecycle rules typed.
+ * Sound for anything `workerBindingSchema` parsed, which lets an
+ * `r2_bucket` binding through only with well-formed rules.
+ */
+export function isR2BucketBinding(binding: WorkerBinding): binding is R2BucketBinding {
+  return binding.type === "r2_bucket";
 }
 
 /**
@@ -757,8 +784,8 @@ export const artifactEntryWorkerSchema = z.object({
 export type ArtifactEntryWorker = z.infer<typeof artifactEntryWorkerSchema>;
 
 /** The artifact formats this version reads: 1 to {@link LATEST_ARTIFACT_FORMAT}. */
-export const LATEST_ARTIFACT_FORMAT = 5;
-export type ArtifactFormat = 1 | 2 | 3 | 4 | 5;
+export const LATEST_ARTIFACT_FORMAT = 6;
+export type ArtifactFormat = 1 | 2 | 3 | 4 | 5 | 6;
 
 /** What decides an artifact's format, as a packer knows it before writing one. */
 /** What of one Worker decides an artifact's format. */
@@ -780,14 +807,21 @@ export interface ArtifactFormatFacts {
   d1Baseline?: Record<string, readonly unknown[]> | undefined;
   /**
    * The catalog manifest: a Worker it keeps off workers.dev, or a D1 seed,
-   * needs format 4; a multiline secret needs format 5.
+   * needs format 4; a multiline secret needs format 5; Vectorize metadata
+   * indexes or R2 bucket settings need format 6.
    */
   catalog?:
     | {
         install?: {
           workers?: ReadonlyArray<{ workersDev?: boolean | undefined }> | undefined;
         };
-        resources?: { d1?: Readonly<Record<string, { seed?: unknown }>> | undefined } | undefined;
+        resources?:
+          | {
+              d1?: Readonly<Record<string, { seed?: unknown }>> | undefined;
+              vectorize?: Readonly<Record<string, { metadataIndexes?: unknown }>> | undefined;
+              r2?: Readonly<Record<string, unknown>> | undefined;
+            }
+          | undefined;
         secrets?: ReadonlyArray<{ multiline?: boolean | undefined }> | undefined;
       }
     | undefined;
@@ -798,6 +832,13 @@ export interface ArtifactFormatFacts {
  * install it correctly reads it and every older one refuses it rather than
  * install it without what it does not know:
  *
+ * - 6: its catalog manifest declares Vectorize metadata indexes
+ *   (`resources.vectorize[binding].metadataIndexes`) or R2 bucket settings
+ *   (`resources.r2`), which a manager that reads only formats 1 to 5 would
+ *   strip, creating the index without the metadata indexes the app's
+ *   queries filter on (vectors written before one exists are never
+ *   indexed), or the bucket without the rules that delete what the app
+ *   means to keep only for a while;
  * - 5: it carries a D1 baseline (`d1Baseline`), which a manager that reads
  *   only formats 1 to 4 would drop, running the migrations on an empty
  *   database instead, where they fail or leave the app without its tables;
@@ -833,6 +874,11 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
     w !== undefined &&
     ((w.exports !== undefined && Object.keys(w.exports).length > 0) ||
       w.cacheOptions !== undefined);
+  const resources = facts.catalog?.resources;
+  const metadataIndexed = Object.values(resources?.vectorize ?? {}).some(
+    (index) => index.metadataIndexes !== undefined,
+  );
+  if (metadataIndexed || Object.keys(resources?.r2 ?? {}).length > 0) return 6;
   if (has(facts.d1Baseline)) return 5;
   const assetsOnly = (w: WorkerFormatFacts | undefined) =>
     w?.modules !== undefined && isAssetsOnlyWorker({ modules: w.modules });
@@ -855,7 +901,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
 function formatProblem(manifest: ArtifactFormatFacts & { format: number }): string | null {
   const needed = artifactFormatFor(manifest);
   if (needed <= manifest.format) return null;
-  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline, a Worker of static assets only, a multiline secret); a manager that reads only format ${manifest.format} would install it without them`;
+  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline, a Worker of static assets only, a multiline secret, Vectorize metadata indexes, R2 lifecycle rules); a manager that reads only format ${manifest.format} would install it without them`;
 }
 
 /**
@@ -971,12 +1017,12 @@ export const artifactManifestV2Schema = z
  * An artifact that carries what managers reading formats 1 and 2 would skip
  * (see {@link artifactFormatFor}): one Worker, or several with `workers` as
  * in format 2. Those managers refuse it, since their schema knows no format 3.
- * Formats 4 and 5 have the same shape; managers that read only the formats
+ * Formats 4 to 6 have the same shape; managers that read only the formats
  * before them refuse them in the same way.
  */
 export const artifactManifestV3Schema = z
   .object({
-    format: z.literal([3, 4, 5]),
+    format: z.literal([3, 4, 5, 6]),
     ...artifactManifestFields,
     workers: z.array(artifactEntryWorkerSchema).min(1).optional(),
   })
@@ -1004,8 +1050,9 @@ export const artifactManifestV3Schema = z
 /**
  * The full artifact manifest, `manifest.json`: format 1 (one Worker), 2
  * (several), 3 (either, with D1 files older managers do not know), 4 (as
- * 3, with a Worker kept off workers.dev or D1 seed statements), or 5 (as 4,
- * with a D1 baseline or a Worker of static assets only).
+ * 3, with a Worker kept off workers.dev or D1 seed statements), 5 (as 4,
+ * with a D1 baseline or a Worker of static assets only), or 6 (as 5, with
+ * Vectorize metadata indexes or R2 lifecycle rules).
  */
 export const artifactManifestSchema = z.discriminatedUnion("format", [
   artifactManifestV1Schema,

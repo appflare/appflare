@@ -5,11 +5,14 @@ import {
   entryWorkerRefName,
   type HyperdriveProtocol,
   hyperdriveDeclarationProblems,
+  isR2BucketBinding,
   isVectorizeBinding,
   PIPELINES_BINDING_TYPE,
   pipelineDeclarationProblems,
+  type R2LifecycleRule,
   serviceBindingProblem,
   type VectorizeIndexConfig,
+  type VectorizeMetadataIndex,
   type WorkerBinding,
 } from "@appflare/schema";
 
@@ -104,14 +107,22 @@ export interface PipelinePlan {
  * catalog manifest declares; its origin comes from the connection string the
  * admin entered, which only the job's input holds. A Pipelines stream
  * carries the plan of its sink and pipeline; the sink's token comes from a
- * secret the admin entered.
+ * secret the admin entered. A Vectorize index may carry the metadata
+ * indexes, and an R2 bucket the lifecycle rules, the artifact records for
+ * it; the job sets them right after it creates the resource.
  */
 export type ResourceBindingPlan =
-  | (ResourcePlanFields & { type: "vectorize"; vectorize: VectorizeIndexConfig })
+  | (ResourcePlanFields & {
+      type: "vectorize";
+      vectorize: VectorizeIndexConfig;
+      metadataIndexes?: readonly VectorizeMetadataIndex[];
+    })
   | (ResourcePlanFields & { type: "hyperdrive"; protocol: HyperdriveProtocol })
   | (ResourcePlanFields & { type: "pipelines"; pipeline: PipelinePlan })
   | (ResourcePlanFields & {
       type: Exclude<ResourceBindingType, "vectorize" | "hyperdrive" | "pipelines">;
+      /** An R2 bucket's lifecycle rules; no other resource has any. */
+      lifecycle?: readonly R2LifecycleRule[];
     });
 
 /**
@@ -236,6 +247,9 @@ export function planBindings(
         kind: RESOURCE_BINDINGS.vectorize,
         name: resourceName(workerName, binding.name),
         vectorize: { dimensions: binding.dimensions, metric: binding.metric },
+        ...(binding.metadataIndexes === undefined
+          ? {}
+          : { metadataIndexes: binding.metadataIndexes }),
       });
     } else if (binding.type === "hyperdrive") {
       // An undeclared one is a problem above; it gets no configuration.
@@ -290,11 +304,13 @@ export function planBindings(
         },
       });
     } else if (isNamedResourceType(binding.type)) {
+      const lifecycle = isR2BucketBinding(binding) ? binding.lifecycle : undefined;
       addResource({
         binding: binding.name,
         type: binding.type,
         kind: RESOURCE_BINDINGS[binding.type],
         name: resourceName(workerName, binding.name),
+        ...(lifecycle === undefined ? {} : { lifecycle }),
       });
     } else if (binding.type === "durable_object_namespace") {
       // A class in another Worker of the app: that Worker implements and

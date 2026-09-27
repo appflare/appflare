@@ -23,9 +23,13 @@ import {
   isNewerNpmLockfileFailure,
   lowestRangeMajor,
   NPM_11_SPEC,
+  newerNpmLockfileFailure,
+  nodeMajorOf,
   npmSpec,
+  PNPM_9_SPEC,
   packageManagerFlavor,
   packageManagerMajor,
+  pnpmLockfileMajor,
   resolveInstallDir,
 } from "./install.ts";
 
@@ -559,5 +563,134 @@ describe("the pinned npm 11", () => {
       "utf8",
     );
     expect(dockerfile).toContain(`RUN npx --yes ${NPM_11_SPEC} --version`);
+  });
+});
+
+describe("installs without devDependencies", () => {
+  it("adds each manager's production flag and keeps the install frozen", () => {
+    const lines = (["pnpm", "npm", "yarn", "bun"] as const).map((pm) => {
+      const inv = installInvocation(pm, "required", {}, { production: true });
+      return [inv.command, ...inv.args].join(" ");
+    });
+    expect(lines).toEqual([
+      "pnpm install --frozen-lockfile --prod --ignore-scripts --config.package-manager-strict=false",
+      "npm ci --ignore-scripts --omit=dev",
+      "yarn install --frozen-lockfile --ignore-scripts --production",
+      "bun install --frozen-lockfile --ignore-scripts --production",
+    ]);
+  });
+
+  it("installs a directory that sets devDependencies false without them, and says so", () => {
+    file("package.json");
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 3 }));
+    const { runs, run } = recorder();
+    const logs = install([{ path: ".", devDependencies: false }], run, "npm");
+    expect(runs).toEqual([{ cwd: ".", line: "npm ci --ignore-scripts --omit=dev" }]);
+    expect(logs[0]).toMatch(/, without devDependencies: npm ci/);
+  });
+
+  it("refuses it for yarn 2 and later, which have no frozen production install", () => {
+    file("package.json", JSON.stringify({ packageManager: "yarn@4.5.0" }));
+    file("yarn.lock", "");
+    const { runs, run } = recorder();
+    expect(() => install([{ path: ".", devDependencies: false }], run, "yarn")).toThrow(
+      /devDependencies false for \., but it is a yarn 2 or later project/,
+    );
+    expect(runs).toEqual([]);
+  });
+});
+
+describe("pnpm 9 for a lockfileVersion 6 lockfile", () => {
+  it("reads the lockfile's major", () => {
+    file("pnpm-lock.yaml", "lockfileVersion: '6.0'\n\nsettings:\n");
+    expect(pnpmLockfileMajor(path.join(root, "pnpm-lock.yaml"))).toBe(6);
+    file("pnpm-lock.yaml", 'lockfileVersion: "9.0"\n');
+    expect(pnpmLockfileMajor(path.join(root, "pnpm-lock.yaml"))).toBe(9);
+    file("pnpm-lock.yaml", "packages: {}\n");
+    expect(pnpmLockfileMajor(path.join(root, "pnpm-lock.yaml"))).toBeNull();
+  });
+
+  it("installs with the pinned pnpm 9 through npx, and a 9.0 lockfile with the machine's pnpm", () => {
+    file("package.json");
+    file("pnpm-lock.yaml", "lockfileVersion: '6.0'\n");
+    const old = recorder();
+    const logs = install([{ path: "." }], old.run, "pnpm");
+    expect(old.runs).toEqual([
+      {
+        cwd: ".",
+        line: `npx --yes ${PNPM_9_SPEC} install --frozen-lockfile --ignore-scripts --config.package-manager-strict=false`,
+      },
+    ]);
+    expect(logs[0]).toMatch(
+      /with pnpm 9 \(the lockfile is lockfileVersion 6, which pnpm 10 refuses\)/,
+    );
+    file("pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+    const current = recorder();
+    install([{ path: "." }], current.run, "pnpm");
+    expect(current.runs[0]?.line).toMatch(/^pnpm install --frozen-lockfile/);
+  });
+
+  it("is pinned exactly, and the sandbox image warms npx's cache with it", () => {
+    expect(PNPM_9_SPEC).toMatch(/^pnpm@9\.\d+\.\d+$/);
+    const dockerfile = readFileSync(
+      path.resolve(import.meta.dirname, "..", "..", "..", "apps", "sandbox", "Dockerfile"),
+      "utf8",
+    );
+    expect(dockerfile).toContain(`RUN npx --yes ${PNPM_9_SPEC} --version`);
+  });
+});
+
+describe("npm 11 from the Node.js the checkout asks for, and on ERESOLVE", () => {
+  it("reads .nvmrc, else engines.node, nearest first", () => {
+    file(".nvmrc", "v24.1.0\n");
+    expect(nodeMajorOf([root])).toBe(24);
+    file(".nvmrc", "lts/*\n");
+    file("package.json", JSON.stringify({ engines: { node: ">=20" } }));
+    expect(nodeMajorOf([root])).toBe(20);
+    file("app/.nvmrc", "24");
+    expect(nodeMajorOf([path.join(root, "app"), root])).toBe(24);
+  });
+
+  it("installs with npm 11 for Node.js 24 or later, unless package.json names an npm", () => {
+    file(".nvmrc", "24\n");
+    file("package.json");
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 3 }));
+    expect(packageManagerFlavor(root, root, "npm")).toEqual({ npmMajor: 11, nodeMajor: 24 });
+    const { runs, run } = recorder();
+    const logs = install([{ path: "." }], run, "npm");
+    expect(runs[0]?.line).toBe("npx --yes npm@11.20.0 ci --ignore-scripts");
+    expect(logs[0]).toMatch(
+      /with npm 11 \(the checkout asks for Node\.js 24, which ships npm 11\)/,
+    );
+    file(".nvmrc", "22\n");
+    expect(packageManagerFlavor(root, root, "npm")).toEqual({});
+    file(".nvmrc", "24\n");
+    file("package.json", JSON.stringify({ packageManager: "npm@10.9.2" }));
+    expect(packageManagerFlavor(root, root, "npm")).toEqual({});
+  });
+
+  const ERESOLVE =
+    "npm error code ERESOLVE\nnpm error ERESOLVE could not resolve\nnpm error\nnpm error While resolving: wrangler@4.131.0\n";
+
+  it("retries with npm 11 when npm 10 cannot resolve a lockfileVersion 3 lockfile's peers", () => {
+    file("package.json");
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 3 }));
+    expect(newerNpmLockfileFailure(path.join(root, "package-lock.json"), ERESOLVE)).toBe(
+      "eresolve",
+    );
+    const runs: string[] = [];
+    const run: InstallRunner = (invocation) => {
+      runs.push([invocation.command, ...invocation.args].join(" "));
+      return invocation.command === "npm"
+        ? { status: 1, stdout: "", stderr: ERESOLVE }
+        : { status: 0, stdout: "", stderr: "" };
+    };
+    const logs = install([{ path: "." }], run, "npm");
+    expect(runs).toEqual(["npm ci --ignore-scripts", "npx --yes npm@11.20.0 ci --ignore-scripts"]);
+    expect(logs[1]).toMatch(
+      /could not resolve the peer dependencies of package-lock\.json \(lockfileVersion 3, ERESOLVE\).*installing with npm 11/,
+    );
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 2 }));
+    expect(newerNpmLockfileFailure(path.join(root, "package-lock.json"), ERESOLVE)).toBeNull();
   });
 });

@@ -621,6 +621,42 @@ describe("r2 / queues / vectorize", () => {
     });
   });
 
+  it("vectorize.createMetadataIndex -> POST .../metadata_index/create { propertyName, indexType }", async () => {
+    const { fake, client } = make({ result: { mutationId: "m1" } });
+    expect(
+      await client.vectorize.createMetadataIndex("idx", {
+        propertyName: "url",
+        indexType: "string",
+      }),
+    ).toEqual({ mutationId: "m1" });
+    const req = fake.last();
+    expect(req.method).toBe("POST");
+    expect(req.url).toBe(`${A}/vectorize/v2/indexes/idx/metadata_index/create`);
+    expect(await req.request.json()).toEqual({ propertyName: "url", indexType: "string" });
+  });
+
+  it("vectorize.listMetadataIndexes -> GET .../metadata_index/list", async () => {
+    const { fake, client } = make({
+      result: { metadataIndexes: [{ propertyName: "url", indexType: "String" }] },
+    });
+    expect(await client.vectorize.listMetadataIndexes("idx")).toEqual([
+      { propertyName: "url", indexType: "String" },
+    ]);
+    expect(fake.last().url).toBe(`${A}/vectorize/v2/indexes/idx/metadata_index/list`);
+  });
+
+  it("r2.getLifecycleRules / putLifecycleRules -> GET and PUT /r2/buckets/{name}/lifecycle", async () => {
+    const rule = { id: "a", enabled: true, conditions: { prefix: "" } };
+    const got = make({ result: { rules: [rule] } });
+    expect(await got.client.r2.getLifecycleRules("b")).toEqual([rule]);
+    expect(got.fake.last().url).toBe(`${A}/r2/buckets/b/lifecycle`);
+    const put = make();
+    await put.client.r2.putLifecycleRules("b", [rule]);
+    expect(put.fake.last().method).toBe("PUT");
+    expect(put.fake.last().url).toBe(`${A}/r2/buckets/b/lifecycle`);
+    expect(await put.fake.last().request.json()).toEqual({ rules: [rule] });
+  });
+
   it("vectorize.deleteIndex -> DELETE /vectorize/v2/indexes/{name}", async () => {
     const { fake, client } = make();
     await client.vectorize.deleteIndex("idx");

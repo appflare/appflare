@@ -1,5 +1,6 @@
 export * from "./artifact";
 export * from "./assets-only";
+export * from "./build-env";
 export * from "./catalog";
 export * from "./catalog-index";
 export * from "./catalog-stats";
@@ -13,6 +14,7 @@ export * from "./keys";
 export * from "./license";
 export * from "./limits";
 export * from "./pipelines";
+export * from "./r2-lifecycle";
 export * from "./random-key";
 export * from "./recovery-code";
 export * from "./repository";

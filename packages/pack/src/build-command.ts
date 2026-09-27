@@ -1,4 +1,14 @@
 import { spawn } from "node:child_process";
+import {
+  type Dirent,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildCommandArgv, buildCommandProblem } from "@appflare/schema";
 
@@ -55,6 +65,12 @@ export interface BuildCommandOptions {
   label?: string;
   /** The scrubbed environment every child of the packer gets. */
   env: NodeJS.ProcessEnv;
+  /**
+   * The catalog manifest's build-time constants (`install.buildEnv`), set
+   * in the command's environment over `env`. The schema refuses names the
+   * build's tools read, so they change what the build writes, not how it runs.
+   */
+  buildEnv?: Readonly<Record<string, string>> | undefined;
   timeoutMs?: number;
   /**
    * How long to wait for the build's output to close after it exits or is
@@ -82,7 +98,13 @@ function stopGroup(pid: number | undefined): void {
   }
 }
 
-export async function runBuildCommand(options: BuildCommandOptions): Promise<void> {
+/** What a build command that succeeded printed last. */
+export interface BuildCommandResult {
+  /** The last lines of its output ({@link outputTail}). */
+  outputTail: string;
+}
+
+export async function runBuildCommand(options: BuildCommandOptions): Promise<BuildCommandResult> {
   const { checkoutDir, command } = options;
   const label = options.label ?? "install.buildCommand";
   const logger = options.logger ?? (() => {});
@@ -97,6 +119,7 @@ export async function runBuildCommand(options: BuildCommandOptions): Promise<voi
   const inherited = options.env.PATH ?? options.env.Path ?? "";
   const env: NodeJS.ProcessEnv = {
     ...options.env,
+    ...options.buildEnv,
     ...BUILD_HOOKS_OFF_ENV,
     PATH: inherited.length > 0 ? `${bin}${path.delimiter}${inherited}` : bin,
   };
@@ -191,6 +214,65 @@ export async function runBuildCommand(options: BuildCommandOptions): Promise<voi
     throw new BuildCommandError(`${label} "${command}" ${how}${quoted}`);
   }
   logger(`${label} finished in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+  return { outputTail: tail };
+}
+
+/**
+ * The file system's own clock now, as `mtimeMs` reads it: the modification
+ * time of a file written for the purpose. File times come from the
+ * kernel's coarse clock, which can lag `Date.now()` by a few milliseconds,
+ * so comparing them with `Date.now()` could miss a file the build wrote at
+ * once.
+ */
+function fileClockNow(): number {
+  const dir = mkdtempSync(path.join(tmpdir(), "appflare-build-clock-"));
+  try {
+    const marker = path.join(dir, "now");
+    writeFileSync(marker, "");
+    return statSync(marker).mtimeMs;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Directory names never looked into: the checkout's git data. */
+const UNWATCHED_DIRS = new Set([".git"]);
+
+/**
+ * Whether anything in `checkoutDir` was created, changed, removed or renamed
+ * at or after `since` (a {@link fileClockNow} reading): a file's own
+ * modification time for a change in place, its directory's for an entry
+ * added, removed or renamed. `.git` is not looked into, and `node_modules`
+ * directories last (a build that only generates code there, such as
+ * `prisma generate`, still counts), stopping at the first change found.
+ */
+export function checkoutChangedSince(checkoutDir: string, since: number): boolean {
+  const changed = (abs: string): boolean => {
+    try {
+      return lstatSync(abs).mtimeMs >= since;
+    } catch {
+      return true;
+    }
+  };
+  if (changed(checkoutDir)) return true;
+  const queue: string[] = [checkoutDir];
+  const later: string[] = [];
+  for (;;) {
+    const dir = queue.shift() ?? later.shift();
+    if (dir === undefined) return false;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory() && UNWATCHED_DIRS.has(entry.name)) continue;
+      const abs = path.join(dir, entry.name);
+      if (changed(abs)) return true;
+      if (entry.isDirectory()) (entry.name === "node_modules" ? later : queue).push(abs);
+    }
+  }
 }
 
 export interface BuildCommandsOptions extends Omit<BuildCommandOptions, "command" | "label"> {
@@ -206,6 +288,13 @@ export interface BuildCommandsOptions extends Omit<BuildCommandOptions, "command
  * time limit: each gets what the ones before it left. Every command is
  * checked before the first runs, so a bad one later in the list fails the
  * build before anything ran.
+ *
+ * A build that succeeds without creating, changing or removing a single file
+ * in the checkout built nothing, and is refused: a command that prints its
+ * usage and exits 0 (a tool given an option where it does not take one)
+ * would otherwise pass, and the packer would bundle whatever the checkout
+ * held. The commands are judged together, so one that only checks (a type
+ * check) may sit beside the ones that write.
  */
 export async function runBuildCommands(options: BuildCommandsOptions): Promise<void> {
   const { commands, ...rest } = options;
@@ -220,13 +309,30 @@ export async function runBuildCommands(options: BuildCommandsOptions): Promise<v
   });
   const timeoutMs = options.timeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
+  const since = fileClockNow();
+  let last: BuildCommandResult = { outputTail: "" };
   for (const [i, command] of commands.entries()) {
-    await runBuildCommand({
+    last = await runBuildCommand({
       ...rest,
       command,
       label: labels[i],
       // At least a second, so a command that starts at the deadline still reports it.
       timeoutMs: Math.max(1_000, deadline - Date.now()),
     });
+  }
+  if (commands.length > 0 && !checkoutChangedSince(options.checkoutDir, since)) {
+    const what =
+      commands.length === 1
+        ? `install.buildCommand "${commands[0]}"`
+        : `the ${commands.length} commands of install.buildCommand (${commands.map((c) => `"${c}"`).join(", ")})`;
+    const quoted =
+      last.outputTail.length > 0
+        ? `; last lines of its output:\n${last.outputTail}`
+        : "; it printed nothing";
+    throw new BuildCommandError(
+      `${what} ran without an error but created, changed or removed no file in the checkout, so it built nothing. ` +
+        "A command that prints its usage and exits 0 does this (a tool given an option it does not take there); " +
+        `check that the command runs the build${quoted}`,
+    );
   }
 }

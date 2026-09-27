@@ -173,7 +173,28 @@ Points that need care:
   pipes, redirects, quotes, variables, and `NAME=value` assignments are refused.
   pnpm and npm run no `pre` or `post` hooks there (`pnpm run build` skips
   `prebuild`), just as dependencies install with `--ignore-scripts`, so list such a
-  step as a command of its own. The build stops at the first command that fails.
+  step as a command of its own. The build stops at the first command that fails. A
+  build whose commands all exit 0 without creating, changing or removing a single
+  file in the repository built nothing (a tool given an option where it does not
+  take one may print its usage and exit 0), and the pack fails with its output.
+- **`install.buildEnv`.** Public constants the build compiles into the app, by name,
+  such as `{ "VITE_API_ORIGIN": "https://api.example.com" }` for a Vite or SvelteKit
+  app that reads settings at build time. The packer sets them for every build command
+  and for wrangler's bundling, and the artifact records them. Everyone can read them,
+  since the catalog publishes them and the build writes them into files anyone can
+  download, so a name that looks like a credential (containing `SECRET`, `PASSWORD`,
+  `PASSWD`, `PASSPHRASE`, `TOKEN`, `PRIVATE` or `CREDENTIAL`) is refused. So
+  is a name that would change how the build runs rather than what it writes: those
+  read by wrangler and what it runs (`WRANGLER_`, `CLOUDFLARE_`, `CF_`, `ESBUILD_`,
+  `MINIFLARE_`, `WORKERD_`), Node.js and package managers (`NODE_`, `NPM_`, `PNPM_`,
+  `YARN_`, `BUN_`, `COREPACK_`, `DENO_`), git and CI (`GIT_`, `GITHUB_`, `RUNNER_`,
+  `ACTIONS_`, `CI`), shells (`BASH…`, `ENV`, `IFS`, `PS4`, `PROMPT_COMMAND` and the
+  like), the dynamic linker (`LD_`, `DYLD_`, `GCONV…`), TLS and HTTP clients (`SSL_`,
+  `OPENSSL_`, `CURL_`, `HTTP_PROXY` and the other proxy names), configuration
+  directories (`XDG_`, `HOME`, `TMPDIR`), other toolchains (`PYTHON…`, `PERL5…`,
+  `RUBY…`, `JAVA_`, `CARGO_`, `RUST…`, `GOPATH`, `GOFLAGS` and the other Go settings) and build tools (`TURBO_`, `NX_`,
+  `PRISMA_`). These rules catch the known cases; catalog review reads every
+  constant as well. Up to 32 upper-case names.
 - **`install.installDirs`.** The directories whose dependencies the packer installs,
   in order, such as `[{ "path": "templates/blog" }]` for a template repository whose
   Worker has its own `package.json` and no root one. Omitted, only the root is
@@ -189,7 +210,12 @@ Points that need care:
   the entry and every file it imports by a relative path, an import of a package fails
   the pack, and any build command runs with no dependencies installed.
   `"lockfile": "none"` is no substitute there: pnpm and bun refuse a directory without
-  a `package.json`, and npm looks for one in the directories above the checkout.
+  a `package.json`, and npm looks for one in the directories above the checkout. Set
+  `"devDependencies": false` on a directory whose devDependencies cannot be installed
+  (a package from a private registry, say) and are not needed to bundle the Worker:
+  it installs with pnpm `--prod`, npm `--omit=dev`, or classic yarn and bun
+  `--production`, still from the lockfile. yarn 2 and later have no such install, so
+  the pack fails there.
 - **`install.configPatch`.** When the app's wrangler config needs a change before it
   installs from its pinned commit, open a pull request upstream first. Until it is
   merged, the entry may carry the change as a JSON merge patch (RFC 7386: an object
@@ -271,8 +297,13 @@ Points that need care:
   `"packageManager": "npm@11.x"` or `engines.npm` asks for a later major; npm 11 runs
   as `npx --yes npm@11.20.0 ci --ignore-scripts`, an exact release. A
   `package-lock.json` of `lockfileVersion` 3 that npm 10 refuses as out of sync
-  ("Missing: … from lock file"), as it does with some lockfiles npm 11 wrote, is
-  installed again with npm 11, and the log says so.
+  ("Missing: … from lock file") or cannot resolve (`ERESOLVE`), as it does with some
+  lockfiles npm 11 wrote, is installed again with npm 11, and the log says so. When
+  no `package.json` names an npm but `.nvmrc` or `engines.node` asks for Node.js 24
+  or later, which ships npm 11, the install uses npm 11 from the start. A
+  `pnpm-lock.yaml` of `lockfileVersion` 6 (pnpm 8), which pnpm 10 refuses, installs
+  with pnpm 9 as `npx --yes pnpm@9.15.9 install --frozen-lockfile`. The build itself
+  still runs on Node.js 22.
 - **What runs at install.** Install scripts are off, but that does not keep the
   repository's own code out of the install: `npx` can resolve a binary from the
   checkout's `node_modules`, and a `yarnPath` in `.yarnrc.yml` runs the yarn release
@@ -300,6 +331,23 @@ Points that need care:
   the template: the packer copies it to its real name (`wrangler.toml`) beside itself
   before the build runs and wrangler reads it. A real file of that name already in
   the repository must be identical to the template, or the pack fails.
+- **Vectorize indexes and R2 buckets.** The wrangler config cannot say how to create
+  a Vectorize index, so declare each binding's shape under `resources.vectorize`,
+  with the metadata properties the app's queries filter on, if any:
+  `"resources": { "vectorize": { "VECTORIZE": { "dimensions": 768, "metric": "cosine", "metadataIndexes": [{ "propertyName": "url", "type": "string" }] } } }`.
+  The manager creates the metadata indexes (at most ten) right after the index,
+  before the app writes a vector, since vectors written earlier are never indexed.
+  An R2 bucket the app keeps files in only for a while can carry lifecycle rules
+  under `resources.r2`, keyed by the R2 binding:
+  `"resources": { "r2": { "FILES": { "lifecycle": [{ "id": "Delete temporary files", "prefix": "tmp/", "deleteAfterDays": 7 }] } } }`.
+  A rule takes `deleteAfterDays`, `infrequentAccessAfterDays` or
+  `abortMultipartUploadsAfterDays` (any of them, in whole days), and applies to every
+  object when it has no `prefix`. The manager sets the rules when it creates the
+  bucket and keeps Cloudflare's default rule (`Default Multipart Abort Rule`, which
+  aborts unfinished multipart uploads after seven days), so that id is refused for a
+  rule of the app's own. Buckets
+  and indexes an earlier version already created keep the settings they have. An
+  artifact with either setting needs a manager that reads format 6.
 - **Databases elsewhere.** An app that keeps its data in PostgreSQL or MySQL outside
   Cloudflare binds it through Hyperdrive. Declare each Hyperdrive binding of the
   wrangler config under `resources.hyperdrive`, for example
@@ -493,15 +541,18 @@ Observability, placement, limits and `cache` settings are left out, as wrangler
 leaves them out, and the pack log says so. The health check requests `healthPath`
 (default `/`) as for any app, so the site should answer there. When the asset
 directory is the repository root, it needs an `.assetsignore` that leaves out
-everything that is not part of the site (`.git`, `.wrangler`, the wrangler config),
-as `wrangler deploy` would upload it too. Such an artifact is written in format 5,
+everything else that is not part of the site (the wrangler config, the sources), as
+`wrangler deploy` would upload it too; the packer always leaves out `.git`,
+`.wrangler` and `node_modules` directories, whatever `.assetsignore` says. Such an artifact is written in format 5,
 which an earlier version of Appflare refuses with a message to update it first.
 
 `_redirects` and `_headers` at the root of the asset directory work as they do with
 `wrangler deploy`, for a static site and for a Worker with code alike: the packer
 records their rules with the artifact instead of serving them as files, and the manager
 sends them with every upload. A sandbox tier entry that is a static site, sets
-`"installDirs": []`, or has a `multiline` secret needs an up-to-date sandbox Worker;
+`"installDirs": []`, or has a `multiline` secret needs an up-to-date sandbox Worker,
+as does one with `buildEnv`, `"devDependencies": false`, Vectorize `metadataIndexes`
+or `resources.r2`;
 an older one is refused with a message to update the sandbox first.
 
 ## Seeding a first admin

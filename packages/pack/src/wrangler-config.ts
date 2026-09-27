@@ -558,6 +558,30 @@ export function checkVectorizeDeclarations(
   }
 }
 
+/** The catalog manifest's `resources.r2` names a binding the wrangler config does not have. */
+export class R2DeclarationError extends Error {
+  override name = "R2DeclarationError";
+}
+
+/**
+ * Throws {@link R2DeclarationError} when the catalog manifest declares
+ * `resources.r2` for a binding none of `bindings` has: its lifecycle rules
+ * would be set on no bucket.
+ */
+export function checkR2Declarations(
+  bindings: readonly WorkerBinding[],
+  resources?: CatalogResources,
+): void {
+  const bound = new Set(bindings.filter((b) => b.type === "r2_bucket").map((b) => b.name));
+  const unbound = Object.keys(resources?.r2 ?? {}).filter((binding) => !bound.has(binding));
+  if (unbound.length > 0) {
+    throw new R2DeclarationError(
+      `the catalog manifest declares resources.r2.${unbound.join(", resources.r2.")}, ` +
+        "but the wrangler config has no R2 binding by that name; remove it from appflare.jsonc or fix the binding name",
+    );
+  }
+}
+
 /**
  * Throws {@link HyperdriveDeclarationError} when the catalog manifest declares
  * `resources.hyperdrive` for a binding none of `bindings` has.
@@ -662,8 +686,16 @@ export function collectBindings(
   for (const d1 of config.d1_databases ?? []) {
     push("d1", d1.binding);
   }
+  // A bucket's lifecycle rules come from the catalog manifest's
+  // `resources.r2[<binding>]`, since wrangler's config has no place for them;
+  // the manager sets them when it creates the bucket.
+  const buckets = resources?.r2 ?? {};
   for (const r2 of config.r2_buckets ?? []) {
-    push("r2_bucket", r2.binding);
+    const settings = Object.hasOwn(buckets, r2.binding) ? buckets[r2.binding] : undefined;
+    push("r2_bucket", r2.binding, { lifecycle: settings?.lifecycle });
+  }
+  if (checkUnboundVectorize) {
+    checkR2Declarations(bindings, resources);
   }
   for (const producer of config.queues?.producers ?? []) {
     push("queue", producer.binding, { delivery_delay: producer.delivery_delay });
@@ -679,7 +711,11 @@ export function collectBindings(
           `add resources.vectorize.${v.binding} with { "dimensions": <1-1536>, "metric": "cosine" | "euclidean" | "dot-product" } to appflare.jsonc`,
       );
     }
-    push("vectorize", v.binding, { dimensions: index.dimensions, metric: index.metric });
+    push("vectorize", v.binding, {
+      dimensions: index.dimensions,
+      metric: index.metric,
+      metadataIndexes: index.metadataIndexes,
+    });
   }
   if (checkUnboundVectorize) {
     checkVectorizeDeclarations(bindings, resources);

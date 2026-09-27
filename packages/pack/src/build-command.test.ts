@@ -281,6 +281,85 @@ writeFileSync("env.json", JSON.stringify({
   });
 });
 
+describe("a build that writes nothing", () => {
+  it("is refused with its output, as a command that printed its usage would be", async () => {
+    script("help.mjs", `console.log("Usage: tool run <script> [--cwd dir]");`);
+    // Writing the script changed the checkout; let the file clock move past it.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const failure = runBuildCommands({
+      checkoutDir: dir,
+      commands: ["node help.mjs --cwd web run build"],
+      env: scrubEnv(process.env),
+    });
+    await expect(failure).rejects.toThrow(
+      /^install\.buildCommand "node help\.mjs --cwd web run build" ran without an error but created, changed or removed no file in the checkout, so it built nothing\..*last lines of its output:\nUsage: tool run <script> \[--cwd dir\]$/s,
+    );
+  });
+
+  it("passes when any command of the list writes, so a check beside the build is fine", async () => {
+    script("check.mjs", "process.exit(0);");
+    script("write.mjs", `import { writeFileSync } from "node:fs"; writeFileSync("out.txt", "x");`);
+    await runBuildCommands({
+      checkoutDir: dir,
+      commands: ["node check.mjs", "node write.mjs"],
+      env: scrubEnv(process.env),
+    });
+    expect(existsSync(path.join(dir, "out.txt"))).toBe(true);
+  });
+
+  it("counts a file changed in place, a file removed, and code generated into node_modules", async () => {
+    script("old.txt", "old");
+    mkdirSync(path.join(dir, "node_modules", ".prisma"), { recursive: true });
+    const run = (source: string) => {
+      script("step.mjs", source);
+      return runBuildCommands({
+        checkoutDir: dir,
+        commands: ["node step.mjs"],
+        env: scrubEnv(process.env),
+      });
+    };
+    // Writing step.mjs changed the checkout before the build; let the clock move on.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+    await settle();
+    await run(`import { writeFileSync } from "node:fs"; writeFileSync("old.txt", "new");`);
+    await settle();
+    await run(`import { rmSync } from "node:fs"; rmSync("old.txt");`);
+    await settle();
+    await run(
+      `import { writeFileSync } from "node:fs"; writeFileSync("node_modules/.prisma/index.js", "");`,
+    );
+  });
+
+  it("ignores changes under .git", async () => {
+    mkdirSync(path.join(dir, ".git"));
+    script("git.mjs", `import { writeFileSync } from "node:fs"; writeFileSync(".git/x", "");`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await expect(
+      runBuildCommands({
+        checkoutDir: dir,
+        commands: ["node git.mjs"],
+        env: scrubEnv(process.env),
+      }),
+    ).rejects.toThrow(/built nothing/);
+  });
+});
+
+describe("build-time constants", () => {
+  it("reach every command's environment", async () => {
+    script(
+      "env.mjs",
+      `import { writeFileSync } from "node:fs"; writeFileSync("env.txt", String(process.env.VITE_ORIGIN));`,
+    );
+    await runBuildCommands({
+      checkoutDir: dir,
+      commands: ["node env.mjs"],
+      env: scrubEnv(process.env),
+      buildEnv: { VITE_ORIGIN: "https://example.com" },
+    });
+    expect(readFileSync(path.join(dir, "env.txt"), "utf8")).toBe("https://example.com");
+  });
+});
+
 describe("outputTail", () => {
   it("keeps the last lines and drops trailing blank ones", () => {
     expect(outputTail("a\r\nb\nc\n\n\n", 2)).toBe("b\nc");

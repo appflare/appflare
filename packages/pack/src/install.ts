@@ -24,9 +24,15 @@ import {
  * against.
  *
  * The checkout picks the package manager's version where the flags differ:
- * yarn 2 and later (Berry) runs through corepack with its own flags, and npm
- * runs as the major the checkout asks for, or as npm 11 when Node 22's npm 10
- * refuses a lockfile npm 11 wrote ({@link packageManagerFlavor}).
+ * yarn 2 and later (Berry) runs through corepack with its own flags; npm
+ * runs as the major the checkout asks for, as npm 11 when it asks for a
+ * Node.js that ships npm 11 (`.nvmrc`, `engines.node`), or as npm 11 when
+ * Node 22's npm 10 refuses a lockfile npm 11 wrote; and pnpm runs as pnpm 9
+ * for a `lockfileVersion` 6 lockfile, which pnpm 10 refuses
+ * ({@link packageManagerFlavor}). Each later version is pinned exactly.
+ *
+ * A directory with `devDependencies: false` installs its production
+ * dependencies alone.
  */
 
 /** A listed directory cannot be installed, or its install failed. */
@@ -67,6 +73,20 @@ export function npmSpec(major: number): string {
   return major === FALLBACK_NPM_MAJOR ? NPM_11_SPEC : `npm@${major}`;
 }
 
+/**
+ * The first Node.js major that ships npm 11. A checkout that asks for it or
+ * a later one (`.nvmrc`, `engines.node`) installs with {@link NPM_11_SPEC},
+ * the npm its lockfile was most likely written with.
+ */
+export const FIRST_NODE_WITH_NPM_11 = 24;
+
+/**
+ * The pnpm a `lockfileVersion` 6 lockfile (pnpm 8's) installs with: pnpm 10
+ * refuses it (ERR_PNPM_LOCKFILE_BREAKING_CHANGE), and pnpm 9 is the last
+ * major that reads it, frozen, without rewriting it.
+ */
+export const PNPM_9_SPEC = "pnpm@9.15.9";
+
 /** What the checkout says about its package manager beyond the name. */
 export interface PackageManagerFlavor {
   /**
@@ -80,6 +100,19 @@ export interface PackageManagerFlavor {
    * lowest major `engines.npm` allows).
    */
   npmMajor?: number;
+  /**
+   * The Node.js major the checkout asks for (`.nvmrc`, else the lowest
+   * major `engines.node` allows) when that is what picked `npmMajor`.
+   */
+  nodeMajor?: number;
+  /** pnpm 9 ({@link PNPM_9_SPEC}), for a `lockfileVersion` 6 lockfile. */
+  pnpm9?: boolean;
+}
+
+/** Options of one install beyond its package manager and lockfile. */
+export interface InstallInvocationOptions {
+  /** Install production dependencies alone (`devDependencies: false`). */
+  production?: boolean;
 }
 
 /**
@@ -108,30 +141,44 @@ export interface PackageManagerFlavor {
  * Berry freezes by default in CI. Corepack, which ships with Node 22, runs
  * the yarn the checkout pins, where the machine's own `yarn` may be classic
  * yarn, which refuses such a checkout. An `npmMajor` runs npm through
- * `npx --yes <spec>` ({@link npmSpec}).
+ * `npx --yes <spec>` ({@link npmSpec}), and `pnpm9` runs
+ * `npx --yes pnpm@9.x.y`.
+ *
+ * `production` leaves devDependencies out, with each manager's own flag,
+ * which keeps the install frozen: pnpm `--prod`, npm `--omit=dev`, classic
+ * yarn and bun `--production`. yarn 2 and later have no such flag on
+ * `install` (their `workspaces focus --production` resolves anew), so the
+ * packer refuses the combination before it gets here.
  */
 export function installInvocation(
   packageManager: PackageManager,
   lockfile: InstallLockfile,
   flavor: PackageManagerFlavor = {},
+  options: InstallInvocationOptions = {},
 ): InstallInvocation {
   const frozen = lockfile === "required";
+  const production = options.production === true;
   switch (packageManager) {
-    case "pnpm":
-      return {
-        command: "pnpm",
-        args: [
-          "install",
-          frozen ? "--frozen-lockfile" : "--no-frozen-lockfile",
-          "--ignore-scripts",
-          "--config.package-manager-strict=false",
-        ],
-        env: { COREPACK_ENABLE_STRICT: "0" },
-      };
+    case "pnpm": {
+      const args = [
+        "install",
+        frozen ? "--frozen-lockfile" : "--no-frozen-lockfile",
+        ...(production ? ["--prod"] : []),
+        "--ignore-scripts",
+        "--config.package-manager-strict=false",
+      ];
+      const env = { COREPACK_ENABLE_STRICT: "0" };
+      return flavor.pnpm9 === true
+        ? { command: "npx", args: ["--yes", PNPM_9_SPEC, ...args], env }
+        : { command: "pnpm", args, env };
+    }
     case "npm": {
-      const args = frozen
-        ? ["ci", "--ignore-scripts"]
-        : ["install", "--ignore-scripts", "--no-audit", "--no-fund"];
+      const args = [
+        ...(frozen
+          ? ["ci", "--ignore-scripts"]
+          : ["install", "--ignore-scripts", "--no-audit", "--no-fund"]),
+        ...(production ? ["--omit=dev"] : []),
+      ];
       return flavor.npmMajor === undefined
         ? { command: "npm", args, env: {} }
         : { command: "npx", args: ["--yes", npmSpec(flavor.npmMajor), ...args], env: {} };
@@ -151,17 +198,23 @@ export function installInvocation(
       // Classic yarn's flags; yarn 2 and later refuse them.
       return {
         command: "yarn",
-        args: frozen
-          ? ["install", "--frozen-lockfile", "--ignore-scripts"]
-          : ["install", "--ignore-scripts"],
+        args: [
+          ...(frozen
+            ? ["install", "--frozen-lockfile", "--ignore-scripts"]
+            : ["install", "--ignore-scripts"]),
+          ...(production ? ["--production"] : []),
+        ],
         env: { YARN_ENABLE_SCRIPTS: "false" },
       };
     case "bun":
       return {
         command: "bun",
-        args: frozen
-          ? ["install", "--frozen-lockfile", "--ignore-scripts"]
-          : ["install", "--ignore-scripts"],
+        args: [
+          ...(frozen
+            ? ["install", "--frozen-lockfile", "--ignore-scripts"]
+            : ["install", "--ignore-scripts"]),
+          ...(production ? ["--production"] : []),
+        ],
         env: {},
       };
   }
@@ -224,7 +277,11 @@ export function lowestRangeMajor(range: unknown): number | null {
  * nearest `package.json` at or above it (up to the checkout root) that
  * says. yarn: `packageManager: "yarn@<major>..."`, 2 or later making it
  * Berry. npm: `packageManager: "npm@<major>..."`, else the lowest major
- * `engines.npm` allows, when it is later than {@link BUNDLED_NPM_MAJOR}.
+ * `engines.npm` allows, when it is later than {@link BUNDLED_NPM_MAJOR};
+ * when no `package.json` names an npm, the Node.js the checkout asks for
+ * ({@link nodeMajorOf}): {@link FIRST_NODE_WITH_NPM_11} or later ships npm
+ * 11, so the install runs with {@link NPM_11_SPEC}. pnpm: pnpm 9 when the
+ * lockfile the install reads is `lockfileVersion` 6.
  *
  * Throws {@link InstallError} for a yarn checkout with a `.yarnrc.yml` (a
  * yarn 2 or later project) but no `packageManager` pin: corepack would run
@@ -261,27 +318,78 @@ export function packageManagerFlavor(
         packageManagerMajor(pkg?.packageManager, "npm") ?? lowestRangeMajor(engines.npm);
       if (major !== null) return major > BUNDLED_NPM_MAJOR ? { npmMajor: major } : {};
     }
+    const nodeMajor = nodeMajorOf(dirs);
+    if (nodeMajor !== null && nodeMajor >= FIRST_NODE_WITH_NPM_11) {
+      return { npmMajor: FALLBACK_NPM_MAJOR, nodeMajor };
+    }
+  }
+  if (packageManager === "pnpm") {
+    const lockfile = findLockfile(checkoutDir, abs, "pnpm");
+    if (lockfile !== null && pnpmLockfileMajor(lockfile) === 6) return { pnpm9: true };
   }
   return {};
 }
 
 /**
- * Whether a failed `npm ci` is Node 22's npm refusing a lockfile a later npm
- * wrote: the lockfile is a `package-lock.json` of `lockfileVersion` 3, and
- * npm says it is out of sync with `package.json`.
+ * The Node.js major the directories ask for, nearest first: a `.nvmrc`
+ * naming a version (`24`, `v24.1.0`; an alias such as `lts/*` names none),
+ * else the lowest major `engines.node` allows. Null when none says.
  */
-export function isNewerNpmLockfileFailure(lockfilePath: string | null, output: string): boolean {
-  if (lockfilePath === null || path.basename(lockfilePath) !== "package-lock.json") return false;
+export function nodeMajorOf(dirs: readonly string[]): number | null {
+  for (const dir of dirs) {
+    const nvmrc = path.join(dir, ".nvmrc");
+    if (existsSync(nvmrc) && statSync(nvmrc).isFile()) {
+      const match = /^v?(\d+)(?:\.|\s|$)/.exec(readFileSync(nvmrc, "utf8").trim());
+      if (match?.[1] !== undefined) return Number(match[1]);
+    }
+    const pkg = readPackageJson(dir);
+    const major = lowestRangeMajor(isRecord(pkg?.engines) ? pkg.engines.node : undefined);
+    if (major !== null) return major;
+  }
+  return null;
+}
+
+/**
+ * The major of a `pnpm-lock.yaml`'s `lockfileVersion` (`'6.0'` gives 6,
+ * `'9.0'` gives 9), read from its first lines, or null when it has none.
+ */
+export function pnpmLockfileMajor(lockfilePath: string): number | null {
+  if (path.basename(lockfilePath) !== "pnpm-lock.yaml") return null;
+  const head = readFileSync(lockfilePath, "utf8").slice(0, 512);
+  const match = /^lockfileVersion:\s*['"]?(\d+)/m.exec(head);
+  return match?.[1] === undefined ? null : Number(match[1]);
+}
+
+/**
+ * How a failed `npm ci` shows Node 22's npm refusing a lockfile a later npm
+ * wrote, or null when it does not: the lockfile is a `package-lock.json` of
+ * `lockfileVersion` 3, and npm says it is out of sync with `package.json`
+ * (`out-of-sync`), or cannot resolve its peer dependencies (`eresolve`),
+ * which npm 10 reports for trees npm 11 resolves and installs (a devDependency
+ * range that no longer meets a peer range of the version the lockfile holds).
+ */
+export function newerNpmLockfileFailure(
+  lockfilePath: string | null,
+  output: string,
+): "out-of-sync" | "eresolve" | null {
+  if (lockfilePath === null || path.basename(lockfilePath) !== "package-lock.json") return null;
   const outOfSync =
     /Missing: \S+ from lock file/.test(output) ||
     /can only install packages when your package\.json and package-lock\.json/.test(output);
-  if (!outOfSync) return false;
+  const eresolve = /\bERESOLVE\b/.test(output);
+  if (!outOfSync && !eresolve) return null;
   try {
     const lock: unknown = JSON.parse(readFileSync(lockfilePath, "utf8"));
-    return isRecord(lock) && lock.lockfileVersion === 3;
+    if (!isRecord(lock) || lock.lockfileVersion !== 3) return null;
   } catch {
-    return false;
+    return null;
   }
+  return outOfSync ? "out-of-sync" : "eresolve";
+}
+
+/** Whether {@link newerNpmLockfileFailure} recognises the failure. */
+export function isNewerNpmLockfileFailure(lockfilePath: string | null, output: string): boolean {
+  return newerNpmLockfileFailure(lockfilePath, output) !== null;
 }
 
 /** What one package manager run ended with. */
@@ -387,6 +495,8 @@ interface PlannedInstall {
   packageManager: PackageManager;
   lockfile: InstallLockfile;
   flavor: PackageManagerFlavor;
+  /** Without devDependencies (`devDependencies: false`). */
+  production: boolean;
 }
 
 function planInstall(
@@ -417,14 +527,21 @@ function planInstall(
     );
   }
   const flavor = packageManagerFlavor(checkoutDir, abs, packageManager);
-  return { path: entry.path, abs, packageManager, lockfile, flavor };
+  const production = entry.devDependencies === false;
+  if (production && flavor.yarnBerry === true) {
+    throw new InstallError(
+      `install.installDirs sets devDependencies false for ${entry.path}, but it is a yarn 2 or later project, ` +
+        "whose install has no flag to leave devDependencies out while keeping to the lockfile; install them, or ask upstream to make them installable",
+    );
+  }
+  return { path: entry.path, abs, packageManager, lockfile, flavor, production };
 }
 
 /** The runner of each version-picking command, for the message when it is missing. */
 const RUNNER_HINT: Readonly<Record<string, string>> = {
   corepack:
     "yarn 2 and later install through corepack, which ships with Node.js 22 and 24 (install it with `npm install -g corepack` on a later Node.js)",
-  npx: "a checkout that asks for a later npm installs through npx, which ships with npm",
+  npx: "a checkout that asks for a later npm, or has a pnpm 8 lockfile, installs through npx, which ships with npm",
 };
 
 /** A lockfile's path in the checkout and its sha256. */
@@ -485,12 +602,13 @@ export function installDependencies(options: InstallOptions): void {
     planInstall(checkoutDir, entry, options.packageManager),
   );
   for (const dir of planned) {
+    const extra = { production: dir.production };
     const describe = (flavor: PackageManagerFlavor) => {
-      const invocation = installInvocation(dir.packageManager, dir.lockfile, flavor);
+      const invocation = installInvocation(dir.packageManager, dir.lockfile, flavor, extra);
       return [invocation.command, ...invocation.args].join(" ");
     };
     const attempt = (flavor: PackageManagerFlavor) => {
-      const invocation = installInvocation(dir.packageManager, dir.lockfile, flavor);
+      const invocation = installInvocation(dir.packageManager, dir.lockfile, flavor, extra);
       const shown = describe(flavor);
       const res = run(invocation, dir.abs, options.env);
       if (res.error !== undefined) {
@@ -505,29 +623,39 @@ export function installDependencies(options: InstallOptions): void {
     const pinned =
       dir.flavor.yarnBerry === true
         ? " 2 or later"
-        : dir.flavor.npmMajor !== undefined
-          ? ` ${dir.flavor.npmMajor}`
-          : "";
+        : dir.flavor.pnpm9 === true
+          ? " 9 (the lockfile is lockfileVersion 6, which pnpm 10 refuses)"
+          : dir.flavor.nodeMajor !== undefined && dir.flavor.npmMajor !== undefined
+            ? ` ${dir.flavor.npmMajor} (the checkout asks for Node.js ${dir.flavor.nodeMajor}, which ships npm ${dir.flavor.npmMajor})`
+            : dir.flavor.npmMajor !== undefined
+              ? ` ${dir.flavor.npmMajor}`
+              : "";
     logger(
       `installing dependencies in ${dir.path} with ${dir.packageManager}${pinned}` +
         (dir.lockfile === "none" ? ", resolving them (upstream ships no lockfile)" : "") +
+        (dir.production ? ", without devDependencies" : "") +
         `: ${describe(dir.flavor)}`,
     );
     const before =
       dir.lockfile === "none" ? lockfileState(checkoutDir, dir.abs, dir.packageManager) : null;
     let { shown, res } = attempt(dir.flavor);
     const lockfilePath = findLockfile(checkoutDir, dir.abs, dir.packageManager);
-    if (
+    const refusal =
       res.status !== 0 &&
       dir.packageManager === "npm" &&
       dir.lockfile === "required" &&
-      dir.flavor.npmMajor === undefined &&
-      isNewerNpmLockfileFailure(lockfilePath, `${res.stdout}\n${res.stderr}`)
-    ) {
+      dir.flavor.npmMajor === undefined
+        ? newerNpmLockfileFailure(lockfilePath, `${res.stdout}\n${res.stderr}`)
+        : null;
+    if (refusal !== null) {
       const retry = { npmMajor: FALLBACK_NPM_MAJOR };
+      const lock = lockfilePath === null ? "the lockfile" : checkoutPath(checkoutDir, lockfilePath);
+      const how =
+        refusal === "out-of-sync"
+          ? `refused ${lock} (lockfileVersion 3) as out of sync`
+          : `could not resolve the peer dependencies of ${lock} (lockfileVersion 3, ERESOLVE)`;
       logger(
-        `${shown} refused ${lockfilePath === null ? "the lockfile" : checkoutPath(checkoutDir, lockfilePath)} ` +
-          `(lockfileVersion 3) as out of sync, as the npm Node.js 22 ships does with a lockfile npm ${FALLBACK_NPM_MAJOR} wrote; ` +
+        `${shown} ${how}, as the npm Node.js 22 ships does with a lockfile npm ${FALLBACK_NPM_MAJOR} wrote; ` +
           `installing with npm ${FALLBACK_NPM_MAJOR}: ${describe(retry)}`,
       );
       ({ shown, res } = attempt(retry));

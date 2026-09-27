@@ -1,12 +1,14 @@
 import { z } from "zod";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
+import { buildEnvSchema } from "./build-env.ts";
 import { configPatchSchema } from "./config-patch.ts";
 import { catalogD1Schema } from "./d1.ts";
 import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
 import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
 import { licenseNoteSchema, licenseSchema } from "./license.ts";
 import { catalogPipelinesSchema, pipelineManifestProblems } from "./pipelines.ts";
+import { catalogR2Schema } from "./r2-lifecycle.ts";
 import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
 import { isSeedOnly, seedManifestProblems } from "./seed.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
@@ -1084,6 +1086,66 @@ export const vectorizeIndexConfigSchema = z.object({
 });
 export type VectorizeIndexConfig = z.infer<typeof vectorizeIndexConfigSchema>;
 
+/** Vectorize allows at most 10 metadata indexes per index. */
+export const MAX_VECTORIZE_METADATA_INDEXES = 10;
+
+/** The type of a metadata property a Vectorize metadata index filters on. */
+export const vectorizeMetadataTypeSchema = z.enum(["string", "number", "boolean"]);
+export type VectorizeMetadataType = z.infer<typeof vectorizeMetadataTypeSchema>;
+
+/**
+ * A metadata index: queries can filter on this metadata property. Only
+ * vectors written after it exists are indexed, so the manager creates it
+ * right after the index, before the app writes anything. Names follow
+ * Vectorize's rules for filter keys: not empty, at most 512 characters, no
+ * `"`, not starting with `$` (a `.` names a nested property).
+ */
+export const vectorizeMetadataIndexSchema = z.object({
+  propertyName: z
+    .string()
+    .min(1)
+    .max(512)
+    .regex(/^[^$"][^"]*$/, 'a metadata property name cannot contain " or start with $')
+    .describe("The metadata property queries filter on, for example `url` or `user_id`."),
+  type: vectorizeMetadataTypeSchema.describe("The property's type: string, number or boolean."),
+});
+export type VectorizeMetadataIndex = z.infer<typeof vectorizeMetadataIndexSchema>;
+
+/** `metadataIndexes`, each property once. */
+export const vectorizeMetadataIndexesSchema = z
+  .array(vectorizeMetadataIndexSchema)
+  .min(1)
+  .max(MAX_VECTORIZE_METADATA_INDEXES)
+  .superRefine((indexes, ctx) => {
+    const seen = new Set<string>();
+    indexes.forEach((index, i) => {
+      if (seen.has(index.propertyName)) {
+        ctx.addIssue({
+          code: "custom",
+          path: [i, "propertyName"],
+          message: `the metadata property "${index.propertyName}" is indexed twice`,
+        });
+      }
+      seen.add(index.propertyName);
+    });
+  });
+
+/**
+ * `resources.vectorize[binding]`: the index's fixed shape, and the metadata
+ * indexes the manager creates on it right after the index. Optional so
+ * manifests written before metadata indexes keep the same parsed shape.
+ */
+export const catalogVectorizeIndexSchema = vectorizeIndexConfigSchema.extend({
+  metadataIndexes: vectorizeMetadataIndexesSchema
+    .describe(
+      "Metadata properties the app's queries filter on, each with its type. Appflare creates " +
+        "these metadata indexes when it creates the index, before the app writes a vector (a " +
+        `vector written earlier is not indexed). At most ${MAX_VECTORIZE_METADATA_INDEXES}.`,
+    )
+    .optional(),
+});
+export type CatalogVectorizeIndex = z.infer<typeof catalogVectorizeIndexSchema>;
+
 /**
  * Settings for resources the app's wrangler config binds but cannot fully
  * describe. `vectorize` is keyed by binding name and must cover every
@@ -1098,7 +1160,15 @@ export type VectorizeIndexConfig = z.infer<typeof vectorizeIndexConfigSchema>;
  * before them keep the same parsed shape.
  */
 export const catalogResourcesSchema = z.object({
-  vectorize: z.record(z.string().min(1), vectorizeIndexConfigSchema).optional(),
+  vectorize: z.record(z.string().min(1), catalogVectorizeIndexSchema).optional(),
+  r2: catalogR2Schema
+    .describe(
+      "Settings of the R2 bucket Appflare creates for an R2 binding, keyed by the binding's name: " +
+        "lifecycle rules that delete objects, move them to Infrequent Access storage, or abort " +
+        "unfinished multipart uploads after some days. Every key must be an R2 binding of the " +
+        "wrangler config. Not allowed on self-deploying entries.",
+    )
+    .optional(),
   hyperdrive: z
     .array(catalogHyperdriveSchema)
     .min(1)
@@ -1517,6 +1587,30 @@ export const catalogInstallSchema = z
       )
       .optional(),
     /**
+     * Build-time constants the packer sets in the environment of every build
+     * command and of wrangler's bundling; see {@link buildEnvSchema}.
+     * Optional for the same reason as `fixedWorkerName`. Refused on
+     * `self-deploying` entries, whose installer runs without the packer.
+     */
+    buildEnv: buildEnvSchema
+      .describe(
+        "Public constants the build compiles into the app, by name, for example " +
+          '`{ "VITE_API_ORIGIN": "https://api.example.com" }`: the packer sets them in the ' +
+          "environment of every build command and of wrangler's bundling. Everyone can read them " +
+          "(the catalog publishes them and the build writes them into downloadable files), so a " +
+          "name that looks like a credential (containing SECRET, PASSWORD, PASSWD, PASSPHRASE, " +
+          "TOKEN, PRIVATE or CREDENTIAL) is refused, and so is a name the build's tools " +
+          "read: wrangler and what it runs (WRANGLER_, CLOUDFLARE_, CF_, ESBUILD_, MINIFLARE_, " +
+          "WORKERD_), Node.js and package managers (NODE_, NPM_, PNPM_, YARN_, BUN_, COREPACK_, " +
+          "DENO_), git and CI (GIT_, GITHUB_, RUNNER_, ACTIONS_, CI), shells (BASH*, ENV, IFS, " +
+          "PS4, PROMPT_COMMAND and the like), the dynamic linker (LD_, DYLD_, GCONV*), TLS and " +
+          "HTTP clients (SSL_, OPENSSL_, CURL_, *_PROXY), configuration directories (XDG_, HOME, " +
+          "TMPDIR), other toolchains (PYTHON*, PERL5*, RUBY*, JAVA_, CARGO_, RUST*, GOPATH, GOFLAGS and the other Go settings), and " +
+          "build tools (TURBO_, NX_, PRISMA_). Catalog review reads every constant as well. " +
+          "Upper-case names, at most 32 constants. Not for the self-deploying tier.",
+      )
+      .optional(),
+    /**
      * The directories whose dependencies the packer installs, in order; see
      * {@link catalogInstallDirsSchema}. Omitted means the root alone; read it
      * with `installDirList`. Optional for the same reason as
@@ -1691,6 +1785,14 @@ export const catalogInstallSchema = z
           "install.installDirs is not allowed for the self-deploying tier: its installer runs at the root of the checkout, without the packer that installs these directories",
       });
     }
+    if (install.buildEnv !== undefined && install.tier === "self-deploying") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["buildEnv"],
+        message:
+          "install.buildEnv is not allowed for the self-deploying tier: its installer builds the app without the packer that sets these constants",
+      });
+    }
     if (install.configPatch !== undefined && install.tier === "self-deploying") {
       ctx.addIssue({
         code: "custom",
@@ -1814,6 +1916,13 @@ export const catalogInstallSchema = z
             not: { required: ["wildcardReason"] },
             properties: { wildcardHostname: { const: false } },
           },
+        ],
+      },
+      // No build-time constants on a self-deploying entry.
+      {
+        anyOf: [
+          { not: { required: ["buildEnv"] } },
+          { properties: { tier: { not: { const: "self-deploying" } } } },
         ],
       },
     ],
@@ -2149,6 +2258,25 @@ export const catalogManifestSchema = z
           "resources.d1 is not allowed for the self-deploying tier: the app's own installer sets up its databases",
       });
     }
+    if (manifest.resources?.r2 !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["resources", "r2"],
+        message:
+          "resources.r2 is not allowed for the self-deploying tier: the app's own installer creates its buckets",
+      });
+    }
+    const metadataIndexed = Object.values(manifest.resources?.vectorize ?? {}).some(
+      (index) => index.metadataIndexes !== undefined,
+    );
+    if (metadataIndexed) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["resources", "vectorize"],
+        message:
+          "Vectorize metadataIndexes are not allowed for the self-deploying tier: the app's own installer creates its indexes",
+      });
+    }
     manifest.secrets.forEach((secret, i) => {
       if (isOptionalSecret(secret)) {
         ctx.addIssue({
@@ -2231,6 +2359,14 @@ export const catalogManifestSchema = z
             properties: { install: { properties: { tier: { not: { const: "self-deploying" } } } } },
           },
           { properties: { resources: { not: { required: ["d1"] } } } },
+        ],
+      },
+      {
+        anyOf: [
+          {
+            properties: { install: { properties: { tier: { not: { const: "self-deploying" } } } } },
+          },
+          { properties: { resources: { not: { required: ["r2"] } } } },
         ],
       },
       {

@@ -75,6 +75,30 @@ export function createR2(http: HttpApi) {
       return { items: result?.buckets ?? [], cursor: envelope.result_info?.cursor || null };
     },
 
+    /**
+     * `GET /r2/buckets/{name}/lifecycle`: the bucket's lifecycle rules, as
+     * the API returns them (a new bucket has Cloudflare's default rule that
+     * aborts multipart uploads after seven days).
+     */
+    async getLifecycleRules(bucket: string): Promise<unknown[]> {
+      const result = await http.result<{ rules?: unknown[] } | null>(
+        "GET",
+        http.acct(`/r2/buckets/${enc(bucket)}/lifecycle`),
+      );
+      return Array.isArray(result?.rules) ? result.rules : [];
+    },
+
+    /**
+     * `PUT /r2/buckets/{name}/lifecycle` with `{ rules }`, which replaces
+     * every rule of the bucket; `wrangler r2 bucket lifecycle add` (wrangler
+     * 4.136.2) reads the rules first and puts them back with its own added.
+     */
+    putLifecycleRules(bucket: string, rules: readonly unknown[]): Promise<unknown> {
+      return http.result("PUT", http.acct(`/r2/buckets/${enc(bucket)}/lifecycle`), {
+        json: { rules },
+      });
+    },
+
     /** `DELETE /r2/buckets/{name}`. Cloudflare refuses a bucket that still holds objects. */
     deleteBucket(name: string): Promise<unknown> {
       return http.result("DELETE", http.acct(`/r2/buckets/${enc(name)}`));

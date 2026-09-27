@@ -82,6 +82,9 @@ ENV JAVASCRIPT_POOL_MIN_SIZE=0 \
 # Node 22's npm 10 refuses a lockfile npm 11 wrote. yarn 2 and later run
 # through `corepack yarn`, which fetches the version the checkout pins.
 RUN npx --yes npm@11.20.0 --version
+# pnpm 9 the same way (PNPM_9_SPEC in the same file): the packer installs a
+# lockfileVersion 6 lockfile (pnpm 8's) with it, since pnpm 10 refuses one.
+RUN npx --yes pnpm@9.15.9 --version
 
 # Fail the image build, not a user's build, when a tool is missing.
 RUN node --version | grep -q '^v22\.' \

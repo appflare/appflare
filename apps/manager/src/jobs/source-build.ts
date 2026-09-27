@@ -24,6 +24,7 @@ import { addedJustNow, justAddedMessage, readGithubToken } from "../github/token
 import {
   assetsOnlyBuildFailure,
   assetsOnlyRefusal,
+  buildEnvRefusal,
   buildsFromRepository,
   configPatchRefusal,
   d1BaselineRefusal,
@@ -194,6 +195,8 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
       if (seedRefused !== null) throw new JobError(seedRefused);
       const baselineRefused = d1BaselineRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
       if (baselineRefused !== null) throw new JobError(baselineRefused);
+      const buildEnvRefused = buildEnvRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
+      if (buildEnvRefused !== null) throw new JobError(buildEnvRefused);
       if (params.githubToken !== undefined && !usesGithubTokens(info)) {
         throw new JobError(
           `the sandbox Worker ${info.sandboxVersion} cannot clone with a GitHub access token; to update it, ${UPDATE_SANDBOX_HINT}`,

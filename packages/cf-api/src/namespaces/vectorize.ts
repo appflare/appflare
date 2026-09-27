@@ -29,6 +29,33 @@ export function createVectorize(http: HttpApi) {
       return http.result("GET", http.acct("/vectorize/v2/indexes"));
     },
 
+    /**
+     * `POST /vectorize/v2/indexes/{name}/metadata_index/create` with
+     * `{ propertyName, indexType }`, as `wrangler vectorize
+     * create-metadata-index` (wrangler 4.136.2) sends it. Cloudflare queues
+     * the change and answers with its mutation id.
+     */
+    createMetadataIndex(
+      indexName: string,
+      args: { propertyName: string; indexType: "string" | "number" | "boolean" },
+    ): Promise<{ mutationId?: string }> {
+      return http.result(
+        "POST",
+        http.acct(`/vectorize/v2/indexes/${enc(indexName)}/metadata_index/create`),
+        { json: { propertyName: args.propertyName, indexType: args.indexType } },
+      );
+    },
+
+    /** `GET /vectorize/v2/indexes/{name}/metadata_index/list`: the index's metadata indexes. */
+    async listMetadataIndexes(
+      indexName: string,
+    ): Promise<Array<{ propertyName: string; indexType: string }>> {
+      const result = await http.result<{
+        metadataIndexes?: Array<{ propertyName: string; indexType: string }>;
+      } | null>("GET", http.acct(`/vectorize/v2/indexes/${enc(indexName)}/metadata_index/list`));
+      return result?.metadataIndexes ?? [];
+    },
+
     /** `DELETE /vectorize/v2/indexes/{name}`. */
     deleteIndex(name: string): Promise<unknown> {
       return http.result("DELETE", http.acct(`/vectorize/v2/indexes/${enc(name)}`));

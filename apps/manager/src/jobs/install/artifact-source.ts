@@ -40,6 +40,7 @@ import { readSettings, SETTING } from "../../db/settings";
 import {
   assetsOnlyBuildFailure,
   assetsOnlyRefusal,
+  buildEnvRefusal,
   configPatchRefusal,
   d1BaselineRefusal,
   d1SeedRefusal,
@@ -497,7 +498,8 @@ async function buildInSandboxPhase(
       configPatchRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
       wranglerConfigInlineRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
       d1SeedRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
-      d1BaselineRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT);
+      d1BaselineRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
+      buildEnvRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT);
     if (refused !== null) throw new JobError(refused);
   }
   const parsedRequest = buildRequestSchema.safeParse({

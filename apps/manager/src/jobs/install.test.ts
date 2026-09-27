@@ -41,6 +41,13 @@ const SINK_TOKEN = "sink-token-DO-NOT-LEAK";
 const HEALTH_URL = "https://cut.appflare-dev.workers.dev/";
 const WORKER_ORIGIN = "https://cut.appflare-dev.workers.dev";
 const VERSION_HEX = "0123456789abcdef0123456789abcdef";
+/** The rule Cloudflare gives every new bucket. */
+const DEFAULT_MULTIPART_RULE = {
+  id: "Default Multipart Abort Rule",
+  enabled: true,
+  conditions: { prefix: "" },
+  abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 604_800 } },
+};
 
 interface FakeState {
   scripts: string[];
@@ -82,6 +89,10 @@ interface FakeState {
   r2Enabled: boolean;
   /** Vectorize indexes with the create body each was made from. */
   vectorize: Array<{ name: string; config: unknown }>;
+  /** Metadata indexes by Vectorize index, as created. */
+  metadataIndexes: Record<string, Array<{ propertyName: string; indexType: string }>>;
+  /** Lifecycle rules by R2 bucket, as last put (a bucket never put has Cloudflare's default). */
+  lifecycle: Record<string, unknown[]>;
   /** Hyperdrive configurations with the create body each was made from. */
   hyperdrive: Array<{ id: string; name: string; origin: unknown }>;
   /** When set, creating a Hyperdrive configuration is refused with this message. */
@@ -157,6 +168,8 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
     r2: [],
     r2Enabled: true,
     vectorize: [],
+    metadataIndexes: {},
+    lifecycle: {},
     hyperdrive: [],
     streams: [],
     sinks: [],
@@ -311,6 +324,24 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
         default:
           return ok({ jwt: sessionJwt, buckets: [] });
       }
+    }
+    const metadataIndex =
+      /^(GET|POST) \/vectorize\/v2\/indexes\/([^/]+)\/metadata_index\/(list|create)$/.exec(key);
+    if (metadataIndex?.[2] !== undefined) {
+      state.metadataIndexes[metadataIndex[2]] ??= [];
+      const list = state.metadataIndexes[metadataIndex[2]] ?? [];
+      if (metadataIndex[3] === "list") return ok({ metadataIndexes: list });
+      list.push((await request.json()) as { propertyName: string; indexType: string });
+      return ok({ mutationId: `m${list.length}` });
+    }
+    const lifecycle = /^(GET|PUT) \/r2\/buckets\/([^/]+)\/lifecycle$/.exec(key);
+    if (lifecycle?.[2] !== undefined) {
+      const bucket = lifecycle[2];
+      if (lifecycle[1] === "GET") {
+        return ok({ rules: state.lifecycle[bucket] ?? [DEFAULT_MULTIPART_RULE] });
+      }
+      state.lifecycle[bucket] = ((await request.json()) as { rules: unknown[] }).rules;
+      return ok({});
     }
     switch (key) {
       case "GET /r2/buckets": {
@@ -1109,6 +1140,62 @@ describe("install job", () => {
     expect(r.fake.state.schedules).toEqual(crons);
   });
 
+  it("creates the declared metadata indexes and sets R2 lifecycle rules right after each resource", async () => {
+    const lifecycle = [{ id: "tmp", prefix: "tmp/", deleteAfterDays: 1 }];
+    const metadataIndexes = [
+      { propertyName: "url", type: "string" as const },
+      { propertyName: "year", type: "number" as const },
+    ];
+    const r = await install({
+      bindings: [
+        { type: "r2_bucket", name: "FILES", lifecycle },
+        { type: "vectorize", name: "VECTORIZE", dimensions: 3, metric: "cosine", metadataIndexes },
+      ],
+      catalog: {
+        resources: {
+          r2: { FILES: { lifecycle } },
+          vectorize: { VECTORIZE: { dimensions: 3, metric: "cosine", metadataIndexes } },
+        },
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.fixture.manifest.format).toBe(6);
+    const names = r.step.names;
+    const at = (name: string) => names.indexOf(name);
+    expect(at("record R2 bucket cut-files")).toBeLessThan(
+      at("read lifecycle rules of R2 bucket cut-files"),
+    );
+    expect(at("read lifecycle rules of R2 bucket cut-files")).toBeLessThan(
+      at("set lifecycle rules of R2 bucket cut-files"),
+    );
+    expect(at("record Vectorize index cut-vectorize")).toBeLessThan(
+      at("create metadata index url on Vectorize index cut-vectorize"),
+    );
+    expect(names).toContain("create metadata index year on Vectorize index cut-vectorize");
+    // Cloudflare's default rule stays; the declared one follows it, in the API's shape.
+    expect(r.fake.state.lifecycle["cut-files"]).toEqual([
+      DEFAULT_MULTIPART_RULE,
+      {
+        id: "tmp",
+        enabled: true,
+        conditions: { prefix: "tmp/" },
+        deleteObjectsTransition: { condition: { type: "Age", maxAge: 86_400 } },
+      },
+    ]);
+    expect(r.fake.state.metadataIndexes["cut-vectorize"]).toEqual([
+      { propertyName: "url", indexType: "string" },
+      { propertyName: "year", indexType: "number" },
+    ]);
+    // The rules and indexes stay out of the script metadata.
+    expect(r.fake.state.metadata?.bindings).toEqual(
+      expect.arrayContaining([
+        { type: "r2_bucket", name: "FILES", bucket_name: "cut-files" },
+        { type: "vectorize", name: "VECTORIZE", index_name: "cut-vectorize" },
+      ]),
+    );
+  });
+
   describe("an app with a database elsewhere", () => {
     const DB_PASSWORD = "db-pass-NEVER-SHOWN";
     const CONNECTION = `postgres://app:${DB_PASSWORD}@db.example.com:6543/feedlog?sslmode=require`;
@@ -1659,6 +1746,41 @@ describe("install job", () => {
       cf_id: "kv-1",
     });
     expect(r.logs.some((l) => l.message.includes("an earlier attempt created"))).toBe(true);
+  });
+
+  it("retries a metadata index whose response was lost without creating it twice", async () => {
+    const metadataIndexes = [{ propertyName: "url", type: "string" as const }];
+    const r = await install(
+      {
+        bindings: [
+          {
+            type: "vectorize",
+            name: "VECTORIZE",
+            dimensions: 3,
+            metric: "cosine",
+            metadataIndexes,
+          },
+        ],
+        catalog: {
+          resources: {
+            vectorize: { VECTORIZE: { dimensions: 3, metric: "cosine", metadataIndexes } },
+          },
+        },
+      },
+      {
+        // Cloudflare takes the create, then the answer is lost: the step fails and retries.
+        failAfter: new Set(["POST /vectorize/v2/indexes/cut-vectorize/metadata_index/create"]),
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.retried["create metadata index url on Vectorize index cut-vectorize"]).toBe(2);
+    expect(r.fake.state.metadataIndexes["cut-vectorize"]).toEqual([
+      { propertyName: "url", indexType: "string" },
+    ]);
+    expect(
+      r.logs.some((l) => l.message.includes('metadata index on "url" an earlier attempt created')),
+    ).toBe(true);
   });
 
   it("does not re-apply a D1 migration an earlier attempt applied", async () => {

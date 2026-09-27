@@ -601,6 +601,13 @@ describe("install.sandbox", () => {
         },
         // The wildcard hostname rule (see the install.wildcardHostname tests).
         expect.anything(),
+        // No build-time constants on a self-deploying entry.
+        {
+          anyOf: [
+            { not: { required: ["buildEnv"] } },
+            { properties: { tier: { not: { const: "self-deploying" } } } },
+          ],
+        },
       ],
       properties: {
         sandbox: {

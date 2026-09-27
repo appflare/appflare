@@ -186,6 +186,21 @@
           ],
           "description": "The command the packer runs at the root of the checkout after installing dependencies (with install scripts disabled) and before bundling, for example `pnpm --filter @scope/web build`, or a list of such commands run in order, for example `[\"pnpm run build:sphere\", \"pnpm run build\"]`; the build stops at the first that fails. Use it when the wrangler config has no `build.command`. Each runs as a plain command without a shell, with no credentials in its environment and the checkout's `node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, and environment assignments are not allowed. pnpm and npm run no pre or post hooks of package scripts there (`pnpm run build` skips `prebuild`), so list such a step as a command of its own. At most 8 commands of at most 256 characters each."
         },
+        "buildEnv": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^(?!(?:CLOUDFLARE_|WRANGLER_|CF_|APPFLARE_|ESBUILD_|MINIFLARE_|WORKERD_|NODE_|NPM_|NPX_|PNPM_|YARN_|BUN_|COREPACK_|DENO_|GIT_|GITHUB_|RUNNER_|ACTIONS_|BASH|SHELLOPTS|LD_|DYLD_|GCONV|SSL_|OPENSSL_|CURL_|XDG_|PYTHON|PERL5|RUBY|JAVA_|_JAVA|CARGO_|RUST|TURBO_|NX_|PRISMA_))(?!(?:PATH|HOME|USER|LOGNAME|SHELL|PWD|OLDPWD|TMPDIR|TMP|TEMP|LANG|TERM|TZ|GOPATH|GOROOT|GOFLAGS|GOPROXY|GOENV|GOCACHE|GOMODCACHE|GOPRIVATE|GONOSUMDB|GONOSUMCHECK|GOINSECURE|GOTOOLCHAIN|GOWORK|HOSTNAME|CI|GH_TOKEN|ENV|PS4|IFS|CDPATH|GLOBIGNORE|PROMPT_COMMAND|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|FTP_PROXY)$)(?!.*(?:SECRET|PASSWORD|PASSWD|PASSPHRASE|TOKEN|PRIVATE|CREDENTIAL))[A-Z][A-Z0-9_]*$",
+            "maxLength": 128
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "minProperties": 1,
+          "maxProperties": 32,
+          "description": "Public constants the build compiles into the app, by name, for example `{ \"VITE_API_ORIGIN\": \"https://api.example.com\" }`: the packer sets them in the environment of every build command and of wrangler's bundling. Everyone can read them (the catalog publishes them and the build writes them into downloadable files), so a name that looks like a credential (containing SECRET, PASSWORD, PASSWD, PASSPHRASE, TOKEN, PRIVATE or CREDENTIAL) is refused, and so is a name the build's tools read: wrangler and what it runs (WRANGLER_, CLOUDFLARE_, CF_, ESBUILD_, MINIFLARE_, WORKERD_), Node.js and package managers (NODE_, NPM_, PNPM_, YARN_, BUN_, COREPACK_, DENO_), git and CI (GIT_, GITHUB_, RUNNER_, ACTIONS_, CI), shells (BASH*, ENV, IFS, PS4, PROMPT_COMMAND and the like), the dynamic linker (LD_, DYLD_, GCONV*), TLS and HTTP clients (SSL_, OPENSSL_, CURL_, *_PROXY), configuration directories (XDG_, HOME, TMPDIR), other toolchains (PYTHON*, PERL5*, RUBY*, JAVA_, CARGO_, RUST*, GOPATH, GOFLAGS and the other Go settings), and build tools (TURBO_, NX_, PRISMA_). Catalog review reads every constant as well. Upper-case names, at most 32 constants. Not for the self-deploying tier."
+        },
         "installDirs": {
           "maxItems": 8,
           "type": "array",
@@ -214,6 +229,10 @@
                   "none"
                 ],
                 "description": "Omitted or `\"required\"`, the install follows the directory's lockfile exactly and fails without one. `\"none\"` resolves the dependencies instead and records the hash of the lockfile it wrote in the pack log; use it only when upstream ships no lockfile for this directory."
+              },
+              "devDependencies": {
+                "type": "boolean",
+                "description": "`false` installs this directory's dependencies without its devDependencies (pnpm `--prod`, npm `--omit=dev`, classic yarn and bun `--production`), for a project whose devDependencies cannot be installed (one from a private registry, say) and are not needed to bundle the Worker. Omitted or `true` installs them all. yarn 2 and later have no such frozen install, so they refuse it."
               }
             },
             "required": [
@@ -2563,6 +2582,26 @@
               }
             }
           ]
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "buildEnv"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            }
+          ]
         }
       ]
     },
@@ -3012,6 +3051,38 @@
                   "euclidean",
                   "dot-product"
                 ]
+              },
+              "metadataIndexes": {
+                "minItems": 1,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "propertyName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "pattern": "^[^$\"][^\"]*$",
+                      "description": "The metadata property queries filter on, for example `url` or `user_id`."
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "description": "The property's type: string, number or boolean."
+                    }
+                  },
+                  "required": [
+                    "propertyName",
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Metadata properties the app's queries filter on, each with its type. Appflare creates these metadata indexes when it creates the index, before the app writes a vector (a vector written earlier is not indexed). At most 10."
               }
             },
             "required": [
@@ -3020,6 +3091,87 @@
             ],
             "additionalProperties": false
           }
+        },
+        "r2": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "lifecycle": {
+                "minItems": 1,
+                "maxItems": 20,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$",
+                      "not": {
+                        "const": "Default Multipart Abort Rule"
+                      },
+                      "description": "The rule's name, shown in the bucket's settings, for example \"Delete temporary files\"."
+                    },
+                    "prefix": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024,
+                      "description": "Apply the rule to objects whose keys start with this, for example `tmp/`. Omitted, it applies to every object."
+                    },
+                    "deleteAfterDays": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 36500,
+                      "description": "Delete an object this long after it was uploaded, in whole days (1 to 36500)."
+                    },
+                    "infrequentAccessAfterDays": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 36500,
+                      "description": "Move an object to Infrequent Access storage this long after it was uploaded, in whole days (1 to 36500)."
+                    },
+                    "abortMultipartUploadsAfterDays": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 36500,
+                      "description": "Abort a multipart upload still unfinished this long after it started, in whole days (1 to 36500)."
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "additionalProperties": false,
+                  "anyOf": [
+                    {
+                      "required": [
+                        "deleteAfterDays"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "infrequentAccessAfterDays"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "abortMultipartUploadsAfterDays"
+                      ]
+                    }
+                  ]
+                },
+                "description": "Lifecycle rules Appflare sets on the bucket when it creates it, beside Cloudflare's default rule for unfinished multipart uploads. At most 20, each with a unique id."
+              }
+            },
+            "required": [
+              "lifecycle"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Settings of the R2 bucket Appflare creates for an R2 binding, keyed by the binding's name: lifecycle rules that delete objects, move them to Infrequent Access storage, or abort unfinished multipart uploads after some days. Every key must be an R2 binding of the wrangler config. Not allowed on self-deploying entries."
         },
         "hyperdrive": {
           "minItems": 1,
@@ -3638,6 +3790,34 @@
               "not": {
                 "required": [
                   "d1"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "properties": {
+            "install": {
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "resources": {
+              "not": {
+                "required": [
+                  "r2"
                 ]
               }
             }

@@ -26,7 +26,7 @@ describe("verifyArtifactManifest", () => {
     expect(manifest.catalog.secrets[0]?.name).toBe("ADMIN_PASSWORD");
   });
 
-  it("reads formats 3 to 5 and asks to update Appflare for a format it does not know", async () => {
+  it("reads formats 3 to 6 and asks to update Appflare for a format it does not know", async () => {
     const d1 = await buildArtifactFixture({
       bindings: [{ type: "d1", name: "DB" }],
       d1Schema: { DB: [{ name: "schema.sql", content: "CREATE TABLE IF NOT EXISTS t (id);" }] },
@@ -75,15 +75,29 @@ describe("verifyArtifactManifest", () => {
     expect(fiveAssets.format).toBe(5);
     expect(fiveAssets.worker.mainModule).toBeUndefined();
 
+    const lifecycle = [{ id: "tmp", deleteAfterDays: 1 }];
+    const bucket = await buildArtifactFixture({
+      bindings: [{ type: "r2_bucket", name: "FILES", lifecycle }],
+      catalog: { resources: { r2: { FILES: { lifecycle } } } },
+    });
+    const six = await verifyArtifactManifest(
+      bucket.manifestBytes,
+      bucket.signature,
+      expected(bucket),
+      bucket.keys,
+    );
+    expect(six.format).toBe(6);
+    expect(six.worker.bindings).toContainEqual({ type: "r2_bucket", name: "FILES", lifecycle });
+
     const future = await buildArtifactFixture({
       tweak: (m) => {
-        (m as { format: number }).format = 6;
+        (m as { format: number }).format = 7;
       },
     });
     await expect(
       verifyArtifactManifest(future.manifestBytes, future.signature, expected(future), future.keys),
     ).rejects.toThrow(
-      "the artifact is format 6, and this version of Appflare reads formats 1 to 5; update Appflare in Settings, then try again",
+      "the artifact is format 7, and this version of Appflare reads formats 1 to 6; update Appflare in Settings, then try again",
     );
   });
 

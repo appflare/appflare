@@ -7,6 +7,7 @@ import {
   buildProgressRequestSchema,
   type RepositoryBuildOutcome,
   SANDBOX_FEATURE_ASSETS_ONLY,
+  SANDBOX_FEATURE_BUILD_ENV,
   SANDBOX_FEATURE_CONFIG_PATCH,
   SANDBOX_FEATURE_D1_BASELINE,
   SANDBOX_FEATURE_D1_SEED,
@@ -64,6 +65,7 @@ export class SandboxBuilds extends WorkerEntrypoint<Env> {
         SANDBOX_FEATURE_D1_BASELINE,
         SANDBOX_FEATURE_WRANGLER_CONFIG_INLINE,
         SANDBOX_FEATURE_ASSETS_ONLY,
+        SANDBOX_FEATURE_BUILD_ENV,
       ],
       // Which version answered: the manager waits for a secret change (a new
       // version) to reach this Worker before it starts a run.

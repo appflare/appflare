@@ -266,6 +266,7 @@ describe("readSandboxStatus", () => {
           "install-dirs",
           "config-patch",
           "assets-only",
+          "build-env",
         ],
       },
       problem: null,

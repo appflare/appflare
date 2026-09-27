@@ -8,6 +8,7 @@ import {
   type RepositoryBuildOutcome,
   repositoryBuildOutcomeSchema,
   SANDBOX_FEATURE_ASSETS_ONLY,
+  SANDBOX_FEATURE_BUILD_ENV,
   SANDBOX_FEATURE_CONFIG_PATCH,
   SANDBOX_FEATURE_D1_BASELINE,
   SANDBOX_FEATURE_D1_SEED,
@@ -323,6 +324,53 @@ export function d1BaselineRefusal(
   const d1 = Object.values(catalog.resources?.d1 ?? {});
   if (!d1.some((layout) => layout.baseline !== undefined)) return null;
   return `the sandbox Worker ${info.sandboxVersion} cannot build an app with a D1 baseline (resources.d1 baseline) and would build it without one; to update it, ${updateHint}`;
+}
+
+/**
+ * Why the sandbox Worker cannot build `catalog`, or null when it can: the
+ * entry uses a setting the sandbox Worker's packer predates, which its
+ * schema would drop without a word: build-time constants
+ * (`install.buildEnv`), an install without devDependencies
+ * (`installDirs[].devDependencies: false`), Vectorize metadata indexes or R2
+ * lifecycle rules.
+ */
+export function buildEnvRefusal(
+  info: Pick<SandboxInfo, "sandboxVersion" | "features">,
+  catalog:
+    | {
+        install: {
+          buildEnv?: unknown;
+          installDirs?: ReadonlyArray<{ devDependencies?: boolean | undefined }> | undefined;
+        };
+        resources?:
+          | {
+              vectorize?: Readonly<Record<string, { metadataIndexes?: unknown }>> | undefined;
+              r2?: Readonly<Record<string, unknown>> | undefined;
+            }
+          | undefined;
+      }
+    | undefined,
+  updateHint: string,
+): string | null {
+  if (catalog === undefined || info.features?.includes(SANDBOX_FEATURE_BUILD_ENV) === true) {
+    return null;
+  }
+  const version = info.sandboxVersion;
+  const update = `; to update it, ${updateHint}`;
+  if (catalog.install.buildEnv !== undefined) {
+    return `the sandbox Worker ${version} cannot set this app's build-time constants (install.buildEnv) and would build it without them${update}`;
+  }
+  if ((catalog.install.installDirs ?? []).some((d) => d.devDependencies === false)) {
+    return `the sandbox Worker ${version} cannot install this app without its devDependencies (installDirs devDependencies: false) and would install them anyway${update}`;
+  }
+  const vectorize = Object.values(catalog.resources?.vectorize ?? {});
+  if (vectorize.some((index) => index.metadataIndexes !== undefined)) {
+    return `the sandbox Worker ${version} cannot build an app with Vectorize metadata indexes (resources.vectorize metadataIndexes) and would build it without them${update}`;
+  }
+  if (Object.keys(catalog.resources?.r2 ?? {}).length > 0) {
+    return `the sandbox Worker ${version} cannot build an app with R2 lifecycle rules (resources.r2) and would build it without them${update}`;
+  }
+  return null;
 }
 
 /** Whether the sandbox Worker holds GitHub access tokens and reads GitHub with them. */
