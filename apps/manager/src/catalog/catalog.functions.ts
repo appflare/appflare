@@ -28,6 +28,7 @@ import { requireRole, requireSession } from "../server/auth.server";
 import { appFacts } from "./app-facts";
 import { listAppFacts } from "./app-facts.server";
 import { getCatalogManifest } from "./app-manifest.server";
+import { moduleBytes } from "./app-page";
 import { appAuthors } from "./authors";
 import { listCatalogRecords } from "./catalogs.server";
 import { cronTriggerCount } from "./cron-triggers";
@@ -384,6 +385,12 @@ export interface CatalogDetail {
    * sandbox tier app, whose wrangler config is read only when it is built.
    */
   cronTriggers: number;
+  /**
+   * Bytes of Worker code the install uploads, across the app's Workers; null
+   * before a build (sandbox and self-deploying apps) or for an app that only
+   * serves static files.
+   */
+  moduleBytes: number | null;
   /** The account's Workers plan in force: detected, else as Settings records it, else free. */
   accountPlan: AccountPlan;
   /** What the account capability probes found, for the requirement badges. */
@@ -458,6 +465,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       sandboxConnected: sandboxBinding(env) !== undefined,
       sandbox,
       cronTriggers: 0,
+      moduleBytes: null,
       accountPlan,
       capabilities,
       images: appMediaView(undefined, ""),
@@ -546,6 +554,10 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
         manifest.manifest === null
           ? 0
           : appWorkers(manifest.manifest).reduce((n, w) => n + cronTriggerCount(w.worker.crons), 0),
+      moduleBytes:
+        manifest.manifest === null
+          ? null
+          : moduleBytes(appWorkers(manifest.manifest).map((w) => w.worker)) || null,
       error: null,
       instances,
       suggestedWorkerName: fixed
