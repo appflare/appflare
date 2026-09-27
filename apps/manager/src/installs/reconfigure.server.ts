@@ -1,10 +1,12 @@
 import {
   type ArtifactManifest,
+  appTokenPermissions,
   artifactManifestSchema,
   type CatalogManifest,
   type EntryWorkerPlaceholders,
   entryPlaceholderValues,
   type SandboxInstanceType,
+  type TokenPermission,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
@@ -31,6 +33,7 @@ import { recordedCatalog, settingsRunId } from "../jobs/self-deploying/phases";
 import { lastDurableObjectTagOf, updatePath } from "../jobs/update/plan";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
 import { readAppBaseUrl } from "./app-address.server";
+import { appTokenSecret } from "./app-token-secret";
 import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
 import {
   enteredDerivedVarProblems,
@@ -109,6 +112,16 @@ export interface InstallSettings {
     expectedMinutes?: number;
     instanceType?: SandboxInstanceType;
   } | null;
+  /**
+   * The Cloudflare token the app needs for itself (its `tokenPermissions`),
+   * so Settings always says how to create one: `secret` is the secret that
+   * takes it (`appTokenSecret`), shown with "Create token" next to its new
+   * value, or null when the app takes the token in its own setup steps and
+   * Settings shows it on its own. Null when the app needs no token of its
+   * own, and for a self-deploying app, whose token card on the app's page
+   * shows it.
+   */
+  appToken: { secret: string | null; permissions: TokenPermission[] } | null;
 }
 
 type InstallRow = typeof installs.$inferSelect;
@@ -284,6 +297,11 @@ export async function readInstallSettingsCore(
     email: ctx.email,
     skipsPreview: ctx.skipsPreview,
     installer: ctx.installer,
+    appToken: (() => {
+      const permissions = appTokenPermissions(ctx.catalog);
+      if (permissions.length === 0 || install.build_kind === "self-deploying") return null;
+      return { secret: appTokenSecret(ctx.catalog), permissions };
+    })(),
   };
 }
 

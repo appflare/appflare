@@ -320,10 +320,15 @@ export function entryPlaceholderValues(
   return values;
 }
 
-const ENTRY_PLACEHOLDER_PATTERN = new RegExp(
-  `\\{\\{\\s*(workerUrl|workerName):(${ENTRY_NAME})\\s*\\}\\}`,
-  "g",
-);
+/**
+ * The regular expression source of `{{workerUrl:<name>}}` and
+ * `{{workerName:<name>}}` as written in a value: the placeholder's kind in
+ * the first capture group, the entry Worker's name in the second. Exported as
+ * source text, not a shared `RegExp`, so callers build their own.
+ */
+export const ENTRY_WORKER_PLACEHOLDER_SOURCE = `\\{\\{\\s*(workerUrl|workerName):(${ENTRY_NAME})\\s*\\}\\}`;
+
+const ENTRY_PLACEHOLDER_PATTERN = new RegExp(ENTRY_WORKER_PLACEHOLDER_SOURCE, "g");
 
 /** Whether `text` holds `{{workerUrl:<name>}}` or `{{workerName:<name>}}`. */
 export function hasEntryWorkerPlaceholder(text: string): boolean {

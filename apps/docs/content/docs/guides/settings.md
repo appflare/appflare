@@ -60,7 +60,7 @@ rolled-back app gets a value that no longer works.
 Two kinds of secret can be removed:
 
 - **Optional** secrets, which the app works without. They are left unset at install
-  unless you choose **Set now**, and updates never ask for them. One that is not set
+  unless you choose **Set it now**, and updates never ask for them. One that is not set
   shows **Not set**; give it a value with **Set new value**.
 - Secrets the app no longer uses. Updates never delete secrets, so a secret an
   earlier version needed stays on the Worker after a newer version stops declaring

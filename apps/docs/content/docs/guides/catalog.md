@@ -95,15 +95,19 @@ dashboard, then choose **Re-check** in **Settings › Account and capabilities**
 ### Apps that need their own token
 
 Some apps call the Cloudflare API themselves, for example to update DNS records.
-Their page shows **This app needs its own Cloudflare token**, with the permissions
-it needs and why.
+Their install form explains how to create that token right next to the field that
+takes it: **Create token** opens a user API token form with the permissions already
+selected, and **Permissions it needs** lists each one and why. Narrow the token to
+the accounts and zones the app needs. A permission the form cannot select says why
+on its own line. When an app takes the token later instead, the explanation sits at
+the end of the form and the app's post-install steps say where it goes.
 
 That token belongs to the app, not to Appflare. The manager never hands its own
-token to an app. Select **Create token** to open a user API token form with the
-permissions filled in, and narrow it to the accounts and zones the app needs.
-Permissions the dashboard cannot prefill are marked **Add by hand**. When the
-install form asks for the token, it is stored as a secret on the app's Worker;
-otherwise the app's post-install steps say where it goes.
+token to an app. When the install form asks for the token, it is stored as a secret
+on the app's Worker. Once the app is installed, its **Settings** tab keeps **Create
+token** and the permissions: next to that secret when you give it a new value, or
+in a section of its own for an app that takes the token in its own setup steps. A
+self-deploying app shows them on its **App token** card.
 
 ## Licenses
 

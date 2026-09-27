@@ -473,7 +473,7 @@ describe("startInstallCore", () => {
       HOME_PAGE: "404",
     });
     expect(() => resolveInstallInput(f.manifest, input({ vars: { HOME_PAGE: "admin" } }))).toThrow(
-      "Home page (HOME_PAGE) must be one of: Landing page, Not found.",
+      "Home page must be one of: Landing page, Not found.",
     );
   });
 
@@ -519,7 +519,7 @@ describe("startInstallCore", () => {
     });
     expect(() =>
       resolveInstallInput(f.manifest, input({ vars: { ADDRESSES: "inbox@example.com" } })),
-    ).toThrow(/^Addresses \(ADDRESSES\) is not valid JSON/);
+    ).toThrow(/^Addresses is not valid JSON/);
     // Placeholders are kept as entered; the jobs fill them in.
     const ok = resolveInstallInput(
       f.manifest,

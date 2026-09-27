@@ -1,7 +1,9 @@
+import type { TokenPermission } from "@appflare/schema";
 import { Banner, Button, Input, LayerCard, Text } from "@cloudflare/kumo";
 import { CheckCircleIcon, KeyIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useState } from "react";
 import { replaceAppCredentials } from "../installs/app-credentials.functions";
+import { AppTokenHelp } from "./app-token-permissions";
 
 /**
  * The install page's card for a self-deploying app's own token: the sandbox
@@ -13,11 +15,14 @@ export function AppCredentialsCard({
   installId,
   appName,
   secretNames,
+  tokenPermissions,
   canEdit,
 }: {
   installId: string;
   appName: string;
   secretNames: readonly string[];
+  /** What the app's token needs, for "Create token" next to its field. */
+  tokenPermissions: readonly TokenPermission[];
   canEdit: boolean;
 }) {
   const [token, setToken] = useState("");
@@ -76,6 +81,7 @@ export function AppCredentialsCard({
               value={token}
               onChange={(e) => setToken(e.currentTarget.value)}
             />
+            {canEdit && <AppTokenHelp appName={appName} permissions={tokenPermissions} />}
             {secretNames.map((name) => (
               <Input
                 key={name}

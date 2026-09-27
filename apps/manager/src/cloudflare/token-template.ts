@@ -37,7 +37,7 @@ export interface PermissionGroup {
    */
   onlyFor?: string;
   /**
-   * The group has no known template key, so the dashboard form cannot be
+   * The group has no confirmed template key, so the dashboard form is not
    * prefilled with it: it is left out of the template links, and its name
    * says to add it by hand. `key` is then only an id within Appflare.
    */
@@ -202,6 +202,8 @@ export const TOKEN_PERMISSION_GROUPS = [
   // bucket is still deleted and the catalog's records stay until a bucket of
   // that name is made again. Neither the template page's table nor the
   // dashboard's published group list has a key for it, so it is added by hand.
+  // (Public template links use `r2_catalog`; app token links use it, but it
+  // stays out of Appflare's own link until the dashboard is seen to take it.)
   {
     key: "workers_r2_data_catalog",
     type: "edit",
@@ -272,14 +274,16 @@ export function accountTokenTemplateUrl(
 
 /**
  * User API token form (fallback for people who cannot create account tokens,
- * which needs Super Administrator). `accountId=*` because the manager does not know
- * its account before it has a token; the user narrows it in the form.
+ * which needs Super Administrator). `accountId=*` while the manager does not
+ * know its account (before it has a token), and the user narrows it in the
+ * form; once known, the form starts on the account Appflare runs in.
  */
 export function userTokenTemplateUrl(
   groups: readonly PermissionGroup[] = TOKEN_PERMISSION_GROUPS,
   name: string = TOKEN_NAME,
+  accountId: string | null = null,
 ): string {
-  return `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodedGroups(groups)}&accountId=%2A&zoneId=all&name=${encodeURIComponent(name)}`;
+  return `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodedGroups(groups)}&accountId=${encodeURIComponent(accountId || "*")}&zoneId=all&name=${encodeURIComponent(name)}`;
 }
 
 /** The dashboard's API tokens page, for permissions no template can prefill. */
@@ -296,9 +300,30 @@ export function r2ApiTokensUrl(accountId: string | null): string {
 
 /**
  * Permission names an app's catalog manifest may use, `<Scope>.<Group>` in the
- * dashboard's wording, mapped to template keys. Keys are from the permission
- * reference on Cloudflare's "API token template URLs" page (linked above).
- * Matching ignores case. Names not listed here are shown as text only.
+ * dashboard's wording, mapped to template keys. Matching ignores case. Where
+ * each key comes from:
+ *
+ * - The permission reference on Cloudflare's "API token template URLs" page
+ *   (linked above): `dns`, `zone`, `zone_settings`, `analytics`,
+ *   `firewall_services`, `page_rules`, `ssl_and_certificates`,
+ *   `account_settings`, `account_analytics`, `billing`, `workers_scripts`,
+ *   `workers_kv_storage`, `workers_routes`, `workers_r2`, `d1`, `queues`,
+ *   `logs`, `access`, `access_acct`.
+ * - The dashboard's own group labels (`<key>_read` / `<key>_write`, the rule
+ *   described at the top of this file; Cloudflare-Mining/Cloudflare-Datamining's
+ *   `token_permission_groups_dash.json`): `email_routing_rule`,
+ *   `email_routing_address`, `query_cache` (Hyperdrive), `pipelines`,
+ *   `vectorize`, `workers_tail`, `load_balancers`, `account_logs` (the
+ *   account-scoped Logs group; `logs` is the zone one), `magic_transit`.
+ * - Public template links for groups added after that list: Cloudflare's own
+ *   cloudflare-prometheus-exporter README (`firewall_services`,
+ *   `load_balancers`, `account_logs`, `magic_transit`), savvyagents/larasend
+ *   (`email_sending`), pkishorez/monorepo's Alchemy console (`secrets_store`),
+ *   shivamanupadi/traks (`r2_catalog`, `r2_catalog_sql`), and the manager's
+ *   own `containers` (see TOKEN_PERMISSION_GROUPS above).
+ *
+ * A name not listed here is listed without a key: the token link cannot
+ * select it, and the app's page says so next to it.
  */
 const APP_PERMISSION_KEYS: Readonly<Record<string, Omit<PermissionGroup, "type">>> = {
   "zone.dns": { key: "dns", label: "Zone: DNS" },
@@ -307,13 +332,35 @@ const APP_PERMISSION_KEYS: Readonly<Record<string, Omit<PermissionGroup, "type">
   "zone.analytics": { key: "analytics", label: "Zone: Analytics" },
   "zone.page rules": { key: "page_rules", label: "Zone: Page Rules" },
   "zone.ssl and certificates": { key: "ssl_and_certificates", label: "Zone: SSL and Certificates" },
+  "zone.firewall services": { key: "firewall_services", label: "Zone: Firewall Services" },
+  "zone.load balancers": { key: "load_balancers", label: "Zone: Load Balancers" },
+  "zone.logs": { key: "logs", label: "Zone: Logs" },
+  "zone.workers routes": { key: "workers_routes", label: "Zone: Workers Routes" },
+  "zone.email routing rules": { key: "email_routing_rule", label: "Zone: Email Routing Rules" },
   "account.account settings": { key: "account_settings", label: "Account: Account Settings" },
   "account.account analytics": { key: "account_analytics", label: "Account: Account Analytics" },
+  "account.billing": { key: "billing", label: "Account: Billing" },
+  "account.logs": { key: "account_logs", label: "Account: Logs" },
+  "account.magic transit": { key: "magic_transit", label: "Account: Magic Transit" },
   "account.workers scripts": { key: "workers_scripts", label: "Account: Workers Scripts" },
   "account.workers kv storage": { key: "workers_kv_storage", label: "Account: Workers KV Storage" },
   "account.workers r2 storage": { key: "workers_r2", label: "Account: Workers R2 Storage" },
+  "account.workers r2 data catalog": {
+    key: "r2_catalog",
+    label: "Account: Workers R2 Data Catalog",
+  },
+  "account.workers r2 sql": { key: "r2_catalog_sql", label: "Account: Workers R2 SQL" },
+  "account.workers tail": { key: "workers_tail", label: "Account: Workers Tail" },
+  "account.workers containers": { key: "containers", label: "Account: Workers Containers" },
   "account.d1": { key: "d1", label: "Account: D1" },
   "account.queues": { key: "queues", label: "Account: Queues" },
+  "account.vectorize": { key: "vectorize", label: "Account: Vectorize" },
+  "account.secrets store": { key: "secrets_store", label: "Account: Secrets Store" },
+  "account.email sending": { key: "email_sending", label: "Account: Email Sending" },
+  "account.email routing addresses": {
+    key: "email_routing_address",
+    label: "Account: Email Routing Addresses",
+  },
   // The dashboard's key for Hyperdrive (see TOKEN_PERMISSION_GROUPS above).
   "account.hyperdrive": { key: "query_cache", label: "Account: Hyperdrive" },
   // The dashboard's key for Pipelines (see TOKEN_PERMISSION_GROUPS above).
@@ -327,12 +374,26 @@ const APP_PERMISSION_KEYS: Readonly<Record<string, Omit<PermissionGroup, "type">
   },
 };
 
+/**
+ * Why the token link cannot select a permission (one line, next to it on the
+ * app's page): its name matches no dashboard group Appflare knows of, or it
+ * names no scope to tell an account group from a zone one.
+ */
+export function unmappedPermissionReason(
+  permission: Pick<AppTokenPermission, "name" | "scope">,
+): string {
+  const bare = !permission.name.includes(".") && permission.scope === null;
+  return bare
+    ? "Not selected for you: the app does not say whether it is an account or a zone permission. Add it in the form."
+    : "Not selected for you: Cloudflare's token link has no way to select it. Add it in the form.";
+}
+
 /** One entry of an app's `tokenPermissions`, with the template group it maps to. */
 export interface AppTokenPermission {
   name: string;
   description: string | null;
   scope: NonNullable<TokenPermission["scope"]> | null;
-  /** Null when the name has no known template key; the user adds it by hand. */
+  /** Null when the name has no known template key: the token link cannot select it. */
   group: PermissionGroup | null;
 }
 
@@ -378,11 +439,13 @@ export function resolveAppTokenPermissions(
  * maps to a template key and named after the app. Null when none maps. It is the
  * user token form because a user token passes `/user/tokens/verify`, the check
  * apps commonly run on their token (an account token fails it), and because the
- * form can narrow the token to one zone.
+ * form can narrow the token to one zone. With `accountId` the form starts on
+ * the account Appflare runs in.
  */
 export function appTokenTemplateUrl(
   appName: string,
   permissions: readonly AppTokenPermission[],
+  accountId: string | null = null,
 ): string | null {
   // One entry per key; Edit covers Read.
   const groups = new Map<string, PermissionGroup>();
@@ -394,5 +457,5 @@ export function appTokenTemplateUrl(
     }
   }
   if (groups.size === 0) return null;
-  return userTokenTemplateUrl([...groups.values()], appName);
+  return userTokenTemplateUrl([...groups.values()], appName, accountId);
 }

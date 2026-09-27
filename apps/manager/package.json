@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.dom.config.ts",
     "db:generate": "drizzle-kit generate && node scripts/gen-migrations-index.mjs",
     "auth:generate": "pnpm dlx auth@1.7.5 generate --config scripts/better-auth.config.ts --output src/db/auth-schema.ts --yes",
     "cf-typegen": "wrangler types"
@@ -42,6 +42,7 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
     "drizzle-kit": "0.31.11",
+    "happy-dom": "20.14.5",
     "tailwindcss": "4.3.3",
     "vite": "8.3.0",
     "vitest": "4.1.11",

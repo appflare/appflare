@@ -1,4 +1,3 @@
-import { appTokenPermissions } from "@appflare/schema";
 import { Banner, Button, Checkbox, Empty, Text } from "@cloudflare/kumo";
 import { PlusIcon, StorefrontIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
@@ -32,7 +31,6 @@ import {
   SettingsList,
 } from "../../../components/app-page-sections";
 import { AppStatStrip } from "../../../components/app-stat-strip";
-import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { BuildFromSourceCard } from "../../../components/build-from-source-card";
 import { DocsLink } from "../../../components/docs-link";
 import { InstallForm } from "../../../components/install-form";
@@ -252,8 +250,9 @@ function reveal(el: HTMLElement | null) {
 }
 
 /**
- * What "Install" opens: what is left to confirm about the account, the token the
- * app needs for itself (if any), the install form, and building from source.
+ * What "Install" opens: what is left to confirm about the account, the install
+ * form (which says how to create any token the app needs for itself, next to
+ * the field that takes it), and building from source.
  */
 function InstallPanel({
   detail,
@@ -346,11 +345,6 @@ function InstallPanel({
           }
         />
       )}
-      <AppTokenPermissions
-        appName={app.name}
-        permissions={appTokenPermissions(catalog)}
-        custody={installer !== null ? "sandbox" : "app"}
-      />
       <InstallForm
         // A new suggestion (after another install) resets the form.
         key={detail.suggestedWorkerName}

@@ -80,6 +80,12 @@ export interface SecretSlot {
   derives?: string[];
   /** For a source of derived vars: their names, which a new value of it replaces too. */
   derivesVars?: string[];
+  /**
+   * For a source of derived secrets or vars: what they are called for people
+   * (their catalog labels, secrets first), for the note that a new value
+   * updates them too.
+   */
+  derivesLabels?: string[];
   /** A new value is entered in a multi-line field (the catalog's `multiline: true`). */
   multiline?: true;
 }
@@ -94,16 +100,23 @@ export interface SecretSlot {
 export function secretSlots(
   declared: readonly CatalogSecret[],
   recordedNames: readonly string[],
-  vars: readonly Pick<CatalogVar, "name" | "derive">[] = [],
+  vars: readonly (Pick<CatalogVar, "name" | "derive"> & { label?: string })[] = [],
 ): SecretSlot[] {
   const recorded = new Set(recordedNames);
   // A seed-only secret was used once by the install and is kept nowhere, so
   // settings neither show nor take it.
   const slots: SecretSlot[] = boundToWorker(declared).map((s) => {
-    const derives = declared.filter((d) => d.derive?.from === s.name).map((d) => d.name);
-    const derivesVars = vars.filter((v) => v.derive?.from === s.name).map((v) => v.name);
+    const derivedSecrets = declared.filter((d) => d.derive?.from === s.name);
+    const derivedVars = vars.filter((v) => v.derive?.from === s.name);
+    const derives = derivedSecrets.map((d) => d.name);
+    const derivesVars = derivedVars.map((v) => v.name);
+    const derivesLabels = [
+      ...derivedSecrets.map((d) => d.label),
+      ...derivedVars.map((v) => v.label ?? v.name),
+    ];
     return {
       ...(derivesVars.length > 0 ? { derivesVars } : {}),
+      ...(derivesLabels.length > 0 ? { derivesLabels } : {}),
       name: s.name,
       label: s.label,
       ...(s.help === undefined ? {} : { help: s.help }),

@@ -1,13 +1,14 @@
 import type { TokenPermission } from "@appflare/schema";
-import { Badge, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
+import { Collapsible, LinkButton, Text } from "@cloudflare/kumo";
 import { KeyIcon } from "@phosphor-icons/react";
 import {
+  type AppTokenPermission,
   appTokenTemplateUrl,
   r2ApiTokensUrl,
   resolveAppTokenPermissions,
-  USER_API_TOKENS_URL,
+  unmappedPermissionReason,
+  userTokenTemplateUrl,
 } from "../cloudflare/token-template";
-import { ResponsiveTable } from "./responsive-table";
 import { useAccountId } from "./use-account-id";
 
 const SCOPE_LABELS: Record<NonNullable<TokenPermission["scope"]>, string> = {
@@ -16,117 +17,111 @@ const SCOPE_LABELS: Record<NonNullable<TokenPermission["scope"]>, string> = {
   user: "User",
 };
 
+/** How a permission reads in the list: the dashboard's group and level, else the catalog's name. */
+export function permissionTitle(p: AppTokenPermission): string {
+  if (p.group === null) return p.name;
+  return `${p.group.label} · ${p.group.type === "edit" ? "Edit" : "Read"}`;
+}
+
 /**
- * The Cloudflare token an app needs for itself (its catalog manifest's
- * `tokenPermissions`): each permission, and a link to the dashboard's token form
- * prefilled with the ones Appflare can map. Renders nothing when the app needs
- * no token of its own.
+ * How to create the Cloudflare API token an app needs for itself (its
+ * catalog manifest's `tokenPermissions`), placed next to the field that
+ * takes the token: a "Create token" link to the dashboard's token form with
+ * every permission it can select already selected, and the permissions,
+ * folded, each with what the app uses it for. A permission the link cannot
+ * select says why on its own line. Renders nothing when the app needs no
+ * token of its own.
  */
-export function AppTokenPermissions({
+export function AppTokenHelp({
   appName,
   permissions,
-  custody = "app",
 }: {
   appName: string;
   permissions: readonly TokenPermission[];
-  /**
-   * Where the token goes: `app`, a secret on the app's Worker; `sandbox`, a
-   * secret on the sandbox Worker, where a self-deploying app's own installer
-   * runs with it.
-   */
-  custody?: "app" | "sandbox";
 }) {
   const accountId = useAccountId();
   if (permissions.length === 0) return null;
   const resolved = resolveAppTokenPermissions(permissions);
-  const templateUrl = appTokenTemplateUrl(appName, resolved);
-  const unmapped = resolved.some((p) => p.group === null);
-  // R2 Data Catalog has no template key; the R2 API token form's Admin Read &
-  // Write grants it together with R2 storage and R2 SQL.
+  const templateUrl = appTokenTemplateUrl(appName, resolved, accountId);
+  const unmapped = resolved.filter((p) => p.group === null).length;
+  // R2's own API token (Admin Read & Write) carries R2 storage, R2 Data
+  // Catalog and R2 SQL together: the way wrangler's `pipelines setup` sends
+  // people, and an alternative for a Pipelines sink's token.
   const r2Token = resolved.some((p) => /\br2 data catalog\b/i.test(p.name));
   return (
-    <section className="grid gap-3">
-      <Text variant="heading" as="h2">
-        This app needs its own Cloudflare token
-      </Text>
-      {custody === "sandbox" ? (
-        <Text variant="secondary">
-          {appName} deploys itself: its own installer creates its Workers and resources with a token
-          you create for it, not with the manager's. The install form asks for it and stores it as a
-          secret on your sandbox Worker, where the installer runs; Appflare keeps no copy. Updating
-          and uninstalling use it again, so keep it valid while the app is installed.
+    <div className="grid gap-2" data-app-token-help="">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <LinkButton
+          href={templateUrl ?? userTokenTemplateUrl([], appName, accountId)}
+          external
+          size="sm"
+          variant="secondary"
+          icon={<KeyIcon />}
+        >
+          Create token
+        </LinkButton>
+        <Text variant="secondary" size="sm">
+          {templateUrl === null
+            ? "Opens Cloudflare's token form; add the permissions listed below."
+            : unmapped === 0
+              ? "Opens Cloudflare with the permissions it needs already selected."
+              : `Opens Cloudflare with the permissions it needs selected, except ${unmapped === 1 ? "one" : unmapped} you add yourself.`}
         </Text>
-      ) : (
-        <Text variant="secondary">
-          {appName} calls the Cloudflare API with a token you create for it. The token belongs to
-          the app, not to the manager: when the install form asks for it, it is stored as a secret
-          on the app's Worker, never on the manager's; otherwise the app's setup steps say where it
-          goes.
-        </Text>
-      )}
-      <ResponsiveTable label="Token permissions" minWidth="sm" stickyFirstColumn>
-        <Table.Header>
-          <Table.Row>
-            <Table.Head>Permission</Table.Head>
-            <Table.Head>Scope</Table.Head>
-            <Table.Head>What the app uses it for</Table.Head>
-          </Table.Row>
-        </Table.Header>
-        <Table.Body>
-          {resolved.map((p) => (
-            <Table.Row key={p.name}>
-              <Table.Cell>
-                <span className="inline-flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[0.9em]">{p.name}</span>
-                  {p.group === null && templateUrl !== null && (
-                    <Badge variant="outline">Add by hand</Badge>
-                  )}
-                </span>
-              </Table.Cell>
-              <Table.Cell>{p.scope !== null ? SCOPE_LABELS[p.scope] : ""}</Table.Cell>
-              <Table.Cell>{p.description ?? ""}</Table.Cell>
-            </Table.Row>
-          ))}
-        </Table.Body>
-      </ResponsiveTable>
+      </div>
       {r2Token && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <LinkButton
             href={r2ApiTokensUrl(accountId)}
             external
+            size="sm"
             variant="secondary"
             icon={<KeyIcon />}
           >
             Create R2 API token
           </LinkButton>
           <Text variant="secondary" size="sm">
-            Opens the account's R2 API tokens. Create an account API token with Admin Read &amp;
-            Write: it has every R2 permission listed here. It reaches every bucket in the account.
+            Or an R2 API token with Admin Read &amp; Write, which has every R2 permission listed. It
+            reaches every bucket in the account.
           </Text>
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        {templateUrl !== null ? (
-          <>
-            <LinkButton href={templateUrl} external variant="secondary" icon={<KeyIcon />}>
-              Create token
-            </LinkButton>
+      <Collapsible.Root>
+        <Collapsible.DefaultTrigger>
+          Permissions it needs ({resolved.length})
+        </Collapsible.DefaultTrigger>
+        <Collapsible.DefaultPanel>
+          <div className="grid gap-2 pt-1">
             <Text variant="secondary" size="sm">
-              Opens a user API token form with{" "}
-              {unmapped ? "the permissions Appflare recognizes" : "these permissions"} selected.
-              Narrow its accounts and zones to the ones the app needs.
+              In the form, narrow the token to this account and the zones the app needs.
             </Text>
-          </>
-        ) : (
-          <Text variant="secondary" size="sm">
-            Create the token in the Cloudflare dashboard under{" "}
-            <Link href={USER_API_TOKENS_URL} target="_blank" rel="noopener noreferrer">
-              API tokens <Link.ExternalIcon />
-            </Link>{" "}
-            and add these permissions by hand.
-          </Text>
-        )}
-      </div>
-    </section>
+            <ul className="m-0 grid list-none gap-2 p-0">
+              {resolved.map((p) => (
+                <li key={p.name} className="grid gap-0.5">
+                  <Text size="sm" bold>
+                    {permissionTitle(p)}
+                    {p.group === null && p.scope !== null && (
+                      <span className="font-normal text-kumo-subtle">
+                        {" "}
+                        ({SCOPE_LABELS[p.scope]})
+                      </span>
+                    )}
+                  </Text>
+                  {p.description !== null && (
+                    <Text variant="secondary" size="sm">
+                      {p.description}
+                    </Text>
+                  )}
+                  {p.group === null && (
+                    <Text variant="secondary" size="sm">
+                      {unmappedPermissionReason(p)}
+                    </Text>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Collapsible.DefaultPanel>
+      </Collapsible.Root>
+    </div>
   );
 }

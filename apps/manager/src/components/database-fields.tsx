@@ -2,10 +2,11 @@ import {
   type CatalogHyperdrive,
   connectionStringExample,
   databaseProtocolName,
-  hyperdriveFieldLabel,
   parseConnectionString,
 } from "@appflare/schema";
 import { SensitiveInput, Text } from "@cloudflare/kumo";
+import type { ReactNode } from "react";
+import { FieldHelp, FieldLabel } from "./field-label";
 
 /**
  * The connection string fields of an app that reaches databases elsewhere
@@ -38,12 +39,17 @@ export function DatabaseField({
   decl,
   value,
   onChange,
-  label = hyperdriveFieldLabel(decl),
+  label = (
+    <FieldLabel
+      label={decl.label ?? `${databaseProtocolName(decl.protocol)} connection string`}
+      name={decl.binding}
+    />
+  ),
 }: {
   decl: CatalogHyperdrive;
   value: string;
   onChange(value: string): void;
-  label?: string;
+  label?: ReactNode;
 }) {
   const problem = connectionFieldProblem(decl, value);
   const help = [
@@ -60,7 +66,7 @@ export function DatabaseField({
       autoComplete="off"
       spellCheck={false}
       required
-      description={help}
+      description={<FieldHelp text={help} />}
       variant={problem === null ? "default" : "error"}
       error={problem === null ? undefined : { message: problem, match: true }}
     />
@@ -83,9 +89,8 @@ export function DatabaseFields({
       <div className="grid gap-1.5">
         <Text bold>Databases</Text>
         <Text variant="secondary" size="sm">
-          This app keeps its data in a database you run elsewhere, reached through Cloudflare
-          Hyperdrive. Appflare creates a Hyperdrive configuration from each connection string and
-          never stores the string itself.
+          The app keeps its data in a database you run elsewhere. Appflare never stores the
+          connection string.
         </Text>
       </div>
       {databases.map((decl) => (

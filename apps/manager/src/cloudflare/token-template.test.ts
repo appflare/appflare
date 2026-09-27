@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ACCESS_FEATURE,
+  type AppTokenPermission,
   accountTokenTemplateUrl,
   appTokenTemplateUrl,
   CUSTOM_DOMAINS_FEATURE,
@@ -16,6 +17,7 @@ import {
   SANDBOX_BUILDS_FEATURE,
   splitPermissionGroups,
   TOKEN_PERMISSION_GROUPS,
+  unmappedPermissionReason,
   userTokenTemplateUrl,
 } from "./token-template";
 
@@ -49,6 +51,9 @@ describe("token template URLs", () => {
       userTokenTemplateUrl().startsWith("https://dash.cloudflare.com/profile/api-tokens?"),
     ).toBe(true);
     expect(params.get("accountId")).toBe("*");
+    expect(
+      new URL(userTokenTemplateUrl(undefined, "App", "acc1")).searchParams.get("accountId"),
+    ).toBe("acc1");
     expect(params.get("zoneId")).toBe("all");
     expect(groupsOf(userTokenTemplateUrl())).toHaveLength(
       TOKEN_PERMISSION_GROUPS.filter((g) => !("manual" in g)).length,
@@ -168,8 +173,10 @@ describe("token template URLs", () => {
       },
     ]);
     expect(groupsOf(accountTokenTemplateUrl())).toContainEqual({ key: "pipelines", type: "edit" });
-    // No template key is known for R2 Data Catalog: it never goes into a link.
-    expect(JSON.stringify(groupsOf(accountTokenTemplateUrl()))).not.toContain("data_catalog");
+    // Its key is not confirmed against the dashboard: Appflare's own link leaves it out.
+    const own = JSON.stringify(groupsOf(accountTokenTemplateUrl()));
+    expect(own).not.toContain("data_catalog");
+    expect(own).not.toContain("r2_catalog");
     expect(
       resolveAppTokenPermissions([{ name: "Account.Pipelines:Edit" }]).map((p) => p.group?.key),
     ).toEqual(["pipelines"]);
@@ -255,12 +262,84 @@ describe("app token permissions", () => {
   it("maps nothing for unknown names, bare names without a scope, or a contradicting scope", () => {
     expect(
       keysOf([
-        { name: "Zone.Email Routing Rules" },
+        { name: "Zone.Email Routing Addresses" },
         { name: "DNS" },
         { name: "Zone.DNS", scope: "account" },
         { name: "User.Memberships", scope: "user" },
       ]),
     ).toEqual([null, null, null, null]);
+  });
+
+  it("says in one line why the link cannot select a permission", () => {
+    const [unknown, bare] = resolveAppTokenPermissions([
+      { name: "User.Memberships", scope: "user" },
+      { name: "DNS" },
+    ]);
+    expect(unmappedPermissionReason(unknown as AppTokenPermission)).toBe(
+      "Not selected for you: Cloudflare's token link has no way to select it. Add it in the form.",
+    );
+    expect(unmappedPermissionReason(bare as AppTokenPermission)).toContain(
+      "does not say whether it is an account or a zone permission",
+    );
+  });
+
+  it("finds a template key for every permission the catalog's apps ask for", () => {
+    // Every tokenPermissions name in the published catalog, plus the Pipelines
+    // sink token's, so none of them is left out of an app's token link.
+    const names: Array<{ name: string; scope?: "account" | "zone" }> = [
+      { name: "Zone.DNS", scope: "zone" },
+      { name: "Zone.Zone:Read", scope: "zone" },
+      { name: "Zone.DNS:Edit", scope: "zone" },
+      { name: "Zone.Zone Settings:Edit", scope: "zone" },
+      { name: "Zone.Zone Settings:Read", scope: "zone" },
+      { name: "Zone.Email Routing Rules:Edit", scope: "zone" },
+      { name: "Account.Email Sending:Edit", scope: "account" },
+      { name: "Account.Email Routing Addresses:Read", scope: "account" },
+      { name: "Workers Scripts", scope: "account" },
+      { name: "Workers KV Storage", scope: "account" },
+      { name: "D1", scope: "account" },
+      { name: "Workers R2 Storage", scope: "account" },
+      { name: "Secrets Store:Edit", scope: "account" },
+      { name: "Account Settings:Read", scope: "account" },
+      { name: "Access: Apps and Policies", scope: "account" },
+      { name: "Access: Organizations, Identity Providers, and Groups", scope: "account" },
+      { name: "Account.Account Analytics:Read", scope: "account" },
+      { name: "Zone.SSL and Certificates:Edit", scope: "zone" },
+      { name: "Zone.Analytics:Read", scope: "zone" },
+      { name: "Account.Workers Scripts:Read", scope: "account" },
+      { name: "Zone.SSL and Certificates:Read", scope: "zone" },
+      { name: "Zone.Firewall Services:Read", scope: "zone" },
+      { name: "Zone.Load Balancers:Read", scope: "zone" },
+      { name: "Account.Logs:Read", scope: "account" },
+      { name: "Account.Magic Transit:Read", scope: "account" },
+      { name: "Account.Workers R2 Storage:Edit" },
+      { name: "Account.Workers R2 Data Catalog:Edit" },
+      { name: "Account.Workers R2 SQL:Read" },
+    ];
+    const resolved = resolveAppTokenPermissions(names);
+    expect(resolved.filter((p) => p.group === null).map((p) => p.name)).toEqual([]);
+    expect(
+      resolved.slice(-9).map((p) => p.group && { key: p.group.key, type: p.group.type }),
+    ).toEqual([
+      { key: "workers_scripts", type: "read" },
+      { key: "ssl_and_certificates", type: "read" },
+      { key: "firewall_services", type: "read" },
+      { key: "load_balancers", type: "read" },
+      { key: "account_logs", type: "read" },
+      { key: "magic_transit", type: "read" },
+      { key: "workers_r2", type: "edit" },
+      { key: "r2_catalog", type: "edit" },
+      { key: "r2_catalog_sql", type: "read" },
+    ]);
+    expect(keysOf([{ name: "Zone.Email Routing Rules:Edit" }])).toEqual([
+      { key: "email_routing_rule", type: "edit" },
+    ]);
+    expect(keysOf([{ name: "Account.Email Sending:Edit" }])).toEqual([
+      { key: "email_sending", type: "edit" },
+    ]);
+    expect(keysOf([{ name: "Secrets Store:Edit", scope: "account" }])).toEqual([
+      { key: "secrets_store", type: "edit" },
+    ]);
   });
 
   it("keeps the manifest's name, description, and scope for display", () => {
@@ -277,7 +356,7 @@ describe("app token permissions", () => {
       "UniFi DDNS",
       resolveAppTokenPermissions([
         { name: "Zone.DNS", scope: "zone" },
-        { name: "Zone.Email Routing Rules", scope: "zone" },
+        { name: "Zone.Email Routing Addresses", scope: "zone" },
       ]),
     );
     expect(url?.startsWith("https://dash.cloudflare.com/profile/api-tokens?")).toBe(true);

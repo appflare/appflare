@@ -1,5 +1,5 @@
 import type { IndexBuild } from "@appflare/schema";
-import { Banner, Checkbox, Link } from "@cloudflare/kumo";
+import { Checkbox, Collapsible, Link, Text } from "@cloudflare/kumo";
 import { ShippingContainerIcon } from "@phosphor-icons/react";
 import {
   buildCostSentence,
@@ -18,6 +18,10 @@ import { SandboxFirstNote } from "./sandbox-first";
  * "installer"`) the container runs the app's own installer instead, with the
  * app's token; it costs the same way. With `sandboxFirst` the install
  * also turns sandbox builds on first, and says so.
+ *
+ * A quiet block rather than a banner: one line on what happens and the
+ * checkbox with the estimate; how it works, the cost detail and the pricing
+ * link fold behind "How this works".
  */
 export function SandboxBuildConfirmation({
   build,
@@ -40,69 +44,62 @@ export function SandboxBuildConfirmation({
   sandboxFirst?: boolean;
 }) {
   const estimate = estimateIndexBuild(build);
-  if (kind === "installer") {
-    return (
-      <div className="grid gap-3">
-        <Banner
-          variant="alert"
-          icon={<ShippingContainerIcon weight="fill" />}
-          title="Deployed by its own installer"
-          description={
-            <div className="grid gap-2">
-              <span>
-                This app ships its own installer. The {action} runs it at commit{" "}
-                <span className="font-mono text-[0.9em]">{build.pin.slice(0, 12)}</span> in your
-                sandbox Worker, on Workers Paid, with the app's token. The installer creates and
-                changes the app's Workers and resources itself; Appflare records them, and only the
-                installer deletes them.
-              </span>
-              <span>{installerCostSentence(estimate)}</span>
-              {sandboxFirst && <SandboxFirstNote />}
-              <Link href={CONTAINERS_PRICING_URL} target="_blank" rel="noopener noreferrer">
-                Containers pricing
-                <Link.ExternalIcon />
-              </Link>
-            </div>
-          }
-        />
-        <Checkbox
-          label={`Run its installer in my sandbox Worker (an estimated ${formatUsd(estimate.usd)} a run beyond the included usage)`}
-          checked={checked}
-          disabled={disabled}
-          onCheckedChange={(value: boolean) => onChange(value)}
-        />
-      </div>
-    );
-  }
+  const installer = kind === "installer";
+  const commit = <span className="font-mono text-[0.9em]">{build.pin.slice(0, 12)}</span>;
   return (
-    <div className="grid gap-3">
-      <Banner
-        variant="alert"
-        icon={<ShippingContainerIcon weight="fill" />}
-        title="Built in your account"
-        description={
-          <div className="grid gap-2">
-            <span>
-              This app has no prebuilt release. The {action} builds commit{" "}
-              <span className="font-mono text-[0.9em]">{build.pin.slice(0, 12)}</span> in your
-              sandbox Worker, on Workers Paid. The result is not signed; Appflare checks it came
-              from that commit.
-            </span>
-            <span>{buildCostSentence(estimate)}</span>
-            {sandboxFirst && <SandboxFirstNote />}
-            <Link href={CONTAINERS_PRICING_URL} target="_blank" rel="noopener noreferrer">
-              Containers pricing
-              <Link.ExternalIcon />
-            </Link>
-          </div>
-        }
-      />
+    <div className="grid gap-2">
+      <Text bold>
+        <span className="inline-flex items-center gap-1.5">
+          <ShippingContainerIcon aria-hidden />
+          {installer ? "Deployed by its own installer" : "Built in your account"}
+        </span>
+      </Text>
+      <Text variant="secondary" size="sm">
+        {installer
+          ? `The ${action} runs the app's own installer in your sandbox Worker, on Workers Paid.`
+          : `This app has no prebuilt release, so the ${action} builds it in your sandbox Worker, on Workers Paid.`}
+      </Text>
+      {sandboxFirst && <SandboxFirstNote />}
       <Checkbox
-        label={`Build it in my sandbox Worker (an estimated ${formatUsd(estimate.usd)} a build beyond the included usage)`}
+        label={
+          installer
+            ? `Run its installer in my sandbox Worker (about ${formatUsd(estimate.usd)} a run beyond the included usage)`
+            : `Build it in my sandbox Worker (about ${formatUsd(estimate.usd)} a build beyond the included usage)`
+        }
         checked={checked}
         disabled={disabled}
         onCheckedChange={(value: boolean) => onChange(value)}
       />
+      <Collapsible.Root>
+        <Collapsible.DefaultTrigger>How this works</Collapsible.DefaultTrigger>
+        <Collapsible.DefaultPanel>
+          <div className="grid gap-2 pt-1">
+            <Text variant="secondary" size="sm">
+              {installer ? (
+                <>
+                  The installer runs at commit {commit} with the app's token. It creates and changes
+                  the app's Workers and resources itself; Appflare records them, and only the
+                  installer deletes them.
+                </>
+              ) : (
+                <>
+                  Your sandbox Worker builds commit {commit}. The result is not signed; Appflare
+                  checks it came from that commit.
+                </>
+              )}
+            </Text>
+            <Text variant="secondary" size="sm">
+              {installer ? installerCostSentence(estimate) : buildCostSentence(estimate)}
+            </Text>
+            <Text variant="secondary" size="sm">
+              <Link href={CONTAINERS_PRICING_URL} target="_blank" rel="noopener noreferrer">
+                Containers pricing
+                <Link.ExternalIcon />
+              </Link>
+            </Text>
+          </div>
+        </Collapsible.DefaultPanel>
+      </Collapsible.Root>
     </div>
   );
 }

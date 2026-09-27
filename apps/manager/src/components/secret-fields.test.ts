@@ -54,7 +54,8 @@ describe("multiline secrets", () => {
     expect(html).not.toContain('type="password"');
     expect(html).toMatch(/<textarea[^>]*class="[^"]*font-mono/);
     expect(html).toContain(`>${PEM}</textarea>`);
-    expect(html).toContain("GitHub App private key (GITHUB_APP_PRIVATE_KEY)");
+    expect(html).toContain("GitHub App private key");
+    expect(html).not.toContain("(GITHUB_APP_PRIVATE_KEY)");
     expect(html).toContain(`The .pem file GitHub gave you. ${MULTILINE_SECRET_NOTE}`);
   });
 });

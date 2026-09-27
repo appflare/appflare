@@ -18,7 +18,6 @@ import { startedByLabel } from "../../../auto-update/auto-update";
 import { InstallAutoUpdateCard } from "../../../auto-update/install-auto-update-card";
 import { AppCredentialsCard } from "../../../components/app-credentials-card";
 import { AppSettingsSection } from "../../../components/app-settings-section";
-import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { AppIcon } from "../../../components/catalog-media";
 import { CatalogSourceBadge } from "../../../components/catalog-source-badge";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
@@ -68,8 +67,9 @@ const TAB_LABELS: Record<Tab, string> = {
 /**
  * `/apps/$installId`: the install's display name (else the app's name) and icon,
  * with "Rename" beside it for admins, its update or uninstall state,
- * then tabs. Overview: details and health, next steps, the Cloudflare token
- * the app needs for itself (if any), and, at the bottom for admins, the
+ * then tabs. Overview: details and health, next steps (the Cloudflare token
+ * an app needs for itself is explained where it is entered: the install
+ * form, Settings, and a self-deploying app's token card), and, at the bottom for admins, the
  * danger zone (uninstall, finishing an uninstall, or once uninstalled
  * deleting what was kept or forgetting the app). Settings: the app's
  * settings and secrets (admins change them and redeploy) and automatic
@@ -197,18 +197,12 @@ function OverviewTab({ install, isAdmin }: { install: InstallDetail; isAdmin: bo
           </LayerCard>
         </Section>
       )}
-      {!gone && (
-        <AppTokenPermissions
-          appName={install.name}
-          permissions={install.tokenPermissions}
-          custody={install.build.kind === "self-deploying" ? "sandbox" : "app"}
-        />
-      )}
       {!gone && install.build.kind === "self-deploying" && (
         <AppCredentialsCard
           installId={install.id}
           appName={install.name}
           secretNames={install.secretNames}
+          tokenPermissions={install.tokenPermissions}
           canEdit={isAdmin}
         />
       )}

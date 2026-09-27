@@ -148,9 +148,7 @@ describe("varValueProblem and missingRequiredVar", () => {
   it("checks JSON only for JSON settings and leaves empty values to the required check", () => {
     expect(varValueProblem(json, '["{{workerName}}@example.com"]')).toBeNull();
     expect(varValueProblem(json, "")).toBeNull();
-    expect(varValueProblem(json, "a@example.com")).toMatch(
-      /^Addresses \(ADDRESSES\) is not valid JSON/,
-    );
+    expect(varValueProblem(json, "a@example.com")).toMatch(/^Addresses is not valid JSON/);
     expect(varValueProblem({ ...json, kind: "text" }, "a@example.com")).toBeNull();
     expect(missingRequiredVar(json, "  ")).toBe(true);
     expect(missingRequiredVar({ ...json, shownDefault: "[]" }, "")).toBe(false);
@@ -277,7 +275,7 @@ describe("select vars", () => {
     if (field === undefined) throw new Error("no field");
     expect(varValueProblem(field, "404")).toBeNull();
     expect(varValueProblem(field, "home")).toBe(
-      "home_page (HOME_PAGE) must be one of: Landing page, Not found, Admin sign-in.",
+      "home_page must be one of: Landing page, Not found, Admin sign-in.",
     );
     expect(varValueProblem(field, "")).toBeNull();
     expect(missingRequiredVar(field, "")).toBe(true);

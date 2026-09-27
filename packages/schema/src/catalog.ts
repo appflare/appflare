@@ -783,10 +783,15 @@ export interface PlaceholderValues {
   wildcardHostname?: string | null;
 }
 
-const PLACEHOLDER_PATTERN = new RegExp(
-  `\\{\\{\\s*(${INSTALL_PLACEHOLDERS.join("|")})\\s*\\}\\}`,
-  "g",
-);
+/**
+ * The regular expression source of one {@link INSTALL_PLACEHOLDERS} entry as
+ * written in a value (`{{ workerUrl }}`), its name in the one capture group.
+ * Exported as source text, not a shared `RegExp`, so callers build their own
+ * and no `lastIndex` leaks between them.
+ */
+export const INSTALL_PLACEHOLDER_SOURCE = `\\{\\{\\s*(${INSTALL_PLACEHOLDERS.join("|")})\\s*\\}\\}`;
+
+const PLACEHOLDER_PATTERN = new RegExp(INSTALL_PLACEHOLDER_SOURCE, "g");
 
 /** Whether `text` holds a placeholder the manager fills in. */
 export function hasPlaceholder(text: string): boolean {

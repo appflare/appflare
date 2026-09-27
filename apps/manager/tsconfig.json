@@ -15,6 +15,7 @@
     "worker-configuration.d.ts",
     "vite.config.ts",
     "vitest.config.ts",
+    "vitest.dom.config.ts",
     "drizzle.config.ts"
   ]
 }

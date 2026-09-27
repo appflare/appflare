@@ -9,18 +9,23 @@ import {
   isOptionalSecret,
   isSeedOnly,
 } from "@appflare/schema";
-import { Button, Input, InputArea, SensitiveInput, Switch, Text } from "@cloudflare/kumo";
+import { Button, Input, InputArea, Label, SensitiveInput, Switch, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
+import type { ReactNode } from "react";
 import { generateTemporaryPassword } from "../auth/temporary-password";
 import { GENERATED_SECRET_LENGTH } from "../installs/install-input";
+import { FieldHelp, FieldLabel } from "./field-label";
 
 /**
  * One field per catalog secret, shared by the install form and the update
- * form. Generated secrets (`generate`) are prefilled once with a fresh value the
+ * form. Each is labelled with the catalog's label; the secret's name shows on
+ * hover or with the form's "Show technical names" (./field-label.tsx), and
+ * long help folds behind "More". Generated secrets (`generate`) are
+ * prefilled once with a fresh value the
  * admin can copy now (it is shown only here) or regenerate; a multi-line one
  * (`multiline`) is a text area that keeps its line breaks; the others are
  * password fields the admin fills in. An optional secret (`optional: true`)
- * is left unset behind a "Set now" switch; turning it on opens its field.
+ * is left unset behind a "Set it now" switch; turning it on opens its field.
  *
  * Values are keyed by secret name. An optional secret has no key while it is
  * left unset, so the form sends nothing for it. A derived secret (the
@@ -105,55 +110,66 @@ export function SecretFields({
   values,
   onChange,
   after,
+  fieldExtras = {},
 }: {
   secrets: readonly CatalogSecret[];
   /** Secrets the Worker already has, asked for again by an update; their fields start empty. */
   held?: readonly string[];
   /** The catalog's vars, for the vars derived from a secret. */
-  vars?: readonly Pick<CatalogVar, "name" | "derive">[];
+  vars?: readonly (Pick<CatalogVar, "name" | "derive"> & { label?: string })[];
   values: Readonly<Record<string, string | undefined>>;
   /** A new value; undefined leaves an optional secret unset. */
   onChange(name: string, value: string | undefined): void;
   /** What ends the chance to copy a generated value ("the install", "the update"). */
   after: string;
+  /**
+   * Shown right under a secret's field, by secret name: how to create the
+   * Cloudflare token the app takes in that secret.
+   */
+  fieldExtras?: Readonly<Record<string, ReactNode>>;
 }) {
   return enteredSecrets(secrets).map((secret) => {
     const value = values[secret.name];
     const derived = derivedNote(secrets, secret.name, vars);
     const isHeld = held.includes(secret.name);
+    const extra = fieldExtras[secret.name];
     if (!isOptionalSecret(secret)) {
       return (
-        <SecretField
-          key={secret.name}
-          secret={secret}
-          value={value ?? ""}
-          onChange={(next) => onChange(secret.name, next)}
-          after={after}
-          note={
-            [
-              derived,
-              isHeld ? heldSecretNote(secret) : undefined,
-              isSeedOnly(secret) ? SEED_ONLY_SECRET_NOTE : undefined,
-            ]
-              .filter((t) => t !== undefined)
-              .join(" ") || undefined
-          }
-          held={isHeld}
-        />
+        <div key={secret.name} className="grid gap-3">
+          <SecretField
+            secret={secret}
+            value={value ?? ""}
+            onChange={(next) => onChange(secret.name, next)}
+            after={after}
+            note={
+              [
+                derived,
+                isHeld ? heldSecretNote(secret) : undefined,
+                isSeedOnly(secret) ? SEED_ONLY_SECRET_NOTE : undefined,
+              ]
+                .filter((t) => t !== undefined)
+                .join(" ") || undefined
+            }
+            held={isHeld}
+          />
+          {extra}
+        </div>
       );
     }
-    const label = `${secret.label} (${secret.name})`;
     return (
       <div key={secret.name} className="grid gap-2">
         <div className="grid gap-1">
-          <Text bold>{label}</Text>
-          <Text variant="secondary" size="sm">
-            {secret.help ? `${secret.help} ` : ""}Optional: the app works without it, and it can be
-            set later in the app's settings.
-          </Text>
+          <Label showOptional>
+            <FieldLabel label={secret.label} name={secret.name} />
+          </Label>
+          {secret.help !== undefined && (
+            <Text variant="secondary" size="sm">
+              <FieldHelp text={secret.help} />
+            </Text>
+          )}
         </div>
         <Switch
-          label="Set now"
+          label="Set it now"
           checked={value !== undefined}
           onCheckedChange={(on: boolean) =>
             onChange(
@@ -163,13 +179,16 @@ export function SecretFields({
           }
         />
         {value !== undefined && (
-          <SecretField
-            secret={secret}
-            withHelp={false}
-            value={value}
-            onChange={(next) => onChange(secret.name, next)}
-            after={after}
-          />
+          <>
+            <SecretField
+              secret={secret}
+              withHelp={false}
+              value={value}
+              onChange={(next) => onChange(secret.name, next)}
+              after={after}
+            />
+            {extra}
+          </>
         )}
       </div>
     );
@@ -177,20 +196,20 @@ export function SecretFields({
 }
 
 /**
- * What the field of `name` says about the secrets and vars derived from it,
- * or undefined when none is.
+ * What the field of `name` says about the secrets and vars derived from it
+ * (by label where the catalog gives one), or undefined when none is.
  */
 export function derivedNote(
   secrets: readonly CatalogSecret[],
   name: string,
-  vars: readonly Pick<CatalogVar, "name" | "derive">[] = [],
+  vars: readonly (Pick<CatalogVar, "name" | "derive"> & { label?: string })[] = [],
 ): string | undefined {
   const derived = [
     ...secrets.filter((s) => isDerivedSecret(s) && s.derive?.from === name),
     ...vars.filter((v) => v.derive?.from === name),
   ];
   if (derived.length === 0) return undefined;
-  return `Appflare also sets ${derived.map((s) => s.name).join(" and ")} from it.`;
+  return `Appflare also sets ${derived.map((s) => s.label ?? s.name).join(" and ")} from it.`;
 }
 
 /**
@@ -217,11 +236,11 @@ export function MultilineSecretInput({
   description,
   disabled = false,
 }: {
-  label: string;
+  label: ReactNode;
   value: string;
   onChange(value: string): void;
   /** Help before the note that the value is hidden once saved. */
-  description?: string | undefined;
+  description?: ReactNode;
   disabled?: boolean;
 }) {
   return (
@@ -243,14 +262,21 @@ export function MultilineSecretInput({
         const settled = normaliseMultilineSecret(value);
         if (settled !== value) onChange(settled);
       }}
-      description={`${description ? `${description} ` : ""}${MULTILINE_SECRET_NOTE}`}
+      description={
+        description === undefined || description === null ? (
+          MULTILINE_SECRET_NOTE
+        ) : (
+          <>
+            {description} {MULTILINE_SECRET_NOTE}
+          </>
+        )
+      }
     />
   );
 }
 
 /** What the field of a multi-line secret says after its help. */
-export const MULTILINE_SECRET_NOTE =
-  "Paste it with its line breaks. It is shown while you enter it and hidden once saved: Appflare cannot read it back.";
+export const MULTILINE_SECRET_NOTE = "Paste it with its line breaks. It is hidden once saved.";
 
 /** The value field of one secret: generated (copy now, regenerate), multi-line, or a password field. */
 function SecretField({
@@ -273,10 +299,16 @@ function SecretField({
   /** The Worker has it already: the admin keeps it by entering it, or chooses a new one. */
   held?: boolean;
 }) {
-  const label = `${secret.label} (${secret.name})`;
-  const help =
-    [withHelp ? secret.help : undefined, note].filter((t) => t !== undefined).join(" ") ||
-    undefined;
+  const label = <FieldLabel label={secret.label} name={secret.name} />;
+  const help = withHelp ? secret.help : undefined;
+  const generatedNote =
+    !secret.generate || (held && value.length === 0)
+      ? undefined
+      : isSeedOnly(secret)
+        ? "Generated for you; the install's page shows it once more."
+        : `Generated for you. Copy it now if you need it: it cannot be shown again after ${after}.`;
+  const notes = [note, generatedNote].filter((t) => t !== undefined).join(" ") || undefined;
+  const description = help === undefined ? notes : <FieldHelp text={help} after={notes} />;
   if (secret.generate) {
     return (
       <div className="grid gap-2">
@@ -284,13 +316,7 @@ function SecretField({
           label={label}
           value={value}
           onValueChange={(next: string) => onChange(next)}
-          description={
-            held && value.length === 0
-              ? help
-              : isSeedOnly(secret)
-                ? `${help ? `${help} ` : ""}Generated for you; the install's page shows it once more.`
-                : `${help ? `${help} ` : ""}Generated for you. Copy it now: it is shown only here and cannot be read back after ${after}.`
-          }
+          description={description}
         />
         <div>
           <Button
@@ -308,7 +334,12 @@ function SecretField({
   }
   if (isMultilineSecret(secret)) {
     return (
-      <MultilineSecretInput label={label} value={value} onChange={onChange} description={help} />
+      <MultilineSecretInput
+        label={label}
+        value={value}
+        onChange={onChange}
+        description={description}
+      />
     );
   }
   return (
@@ -320,7 +351,7 @@ function SecretField({
       passwordManagerIgnore
       required
       onChange={(e) => onChange(e.currentTarget.value)}
-      description={help}
+      description={description}
     />
   );
 }

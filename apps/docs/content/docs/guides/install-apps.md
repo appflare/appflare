@@ -24,14 +24,24 @@ secret of several lines, such as a PEM private key, gets a text area: paste it w
 its line breaks. Its text shows while you enter it and cannot be read back once
 the app is installed. A secret
 marked optional is one the app works without: it is left unset unless you turn on
-**Set now**, and you can set or remove it later in the app's
+**Set it now**, and you can set or remove it later in the app's
 [settings](/guides/settings/#remove-a-secret).
 
+Fields show the app's own labels. The name the app reads each value under (its
+variable or secret name) shows when you hover over a label, or next to every label
+once you turn on **Show technical names** at the top of the form. Long help shows
+its first sentence; **More** shows the rest.
+
 **Settings.** Variables on the app's Worker, for example a home page URL. A setting
-starts with the app's default. When the default names the app's own address, the
-form shows it filled in for the Worker name you typed, and the install fills in the
-real workers.dev address (also when you attach a custom domain later). Only settings
-you change are stored; the others follow the app's default on each update. Settings marked JSON take a JSON value, such as `["inbox@example.com"]`,
+starts with the app's default. Parts of it that Appflare fills in, such as the app's
+address, its Worker name or your account ID, show as chips ("App address",
+"Account ID"). Hover over, click or tap a chip's name to see what it becomes. A chip
+is removed whole with Backspace or Delete, or with its ×, and **Insert** on the field
+adds one back. The setting keeps
+the chip, not its current value, so the app's address follows the Worker name you
+typed and stays the real workers.dev address (also when you attach a custom domain
+later). Only settings you change are stored; the others follow the app's default on
+each update. Settings marked JSON take a JSON value, such as `["inbox@example.com"]`,
 and the form checks it before you can install. A setting with a fixed set of values
 shows them as choices: cards for up to four, a dropdown for more. A setting derived
 from a secret, such as the public key of a VAPID private key, is read-only: Appflare

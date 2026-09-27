@@ -179,11 +179,11 @@ export function varValueProblem(
 ): string | null {
   if (value.trim().length === 0) return null;
   if (field.options !== null && !field.options.some((o) => o.value === value)) {
-    return `${field.label} (${field.name}) must be one of: ${field.options.map((o) => o.label).join(", ")}.`;
+    return `${field.label} must be one of: ${field.options.map((o) => o.label).join(", ")}.`;
   }
   if (field.kind !== "json") return null;
   const problem = jsonTextProblem(value);
-  return problem === null ? null : `${field.label} (${field.name}) ${problem}.`;
+  return problem === null ? null : `${field.label} ${problem}.`;
 }
 
 /** Whether a required field is empty with nothing to fall back to. */

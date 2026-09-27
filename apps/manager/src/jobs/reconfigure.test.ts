@@ -1282,6 +1282,8 @@ describe("the Settings section", () => {
       email: null,
       skipsPreview: null,
       installer: null,
+      // Cut takes no Cloudflare token of its own.
+      appToken: null,
     });
     expect(settings?.fields.map((f) => [f.name, f.stored, f.shownDefault])).toEqual([
       ["HOME_PAGE", "admin", ""],

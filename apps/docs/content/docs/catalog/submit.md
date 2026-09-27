@@ -427,7 +427,7 @@ Points that need care:
   [Seeding a first admin](#seeding-a-first-admin).
 - **Optional secrets.** Add `"optional": true` to a secret the app works without,
   such as an SMTP password for a feature that stays off until it is set. The install
-  form leaves it unset unless the admin chooses **Set now**, updates never ask for it,
+  form leaves it unset unless the admin chooses **Set it now**, updates never ask for it,
   and admins can set or remove it later in the app's settings. Self-deploying entries
   cannot have optional secrets: their installer runs with every secret the manifest
   lists.

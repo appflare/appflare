@@ -1,27 +1,16 @@
 import {
+  appTokenPermissions,
   type CatalogManifest,
+  enteredSecrets,
   entryPlaceholderValues,
-  hasPlaceholder,
   type IndexBuild,
   isSeedOnly,
-  renderEntryWorkerPlaceholders,
-  renderPlaceholders,
 } from "@appflare/schema";
-import {
-  Banner,
-  Button,
-  Input,
-  InputArea,
-  InputGroup,
-  LayerCard,
-  Link,
-  Radio,
-  Select,
-  Text,
-} from "@cloudflare/kumo";
+import { Banner, Button, Input, InputGroup, LayerCard, Link, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useState } from "react";
 import type { AccountPlan } from "../account/plan";
+import { appTokenSecret } from "../installs/app-token-secret";
 import { DISPLAY_NAME_MAX_LENGTH, displayNameProblem } from "../installs/display-name";
 import {
   type InstallDomainInput,
@@ -32,32 +21,45 @@ import {
 import {
   enteredVarFields,
   type InstallVarField,
-  MAX_CARD_OPTIONS,
   missingRequiredVar,
   varValueProblem,
 } from "../installs/install-vars";
 import { startInstall } from "../installs/installs.functions";
 import { workersDevUrl } from "../installs/post-install";
 import { installSourceBuild } from "../installs/source-builds.functions";
+import { AppTokenHelp } from "./app-token-permissions";
 import { CronTriggersField } from "./cron-triggers-field";
 import { connectionsComplete, DatabaseFields } from "./database-fields";
 import { EmailRoutingFields } from "./email-routing-fields";
+import { TechnicalNamesProvider, TechnicalNamesSwitch } from "./field-label";
 import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
+import { placeholderOptions } from "./placeholder-chips";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import {
   initialSecretValues,
-  SEED_ONLY_VAR_NOTE,
   SecretFields,
   secretsComplete,
   withSecretValue,
 } from "./secret-fields";
 import { generatedSeedCredentials, holdSeedCredentials } from "./seed-credentials";
 import { tooltipContent } from "./tooltip";
+import { type PlaceholderChips, VarField } from "./var-field";
 import {
   WorkersPaidConfirmation,
   type WorkersPaidConfirmationState,
 } from "./workers-paid-confirmation";
+
+/** The one notice at the top of the install form, or null when there is nothing to say. */
+export function installFormNotice(
+  canInstall: boolean,
+  blockedReason: string | null,
+  blockedLink: { href: string; label: string } | null = null,
+): { title: string; link: { href: string; label: string } | null } | null {
+  if (blockedReason !== null) return { title: blockedReason, link: blockedLink };
+  if (!canInstall) return { title: "Only admins can install apps.", link: null };
+  return null;
+}
 
 /**
  * The install form of `/catalog/$slug`, generated from
@@ -69,7 +71,7 @@ import {
  * (`generate`) are prefilled with a fresh value the admin can copy now; it is
  * shown only here. A derived var is shown read-only: the install computes it
  * from its source secret. Optional secrets stay unset unless the admin turns on
- * "Set now". Seed-only secrets and vars (a first admin's account) say they
+ * "Set it now". Seed-only secrets and vars (a first admin's account) say they
  * are used once and not kept; a generated one is shown once more on the
  * install's job page (./seed-credentials.ts). An app that receives email (`install.emailRouting`) also
  * asks for a zone and previews what the install sets up there. An app with
@@ -84,11 +86,18 @@ import {
  * Members see the form disabled.
  *
  * Settings start with the catalog default, else the wrangler config's value,
- * with `{{workerUrl}}` and `{{workerName}}` shown filled in for the Worker
- * name as typed. Only settings the admin changed are sent and stored; the
- * others take the default of whichever version a job deploys, placeholders
- * filled in then. A setting the app reads as JSON is a
+ * placeholders shown as chips that say what they become for the Worker name
+ * as typed. Only settings the admin changed are sent and stored, with their
+ * placeholders; the others take the default of whichever version a job
+ * deploys, placeholders filled in then. A setting the app reads as JSON is a
  * multi-line field that must hold valid JSON.
+ *
+ * Fields are labelled for people, not code: a "Show technical names" switch
+ * at the top shows each field's variable or secret name. The form carries at
+ * most one notice, at the top (why it cannot be used now). The Cloudflare
+ * token an app needs for itself is explained next to the field that takes it
+ * (the installer's token field, or the secret the app reads it from), else
+ * after the settings.
  */
 export function InstallForm({
   catalog,
@@ -193,15 +202,32 @@ export function InstallForm({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showNames, setShowNames] = useState(false);
+  const notice = installFormNotice(canInstall, blockedReason, blockedLink);
+  /** Fields labelled for people, whose technical names the switch at the top shows. */
+  const namedFields =
+    enteredSecrets(catalog.secrets).length > 0 || varFields.length > 0 || databases.length > 0;
+  // The app's own Cloudflare token: explained at the installer's token field,
+  // at the secret that takes it, or else after the settings.
+  const tokenPermissions = appTokenPermissions(catalog);
+  const tokenSecret = installer === null ? appTokenSecret(catalog) : null;
+  const tokenElsewhere = tokenPermissions.length > 0 && installer === null && tokenSecret === null;
 
-  const placeholders = { workerName, workerUrl: workersDevUrl(workerName, subdomain) };
-  // An app of several Workers: `{{workerUrl:<name>}}` names one of them.
-  const entryWorkers = entryPlaceholderValues(catalog, workerName, subdomain) ?? {};
-  const shownDefault = (field: InstallVarField): string =>
-    renderEntryWorkerPlaceholders(
-      renderPlaceholders(field.shownDefault, placeholders),
-      entryWorkers,
-    );
+  // Placeholders stay in the fields as chips, each saying what it becomes;
+  // the install fills them in, for the Worker name it gets.
+  const entryWorkers = entryPlaceholderValues(catalog, workerName, subdomain);
+  const chips: PlaceholderChips = {
+    options: placeholderOptions({
+      wildcard: catalog.install.wildcardHostname === true,
+      workers: Object.keys(entryWorkers ?? {}),
+    }),
+    known: {
+      workerName: installer === null ? workerName : null,
+      workerUrl: installer === null ? workersDevUrl(workerName, subdomain) : null,
+      ...(entryWorkers === undefined ? {} : { entryWorkers }),
+    },
+  };
+  const shownDefault = (field: InstallVarField): string => field.shownDefault;
   const shownVar = (field: InstallVarField): string =>
     editedVars[field.name] ?? shownDefault(field);
   /**
@@ -281,192 +307,219 @@ export function InstallForm({
       <LayerCard.Secondary>Install {catalog.name}</LayerCard.Secondary>
       <LayerCard.Primary className="px-5 py-4">
         <form className="grid gap-6" onSubmit={onSubmit}>
-          {!canInstall && (
+          {notice !== null && (
             <Banner
               variant="secondary"
               icon={<InfoIcon weight="fill" />}
-              title="Only admins can install apps."
-            />
-          )}
-          {blockedReason !== null && (
-            <Banner
-              variant="secondary"
-              icon={<InfoIcon weight="fill" />}
-              title={blockedReason}
+              title={notice.title}
               description={
-                blockedLink === null ? undefined : (
-                  <Link href={blockedLink.href}>{blockedLink.label}</Link>
+                notice.link === null ? undefined : (
+                  <Link href={notice.link.href}>{notice.link.label}</Link>
                 )
               }
             />
           )}
-          <fieldset disabled={disabled} className="grid gap-6">
-            {installer !== null ? (
-              <Text variant="secondary" size="sm">
-                {catalog.name}'s installer names its Workers after this install (
-                <span className="font-mono text-[0.9em]">
-                  {catalog.install.selfDeploying?.workers[0]?.replace("{{stage}}", "appflare-…") ??
-                    catalog.install.workerName}
-                </span>
-                ), so several installs never share one.
-              </Text>
-            ) : (
-              <InputGroup
-                label="Worker name"
-                labelTooltip={tooltipContent(
-                  "Resources are named after it. Each install of an app needs its own Worker name.",
-                )}
-                error={nameValid ? undefined : { message: `Use ${WORKER_NAME_HINT}`, match: true }}
-                description={
-                  fixedWorkerName
-                    ? `${catalog.name} only works as the Worker "${workerName}", so it installs once per account.`
-                    : "The app is served at this address."
-                }
-              >
-                <InputGroup.Addon>https://</InputGroup.Addon>
-                <InputGroup.Input
-                  aria-label="Worker name"
-                  value={workerName}
-                  onChange={(e) => setWorkerName(e.currentTarget.value.trim())}
-                  readOnly={fixedWorkerName}
-                  autoComplete="off"
-                  spellCheck={false}
-                  required
-                  maxLength={WORKER_NAME_MAX_LENGTH}
-                />
-                <InputGroup.Suffix>
-                  .{subdomain ?? "<your subdomain>"}.workers.dev
-                </InputGroup.Suffix>
-              </InputGroup>
-            )}
-            <Input
-              label="Name"
-              labelTooltip={tooltipContent(
-                "Optional. Shown instead of the Worker name in Appflare only; it can be changed at any time from the app's page.",
-              )}
-              value={displayName}
-              onChange={(e) => setDisplayName(e.currentTarget.value)}
-              placeholder={installer !== null ? catalog.name : workerName}
-              autoComplete="off"
-              maxLength={DISPLAY_NAME_MAX_LENGTH}
-              error={displayNameError ?? undefined}
-              description={
-                installer !== null
-                  ? `How this install is listed in Appflare. Leave empty to use ${catalog.name}.`
-                  : "How this install is listed in Appflare. Leave empty to use the Worker name."
-              }
-            />
-
-            {installer !== null && (
-              <Input
-                label={`${catalog.name}'s Cloudflare API token`}
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                passwordManagerIgnore
-                required
-                value={appToken}
-                onChange={(e) => setAppToken(e.currentTarget.value)}
-                description="The token you created with the permissions listed above. It is stored as a secret on your sandbox Worker, where the app's installer runs with it; Appflare keeps no copy and never uses it itself."
-              />
-            )}
-
-            {catalog.secrets.length > 0 && (
-              <div className="grid gap-4">
-                <div className="grid gap-1.5">
-                  <Text bold>Secrets</Text>
-                  <Text variant="secondary" size="sm">
-                    {installer !== null
-                      ? "Stored as encrypted secrets on your sandbox Worker for the app's installer, which sets them on the app's Workers. Appflare keeps only their names."
-                      : "Stored as encrypted secrets on the app's Worker. Appflare keeps only their names."}
-                    {catalog.secrets.some(isSeedOnly)
-                      ? " Those used to create the first admin account are not stored at all."
-                      : ""}
-                  </Text>
-                </div>
-                <SecretFields
-                  secrets={catalog.secrets}
-                  vars={catalog.vars}
-                  values={secrets}
-                  onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
-                  after="the install"
-                />
-              </div>
-            )}
-
-            <DatabaseFields
-              databases={databases}
-              values={connections}
-              onChange={(binding, value) => setConnections((s) => ({ ...s, [binding]: value }))}
-            />
-
-            {varFields.length > 0 && (
-              <div className="grid gap-4">
-                <div className="grid gap-1.5">
-                  <Text bold>Variables</Text>
-                  <Text variant="secondary" size="sm">
-                    {installer !== null
-                      ? "Handed to the app's installer as environment variables."
-                      : "Variables on the app's Worker. Variables marked JSON take a JSON value."}
-                  </Text>
-                </div>
-                {varFields.map((field) => (
-                  <VarField
-                    key={field.name}
-                    field={field}
-                    value={shownVar(field)}
-                    onChange={(value) => setEditedVars((s) => ({ ...s, [field.name]: value }))}
+          {namedFields && (
+            <div className="flex justify-end">
+              <TechnicalNamesSwitch checked={showNames} onChange={setShowNames} />
+            </div>
+          )}
+          <TechnicalNamesProvider value={showNames}>
+            <fieldset disabled={disabled} className="grid gap-6">
+              {installer !== null ? (
+                <Text variant="secondary" size="sm">
+                  {catalog.name}'s installer names its Workers after this install (
+                  <span className="font-mono text-[0.9em]">
+                    {catalog.install.selfDeploying?.workers[0]?.replace(
+                      "{{stage}}",
+                      "appflare-…",
+                    ) ?? catalog.install.workerName}
+                  </span>
+                  ), so several installs never share one.
+                </Text>
+              ) : (
+                <InputGroup
+                  label="Worker name"
+                  labelTooltip={tooltipContent(
+                    "Resources are named after it. Each install of an app needs its own Worker name.",
+                  )}
+                  error={
+                    nameValid ? undefined : { message: `Use ${WORKER_NAME_HINT}`, match: true }
+                  }
+                  description={
+                    fixedWorkerName
+                      ? `${catalog.name} only works as the Worker "${workerName}", so it installs once per account.`
+                      : "The app is served at this address."
+                  }
+                >
+                  <InputGroup.Addon>https://</InputGroup.Addon>
+                  <InputGroup.Input
+                    aria-label="Worker name"
+                    value={workerName}
+                    onChange={(e) => setWorkerName(e.currentTarget.value.trim())}
+                    readOnly={fixedWorkerName}
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                    maxLength={WORKER_NAME_MAX_LENGTH}
                   />
-                ))}
-              </div>
-            )}
-
-            {/* The zone reads are admin-only calls; a member sees no zone field. */}
-            {receivesEmail && canInstall && blockedReason === null && (
-              <EmailRoutingFields
-                slug={appKey}
-                workerName={workerName}
-                disabled={disabled}
-                zoneId={emailZoneId}
-                onZoneChange={setEmailZoneId}
-                onReadyChange={setEmailReady}
+                  <InputGroup.Suffix>
+                    .{subdomain ?? "<your subdomain>"}.workers.dev
+                  </InputGroup.Suffix>
+                </InputGroup>
+              )}
+              <Input
+                label="Name"
+                required={false}
+                labelTooltip={tooltipContent(
+                  "Shown in Appflare only. You can change it at any time from the app's page.",
+                )}
+                value={displayName}
+                onChange={(e) => setDisplayName(e.currentTarget.value)}
+                placeholder={installer !== null ? catalog.name : workerName}
+                autoComplete="off"
+                maxLength={DISPLAY_NAME_MAX_LENGTH}
+                error={displayNameError ?? undefined}
+                description={`How it is listed in Appflare. Leave empty to use ${installer !== null ? catalog.name : "the Worker name"}.`}
               />
-            )}
 
-            {/* The zone and gateway reads are admin-only calls; the installer of a
+              {installer !== null && (
+                <div className="grid gap-3">
+                  <Input
+                    label={`Cloudflare API token for ${catalog.name}`}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    passwordManagerIgnore
+                    required
+                    value={appToken}
+                    onChange={(e) => setAppToken(e.currentTarget.value)}
+                    description="The app's installer runs with it from your sandbox Worker. Appflare keeps no copy."
+                  />
+                  <AppTokenHelp appName={catalog.name} permissions={tokenPermissions} />
+                </div>
+              )}
+
+              {catalog.secrets.length > 0 && (
+                <div className="grid gap-4">
+                  <div className="grid gap-1.5">
+                    <Text bold>Secrets</Text>
+                    <Text variant="secondary" size="sm">
+                      {installer !== null
+                        ? "Kept encrypted for the app's installer. Appflare stores only their names."
+                        : "Kept encrypted on the app. Appflare stores only their names."}
+                      {catalog.secrets.some(isSeedOnly)
+                        ? " Those that create the first admin account are not kept at all."
+                        : ""}
+                    </Text>
+                  </div>
+                  <SecretFields
+                    secrets={catalog.secrets}
+                    vars={catalog.vars}
+                    values={secrets}
+                    onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
+                    after="the install"
+                    fieldExtras={
+                      tokenSecret === null
+                        ? {}
+                        : {
+                            [tokenSecret]: (
+                              <AppTokenHelp appName={catalog.name} permissions={tokenPermissions} />
+                            ),
+                          }
+                    }
+                  />
+                </div>
+              )}
+
+              <DatabaseFields
+                databases={databases}
+                values={connections}
+                onChange={(binding, value) => setConnections((s) => ({ ...s, [binding]: value }))}
+              />
+
+              {varFields.length > 0 && (
+                <div className="grid gap-4">
+                  <div className="grid gap-1.5">
+                    <Text bold>Settings</Text>
+                    <Text variant="secondary" size="sm">
+                      {installer !== null
+                        ? "Handed to the app's installer. You can change them later on the app's page."
+                        : "You can change them later on the app's page."}
+                    </Text>
+                  </div>
+                  {varFields.map((field) => (
+                    <VarField
+                      key={field.name}
+                      field={field}
+                      value={shownVar(field)}
+                      chips={chips}
+                      onChange={(value) => setEditedVars((s) => ({ ...s, [field.name]: value }))}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {tokenElsewhere && (
+                <div className="grid gap-3">
+                  <div className="grid gap-1.5">
+                    <Text bold>Cloudflare token for {catalog.name}</Text>
+                    <Text variant="secondary" size="sm">
+                      {catalog.name} uses a Cloudflare API token of its own, which you give it after
+                      it is installed. Its setup steps say where.
+                    </Text>
+                  </div>
+                  <AppTokenHelp appName={catalog.name} permissions={tokenPermissions} />
+                </div>
+              )}
+
+              {/* The zone reads are admin-only calls; a member sees no zone field. */}
+              {receivesEmail && canInstall && blockedReason === null && (
+                <EmailRoutingFields
+                  slug={appKey}
+                  workerName={workerName}
+                  disabled={disabled}
+                  zoneId={emailZoneId}
+                  onZoneChange={setEmailZoneId}
+                  onReadyChange={setEmailReady}
+                />
+              )}
+
+              {/* The zone and gateway reads are admin-only calls; the installer of a
                 self-deploying app decides where its Workers answer. */}
-            {installer === null && canInstall && blockedReason === null && (
-              <InstallDomainFields
-                disabled={disabled}
-                onChange={onDomainChange}
-                wildcard={
-                  catalog.install.wildcardHostname === true
-                    ? { reason: catalog.install.wildcardReason ?? "" }
-                    : null
-                }
+              {installer === null && canInstall && blockedReason === null && (
+                <InstallDomainFields
+                  disabled={disabled}
+                  onChange={onDomainChange}
+                  wildcard={
+                    catalog.install.wildcardHostname === true
+                      ? { reason: catalog.install.wildcardReason ?? "" }
+                      : null
+                  }
+                />
+              )}
+
+              {confirmsCost !== null && (
+                <SandboxBuildConfirmation
+                  build={confirmsCost}
+                  checked={buildConfirmed}
+                  onChange={setBuildConfirmed}
+                  action="install"
+                  kind={installer !== null ? "installer" : "build"}
+                  sandboxFirst={sandboxFirst}
+                />
+              )}
+
+              <CronTriggersField
+                count={cronTriggers}
+                confirmation={catalog.plan === "paid" || accountPaid ? null : paidConfirmation}
               />
-            )}
 
-            {confirmsCost !== null && (
-              <SandboxBuildConfirmation
-                build={confirmsCost}
-                checked={buildConfirmed}
-                onChange={setBuildConfirmed}
-                action="install"
-                kind={installer !== null ? "installer" : "build"}
-                sandboxFirst={sandboxFirst}
-              />
-            )}
-
-            <CronTriggersField
-              count={cronTriggers}
-              confirmation={catalog.plan === "paid" || accountPaid ? null : paidConfirmation}
-            />
-
-            {catalog.plan === "paid" && !accountPaid && (
-              <WorkersPaidConfirmation state={paidConfirmation} />
-            )}
-          </fieldset>
+              {catalog.plan === "paid" && !accountPaid && (
+                <WorkersPaidConfirmation state={paidConfirmation} />
+              )}
+            </fieldset>
+          </TechnicalNamesProvider>
 
           {error !== null && (
             <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
@@ -485,129 +538,5 @@ export function InstallForm({
         </form>
       </LayerCard.Primary>
     </LayerCard>
-  );
-}
-
-/**
- * One setting: a text field, a JSON field checked as the admin types, or for
- * a catalog `type: "select"` var its choices (cards for up to
- * {@link MAX_CARD_OPTIONS}, a dropdown beyond). Shared with the Settings
- * section of the app page.
- */
-export function VarField({
-  field,
-  value,
-  onChange,
-  when = "when it installs",
-}: {
-  field: InstallVarField;
-  value: string;
-  onChange: (value: string) => void;
-  /** When placeholders are filled in, for the field's note. */
-  when?: string;
-}) {
-  if (field.derivedFrom !== undefined) {
-    return (
-      <DerivedVarField field={field} derivedFrom={field.derivedFrom} value={value} when={when} />
-    );
-  }
-  const notes = [
-    field.help,
-    field.seedOnly === true ? SEED_ONLY_VAR_NOTE : undefined,
-    hasPlaceholder(value)
-      ? `{{workerUrl}}, {{workerName}} and {{accountId}} are filled in with the app's URL, Worker name and Cloudflare account id ${when}.`
-      : undefined,
-  ].filter((note) => note !== undefined);
-  const description = notes.length > 0 ? notes.join(" ") : undefined;
-  const problem = varValueProblem(field, value) ?? undefined;
-  if (field.options !== null && field.options.length <= MAX_CARD_OPTIONS) {
-    return (
-      <Radio.Group
-        legend={`${field.label} (${field.name})`}
-        description={description}
-        value={value}
-        onValueChange={(next: string) => onChange(next)}
-        orientation="horizontal"
-        appearance="card"
-        error={problem}
-      >
-        {field.options.map((option) => (
-          <Radio.Item key={option.value} value={option.value} label={option.label} />
-        ))}
-      </Radio.Group>
-    );
-  }
-  if (field.options !== null) {
-    return (
-      <Select
-        label={`${field.label} (${field.name})`}
-        placeholder="Choose one"
-        value={value === "" ? null : value}
-        onValueChange={(next) => onChange(typeof next === "string" ? next : "")}
-        items={field.options.map((option) => ({ value: option.value, label: option.label }))}
-        required={field.required}
-        description={description}
-        error={problem}
-      />
-    );
-  }
-  if (field.kind === "json") {
-    return (
-      <InputArea
-        label={`${field.label} (${field.name}, JSON)`}
-        value={value}
-        required={field.required}
-        autoComplete="off"
-        spellCheck={false}
-        autoResize
-        minRows={1}
-        maxRows={8}
-        className="font-mono"
-        onChange={(e) => onChange(e.currentTarget.value)}
-        description={description}
-        error={problem}
-      />
-    );
-  }
-  return (
-    <Input
-      label={`${field.label} (${field.name})`}
-      value={value}
-      required={field.required}
-      autoComplete="off"
-      onChange={(e) => onChange(e.currentTarget.value)}
-      description={description}
-    />
-  );
-}
-
-/**
- * A derived var (the catalog's `derive`), read-only: Appflare computes it from
- * a secret, at install and whenever that secret gets a new value. Empty until
- * the install computes it.
- */
-function DerivedVarField({
-  field,
-  derivedFrom,
-  value,
-  when,
-}: {
-  field: Pick<InstallVarField, "name" | "label" | "help">;
-  derivedFrom: string;
-  value: string;
-  /** When the value is computed, for the empty field's placeholder. */
-  when: string;
-}) {
-  return (
-    <Input
-      label={`${field.label} (${field.name})`}
-      value={value}
-      readOnly
-      placeholder={`Computed ${when}`}
-      autoComplete="off"
-      spellCheck={false}
-      className="font-mono"
-      description={`${field.help ? `${field.help} ` : ""}Derived from ${derivedFrom}: Appflare sets it, and sets it again whenever ${derivedFrom} gets a new value.`}
-    />
   );
 }
