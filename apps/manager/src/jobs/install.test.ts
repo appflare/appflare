@@ -1,6 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { MAX_WORKER_MODULES, type SigningKey, withRevisedCatalog } from "@appflare/schema";
+import { type SigningKey, withRevisedCatalog } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
@@ -1625,19 +1625,39 @@ describe("install job", () => {
     expect(r.logs.at(-1)?.message).toMatch(new RegExp(`at ${HEALTH_URL} \\(health: verified`));
   });
 
-  it("refuses an artifact with more modules than one upload can fetch, before creating anything", async () => {
+  it("refuses an artifact whose Worker is too large for one upload, before creating anything", async () => {
     const r = await install({
       tweak: (m) => {
         const first = m.worker.modules[0];
         if (first === undefined) throw new Error("the fixture has no module");
-        for (let i = 1; i <= MAX_WORKER_MODULES; i++) {
-          m.worker.modules.push({ ...first, name: `chunk-${i}.js` });
+        // Never fetched: the check reads the manifest alone.
+        first.size = 40 * 1024 * 1024;
+      },
+    });
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toBe(
+      "preflight checks: This app version has 40.00 MiB of Worker modules, but Appflare uploads at most 32.00 MiB: the upload holds every module and the request body in memory at once, within the 128 MB a Worker may use. Make the Worker smaller, for example by minifying it or serving large files as static assets.",
+    );
+    expect(r.installRow?.status).toBe("failed");
+    expect(r.resources).toEqual([]);
+    expect(r.fake.state.calls).toEqual([]);
+  });
+
+  it("refuses an artifact whose modules take more ranges than one upload may read, before creating anything", async () => {
+    const r = await install({
+      tweak: (m) => {
+        const first = m.worker.modules[0];
+        if (first === undefined) throw new Error("the fixture has no module");
+        // 42 small modules 1 MiB apart: each needs a Range request of its own,
+        // 43 subrequests with the redirect, though they add up to a few KiB.
+        for (let i = 1; i < 42; i++) {
+          m.worker.modules.push({ ...first, name: `chunk-${i}.js`, offset: i * 1024 * 1024 });
         }
       },
     });
     expect(r.job?.status).toBe("failed");
     expect(r.job?.error).toBe(
-      `preflight checks: This app version has ${MAX_WORKER_MODULES + 1} Worker modules, but one upload can fetch at most ${MAX_WORKER_MODULES} within the free plan's 50 subrequests per invocation (2 per module from a release asset). It must be built as ${MAX_WORKER_MODULES} or fewer modules, for example as one bundled module.`,
+      "preflight checks: This app version needs 43 subrequests to read its 42 Worker modules (42 Range requests to the release zip and the redirect), but one upload may make at most 42 of the free plan's 50 per invocation. Pack it again with the current packer, which writes a Worker's modules next to each other in the zip.",
     );
     expect(r.installRow?.status).toBe("failed");
     expect(r.resources).toEqual([]);

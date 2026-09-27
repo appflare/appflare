@@ -24,12 +24,16 @@ app's own repository.
   binding to any other Worker fails the pack, because an app must never be able to
   call another app or Appflare itself. An app made of several Workers lists them all
   in its entry; see [Apps of several Workers](#apps-of-several-workers).
-- **Each Worker has at most 21 modules.** The manager installs apps from inside a
-  Workflow on the free plan, which allows 50 subrequests per invocation, and it
-  fetches each module as its own subrequest. A build that code-splits into many
-  chunks must be configured to emit one module.
-- **It fits the free plan, or says it does not.** A Worker larger than 3 MB
-  compressed, or one that needs paid features, is `"plan": "paid"`.
+- **Each Worker fits one upload.** The manager installs apps from inside a Workflow
+  on the free plan, which allows 50 subrequests per invocation, and uploads each
+  Worker in one request. It reads modules that lie next to each other in the
+  artifact with one Range request per 8 MiB, so a build may emit as many modules
+  as it likes, but a Worker's modules may add up to at most 32 MiB: the upload
+  holds all of them in memory at once.
+- **It fits the free plan, or says it does not.** An app that needs paid features
+  is `"plan": "paid"`. Size does not decide the plan: Cloudflare accepts a Worker
+  of up to 64 MiB uncompressed on every plan, and Appflare installs a Worker whose
+  modules add up to at most 32 MiB on either.
 
 The manager creates KV namespaces, D1 databases, R2 buckets, queues, and Vectorize
 indexes for an app, attaches the app's Worker to the queues it consumes (dead-letter
@@ -135,9 +139,12 @@ Points that need care:
   pnpm and npm run no `pre` or `post` hooks there (`pnpm run build` skips
   `prebuild`), just as dependencies install with `--ignore-scripts`, so list such a
   step as a command of its own. The build stops at the first command that fails.
-- **Worker size.** `pnpm pack-app` prints the Worker's size and module count. A
-  Worker may be up to 64 MiB uncompressed on every plan, and the manager installs
-  at most 21 modules, so bundle the Worker into as few modules as you can.
+- **Worker size.** `pnpm pack-app` prints each Worker's modules, the Range requests
+  the manager reads them with, and their size, for example
+  `579 modules in 2 ranges, 11.44 MiB of at most 32.00 MiB`. Cloudflare accepts a
+  Worker of up to 64 MiB uncompressed on every plan; the manager uploads at most
+  32 MiB of modules in one request, and packing fails above that. The number of
+  modules is not limited.
 - **`install.wranglerConfig`.** Name the app's own wrangler config, the one you would
   run `wrangler deploy` next to. When the build leaves `.wrangler/deploy/config.json`
   beside it, as the Cloudflare Vite plugin does, the packer follows that redirect to
@@ -292,7 +299,8 @@ The pull request runs these checks:
 1. The manifest is validated against the schema, and `CODEOWNERS` must match the
    manifests.
 2. The app is packed from the pinned commit exactly as a release would be, and every
-   file's hashes are verified. Packing fails if the Worker has too many modules.
+   file's hashes are verified. Packing fails if a Worker is too large for the
+   manager to upload in one request.
 3. **The install check.** The packed app is deployed to a dedicated Cloudflare test
    account with random secrets and default settings. CI then requests its health
    path for up to 60 seconds, and deletes everything again. A server error, or no

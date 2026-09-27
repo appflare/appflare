@@ -12,5 +12,6 @@ export * from "./revision";
 export * from "./sandbox";
 export * from "./self-deploying";
 export * from "./services";
+export * from "./spans";
 export * from "./telemetry";
 export * from "./workers";

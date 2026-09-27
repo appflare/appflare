@@ -4,7 +4,7 @@ import {
   type ArtifactManifest,
   appHealthMode,
   appHealthPath,
-  tooManyModulesMessage,
+  workerUploadProblem,
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
@@ -463,14 +463,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           );
         }
       }
-      // The upload fetches every module in one invocation; refuse before
-      // the snapshot rather than failing mid-upload.
+      // The upload reads and sends every module in one invocation; refuse
+      // before the snapshot rather than failing mid-upload.
       for (const w of workers) {
-        const tooMany = tooManyModulesMessage(
-          w.manifest.worker.modules.length,
+        const tooBig = workerUploadProblem(
+          w.manifest.worker.modules,
           w.primary ? "This version" : `The Worker "${w.name}" of this version`,
         );
-        if (tooMany !== null) problems.push(tooMany);
+        if (tooBig !== null) problems.push(tooBig);
       }
       const tooManyWorkers = workerCountProblem(
         workers.length,

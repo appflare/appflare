@@ -4,8 +4,13 @@
  * signs it (in the same step or separately), and verifies one.
  */
 
-/** The most Worker modules Appflare can upload; `verify --max-modules` takes it. */
-export { MAX_WORKER_MODULES } from "@appflare/schema";
+/** What one Appflare upload may carry and cost; `verify --check-upload` applies it. */
+export {
+  MAX_WORKER_UPLOAD_BYTES,
+  MAX_WORKER_UPLOAD_SUBREQUESTS,
+  workerUploadCost,
+  workerUploadProblem,
+} from "@appflare/schema";
 export {
   BUILD_HOOKS_OFF_ENV,
   BuildCommandError,
@@ -27,7 +32,7 @@ export { deriveSecretValue } from "./derive-secret.ts";
 export { inspectWranglerConfig, wranglerFacts } from "./inspect.ts";
 export { parseJsonc } from "./jsonc.ts";
 export type { PackedWorker, PackOptions, PackResult } from "./pack.ts";
-export { describeVersionOrigin, mergeD1Migrations, pack, packWarnings } from "./pack.ts";
+export { describeVersionOrigin, mergeD1Migrations, pack } from "./pack.ts";
 export type { SignOptions, SignResult } from "./sign.ts";
 export { sign } from "./sign.ts";
 export { UNSIGNED_KEY_ID } from "./signing.ts";
@@ -44,11 +49,9 @@ export {
 export {
   artifactWorkerSize,
   formatBytes,
-  MAX_WORKER_SIZE_BYTES,
   type WorkerSize,
   workerSize,
   workerSizeLine,
-  workerTooLargeMessage,
 } from "./worker-size.ts";
 export {
   type CollectBindingsOptions,

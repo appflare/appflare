@@ -1,4 +1,5 @@
-import { type ArtifactFileRef, planSpans, SPAN_LIMITS } from "./artifact";
+import { planSpans, SPAN_LIMITS } from "@appflare/schema";
+import type { ArtifactFileRef } from "./artifact";
 import { ARTIFACT_FETCH_COST } from "./budget";
 
 /**

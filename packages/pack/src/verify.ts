@@ -13,8 +13,8 @@ import {
   queueConsumerProblems,
   serviceBindingProblem,
   signingKeys,
-  tooManyModulesMessage,
   workerManifest,
+  workerUploadProblem,
 } from "@appflare/schema";
 import { UNSIGNED_KEY_ID } from "./signing.ts";
 
@@ -34,11 +34,13 @@ export interface VerifyOptions {
    */
   hashesOnly?: boolean;
   /**
-   * Fail when the artifact has more Worker modules than this. Catalog CI passes
-   * `MAX_WORKER_MODULES` from `@appflare/schema` so it never publishes an
+   * Fail when a Worker does not fit Appflare's upload budget
+   * (`workerUploadProblem` from `@appflare/schema`): too many module bytes
+   * for one upload, or modules spread over more Range requests than one
+   * invocation may make. Catalog CI sets it so it never publishes an
    * artifact Appflare could not install or update.
    */
-  maxModules?: number;
+  checkUpload?: boolean;
   logger?: (message: string) => void;
 }
 
@@ -142,7 +144,7 @@ function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
  * its size and sha256 — never by unzipping. Also checks that each Vectorize
  * binding records the index shape the embedded catalog manifest declares, and
  * that no service binding points anywhere but the app's own Worker. With
- * `maxModules`, also fails an artifact with more Worker modules than that.
+ * `checkUpload`, also fails an artifact whose Worker Appflare could not upload.
  * Throws on any mismatch.
  */
 export async function verify(options: VerifyOptions): Promise<VerifyResult> {
@@ -153,12 +155,6 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   }
   if (options.hashesOnly && options.publicKey) {
     throw new Error("--hashes-only and --public-key are mutually exclusive");
-  }
-  if (
-    options.maxModules !== undefined &&
-    (!Number.isInteger(options.maxModules) || options.maxModules < 1)
-  ) {
-    throw new Error(`--max-modules must be a positive integer, got ${options.maxModules}`);
   }
 
   const manifestPath = path.join(dir, "manifest.json");
@@ -213,18 +209,18 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
     throw new Error(problems.join(" "));
   }
 
-  if (options.maxModules !== undefined) {
-    for (const w of workers) {
-      const tooMany = tooManyModulesMessage(
-        w.worker.modules.length,
-        w.primary
-          ? `${manifest.app}@${manifest.version}`
-          : `The Worker "${w.name}" of ${manifest.app}@${manifest.version}`,
-        options.maxModules,
-      );
-      if (tooMany !== null) {
-        throw new Error(tooMany);
-      }
+  if (options.checkUpload) {
+    const tooBig = workers.flatMap(
+      (w) =>
+        workerUploadProblem(
+          w.worker.modules,
+          w.primary
+            ? `${manifest.app}@${manifest.version}`
+            : `The Worker "${w.name}" of ${manifest.app}@${manifest.version}`,
+        ) ?? [],
+    );
+    if (tooBig.length > 0) {
+      throw new Error(tooBig.join(" "));
     }
   }
 

@@ -10,8 +10,8 @@ import {
   SANDBOX_VERSION_METADATA_BINDING,
   type SigningKey,
   signingKeys,
-  tooManyModulesMessage,
   verifyManifestSignature,
+  workerUploadProblem,
 } from "@appflare/schema";
 import { z } from "zod";
 import sandboxPackage from "../../../sandbox/package.json";
@@ -256,8 +256,8 @@ export async function verifySandboxManifest(
       `the artifact is version ${manifest.version}, the release is ${expectedVersion}`,
     );
   }
-  const tooMany = tooManyModulesMessage(manifest.worker.modules.length, "The release");
-  const problems = [...checkSandboxBindings(manifest), ...(tooMany === null ? [] : [tooMany])];
+  const tooBig = workerUploadProblem(manifest.worker.modules, "The release");
+  const problems = [...checkSandboxBindings(manifest), ...(tooBig === null ? [] : [tooBig])];
   if (problems.length > 0) throw new ArtifactError(problems.join("; "));
   return manifest;
 }

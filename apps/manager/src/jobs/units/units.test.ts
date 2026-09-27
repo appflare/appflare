@@ -1,5 +1,6 @@
 import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
+import { workerUploadCost, workerUploadProblem } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import { buildArtifactFixture, ZIP_URL } from "../../test/artifact-fixture";
 import { ACC, fakeAccount, NEW_VERSION, TOKEN } from "../../test/fake-account";
@@ -56,6 +57,24 @@ describe("uploadWorker", () => {
       `POST /accounts/${ACC}/workers/scripts/cut/versions -> 200`,
     ]);
     expect(w.account.state.versions[0]?.modules).toEqual(["worker.js"]);
+  });
+
+  it("uploads a Worker of 600 modules in one call, reading them with one range", async () => {
+    const w = await world({
+      extraModules: Array.from({ length: 599 }, (_, i) => ({
+        content: `export const chunk${i} = ${JSON.stringify("x".repeat(2000))};`,
+      })),
+    });
+    const modules = w.fixture.manifest.worker.modules;
+    expect(modules).toHaveLength(600);
+    // What the packer and the jobs plan: the redirect and one range.
+    expect(workerUploadCost(modules)).toBe(2);
+    expect(workerUploadProblem(modules)).toBeNull();
+    const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch: w.fetch });
+    const result = await units.uploadWorker(uploadInput(w.fixture));
+    // What the call made: the planned reads, then the upload.
+    expect(result).toMatchObject({ ok: true, value: { modules: 600 }, subrequests: 3 });
+    expect(w.account.state.versions[0]?.modules).toHaveLength(600);
   });
 
   it("reads the API token from its own environment, never from its input", async () => {

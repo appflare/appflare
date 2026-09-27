@@ -15,11 +15,11 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { assetHash } from "@appflare/cf-api";
-import { type ArtifactManifest, MAX_WORKER_MODULES } from "@appflare/schema";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { main, parseMaxModules } from "./cli-main.ts";
+import { type ArtifactManifest, MAX_WORKER_UPLOAD_BYTES } from "@appflare/schema";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { MAX_MODULES_DEPRECATION, main } from "./cli-main.ts";
 import { parseJsonc } from "./jsonc.ts";
-import { type PackResult, pack, packWarnings } from "./pack.ts";
+import { type PackResult, pack } from "./pack.ts";
 import { verify } from "./verify.ts";
 import { artifactWorkerSize } from "./worker-size.ts";
 
@@ -28,6 +28,7 @@ const FIXTURE = path.resolve(HERE, "..", "fixtures", "hello");
 const FIXTURE_MANIFEST = path.join(FIXTURE, "appflare.jsonc");
 const SIGN_ENV = "APPFLARE_PACK_TEST_KEY";
 const hasUnzip = spawnSync("unzip", ["-v"]).error === undefined;
+const MIB = 1024 * 1024;
 
 async function generateKeypair(): Promise<{ privateBase64: string; publicBase64: string }> {
   const pair = await webcrypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
@@ -91,7 +92,6 @@ describe("pack + verify (integration)", () => {
     expect(result.d1MigrationCount).toBe(2);
     expect(result.manifest.keyId).toBe("test-key");
     expect(result.signaturePath).not.toBeNull();
-    expect(result.warnings).toEqual([]);
   });
 
   it("strips account ids and records string vars as plain_text bindings", () => {
@@ -177,40 +177,65 @@ describe("pack + verify (integration)", () => {
     }
   });
 
-  it("fails --max-modules only when the Worker has more modules than allowed", async () => {
+  it("passes --check-upload for any module count that fits one upload", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "appflare-pack-modules-"));
     try {
-      // The same artifact listing its one module under many names: every range
-      // still verifies, so only the module count can fail it.
+      // The same artifact listing its one module under 600 names: every range
+      // still verifies, and they all lie in one span of the zip.
       const manifest = JSON.parse(
         readFileSync(result.manifestJsonPath, "utf8"),
       ) as ArtifactManifest;
       const first = manifest.worker.modules[0] as ArtifactManifest["worker"]["modules"][number];
-      for (let i = 1; i <= MAX_WORKER_MODULES; i++) {
+      for (let i = 1; i < 600; i++) {
         manifest.worker.modules.push({ ...first, name: `chunk-${i}.js` });
       }
       writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest));
       writeFileSync(path.join(dir, path.basename(result.zipPath)), readFileSync(result.zipPath));
-      const count = MAX_WORKER_MODULES + 1;
 
-      // Opt-in: without the flag the artifact verifies.
-      await expect(verify({ dir, hashesOnly: true })).resolves.toMatchObject({ ok: true });
-      await expect(verify({ dir, hashesOnly: true, maxModules: count })).resolves.toMatchObject({
+      await expect(verify({ dir, hashesOnly: true, checkUpload: true })).resolves.toMatchObject({
         ok: true,
       });
-      await expect(
-        verify({ dir, hashesOnly: true, maxModules: MAX_WORKER_MODULES }),
-      ).rejects.toThrow(
-        `hello@1.2.3 has ${count} Worker modules, but one upload can fetch at most ${MAX_WORKER_MODULES}`,
-      );
-      await expect(verify({ dir, hashesOnly: true, maxModules: 0 })).rejects.toThrow(
-        /--max-modules must be a positive integer/,
-      );
-      // The CLI flag reaches verify.
-      await expect(
-        main(["verify", dir, "--hashes-only", "--max-modules", String(MAX_WORKER_MODULES)]),
-      ).rejects.toThrow(`has ${count} Worker modules`);
+      const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        await expect(main(["verify", dir, "--hashes-only", "--check-upload"])).resolves.toBe(0);
+        expect(out).toHaveBeenCalledWith("OK: 605 files verified (unsigned)\n");
+      } finally {
+        out.mockRestore();
+        err.mockRestore();
+      }
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails --check-upload, and the deprecated --max-modules, for a Worker too large to upload", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "appflare-pack-too-big-"));
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const manifest = JSON.parse(
+        readFileSync(result.manifestJsonPath, "utf8"),
+      ) as ArtifactManifest;
+      const first = manifest.worker.modules[0] as ArtifactManifest["worker"]["modules"][number];
+      // The check reads the manifest before any range, so the zip need not hold these bytes.
+      first.size = 40 * 1024 * 1024;
+      writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+      writeFileSync(path.join(dir, path.basename(result.zipPath)), readFileSync(result.zipPath));
+      const tooBig =
+        "hello@1.2.3 has 40.00 MiB of Worker modules, but Appflare uploads at most 32.00 MiB";
+
+      await expect(verify({ dir, hashesOnly: true, checkUpload: true })).rejects.toThrow(tooBig);
+      // The CLI flag reaches verify.
+      await expect(main(["verify", dir, "--hashes-only", "--check-upload"])).rejects.toThrow(
+        tooBig,
+      );
+      // Existing catalog workflows still pass --max-modules <n>: it runs the same check.
+      await expect(main(["verify", dir, "--hashes-only", "--max-modules", "21"])).rejects.toThrow(
+        tooBig,
+      );
+      expect(stderr).toHaveBeenCalledWith(`- ${MAX_MODULES_DEPRECATION}\n`);
+    } finally {
+      stderr.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -917,39 +942,29 @@ describe("pack with a redirected wrangler config", () => {
   }, 120_000);
 });
 
-describe("packWarnings", () => {
-  const withModules = (count: number) => ({
-    app: "demo",
-    version: "1.0.0",
-    worker: {
-      modules: Array.from({ length: count }, (_, i) => ({ name: `m${i}.js` })),
-    } as unknown as ArtifactManifest["worker"],
-  });
-
-  it("is empty while the modules fit one upload", () => {
-    expect(packWarnings(withModules(1))).toEqual([]);
-    expect(packWarnings(withModules(MAX_WORKER_MODULES))).toEqual([]);
-  });
-
-  it("warns when Appflare could not upload that many modules", () => {
-    const [warning, ...rest] = packWarnings(withModules(84));
-    expect(rest).toEqual([]);
-    expect(warning).toMatch(
-      /^demo@1\.0\.0 has 84 Worker modules, but one upload can fetch at most /,
-    );
-    expect(warning).toMatch(/Appflare cannot install or update it as packed\.$/);
-  });
-});
-
-describe("parseMaxModules", () => {
-  it("accepts a positive integer and nothing", () => {
-    expect(parseMaxModules(undefined)).toBeUndefined();
-    expect(parseMaxModules("21")).toBe(21);
-  });
-
-  it("rejects anything else", () => {
-    for (const bad of ["0", "-1", "1.5", "abc", ""]) {
-      expect(() => parseMaxModules(bad)).toThrow(/--max-modules must be a positive integer/);
+describe("pack of a Worker too large for one upload", () => {
+  it("refuses it and writes nothing", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-too-big-"));
+    const outDir = path.join(parent, "out");
+    try {
+      const dir = path.join(parent, "checkout");
+      cpSync(FIXTURE, dir, { recursive: true });
+      // A 33 MiB data module (wrangler's default rules make a .bin import one):
+      // well under Cloudflare's 64 MiB, over what one upload holds.
+      writeFileSync(path.join(dir, "src", "big.bin"), Buffer.alloc(MAX_WORKER_UPLOAD_BYTES + MIB));
+      const entry = path.join(dir, "src", "index.ts");
+      writeFileSync(
+        entry,
+        `// @ts-nocheck\nimport big from "./big.bin";\nexport const bigSize = big.byteLength;\n${readFileSync(entry, "utf8")}`,
+      );
+      await expect(
+        pack({ checkoutDir: dir, manifestPath: FIXTURE_MANIFEST, outDir, install: false }),
+      ).rejects.toThrow(
+        /^hello@1\.2\.3 has 33\.\d\d MiB of Worker modules, but Appflare uploads at most 32\.00 MiB: .* Appflare could not install or update it, so nothing was written\.$/,
+      );
+      expect(existsSync(outDir)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 });

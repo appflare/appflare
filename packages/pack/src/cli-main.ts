@@ -1,18 +1,22 @@
 import { parseArgs } from "node:util";
-import { INSPECT_OUTPUT_PREFIX, MAX_WORKER_MODULES } from "@appflare/schema";
+import {
+  INSPECT_OUTPUT_PREFIX,
+  MAX_WORKER_UPLOAD_BYTES,
+  MAX_WORKER_UPLOAD_SUBREQUESTS,
+} from "@appflare/schema";
 import { inspectWranglerConfig } from "./inspect.ts";
 import { formatKeygenOutput, keygen } from "./keygen.ts";
 import { describeVersionOrigin, pack } from "./pack.ts";
 import { sign } from "./sign.ts";
 import { verify } from "./verify.ts";
-import { workerSizeLine } from "./worker-size.ts";
+import { formatBytes, workerSizeLine } from "./worker-size.ts";
 
 const USAGE = `appflare-pack — build, sign, and verify Appflare artifacts, and make signing keys
 
 Usage:
   appflare-pack <checkoutDir> --manifest <appflare.jsonc> --out <dir> [--key-id ID [--sign-key-env NAME]] [--no-install]
   appflare-pack sign <dir> --sign-key-env NAME [--key-id ID] [--force]
-  appflare-pack verify <dir> [--public-key <base64>] [--require-signed | --hashes-only] [--max-modules <n>]
+  appflare-pack verify <dir> [--public-key <base64>] [--require-signed | --hashes-only] [--check-upload]
   appflare-pack inspect <checkoutDir> --config <wrangler config>
   appflare-pack keygen --out <file> --key-id <id>
 
@@ -47,9 +51,11 @@ Verify options:
   --public-key <base64>   raw Ed25519 public key to verify against
   --require-signed        fail if the artifact is unsigned or has no manifest.sig
   --hashes-only           skip signature checks; still check sizes, hashes, offsets
-  --max-modules <n>       fail if the Worker has more than <n> modules. Appflare
-                          uploads at most ${MAX_WORKER_MODULES} (the free plan's subrequest limit);
-                          pass ${MAX_WORKER_MODULES} to reject artifacts it could never install.
+  --check-upload          fail if a Worker does not fit one Appflare upload: at most
+                          ${formatBytes(MAX_WORKER_UPLOAD_BYTES)} of modules, read with at most ${MAX_WORKER_UPLOAD_SUBREQUESTS} subrequests
+                          (the release redirect and one per range of adjacent modules).
+                          The module count itself is not limited.
+  --max-modules <n>       deprecated: does what --check-upload does; <n> is ignored.
 `;
 
 const logToStderr = (message: string): void => {
@@ -119,23 +125,17 @@ async function runPack(argv: string[]): Promise<number> {
   } else {
     process.stdout.write(`  worker:    ${workerSizeLine(result.workerSize, result.moduleCount)}\n`);
   }
-  for (const warning of result.warnings) {
-    process.stdout.write(`  warning: ${warning}\n`);
-  }
   return 0;
 }
 
-/** `--max-modules`: a positive integer, or undefined when not given. */
-export function parseMaxModules(value: string | undefined): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  const n = Number(value);
-  if (!/^\d+$/.test(value.trim()) || !Number.isSafeInteger(n) || n < 1) {
-    throw new Error(`--max-modules must be a positive integer, got "${value}"`);
-  }
-  return n;
-}
+/**
+ * What `verify` prints on stderr for `--max-modules`: Appflare no longer
+ * limits the module count, so the flag only turns on the upload check.
+ */
+export const MAX_MODULES_DEPRECATION =
+  "--max-modules is deprecated and its value is ignored: Cloudflare has no module count " +
+  "limit, and Appflare checks what an upload costs instead (subrequests and memory). " +
+  "It does what --check-upload does; pass that instead.";
 
 async function runVerify(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -145,6 +145,8 @@ async function runVerify(argv: string[]): Promise<number> {
       "public-key": { type: "string" },
       "require-signed": { type: "boolean" },
       "hashes-only": { type: "boolean" },
+      "check-upload": { type: "boolean" },
+      // Deprecated; still accepted because existing catalog workflows pass it.
       "max-modules": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
@@ -158,12 +160,15 @@ async function runVerify(argv: string[]): Promise<number> {
     process.stderr.write(`error: missing <dir>\n\n${USAGE}`);
     return 1;
   }
+  if (values["max-modules"] !== undefined) {
+    logToStderr(MAX_MODULES_DEPRECATION);
+  }
   const result = await verify({
     dir,
     publicKey: values["public-key"],
     requireSigned: values["require-signed"],
     hashesOnly: values["hashes-only"],
-    maxModules: parseMaxModules(values["max-modules"]),
+    checkUpload: values["check-upload"] === true || values["max-modules"] !== undefined,
     logger: logToStderr,
   });
   process.stdout.write(

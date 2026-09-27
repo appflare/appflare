@@ -160,6 +160,7 @@ describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))("the packed manager artif
     for (let i = 1; i <= MANAGER_MAX_MODULES; i++) {
       manifest.worker.modules.push({ ...first, name: `chunk-${i}.js` });
     }
+    first.size = 40 * 1024 * 1024;
     const names = zipEntryNames(readFileSync(path.join(outDir, `appflare-${version}.zip`)));
     const problems = managerArtifactProblems(
       manifest,
@@ -180,6 +181,7 @@ describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))("the packed manager artif
             `^the Worker has ${MANAGER_MAX_MODULES + 1} modules; a manager release may have at most ${MANAGER_MAX_MODULES}\\. `,
           ),
         ),
+        expect.stringMatching(/^The manager release has \d+\.\d\d MiB of Worker modules, but /),
         "zip entry dist/server/.dev.vars is not listed in manifest.json",
         "zip entry dist/server/.dev.vars must not ship",
       ]),

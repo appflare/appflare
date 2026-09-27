@@ -6,8 +6,8 @@ import {
   appHealthPath,
   artifactManifestSchema,
   connectionStringProblems,
-  tooManyModulesMessage,
   withRevisedCatalog,
+  workerUploadProblem,
 } from "@appflare/schema";
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -546,11 +546,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         problems.push("This app does not receive email; it takes no zone.");
       }
       for (const w of workers) {
-        const tooMany = tooManyModulesMessage(
-          w.manifest.worker.modules.length,
+        const tooBig = workerUploadProblem(
+          w.manifest.worker.modules,
           w.primary ? "This version" : `The Worker "${w.name}" of this version`,
         );
-        if (tooMany !== null) problems.push(tooMany);
+        if (tooBig !== null) problems.push(tooBig);
       }
       if (!redeploy && newZoneId === null && oldRoutes.length === 0) {
         problems.push(

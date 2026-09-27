@@ -12,8 +12,8 @@ Each app's catalog card shows **Free plan** or **Workers Paid**.
 
 | Limit on Workers Free | What it means for Appflare |
 | --- | --- |
-| 50 subrequests per invocation | The manager installs apps from a Workflow that must stay within this budget. This is why a catalog app can have at most 21 Worker modules. |
-| 3 MB Worker size, compressed | Apps with a larger Worker need Workers Paid and are marked that way in the catalog. |
+| 50 subrequests per invocation | The manager installs apps from a Workflow that must stay within this budget. It reads a Worker's modules with one request per 8 MiB of adjacent modules, so the number of modules does not matter, and it uploads at most 32 MiB of modules per Worker, which one upload holds in memory at once. |
+| 64 MiB Worker size, uncompressed (on every plan) | No plan difference: Cloudflare no longer limits the compressed size. Appflare's own cap is lower, 32 MiB of module bytes per Worker, because one upload holds them all in memory. |
 | 5 cron triggers per account | The manager uses one (every 30 minutes). Apps with cron triggers share the other four. The catalog page says how many an app uses, and an install stops before it creates anything if the account would pass 5. The count is skipped when the account's Workers plan (detected, or set in **Settings**, **Account and capabilities**) is Workers Paid, or when you tick **This account is on Workers Paid** for that install or update. |
 | 10 D1 databases per account | The manager uses one. Each app that binds D1 uses one per database, per install. |
 

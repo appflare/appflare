@@ -4,7 +4,8 @@ import {
   artifactManifestSchema,
   indexArtifactsSchema,
   SANDBOX_WORKER_NAME,
-  tooManyModulesMessage,
+  workerUploadCost,
+  workerUploadProblem,
 } from "@appflare/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -184,10 +185,12 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
       ),
     );
     await run("check release shape", async ({ log }) => {
-      const count = manifest.worker.modules.length;
-      const tooMany = tooManyModulesMessage(count, "The release");
-      if (tooMany !== null) throw new JobError(tooMany);
-      log.info(`The release has ${count} Worker module(s); they fit one upload.`);
+      const modules = manifest.worker.modules;
+      const tooBig = workerUploadProblem(modules, "The release");
+      if (tooBig !== null) throw new JobError(tooBig);
+      log.info(
+        `The release has ${modules.length} Worker module(s); they fit one upload (${workerUploadCost(modules)} subrequests to read them).`,
+      );
       return {};
     });
 

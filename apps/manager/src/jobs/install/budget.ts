@@ -16,9 +16,10 @@ export function fetchCost(response: Pick<Response, "redirected">): number {
 }
 
 /**
- * Worst-case cost of one artifact Range fetch (GitHub release assets redirect
- * once). Shared with the packer's module limit (`MAX_WORKER_MODULES`), which
- * the install, update, and self-update jobs check before any upload.
+ * Worst-case cost of the first artifact Range fetch (GitHub release assets
+ * redirect once; later ranges go straight to the storage URL). The Worker
+ * upload budget (`workerUploadCost` in @appflare/schema), which the packer and
+ * every job check before an upload, counts the redirect the same way.
  */
 export const ARTIFACT_FETCH_COST = ARTIFACT_FETCH_SUBREQUESTS;
 

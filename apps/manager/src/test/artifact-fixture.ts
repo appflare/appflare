@@ -28,6 +28,11 @@ export interface ArtifactFixtureOptions {
   crons?: string[];
   migrations?: ArtifactManifest["worker"]["migrations"];
   /**
+   * More modules for the Worker, laid out right after `worker.js` as the
+   * packer writes a Worker's modules; each is `chunk-<n>.js`.
+   */
+  extraModules?: Array<{ content: string }>;
+  /**
    * Makes the app one of several Workers (format 2): the fixture's Worker is
    * the primary one, named `app` in the entry, and these are the others, in
    * the entry's order. Their modules and assets are laid out under
@@ -131,6 +136,15 @@ export async function buildArtifactFixture(
     "worker/worker.js",
     "export default { fetch() { return new Response('ok') } };",
   );
+  const extraModules = [];
+  for (const [i, m] of (opts.extraModules ?? []).entries()) {
+    const name = `chunk-${i + 1}.js`;
+    extraModules.push({
+      name,
+      type: "esm" as const,
+      ...(await place(`worker/${name}`, m.content)),
+    });
+  }
   const assets = [];
   for (const a of opts.assets ?? []) {
     const placed = await place(`assets${a.route}`, a.content);
@@ -204,7 +218,7 @@ export async function buildArtifactFixture(
       mainModule: "worker.js",
       compatibilityDate: "2024-12-30",
       compatibilityFlags: ["nodejs_compat"],
-      modules: [{ name: "worker.js", type: "esm" as const, ...worker }],
+      modules: [{ name: "worker.js", type: "esm" as const, ...worker }, ...extraModules],
       bindings: opts.bindings ?? [{ type: "kv_namespace", name: "CUT_KV" }],
       migrations: opts.migrations ?? [],
       crons: opts.crons ?? [],

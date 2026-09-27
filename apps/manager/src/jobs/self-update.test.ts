@@ -1,7 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
-import { MAX_WORKER_MODULES } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { refreshManagerReleases } from "../catalog/manager-releases.server";
 import { createDb } from "../db/client";
@@ -350,17 +349,17 @@ describe("self_update job", () => {
     );
   });
 
-  it("refuses a release with more modules than one upload can fetch, before touching Cloudflare", async () => {
+  it("refuses a release too large for one upload, before touching Cloudflare", async () => {
     const release = await managerRelease(TO, "appflare-test", (m) => {
-      // A code-split server build: 84 chunks. The entries are never fetched.
+      // The module is never fetched: the check reads the manifest alone.
       const first = m.worker.modules[0];
       if (first === undefined) throw new Error("the fixture has no module");
-      for (let i = 1; i < 84; i++) m.worker.modules.push({ ...first, name: `chunk-${i}.js` });
+      first.size = 40 * 1024 * 1024;
     });
     const r = await selfUpdate({ release });
     expect(r.job?.status).toBe("failed");
     expect(r.job?.error).toBe(
-      `check release shape: The release has 84 Worker modules, but one upload can fetch at most ${MAX_WORKER_MODULES} within the free plan's 50 subrequests per invocation (2 per module from a release asset). It must be built as ${MAX_WORKER_MODULES} or fewer modules, for example as one bundled module.`,
+      "check release shape: The release has 40.00 MiB of Worker modules, but Appflare uploads at most 32.00 MiB: the upload holds every module and the request body in memory at once, within the 128 MB a Worker may use. Make the Worker smaller, for example by minifying it or serving large files as static assets.",
     );
     expect(r.step.names).toEqual([
       "start",

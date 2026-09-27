@@ -1,7 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
-import { type ArtifactManifest, MAX_WORKER_MODULES, withRevisedCatalog } from "@appflare/schema";
+import { type ArtifactManifest, withRevisedCatalog } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
@@ -848,20 +848,19 @@ describe("update job", () => {
     expect(fake.state.calls).toEqual([]);
   });
 
-  it("refuses a version with more modules than one upload can fetch, before snapshotting", async () => {
+  it("refuses a version whose Worker is too large for one upload, before snapshotting", async () => {
     const r = await update({
       ...NEW_APP,
       tweak: (m) => {
         const first = m.worker.modules[0];
         if (first === undefined) throw new Error("the fixture has no module");
-        for (let i = 1; i <= MAX_WORKER_MODULES; i++) {
-          m.worker.modules.push({ ...first, name: `chunk-${i}.js` });
-        }
+        // Never fetched: the check reads the manifest alone.
+        first.size = 40 * 1024 * 1024;
       },
     });
     expect(r.job?.status).toBe("failed");
     expect(r.job?.error).toBe(
-      `plan update: This version has ${MAX_WORKER_MODULES + 1} Worker modules, but one upload can fetch at most ${MAX_WORKER_MODULES} within the free plan's 50 subrequests per invocation (2 per module from a release asset). It must be built as ${MAX_WORKER_MODULES} or fewer modules, for example as one bundled module.`,
+      "plan update: This version has 40.00 MiB of Worker modules, but Appflare uploads at most 32.00 MiB: the upload holds every module and the request body in memory at once, within the 128 MB a Worker may use. Make the Worker smaller, for example by minifying it or serving large files as static assets.",
     );
     expect(r.step.names).not.toContain("read current deployment");
     expect(r.fake.state.calls).toEqual([]);

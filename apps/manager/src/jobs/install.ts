@@ -9,7 +9,7 @@ import {
   indexArtifactsSchema,
   isOptionalSecret,
   sha256Schema,
-  tooManyModulesMessage,
+  workerUploadProblem,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
@@ -283,14 +283,14 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         ...connectionStringProblems(databases, params.hyperdrive ?? {}),
       ];
       if (problems.length > 0) throw new InstallError(problems.join(" "));
-      // The upload fetches every module in one invocation; refuse before
-      // anything is created rather than failing mid-upload.
+      // The upload reads and sends every module in one invocation; refuse
+      // before anything is created rather than failing mid-upload.
       for (const w of workers) {
-        const tooMany = tooManyModulesMessage(
-          w.manifest.worker.modules.length,
+        const tooBig = workerUploadProblem(
+          w.manifest.worker.modules,
           w.primary ? "This app version" : `The Worker "${w.name}" of this app version`,
         );
-        if (tooMany !== null) throw new InstallError(tooMany);
+        if (tooBig !== null) throw new InstallError(tooBig);
       }
       // The Worker name is the unique key of an active install; an app whose
       // Worker name is fixed installs once.

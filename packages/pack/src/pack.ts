@@ -28,9 +28,9 @@ import {
   catalogVarProblems,
   type D1MigrationFile,
   type DoMigration,
-  tooManyModulesMessage,
   type WorkerModule,
   workerManifest,
+  workerUploadProblem,
 } from "@appflare/schema";
 import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
@@ -47,7 +47,7 @@ import { parseJsonc } from "./jsonc.ts";
 import { scrubEnv } from "./scrub-env.ts";
 import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
 import { deriveVersionWithOrigin, formatBuildDate, type VersionOrigin } from "./version.ts";
-import { type WorkerSize, workerSize, workerTooLargeMessage } from "./worker-size.ts";
+import { type WorkerSize, workerSize } from "./worker-size.ts";
 import {
   checkHyperdriveDeclarations,
   checkVectorizeDeclarations,
@@ -103,12 +103,6 @@ export interface PackResult {
   workerSize: WorkerSize;
   /** Every Worker packed, the primary one first: one for most apps. */
   workers: PackedWorker[];
-  /**
-   * Problems that do not stop the pack but that the artifact's users hit
-   * later, such as more Worker modules than Appflare can upload
-   * (`MAX_WORKER_MODULES`). Also sent to the logger.
-   */
-  warnings: string[];
 }
 
 /** One Worker of a packed artifact, as the pack summary reports it. */
@@ -712,7 +706,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     return {
       name: b.name,
       primary: b.primary,
-      size: workerSize(b.modules.map((m) => m.bytes)),
+      size: workerSize(
+        b.modules.map((m) => m.bytes),
+        moduleManifest,
+      ),
       worker: {
         name: b.config.name,
         wranglerConfig: b.wranglerConfig,
@@ -791,6 +788,22 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       throw new Error(varProblems.join(" "));
     }
   }
+  // An artifact the manager could never upload is refused here, before
+  // anything is written, rather than at install.
+  const uploadProblems = sections.flatMap(
+    (s) =>
+      workerUploadProblem(
+        s.worker.modules,
+        s.primary
+          ? `${catalog.slug}@${version}`
+          : `The Worker "${s.name}" of ${catalog.slug}@${version}`,
+      ) ?? [],
+  );
+  if (uploadProblems.length > 0) {
+    throw new Error(
+      `${uploadProblems.join(" ")} Appflare could not install or update it, so nothing was written.`,
+    );
+  }
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
   // (j) manifest.json is the LAST zip entry: its bytes carry every other file's
@@ -839,19 +852,6 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     assetCount: s.assets.files.length,
     workerSize: s.size,
   }));
-  const warnings = sections.flatMap((s) =>
-    packWarnings(
-      {
-        app: s.primary ? manifest.app : `${manifest.app} (Worker "${s.name}")`,
-        version: manifest.version,
-        worker: s.worker,
-      },
-      s.size,
-    ),
-  );
-  for (const warning of warnings) {
-    logger(`warning: ${warning}`);
-  }
   const moduleCount = workers.reduce((n, w) => n + w.moduleCount, 0);
   const assetCount = workers.reduce((n, w) => n + w.assetCount, 0);
   logger(
@@ -874,7 +874,6 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     zipSize: zipBytes.length,
     workerSize: size,
     workers,
-    warnings,
   };
 }
 
@@ -888,32 +887,4 @@ export function describeVersionOrigin(origin: VersionOrigin): string {
     case "commit":
       return "version from the pinned commit's date and SHA";
   }
-}
-
-/**
- * What is wrong with a packed artifact without making it invalid: more
- * Worker modules than Appflare can Range-fetch for one upload
- * (`MAX_WORKER_MODULES`), which bundling the Worker into one module fixes,
- * and, when `size` is given, a Worker larger than Cloudflare accepts
- * (`MAX_WORKER_SIZE_BYTES`). Such an artifact verifies but can never be
- * installed or updated.
- */
-export function packWarnings(
-  manifest: Pick<ArtifactManifest, "app" | "version" | "worker">,
-  size?: WorkerSize,
-): string[] {
-  const warnings: string[] = [];
-  const tooLarge =
-    size === undefined ? null : workerTooLargeMessage(size, `${manifest.app}@${manifest.version}`);
-  if (tooLarge !== null) {
-    warnings.push(`${tooLarge} Appflare cannot install or update it as packed.`);
-  }
-  const tooMany = tooManyModulesMessage(
-    manifest.worker.modules.length,
-    `${manifest.app}@${manifest.version}`,
-  );
-  if (tooMany !== null) {
-    warnings.push(`${tooMany} Appflare cannot install or update it as packed.`);
-  }
-  return warnings;
 }

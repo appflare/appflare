@@ -1,5 +1,4 @@
-import type { AssetFile } from "@appflare/schema";
-import { byOffset, SpanBuilder } from "./artifact";
+import { type AssetFile, byOffset, SpanBuilder } from "@appflare/schema";
 import { ARTIFACT_FETCH_COST } from "./budget";
 
 /**

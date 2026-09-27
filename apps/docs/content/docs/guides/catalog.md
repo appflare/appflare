@@ -14,8 +14,8 @@ Each app shows:
 
 - **Its icon**, when the catalog has one.
 - **A plan badge.** **Free plan** means the app runs on the Workers free plan.
-  **Workers Paid** means it needs the paid plan, usually because its Worker is
-  larger than the free plan's 3 MB limit.
+  **Workers Paid** means it needs the paid plan, because it uses features the
+  free plan lacks.
 - **The authors**: who wrote the app upstream.
 - **The version** the catalog offers.
 - **Install checked** with a date: the last time the catalog's nightly job

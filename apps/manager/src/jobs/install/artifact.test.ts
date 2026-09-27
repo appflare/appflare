@@ -7,7 +7,6 @@ import {
   artifactReader,
   fetchArtifactFile,
   fetchWhole,
-  planSpans,
   sha256Hex,
   verifyArtifactManifest,
 } from "./artifact";
@@ -138,32 +137,6 @@ describe("fetchArtifactFile", () => {
       MANIFEST_URL,
     );
     expect(got.bytes).toEqual(f.manifestBytes);
-  });
-});
-
-describe("planSpans", () => {
-  const file = (offset: number, size: number) => ({ path: `f${offset}`, offset, size, sha256: "" });
-
-  it("covers adjacent files and small gaps with one range, in offset order", () => {
-    const spans = planSpans([file(30, 10), file(0, 10), file(14, 10)]);
-    expect(spans.map((s) => [s.start, s.end, s.files.map((f) => f.offset)])).toEqual([
-      [0, 40, [0, 14, 30]],
-    ]);
-  });
-
-  it("starts a new range after a large gap or at the size limit, and skips empty files", () => {
-    const limits = { maxBytes: 80, maxGap: 5 };
-    expect(
-      planSpans([file(0, 10), file(20, 10), file(31, 60), file(95, 10), file(50, 0)], limits).map(
-        (s) => [s.start, s.end],
-      ),
-    ).toEqual([
-      [0, 10],
-      [20, 91],
-      [95, 105],
-    ]);
-    // A file larger than the limit still gets a range of its own.
-    expect(planSpans([file(0, 500)], limits).map((s) => [s.start, s.end])).toEqual([[0, 500]]);
   });
 });
 

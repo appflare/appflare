@@ -68,7 +68,6 @@ describe("pack an app of several Workers", () => {
       ["web", true, 1],
       ["jobs", false, 1],
     ]);
-    expect(result.warnings).toEqual([]);
   });
 
   it("points bindings between the Workers at placeholders and keeps a self binding", () => {
@@ -123,7 +122,7 @@ describe("pack an app of several Workers", () => {
   });
 
   it("verifies every Worker's files", async () => {
-    const res = await verify({ dir: outDir, hashesOnly: true, maxModules: 1 });
+    const res = await verify({ dir: outDir, hashesOnly: true, checkUpload: true });
     expect(res.checkedFiles).toBe(4); // 2 modules + 1 asset + 1 migration
   });
 

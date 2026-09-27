@@ -3,8 +3,8 @@ import {
   appServices,
   combinedWorkerFacts,
   type RepositoryDetection,
-  tooManyModulesMessage,
   type UNSUPPORTED_WRANGLER_SECTIONS,
+  workerUploadProblem,
 } from "@appflare/schema";
 
 type UnsupportedWranglerSection = (typeof UNSUPPORTED_WRANGLER_SECTIONS)[number];
@@ -107,11 +107,11 @@ export function reviewBuild(
     ...entryNameProblems(manifest, workerName),
   ];
   for (const w of workers) {
-    const tooMany = tooManyModulesMessage(
-      w.manifest.worker.modules.length,
+    const tooBig = workerUploadProblem(
+      w.manifest.worker.modules,
       w.primary ? "This build" : `The Worker "${w.name}" of this build`,
     );
-    if (tooMany !== null) problems.push(tooMany);
+    if (tooBig !== null) problems.push(tooBig);
   }
   if (origin === "repository" && manifest.catalog.install.emailRouting !== undefined) {
     problems.push(

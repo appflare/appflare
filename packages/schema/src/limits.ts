@@ -1,22 +1,26 @@
+import { planSpans, type SpanFile } from "./spans";
+
 /**
- * How many Worker modules an artifact may have and still be installable.
+ * What one Worker upload may cost, so that an artifact Appflare cannot
+ * install is refused when it is packed and before a job changes anything.
  *
- * The manager uploads a Worker (install, update, self-update) as ONE
- * multipart request carrying every module, and Range-fetches each module from
- * the artifact zip in that same Workflow invocation. Workers Free allows 50
- * subrequests per invocation, and every hop of a redirect counts
- * (developers.cloudflare.com/workers/platform/limits, "Subrequests"). A
- * GitHub release asset answers a Range request with a redirect to its storage
- * host, so each module costs two subrequests. An artifact with more modules
- * than {@link MAX_WORKER_MODULES} can be packed and verified but never
- * installed or updated by the manager; bundle the Worker into fewer modules
- * (ideally one) instead.
+ * Cloudflare has no limit on how many modules a Worker has. What binds the
+ * manager is the upload itself: it sends a Worker (install, update,
+ * self-update) as ONE multipart request carrying every module, and reads the
+ * modules from the artifact zip in that same invocation. Workers Free allows
+ * 50 subrequests per invocation, and every hop of a redirect counts
+ * (developers.cloudflare.com/workers/platform/limits, "Subrequests"). The
+ * reader follows the release asset's redirect once and then reads modules
+ * that lie next to each other in the zip with one Range request per span
+ * ({@link planSpans}), so the cost is one redirect plus the spans, whatever
+ * the module count. The other bound is memory: the invocation holds every
+ * module and the request body at once, inside the 128 MB a Worker may use.
  */
 
 /** Subrequests one Workers Free invocation may make. */
 export const FREE_PLAN_SUBREQUESTS = 50;
 
-/** Worst-case subrequests of one artifact Range fetch: the redirect plus the real request. */
+/** Worst-case subrequests of the first artifact Range fetch: the redirect plus the real request. */
 export const ARTIFACT_FETCH_SUBREQUESTS = 2;
 
 /**
@@ -28,26 +32,74 @@ export const ARTIFACT_FETCH_SUBREQUESTS = 2;
  */
 export const WORKER_UPLOAD_OVERHEAD_SUBREQUESTS = 8;
 
-/** The most Worker modules one upload can Range-fetch within {@link FREE_PLAN_SUBREQUESTS}. */
-export const MAX_WORKER_MODULES = Math.floor(
-  (FREE_PLAN_SUBREQUESTS - WORKER_UPLOAD_OVERHEAD_SUBREQUESTS) / ARTIFACT_FETCH_SUBREQUESTS,
-);
+/** Subrequests one upload may spend reading its modules: 42. */
+export const MAX_WORKER_UPLOAD_SUBREQUESTS =
+  FREE_PLAN_SUBREQUESTS - WORKER_UPLOAD_OVERHEAD_SUBREQUESTS;
 
 /**
- * Why an artifact with `count` Worker modules cannot be uploaded, or null
- * when it can. `subject` names the artifact in the message ("The release",
- * "This version").
+ * The most module bytes one Worker upload carries: 32 MiB. The invocation
+ * holds the modules and the multipart body built from them at the same time,
+ * so this stays well inside the 128 MB isolate, and below the 64 MiB
+ * Cloudflare accepts for a Worker on every plan.
  */
-export function tooManyModulesMessage(
-  count: number,
+export const MAX_WORKER_UPLOAD_BYTES = 32 * 1024 * 1024;
+
+/**
+ * No longer a limit. Tools built against the previous release read this
+ * export by name, so it stays for one release; check
+ * {@link workerUploadProblem} instead.
+ *
+ * @deprecated Cloudflare has no module count limit; use {@link workerUploadProblem}.
+ */
+export const MAX_WORKER_MODULES = 21;
+
+/**
+ * Subrequests one upload spends reading `modules` from a release asset: the
+ * redirect, followed once, plus one Range request per span. Zero when there
+ * is nothing to read.
+ */
+export function workerUploadCost(modules: readonly SpanFile[]): number {
+  return rangeReadCost(planSpans(modules).length);
+}
+
+/** Subrequests reading `ranges` Range requests from a release asset costs: the redirect once, then one each. */
+export function rangeReadCost(ranges: number): number {
+  return ranges === 0 ? 0 : ARTIFACT_FETCH_SUBREQUESTS - 1 + ranges;
+}
+
+/** Rounded up, so a size just over the cap never reads as the cap itself. */
+function mib(bytes: number): string {
+  return `${(Math.ceil((bytes * 100) / (1024 * 1024)) / 100).toFixed(2)} MiB`;
+}
+
+/**
+ * Why a Worker of `modules` cannot be uploaded in one request, or null when it
+ * can. `subject` names the Worker in the message ("The release", "This
+ * version").
+ */
+export function workerUploadProblem(
+  modules: readonly SpanFile[],
   subject = "The artifact",
-  limit: number = MAX_WORKER_MODULES,
 ): string | null {
-  if (count <= limit) return null;
-  return (
-    `${subject} has ${count} Worker modules, but one upload can fetch at most ${limit} ` +
-    `within the free plan's ${FREE_PLAN_SUBREQUESTS} subrequests per invocation ` +
-    `(${ARTIFACT_FETCH_SUBREQUESTS} per module from a release asset). ` +
-    `It must be built as ${limit} or fewer modules, for example as one bundled module.`
-  );
+  const problems: string[] = [];
+  const bytes = modules.reduce((n, m) => n + m.size, 0);
+  if (bytes > MAX_WORKER_UPLOAD_BYTES) {
+    problems.push(
+      `${subject} has ${mib(bytes)} of Worker modules, but Appflare uploads at most ` +
+        `${mib(MAX_WORKER_UPLOAD_BYTES)}: the upload holds every module and the request body ` +
+        "in memory at once, within the 128 MB a Worker may use. Make the Worker smaller, " +
+        "for example by minifying it or serving large files as static assets.",
+    );
+  }
+  const cost = workerUploadCost(modules);
+  if (cost > MAX_WORKER_UPLOAD_SUBREQUESTS) {
+    problems.push(
+      `${subject} needs ${cost} subrequests to read its ${modules.length} Worker modules ` +
+        `(${cost - 1} Range requests to the release zip and the redirect), but one upload may ` +
+        `make at most ${MAX_WORKER_UPLOAD_SUBREQUESTS} of the free plan's ` +
+        `${FREE_PLAN_SUBREQUESTS} per invocation. Pack it again with the current packer, ` +
+        "which writes a Worker's modules next to each other in the zip.",
+    );
+  }
+  return problems.length === 0 ? null : problems.join(" ");
 }
