@@ -66,6 +66,7 @@ Steps:
 4. Choose the slug: short, lower case, the app's usual name, not already used in apps/. Pin the version: if the repository has stable semver tags, take the newest one; source.ref is the tag and source.sha the full 40-character commit it points to (for an annotated tag, the commit, not the tag object). Otherwise take the head of the default branch, with source.ref set to the branch name. When the tags do not describe this app, as in a repository of many templates, also set install.version.
 5. Write apps/<slug>/appflare.jsonc, starting from a copy of apps/cut/appflare.jsonc. Read the app's wrangler config, README, .dev.vars.example if there is one, and the code that reads env. Fill in:
    - $schema, slug, name, summary (one sentence), homepage (https), repo (owner/name), license, categories.
+   - tagline: what the app does in plain words for someone who is not a developer, one sentence of at most 80 characters with no trailing period, such as "Short links on your own domain".
    - license: the SPDX license expression the repository declares (MIT, Apache-2.0, BUSL-1.1, FSL-1.1-MIT, ...); NONE when it publishes no license; SEE LICENSE IN <file> for a license with no SPDX id. Add licenseNote, one short line, when the id does not say what matters, such as "Source-available: production use restricted; see the license".
    - authors: who wrote the app upstream, as the repository owner, its README, or its license names them. Each is { "name", "url"?, "github"?, "x"? }, with handles written without @.
    - maintainers: [<MY GITHUB USERNAME>].

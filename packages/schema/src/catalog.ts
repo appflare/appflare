@@ -10,6 +10,7 @@ import { catalogPipelinesSchema, pipelineManifestProblems } from "./pipelines.ts
 import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
 import { isSeedOnly, seedManifestProblems } from "./seed.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
+import { taglineSchema } from "./tagline.ts";
 import { isVapidPrivateKey, VAPID_PRIVATE_KEY_LENGTH } from "./vapid.ts";
 
 /**
@@ -1840,7 +1841,7 @@ export const catalogRevisionSchema = z
   .describe(
     "Which edit of this entry's form and copy the catalog publishes for the build its `source` " +
       "already released, starting at 1 (the default when omitted). Raise it by one to publish a " +
-      "change to `name`, `summary`, `homepage`, `license`, `licenseNote`, `categories`, " +
+      "change to `name`, `summary`, `tagline`, `homepage`, `license`, `licenseNote`, `categories`, " +
       "`authors`, `maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving " +
       "`source`: the released artifact stays as it is, and managers show the new form without " +
       "an update. " +
@@ -1854,6 +1855,12 @@ export const catalogManifestSchema = z
     slug: z.string().min(1),
     name: z.string().min(1),
     summary: z.string().min(1),
+    /**
+     * The one-line pitch on catalog tiles. Optional rather than defaulted so
+     * manifests and artifacts written before the field existed keep the same
+     * parsed shape.
+     */
+    tagline: taglineSchema.optional(),
     /** Shown as a link in the manager; https only (the regex also lands in the JSON Schema). */
     homepage: z
       .url({ protocol: /^https$/, error: "must be an https:// URL" })

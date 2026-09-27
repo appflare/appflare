@@ -44,6 +44,7 @@ import {
   refreshCustomCatalog,
   refreshOfficialCatalog,
 } from "./merged.server";
+import { appPitch } from "./pitch";
 import { type AppPopularity, appPopularity, freshStats } from "./popularity";
 import type { AppPrimitives } from "./primitives";
 import { appKey, type CatalogSource, installAppKey, unsignedTierRefusal } from "./sources";
@@ -76,6 +77,8 @@ export interface CatalogListItem extends IndexApp {
   categories: string[];
   /** The license from the index row, else the catalog manifest; null until either states it. */
   appLicense: AppLicense | null;
+  /** The line under its name on a catalog tile: the tagline, else the summary's first clause. */
+  pitch: string;
 }
 
 export interface CatalogList {
@@ -192,6 +195,7 @@ async function listItems(
       // Images, avatars and popularity come from the official catalog alone.
       images: appMediaView(official ? app.media : undefined, indexUrl),
       popularity: official ? appPopularity(stats, app.slug) : null,
+      pitch: appPitch(app),
       ...(facts.get(app.slug) ?? appFacts(app, null)),
     };
   });

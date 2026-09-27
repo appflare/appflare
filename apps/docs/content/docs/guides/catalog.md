@@ -5,34 +5,62 @@ description: What the catalog pages show before you install an app.
 
 Open **Catalog** in the manager. The list comes from the catalog's `index.json`
 (and from any catalogs an admin added, see [Custom catalogs](/guides/custom-catalogs/)),
-which the manager fetches every 30 minutes and caches. Admins can select
-**Refresh** to fetch it now.
+which the manager fetches every 30 minutes and caches. Admins can select the
+refresh button at the top right to fetch it now. The line under the search field
+says how many apps there are and when the list was last updated; hover over the
+time for the exact date.
 
-## The catalog card
+## Search and filters
 
-Each app shows:
+Type in the search field to find apps by name, by what they do, by author, or by a
+Cloudflare service they use (such as `D1` or `R2`). The filter button at the end of
+the field narrows the list by plan (**Free** or **Paid**), by license (see
+[Licenses](#licenses)), to apps installed in this account, and, once you have added
+a catalog, to one catalog. Each active filter shows as a pill inside the field,
+such as **Category: Email** or **Plan: Free**: select its **×**, or press Backspace
+at the start of the field, to remove it. The **×** at the end of the field clears
+the words and every filter.
 
-- **Its icon**, when the catalog has one.
-- **A plan badge.** **Free plan** means the app runs on the Workers free plan.
-  **Workers Paid** means it needs the paid plan, because it uses features the
-  free plan lacks.
-- **The authors**: who wrote the app upstream.
-- **The version** the catalog offers.
-- **The license**, as the app's repository declares it (see [Licenses](#licenses)).
-- **Install checked** with a date: the last time the catalog's nightly job
-  reinstalled this exact version into a test account and got an answer from it. A
-  new version shows **Not checked yet** until its first check passes. A check that
-  fails keeps the previous date, so an old date means recent checks failed. This is
-  about the catalog's test account, not your installs; their own health is shown as
-  **Verified** on each app's page (see [Health checks](/guides/health/)).
-- **Requirements**, as icons, when the app needs more than Workers.
-- How many times the app is installed in this account.
-- **GitHub stars and installs** across Appflare managers, when the catalog publishes
-  them (see [below](#catalog-images-popularity-and-the-sponsored-slot)).
+Under the field, the categories show as cards with the number of apps in each.
+Select a card to show that category's apps, and select it again to show every app.
+
+The search and filters are part of the page address, so you can bookmark or share a
+filtered view, for example `/catalog?category=email&plan=free` or
+`/catalog?installed=1`.
+
+## Rows and tiles
+
+Without a search or filter, the page shows rows of apps:
+
+- **New this week**: apps added to the catalog in the last seven days. While the
+  catalog does not say when apps were added, this row is **Recently tested** and
+  shows the apps whose latest version passed the catalog's test most recently.
+- **Most popular**: the apps running on the most Appflare managers, then the most
+  starred on GitHub (see [Popularity](#popularity)).
+- **Installed on this account**.
+- One row for each of the biggest categories.
+
+Each row has **See all**, which lists every app of the row, and arrows to scroll it
+(on a phone, swipe instead). With the keyboard, the Left and Right arrow keys move
+between the apps of a row. **All apps** below the rows lists every app by name.
+
+Each app shows its icon, name and a one-line description, then its plan (**Free**
+runs on the Workers free plan, **Paid** needs Workers Paid; hover for the full plan
+name), its GitHub stars when the catalog publishes them, and one button: **Get**
+opens the app's page, where installing starts, and **Manage** opens the app you
+already installed.
 
 ## The app page
 
-Select **View and install** (or **Details** for an app you already have). The page
+Select an app, or **Get**, to open its page. It shows **Install checked** with a
+date: the last time the catalog's nightly job reinstalled this exact version into a
+test account and got an answer from it. A new version shows **Not checked yet**
+until its first check passes. A check that fails keeps the previous date, so an old date means
+recent checks failed. This is about the catalog's test account, not your installs;
+their own health is shown as **Verified** on each app's page (see
+[Health checks](/guides/health/)).
+
+The page
 shows the version, the source repository, homepage, license (with a line on what it
 allows), the app's authors with
 links to their website, GitHub, and X profiles, the catalog maintainers who package it
@@ -94,14 +122,14 @@ shows the license the app's own repository declares, so the choice is yours:
 - **Custom license** means the app has a license of its own with no standard id;
   its page links to the file.
 
-The license filter above the list (**Any license**) narrows it to open-source,
-source-available, or unlicensed apps.
+The license filter in the search field's filter menu narrows the list to
+open-source, source-available, or unlicensed apps.
 
 ## Catalog images, popularity and the sponsored slot
 
 ### Images
 
-A catalog entry can have an icon, shown on its card, and a cover image (1200 by 630
+A catalog entry can have an icon, shown wherever the app is listed, and a cover image (1200 by 630
 pixels) and up to 8 screenshots, shown on its page. The manager serves every image
 itself, at `/api/catalog/media/<sha256>`. It fetches an image only when the catalog
 index it has cached lists it, on the catalog's own site, and serves it only when its
@@ -113,28 +141,27 @@ or a sponsor to show an image.
 Next to its index, the catalog publishes numbers it rebuilds about every hour: the
 stars of each app's upstream repository on GitHub, and how many Appflare managers run
 the app or installed it in the last 30 days, counted from anonymous
-[usage data](/telemetry/). Counts below 10 are not published; cards show them as
-**Fewer than 10**. A manager with usage data turned off is not counted, and still
+[usage data](/telemetry/). Counts below 10 are not published; app pages show them
+as **Fewer than 10**. A manager with usage data turned off is not counted, and still
 sees the numbers.
 
-When recent numbers exist, the catalog page offers **Sort by**: **Most popular** (the
-default) lists first the apps running on the most managers, then those installed most
-in 30 days, then the most starred, with apps that have no numbers last. **Name** sorts
-alphabetically. Numbers older than 72 hours are not shown, and the page keeps the
-catalog's own order. Popularity only orders and labels the list; nothing else
-depends on it.
+The **Most popular** row, and search and filter results, list first the apps running
+on the most managers, then those installed most in 30 days, then the most starred,
+with apps that have no numbers last. Numbers older than 72 hours are not shown: the
+**Most popular** row is left out and results keep the catalog's own order.
+Popularity only orders and labels the list; nothing else depends on it.
 
 ### The sponsored slot
 
 The catalog index has a slot for sponsored content, in every release from the first
 one, empty while there is no sponsor. When it holds something, the catalog page shows
-one item above the list, labelled **Sponsored**, with **Sponsored by** and the
+one item as a single line after the first row, labelled **Sponsored**, with the
 sponsor's name. The label is part of the manager, not of the catalog, so no catalog
 can take it off. The information button next to it says what the item is:
 
-- **An app in the catalog.** It was checked like every other app. Being sponsored
-  changes nothing else: not its place in the list, its sorting, or its numbers.
-- **Anything else**, such as a sponsor's own product. Appflare has not checked what
+- **An app in the catalog.** It was tested like every other app. Being sponsored
+  changes nothing else: not its place in the list, its order, or its numbers.
+- **Anything else**, such as a sponsor's own product. Appflare has not reviewed what
   it links to.
 
 Select **Hide** (the close button) to hide an item for yourself. Other users still

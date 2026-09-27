@@ -1,152 +1,74 @@
-import { installTierSchema, planSchema } from "@appflare/schema";
+import { Banner, Button, Empty, Text, useKumoToastManager } from "@cloudflare/kumo";
 import {
-  Banner,
-  Button,
-  Empty,
-  InputGroup,
-  LayerCard,
-  LinkButton,
-  Select,
-  Text,
-  useKumoToastManager,
-} from "@cloudflare/kumo";
-import {
-  ArrowRightIcon,
   ArrowsClockwiseIcon,
   MagnifyingGlassIcon,
   StorefrontIcon,
   WarningCircleIcon,
-  XIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
-import { z } from "zod";
-import type { CapabilitiesView } from "../../../capabilities/capabilities";
-import { authorNames } from "../../../catalog/authors";
+import { Fragment, useId, useMemo, useRef, useState } from "react";
 import {
   type BrowseQuery,
   browseApps,
-  categoriesOf,
-  categoryLabel,
-  isFiltered,
-  SORTS,
-  type Sort,
+  browseNavigation,
+  browseSearchSchema,
+  categoryCounts,
+  showsResults,
 } from "../../../catalog/browse";
-import {
-  type CatalogListItem,
-  listCatalog,
-  refreshCatalog,
-} from "../../../catalog/catalog.functions";
-import { LICENSE_FILTERS } from "../../../catalog/license";
+import { type CatalogList, listCatalog, refreshCatalog } from "../../../catalog/catalog.functions";
 import { UNSIGNED_INDEX_REFUSAL } from "../../../catalog/sources";
 import {
-  AvailabilityLegend,
-  InstallCheckBadge,
-  InstalledBadge,
-  LicenseBadge,
-  PlanBadge,
-  PrimitiveIcons,
-  TierBadge,
-} from "../../../components/catalog-badges";
-import { AppIcon, PopularityLine } from "../../../components/catalog-media";
-import { CatalogSourceBadge } from "../../../components/catalog-source-badge";
+  filterPills,
+  knowsAddedDates,
+  resultsTitle,
+  sinceDay,
+  storefrontRows,
+} from "../../../catalog/storefront";
+import { AppGrid, AppRow, CatalogSection } from "../../../components/catalog-row";
+import { CatalogSearch, useSearchText } from "../../../components/catalog-search";
+import { CompactAppLink } from "../../../components/catalog-tile";
+import { CategoryCards } from "../../../components/category-cards";
 import { FeaturedCard } from "../../../components/featured-card";
+import { formatExactDateTime } from "../../../components/format";
 import { PageHeader } from "../../../components/page-header";
 import { RepositoryBuildButton } from "../../../components/repository-build-dialog";
-import { Timestamp } from "../../../components/timestamp";
-
-/** A search parameter that is dropped, not an error, when a link carries a value this page does not know. */
-function lenient<T extends z.ZodType>(schema: T) {
-  return schema.optional().catch(undefined);
-}
-
-const licenseFilterSchema = z.enum(["open-source", "source-available", "none"]);
-
-const searchSchema = z.object({
-  q: lenient(z.string().max(200)),
-  installed: lenient(z.enum(["yes", "no"])),
-  plan: lenient(planSchema),
-  tier: lenient(installTierSchema),
-  category: lenient(z.string().min(1).max(60)),
-  source: lenient(z.string().min(1).max(64)),
-  license: lenient(licenseFilterSchema),
-  sort: lenient(z.enum(["popular", "name", "checked"])),
-});
+import { Tooltip } from "../../../components/tooltip";
 
 /**
- * `/catalog`: apps from every enabled catalog's KV-cached `index.json`, with
- * a search over names, summaries, authors and primitives, filters for
- * installed, plan, tier, category, license and (with more than one catalog)
- * source, and a sort; all kept in the URL so a filtered list can be shared. Each
- * card carries its catalog's source badge when there is more than one.
- * The sponsored item (if any) sits above the list. Every card has the same
- * slots in the same order so apps can be compared down a column.
+ * `/catalog`: the apps of every enabled catalog, as a storefront. A search
+ * field first, with the active filters as pills inside it, then the
+ * categories as cards. Without a search or filter, rows picked for a first
+ * look (new, most popular, installed here, the biggest categories) with the
+ * sponsored item among them, then every app in a compact list; with one,
+ * the matching apps as tiles. The search and filters live in the page
+ * address (`?q=`, `?category=`, `?plan=`, `?license=`, `?installed=1`,
+ * `?source=`, and `?sort=` for a row's "See all"), so any view can be shared.
  */
 export const Route = createFileRoute("/_app/catalog/")({
-  staticData: { title: "Catalog" },
-  validateSearch: searchSchema,
+  staticData: { title: "Catalog", width: "wide" },
+  validateSearch: browseSearchSchema,
   loader: () => listCatalog(),
   component: CatalogPage,
 });
 
-const ANY = "any";
-
-const INSTALLED_ITEMS = { [ANY]: "All apps", yes: "Installed", no: "Not installed" };
-const PLAN_ITEMS = { [ANY]: "Any plan", free: "Free plan", paid: "Workers Paid" };
-const TIER_ITEMS = {
-  [ANY]: "Any build",
-  artifact: "Signed release",
-  sandbox: "Built in your account",
-  "self-deploying": "Self-deploying",
-};
-const LICENSE_ITEMS = { [ANY]: "Any license", ...LICENSE_FILTERS };
-
 function CatalogPage() {
   const catalog = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
-  const search = Route.useSearch();
-  const navigate = useNavigate({ from: Route.fullPath });
-  const [text, setText] = useSearchText(search.q, (q) => update({ q }));
-  const hasStats = catalog.statsGeneratedAt !== null;
-  const sort: Sort = search.sort ?? (hasStats ? "popular" : "name");
-  const query: BrowseQuery = { ...search, sort };
-  const apps = browseApps(catalog.apps, query, hasStats);
-  const filtered = isFiltered(query);
-  const categories = categoriesOf(catalog.apps);
-  // With one catalog there is nothing to tell apart.
-  const manySources = catalog.sources.length > 1;
-
-  function update(patch: Partial<BrowseQuery>) {
-    void navigate({
-      search: (prev) => ({ ...prev, ...patch }),
-      replace: true,
-      resetScroll: false,
-    });
-  }
-  function clearFilters() {
-    void navigate({ search: { sort: search.sort }, replace: true, resetScroll: false });
-  }
-  const sortItems: Partial<Record<Sort, string>> = hasStats
-    ? SORTS
-    : { name: SORTS.name, checked: SORTS.checked };
 
   return (
     <>
       <PageHeader
         title="Catalog"
-        description="Cloudflare-native apps you can install into this account."
+        description="Apps you can add to your Cloudflare account."
         actions={
           viewer.role === "admin" ? (
-            <div className="flex flex-wrap items-center gap-2">
+            <>
               {catalog.repositoryBuilds && <RepositoryBuildButton sandbox={catalog.sandbox} />}
               <RefreshButton />
-            </div>
+            </>
           ) : undefined
         }
       />
-      {catalog.featured !== null && (
-        <FeaturedCard key={catalog.featured.id} item={catalog.featured} />
-      )}
       {catalog.error === null &&
         catalog.failed.map(({ source, error }) => (
           <Banner
@@ -170,7 +92,7 @@ function CatalogPage() {
         <Banner
           variant="secondary"
           icon={<WarningCircleIcon weight="fill" />}
-          title={`${catalog.unreadable} ${catalog.unreadable === 1 ? "entry" : "entries"} could not be read`}
+          title={`${catalog.unreadable} ${catalog.unreadable === 1 ? "app" : "apps"} could not be shown`}
           description="The catalog lists apps this version of Appflare does not understand yet. Update Appflare in Settings to see them."
         />
       )}
@@ -184,266 +106,173 @@ function CatalogPage() {
         <Empty
           icon={<StorefrontIcon size={48} className="text-kumo-inactive" />}
           title="No apps in the catalog yet"
-          description="The catalog index was loaded but lists no apps."
+          description="The list of apps was loaded but is empty."
         />
       ) : (
-        <>
-          <div className="grid gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <InputGroup className="min-w-64 flex-1">
-                <InputGroup.Addon>
-                  <MagnifyingGlassIcon />
-                </InputGroup.Addon>
-                <InputGroup.Input
-                  type="search"
-                  value={text}
-                  placeholder="Search apps, authors, services"
-                  aria-label="Search apps"
-                  onChange={(e) => setText(e.target.value)}
-                />
-                {text !== "" && (
-                  <InputGroup.Addon align="end" className="pr-1">
-                    <InputGroup.Button
-                      shape="square"
-                      icon={XIcon}
-                      aria-label="Clear search"
-                      onClick={() => setText("")}
-                    />
-                  </InputGroup.Addon>
-                )}
-              </InputGroup>
-              <Select
-                aria-label="Installed"
-                value={search.installed ?? ANY}
-                items={INSTALLED_ITEMS}
-                onValueChange={(value) =>
-                  update({ installed: value === "yes" || value === "no" ? value : undefined })
-                }
-              />
-              <Select
-                aria-label="Plan"
-                value={search.plan ?? ANY}
-                items={PLAN_ITEMS}
-                onValueChange={(value) =>
-                  update({ plan: value === "free" || value === "paid" ? value : undefined })
-                }
-              />
-              <Select
-                aria-label="How it is built"
-                value={search.tier ?? ANY}
-                items={TIER_ITEMS}
-                onValueChange={(value) => {
-                  const tier = installTierSchema.safeParse(value);
-                  update({ tier: tier.success ? tier.data : undefined });
-                }}
-              />
-              <Select
-                aria-label="License"
-                value={search.license ?? ANY}
-                items={LICENSE_ITEMS}
-                onValueChange={(value) => {
-                  const license = licenseFilterSchema.safeParse(value);
-                  update({ license: license.success ? license.data : undefined });
-                }}
-              />
-              {manySources && (
-                <Select
-                  aria-label="Source"
-                  value={search.source ?? ANY}
-                  items={{
-                    [ANY]: "All catalogs",
-                    ...Object.fromEntries(catalog.sources.map((s) => [s.id, s.label])),
-                  }}
-                  onValueChange={(value) =>
-                    update({
-                      source: typeof value === "string" && value !== ANY ? value : undefined,
-                    })
-                  }
-                />
-              )}
-              {categories.length > 0 && (
-                <Select
-                  aria-label="Category"
-                  value={search.category ?? ANY}
-                  items={{
-                    [ANY]: "All categories",
-                    ...Object.fromEntries(categories.map((c) => [c, categoryLabel(c)])),
-                  }}
-                  onValueChange={(value) =>
-                    update({
-                      category: typeof value === "string" && value !== ANY ? value : undefined,
-                    })
-                  }
-                />
-              )}
-              <Select
-                aria-label="Sort apps"
-                value={sort}
-                items={sortItems}
-                renderValue={(value) => `Sort: ${SORTS[value as Sort] ?? SORTS.name}`}
-                onValueChange={(value) => {
-                  const next = z.enum(["popular", "name", "checked"]).safeParse(value);
-                  update({ sort: next.success ? next.data : undefined });
-                }}
-              />
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
-                <Text as="span" variant="secondary" size="sm">
-                  {filtered
-                    ? `${apps.length} of ${catalog.apps.length} apps`
-                    : `${catalog.apps.length} apps`}
-                  {catalog.updatedAt !== null && (
-                    <>
-                      {" "}
-                      · catalog updated <Timestamp iso={catalog.updatedAt} />
-                    </>
-                  )}
-                </Text>
-                {filtered && (
-                  <Button variant="ghost" size="sm" onClick={clearFilters}>
-                    Clear filters
-                  </Button>
-                )}
-              </span>
-              <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
-                <Text as="span" variant="secondary" size="sm">
-                  Services on this account:
-                </Text>
-                <AvailabilityLegend />
-              </span>
-            </div>
-          </div>
-          {apps.length === 0 ? (
-            <Empty
-              icon={<MagnifyingGlassIcon size={48} className="text-kumo-inactive" />}
-              title="No apps match"
-              description="Try other words, or clear the filters to see every app."
-              contents={<Button onClick={clearFilters}>Clear filters</Button>}
-            />
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-              {apps.map((app) => (
-                <AppCard
-                  key={app.key}
-                  app={app}
-                  capabilities={catalog.capabilities}
-                  showSource={manySources}
-                />
-              ))}
-            </div>
-          )}
-        </>
+        <Storefront catalog={catalog} />
       )}
     </>
   );
 }
 
-/**
- * The search box's text: the URL's `q`, so back and forward bring the words
- * back, and while someone types, their own draft (every keystroke replaces
- * `q`, and a navigation still in flight must not overwrite newer letters).
- * A `q` the box did not write itself (back, forward, Clear filters) drops
- * the draft.
- */
-function useSearchText(
-  q: string | undefined,
-  write: (q: string | undefined) => void,
-): [string, (text: string) => void] {
-  const [draft, setDraft] = useState<string | null>(null);
-  // Values the box wrote that the URL has not reached yet, and the newest one.
-  const inFlight = useRef(new Set<string>());
-  const latest = useRef<string | null>(null);
-  useEffect(() => {
-    const current = q ?? "";
-    if (current === latest.current) {
-      inFlight.current.clear();
-      latest.current = null;
-      return;
-    }
-    if (inFlight.current.has(current)) return;
-    inFlight.current.clear();
-    latest.current = null;
-    setDraft(null);
-  }, [q]);
-  function type(text: string) {
-    const next = text.trim() === "" ? undefined : text;
-    inFlight.current.add(next ?? "");
-    latest.current = next ?? "";
-    setDraft(text);
-    write(next);
-  }
-  return [draft ?? q ?? "", type];
-}
+function Storefront({ catalog }: { catalog: CatalogList }) {
+  const query = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const [text, setText] = useSearchText(query.q, (q) => update({ q }, "typing"));
+  // One "now" per visit, so rows and relative times do not shift while the page is open.
+  const [now] = useState(() => new Date());
+  const top = useRef<HTMLDivElement>(null);
+  const resultsId = useId();
+  const allId = useId();
 
-/**
- * One app, with the same slots in the same order on every card: header
- * (icon or monogram, name, tier and plan), summary (two lines), meta
- * (authors, version), status (install check, license, popularity), primitives
- * (always), and a footer with the installed state and the one action.
- */
-function AppCard({
-  app,
-  capabilities,
-  showSource,
-}: {
-  app: CatalogListItem;
-  capabilities: CapabilitiesView | null;
-  /** Show the catalog's source badge (there is more than one catalog). */
-  showSource: boolean;
-}) {
-  const authors = app.authors === undefined ? "" : authorNames(app.authors);
+  /** Typing replaces the history entry; every other change adds one, so Back undoes it. */
+  function update(patch: BrowseQuery, change: "typing" | "choice" = "choice") {
+    void navigate(browseNavigation(patch, change));
+  }
+  function clearAll() {
+    void navigate({ search: {}, replace: false, resetScroll: false });
+  }
+  /** A row's "See all": its filter or order, with the results brought into view. */
+  function seeAll(patch: BrowseQuery) {
+    update(patch);
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    top.current?.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+  }
+
+  const addedDates = useMemo(() => knowsAddedDates(catalog.apps), [catalog.apps]);
+  const pills = filterPills(query, {
+    sourceLabel: (id) => catalog.sources.find((s) => s.id === id)?.label ?? id,
+    addedDates,
+  });
+  const results = useMemo(
+    () => (showsResults(query) ? browseApps(catalog.apps, query) : null),
+    [catalog.apps, query],
+  );
+  const rows = useMemo(
+    () => (results === null ? storefrontRows(catalog.apps, now) : []),
+    [catalog.apps, results, now],
+  );
+  const categories = useMemo(() => categoryCounts(catalog.apps), [catalog.apps]);
+  const byName = useMemo(
+    () => [...catalog.apps].sort((a, b) => a.name.localeCompare(b.name, "en")),
+    [catalog.apps],
+  );
+  const featured =
+    catalog.featured === null ? null : (
+      <FeaturedCard key={catalog.featured.id} item={catalog.featured} />
+    );
+
   return (
-    <LayerCard className="flex h-full flex-col">
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span className="flex min-w-0 items-center gap-3">
-          <AppIcon src={app.images.icon} name={app.name} size={28} />
-          <Text as="h2" bold>
-            {app.name}
-          </Text>
-        </span>
-        <span className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <TierBadge tier={app.tier} />
-          <PlanBadge plan={app.plan} />
-        </span>
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="flex flex-1 flex-col gap-3 px-5 py-4">
-        <div className="grid gap-1">
-          <Text>
-            <span className="line-clamp-2 min-h-[2lh]" title={app.summary}>
-              {app.summary}
-            </span>
-          </Text>
-          <Text variant="secondary" size="sm" truncate>
-            {authors !== "" && <>By {authors} · </>}
-            <span className="font-mono text-[0.9em]">{app.version}</span>
-          </Text>
+    <div ref={top} className="grid min-w-0 scroll-mt-6 grid-cols-1 gap-8">
+      <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 gap-1.5">
+          <CatalogSearch
+            text={text}
+            onText={setText}
+            query={query}
+            pills={pills}
+            sources={catalog.sources}
+            onChange={update}
+            onClear={clearAll}
+          />
+          <StatusLine
+            shown={results?.length ?? null}
+            total={catalog.apps.length}
+            updatedAt={catalog.updatedAt}
+            now={now}
+          />
         </div>
-        <div className="flex min-h-7 flex-wrap items-center gap-x-4 gap-y-2">
-          {showSource && <CatalogSourceBadge source={app.source} />}
-          <InstallCheckBadge lastVerified={app.lastVerified} />
-          {app.appLicense !== null && <LicenseBadge license={app.appLicense} />}
-          <PopularityLine popularity={app.popularity} />
-        </div>
-        <PrimitiveIcons primitives={app.primitives} capabilities={capabilities} tier={app.tier} />
-        <div className="mt-auto flex items-center justify-between gap-3 pt-1">
-          <InstalledBadge instances={app.instances} />
-          <LinkButton
-            href={`/catalog/${app.key}`}
-            variant="secondary"
-            icon={<ArrowRightIcon />}
-            className="ml-auto"
-            aria-label={`Details of ${app.name}`}
-          >
-            Details
-          </LinkButton>
-        </div>
-      </LayerCard.Primary>
-    </LayerCard>
+        <CategoryCards
+          categories={categories}
+          selected={query.category}
+          onSelect={(category) => update({ category })}
+        />
+      </div>
+
+      {results !== null ? (
+        results.length === 0 ? (
+          <Empty
+            icon={<MagnifyingGlassIcon size={48} className="text-kumo-inactive" />}
+            title="No apps match"
+            description="Try other words, or remove a filter."
+            contents={<Button onClick={clearAll}>Show all apps</Button>}
+          />
+        ) : (
+          <CatalogSection title={resultsTitle(query, addedDates)} titleId={resultsId}>
+            <AppGrid apps={results} label={resultsTitle(query, addedDates)} />
+          </CatalogSection>
+        )
+      ) : (
+        <>
+          {rows.map((row, index) => (
+            <Fragment key={row.id}>
+              <AppRow
+                title={row.title}
+                caption={row.caption}
+                apps={row.apps}
+                onSeeAll={() => seeAll(row.seeAll)}
+              />
+              {index === 0 && featured}
+            </Fragment>
+          ))}
+          {rows.length === 0 && featured}
+          <CatalogSection title="All apps" titleId={allId}>
+            <ul
+              // biome-ignore lint/a11y/noRedundantRoles: list styles are removed, and Safari then drops the list role
+              role="list"
+              aria-labelledby={allId}
+              className="-mx-2 grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-x-4"
+            >
+              {byName.map((app) => (
+                <li key={app.key} className="min-w-0">
+                  <CompactAppLink app={app} />
+                </li>
+              ))}
+            </ul>
+          </CatalogSection>
+        </>
+      )}
+    </div>
   );
 }
 
-/** Admin only: re-fetch `index.json` now instead of waiting for the cron; a toast says how it went. */
+/** "136 apps · Updated 3 days ago" (or "12 of 136 apps" while filtered), the exact time in a tooltip. */
+function StatusLine({
+  shown,
+  total,
+  updatedAt,
+  now,
+}: {
+  /** Apps matching the search and filters; null when there are none. */
+  shown: number | null;
+  total: number;
+  updatedAt: string | null;
+  now: Date;
+}) {
+  return (
+    <Text as="span" variant="secondary" size="sm">
+      <span className="px-1">
+        <span role="status">{shown === null ? `${total} apps` : `${shown} of ${total} apps`}</span>
+        {updatedAt !== null && (
+          <>
+            {" · "}
+            <Tooltip
+              content={`The list of apps was last updated ${formatExactDateTime(updatedAt)}.`}
+              render={
+                // biome-ignore lint/a11y/noNoninteractiveTabindex: focus opens the exact time's tooltip
+                <time dateTime={updatedAt} tabIndex={0} />
+              }
+            >
+              Updated {sinceDay(updatedAt, now)}
+            </Tooltip>
+          </>
+        )}
+      </span>
+    </Text>
+  );
+}
+
+/** Admin only: fetch the list of apps now instead of waiting for the next scheduled refresh. */
 function RefreshButton() {
   const router = useRouter();
   const toasts = useKumoToastManager();
@@ -455,13 +284,13 @@ function RefreshButton() {
       const { count, failed } = await refreshCatalog();
       await router.invalidate();
       toasts.add({
-        title: failed.length === 0 ? "Catalog refreshed" : "Catalog partly refreshed",
+        title: failed.length === 0 ? "List of apps refreshed" : "List of apps partly refreshed",
         description: `Loaded ${count} app${count === 1 ? "" : "s"}.${failed.length === 0 ? "" : ` Could not refresh ${failed.join(", ")}.`}`,
         variant: failed.length === 0 ? "success" : "warning",
       });
     } catch (error) {
       toasts.add({
-        title: "Could not refresh the catalog",
+        title: "Could not refresh the list of apps",
         description: error instanceof Error ? error.message : undefined,
         variant: "error",
       });
@@ -471,13 +300,18 @@ function RefreshButton() {
   }
 
   return (
-    <Button
-      variant="secondary"
-      icon={<ArrowsClockwiseIcon />}
-      loading={pending}
-      onClick={onRefresh}
-    >
-      Refresh
-    </Button>
+    <Tooltip
+      content="Refresh the list of apps"
+      render={
+        <Button
+          variant="ghost"
+          shape="square"
+          icon={ArrowsClockwiseIcon}
+          loading={pending}
+          aria-label="Refresh the list of apps"
+          onClick={onRefresh}
+        />
+      }
+    />
   );
 }

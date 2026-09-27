@@ -48,6 +48,7 @@ export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
   "$schema",
   "name",
   "summary",
+  "tagline",
   "homepage",
   "license",
   "licenseNote",

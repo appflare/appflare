@@ -1,4 +1,5 @@
-import type { CatalogAuthor, InstallTier, Plan } from "@appflare/schema";
+import { type CatalogAuthor, type Plan, planSchema } from "@appflare/schema";
+import { z } from "zod";
 import { type AppLicense, type LicenseFilter, licenseKind } from "./license";
 import { type AppPopularity, comparePopularity } from "./popularity";
 import { type AppPrimitives, PRIMITIVE_LABELS } from "./primitives";
@@ -7,48 +8,91 @@ import { type AppPrimitives, PRIMITIVE_LABELS } from "./primitives";
  * Finding apps on the catalog page: a search over what a person remembers
  * about an app (its name, what it does, who wrote it, what it runs on),
  * filters for the facts that decide whether it fits this account, and the
- * order. Runs in the browser over the list the page already loaded.
+ * two orders a row's "See all" opens. Runs in the browser over the list the
+ * page already loaded; the query lives in the page address so it can be
+ * shared.
  */
 
-/** What the search, filters and sort read from one app. */
+/** What the search, filters and orders read from one app. */
 export interface BrowsableApp {
   slug: string;
   name: string;
   summary: string;
-  tier: InstallTier;
+  /** The catalog's one-line pitch, when the entry has one. */
+  tagline?: string | undefined;
   plan: Plan;
   lastVerified: string | null;
+  /** When the entry joined the catalog, when the index says. */
+  addedAt?: string | undefined;
   authors?: ReadonlyArray<Pick<CatalogAuthor, "name">> | undefined;
   categories: readonly string[];
   primitives: Pick<AppPrimitives, "ids">;
   instances: readonly unknown[];
   popularity: AppPopularity | null;
-  /** The catalog that lists it, for the source filter. */
+  /** The catalog that lists it, for the catalog filter. */
   source?: { id: string } | undefined;
   /** Its license, for the license filter; null or absent while not known. */
   appLicense?: AppLicense | null | undefined;
 }
 
-export const SORTS = {
-  popular: "Most popular",
-  name: "Name",
-  checked: "Recently checked",
-} as const;
-export type Sort = keyof typeof SORTS;
+/** The orders a row's "See all" opens: most popular first, or newest first. */
+export const CATALOG_SORTS = ["popular", "new"] as const;
+export type CatalogSort = (typeof CATALOG_SORTS)[number];
 
 export interface BrowseQuery {
   /** Free text; every word must match. */
   q?: string | undefined;
-  installed?: "yes" | "no" | undefined;
-  plan?: Plan | undefined;
-  tier?: InstallTier | undefined;
   category?: string | undefined;
-  /** A catalog id: only that catalog's apps. */
-  source?: string | undefined;
+  plan?: Plan | undefined;
   /** Only apps whose license is of this kind; an app whose license is not known yet matches none. */
   license?: LicenseFilter | undefined;
-  sort?: Sort | undefined;
+  /** `1`: only apps installed on this account (the address reads `installed=1`). */
+  installed?: 1 | undefined;
+  /** A catalog id: only that catalog's apps. */
+  source?: string | undefined;
+  /** Every app in this order, as a row's "See all" asks. */
+  sort?: CatalogSort | undefined;
 }
+
+/** The longest search the address keeps; longer words are cut to it. */
+export const MAX_QUERY_LENGTH = 200;
+
+/**
+ * How a change to the query goes into the browser's history: typing replaces
+ * the current entry, so Back does not step through every letter; a choice
+ * (a category, a filter, a pill removed, "See all", clearing) adds one, so
+ * Back undoes it.
+ */
+export function browseNavigation(patch: BrowseQuery, change: "typing" | "choice") {
+  return {
+    search: <T extends BrowseQuery>(prev: T): T => ({ ...prev, ...patch }),
+    replace: change === "typing",
+    resetScroll: false,
+  } as const;
+}
+
+/** A search parameter that is dropped, not an error, when a link carries a value this page does not know. */
+function lenient<T extends z.ZodType>(schema: T) {
+  return schema.optional().catch(undefined);
+}
+
+/**
+ * The catalog page's address (`/catalog?q=…&category=…&plan=…&installed=1`).
+ * Unknown values are dropped, so an old or edited link still opens the page;
+ * `installed=yes` from older links reads as `installed=1`.
+ */
+export const browseSearchSchema = z.object({
+  // Cut, not refused: a refused value would empty the field at the 201st character.
+  q: lenient(z.string().transform((s) => s.slice(0, MAX_QUERY_LENGTH))),
+  category: lenient(z.string().min(1).max(60)),
+  plan: lenient(planSchema),
+  license: lenient(z.enum(["open-source", "source-available", "none"])),
+  installed: lenient(
+    z.union([z.literal(1), z.literal(true), z.enum(["1", "true", "yes"])]).transform((): 1 => 1),
+  ),
+  source: lenient(z.string().min(1).max(64)),
+  sort: lenient(z.enum(CATALOG_SORTS)),
+});
 
 /** Lower case without accents, so "cafe" finds "Café". */
 function fold(text: string): string {
@@ -61,6 +105,7 @@ function haystack(app: BrowsableApp): string {
     [
       app.name,
       app.slug,
+      app.tagline ?? "",
       app.summary,
       ...(app.authors ?? []).map((a) => a.name),
       ...app.primitives.ids.flatMap((id) => [PRIMITIVE_LABELS[id], id]),
@@ -81,10 +126,8 @@ export function matchesSearch(app: BrowsableApp, q: string | undefined): boolean
 
 /** Whether `app` passes the query's filters (search not included). */
 export function matchesFilters(app: BrowsableApp, query: BrowseQuery): boolean {
-  if (query.installed === "yes" && app.instances.length === 0) return false;
-  if (query.installed === "no" && app.instances.length > 0) return false;
+  if (query.installed === 1 && app.instances.length === 0) return false;
   if (query.plan !== undefined && app.plan !== query.plan) return false;
-  if (query.tier !== undefined && app.tier !== query.tier) return false;
   if (query.category !== undefined && !app.categories.includes(query.category)) return false;
   if (query.source !== undefined && app.source?.id !== query.source) return false;
   if (query.license !== undefined) {
@@ -93,56 +136,72 @@ export function matchesFilters(app: BrowsableApp, query: BrowseQuery): boolean {
   return true;
 }
 
-/** Most recently checked first; never checked last. */
-function compareChecked(a: BrowsableApp, b: BrowsableApp): number {
-  const time = (app: BrowsableApp) =>
-    app.lastVerified === null ? Number.NEGATIVE_INFINITY : Date.parse(app.lastVerified);
-  return time(b) - time(a);
+/** A time for ordering; missing or unreadable times sort last. */
+function timeOf(iso: string | null | undefined): number {
+  const time = iso == null ? Number.NaN : Date.parse(iso);
+  return Number.isNaN(time) ? Number.NEGATIVE_INFINITY : time;
+}
+
+/** Newest first: by the day the entry joined the catalog, then by its latest test. */
+export function compareNewest(
+  a: Pick<BrowsableApp, "addedAt" | "lastVerified">,
+  b: Pick<BrowsableApp, "addedAt" | "lastVerified">,
+): number {
+  const added = timeOf(b.addedAt) - timeOf(a.addedAt);
+  if (added !== 0 && !Number.isNaN(added)) return added;
+  const tested = timeOf(b.lastVerified) - timeOf(a.lastVerified);
+  return Number.isNaN(tested) ? 0 : tested;
 }
 
 /**
- * `apps` in the query's order: "popular" (the default) keeps the index order
- * when the catalog publishes no popularity numbers. Every sort is stable, so
- * ties keep the index order. Never changes the input.
+ * `apps` in `sort`'s order; without one, most popular first. Apps without
+ * popularity numbers keep the index order (every sort is stable). Never
+ * changes the input.
  */
-export function sortApps<T extends BrowsableApp>(
-  apps: readonly T[],
-  sort: Sort,
-  hasStats: boolean,
-): T[] {
+export function sortApps<T extends BrowsableApp>(apps: readonly T[], sort?: CatalogSort): T[] {
   const copy = [...apps];
-  if (sort === "name") return copy.sort((a, b) => a.name.localeCompare(b.name, "en"));
-  if (sort === "checked") return copy.sort(compareChecked);
-  return hasStats ? copy.sort((a, b) => comparePopularity(a.popularity, b.popularity)) : copy;
+  if (sort === "new") return copy.sort(compareNewest);
+  return copy.sort((a, b) => comparePopularity(a.popularity, b.popularity));
 }
 
-/** The apps to show for `query`: searched, filtered, then sorted. */
-export function browseApps<T extends BrowsableApp>(
-  apps: readonly T[],
-  query: BrowseQuery,
-  hasStats: boolean,
-): T[] {
+/** The apps to show for `query`: searched, filtered, then ordered. */
+export function browseApps<T extends BrowsableApp>(apps: readonly T[], query: BrowseQuery): T[] {
   const shown = apps.filter((app) => matchesFilters(app, query) && matchesSearch(app, query.q));
-  return sortApps(shown, query.sort ?? "popular", hasStats);
+  return sortApps(shown, query.sort);
 }
 
-/** Whether any search or filter is set (the sort does not count). */
+/** Whether any search or filter is set (a "See all" order does not count). */
 export function isFiltered(query: BrowseQuery): boolean {
   return (
     (query.q ?? "").trim() !== "" ||
     query.installed !== undefined ||
     query.plan !== undefined ||
-    query.tier !== undefined ||
     query.category !== undefined ||
     query.source !== undefined ||
     query.license !== undefined
   );
 }
 
-/** Every category the apps list, sorted by label. */
-export function categoriesOf(apps: ReadonlyArray<Pick<BrowsableApp, "categories">>): string[] {
-  const all = new Set(apps.flatMap((a) => a.categories));
-  return [...all].sort((a, b) => categoryLabel(a).localeCompare(categoryLabel(b), "en"));
+/** Whether the page lists results in place of its rows: a search, a filter or a "See all". */
+export function showsResults(query: BrowseQuery): boolean {
+  return isFiltered(query) || query.sort !== undefined;
+}
+
+/** Every category the apps list with its number of apps: the most apps first, then by label. */
+export function categoryCounts(
+  apps: ReadonlyArray<Pick<BrowsableApp, "categories">>,
+): Array<{ id: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const app of apps) {
+    for (const category of new Set(app.categories)) {
+      counts.set(category, (counts.get(category) ?? 0) + 1);
+    }
+  }
+  return [...counts]
+    .map(([id, count]) => ({ id, count }))
+    .sort(
+      (a, b) => b.count - a.count || categoryLabel(a.id).localeCompare(categoryLabel(b.id), "en"),
+    );
 }
 
 const CATEGORY_WORDS: Readonly<Record<string, string>> = { ai: "AI", dns: "DNS", seo: "SEO" };

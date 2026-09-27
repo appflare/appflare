@@ -133,6 +133,10 @@ example:
 
 Points that need care:
 
+- **`tagline`** (optional). What the app does, as one plain sentence of at most 80
+  characters without a trailing period, such as `"Short links on your own domain"`.
+  Managers show it under the app's name on catalog tiles. Write it for someone who
+  is not a developer. Without it, tiles show the first clause of `summary`.
 - **`license`.** Write the license the app's own repository declares, as an SPDX
   license expression: `MIT`, `Apache-2.0`, `MIT OR Apache-2.0`, or a
   source-available license such as `BUSL-1.1`, `FSL-1.1-MIT`, `PolyForm-Noncommercial-1.0.0`
@@ -652,7 +656,7 @@ A change to a released version without a new pin fails to publish, with two
 exceptions:
 
 - a change to `authors` alone, which `index.json` reads from the manifest;
-- a change to the form or copy only (`name`, `summary`, `homepage`, `license`,
+- a change to the form or copy only (`name`, `summary`, `tagline`, `homepage`, `license`,
   `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump`) together
   with `revision` raised by one (it starts at 1 when omitted). CI signs and
   publishes the revised manifest without building anything; managers switch to the

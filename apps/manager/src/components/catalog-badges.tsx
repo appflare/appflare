@@ -1,5 +1,5 @@
 import type { InstallTier, Plan } from "@appflare/schema";
-import { Badge, cn, Text } from "@cloudflare/kumo";
+import { Badge, Text } from "@cloudflare/kumo";
 import {
   ArchiveIcon,
   BrowserIcon,
@@ -23,7 +23,6 @@ import {
   VectorThreeIcon,
 } from "@phosphor-icons/react";
 import type { CapabilitiesView } from "../capabilities/capabilities";
-import { installedState } from "../catalog/installed-state";
 import { type AppLicense, licenseBadgeCopy } from "../catalog/license";
 import {
   type AppPrimitives,
@@ -39,10 +38,10 @@ import { installCheckBadgeCopy, PLAN_BADGES } from "./catalog-badge-copy";
 import { Tooltip } from "./tooltip";
 
 /**
- * What the catalog index says about an app beyond its name: the Workers plan it
- * needs, how it is built, when the catalog last checked that it installs, what
- * it runs on, and whether it is installed here. The catalog list and each
- * app's page render these same components so their wording always matches.
+ * What the catalog index says about an app beyond its name, on the app's
+ * page and the page of a build from source: the Workers plan it needs, how it
+ * is built, when the catalog last tested that it installs, its license, and
+ * what it runs on.
  */
 
 /** The index's `plan`. */
@@ -142,14 +141,6 @@ export const PRIMITIVE_ICONS: Record<PrimitiveId, Icon> = {
   access: LockKeyIcon,
 };
 
-/** The tint of a primitive's chip: green available, amber not available, grey unknown. */
-const CHIP_TONES: Record<Availability, string> = {
-  available: "bg-kumo-success-tint text-kumo-success",
-  unavailable: "bg-kumo-warning-tint text-kumo-warning",
-  unknown: "bg-kumo-recessed text-kumo-subtle",
-  provided: "bg-kumo-info-tint text-kumo-info",
-};
-
 const BADGE_VARIANTS: Record<Availability, "success" | "warning" | "neutral" | "info"> = {
   available: "success",
   unavailable: "warning",
@@ -159,63 +150,6 @@ const BADGE_VARIANTS: Record<Availability, "success" | "warning" | "neutral" | "
 
 function statusText(status: PrimitiveStatus): string {
   return `${PRIMITIVE_LABELS[status.id]}: ${AVAILABILITY_LABELS[status.availability]}. ${status.reason}`;
-}
-
-/** One primitive as a small tinted icon, named with its availability by tooltip and screen-reader text. */
-function PrimitiveChip({ status }: { status: PrimitiveStatus }) {
-  const PrimitiveIcon = PRIMITIVE_ICONS[status.id];
-  const text = statusText(status);
-  return (
-    <Tooltip
-      content={text}
-      className={cn(
-        "flex size-7 items-center justify-center rounded-md",
-        CHIP_TONES[status.availability],
-      )}
-    >
-      <PrimitiveIcon size={16} aria-hidden />
-      <span className="sr-only">{text}</span>
-    </Tooltip>
-  );
-}
-
-/**
- * The primitives line of a catalog card: every primitive the app uses as an
- * icon, always rendered. "Worker only" when the app needs nothing beyond a
- * Worker; a muted note when the list may be incomplete.
- */
-export function PrimitiveIcons({
-  primitives,
-  capabilities,
-  tier,
-}: {
-  primitives: AppPrimitives;
-  capabilities: CapabilitiesView | null;
-  tier: InstallTier;
-}) {
-  const statuses = primitiveStatuses(primitives, capabilities);
-  const note = primitivesNote(primitives, tier);
-  return (
-    <div className="flex min-h-7 flex-wrap items-center gap-1.5">
-      {statuses.map((status) => (
-        <PrimitiveChip key={status.id} status={status} />
-      ))}
-      {statuses.length === 0 && note === null && (
-        <Tooltip content="Needs nothing beyond a Worker, which every plan includes.">
-          <Text as="span" variant="secondary" size="sm">
-            Worker only
-          </Text>
-        </Tooltip>
-      )}
-      {note !== null && (
-        <Tooltip content={note}>
-          <Text as="span" variant="secondary" size="sm">
-            More on its page
-          </Text>
-        </Tooltip>
-      )}
-    </div>
-  );
 }
 
 /** The app page's primitives: a badge per primitive with its name and availability. */
@@ -259,41 +193,5 @@ export function PrimitiveBadges({
         </Text>
       )}
     </div>
-  );
-}
-
-/** What the tints mean, once, above the cards. */
-export function AvailabilityLegend() {
-  return (
-    <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
-      {(Object.keys(CHIP_TONES) as Availability[]).map((availability) => (
-        <span key={availability} className="inline-flex items-center gap-1.5">
-          <span
-            aria-hidden
-            className={cn("size-3 rounded-sm ring ring-kumo-hairline", CHIP_TONES[availability])}
-          />
-          <Text as="span" variant="secondary" size="sm">
-            {AVAILABILITY_LABELS[availability]}
-          </Text>
-        </span>
-      ))}
-    </span>
-  );
-}
-
-/** Whether the app is installed here: one dot badge for one install or several; nothing when it is not. */
-export function InstalledBadge({
-  instances,
-}: {
-  instances: ReadonlyArray<{ status: string; instanceName: string }>;
-}) {
-  const state = installedState(instances);
-  if (state === null) return null;
-  return (
-    <Tooltip content={state.details.join(", ")}>
-      <Badge variant={state.tone} appearance="dot">
-        {state.label}
-      </Badge>
-    </Tooltip>
   );
 }

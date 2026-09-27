@@ -15,6 +15,11 @@ declare module "@tanstack/react-router" {
      * `head()` title instead, which takes precedence over this one.
      */
     title?: string;
+    /**
+     * `wide`: the signed-in shell centres the page in a 72rem column instead
+     * of the usual 64rem, for pages of tiles such as the catalog.
+     */
+    width?: "wide";
   }
 }
 

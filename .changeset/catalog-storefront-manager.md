@@ -1,0 +1,11 @@
+---
+"@appflare/manager": minor
+---
+
+The catalog page is now a storefront. It opens with one search field: the words search app names, what the apps do, their authors and the Cloudflare services they use, and the active filters sit inside the field as pills in plain words ("Category: Email", "Plan: Free", "Installed"), each removed with its × or with Backspace at the start of the field. A filter menu in the field adds the plan, license, installed and (with several catalogs) catalog filters, and one × clears everything. Under the field, the categories show as cards with their number of apps; a card filters the page and a second click clears it. The count line reads "136 apps · Updated 3 days ago", with the exact time on hover, and refreshing the list is an icon button at the top right.
+
+Without a search or filter the page shows rows: New this week (apps the catalog added in the last seven days; the most recently tested apps, with a caption saying so, while the catalog does not date its apps), Most popular, Installed on this account, and the biggest categories, then every app in a compact list. Each row has See all and previous and next arrows (hidden on phones, where rows are swiped), snaps to tiles, and moves between tiles with the arrow keys. A search or filter replaces the rows with a grid of the matching apps. The sponsored item is one quiet line after the first row and can still be hidden per user.
+
+Each tile shows the app's icon, name and a two-line description, then one line with the plan as one word (the full plan name on hover), the GitHub stars ("★ 3.8k"), and one button: Get, which opens the app's page, or Manage for an app installed here. The description is the catalog's new tagline, or the first clause of the summary when an entry has none. Badges, the install check and service icons moved off the list; the app's page keeps them.
+
+Filtered views keep shareable addresses: `?q=`, `?category=`, `?plan=`, `?license=`, `?installed=1`, `?source=`, and `?sort=popular` or `?sort=new` for a row's See all. Older links with `installed=yes` still work; the tier filter and the name and last-checked orders are gone. The catalog page is centred in a wider column than other pages.

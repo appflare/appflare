@@ -58,9 +58,9 @@ dialog says why. A manager takes up to five added catalogs.
 ## Browse apps from several catalogs
 
 The **Catalog** page lists the apps of every catalog that is on, together. Each
-card, and each app's page, shows a source badge with the catalog's label and
-colour (the catalog page shows them once you have added a catalog). Use the
-**Source** filter to show one catalog's apps only. **Refresh** fetches every
+app's page shows a source badge with the catalog's label and colour. Use the
+**Catalog** choice in the search field's filter menu (shown once you have added a
+catalog) to show one catalog's apps only. **Refresh** fetches every
 catalog that is on; the cron does the same every 30 minutes, with one request per
 catalog that costs nothing when its index has not changed.
 

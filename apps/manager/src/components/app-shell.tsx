@@ -1,4 +1,4 @@
-import { Link, Sidebar, useSidebar } from "@cloudflare/kumo";
+import { cn, Link, Sidebar, useSidebar } from "@cloudflare/kumo";
 import {
   GearIcon,
   HouseIcon,
@@ -8,7 +8,7 @@ import {
   SidebarSimpleIcon,
   StorefrontIcon,
 } from "@phosphor-icons/react";
-import { useLocation } from "@tanstack/react-router";
+import { useLocation, useMatches } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useEffect, useRef } from "react";
 import { type PendingUpdates, sidebarUpdateBadge } from "../installs/pending-updates";
 import type { Viewer } from "../server/session.functions";
@@ -227,6 +227,12 @@ export function AppShell({
 }) {
   const [rail, setRail] = useSidebarRail();
   const narrow = useIsNarrow(MOBILE_BREAKPOINT);
+  // The deepest page decides; see `StaticDataRouteOption.width`.
+  const wide =
+    useMatches({
+      select: (matches) =>
+        matches.findLast((m) => m.staticData.width !== undefined)?.staticData.width,
+    }) === "wide";
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (!narrow) setRail(open ? "expanded" : "collapsed");
@@ -250,7 +256,9 @@ export function AppShell({
       <div className="flex min-w-0 flex-1 flex-col">
         <MobileTopBar />
         <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-6">
-          <div className="mx-auto grid max-w-5xl gap-6">{children}</div>
+          <div className={cn("mx-auto grid gap-6", wide ? "max-w-[72rem]" : "max-w-5xl")}>
+            {children}
+          </div>
         </main>
       </div>
     </Sidebar.Provider>

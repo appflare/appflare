@@ -11,6 +11,7 @@ import {
   sandboxInstanceTypeSchema,
 } from "./catalog";
 import { licenseNoteSchema, licenseSchema } from "./license";
+import { taglineSchema } from "./tagline";
 
 /**
  * Schema for the generated `index.json` published to GitHub Pages.
@@ -122,6 +123,18 @@ export const indexAppSchema = z
     slug: z.string().min(1),
     name: z.string().min(1),
     summary: z.string().min(1),
+    /**
+     * The catalog manifest's `tagline`, the pitch on catalog tiles. Optional
+     * so an index published before the field existed still parses; a manager
+     * without it shortens `summary`.
+     */
+    tagline: taglineSchema.optional(),
+    /**
+     * When the entry first appeared in the catalog (the commit that added its
+     * manifest), for "New this week". Optional so an index published before
+     * the field existed still parses.
+     */
+    addedAt: z.iso.datetime({ offset: true }).optional(),
     version: z.string().min(1),
     artifacts: indexArtifactsSchema.optional(),
     digest: sha256Schema.optional(),
