@@ -444,6 +444,10 @@ export type CatalogVarDerive = z.infer<typeof catalogVarDeriveSchema>;
  * parsed shape (catalog CI compares a published release's manifest with the
  * current one field by field). Refused on `self-deploying` entries, whose
  * installer run expects every declared secret ({@link catalogManifestSchema}).
+ *
+ * `multiline: true` asks for a value of several lines (a PEM private key) in
+ * a multi-line field; the value reaches the Worker with its line breaks
+ * ({@link multilineSecretProblems} refuses it next to `generate` or `derive`).
  */
 export const catalogSecretSchema = z
   .object({
@@ -494,13 +498,36 @@ export const catalogSecretSchema = z
           "`workers`, nor on self-deploying entries.",
       )
       .optional(),
+    /**
+     * Asked for in a multi-line field. Optional rather than defaulted for the
+     * same reason as `optional`.
+     */
+    multiline: z
+      .boolean()
+      .describe(
+        "The value spans several lines, such as a PEM private key: the install, update and " +
+          "settings forms ask for it in a multi-line field that keeps every line break, and the " +
+          "Worker gets the value as entered (Windows line endings become `\\n`, and spaces or " +
+          "tabs at the end of the last line are dropped). Not allowed with `generate` or `derive`.",
+      )
+      .optional(),
   })
   // The manifest-level refinement does not reach the JSON Schema; this states
   // its per-secret half there (no `generate` but false and no `optional: true`
   // next to `derive`; no `optional: true`, `derive` or `workers` next to
-  // `seedOnly: true`), so editors refuse the same secrets.
+  // `seedOnly: true`; no `generate` but false and no `derive` next to
+  // `multiline: true`), so editors refuse the same secrets.
   .meta({
     allOf: [
+      {
+        anyOf: [
+          { not: { required: ["multiline"], properties: { multiline: { const: true } } } },
+          {
+            not: { required: ["derive"] },
+            properties: { generate: { const: false } },
+          },
+        ],
+      },
       {
         anyOf: [
           { not: { required: ["derive"] } },
@@ -528,6 +555,38 @@ export type CatalogSecret = z.infer<typeof catalogSecretSchema>;
 /** Whether the app works without the secret (`optional: true`). */
 export function isOptionalSecret(secret: Pick<CatalogSecret, "optional">): boolean {
   return secret.optional === true;
+}
+
+/** Whether the forms ask for the secret in a multi-line field (`multiline: true`). */
+export function isMultilineSecret(secret: Pick<CatalogSecret, "multiline">): boolean {
+  return secret.multiline === true;
+}
+
+/**
+ * What is wrong with the `multiline` flags of a manifest's secrets, one issue
+ * each (the Zod refinement and catalog tooling share it): a generated value
+ * is one line, and a derived secret is never entered.
+ */
+export function multilineSecretProblems(
+  secrets: readonly Pick<CatalogSecret, "name" | "generate" | "derive" | "multiline">[],
+): Array<{ path: Array<string | number>; message: string }> {
+  const problems: Array<{ path: Array<string | number>; message: string }> = [];
+  secrets.forEach((secret, i) => {
+    if (!isMultilineSecret(secret)) return;
+    if (secret.generate) {
+      problems.push({
+        path: [i, "multiline"],
+        message: `${secret.name} is multiline; it cannot also be generated, since a generated value is one line`,
+      });
+    }
+    if (secret.derive !== undefined) {
+      problems.push({
+        path: [i, "multiline"],
+        message: `${secret.name} is derived from ${secret.derive.from}, so no one enters it; it cannot be multiline`,
+      });
+    }
+  });
+  return problems;
 }
 
 /** Whether the manager computes the secret from another one (`derive`). */
@@ -1745,6 +1804,13 @@ export const catalogManifestSchema = z
       ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
     }
     for (const problem of derivedSecretProblems(manifest.secrets)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["secrets", ...problem.path],
+        message: problem.message,
+      });
+    }
+    for (const problem of multilineSecretProblems(manifest.secrets)) {
       ctx.addIssue({
         code: "custom",
         path: ["secrets", ...problem.path],

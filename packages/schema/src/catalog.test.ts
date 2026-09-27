@@ -24,9 +24,11 @@ import {
   installToolchains,
   isDerivedSecret,
   isDerivedVar,
+  isMultilineSecret,
   isOptionalSecret,
   MAX_BUILD_COMMANDS,
   MAX_VAR_OPTIONS,
+  multilineSecretProblems,
   renderJsonPlaceholders,
   renderPlaceholders,
   runsInSandbox,
@@ -1114,5 +1116,59 @@ describe("a name that is both a secret and a var", () => {
           "ADMIN_PASSWORD is declared both as a secret and as a var; a Worker cannot have a secret and a var of one name, so keep one of them",
       }),
     ]);
+  });
+});
+
+describe("multiline secrets", () => {
+  const pem = { name: "GITHUB_APP_PRIVATE_KEY", label: "GitHub App private key", multiline: true };
+
+  it("parse, and leave the shape of other secrets as it was", () => {
+    const parsed = catalogManifestSchema.parse({
+      ...validManifest,
+      secrets: [...validManifest.secrets, pem, { ...pem, name: "SPARE_KEY", optional: true }],
+    });
+    const [first, key, spare] = parsed.secrets;
+    expect(first !== undefined && "multiline" in first).toBe(false);
+    expect(key).toEqual({ ...pem, generate: false });
+    expect(key !== undefined && isMultilineSecret(key)).toBe(true);
+    expect(spare !== undefined && isOptionalSecret(spare) && isMultilineSecret(spare)).toBe(true);
+    expect(isMultilineSecret({})).toBe(false);
+  });
+
+  it("refuse generate and derive", () => {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ ...pem, generate: true }, "cannot also be generated"],
+      [{ ...pem, generate: "base64-key-32" }, "cannot also be generated"],
+      [{ ...pem, derive: { from: "ADMIN_PASSWORD", method: "bcrypt" } }, "cannot be multiline"],
+    ];
+    for (const [secret, why] of cases) {
+      const result = catalogManifestSchema.safeParse({
+        ...validManifest,
+        secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password" }, secret],
+      });
+      expect(result.success, why).toBe(false);
+      expect(result.error?.issues).toContainEqual(
+        expect.objectContaining({ path: ["secrets", 1, "multiline"] }),
+      );
+      expect(JSON.stringify(result.error?.issues)).toContain(why);
+    }
+    expect(
+      multilineSecretProblems([
+        { name: "K", generate: true, multiline: true },
+        { ...pem, generate: false },
+      ]),
+    ).toEqual([
+      {
+        path: [0, "multiline"],
+        message: "K is multiline; it cannot also be generated, since a generated value is one line",
+      },
+    ]);
+  });
+
+  it("state the same rule in the JSON Schema", () => {
+    const text = JSON.stringify(z.toJSONSchema(catalogManifestSchema));
+    expect(text).toContain(
+      '{"anyOf":[{"not":{"required":["multiline"],"properties":{"multiline":{"const":true}}}},{"not":{"required":["derive"]},"properties":{"generate":{"const":false}}}]}',
+    );
   });
 });

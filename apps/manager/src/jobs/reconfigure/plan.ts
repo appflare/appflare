@@ -6,6 +6,7 @@ import {
   type CatalogVar,
   connectionStringProblems,
   hyperdriveFieldLabel,
+  isMultilineSecret,
   isOptionalSecret,
   MAX_CONNECTION_STRING_LENGTH,
   secretValueProblem,
@@ -79,6 +80,8 @@ export interface SecretSlot {
   derives?: string[];
   /** For a source of derived vars: their names, which a new value of it replaces too. */
   derivesVars?: string[];
+  /** A new value is entered in a multi-line field (the catalog's `multiline: true`). */
+  multiline?: true;
 }
 
 /**
@@ -110,6 +113,7 @@ export function secretSlots(
       present: recorded.has(s.name),
       ...(s.derive === undefined ? {} : { derivedFrom: s.derive.from }),
       ...(derives.length > 0 ? { derives } : {}),
+      ...(isMultilineSecret(s) ? { multiline: true as const } : {}),
     };
   });
   const names = new Set(declared.map((s) => s.name));

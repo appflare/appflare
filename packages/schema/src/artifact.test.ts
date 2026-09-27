@@ -405,6 +405,19 @@ describe("worker.exports and worker.cacheOptions", () => {
     }
   });
 
+  it("need format 5 for a multiline secret, so an older manager never asks for it on one line", () => {
+    const key = { name: "PRIVATE_KEY", label: "Private key", multiline: true };
+    expect(artifactFormatFor({ catalog: { secrets: [key] } })).toBe(5);
+    expect(artifactFormatFor({ catalog: { secrets: [{ ...key, multiline: false }] } })).toBe(1);
+    const catalog = { ...validArtifact.catalog, secrets: [key] };
+    const refused = artifactManifestSchema.safeParse({ ...validArtifact, catalog });
+    expect(refused.error?.issues.map((i) => i.message)).toEqual([
+      expect.stringMatching(/^the artifact needs format 5 for what it carries/),
+    ]);
+    const parsed = artifactManifestSchema.parse({ ...validArtifact, format: 5, catalog });
+    expect(parsed.catalog.secrets[0]?.multiline).toBe(true);
+  });
+
   it("compares exports whatever the key order, with none the same as an empty block", () => {
     expect(
       sameWorkerExports(

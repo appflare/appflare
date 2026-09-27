@@ -5,10 +5,11 @@ import {
   generateBase64Key32,
   generateVapidPrivateKey,
   isDerivedSecret,
+  isMultilineSecret,
   isOptionalSecret,
   isSeedOnly,
 } from "@appflare/schema";
-import { Button, Input, SensitiveInput, Switch, Text } from "@cloudflare/kumo";
+import { Button, Input, InputArea, SensitiveInput, Switch, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { generateTemporaryPassword } from "../auth/temporary-password";
 import { GENERATED_SECRET_LENGTH } from "../installs/install-input";
@@ -16,7 +17,8 @@ import { GENERATED_SECRET_LENGTH } from "../installs/install-input";
 /**
  * One field per catalog secret, shared by the install form and the update
  * form. Generated secrets (`generate`) are prefilled once with a fresh value the
- * admin can copy now (it is shown only here) or regenerate; the others are
+ * admin can copy now (it is shown only here) or regenerate; a multi-line one
+ * (`multiline`) is a text area that keeps its line breaks; the others are
  * password fields the admin fills in. An optional secret (`optional: true`)
  * is left unset behind a "Set now" switch; turning it on opens its field.
  *
@@ -191,7 +193,66 @@ export function derivedNote(
   return `Appflare also sets ${derived.map((s) => s.name).join(" and ")} from it.`;
 }
 
-/** The value field of one secret: generated (copy now, regenerate) or a password field. */
+/**
+ * A multi-line secret as the Worker gets it: Windows line endings become
+ * `\n`, and spaces or tabs at the end of the last line are dropped (a paste
+ * often carries them). Every other character, line breaks included, is kept,
+ * so a PEM block arrives exactly as pasted.
+ */
+export function normaliseMultilineSecret(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/[^\S\n]+$/, "");
+}
+
+/**
+ * The field of a multi-line secret (the catalog's `multiline: true`), such as
+ * a PEM private key: a monospace text area that keeps every line break. A
+ * text area cannot mask its value, so it is shown while the admin enters it,
+ * and the note says it is never shown again. Shared by the install and
+ * update forms and the app's settings.
+ */
+export function MultilineSecretInput({
+  label,
+  value,
+  onChange,
+  description,
+  disabled = false,
+}: {
+  label: string;
+  value: string;
+  onChange(value: string): void;
+  /** Help before the note that the value is hidden once saved. */
+  description?: string | undefined;
+  disabled?: boolean;
+}) {
+  return (
+    <InputArea
+      label={label}
+      value={value}
+      required
+      disabled={disabled}
+      autoResize
+      minRows={6}
+      maxRows={16}
+      className="font-mono"
+      autoComplete="off"
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
+      onValueChange={(next: string) => onChange(next.replace(/\r\n/g, "\n"))}
+      onBlur={() => {
+        const settled = normaliseMultilineSecret(value);
+        if (settled !== value) onChange(settled);
+      }}
+      description={`${description ? `${description} ` : ""}${MULTILINE_SECRET_NOTE}`}
+    />
+  );
+}
+
+/** What the field of a multi-line secret says after its help. */
+export const MULTILINE_SECRET_NOTE =
+  "Paste it with its line breaks. It is shown while you enter it and hidden once saved: Appflare cannot read it back.";
+
+/** The value field of one secret: generated (copy now, regenerate), multi-line, or a password field. */
 function SecretField({
   secret,
   value,
@@ -243,6 +304,11 @@ function SecretField({
           </Button>
         </div>
       </div>
+    );
+  }
+  if (isMultilineSecret(secret)) {
+    return (
+      <MultilineSecretInput label={label} value={value} onChange={onChange} description={help} />
     );
   }
   return (

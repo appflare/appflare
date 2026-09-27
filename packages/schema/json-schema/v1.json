@@ -1122,6 +1122,10 @@
           "seedOnly": {
             "type": "boolean",
             "description": "The secret exists only for `resources.d1[binding].seed`: the install form asks for it once, the seed uses it (as a param or the source of a hash), and it is never set on the Worker, stored, or asked for again by updates or settings. For a first admin's password, so the plaintext never sits in the app's environment. Not allowed with `optional`, `derive` or `workers`, nor on self-deploying entries."
+          },
+          "multiline": {
+            "type": "boolean",
+            "description": "The value spans several lines, such as a PEM private key: the install, update and settings forms ask for it in a multi-line field that keeps every line break, and the Worker gets the value as entered (Windows line endings become `\\n`, and spaces or tabs at the end of the last line are dropped). Not allowed with `generate` or `derive`."
           }
         },
         "required": [
@@ -1131,6 +1135,34 @@
         ],
         "additionalProperties": false,
         "allOf": [
+          {
+            "anyOf": [
+              {
+                "not": {
+                  "required": [
+                    "multiline"
+                  ],
+                  "properties": {
+                    "multiline": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "derive"
+                  ]
+                },
+                "properties": {
+                  "generate": {
+                    "const": false
+                  }
+                }
+              }
+            ]
+          },
           {
             "anyOf": [
               {

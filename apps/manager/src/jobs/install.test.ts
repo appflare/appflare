@@ -798,6 +798,29 @@ describe("install job", () => {
     expect(r.logs.at(-1)?.message).toMatch(/^Installed cut 1\.0\.0 at https:\/\/cut\.appflare-dev/);
   });
 
+  it("sets a multiline secret with every line break it was entered with", async () => {
+    const body = "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun-DO-NOT-LEAK";
+    const key = `-----BEGIN RSA PRIVATE KEY-----\n${body}\nVHK0CLt3=\n-----END RSA PRIVATE KEY-----\n`;
+    const base = baseCatalog();
+    const r = await install(
+      {
+        catalog: {
+          secrets: [
+            ...base.secrets,
+            { name: "APP_KEY", label: "Private key", generate: false, multiline: true },
+          ],
+        },
+      },
+      {},
+      { secrets: { ADMIN_PASSWORD: PASSWORD, APP_KEY: key } },
+    );
+    expect(r.error).toBeNull();
+    expect(r.fixture.manifest.format).toBe(5);
+    expect(r.fake.state.secrets).toEqual({ ADMIN_PASSWORD: PASSWORD, APP_KEY: key });
+    expect(r.fake.state.secrets.APP_KEY?.split("\n")).toHaveLength(5);
+    expect(JSON.stringify(r.logs)).not.toContain(body);
+  });
+
   it("runs schema files after the migrations and post-deploy migrations after both", async () => {
     const r = await install({
       bindings: [{ type: "d1", name: "DB" }],

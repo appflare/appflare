@@ -352,6 +352,16 @@ Points that need care:
   `"generate": "base64-key-32"`: the install form fills in 32 random bytes as padded
   base64 (44 characters), and the manager refuses a value that does not decode to
   32 bytes.
+- **Multi-line secrets.** For a value of several lines, such as a PEM private key
+  (a GitHub App's `GITHUB_APP_PRIVATE_KEY`), add `"multiline": true`. The install,
+  update and settings forms ask for it in a monospace text area instead of a
+  one-line password field, which would drop the line breaks. The Worker gets the
+  value as pasted: Windows line endings become `\n` and spaces or tabs at the end
+  of the last line are dropped; every other character, line breaks included, is
+  kept. A text area cannot hide its text, so the value shows while the admin enters
+  it and cannot be read back once saved. A multi-line secret cannot be `generate` or
+  `derive`. An artifact whose manifest has one is format 5, so a manager too old to
+  know the field refuses it rather than ask for the value on one line.
 - **A first admin.** An app that has no sign-up page and expects its first admin
   account in the database can have Appflare add it at install. See
   [Seeding a first admin](#seeding-a-first-admin).

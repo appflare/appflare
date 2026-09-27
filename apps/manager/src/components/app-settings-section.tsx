@@ -34,7 +34,7 @@ import { EmailRoutingFields } from "./email-routing-fields";
 import { VarField } from "./install-form";
 import { useJobStarted } from "./job-started";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
-import { generatedSecret } from "./secret-fields";
+import { generatedSecret, MultilineSecretInput } from "./secret-fields";
 
 /**
  * The "Settings" section of `/apps/$installId`: the app's settings (vars),
@@ -654,6 +654,14 @@ function SecretRow({
               </Button>
             </div>
           </div>
+        ) : slot.multiline === true ? (
+          <MultilineSecretInput
+            label={`New value of ${slot.name}`}
+            value={value}
+            disabled={disabled}
+            onChange={(next) => onValueChange(next)}
+            description="The current value stays until the new one is saved."
+          />
         ) : (
           <Input
             label={`New value of ${slot.name}`}

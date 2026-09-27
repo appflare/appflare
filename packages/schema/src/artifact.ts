@@ -772,7 +772,7 @@ export interface ArtifactFormatFacts {
   d1Baseline?: Record<string, readonly unknown[]> | undefined;
   /**
    * The catalog manifest: a Worker it keeps off workers.dev, or a D1 seed,
-   * needs format 4.
+   * needs format 4; a multiline secret needs format 5.
    */
   catalog?:
     | {
@@ -780,6 +780,7 @@ export interface ArtifactFormatFacts {
           workers?: ReadonlyArray<{ workersDev?: boolean | undefined }> | undefined;
         };
         resources?: { d1?: Readonly<Record<string, { seed?: unknown }>> | undefined } | undefined;
+        secrets?: ReadonlyArray<{ multiline?: boolean | undefined }> | undefined;
       }
     | undefined;
 }
@@ -795,6 +796,10 @@ export interface ArtifactFormatFacts {
  *   or a Worker has no code of its own and serves static assets only
  *   (no modules and no `mainModule`), which such a manager would fail to
  *   upload after creating the app's resources;
+ *   or its catalog manifest asks for a multiline secret
+ *   (`secrets[].multiline: true`), which such a manager's schema strips,
+ *   asking for it in a one-line field that drops the line breaks and
+ *   setting a broken value, such as a PEM key the app cannot read;
  * - 4: its catalog manifest keeps a Worker off workers.dev
  *   (`install.workers[].workersDev: false`), which a manager that reads only
  *   formats 1 to 3 would not know and would put on its workers.dev URL,
@@ -826,6 +831,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
   if (assetsOnly(facts.worker) || (facts.workers ?? []).some((w) => assetsOnly(w.worker))) {
     return 5;
   }
+  if (facts.catalog?.secrets?.some((s) => s.multiline === true) === true) return 5;
   if (facts.catalog?.install?.workers?.some((w) => w.workersDev === false) === true) return 4;
   const d1 = facts.catalog?.resources?.d1 ?? {};
   if (Object.values(d1).some((layout) => layout.seed !== undefined)) return 4;
@@ -841,7 +847,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
 function formatProblem(manifest: ArtifactFormatFacts & { format: number }): string | null {
   const needed = artifactFormatFor(manifest);
   if (needed <= manifest.format) return null;
-  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline, a Worker of static assets only); a manager that reads only format ${manifest.format} would install it without them`;
+  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline, a Worker of static assets only, a multiline secret); a manager that reads only format ${manifest.format} would install it without them`;
 }
 
 /**

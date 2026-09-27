@@ -360,7 +360,7 @@ describe("artifact formats", () => {
     const result = artifactManifestSchema.safeParse(artifact({ format: 1, ...schemaFile }, layout));
     expect(result.success).toBe(false);
     expect(result.error?.issues.map((i) => i.message)).toContain(
-      "the artifact needs format 3 for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline, a Worker of static assets only); a manager that reads only format 1 would install it without them",
+      "the artifact needs format 3 for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline, a Worker of static assets only, a multiline secret); a manager that reads only format 1 would install it without them",
     );
     expect(
       artifactManifestSchema.safeParse(artifact({ format: 3, ...schemaFile }, layout)).success,

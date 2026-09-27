@@ -19,7 +19,10 @@ never takes over a Worker it did not create.
 their names. Some secrets are generated for you: the field is filled with a random
 32-character value (or, for an app that sends push notifications, a new VAPID
 private key) that you can copy, replace, or regenerate. Copy it before you
-install. It is shown only on this form and cannot be read back afterwards. A secret
+install. It is shown only on this form and cannot be read back afterwards. A
+secret of several lines, such as a PEM private key, gets a text area: paste it with
+its line breaks. Its text shows while you enter it and cannot be read back once
+the app is installed. A secret
 marked optional is one the app works without: it is left unset unless you turn on
 **Set now**, and you can set or remove it later in the app's
 [settings](/guides/settings/#remove-a-secret).
