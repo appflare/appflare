@@ -38,6 +38,7 @@ import {
 import type { BuildKind, InstallOrigin } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import {
+  configPatchRefusal,
   installDirsRefusal,
   parseBuildOutcome,
   SandboxProtocolError,
@@ -485,7 +486,9 @@ async function buildInSandboxPhase(
   steps.current = "prepare build request";
   // A job resumed from before this check recorded no features: nothing to refuse then.
   if (checked.sandbox !== undefined) {
-    const refused = installDirsRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT);
+    const refused =
+      installDirsRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
+      configPatchRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT);
     if (refused !== null) throw new JobError(refused);
   }
   const parsedRequest = buildRequestSchema.safeParse({

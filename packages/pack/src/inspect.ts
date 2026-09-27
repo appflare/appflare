@@ -1,6 +1,11 @@
 import path from "node:path";
-import { UNSUPPORTED_WRANGLER_SECTIONS, type WranglerFacts } from "@appflare/schema";
+import {
+  type CatalogManifest,
+  UNSUPPORTED_WRANGLER_SECTIONS,
+  type WranglerFacts,
+} from "@appflare/schema";
 import { unstable_readConfig } from "wrangler";
+import { applyConfigPatches, workerSpecs } from "./config-patch.ts";
 import { copyTemplateConfig, readConfigArgs, resolveWranglerConfig } from "./config-redirect.ts";
 
 /**
@@ -32,14 +37,48 @@ export function wranglerFacts(config: Record<string, unknown>): WranglerFacts {
   return { name, vars, unsupported };
 }
 
+/** Options for {@link inspectWranglerConfig}. */
+export interface InspectOptions {
+  /**
+   * The catalog manifest of the entry that builds `configPath`: its config
+   * patch for that config is applied first, as the pack applies it, and the
+   * facts are the patched config's.
+   */
+  catalog?: CatalogManifest | undefined;
+  /** Gets the patched config's path and the patch's effect. */
+  logger?: ((message: string) => void) | undefined;
+}
+
 /**
  * Reads the wrangler config `configPath` (relative to `checkoutDir`) the way
  * the packer does, following a redirect a build left, and returns its facts.
+ * With `catalog`, the entry's config patch for `configPath` is applied first
+ * and the patched config (`.appflare.wrangler.jsonc` beside it) is read.
  */
-export function inspectWranglerConfig(checkoutDir: string, configPath: string): WranglerFacts {
+export function inspectWranglerConfig(
+  checkoutDir: string,
+  configPath: string,
+  options: InspectOptions = {},
+): WranglerFacts {
   const root = path.resolve(checkoutDir);
+  let patched: ReturnType<typeof applyConfigPatches> = new Map();
+  if (options.catalog !== undefined) {
+    const specs = workerSpecs(options.catalog.install);
+    if (!specs.some((s) => s.wranglerConfig === configPath)) {
+      throw new Error(
+        `the catalog manifest builds no Worker from ${configPath}; name the config as its install.wranglerConfig (or install.workers[].wranglerConfig) does`,
+      );
+    }
+    patched = applyConfigPatches({
+      checkoutDir: root,
+      specs,
+      only: configPath,
+      logger: options.logger,
+    });
+  }
   // A template (`wrangler.toml.example`) is read under its real name, as the pack reads it.
-  const target = resolveWranglerConfig(root, copyTemplateConfig(root, configPath));
+  const target =
+    patched.get(configPath) ?? resolveWranglerConfig(root, copyTemplateConfig(root, configPath));
   const read = readConfigArgs(target);
   const config = unstable_readConfig(read.args, read.options) as unknown;
   if (!isRecord(config)) throw new Error("wrangler did not return a config");

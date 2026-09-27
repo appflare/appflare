@@ -387,7 +387,9 @@ export const workerLimitsSchema = z.looseObject({}).nullable();
  * `install.wranglerConfig`; `effective` is the config wrangler actually
  * deploys, which differs when the build left a redirect in
  * `.wrangler/deploy/config.json` beside the declared config (as the
- * Cloudflare Vite plugin does, pointing at the config it generates).
+ * Cloudflare Vite plugin does, pointing at the config it generates), and
+ * when the catalog manifest's config patch was applied (the patched config,
+ * `.appflare.wrangler.jsonc` beside the declared one).
  */
 export const artifactWranglerConfigSchema = z.object({
   declared: z.string().min(1),

@@ -752,6 +752,34 @@ describe("building a catalog app from source", () => {
     expect(r.sandbox.requests).toEqual([]);
   });
 
+  it("refuses an app that patches its wrangler config on a sandbox Worker that predates patches", async () => {
+    const r = await fromSource(undefined, {
+      catalog: (c) => ({ ...c, install: { ...c.install, configPatch: { build: null } } }),
+      sandbox: {
+        info: {
+          protocol: 1,
+          sandboxVersion: "0.1.4",
+          image: "docker.io/mendylanda/appflare-sandbox:0.1.4",
+          features: ["self-deploying", "repository-builds", "github-tokens", "install-dirs"],
+        },
+      },
+    });
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String(r.job?.error)).toContain(
+      "the sandbox Worker 0.1.4 cannot apply this app's wrangler config patch (install.configPatch)",
+    );
+    expect(r.sandbox.requests).toEqual([]);
+  });
+
+  it("builds an app that patches its wrangler config on a sandbox Worker that applies patches", async () => {
+    const configPatch = { build: null };
+    const r = await fromSource(undefined, {
+      catalog: (c) => ({ ...c, install: { ...c.install, configPatch } }),
+    });
+    expect(r.error).toBeNull();
+    expect(r.sandbox.requests[0]).toMatchObject({ baseline: { install: { configPatch } } });
+  });
+
   it("builds the catalog's repository with the catalog manifest as the baseline", async () => {
     const r = await fromSource();
     expect(r.error).toBeNull();

@@ -1,6 +1,7 @@
 import { z } from "zod";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
+import { configPatchSchema } from "./config-patch.ts";
 import { catalogD1Schema } from "./d1.ts";
 import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
 import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
@@ -184,6 +185,12 @@ export const catalogEntryWorkerSchema = z
         "The command, or the commands in order, the packer runs at the root of the checkout for " +
           "this Worker, after `install.buildCommand` (when set) and before bundling it. Same " +
           "rules as `install.buildCommand`.",
+      )
+      .optional(),
+    configPatch: configPatchSchema
+      .describe(
+        "Changes to this Worker's wrangler config, applied before wrangler reads it; the same " +
+          "rules as `install.configPatch`.",
       )
       .optional(),
     primary: z
@@ -1258,6 +1265,14 @@ export const catalogInstallSchema = z
      * Refused on `artifact` entries, which never run in the user's account.
      */
     sandbox: catalogSandboxSchema.optional(),
+    /**
+     * Changes to the wrangler config the packer applies before wrangler reads
+     * it; see {@link configPatchSchema}. Optional for the same reason as
+     * `fixedWorkerName`. An entry of several Workers sets it per Worker
+     * instead, and a `self-deploying` entry cannot set it: its installer
+     * runs without the packer.
+     */
+    configPatch: configPatchSchema.optional(),
     // --- Self-deploying tier -------------------------------------------------
     /**
      * How the sandbox Worker runs the app's own installer; see
@@ -1308,6 +1323,22 @@ export const catalogInstallSchema = z
           "install.installDirs is not allowed for the self-deploying tier: its installer runs at the root of the checkout, without the packer that installs these directories",
       });
     }
+    if (install.configPatch !== undefined && install.tier === "self-deploying") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["configPatch"],
+        message:
+          "install.configPatch is not allowed for the self-deploying tier: its installer deploys the app without the packer that applies the patch",
+      });
+    }
+    if (install.configPatch !== undefined && install.workers !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["configPatch"],
+        message:
+          "install.configPatch is for an app of one Worker; with install.workers, set configPatch on the Worker whose config it changes",
+      });
+    }
     if (install.emailRouting !== undefined && install.tier === "self-deploying") {
       ctx.addIssue({
         code: "custom",
@@ -1321,7 +1352,8 @@ export const catalogInstallSchema = z
   // (no `sandbox`, or a tier that runs in the sandbox Worker; `selfDeploying`
   // exactly when the tier is `self-deploying`; no `emailRouting` or
   // `installDirs` on a `self-deploying` entry; `workers` only on the
-  // `artifact` tier), so editors
+  // `artifact` tier; `configPatch` neither beside `workers` nor on a
+  // `self-deploying` entry), so editors
   // refuse the same manifests.
   .meta({
     allOf: [
@@ -1359,6 +1391,15 @@ export const catalogInstallSchema = z
         anyOf: [
           { not: { required: ["workers"] } },
           { properties: { tier: { const: "artifact" } } },
+        ],
+      },
+      {
+        anyOf: [
+          { not: { required: ["configPatch"] } },
+          {
+            not: { required: ["workers"] },
+            properties: { tier: { not: { const: "self-deploying" } } },
+          },
         ],
       },
     ],

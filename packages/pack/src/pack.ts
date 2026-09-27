@@ -38,6 +38,7 @@ import {
 import ignore from "ignore";
 import { unstable_readConfig } from "wrangler";
 import { DEFAULT_BUILD_TIMEOUT_MS, runBuildCommands } from "./build-command.ts";
+import { applyConfigPatches, workerSpecs } from "./config-patch.ts";
 import {
   checkoutRelative,
   copyTemplateConfig,
@@ -326,16 +327,19 @@ interface ReadWorkerConfig {
 /**
  * Reads the resolved wrangler config at `declared` (relative to the
  * checkout) with wrangler's own reader, following a redirect the build left,
- * as `wrangler deploy` would. Throws when it lacks `main`, `name` or
+ * as `wrangler deploy` would, or the config a catalog config patch wrote in
+ * its place (`patched`). Throws when it lacks `main`, `name` or
  * `compatibility_date`.
  */
 function readWorkerConfig(
   checkoutDir: string,
   declared: string,
   logger: (m: string) => void,
+  patched?: WranglerConfigTarget,
 ): ReadWorkerConfig {
   // A template was copied to its real name before the build; that is what wrangler reads.
-  const target = resolveWranglerConfig(checkoutDir, copyTemplateConfig(checkoutDir, declared));
+  const target =
+    patched ?? resolveWranglerConfig(checkoutDir, copyTemplateConfig(checkoutDir, declared));
   const wranglerConfig = {
     // The catalog's path, a template included; `effective` is what was read.
     declared: checkoutRelative(checkoutDir, path.resolve(checkoutDir, declared)),
@@ -539,14 +543,18 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     });
   }
 
+  // (b4) The catalog's config patches, after the build (which may write the
+  // config) and before wrangler reads anything: each patched config is
+  // written beside its original, and wrangler reads and bundles that one.
+  const specs = workerSpecs(catalog.install);
+  const patched = applyConfigPatches({ checkoutDir, specs, logger });
+
   // (c) Read every resolved wrangler config with wrangler's own reader,
   // following a redirect the build left, as `wrangler deploy` would.
-  const specs: ReadonlyArray<{ name: string | null; wranglerConfig: string; primary?: true }> =
-    entry ?? [{ name: null, wranglerConfig: catalog.install.wranglerConfig, primary: true }];
   const read = specs.map((spec) => ({
     name: spec.name,
-    primary: spec.primary === true,
-    ...readWorkerConfig(checkoutDir, spec.wranglerConfig, logger),
+    primary: spec.primary,
+    ...readWorkerConfig(checkoutDir, spec.wranglerConfig, logger, patched.get(spec.wranglerConfig)),
   }));
   // Where a config names another Worker of the entry, by its wrangler name.
   const entryNames = new Map<string, string>();

@@ -26,6 +26,7 @@ import {
   cloneUrl,
   commandLine,
   DETECTION_READ_LIMIT,
+  INSPECT_MANIFEST_INPUT,
   inspectArgv,
   LOG_FLUSH_INTERVAL_MS,
   minutesBetween,
@@ -256,10 +257,24 @@ class RepositorySteps extends CommandRunner<BuildStage> {
 
   /**
    * The wrangler config's name, plain vars and the sections the packer
-   * leaves out, as wrangler resolves it (JSON, JSONC or TOML alike).
+   * leaves out, as wrangler resolves it (JSON, JSONC or TOML alike). A
+   * catalog app built from source is inspected with its catalog manifest, so
+   * its config patch applies as it will in the pack.
    */
-  private async inspect(wranglerConfig: string): Promise<WranglerFacts> {
-    const result = await this.run("detect", commandLine(inspectArgv(SOURCE_DIR, wranglerConfig)), {
+  private async inspect(
+    wranglerConfig: string,
+    baseline: RepositoryBuildRequest["baseline"],
+  ): Promise<WranglerFacts> {
+    let manifest: string | undefined;
+    if (baseline !== undefined) {
+      await this.sandbox.writeFile(
+        INSPECT_MANIFEST_INPUT,
+        `${JSON.stringify(baseline, null, 2)}\n`,
+      );
+      manifest = INSPECT_MANIFEST_INPUT;
+    }
+    const argv = inspectArgv(SOURCE_DIR, wranglerConfig, manifest);
+    const result = await this.run("detect", commandLine(argv), {
       cwd: SOURCE_DIR,
       timeoutMs: STAGE_TIMEOUTS.quick,
       quiet: true,
@@ -296,7 +311,7 @@ class RepositorySteps extends CommandRunner<BuildStage> {
       const packageManager: PackageManager =
         baseline?.install.packageManager ?? (pkg === null ? "npm" : detectPackageManager(files));
       const wranglerConfig = baseline?.install.wranglerConfig ?? detectWranglerConfig(files);
-      const wrangler = await this.inspect(wranglerConfig);
+      const wrangler = await this.inspect(wranglerConfig, baseline);
       const choice: BuildCommandChoice = request.buildCommand ?? { mode: "detect" };
       const build = chooseBuildCommand(choice, packageManager, pkg, baseline?.install.buildCommand);
       const version = artifactVersion({

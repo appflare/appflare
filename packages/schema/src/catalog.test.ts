@@ -485,6 +485,16 @@ describe("install.sandbox", () => {
             { properties: { tier: { const: "artifact" } } },
           ],
         },
+        // A config patch neither beside several Workers nor on a self-deploying entry.
+        {
+          anyOf: [
+            { not: { required: ["configPatch"] } },
+            {
+              not: { required: ["workers"] },
+              properties: { tier: { not: { const: "self-deploying" } } },
+            },
+          ],
+        },
       ],
       properties: {
         sandbox: {

@@ -150,6 +150,35 @@ Points that need care:
   `--ignore-scripts`, and prints the sha256 of the lockfile it wrote. A directory
   that holds a lockfile always installs from it, and any other directory needs one in
   it or above it (a workspace's), or the pack fails.
+- **`install.configPatch`.** When the app's wrangler config needs a change before it
+  installs from its pinned commit, open a pull request upstream first. Until it is
+  merged, the entry may carry the change as a JSON merge patch (RFC 7386: an object
+  merges key by key, `null` removes a key, an array replaces the whole list), with a
+  comment linking the pull request:
+
+  ```jsonc
+  "install": {
+    // Until https://github.com/<owner>/<repo>/pull/<number> is merged.
+    "configPatch": { "build": null, "vars": { "DEBUG": null } }
+  }
+  ```
+
+  After the build commands, the packer writes the patched config beside the original as
+  `.appflare.wrangler.jsonc`, so relative paths resolve as before, bundles from it,
+  and prints each change in the pack log. A TOML config is patched the same way and
+  written as JSONC. A build command that reads the wrangler config itself still sees
+  it unpatched. Only these keys may be patched: `main` and `assets`, with paths
+  relative to the config and without `..`; `build`, only
+  to `null` when `install.buildCommand` builds instead; `services`, only to leave
+  bindings out or to add one that points at a Worker of the same entry;
+  `kv_namespaces`, `r2_buckets` and `d1_databases`, only to add bindings or to leave
+  out an `id`, `bucket_name` or `database_id` that is an empty string, so the
+  install provisions it; `vars`, only removals; and `migrations`, only to rename
+  `new_classes` to `new_sqlite_classes`, which the Free plan requires. Anything else
+  fails with a message. An app of several Workers sets `configPatch` on each Worker
+  in `install.workers`. The patch is part of the signed manifest.
+  `appflare-pack inspect <checkout> --config <config> --manifest appflare.jsonc`
+  applies it and shows what changed.
 - **Worker size.** `pnpm pack-app` prints each Worker's modules, the Range requests
   the manager reads them with, and their size, for example
   `579 modules in 2 ranges, 11.44 MiB of at most 32.00 MiB`. Cloudflare accepts a

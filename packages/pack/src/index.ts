@@ -25,6 +25,14 @@ export {
   runBuildCommands,
 } from "./build-command.ts";
 export {
+  type ApplyConfigPatchesOptions,
+  applyConfigPatches,
+  ConfigPatchError,
+  readRawWranglerConfig,
+  type WorkerSpec,
+  workerSpecs,
+} from "./config-patch.ts";
+export {
   ConfigRedirectError,
   ConfigTemplateError,
   copyTemplateConfig,
@@ -33,7 +41,7 @@ export {
   type WranglerConfigTarget,
 } from "./config-redirect.ts";
 export { deriveSecretValue } from "./derive-secret.ts";
-export { inspectWranglerConfig, wranglerFacts } from "./inspect.ts";
+export { type InspectOptions, inspectWranglerConfig, wranglerFacts } from "./inspect.ts";
 export {
   findLockfile,
   InstallError,

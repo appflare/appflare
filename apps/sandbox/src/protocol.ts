@@ -14,6 +14,11 @@ export const SOURCE_DIR = `${WORK_ROOT}/source`;
 export const OUT_DIR = `${WORK_ROOT}/out`;
 /** The catalog manifest handed to the packer. */
 export const MANIFEST_INPUT = `${WORK_ROOT}/appflare.json`;
+/**
+ * Where a source build writes the catalog's manifest for `appflare-pack
+ * inspect`, so the config is read with the entry's config patch applied.
+ */
+export const INSPECT_MANIFEST_INPUT = `${WORK_ROOT}/appflare.inspect.json`;
 /** Where the build's R2 prefix is mounted for the copy. */
 export const MOUNT_DIR = "/mnt/appflare-builds";
 
@@ -202,10 +207,14 @@ export function packArgv(project: string, options: { install?: boolean } = {}): 
 
 /**
  * `appflare-pack inspect`: the name, plain vars and left-out sections of the
- * project's wrangler config, read with wrangler's own reader.
+ * project's wrangler config, read with wrangler's own reader. With
+ * `manifest` (a catalog manifest file), the entry's config patch is applied
+ * first, as the pack applies it: a config that wrangler only reads patched
+ * (an empty KV id) must be inspected patched too.
  */
-export function inspectArgv(project: string, wranglerConfig: string): string[] {
-  return ["appflare-pack", "inspect", project, "--config", wranglerConfig];
+export function inspectArgv(project: string, wranglerConfig: string, manifest?: string): string[] {
+  const argv = ["appflare-pack", "inspect", project, "--config", wranglerConfig];
+  return manifest === undefined ? argv : [...argv, "--manifest", manifest];
 }
 
 /** Minutes between two timestamps, one decimal. */

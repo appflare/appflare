@@ -53,6 +53,20 @@ describe("buildRequestSchema", () => {
     expect(parsed.buildCommand).toEqual(["pnpm", "build"]);
   });
 
+  it("checks the catalog manifest's config patch and keeps it", () => {
+    const withPatch = (configPatch: unknown) => {
+      const r = request();
+      const manifest = r.catalogManifest as { install: Record<string, unknown> };
+      manifest.install.configPatch = configPatch;
+      return buildRequestSchema.safeParse(r);
+    };
+    const accepted = withPatch({ build: null });
+    expect(accepted.data?.catalogManifest.install).toMatchObject({ configPatch: { build: null } });
+    expect(withPatch({ name: "other" }).error?.issues.map((i) => i.path.join("."))).toEqual([
+      "catalogManifest.install.configPatch.name",
+    ]);
+  });
+
   it("refuses another protocol version", () => {
     expect(buildRequestSchema.safeParse(request({ protocol: 2 })).success).toBe(false);
   });

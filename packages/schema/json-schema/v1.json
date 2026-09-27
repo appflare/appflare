@@ -271,6 +271,233 @@
           "additionalProperties": false,
           "description": "How a run of this app in the user's sandbox Worker is sized: the build of a `sandbox` tier entry or the installer of a `self-deploying` one (not allowed on `artifact` entries). Both fields feed the cost the manager shows before each install and update."
         },
+        "configPatch": {
+          "minProperties": 1,
+          "description": "Changes to the app's wrangler config, applied before wrangler reads it, as a JSON merge patch (RFC 7386): an object merges key by key, null removes a key, and anything else, arrays included, replaces the value. Allowed keys: main, assets, build, services, kv_namespaces, r2_buckets, d1_databases, vars, migrations. Prefer a pull request upstream and link it in a comment beside the patch; the patch is for the time until it is merged.",
+          "type": "object",
+          "properties": {
+            "main": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!(?:.*[/\\\\])?\\.\\.(?:[/\\\\]|$)).+$",
+              "description": "The Worker's entrypoint, relative to the config, for example `dist/index.js`; not absolute and without `..`."
+            },
+            "assets": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "directory": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!(?:.*[/\\\\])?\\.\\.(?:[/\\\\]|$)).+$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "binding": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "html_handling": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "not_found_handling": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "run_worker_first": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Merged into the config's `assets`: `directory`, `binding`, `html_handling`, `not_found_handling`, `run_worker_first`; null removes a key, or `assets` itself."
+            },
+            "build": {
+              "type": "null",
+              "description": "Only null: removes the config's `build`, when `install.buildCommand` builds instead."
+            },
+            "services": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "binding": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The binding's name, as the Worker reads it from `env`."
+                      },
+                      "service": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The name of the Worker the binding points at."
+                      }
+                    },
+                    "required": [
+                      "binding",
+                      "service"
+                    ],
+                    "additionalProperties": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The whole list of service bindings (a merge patch replaces arrays): the config's own entries, some left out, and entries that point at a Worker of this entry. null removes them all."
+            },
+            "kv_namespaces": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "binding": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The binding's name, as the Worker reads it from `env`."
+                  }
+                },
+                "required": [
+                  "binding"
+                ],
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "description": "The whole list: every binding of the config, plus new ones. A binding whose `id` is an empty string may leave it out, so the install provisions it; \"\" is refused by wrangler."
+            },
+            "r2_buckets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "binding": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The binding's name, as the Worker reads it from `env`."
+                  }
+                },
+                "required": [
+                  "binding"
+                ],
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "description": "The whole list: every binding of the config, plus new ones. A binding whose `bucket_name` is an empty string may leave it out."
+            },
+            "d1_databases": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "binding": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The binding's name, as the Worker reads it from `env`."
+                  }
+                },
+                "required": [
+                  "binding"
+                ],
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "description": "The whole list: every binding of the config, plus new ones. A binding whose `database_id` is an empty string may leave it out."
+            },
+            "vars": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "null"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only removals: each var to remove as null, or null to remove them all."
+            },
+            "migrations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "tag": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The migration's tag, as the config gives it."
+                  }
+                },
+                "required": [
+                  "tag"
+                ],
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema0"
+                }
+              },
+              "description": "The config's Durable Object migrations, the same list with `new_classes` renamed to `new_sqlite_classes`, which the Free plan requires."
+            }
+          },
+          "additionalProperties": false
+        },
         "selfDeploying": {
           "type": "object",
           "properties": {
@@ -372,6 +599,233 @@
                   }
                 ],
                 "description": "The command, or the commands in order, the packer runs at the root of the checkout for this Worker, after `install.buildCommand` (when set) and before bundling it. Same rules as `install.buildCommand`."
+              },
+              "configPatch": {
+                "minProperties": 1,
+                "description": "Changes to this Worker's wrangler config, applied before wrangler reads it; the same rules as `install.configPatch`.",
+                "type": "object",
+                "properties": {
+                  "main": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!(?:.*[/\\\\])?\\.\\.(?:[/\\\\]|$)).+$",
+                    "description": "The Worker's entrypoint, relative to the config, for example `dist/index.js`; not absolute and without `..`."
+                  },
+                  "assets": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "directory": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!(?:.*[/\\\\])?\\.\\.(?:[/\\\\]|$)).+$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "binding": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "html_handling": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "not_found_handling": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "run_worker_first": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Merged into the config's `assets`: `directory`, `binding`, `html_handling`, `not_found_handling`, `run_worker_first`; null removes a key, or `assets` itself."
+                  },
+                  "build": {
+                    "type": "null",
+                    "description": "Only null: removes the config's `build`, when `install.buildCommand` builds instead."
+                  },
+                  "services": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "binding": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "The binding's name, as the Worker reads it from `env`."
+                            },
+                            "service": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "The name of the Worker the binding points at."
+                            }
+                          },
+                          "required": [
+                            "binding",
+                            "service"
+                          ],
+                          "additionalProperties": {
+                            "$ref": "#/$defs/__schema0"
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The whole list of service bindings (a merge patch replaces arrays): the config's own entries, some left out, and entries that point at a Worker of this entry. null removes them all."
+                  },
+                  "kv_namespaces": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "binding": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "The binding's name, as the Worker reads it from `env`."
+                        }
+                      },
+                      "required": [
+                        "binding"
+                      ],
+                      "additionalProperties": {
+                        "$ref": "#/$defs/__schema0"
+                      }
+                    },
+                    "description": "The whole list: every binding of the config, plus new ones. A binding whose `id` is an empty string may leave it out, so the install provisions it; \"\" is refused by wrangler."
+                  },
+                  "r2_buckets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "binding": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "The binding's name, as the Worker reads it from `env`."
+                        }
+                      },
+                      "required": [
+                        "binding"
+                      ],
+                      "additionalProperties": {
+                        "$ref": "#/$defs/__schema0"
+                      }
+                    },
+                    "description": "The whole list: every binding of the config, plus new ones. A binding whose `bucket_name` is an empty string may leave it out."
+                  },
+                  "d1_databases": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "binding": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "The binding's name, as the Worker reads it from `env`."
+                        }
+                      },
+                      "required": [
+                        "binding"
+                      ],
+                      "additionalProperties": {
+                        "$ref": "#/$defs/__schema0"
+                      }
+                    },
+                    "description": "The whole list: every binding of the config, plus new ones. A binding whose `database_id` is an empty string may leave it out."
+                  },
+                  "vars": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "null"
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Only removals: each var to remove as null, or null to remove them all."
+                  },
+                  "migrations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "tag": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "The migration's tag, as the config gives it."
+                        }
+                      },
+                      "required": [
+                        "tag"
+                      ],
+                      "additionalProperties": {
+                        "$ref": "#/$defs/__schema0"
+                      }
+                    },
+                    "description": "The config's Durable Object migrations, the same list with `new_classes` renamed to `new_sqlite_classes`, which the Free plan requires."
+                  }
+                },
+                "additionalProperties": false
               },
               "primary": {
                 "type": "boolean",
@@ -499,6 +953,31 @@
               "properties": {
                 "tier": {
                   "const": "artifact"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "configPatch"
+                ]
+              }
+            },
+            {
+              "not": {
+                "required": [
+                  "workers"
+                ]
+              },
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
                 }
               }
             }
@@ -1117,5 +1596,38 @@
         }
       ]
     }
-  ]
+  ],
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  }
 }

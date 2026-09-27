@@ -7,6 +7,7 @@ import {
   GITHUB_FETCH_HEADERS,
   type RepositoryBuildOutcome,
   repositoryBuildOutcomeSchema,
+  SANDBOX_FEATURE_CONFIG_PATCH,
   SANDBOX_FEATURE_GITHUB_TOKENS,
   SANDBOX_FEATURE_INSTALL_DIRS,
   SANDBOX_FEATURE_REPOSITORY,
@@ -154,6 +155,37 @@ export function installDirsRefusal(
 ): string | null {
   if (catalog?.install.installDirs === undefined || installsListedDirs(info)) return null;
   return `the sandbox Worker ${info.sandboxVersion} cannot install the directories this app lists (install.installDirs); to update it, ${updateHint}`;
+}
+
+/** Whether the sandbox Worker's packer applies a catalog entry's config patch. */
+export function appliesConfigPatch(info: Pick<SandboxInfo, "features">): boolean {
+  return info.features?.includes(SANDBOX_FEATURE_CONFIG_PATCH) === true;
+}
+
+/**
+ * Why the sandbox Worker cannot build `catalog`, or null when it can: the
+ * entry patches its wrangler config (`install.configPatch`, or a Worker's)
+ * and the sandbox Worker's packer predates patches, so it would build the
+ * config unpatched.
+ */
+export function configPatchRefusal(
+  info: Pick<SandboxInfo, "sandboxVersion" | "features">,
+  catalog:
+    | {
+        install: {
+          configPatch?: unknown;
+          workers?: ReadonlyArray<{ configPatch?: unknown }> | undefined;
+        };
+      }
+    | undefined,
+  updateHint: string,
+): string | null {
+  if (catalog === undefined || appliesConfigPatch(info)) return null;
+  const patched =
+    catalog.install.configPatch !== undefined ||
+    (catalog.install.workers ?? []).some((w) => w.configPatch !== undefined);
+  if (!patched) return null;
+  return `the sandbox Worker ${info.sandboxVersion} cannot apply this app's wrangler config patch (install.configPatch) and would build the config unpatched; to update it, ${updateHint}`;
 }
 
 /** Whether the sandbox Worker holds GitHub access tokens and reads GitHub with them. */

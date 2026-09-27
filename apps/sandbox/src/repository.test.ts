@@ -10,7 +10,7 @@ import {
 } from "@appflare/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { readProgress } from "./log";
-import { BUILD_ENV, MANIFEST_INPUT, repositorySandboxId } from "./protocol";
+import { BUILD_ENV, INSPECT_MANIFEST_INPUT, MANIFEST_INPUT, repositorySandboxId } from "./protocol";
 import { runRepositoryBuild } from "./repository";
 import { type FakeFailure, FakeSandbox, type FakeSandboxOptions } from "./test/fake-sandbox";
 
@@ -405,6 +405,53 @@ describe("runRepositoryBuild", () => {
     expect(result.log).toContain(
       "Install directories: templates/blog (no lockfile upstream) (from the catalog).",
     );
+  });
+
+  it("inspects a catalog app's config with its catalog manifest, so its config patch applies", async () => {
+    const baseline = {
+      slug: "mdpage",
+      name: "md.page",
+      summary: "Markdown pages.",
+      homepage: "https://github.com/MendyLanda/cut",
+      repo: "MendyLanda/cut",
+      license: "MIT",
+      categories: [],
+      maintainers: [],
+      source: { ref: "main", sha: "f".repeat(40) },
+      install: {
+        tier: "artifact",
+        packageManager: "pnpm",
+        wranglerConfig: "wrangler.jsonc",
+        workerName: "mdpage",
+        configPatch: { kv_namespaces: [{ binding: "PAGES" }] },
+      },
+      plan: "free",
+      requires: [],
+      secrets: [],
+      vars: [],
+      postInstall: [],
+      tokenPermissions: [],
+    };
+    const sandbox = fake();
+    asResult(await build(sandbox, request({ ref: "main", baseline })).promise);
+    const inspect = sandbox.commands.find((c) => c.startsWith("appflare-pack inspect "));
+    expect(inspect).toContain(`--config wrangler.jsonc --manifest ${INSPECT_MANIFEST_INPUT}`);
+    expect(JSON.parse(sandbox.written.get(INSPECT_MANIFEST_INPUT) ?? "null")).toMatchObject({
+      slug: "mdpage",
+      install: { configPatch: { kv_namespaces: [{ binding: "PAGES" }] } },
+    });
+    expect(packedCatalog(sandbox)).toMatchObject({
+      install: { configPatch: { kv_namespaces: [{ binding: "PAGES" }] } },
+    });
+  });
+
+  it("inspects a repository without a catalog manifest as it is", async () => {
+    const sandbox = fake();
+    asResult(await build(sandbox, request({ ref: "main" })).promise);
+    const inspect = sandbox.commands.find((c) => c.startsWith("appflare-pack inspect "));
+    expect(inspect).toBeDefined();
+    expect(inspect).not.toContain("--manifest");
+    expect(sandbox.written.has(INSPECT_MANIFEST_INPUT)).toBe(false);
   });
 
   it("gives a rebuild a version of its own when the install already has that one", async () => {

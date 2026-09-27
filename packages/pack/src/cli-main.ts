@@ -1,10 +1,13 @@
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import {
+  catalogManifestSchema,
   INSPECT_OUTPUT_PREFIX,
   MAX_WORKER_UPLOAD_BYTES,
   MAX_WORKER_UPLOAD_SUBREQUESTS,
 } from "@appflare/schema";
 import { inspectWranglerConfig } from "./inspect.ts";
+import { parseJsonc } from "./jsonc.ts";
 import { formatKeygenOutput, keygen } from "./keygen.ts";
 import { describeVersionOrigin, pack } from "./pack.ts";
 import { sign } from "./sign.ts";
@@ -17,7 +20,7 @@ Usage:
   appflare-pack <checkoutDir> --manifest <appflare.jsonc> --out <dir> [--key-id ID [--sign-key-env NAME]] [--no-install]
   appflare-pack sign <dir> --sign-key-env NAME [--key-id ID] [--force]
   appflare-pack verify <dir> [--public-key <base64>] [--require-signed | --hashes-only] [--check-upload]
-  appflare-pack inspect <checkoutDir> --config <wrangler config>
+  appflare-pack inspect <checkoutDir> --config <wrangler config> [--manifest <appflare.jsonc>]
   appflare-pack keygen --out <file> --key-id <id>
 
 Pack options:
@@ -38,6 +41,11 @@ Sign options (signs <dir>/manifest.json as-is, writes manifest.sig, self-verifie
 Inspect options (prints the config's name, plain vars and the sections the
 packer leaves out, as JSON after "${INSPECT_OUTPUT_PREFIX.trim()}"):
   --config <path>         the wrangler config, relative to <checkoutDir> (required)
+  --manifest <path>       a catalog manifest that builds that config: its config patch
+                          is applied first, as a pack applies it, and the patched
+                          config is read. Its path and the patch's effect go to
+                          stderr; the patched config stays beside the original as
+                          .appflare.wrangler.jsonc.
 
 Keygen options (writes a new Ed25519 private key, base64 PKCS#8, to <file> with
 mode 0600; never overwrites a file or writes where git would track it; prints the
@@ -224,6 +232,7 @@ async function runInspect(argv: string[]): Promise<number> {
     allowPositionals: true,
     options: {
       config: { type: "string" },
+      manifest: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -236,7 +245,14 @@ async function runInspect(argv: string[]): Promise<number> {
     process.stderr.write(`error: <checkoutDir> and --config are required\n\n${USAGE}`);
     return 1;
   }
-  const facts = inspectWranglerConfig(checkoutDir, values.config);
+  const catalog =
+    values.manifest === undefined
+      ? undefined
+      : catalogManifestSchema.parse(parseJsonc(readFileSync(values.manifest, "utf8")));
+  const facts = inspectWranglerConfig(checkoutDir, values.config, {
+    catalog,
+    logger: logToStderr,
+  });
   process.stdout.write(`${INSPECT_OUTPUT_PREFIX}${JSON.stringify(facts)}\n`);
   return 0;
 }

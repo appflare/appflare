@@ -376,6 +376,40 @@ describe("installing a sandbox tier app", () => {
     expect(r.sandbox?.requests[0]).toMatchObject({ catalogManifest: { install: { installDirs } } });
   });
 
+  it("refuses an app that patches its wrangler config on a sandbox Worker that predates patches", async () => {
+    const r = await install({
+      fixture: await sandboxApp({
+        catalog: {
+          install: { ...baseCatalog().install, tier: "sandbox", configPatch: { build: null } },
+        },
+      }),
+      sandbox: {
+        info: {
+          protocol: 1,
+          sandboxVersion: "0.1.4",
+          image: "docker.io/mendylanda/appflare-sandbox:0.1.4",
+          features: ["self-deploying", "repository-builds", "github-tokens", "install-dirs"],
+        },
+      },
+    });
+    expect(r.job?.error).toContain(
+      "the sandbox Worker 0.1.4 cannot apply this app's wrangler config patch (install.configPatch) and would build the config unpatched; to update it, choose Update sandbox in",
+    );
+    expect(r.sandbox?.requests).toEqual([]);
+    expect(r.account.state.versions).toEqual([]);
+  });
+
+  it("hands the config patch to a sandbox Worker that applies it", async () => {
+    const configPatch = { build: null, vars: { DEBUG: null } };
+    const r = await install({
+      fixture: await sandboxApp({
+        catalog: { install: { ...baseCatalog().install, tier: "sandbox", configPatch } },
+      }),
+    });
+    expect(r.job?.error ?? null).toBeNull();
+    expect(r.sandbox?.requests[0]).toMatchObject({ catalogManifest: { install: { configPatch } } });
+  });
+
   it("reports a failed build with its step and exit code, without retrying it", async () => {
     const failed: BuildOutcome = {
       ok: false,

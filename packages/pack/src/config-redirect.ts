@@ -93,7 +93,7 @@ export function checkoutRelative(root: string, abs: string): string {
  * Whether the existing file `abs` lies inside `root` once every symlink on
  * either path is resolved, so a link in the checkout cannot lead out of it.
  */
-function isInside(root: string, abs: string): boolean {
+export function isInside(root: string, abs: string): boolean {
   const rel = path.relative(realpathSync(root), realpathSync(abs));
   return (
     rel.length > 0 && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)

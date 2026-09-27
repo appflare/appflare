@@ -193,6 +193,9 @@ export const buildCatalogManifestSchema = z.looseObject({
     // The packer installs these itself, so the sandbox Worker hands it the
     // install instead of running the root install first.
     installDirs: catalogInstallSchema.shape.installDirs,
+    // Applied by the packer; checked here too so a malformed patch fails
+    // before a container starts.
+    configPatch: catalogInstallSchema.shape.configPatch,
   }),
 });
 export type BuildCatalogManifest = z.infer<typeof buildCatalogManifestSchema>;
