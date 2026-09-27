@@ -8,7 +8,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { resources } from "../../db/schema";
-import { workersDevSubdomain } from "../../installs/workers-dev";
+import { OFF_WORKERS_DEV, workersDevSubdomain } from "../../installs/workers-dev";
 import { type EntryWorker, entryBindings, workerLabel } from "../entry-workers";
 import type { SecretChanges } from "../reconfigure/plan";
 import { applySecretChangesPhase } from "../reconfigure/secrets";
@@ -132,8 +132,9 @@ export function planEntryQueueConsumers(
  * Install: one other Worker of the app, after the resources exist and the
  * Workers it binds to are deployed. Its assets, the script (recorded before
  * the upload, like the primary Worker's), its secrets, cron triggers, queue
- * consumers, and its workers.dev address, which it always keeps: only the
- * primary Worker is the app's address.
+ * consumers, and its workers.dev address: on, unless the catalog entry keeps
+ * the Worker off workers.dev, in which case it is turned off with its version
+ * previews. Only the primary Worker is the app's address.
  */
 export async function deployOtherWorkerPhase(
   steps: JobSteps,
@@ -215,6 +216,9 @@ export async function deployOtherWorkerPhase(
       .where(eq(resources.id, resourceId(ctx.installId, "worker", name)));
     return {};
   });
+  // An uploaded script starts off workers.dev (the manager, unlike wrangler,
+  // never turns it on); saying so explicitly guards a Worker kept private.
+  if (!worker.workersDev) await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
   for (const secret of own.catalog.secrets) {
     const value = input.secrets[secret.name];
     if (isOptionalSecret(secret) && (value ?? "").length === 0) continue;
@@ -248,18 +252,41 @@ export async function deployOtherWorkerPhase(
     });
   }
   await input.attachConsumers(steps, name, input.consumers);
-  await enableOtherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
+  if (worker.workersDev) await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
   return { versionId: upload.versionId };
 }
 
-/** Turns on (and records) the other Worker's workers.dev address, with version previews. */
-export async function enableOtherWorkerRoutePhase(
+/**
+ * Puts one other Worker's workers.dev address where its catalog entry wants
+ * it: on, with version previews, and recorded; or, for a Worker kept off
+ * workers.dev, off with its previews, and its record (from a version that had
+ * it on) marked deleted.
+ */
+export async function otherWorkerRoutePhase(
   steps: JobSteps,
   installId: string,
-  worker: EntryWorker,
+  worker: Pick<EntryWorker, "primary" | "scriptName" | "workersDev">,
   subdomain: string,
 ): Promise<void> {
   const host = `${worker.scriptName}.${subdomain}.workers.dev`;
+  const id = resourceId(installId, "subdomain", host);
+  if (!worker.workersDev) {
+    await steps.run(
+      `turn off workers.dev route${workerLabel(worker)}`,
+      async ({ log, cf, orm }) => {
+        await cf().workers.enableSubdomain(worker.scriptName, OFF_WORKERS_DEV);
+        await orm
+          .update(resources)
+          .set({ deleted_at: new Date(steps.now()) })
+          .where(and(eq(resources.id, id), isNull(resources.deleted_at)));
+        log.info(
+          `Worker "${worker.scriptName}" is not reachable from the internet: its workers.dev URL and version previews are off, and the app's other Workers reach it through their bindings.`,
+        );
+        return {};
+      },
+    );
+    return;
+  }
   await steps.run(`enable workers.dev route${workerLabel(worker)}`, async ({ log, cf, orm }) => {
     await cf().workers.enableSubdomain(worker.scriptName, workersDevSubdomain(true));
     await recordResource(
@@ -268,10 +295,16 @@ export async function enableOtherWorkerRoutePhase(
       { kind: "subdomain", key: host, binding: null, name: host, cfId: null },
       new Date(steps.now()),
     );
+    // A version that kept the Worker off workers.dev marked the row deleted.
+    await orm.update(resources).set({ deleted_at: null }).where(eq(resources.id, id));
     log.info(`Enabled https://${host}.`);
     return {};
   });
 }
+
+/** Why a Worker kept off workers.dev gets no preview check. */
+export const OFF_WORKERS_DEV_CANARY_REASON =
+  "it is kept off workers.dev, so it has no preview URL to check; the app's other Workers reach it through their bindings";
 
 /** One other Worker's part of an update, between its upload and its promotion. */
 export interface OtherWorkerUpdate {
@@ -320,6 +353,13 @@ function updateMetadata(
  * implements a Durable Object has none). A version with Durable Object
  * migrations the Worker lacks is deployed whole at promotion instead.
  * Secrets the version introduces ride on the upload; the rest are carried over.
+ *
+ * A Worker the new version keeps off workers.dev is taken off it (with its
+ * previews) before anything is uploaded, so no version of it answers from the
+ * internet, and gets no preview check. One the installed version kept off
+ * workers.dev gets none either, since turning previews on would put the
+ * serving version back on its URL; the caller turns its address on once the
+ * update promotes it.
  */
 export async function prepareOtherWorkerPhase(
   steps: JobSteps,
@@ -333,6 +373,8 @@ export async function prepareOtherWorkerPhase(
     servingExports: WorkerExports | undefined;
     /** Values of the secrets this version introduces, by name. */
     newSecrets: Readonly<Record<string, string>>;
+    /** Whether the installed version keeps this Worker on workers.dev. */
+    wasOnWorkersDev: boolean;
     slug: string;
     version: string;
     jobId: string;
@@ -344,6 +386,7 @@ export async function prepareOtherWorkerPhase(
   const own = worker.manifest;
   const pending = pendingDurableObjectMigrations(own.worker, input.appliedDoTag);
   const exportsChanged = !sameDurableObjectExports(own.worker.exports, input.servingExports);
+  if (!worker.workersDev) await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
   const assetsJwt = await uploadAssetsPhase(
     steps,
     name,
@@ -406,6 +449,17 @@ export async function prepareOtherWorkerPhase(
     );
     return { versionId: result.versionId, hasPreview: result.hasPreview };
   });
+  if (!worker.workersDev || !input.wasOnWorkersDev) {
+    await steps.run(`skip canary${label}`, async ({ log }) => {
+      log.info(
+        worker.workersDev
+          ? `No preview check for Worker "${name}": the installed version keeps it off workers.dev, and its URL is turned on once this version serves.`
+          : `No preview check for Worker "${name}": ${OFF_WORKERS_DEV_CANARY_REASON}.`,
+      );
+      return {};
+    });
+    return { ...update, versionId: uploaded.versionId };
+  }
   const skip = canarySkipReason(uploaded.hasPreview, 0);
   if (skip !== null) {
     await steps.run(`skip canary${label}`, async ({ log }) => {
@@ -507,6 +561,8 @@ function changesAny(changes: SecretChanges): boolean {
  * on its preview URL. Promoted by {@link promoteOtherWorkerPhase} before the
  * primary Worker. `uploadedVersionId` is the upload the secrets patch was
  * made from, which a failure before promotion needs to put the secrets back.
+ * A Worker kept off workers.dev is made sure to be off before the upload and
+ * gets no preview check.
  */
 export async function reconfigureOtherWorkerPhase(
   steps: JobSteps,
@@ -524,6 +580,7 @@ export async function reconfigureOtherWorkerPhase(
   const label = workerLabel(worker);
   const name = worker.scriptName;
   const own = worker.manifest;
+  if (!worker.workersDev) await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
   const assetsJwt = await uploadAssetsPhase(
     steps,
     name,
@@ -584,7 +641,12 @@ export async function reconfigureOtherWorkerPhase(
   const skip = implementsDurableObject
     ? NO_PREVIEW_REASON
     : canarySkipReason(uploaded.hasPreview, 0);
-  if (skip !== null) {
+  if (!worker.workersDev) {
+    await steps.run(`skip canary${label}`, async ({ log }) => {
+      log.info(`No preview check for Worker "${name}": ${OFF_WORKERS_DEV_CANARY_REASON}.`);
+      return {};
+    });
+  } else if (skip !== null) {
     await steps.run(`skip canary${label}`, async ({ log }) => {
       log.warn(`${skip}.`);
       return {};

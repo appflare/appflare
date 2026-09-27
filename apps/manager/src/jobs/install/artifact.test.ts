@@ -26,7 +26,7 @@ describe("verifyArtifactManifest", () => {
     expect(manifest.catalog.secrets[0]?.name).toBe("ADMIN_PASSWORD");
   });
 
-  it("reads format 3 and asks to update Appflare for a format it does not know", async () => {
+  it("reads formats 3 and 4 and asks to update Appflare for a format it does not know", async () => {
     const d1 = await buildArtifactFixture({
       bindings: [{ type: "d1", name: "DB" }],
       d1Schema: { DB: [{ name: "schema.sql", content: "CREATE TABLE IF NOT EXISTS t (id);" }] },
@@ -40,15 +40,24 @@ describe("verifyArtifactManifest", () => {
     expect(manifest.format).toBe(3);
     expect(manifest.d1Schema?.DB?.[0]?.name).toBe("schema.sql");
 
+    const kept = await buildArtifactFixture({ otherWorkers: [{ name: "git", workersDev: false }] });
+    const four = await verifyArtifactManifest(
+      kept.manifestBytes,
+      kept.signature,
+      expected(kept),
+      kept.keys,
+    );
+    expect(four.format).toBe(4);
+
     const future = await buildArtifactFixture({
       tweak: (m) => {
-        (m as { format: number }).format = 4;
+        (m as { format: number }).format = 5;
       },
     });
     await expect(
       verifyArtifactManifest(future.manifestBytes, future.signature, expected(future), future.keys),
     ).rejects.toThrow(
-      "the artifact is format 4, and this version of Appflare reads formats 1 to 3; update Appflare in Settings, then try again",
+      "the artifact is format 5, and this version of Appflare reads formats 1 to 4; update Appflare in Settings, then try again",
     );
   });
 

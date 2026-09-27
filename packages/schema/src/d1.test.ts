@@ -304,7 +304,7 @@ describe("artifact formats", () => {
     const result = artifactManifestSchema.safeParse(artifact({ format: 1, ...schemaFile }, layout));
     expect(result.success).toBe(false);
     expect(result.error?.issues.map((i) => i.message)).toContain(
-      "the artifact needs format 3 for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block); a manager that reads only format 1 would install it without them",
+      "the artifact needs format 3 for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev); a manager that reads only format 1 would install it without them",
     );
     expect(
       artifactManifestSchema.safeParse(artifact({ format: 3, ...schemaFile }, layout)).success,
@@ -322,15 +322,16 @@ describe("artifact formats", () => {
     );
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toMatch(
-      /must be format 2 \(or 3\) with a workers list/,
+      /must be format 2 or later with a workers list/,
     );
   });
 
   it("says to update Appflare for a newer format and nothing for a known one", () => {
     expect(unknownArtifactFormatProblem({ format: 3 })).toBeNull();
     expect(unknownArtifactFormatProblem({ format: "3" })).toBeNull();
-    expect(unknownArtifactFormatProblem({ format: 4 })).toBe(
-      `the artifact is format 4, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in Settings, then try again`,
+    expect(unknownArtifactFormatProblem({ format: 4 })).toBeNull();
+    expect(unknownArtifactFormatProblem({ format: 5 })).toBe(
+      `the artifact is format 5, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in Settings, then try again`,
     );
     expect(unknownArtifactFormatProblem({ format: 0 })).toMatch(/no version of Appflare reads/);
   });

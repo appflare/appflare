@@ -74,6 +74,8 @@ export interface FixtureWorker {
   queueConsumers?: ArtifactManifest["worker"]["queueConsumers"];
   exports?: ArtifactManifest["worker"]["exports"];
   assets?: Array<{ route: string; content: string }>;
+  /** `install.workers[].workersDev`; false keeps it off workers.dev (format 4). */
+  workersDev?: boolean;
 }
 
 /** Where a fixture's revised catalog manifest is served. */
@@ -246,7 +248,11 @@ export async function buildArtifactFixture(
   if (others.length > 0) {
     catalog.install.workers = [
       { name: "app", wranglerConfig: catalog.install.wranglerConfig, primary: true },
-      ...others.map((w) => ({ name: w.name, wranglerConfig: `${w.name}/wrangler.jsonc` })),
+      ...(opts.otherWorkers ?? []).map((w) => ({
+        name: w.name,
+        wranglerConfig: `${w.name}/wrangler.jsonc`,
+        ...(w.workersDev === undefined ? {} : { workersDev: w.workersDev }),
+      })),
     ];
   }
   const fields = {

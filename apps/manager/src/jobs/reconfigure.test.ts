@@ -1545,4 +1545,46 @@ describe("settings change job, an app of several Workers", () => {
     );
     expect(JSON.stringify(r.logs)).not.toContain(JOBS_KEY);
   });
+
+  it("keeps a private Worker off workers.dev and skips its preview check", async () => {
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [{ id: "dep-j", versions: [{ version_id: JOBS_OLD, percentage: 100 }] }],
+    });
+    const r = await reconfigure({
+      app: {
+        ...TWO,
+        otherWorkers: [
+          {
+            name: "jobs",
+            bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+            workersDev: false,
+          },
+        ],
+      },
+      resources: [
+        ...RESOURCES,
+        { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
+        { kind: "secret", binding: "JOBS_KEY", name: "JOBS_KEY" },
+      ],
+      request: {
+        vars: { HOME_PAGE: "links", TITLE: "My links" },
+        secrets: { set: { JOBS_KEY }, unset: [] },
+      },
+      front: async (request) =>
+        /\/workers\/(scripts|workers)\/cut-jobs\b/.test(request.url) ||
+        request.url.includes("-cut-jobs.")
+          ? jobs.fetch(request.url, request)
+          : null,
+    });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(jobs.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: false }]);
+    expect(jobs.state.previewHosts).toEqual([]);
+    expect(jobs.state.calls.indexOf("POST /workers/scripts/cut-jobs/subdomain")).toBeLessThan(
+      jobs.state.calls.indexOf("POST /workers/scripts/cut-jobs/versions"),
+    );
+    expect(r.step.names).toContain('skip canary (Worker "cut-jobs")');
+    expect(jobs.state.deployments[0]?.versions[0]?.version_id).not.toBe(JOBS_OLD);
+  });
 });

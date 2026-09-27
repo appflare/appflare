@@ -23,8 +23,9 @@ import { installs } from "../db/schema";
  * is the install's own: its Worker name is the install's, and the install,
  * update, rollback and uninstall jobs handle it exactly as the only Worker of
  * a one-Worker app. Every other Worker runs as `<install Worker name>-<name>`
- * on its workers.dev address, is recorded as a `worker` resource, and is
- * handled by the phases in ./install/entry-worker-phases.ts.
+ * on its workers.dev address (unless the entry keeps it off workers.dev), is
+ * recorded as a `worker` resource, and is handled by the phases in
+ * ./install/entry-worker-phases.ts.
  *
  * Resources belong to the app, shared by binding name, so they are planned
  * once from every Worker's bindings together ({@link entryBindings}).
@@ -35,6 +36,13 @@ export interface EntryWorker {
   /** Its name within the catalog entry; null for an app of one Worker. */
   name: string | null;
   primary: boolean;
+  /**
+   * Whether it answers on its workers.dev URL. False only for a Worker other
+   * than the primary one whose catalog entry sets `workersDev: false`: it is
+   * reached only through the other Workers' bindings, so its workers.dev URL
+   * and version previews stay off, and no job probes it.
+   */
+  workersDev: boolean;
   /** The Worker name it is installed under. */
   scriptName: string;
   /**
@@ -50,6 +58,7 @@ export function entryWorkers(manifest: ArtifactManifest, installWorkerName: stri
   return appWorkersInDeployOrder(manifest).map((w) => ({
     name: w.name,
     primary: w.primary,
+    workersDev: w.workersDev,
     scriptName:
       w.name === null ? installWorkerName : entryScriptName(installWorkerName, w.name, w.primary),
     manifest: workerManifest(manifest, w),

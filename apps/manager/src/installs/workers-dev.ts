@@ -24,6 +24,14 @@ export function workersDevSubdomain(enabled: boolean): {
 }
 
 /**
+ * The body of the subdomain call for a Worker of an app that its catalog
+ * entry keeps off workers.dev (`install.workers[].workersDev: false`): the
+ * app's other Workers reach it through their bindings, and nothing else may.
+ * Previews go off too, since a preview URL answers from the internet as well.
+ */
+export const OFF_WORKERS_DEV = { enabled: false, previews_enabled: false } as const;
+
+/**
  * The body of the subdomain call for Appflare's own Worker, which always
  * keeps its workers.dev URL: the address the installer prints, the sign-in
  * origin and the installer's health check all use it.

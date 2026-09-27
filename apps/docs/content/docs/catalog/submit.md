@@ -374,6 +374,18 @@ as one app:
   `install.wranglerConfig`, so tools that build one Worker build the primary. Every
   other Worker runs as `<install Worker name>-<name>` on its own workers.dev
   address: `notes-api` in the example.
+- **Workers only the app calls.** Set `"workersDev": false` on a Worker that only the
+  entry's other Workers reach, through a service binding or a Durable Object binding,
+  and that must not answer from the internet: for example one that trusts identity
+  headers the primary Worker sets. The manager keeps its workers.dev URL and its
+  version previews off on every install, update, rollback and settings change, skips
+  its preview check during updates, and the app's page lists it as not reachable
+  from the internet. Leave it out for every Worker that people or other services
+  call, such as a file origin, an inbox, or a webhook endpoint. The primary Worker
+  cannot set it: it is the app's address and health check until the admin adds a
+  custom domain, which turns its workers.dev URL off anyway. `{{workerUrl:<name>}}`
+  of such a Worker is refused, since it has no URL. Managers too old to know the
+  field refuse the release and ask the admin to update Appflare first.
 - **Builds.** `install.buildCommand` runs once, first. Then each Worker's own
   `buildCommand`, if it has one, runs in the order of the list. Both follow the
   rules for `install.buildCommand` above.
@@ -381,7 +393,8 @@ as one app:
   Without it, a secret goes to every Worker, and a var goes to the Workers whose
   wrangler config declares it, or to every Worker when none does.
 - **Placeholders.** `{{workerUrl:<name>}}` and `{{workerName:<name>}}` give one
-  Worker's workers.dev URL and installed Worker name. `{{workerUrl}}` and
+  Worker's workers.dev URL and installed Worker name (`{{workerUrl:<name>}}` only for
+  a Worker on workers.dev). `{{workerUrl}}` and
   `{{workerName}}` still mean the app, that is, the primary Worker.
 - **Resources are shared by binding name.** Workers that both bind `DB` use one D1
   database, so they must bring the same migrations, or only one of them brings any.

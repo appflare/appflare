@@ -60,6 +60,13 @@ checked at its own preview URL, D1 migrations run before any Worker switches, an
 then the Workers switch to their new versions one at a time, with the app's own
 Worker last. A rollback returns every Worker to its version in the snapshot.
 
+A Worker the app keeps off `workers.dev` has no preview URL, so its new version is
+not checked before it switches. When a new version changes whether a Worker is on
+`workers.dev`, the Worker leaves it before the version that keeps it private is
+uploaded (and gets it back if the update fails before the switch), and comes back
+only once the version that wants it serves; a rollback does the same in the other
+direction.
+
 An update cannot add a Worker to an installed app, because the manager keeps no
 secret values to give the new Worker: the job refuses such a version before anything
 changes, and the app has to be installed again to get it. A Worker a new version no

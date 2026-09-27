@@ -46,6 +46,7 @@ import {
   type InstallDetail,
   type ResourceView,
 } from "../../../installs/installs.functions";
+import { NOT_REACHABLE_NOTE, type OtherWorkerView } from "../../../installs/other-workers";
 import { getInstallSettings } from "../../../installs/reconfigure.functions";
 import type { InstallSettings } from "../../../installs/reconfigure.server";
 import { listSnapshots } from "../../../installs/versions.functions";
@@ -577,6 +578,32 @@ function UninstallState({ install }: { install: InstallDetail }) {
   );
 }
 
+/**
+ * The app's Workers besides its own: each one's Worker name, with its
+ * workers.dev URL, or a note when its catalog entry keeps it off the internet.
+ */
+function OtherWorkers({ workers }: { workers: OtherWorkerView[] }) {
+  return (
+    <ul className="grid gap-2">
+      {workers.map((w) => (
+        <li key={w.name} className="grid gap-0.5">
+          <span className={mono}>{w.workerName}</span>
+          {!w.public ? (
+            <Text as="span" variant="secondary" size="sm">
+              {NOT_REACHABLE_NOTE}
+            </Text>
+          ) : w.url !== null ? (
+            <Link href={w.url} target="_blank" rel="noopener noreferrer">
+              {w.url}
+              <Link.ExternalIcon />
+            </Link>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** The Overview's details: what is installed, where it serves, its health and build. */
 function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
   const vars = Object.entries(install.vars);
@@ -652,6 +679,11 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
               "Not serving yet"
             )}
           </DescriptionItem>
+          {install.otherWorkers.length > 0 && install.status !== "uninstalled" && (
+            <DescriptionItem label="Other Workers">
+              <OtherWorkers workers={install.otherWorkers} />
+            </DescriptionItem>
+          )}
           {(install.status === "installed" || install.status === "updating") && (
             <DescriptionItem label="Health">
               <InstallHealth

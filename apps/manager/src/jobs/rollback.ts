@@ -22,6 +22,7 @@ import { appBaseUrl, domainHostnames } from "../installs/workers-dev";
 import { mergedWorkerVersions, parseWorkerVersions, storedOtherWorkers } from "./entry-workers";
 import {
   deployOtherWorkerVersionPhase,
+  otherWorkerRoutePhase,
   setOtherWorkerCronsPhase,
 } from "./install/entry-worker-phases";
 import { healthCheckOfManifest, healthLabel } from "./install/health";
@@ -339,6 +340,10 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           return {
             scriptName,
             versionId,
+            // Whether the snapshot's version and the serving one keep the
+            // Worker on workers.dev; null when the snapshot's is not known.
+            workersDev: then?.workersDev ?? null,
+            workersDevNow: now?.workersDev ?? true,
             crons: then?.manifest.worker.crons ?? null,
             cronsNow: now?.manifest.worker.crons ?? [],
             consumers:
@@ -402,7 +407,24 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     // kept; the primary Worker last. A snapshot taken before other Workers
     // were recorded has none.
     const otherWorkers = started.otherWorkers ?? [];
+    // Looked up once, when first needed.
+    let knownSubdomain: string | undefined;
+    const subdomainOf = async () => {
+      knownSubdomain ??= await lookupSubdomainPhase(steps);
+      return knownSubdomain;
+    };
     for (const other of otherWorkers) {
+      // A Worker the snapshot's version keeps off workers.dev goes off it
+      // before that version serves; one it puts back on, after (below).
+      // Absent in a job started before the flag existed.
+      if (other.workersDev === false) {
+        await otherWorkerRoutePhase(
+          steps,
+          params.installId,
+          { primary: false, scriptName: other.scriptName, workersDev: false },
+          await subdomainOf(),
+        );
+      }
       await deployOtherWorkerVersionPhase(
         steps,
         { primary: false, scriptName: other.scriptName },
@@ -532,7 +554,18 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       );
     }
 
-    const subdomain = await lookupSubdomainPhase(steps);
+    for (const other of otherWorkers) {
+      if (other.workersDev === true && other.workersDevNow === false) {
+        await otherWorkerRoutePhase(
+          steps,
+          params.installId,
+          { primary: false, scriptName: other.scriptName, workersDev: true },
+          await subdomainOf(),
+        );
+      }
+    }
+
+    const subdomain = await subdomainOf();
     const url = `${appBaseUrl({ workerName, subdomain, workersDev: started.workersDev, domains: started.domains, served: started.servedDomain })}${started.healthPath}`;
     // Recorded rather than fatal: the snapshot's version already serves. A
     // job started before health modes existed has none recorded.

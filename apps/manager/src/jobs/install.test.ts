@@ -2063,6 +2063,41 @@ describe("install job, an app of several Workers", () => {
     expect(r.fake.state.others["cut-hooks"]?.secrets).toEqual({ ADMIN_PASSWORD: PASSWORD });
   });
 
+  it("keeps a Worker off workers.dev when its entry says so", async () => {
+    const options = twoWorkers();
+    const jobsWorker = options.otherWorkers?.[0];
+    if (jobsWorker === undefined) throw new Error("no jobs Worker");
+    const r = await install(
+      {
+        ...options,
+        otherWorkers: [{ ...jobsWorker, workersDev: false }],
+        catalog: { ...options.catalog, vars: [] },
+        bindings: (options.bindings ?? []).filter((b) => b.name !== "JOBS_URL"),
+      },
+      {},
+      secrets,
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const jobs = r.fake.state.others["cut-jobs"];
+    expect(jobs?.subdomain).toEqual({ enabled: false, previews_enabled: false });
+    expect(jobs?.secrets).toEqual({ SHARED_KEY: "shared" });
+    const calls = r.fake.state.calls;
+    expect(calls.indexOf("POST /workers/scripts/cut-jobs/subdomain")).toBeGreaterThan(
+      calls.indexOf("PUT /workers/scripts/cut-jobs"),
+    );
+    expect(calls.indexOf("POST /workers/scripts/cut-jobs/subdomain")).toBeLessThan(
+      calls.indexOf("PUT /workers/scripts/cut-jobs/secrets"),
+    );
+    // The primary Worker keeps its address; only it is recorded as one.
+    expect(r.fake.state.subdomainEnabled).toEqual({ enabled: true, previews_enabled: true });
+    expect(r.resources.filter((row) => row.kind === "subdomain").map((row) => row.name)).toEqual([
+      "cut.appflare-dev.workers.dev",
+    ]);
+    expect(r.step.names).toContain('turn off workers.dev route (Worker "cut-jobs")');
+    expect(r.step.names).not.toContain('enable workers.dev route (Worker "cut-jobs")');
+  });
+
   it("refuses more Workers than the free plan's request budget allows, before creating anything", async () => {
     const r = await install({
       otherWorkers: [{ name: "a" }, { name: "b" }, { name: "c" }],

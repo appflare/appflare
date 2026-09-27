@@ -843,6 +843,10 @@
                 "type": "boolean",
                 "const": true,
                 "description": "The Worker that answers the app's address and its health check. Exactly one Worker is primary, and its `wranglerConfig` is `install.wranglerConfig`."
+              },
+              "workersDev": {
+                "type": "boolean",
+                "description": "Whether this Worker answers on its workers.dev URL (on unless set to `false`). Set `false` for a Worker only the entry's other Workers call, through a service binding or a Durable Object binding, and that must not be reachable from the internet (for example one that trusts identity headers set by the primary Worker). It then has no public URL and no version previews, and updates skip its preview check. The primary Worker always keeps its workers.dev URL: it is the app's address and health check until a custom domain takes over."
               }
             },
             "required": [

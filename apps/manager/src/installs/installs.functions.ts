@@ -44,6 +44,7 @@ import { displayNameInput, installLabel } from "./display-name";
 import { RenameInstallError, renameInstallCore } from "./display-name.server";
 import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
 import { startInstallInput } from "./install-input";
+import { type OtherWorkerView, otherWorkerViews } from "./other-workers";
 import { renderPostInstall, workersDevUrl } from "./post-install";
 import { isDeleteRetainedJob } from "./removed-apps.server";
 import {
@@ -369,6 +370,8 @@ export interface InstallDetail extends InstallRow {
   workersDevChoice: WorkersDevChoice;
   /** `https://<worker>.<subdomain>.workers.dev`, whether or not it is on; null when the subdomain is unknown. */
   workersDevUrl: string | null;
+  /** An app of several Workers: the Workers besides the install's own; empty otherwise. */
+  otherWorkers: OtherWorkerView[];
   /** The install's automatic-update choice. */
   autoUpdate: AutoUpdateChoice;
   /** The catalog version automatic updates left for an admin, if any. */
@@ -462,6 +465,7 @@ export const getInstall = createServerFn({ method: "GET" })
     let postInstall: string[] = [];
     let tokenPermissions: TokenPermission[] = [];
     let entryWorkers: EntryWorkerPlaceholders | undefined;
+    let otherWorkers: OtherWorkerView[] = [];
     const installerCatalog =
       row.build_kind === "self-deploying" ? recordedCatalog(row.manifest_json) : null;
     if (installerCatalog !== null) {
@@ -483,6 +487,7 @@ export const getInstall = createServerFn({ method: "GET" })
         name = manifest.catalog.name;
         // An app of several Workers: `{{workerUrl:<name>}}` names one of them.
         entryWorkers = entryPlaceholderValues(manifest.catalog, row.worker_name, sub, primaryUrl);
+        otherWorkers = otherWorkerViews(manifest, row.worker_name, sub);
         const entry = entryWorkers;
         postInstall = manifest.catalog.postInstall.map((p) =>
           renderPostInstall(p.content, placeholders, entry),
@@ -531,6 +536,7 @@ export const getInstall = createServerFn({ method: "GET" })
       workersDevNote: workersDevNoteOf(row, addressDomains),
       workersDevChoice: row.workers_dev_choice,
       workersDevUrl: workerUrl,
+      otherWorkers,
       autoUpdate: row.auto_update,
       autoUpdateDefault: autoUpdateDefaults.apps,
       autoUpdateWaiting: row.auto_update_waiting,

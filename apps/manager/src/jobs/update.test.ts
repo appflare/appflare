@@ -1439,14 +1439,21 @@ describe("update job, an app of several Workers", () => {
   });
 
   type Exports = NonNullable<ArtifactManifest["worker"]["exports"]>;
-  /** The app with the `jobs` Worker given these exports. */
+  /** The app with the `jobs` Worker given these exports, and kept off workers.dev when `workersDev` is false. */
   const withJobsExports = (
     options: ArtifactFixtureOptions,
     exports: Exports | undefined,
+    workersDev?: boolean,
   ): ArtifactFixtureOptions => ({
     ...options,
     otherWorkers: (options.otherWorkers ?? []).map((w) =>
-      w.name === "jobs" && exports !== undefined ? { ...w, exports } : w,
+      w.name === "jobs"
+        ? {
+            ...w,
+            ...(exports === undefined ? {} : { exports }),
+            ...(workersDev === undefined ? {} : { workersDev }),
+          }
+        : w,
     ),
   });
 
@@ -1456,9 +1463,11 @@ describe("update job, an app of several Workers", () => {
     jobsWorld: Partial<FakeAccount> = {},
     /** The `jobs` Worker's exports in the installed and in the new version. */
     exports: { installed?: Exports; next?: Exports } = {},
+    /** Whether the installed and the new version keep the `jobs` Worker on workers.dev. */
+    workersDev: { installed?: boolean; next?: boolean } = {},
   ) {
     const old = await buildArtifactFixture({
-      ...withJobsExports(app("1.0.0", ["*/5 * * * *"]), exports.installed),
+      ...withJobsExports(app("1.0.0", ["*/5 * * * *"]), exports.installed, workersDev.installed),
       version: "1.0.0",
     });
     const jobs = fakeAccount(null, {
@@ -1467,7 +1476,7 @@ describe("update job, an app of several Workers", () => {
       ...jobsWorld,
     });
     const r = await update(
-      withJobsExports(app("1.1.0", ["*/15 * * * *"]), exports.next),
+      withJobsExports(app("1.1.0", ["*/15 * * * *"]), exports.next, workersDev.next),
       world,
       {
         manifestJson: JSON.stringify(old.manifest),
@@ -1580,6 +1589,65 @@ describe("update job, an app of several Workers", () => {
     expect(r.jobs.state.deployments).toHaveLength(1);
     expect(r.fake.state.deployments).toHaveLength(1);
     expect(r.install?.catalog_version).toBe("1.0.0");
+  });
+
+  it("takes a Worker the new version keeps private off workers.dev before uploading it", async () => {
+    const r = await updateBoth({}, {}, {}, { next: false });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    // Off with its previews, before any of its uploads; never turned back on.
+    expect(r.jobs.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: false }]);
+    const calls = r.jobs.state.calls;
+    expect(calls.indexOf("POST /workers/scripts/cut-jobs/subdomain")).toBeLessThan(
+      calls.indexOf("POST /workers/scripts/cut-jobs/versions"),
+    );
+    // No preview check; the version is still promoted before the primary one.
+    expect(r.jobs.state.previewHosts).toEqual([]);
+    expect(r.step.names).toContain('skip canary (Worker "cut-jobs")');
+    expect(r.jobs.state.deployments[0]?.versions[0]?.version_id).toBe(NEW_VERSION);
+    const route = r.resources.find((row) => row.name === "cut-jobs.appflare-dev.workers.dev");
+    expect(route?.deleted_at).not.toBeNull();
+  });
+
+  it("puts a Worker taken off workers.dev back on it when the update fails before promotion", async () => {
+    const r = await updateBoth(
+      { previews: [{ status: 500, body: "boom" }] },
+      {},
+      {},
+      { next: false },
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^canary check \d+:/);
+    expect(r.fake.state.deployments).toHaveLength(1);
+    // Off before its upload, back on once the job fails: the serving version wants it.
+    expect(r.jobs.state.subdomainCalls).toEqual([
+      { enabled: false, previews_enabled: false },
+      { enabled: true, previews_enabled: true },
+    ]);
+    const route = r.resources.find((row) => row.name === "cut-jobs.appflare-dev.workers.dev");
+    expect(route?.deleted_at).toBeNull();
+  });
+
+  it("keeps a private Worker off workers.dev on every update", async () => {
+    const r = await updateBoth({}, {}, {}, { installed: false, next: false });
+    expect(r.error).toBeNull();
+    expect(r.jobs.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: false }]);
+    expect(r.jobs.state.previewHosts).toEqual([]);
+  });
+
+  it("puts a Worker back on workers.dev only once the version that wants it serves", async () => {
+    const r = await updateBoth({}, {}, {}, { installed: false, next: true });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    // No preview check: turning previews on would put the serving version on its URL.
+    expect(r.jobs.state.previewHosts).toEqual([]);
+    expect(r.jobs.state.subdomainCalls).toEqual([{ enabled: true, previews_enabled: true }]);
+    const order = r.step.names;
+    expect(order.indexOf('enable workers.dev route (Worker "cut-jobs")')).toBeGreaterThan(
+      order.indexOf("promote version"),
+    );
+    const route = r.resources.find((row) => row.name === "cut-jobs.appflare-dev.workers.dev");
+    expect(route?.deleted_at).toBeNull();
   });
 
   it("refuses a version that adds a Worker, before snapshotting", async () => {

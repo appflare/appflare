@@ -140,7 +140,9 @@ Some apps install as several Workers, for example a web front end and an API. On
 them is the app: it runs under the Worker name you choose, serves the app's address
 and any custom or external domain, and answers the health check. Every other Worker
 runs as `<worker-name>-<name>` on its own `workers.dev` address; an app installed as
-`notes` with an `api` Worker also gets `notes-api`.
+`notes` with an `api` Worker also gets `notes-api`. A Worker that only the app's other
+Workers call can be kept off `workers.dev` by its catalog entry: it then has no
+address at all and is not reachable from the internet.
 
 On Workers Free an app may have at most three Workers: each one adds requests
 to the install job, which the free plan limits to 50, so the manager refuses a
@@ -154,10 +156,13 @@ The install job creates the app's resources first, one for each binding name: tw
 Workers that bind `DB` share one D1 database. It then deploys the Workers one at a
 time, each after the Workers it binds to, with the app's own Worker as late as
 possible. Each gets its own static assets, secrets, cron triggers, queue consumers,
-and `workers.dev` address. D1 migrations run once all of them are deployed, and the
+and `workers.dev` address, except a Worker kept off `workers.dev`, whose address and
+version previews stay off. D1 migrations run once all of them are deployed, and the
 health check requests the app's own Worker.
 
-The app's page lists each Worker under its resources. [Updates and
+The app's page lists the other Workers under Details, each with its address or a
+note that it is not reachable from the internet, and each Worker under its
+resources. [Updates and
 rollbacks](/guides/updates/#apps-of-several-workers), [settings
 changes](/guides/settings/), and [uninstalling](/guides/uninstall/) always cover
 every Worker of the app.

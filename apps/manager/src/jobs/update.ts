@@ -42,6 +42,7 @@ import {
   deployOtherWorkerVersionPhase,
   type EntryUploadContext,
   type OtherWorkerUpdate,
+  otherWorkerRoutePhase,
   planEntryQueueConsumers,
   prepareOtherWorkerPhase,
   promoteOtherWorkerPhase,
@@ -252,6 +253,13 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   const promotedVersions: Record<string, string> = {};
   /** The version each other Worker served when the snapshot was taken. */
   let snapshotOthers: Record<string, string> | null = null;
+  /**
+   * Other Workers the serving version keeps on workers.dev that this version
+   * takes off it, before their uploads: a failure before promotion puts their
+   * addresses back. With the account's subdomain, for their route records.
+   */
+  const takenOffWorkersDev: string[] = [];
+  let routeSubdomain: string | null = null;
   /** The catalog version installed before the job, for the annotation of a return. */
   let previousVersion = "the previous version";
   /**
@@ -380,6 +388,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         // An app of several Workers: what the installed version's other Workers have.
         previousOthers: storedOtherWorkers(install.manifest_json, install.worker_name).map((w) => ({
           scriptName: w.scriptName,
+          workersDev: w.workersDev,
           doTag: appliedDurableObjectTag(w.manifest.worker),
           exports: w.manifest.worker.exports,
           crons: w.manifest.worker.crons,
@@ -784,11 +793,17 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       entryNames,
     };
     const otherUpdates: OtherWorkerUpdate[] = [];
+    routeSubdomain = subdomain;
     for (const w of others) {
+      if (!w.workersDev && previousOf(w.scriptName)?.workersDev !== false) {
+        takenOffWorkersDev.push(w.scriptName);
+      }
       const update = await prepareOtherWorkerPhase(steps, step, entryContext, w, {
         appliedDoTag: previousOf(w.scriptName)?.doTag ?? null,
         servingExports: previousOf(w.scriptName)?.exports,
         newSecrets: secretValues,
+        // A step output recorded before the flag existed: every Worker was on workers.dev.
+        wasOnWorkersDev: previousOf(w.scriptName)?.workersDev !== false,
         slug: started.slug,
         version: params.version,
         jobId: params.jobId,
@@ -987,6 +1002,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         previousOf(w.scriptName)?.crons ?? [],
       );
     }
+    // A Worker the installed version kept off workers.dev and this one puts
+    // on it gets its URL now that the new version serves. The other way round
+    // was done before its upload (`prepareOtherWorkerPhase`).
+    for (const w of others) {
+      if (w.workersDev && previousOf(w.scriptName)?.workersDev === false) {
+        await otherWorkerRoutePhase(steps, params.installId, w, subdomain);
+      }
+    }
 
     // Hyperdrive configurations a settings change superseded are bound only
     // by versions before this update's snapshot, which is the latest now.
@@ -1127,6 +1150,26 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }
       othersRecord = record;
     }
+    // A Worker taken off workers.dev for this version gets its address back
+    // while the version that wants it serves again (every Worker but those
+    // whose return to the snapshot's version failed).
+    const offSubdomain = routeSubdomain;
+    const routesBack: string[] = [];
+    if (!wasPromoted && offSubdomain !== null) {
+      for (const name of takenOffWorkersDev) {
+        if (othersPromoted.includes(name)) continue;
+        try {
+          await otherWorkerRoutePhase(
+            steps,
+            params.installId,
+            { primary: false, scriptName: name, workersDev: true },
+            offSubdomain,
+          );
+        } catch {
+          routesBack.push(name);
+        }
+      }
+    }
     const othersRecordJson = othersRecord === null ? null : JSON.stringify(othersRecord);
     await step.do("mark update failed", async () => {
       const orm = createDb(env.DB);
@@ -1163,6 +1206,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         log.error(
           `The app's Workers ${othersPromoted.map((n) => `"${n}"`).join(", ")} may still serve the new version while the primary Worker serves the previous one. Roll back to this update's snapshot from the install page, or retry the update.`,
           { promoted: othersPromoted },
+        );
+      }
+      if (routesBack.length > 0) {
+        log.error(
+          `Appflare could not turn the workers.dev URL of ${routesBack.map((n) => `"${n}"`).join(", ")} back on for the version it serves; retry the update, or roll back to this update's snapshot.`,
+          { routesBack },
         );
       }
       if (othersBack.length > 0) {

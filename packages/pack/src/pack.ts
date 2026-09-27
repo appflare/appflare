@@ -762,7 +762,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // (i) Assemble + validate the manifest in the oldest format that carries it
   // (`artifactFormatFor`): 1 for one Worker, 2 for several (the primary
   // Worker as `worker`, the others in `workers`), 3 once it has D1 files
-  // older managers would skip.
+  // older managers would skip, 4 once the entry keeps a Worker off workers.dev.
   const primarySection = sections[0];
   if (primarySection === undefined) {
     throw new Error("internal error: no Worker was packed");

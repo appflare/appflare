@@ -682,8 +682,8 @@ export const artifactEntryWorkerSchema = z.object({
 export type ArtifactEntryWorker = z.infer<typeof artifactEntryWorkerSchema>;
 
 /** The artifact formats this version reads: 1 to {@link LATEST_ARTIFACT_FORMAT}. */
-export const LATEST_ARTIFACT_FORMAT = 3;
-export type ArtifactFormat = 1 | 2 | 3;
+export const LATEST_ARTIFACT_FORMAT = 4;
+export type ArtifactFormat = 1 | 2 | 3 | 4;
 
 /** What decides an artifact's format, as a packer knows it before writing one. */
 /** What of one Worker decides an artifact's format. */
@@ -699,6 +699,14 @@ export interface ArtifactFormatFacts {
   workers?: ReadonlyArray<{ worker?: WorkerFormatFacts | undefined }> | undefined;
   d1Schema?: Record<string, readonly unknown[]> | undefined;
   d1PostDeploy?: Record<string, readonly unknown[]> | undefined;
+  /** The catalog manifest: a Worker it keeps off workers.dev needs format 4. */
+  catalog?:
+    | {
+        install: {
+          workers?: ReadonlyArray<{ workersDev?: boolean | undefined }> | undefined;
+        };
+      }
+    | undefined;
 }
 
 /**
@@ -706,6 +714,10 @@ export interface ArtifactFormatFacts {
  * install it correctly reads it and every older one refuses it rather than
  * install it without what it does not know:
  *
+ * - 4: its catalog manifest keeps a Worker off workers.dev
+ *   (`install.workers[].workersDev: false`), which a manager that reads only
+ *   formats 1 to 3 would not know and would put on its workers.dev URL,
+ *   reachable from the internet;
  * - 3: it carries D1 schema files or post-deploy migrations (`d1Schema`,
  *   `d1PostDeploy`), which a manager that reads only formats 1 and 2 would
  *   drop without a word, leaving the app without its tables; or a Worker
@@ -724,6 +736,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
     w !== undefined &&
     ((w.exports !== undefined && Object.keys(w.exports).length > 0) ||
       w.cacheOptions !== undefined);
+  if (facts.catalog?.install.workers?.some((w) => w.workersDev === false) === true) return 4;
   if (has(facts.d1Schema) || has(facts.d1PostDeploy)) return 3;
   if (workerNeeds3(facts.worker) || (facts.workers ?? []).some((w) => workerNeeds3(w.worker))) {
     return 3;
@@ -736,7 +749,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
 function formatProblem(manifest: ArtifactFormatFacts & { format: number }): string | null {
   const needed = artifactFormatFor(manifest);
   if (needed <= manifest.format) return null;
-  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block); a manager that reads only format ${manifest.format} would install it without them`;
+  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev); a manager that reads only format ${manifest.format} would install it without them`;
 }
 
 /**
@@ -753,7 +766,7 @@ function singleWorkerProblems(manifest: {
     problems.push({
       path: ["format"],
       message:
-        "the catalog manifest declares several Workers (install.workers), so the artifact must be format 2 (or 3) with a workers list",
+        "the catalog manifest declares several Workers (install.workers), so the artifact must be format 2 or later with a workers list",
     });
   }
   for (const binding of manifest.worker.bindings) {
@@ -831,14 +844,18 @@ export const artifactManifestV2Schema = z
  * An artifact that carries what managers reading formats 1 and 2 would skip
  * (see {@link artifactFormatFor}): one Worker, or several with `workers` as
  * in format 2. Those managers refuse it, since their schema knows no format 3.
+ * Format 4 has the same shape; managers that read only formats 1 to 3 refuse
+ * it in the same way.
  */
 export const artifactManifestV3Schema = z
   .object({
-    format: z.literal(3),
+    format: z.literal([3, 4]),
     ...artifactManifestFields,
     workers: z.array(artifactEntryWorkerSchema).min(1).optional(),
   })
   .superRefine((manifest, ctx) => {
+    const format = formatProblem(manifest);
+    if (format !== null) ctx.addIssue({ code: "custom", path: ["format"], message: format });
     for (const message of artifactD1Problems(manifest)) {
       ctx.addIssue({ code: "custom", path: ["d1Migrations"], message });
     }
@@ -858,7 +875,8 @@ export const artifactManifestV3Schema = z
 
 /**
  * The full artifact manifest, `manifest.json`: format 1 (one Worker), 2
- * (several), or 3 (either, with D1 files older managers do not know).
+ * (several), 3 (either, with D1 files older managers do not know), or 4 (as
+ * 3, with a Worker kept off workers.dev).
  */
 export const artifactManifestSchema = z.discriminatedUnion("format", [
   artifactManifestV1Schema,

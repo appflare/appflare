@@ -441,5 +441,62 @@ describe("rollback job, an app of several Workers", () => {
     expect(r.fake.state.deployments[0]?.versions).toEqual([
       { version_id: OLD_VERSION, percentage: 100 },
     ]);
+    // Both versions keep it on workers.dev: its address is left alone.
+    expect(jobs.state.subdomainCalls).toEqual([]);
+  });
+
+  /** Rolls back from a version with `jobs` on workers.dev as `now` says to one as `then` says. */
+  async function rollbackAcross(then: boolean, now: boolean) {
+    const jobsWorker = (workersDev: boolean) => ({
+      name: "jobs",
+      bindings: [{ type: "kv_namespace", name: "CUT_KV" }],
+      ...(workersDev ? {} : { workersDev }),
+    });
+    const before = await buildArtifactFixture({ otherWorkers: [jobsWorker(then)] });
+    const after = await buildArtifactFixture({
+      version: "1.1.0",
+      otherWorkers: [jobsWorker(now)],
+    });
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?1 WHERE id = ?2")
+      .bind(JSON.stringify(after.manifest), INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "UPDATE snapshots SET manifest_json = ?1, worker_versions_json = ?2 WHERE id = 'upd1'",
+    )
+      .bind(JSON.stringify(before.manifest), JSON.stringify({ "cut-jobs": JOBS_OLD }))
+      .run();
+    const jobs = fakeAccount(null, {
+      worker: "cut-jobs",
+      deployments: [
+        { id: "dep-j2", versions: [{ version_id: JOBS_NEW, percentage: 100 }] },
+        { id: "dep-j1", versions: [{ version_id: JOBS_OLD, percentage: 100 }] },
+      ],
+    });
+    const r = await rollback(
+      {},
+      (fake) => async (input, init) =>
+        (input.includes("/workers/scripts/cut-jobs") ? jobs : fake).fetch(input, init),
+    );
+    return { ...r, jobs };
+  }
+
+  it("takes a Worker off workers.dev before the snapshot version that keeps it private serves", async () => {
+    const r = await rollbackAcross(false, true);
+    expect(r.error).toBeNull();
+    expect(r.jobs.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: false }]);
+    const names = r.step.names;
+    expect(names.indexOf('turn off workers.dev route (Worker "cut-jobs")')).toBeLessThan(
+      names.indexOf('deploy snapshot version (Worker "cut-jobs")'),
+    );
+  });
+
+  it("puts a Worker back on workers.dev once the snapshot version that wants it serves", async () => {
+    const r = await rollbackAcross(true, false);
+    expect(r.error).toBeNull();
+    expect(r.jobs.state.subdomainCalls).toEqual([{ enabled: true, previews_enabled: true }]);
+    const names = r.step.names;
+    expect(names.indexOf('enable workers.dev route (Worker "cut-jobs")')).toBeGreaterThan(
+      names.indexOf('deploy snapshot version (Worker "cut-jobs")'),
+    );
   });
 });

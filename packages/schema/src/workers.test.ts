@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type ArtifactManifest,
+  artifactFormatFor,
   artifactManifestSchema,
   isEntryServiceBinding,
   serviceBindingProblem,
@@ -11,8 +12,10 @@ import {
   appWorkers,
   appWorkersInDeployOrder,
   combinedWorkerFacts,
+  entryPlaceholderValues,
   entryScriptName,
   entryScriptNames,
+  entryWorkerOnWorkersDev,
   entryWorkerOrder,
   entryWorkerRef,
   entryWorkerRefName,
@@ -506,5 +509,99 @@ describe("installed names, targets and placeholders", () => {
   it("combines every Worker's bindings for what the app uses", () => {
     const facts = combinedWorkerFacts(parsed(artifact()));
     expect(facts.bindings.filter((b) => b.type === "d1")).toHaveLength(2);
+  });
+});
+
+describe("a Worker kept off workers.dev", () => {
+  const privateWorkers = [
+    { name: "app", wranglerConfig: "packages/api/wrangler.jsonc", primary: true },
+    {
+      name: "content",
+      wranglerConfig: "packages/api/wrangler.content.jsonc",
+      workersDev: false,
+    },
+  ];
+
+  it("keeps every Worker on workers.dev unless it says otherwise", () => {
+    const manifest = parsed(artifact());
+    expect(appWorkers(manifest).map((w) => w.workersDev)).toEqual([true, true]);
+    expect(entryWorkerOnWorkersDev(manifest.catalog, "content")).toBe(true);
+    expect(entryWorkerOnWorkersDev(manifest.catalog, null)).toBe(true);
+  });
+
+  it("reads workersDev: false on a Worker other than the primary", () => {
+    const manifest = parsed(artifact({ format: 4, catalog: catalog({ workers: privateWorkers }) }));
+    expect(appWorkers(manifest).map((w) => [w.name, w.workersDev])).toEqual([
+      ["app", true],
+      ["content", false],
+    ]);
+  });
+
+  it("refuses workersDev: false on the primary Worker", () => {
+    const result = catalogManifestSchema.safeParse(
+      catalog({
+        workers: [
+          {
+            name: "app",
+            wranglerConfig: "packages/api/wrangler.jsonc",
+            primary: true,
+            workersDev: false,
+          },
+          { name: "content", wranglerConfig: "packages/api/wrangler.content.jsonc" },
+        ],
+      }),
+    );
+    expect(result.error?.issues).toEqual([
+      expect.objectContaining({
+        path: ["install", "workers", 0, "workersDev"],
+        message: expect.stringContaining("the primary Worker cannot turn workersDev off"),
+      }),
+    ]);
+  });
+
+  it("refuses {{workerUrl:<name>}} of a Worker without a URL", () => {
+    const result = catalogManifestSchema.safeParse(
+      catalog(
+        { workers: privateWorkers },
+        {
+          vars: [{ name: "CONTENT_URL", label: "Content URL", default: "{{workerUrl:content}}" }],
+          postInstall: [{ type: "markdown", content: "Files at {{ workerUrl:content }}/f." }],
+        },
+      ),
+    );
+    expect(result.error?.issues.map((i) => i.path)).toEqual([
+      ["postInstall", 0, "content"],
+      ["vars", 0, "default"],
+    ]);
+    const named = catalogManifestSchema.safeParse(
+      catalog(
+        { workers: privateWorkers },
+        { postInstall: [{ type: "markdown", content: "{{workerName:content}} is private." }] },
+      ),
+    );
+    expect(named.success).toBe(true);
+  });
+
+  it("gives such a Worker no URL for placeholders", () => {
+    const manifest = parsed(artifact({ format: 4, catalog: catalog({ workers: privateWorkers }) }));
+    expect(entryPlaceholderValues(manifest.catalog, "team", "acme")).toEqual({
+      app: { workerName: "team", workerUrl: "https://team.acme.workers.dev" },
+      content: { workerName: "team-content", workerUrl: null },
+    });
+  });
+
+  it("needs artifact format 4, which older managers refuse", () => {
+    const withPrivate = catalog({ workers: privateWorkers });
+    expect(
+      artifactFormatFor({ workers: [{}], catalog: catalogManifestSchema.parse(withPrivate) }),
+    ).toBe(4);
+    expect(
+      artifactFormatFor({ workers: [{}], catalog: catalogManifestSchema.parse(catalog()) }),
+    ).toBe(2);
+    for (const format of [2, 3]) {
+      const result = artifactManifestSchema.safeParse(artifact({ format, catalog: withPrivate }));
+      expect(JSON.stringify(result.error?.issues)).toContain("needs format 4");
+    }
+    expect(parsed(artifact({ format: 4, catalog: withPrivate })).format).toBe(4);
   });
 });

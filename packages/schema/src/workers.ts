@@ -33,8 +33,29 @@ export interface AppWorker {
   /** The Worker's name within the entry (`install.workers[].name`); `null` for a one-Worker app. */
   name: string | null;
   primary: boolean;
+  /**
+   * Whether it answers on its workers.dev URL (`entryWorkerOnWorkersDev`).
+   * For the primary Worker, whether it may: the install's own setting decides.
+   */
+  workersDev: boolean;
   worker: ArtifactWorker;
   assets: ArtifactAssets;
+}
+
+/**
+ * Whether the entry Worker `name` answers on its workers.dev URL: every
+ * Worker does unless its `install.workers[].workersDev` is false, which the
+ * catalog schema allows only for a Worker other than the primary one. Such a
+ * Worker is reached only through the bindings of the entry's other Workers,
+ * so its workers.dev URL and version previews stay off.
+ */
+export function entryWorkerOnWorkersDev(
+  catalog: { install: Pick<CatalogManifest["install"], "workers"> },
+  name: string | null,
+): boolean {
+  if (name === null) return true;
+  const declared = catalog.install.workers?.find((w) => w.name === name);
+  return declared === undefined || declared.primary === true || declared.workersDev !== false;
 }
 
 /** Lowercase letters, digits and inner hyphens, as `ENTRY_WORKER_NAME_PATTERN` in catalog.ts. */
@@ -105,6 +126,7 @@ export function appWorkers(manifest: ArtifactManifest): AppWorker[] {
   const primary: AppWorker = {
     name: primaryEntryWorkerName(manifest.catalog),
     primary: true,
+    workersDev: true,
     worker: manifest.worker,
     assets: manifest.assets,
   };
@@ -113,6 +135,7 @@ export function appWorkers(manifest: ArtifactManifest): AppWorker[] {
     ...secondaryWorkers(manifest).map((w) => ({
       name: w.name,
       primary: false,
+      workersDev: entryWorkerOnWorkersDev(manifest.catalog, w.name),
       worker: w.worker,
       assets: w.assets,
     })),
@@ -268,9 +291,10 @@ export type EntryWorkerPlaceholders = Readonly<
 /**
  * What `{{workerUrl:<name>}}` and `{{workerName:<name>}}` become for an
  * install under `installWorkerName`: each Worker's installed name and its
- * workers.dev URL (null while the account's subdomain is unknown). The
- * primary Worker's URL is `appUrl` when given (the app's address, as
- * `{{workerUrl}}` is). Undefined for an app of one Worker.
+ * workers.dev URL (null while the account's subdomain is unknown, and for a
+ * Worker kept off workers.dev, which has none). The primary Worker's URL is
+ * `appUrl` when given (the app's address, as `{{workerUrl}}` is). Undefined
+ * for an app of one Worker.
  */
 export function entryPlaceholderValues(
   catalog: Pick<CatalogManifest, "install">,
@@ -284,7 +308,10 @@ export function entryPlaceholderValues(
   for (const w of declared) {
     const primary = w.primary === true;
     const scriptName = entryScriptName(installWorkerName, w.name, primary);
-    const workersDev = subdomain ? `https://${scriptName}.${subdomain}.workers.dev` : null;
+    const workersDev =
+      subdomain && entryWorkerOnWorkersDev(catalog, w.name)
+        ? `https://${scriptName}.${subdomain}.workers.dev`
+        : null;
     values[w.name] = {
       workerName: scriptName,
       workerUrl: primary && appUrl != null ? appUrl : workersDev,

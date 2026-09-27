@@ -200,6 +200,22 @@ export const catalogEntryWorkerSchema = z
           "is primary, and its `wranglerConfig` is `install.wranglerConfig`.",
       )
       .optional(),
+    /**
+     * Whether the Worker answers on its workers.dev URL. On unless set to
+     * false; only a Worker other than the primary may turn it off.
+     */
+    workersDev: z
+      .boolean()
+      .describe(
+        "Whether this Worker answers on its workers.dev URL (on unless set to `false`). Set " +
+          "`false` for a Worker only the entry's other Workers call, through a service binding " +
+          "or a Durable Object binding, and that must not be reachable from the internet (for " +
+          "example one that trusts identity headers set by the primary Worker). It then has no " +
+          "public URL and no version previews, and updates skip its preview check. The primary " +
+          "Worker always keeps its workers.dev URL: it is the app's address and health check " +
+          "until a custom domain takes over.",
+      )
+      .optional(),
   })
   .describe("One Worker of an entry that installs as several Workers.");
 export type CatalogEntryWorker = z.infer<typeof catalogEntryWorkerSchema>;
@@ -244,6 +260,13 @@ export function entryWorkersProblems(install: {
   const names = new Set<string>();
   const configs = new Set<string>();
   workers.forEach((w, i) => {
+    if (w.primary === true && w.workersDev === false) {
+      problems.push({
+        path: ["workers", i, "workersDev"],
+        message:
+          "the primary Worker cannot turn workersDev off: its workers.dev URL is the app's address, health check and Open link until the admin adds a custom domain, which then turns it off",
+      });
+    }
     if (names.has(w.name)) {
       problems.push({ path: ["workers", i, "name"], message: `two Workers are named "${w.name}"` });
     }
@@ -1685,6 +1708,29 @@ export const catalogManifestSchema = z
     };
     check("secrets", manifest.secrets);
     check("vars", manifest.vars);
+    // `{{workerUrl:<name>}}` of a Worker kept off workers.dev names a URL
+    // that never answers.
+    const offWorkersDev = (declared ?? []).filter((w) => w.workersDev === false).map((w) => w.name);
+    const texts: Array<{ path: Array<string | number>; text: string }> = [
+      ...manifest.postInstall.map((step, i) => ({
+        path: ["postInstall", i, "content"],
+        text: step.content,
+      })),
+      ...manifest.vars.flatMap((v, i) =>
+        typeof v.default === "string" ? [{ path: ["vars", i, "default"], text: v.default }] : [],
+      ),
+    ];
+    for (const { path, text } of texts) {
+      for (const name of offWorkersDev) {
+        if (new RegExp(`\\{\\{\\s*workerUrl:${name}\\s*\\}\\}`).test(text)) {
+          ctx.addIssue({
+            code: "custom",
+            path,
+            message: `{{workerUrl:${name}}} names the Worker "${name}", which sets workersDev to false and so has no URL`,
+          });
+        }
+      }
+    }
   })
   .superRefine((manifest, ctx) => {
     const hyperdrive = manifest.resources?.hyperdrive ?? [];
