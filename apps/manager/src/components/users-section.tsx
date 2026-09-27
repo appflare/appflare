@@ -15,6 +15,7 @@ import {
   CrownSimpleIcon,
   DotsThreeIcon,
   InfoIcon,
+  KeyIcon,
   TrashIcon,
   UserGearIcon,
   UserPlusIcon,
@@ -32,6 +33,7 @@ import {
   type UserRow,
 } from "../server/users.functions";
 import { ConfirmDialog } from "./confirm-dialog";
+import { ResetPasswordDialog } from "./reset-password-dialog";
 import { ResponsiveTable } from "./responsive-table";
 import { Timestamp } from "./timestamp";
 import { readOnlyNote, type UserAction, userActions } from "./user-actions";
@@ -39,17 +41,20 @@ import { readOnlyNote, type UserAction, userActions } from "./user-actions";
 /**
  * Settings, Users and access: the users. `users` is null for members, who
  * see a read-only note. The page puts {@link AddUserDialog} beside the title.
- * The owner gets a menu on every other row (change the role, transfer
- * ownership to an admin, delete); everyone else sees the table read-only.
+ * Admins get "Reset password" on the rows of other users but the owner; the
+ * owner also changes roles, transfers ownership to an admin, and deletes.
  */
 export function UsersSection({
   users,
   viewerId,
   viewerIsOwner,
+  emailReset,
 }: {
   users: UserRow[] | null;
   viewerId: string;
   viewerIsOwner: boolean;
+  /** Password reset emails are on, so a reset can be a link. */
+  emailReset: boolean;
 }) {
   const [picked, setPicked] = useState<{ user: UserRow; action: UserAction } | null>(null);
   const [open, setOpen] = useState(false);
@@ -71,6 +76,8 @@ export function UsersSection({
   }
 
   const owner = users.find((u) => u.isOwner);
+  // Only admins get the list (`users` is null for members).
+  const viewer = { id: viewerId, isAdmin: true, isOwner: viewerIsOwner };
   return (
     <div className="grid gap-3">
       {!viewerIsOwner && (
@@ -85,11 +92,9 @@ export function UsersSection({
             <Table.Head>Name</Table.Head>
             <Table.Head>Role</Table.Head>
             <Table.Head>Created</Table.Head>
-            {viewerIsOwner && (
-              <Table.Head>
-                <span className="sr-only">Actions</span>
-              </Table.Head>
-            )}
+            <Table.Head>
+              <span className="sr-only">Actions</span>
+            </Table.Head>
           </Table.Row>
         </Table.Header>
         <Table.Body>
@@ -114,11 +119,9 @@ export function UsersSection({
               <Table.Cell>
                 <Timestamp iso={u.createdAt} dateOnly />
               </Table.Cell>
-              {viewerIsOwner && (
-                <Table.Cell className="text-right">
-                  <UserRowMenu user={u} actions={userActions(true, u)} onPick={pick} />
-                </Table.Cell>
-              )}
+              <Table.Cell className="text-right">
+                <UserRowMenu user={u} actions={userActions(viewer, u)} onPick={pick} />
+              </Table.Cell>
             </Table.Row>
           ))}
         </Table.Body>
@@ -129,6 +132,7 @@ export function UsersSection({
           action={picked.action}
           open={open}
           onOpenChange={setOpen}
+          emailReset={emailReset}
         />
       )}
     </div>
@@ -137,6 +141,8 @@ export function UsersSection({
 
 function actionLabel(action: UserAction): string {
   switch (action.kind) {
+    case "reset":
+      return "Reset password";
     case "role":
       return action.role === "admin" ? "Make admin" : "Make member";
     case "transfer":
@@ -173,7 +179,9 @@ function UserRowMenu({
           // icon, but renders an element as it is, flush against the label.
           <DropdownMenu.Item
             key={a.kind}
-            icon={a.kind === "transfer" ? CrownSimpleIcon : UserGearIcon}
+            icon={
+              a.kind === "reset" ? KeyIcon : a.kind === "transfer" ? CrownSimpleIcon : UserGearIcon
+            }
             onClick={() => onPick(user, a)}
           >
             {actionLabel(a)}
@@ -208,11 +216,13 @@ function UserActionDialog({
   action,
   open,
   onOpenChange,
+  emailReset,
 }: {
   user: UserRow;
   action: UserAction;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  emailReset: boolean;
 }) {
   const router = useRouter();
   const toasts = useKumoToastManager();
@@ -229,6 +239,15 @@ function UserActionDialog({
 
   const common = { open, onOpenChange, actionLabel: actionLabel(action) };
   switch (action.kind) {
+    case "reset":
+      return (
+        <ResetPasswordDialog
+          user={user}
+          emailReset={emailReset}
+          open={open}
+          onOpenChange={onOpenChange}
+        />
+      );
     case "role": {
       const toAdmin = action.role === "admin";
       return (

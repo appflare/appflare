@@ -14,6 +14,7 @@ export * from "./license";
 export * from "./limits";
 export * from "./pipelines";
 export * from "./random-key";
+export * from "./recovery-code";
 export * from "./repository";
 export * from "./revision";
 export * from "./sandbox";

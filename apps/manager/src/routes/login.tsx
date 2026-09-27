@@ -1,4 +1,4 @@
-import { Button, Input } from "@cloudflare/kumo";
+import { Button, Input, Link, Text } from "@cloudflare/kumo";
 import { FingerprintIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
@@ -76,6 +76,9 @@ function LoginPage() {
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Input label="Email" name="email" type="email" autoComplete="username" required />
           <PasswordInput label="Password" name="password" autoComplete="current-password" />
+          <Text variant="secondary" size="sm" as="p">
+            <Link href="/forgot-password">Forgot your password?</Link>
+          </Text>
           <Button
             type="submit"
             variant="primary"

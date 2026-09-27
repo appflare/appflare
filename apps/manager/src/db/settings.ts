@@ -107,6 +107,24 @@ export const SETTING = {
    * "Deploy to Cloudflare" button, and only until then.
    */
   deployCopyDismissedAt: "deploy_copy_dismissed_at",
+  /**
+   * The address password reset emails come from, set by the owner in
+   * Settings > Users (auth/password-email.server.ts). Reset emails are on
+   * only while this is set and the running Worker has its `AUTH_EMAIL` binding.
+   */
+  passwordResetSender: "password_reset_sender",
+  /**
+   * SHA-256 of the last recovery code from the Cloudflare account that was
+   * used (auth/recovery.server.ts). The Worker secret holding it is deleted
+   * after use, but until the version without it serves everywhere, this is
+   * what keeps the code single use.
+   */
+  recoveryCodeUsed: "recovery_code_used",
+  /**
+   * JSON `{ at, method, userId }`: the last password reset done without the
+   * old password (recovery code or email link), shown on Settings > Users.
+   */
+  lastPasswordRecovery: "last_password_recovery",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

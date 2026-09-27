@@ -32,7 +32,9 @@ Appflare has no email provider, so there are no invitations. Instead:
    discards the password.
 
 People sign in at `/login` with their email and password. Nobody can sign up on their
-own.
+own. Someone who forgets their password resets it from the sign-in page; see
+[Forgot your password](/guides/forgot-password/). The owner can also pick **Reset
+password** in any other user's row menu, and admins in a member's.
 
 ## Change a role or delete a user
 

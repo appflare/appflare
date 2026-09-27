@@ -179,6 +179,23 @@ describe("selfUpdateBindings", () => {
     ]);
   });
 
+  it("keeps the password reset email binding with its sender restriction, without a warning", () => {
+    const authEmail = {
+      type: "send_email",
+      name: "AUTH_EMAIL",
+      allowed_sender_addresses: ["reset@example.com"],
+    };
+    const plan = selfUpdateBindings({
+      current: [...CURRENT, authEmail],
+      manifest: MANIFEST,
+      workerName: "team-apps",
+      newVersion: "0.2.0",
+    });
+    expect(plan.bindings).toContainEqual(authEmail);
+    expect(plan.warnings).toEqual([]);
+    expect(plan.problems).toEqual([]);
+  });
+
   it("adds new bindings that need no resource and refuses ones that do", () => {
     const manifest = {
       ...MANIFEST,

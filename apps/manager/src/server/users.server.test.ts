@@ -17,6 +17,7 @@ import {
   listManagedUsers,
   makeFirstUserOwner,
   OWNER_ONLY_MESSAGE,
+  passwordResetTarget,
   transferOwnership,
   USER_CHANGE_MESSAGES,
   UserChangeError,
@@ -462,5 +463,37 @@ describe("Better Auth's admin endpoints", () => {
       new Request(`${BASE}/api/auth/admin/list-users`, { method: "GET", headers }),
     );
     expect(list.status).toBe(200);
+  });
+});
+
+describe("passwordResetTarget", () => {
+  it("lets the owner reset any other user and an admin reset members", async () => {
+    await seedCast();
+    await expect(passwordResetTarget(db(), "owner", { userId: "admin2" })).resolves.toMatchObject({
+      id: "admin2",
+    });
+    await expect(passwordResetTarget(db(), "owner", { userId: "member" })).resolves.toMatchObject({
+      id: "member",
+    });
+    await expect(passwordResetTarget(db(), "admin", { userId: "member" })).resolves.toMatchObject({
+      id: "member",
+    });
+    for (const [actor, target] of [
+      ["admin", "admin2"],
+      ["admin", "owner"],
+      ["admin", "admin"],
+      ["owner", "owner"],
+    ] as const) {
+      await expect(passwordResetTarget(db(), actor, { userId: target })).rejects.toThrow(
+        USER_CHANGE_MESSAGES.resetNotAllowed,
+      );
+    }
+  });
+
+  it("refuses members", async () => {
+    await seedCast();
+    await expect(passwordResetTarget(db(), "member", { userId: "member2" })).rejects.toBeInstanceOf(
+      AuthGuardError,
+    );
   });
 });

@@ -139,6 +139,15 @@ export const wranglerArgs = {
     "--name",
     worker,
   ],
+  /** Prints a JSON array of `{ name, type }` (the default format). */
+  secretList: (worker: string): string[] => [
+    "secret",
+    "list",
+    "--name",
+    worker,
+    "--format",
+    "json",
+  ],
   deploymentsList: (worker: string): string[] => [
     "deployments",
     "list",

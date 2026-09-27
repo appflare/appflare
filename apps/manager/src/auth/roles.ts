@@ -4,7 +4,9 @@ import { defaultStatements } from "better-auth/plugins/admin/access";
 /**
  * Manager roles. Admins change things and add users; members read everything
  * and change nothing. One admin is also the owner (`user.is_owner`), the only
- * one who can change roles, delete users, or hand ownership over. That is a
+ * one who can change roles, delete users, hand ownership over, or reset an
+ * admin's password (admins reset members' passwords only; see
+ * `canResetPassword` in components/user-actions.ts). That is a
  * flag rather than a third role, so every admin check keeps holding for the
  * owner. Shared by the server (`auth/server.ts`) and the client plugin
  * (`auth/client.ts`).

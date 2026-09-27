@@ -1,9 +1,11 @@
-import { env } from "cloudflare:workers";
+import { env, waitUntil } from "cloudflare:workers";
 import { redirect } from "@tanstack/react-router";
 import { getRequest } from "@tanstack/react-start/server";
 import * as guards from "../auth/guards";
+import { deleteRecoverySecret, sendResetEmailFromSettings } from "../auth/password-email.server";
+import { versionCreatedAt } from "../auth/recovery.server";
 import type { Role } from "../auth/roles";
-import { type Auth, createAuth } from "../auth/server";
+import { type Auth, createAuth, type RecoveryAuthDeps } from "../auth/server";
 import { createDb } from "../db/client";
 
 /**
@@ -41,10 +43,31 @@ export function authFor(request: Request): Auth {
       db: createDb(env.DB),
       secret,
       baseURL: new URL(request.url).origin,
+      recovery: recoveryDeps(),
     });
     authByRequest.set(request, auth);
   }
   return auth;
+}
+
+/**
+ * Password recovery for Better Auth, from this version's bindings: the
+ * recovery code secret the installer may have written, and the reset email
+ * binding when the owner turned reset emails on.
+ */
+function recoveryDeps(): RecoveryAuthDeps {
+  const background = (promise: Promise<unknown>) => waitUntil(promise);
+  const mail = env.AUTH_EMAIL;
+  return {
+    d1: env.DB,
+    accountSecret: () => env.RECOVERY_CODE_HASH,
+    accountSecretSince: () => versionCreatedAt(env.CF_VERSION_METADATA),
+    onAccountCodeUsed: () => background(deleteRecoverySecret(env)),
+    background,
+    ...(mail === undefined
+      ? {}
+      : { sendResetEmail: (args) => sendResetEmailFromSettings(env.DB, mail, args) }),
+  };
 }
 
 /** Better Auth for the request being served. */

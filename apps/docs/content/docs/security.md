@@ -149,6 +149,20 @@ app, never the manager's.
   delete users, or transfer ownership; Better Auth's own admin endpoints give admins
   read access only, so they cannot be used to get around that. The server checks the
   role on every action, not just the UI. See [Users and roles](/guides/users/).
+- **Password recovery.** A forgotten password is reset from the sign-in page with an
+  emailed link (only when the owner turned reset emails on) or a one-time recovery
+  code. A code comes from the owner (for any other user), from an admin (for a
+  member), or from `npx create-appflare recover`, which writes a fingerprint of the
+  code as the Worker secret `RECOVERY_CODE_HASH`. By design, anyone who can set
+  secrets on the manager's Worker, that is, whoever controls the Cloudflare account,
+  can reset any admin's password, the owner's included. Links and codes work once,
+  for 30 minutes (an account code at most 35 minutes after the version holding it
+  was created, whatever expiry was written). Appflare stores reset link tokens and
+  codes only as SHA-256 hashes, compares codes in constant time, limits code tries
+  to 5 per client address in 10 minutes, deletes the secret once it is used or
+  expired, and signs the user out everywhere. Neither codes nor email addresses are
+  logged.
+  See [Forgot your password](/guides/forgot-password/).
 
 Apart from the sign-in and setup pages, the only endpoint that answers without a
 session is `/api/health`, also when [Cloudflare Access](#protect-with-cloudflare-access)

@@ -21,6 +21,12 @@ interface ManagerSecrets {
    * github.com, never logged.
    */
   GITHUB_TOKEN?: string;
+  /**
+   * `v1.<expires at, epoch ms>.<sha-256 hex>` of a one-time recovery code,
+   * written by `create-appflare recover` (see @appflare/schema's
+   * recovery-code.ts). Deleted by the manager once used.
+   */
+  RECOVERY_CODE_HASH?: string;
 }
 
 // Optional vars that are not in wrangler.jsonc (code defaults apply when unset):
@@ -56,6 +62,12 @@ interface ManagerOptionalVars {
    * `deployButtonInstalled()`.
    */
   APPFLARE_INSTALL_SOURCE?: string;
+  /**
+   * `send_email` binding for password reset emails. Not in wrangler.jsonc:
+   * the owner turns reset emails on from Settings > Users, and the manager
+   * adds the binding to itself then (auth/password-email.server.ts).
+   */
+  AUTH_EMAIL?: SendEmail;
 }
 
 declare namespace Cloudflare {

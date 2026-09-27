@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { install } from "./commands/install.ts";
+import { recover } from "./commands/recover.ts";
 import type { CommandContext } from "./context.ts";
 import { CliTelemetry, cliVersion } from "./telemetry.ts";
 import { CancelledError } from "./ui.ts";
@@ -7,7 +8,10 @@ import { CancelledError } from "./ui.ts";
 export const USAGE = `create-appflare: installs Appflare, a self-hosted app manager for Cloudflare, into your Cloudflare account.
 
 Usage:
-  npx create-appflare [options]
+  npx create-appflare [options]            install Appflare
+  npx create-appflare recover [options]    get a one-time code to reset a forgotten
+                                           admin password (--name, --yes and
+                                           --email <admin email> apply)
 
 Options:
   --version <x.y.z>       manager release to install (default: the latest)
@@ -23,6 +27,12 @@ Options:
                           with its usage data turned off (APPFLARE_TELEMETRY=off)
   -v, --version           print this installer's version (--version without a value)
   -h, --help              print this help
+
+\`recover\` is for when the owner or an admin forgot their password. It needs the
+same Cloudflare login as the install. It saves a code's fingerprint on the manager
+Worker and prints the code, which works once, for 30 minutes, on the sign-in page
+under "Forgot your password?". With --email, it works only for that admin. It sends
+no usage data.
 
 It uses wrangler: log in with \`npx wrangler login\` first, or let the installer
 open the login for you. With several accounts, set CLOUDFLARE_ACCOUNT_ID or pick
@@ -119,6 +129,21 @@ async function run(
   const instead = command === undefined ? undefined : REMOVED_COMMANDS[command];
   if (instead !== undefined) {
     throw new Error(`\`${command}\` is no longer part of the installer; ${instead}.`);
+  }
+  if (command === "recover") {
+    const { values } = parseArgs({
+      args: args.slice(1),
+      allowPositionals: false,
+      options: {
+        name: { type: "string" },
+        email: { type: "string" },
+        yes: { type: "boolean", short: "y", default: false },
+      },
+    });
+    ctx.ui.banner();
+    // No `telemetry.begin`: nothing is sent for a recovery.
+    await recover({ name: values.name, email: values.email, yes: values.yes }, ctx);
+    return 0;
   }
   const { values, positionals } = parseArgs({
     args,

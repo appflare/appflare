@@ -119,6 +119,26 @@ Everything after the install happens in the manager itself:
 | Remove Appflare, its database and its KV namespace | **Settings > General > Remove Appflare** (owner only) |
 | Return to an earlier manager version | **Settings > Appflare updates > Versions** (admins); if the manager does not load, the Worker's **Deployments** page in the Cloudflare dashboard |
 
+## Forgot your password
+
+If the owner or an admin can no longer sign in, whoever manages the Cloudflare
+account can get them back in:
+
+```sh
+npx create-appflare recover [--name appflare] [--email admin@example.com] [--yes]
+```
+
+It uses the same Cloudflare login as the install, saves a fingerprint of a new random
+code on the manager Worker (the secret `RECOVERY_CODE_HASH`), and prints the code. On
+the manager's sign-in page, choose **Forgot your password?**, then **I have a recovery
+code**, and enter an admin's email, the code, and a new password. The code works once,
+for 30 minutes; the manager deletes the secret when it is used. With `--email`, the
+code works only with that admin's email. `recover` sends no usage data.
+
+This is by design: anyone who can set secrets on the manager Worker, which means
+anyone who controls the Cloudflare account, can reset any admin's password, the
+owner's included.
+
 Earlier versions of this package had `status`, `rollback`, `uninstall`, and
 `sandbox` commands. Running one of them now prints where its job is done instead.
 

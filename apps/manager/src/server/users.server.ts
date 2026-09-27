@@ -1,8 +1,10 @@
 import { and, asc, count, eq, sql } from "drizzle-orm";
 import { AuthGuardError } from "../auth/guards";
+import { issuedCodeIdentifier } from "../auth/recovery.server";
 import { hasRole, type Role } from "../auth/roles";
+import { canResetPassword } from "../components/user-actions";
 import type { Database } from "../db/client";
-import { settings, user } from "../db/schema";
+import { settings, user, verification } from "../db/schema";
 import { seenKey } from "../whats-new/seen.server";
 
 /** True once any user exists: from then on `/setup` no longer creates admins. */
@@ -62,6 +64,8 @@ export const USER_CHANGE_MESSAGES = {
   alreadyOwner: "You are already the owner.",
   transferToMember: "Ownership can only go to an admin. Make them an admin first.",
   transferFailed: "Ownership did not change. Reload the page and try again.",
+  resetNotAllowed:
+    "Only the owner can reset an admin's password, and nobody can reset the owner's or their own from here. Use \"Forgot your password?\" on the sign-in page instead.",
 } as const;
 
 /** SQL twin of `hasRole(role, "admin")` for Better Auth's comma-separated roles. */
@@ -155,6 +159,29 @@ export async function makeFirstUserOwner(db: Database, userId: string): Promise<
     .where(and(eq(user.id, userId), sql`NOT EXISTS (SELECT 1 FROM "user" WHERE "is_owner" = 1)`));
 }
 
+/**
+ * An admin resetting another user's password (reset link or recovery code):
+ * checks the rule of `canResetPassword` against the database and returns
+ * the user whose password is reset.
+ */
+export async function passwordResetTarget(
+  db: Database,
+  actorId: string,
+  input: { userId: string },
+): Promise<ManagedUser> {
+  await ensureOwner(db);
+  const actor = await findUser(db, actorId);
+  if (actor === null || actor.role !== "admin") {
+    throw new AuthGuardError(403, "You do not have permission to do that.");
+  }
+  const target = await requireUser(db, input.userId);
+  const viewer = { id: actor.id, isAdmin: true, isOwner: actor.isOwner };
+  if (!canResetPassword(viewer, target)) {
+    throw new UserChangeError(USER_CHANGE_MESSAGES.resetNotAllowed);
+  }
+  return target;
+}
+
 export interface RoleChange {
   email: string;
   before: Role;
@@ -171,10 +198,15 @@ export async function changeUserRole(
   const target = await requireUser(db, input.userId);
   if (target.isOwner) throw new UserChangeError(USER_CHANGE_MESSAGES.ownerRole);
   if (target.role !== input.role) {
-    await db
-      .update(user)
-      .set({ role: input.role })
-      .where(and(eq(user.id, target.id), sql`coalesce(${user.isOwner}, 0) = 0`));
+    await db.batch([
+      db
+        .update(user)
+        .set({ role: input.role })
+        .where(and(eq(user.id, target.id), sql`coalesce(${user.isOwner}, 0) = 0`)),
+      // A recovery code issued for the old role may not outlive it (only the
+      // owner may reset an admin's password).
+      db.delete(verification).where(eq(verification.identifier, issuedCodeIdentifier(target.id))),
+    ]);
   }
   return { email: target.email, before: target.role, after: input.role };
 }
@@ -266,6 +298,8 @@ export async function transferOwnership(
           sql`NOT EXISTS (SELECT 1 FROM "user" AS "owner" WHERE "owner"."is_owner" = 1)`,
         ),
       ),
+    // A recovery code an admin issued for the new owner must not reset the owner.
+    db.delete(verification).where(eq(verification.identifier, issuedCodeIdentifier(target.id))),
   ]);
   if (!(await isOwner(db, target.id))) {
     throw new UserChangeError(USER_CHANGE_MESSAGES.transferFailed);

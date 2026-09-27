@@ -1,10 +1,13 @@
 import handler from "@tanstack/react-start/server-entry";
 import { accessGate } from "./access/gate";
+import { versionCreatedAt } from "./auth/recovery.server";
+import { cleanUpRecoverySecret } from "./auth/recovery-cleanup.server";
 import { ensureAuthStorage } from "./auth/storage.server";
 import { runScheduledUpdates, scheduledUpdatesLog } from "./auto-update/cron.server";
 import { refreshCapabilitiesDaily } from "./capabilities/capabilities.server";
 import { ManagerReleasesError, refreshManagerReleases } from "./catalog/manager-releases.server";
 import { refreshEnabledCatalogs } from "./catalog/refresh.server";
+import { getCfClient } from "./cloudflare/client.server";
 import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
@@ -101,7 +104,8 @@ export default {
    * account's capabilities (capabilities/). Then the anonymous usage-data report
    * (telemetry/report.server.ts), which starts with the first run after setup
    * and sends nothing once an admin turns it off. It starts update jobs only for what automatic updates
-   * allow (auto-update/), and only updates that need nothing from an admin.
+   * allow (auto-update/), and only updates that need nothing from an admin. Last, it deletes a
+   * recovery code secret that can no longer be used (auth/recovery-cleanup.server.ts).
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
@@ -151,5 +155,25 @@ export default {
     await scheduledExternalDomainCheck(env);
     // Notification channels: conditions, missed job ends, deliveries; never fails the run.
     await scheduledNotifications(env);
+    // A recovery code secret that can no longer be used is deleted; never fails the run.
+    try {
+      const cleanup = await cleanUpRecoverySecret({
+        d1: env.DB,
+        secret: env.RECOVERY_CODE_HASH,
+        since: versionCreatedAt(env.CF_VERSION_METADATA),
+        now: new Date(),
+        api: () => getCfClient(env),
+        workflows: env.JOBS,
+      });
+      if (cleanup.outcome === "deleted") {
+        console.log(`recovery code secret deleted (${cleanup.reason})`);
+      } else if (cleanup.outcome === "skipped") {
+        console.log(`recovery code secret kept for now: ${cleanup.reason}`);
+      }
+    } catch (error) {
+      console.error("recovery code secret cleanup failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   },
 } satisfies ExportedHandler<Env>;

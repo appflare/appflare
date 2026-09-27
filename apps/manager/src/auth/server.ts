@@ -6,6 +6,9 @@ import { betterAuth } from "better-auth/minimal";
 import { admin } from "better-auth/plugins";
 import type { Database } from "../db/client";
 import * as schema from "../db/schema";
+import { RESET_LINK_TTL_SECONDS, resetPasswordUrl } from "./password-email";
+import { recordRecovery } from "./recovery.server";
+import { type RecoveryPluginDeps, recoveryCodes } from "./recovery-plugin";
 import { accessControl, DEFAULT_ROLE, roles } from "./roles";
 
 /**
@@ -26,6 +29,21 @@ export interface AuthDeps {
   secret: string;
   /** The manager's own origin, e.g. `https://appflare.example.workers.dev`. */
   baseURL: string;
+  /**
+   * Password recovery (see `recovery.server.ts`). Without it there is no
+   * recovery code endpoint and no reset email; tests of other parts omit it.
+   */
+  recovery?: RecoveryAuthDeps;
+}
+
+export interface RecoveryAuthDeps extends RecoveryPluginDeps {
+  /**
+   * Sends a password reset link. Present only when the running Worker has the
+   * `AUTH_EMAIL` binding; it may still send nothing (no sender address set).
+   */
+  sendResetEmail?: (args: { to: string; url: string }) => Promise<void>;
+  /** Keeps work alive after the response (`waitUntil`). */
+  background: (promise: Promise<unknown>) => void;
 }
 
 /**
@@ -45,17 +63,55 @@ export interface AuthDeps {
  * - Cookies are Better Auth's defaults: HttpOnly, SameSite=Lax, Secure on https.
  * - The trusted origin is the manager's own origin only, and passkeys are bound
  *   to it too (see `passkeyRelyingParty`).
+ * - A forgotten password is reset with a recovery code (always) or an emailed
+ *   link (when the owner turned reset emails on); both sign the user out
+ *   everywhere.
  */
-export function createAuth({ db, secret, baseURL }: AuthDeps) {
+export function createAuth({ db, secret, baseURL, recovery }: AuthDeps) {
   return betterAuth({
     appName: "Appflare",
     baseURL,
     secret,
     trustedOrigins: [baseURL],
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
+    // Reset link tokens are kept only as SHA-256 hashes, so a copy of the
+    // database cannot be used to reset anyone's password. Other verification
+    // values (passkey challenges) stay as Better Auth stores them.
+    verification: {
+      storeIdentifier: { default: "plain", overrides: { "reset-password:": "hashed" } },
+    },
     emailAndPassword: {
       enabled: true,
       disableSignUp: true,
+      // Reset links, sent only when reset emails are on. The email is sent in
+      // the background, so the answer takes as long whether or not the
+      // address belongs to anyone (Better Auth answers alike either way).
+      resetPasswordTokenExpiresIn: RESET_LINK_TTL_SECONDS,
+      revokeSessionsOnPasswordReset: true,
+      ...(recovery?.sendResetEmail === undefined
+        ? {}
+        : {
+            sendResetPassword: async ({
+              user,
+              token,
+            }: {
+              user: { email: string };
+              token: string;
+            }) => {
+              await recovery.sendResetEmail?.({
+                to: user.email,
+                url: resetPasswordUrl(baseURL, token),
+              });
+            },
+          }),
+      ...(recovery === undefined
+        ? {}
+        : {
+            onPasswordReset: async ({ user }: { user: { id: string } }) => {
+              const now = (recovery.now ?? (() => new Date()))();
+              await recordRecovery(recovery.d1, { at: now, method: "email_link", userId: user.id });
+            },
+          }),
     },
     user: {
       additionalFields: {
@@ -73,6 +129,7 @@ export function createAuth({ db, secret, baseURL }: AuthDeps) {
     advanced: {
       // Cloudflare sets this header on every request; it cannot be spoofed by the client.
       ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
+      ...(recovery === undefined ? {} : { backgroundTasks: { handler: recovery.background } }),
     },
     // Better Auth's own telemetry (sent to Better Auth, not Appflare) stays off.
     // Off by default; pinned here. Appflare's anonymous usage data is separate
@@ -86,6 +143,7 @@ export function createAuth({ db, secret, baseURL }: AuthDeps) {
         adminRoles: ["admin"],
       }),
       passkey({ rpName: "Appflare", ...passkeyRelyingParty(baseURL) }),
+      ...(recovery === undefined ? [] : [recoveryCodes(recovery)]),
     ],
   });
 }
