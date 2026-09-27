@@ -10,41 +10,40 @@ import {
   type TokenPermission,
 } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AutoUpdateChoice } from "../auto-update/auto-update";
 import { readAutoUpdateDefaults } from "../auto-update/auto-update.server";
 import { getCatalogManifest, refreshInstalledRevision } from "../catalog/app-manifest.server";
-import { listCatalogRecords, sourceOf } from "../catalog/catalogs.server";
-import { catalogIndexUrl } from "../catalog/index.server";
-import { mediaSrc } from "../catalog/media";
-import { catalogLookup, findCatalogApp, type ListedApp } from "../catalog/merged.server";
+import { findCatalogApp } from "../catalog/merged.server";
 import { effectiveManifest } from "../catalog/revisions.server";
-import { type CatalogSource, installAppKey, OFFICIAL_CATALOG_ID } from "../catalog/sources";
+import { installAppKey } from "../catalog/sources";
 import { isUpdateAvailable } from "../catalog/versions";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
-import {
-  type BuildKind,
-  type HealthStatus,
-  type InstallOrigin,
-  installs,
-  type JobStarter,
-  jobs,
-  resources,
-} from "../db/schema";
+import { type BuildKind, installs, type JobStarter, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { recordedCatalog } from "../jobs/self-deploying/phases";
 import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
-import { type AddressDomain, type AppAddressInput, appAddress } from "./app-address";
-import { addressDomainOf, readAddressDomains } from "./app-address.server";
-import { displayNameInput, installLabel } from "./display-name";
+import { type AddressDomain, appAddress } from "./app-address";
+import { addressDomainOf } from "./app-address.server";
+import { displayNameInput } from "./display-name";
 import { RenameInstallError, renameInstallCore } from "./display-name.server";
 import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
 import { startInstallInput } from "./install-input";
+import {
+  addressInput,
+  catalogSources,
+  healthOf,
+  type InstallRow,
+  iconOf,
+  namesOf,
+  sourceOfRow,
+  subdomain,
+} from "./install-rows.server";
 import { type OtherWorkerView, otherWorkerViews } from "./other-workers";
 import { renderPostInstall, workersDevUrl } from "./post-install";
 import { isDeleteRetainedJob } from "./removed-apps.server";
@@ -55,13 +54,14 @@ import {
   EMAIL_ROUTE_KIND,
   WILDCARD_DOMAIN_KIND,
 } from "./resource-kinds";
-import { REPOSITORY_SLUG_PREFIX } from "./source-review";
 import { catalogOnlyManifest, StartInstallError, startInstallCore } from "./start-install.server";
 import { wildcardHostnameOf, wildcardOfManifest } from "./wildcard-domain-input";
 import { domainHostnames, primaryDomain, type WorkersDevChoice } from "./workers-dev";
 import { settingsUseWorkerUrl } from "./workers-dev.server";
 
-/** Installs: start one (admin), list them, and show one. Uninstall lives in `uninstall.functions.ts`. */
+export type { InstallRow } from "./install-rows.server";
+
+/** Installs: start one (admin) and show one. Home lists them (`getLayoutData`); uninstall lives in `uninstall.functions.ts`. */
 
 /** Admin only. Returns ids; the UI navigates to `/jobs/$jobId`. */
 export const startInstall = createServerFn({ method: "POST" })
@@ -121,80 +121,6 @@ export const renameInstall = createServerFn({ method: "POST" })
     }
   });
 
-export interface InstallRow {
-  id: string;
-  /** The app key (`sources.ts`): the catalog page of the app is `/catalog/<slug>`. */
-  slug: string;
-  /** The catalog the app comes from; null for a repository, or when that catalog is gone. */
-  catalogSource: CatalogSource | null;
-  /**
-   * Where the code comes from: the catalog, a repository (not from the
-   * catalog, not checked), or a catalog app built from source.
-   */
-  origin: InstallOrigin;
-  /** The app's name from the catalog. */
-  name: string;
-  /** The app's icon from the catalog, as a manager path; null when it has none. */
-  icon: string | null;
-  /** The name an admin gave the install; null when it has none. */
-  displayName: string | null;
-  /** What the UI calls the install (`installLabel`): its display name, else its Worker name. */
-  label: string;
-  workerName: string;
-  status: string;
-  version: string;
-  latestVersion: string | null;
-  updateAvailable: boolean;
-  /** Where "Open" takes the app (`appAddress`); null until installed, or with no address. */
-  address: string | null;
-  /** ISO 8601 */
-  updatedAt: string;
-  /** ISO 8601; null until the install is uninstalled. */
-  uninstalledAt: string | null;
-  /** The last health check of the Worker's URL; null until one ran. */
-  healthStatus: HealthStatus | null;
-  /** ISO 8601; when that check ran. */
-  healthCheckedAt: string | null;
-}
-
-/**
- * The app's name when the catalog does not list it: an install from a
- * repository (or an app that left the catalog) carries its name in its
- * recorded artifact manifest.
- */
-function recordedName(row: typeof installs.$inferSelect): string {
-  if (row.manifest_json !== null) {
-    try {
-      const parsed = artifactManifestSchema.safeParse(JSON.parse(row.manifest_json));
-      if (parsed.success) return parsed.data.catalog.name;
-    } catch {
-      // Not an artifact manifest; the slug below names it.
-    }
-  }
-  return row.app_slug.replace(REPOSITORY_SLUG_PREFIX, "");
-}
-
-/** The name fields of an install row, for the list and the detail page. */
-function namesOf(row: typeof installs.$inferSelect) {
-  const names = { displayName: row.display_name, workerName: row.worker_name };
-  return { ...names, label: installLabel(names) };
-}
-
-/** What `appAddress` needs of an install row. */
-function addressInput(
-  row: typeof installs.$inferSelect,
-  domains: AddressDomain[],
-  sub: string | null,
-): AppAddressInput {
-  return {
-    workerName: row.worker_name,
-    workersDevEnabled: row.workers_dev_enabled,
-    servedDomain: row.served_domain,
-    domains,
-    subdomain: sub,
-  };
-}
-
 function domainView(r: {
   id: string;
   kind: string;
@@ -225,92 +151,11 @@ function workersDevNoteOf(
   return live && settingsUseWorkerUrl(row.manifest_json, row.config_json) ? "settings" : null;
 }
 
-/** The health fields of an install row, for the list and the detail page. */
-function healthOf(row: typeof installs.$inferSelect) {
-  return {
-    healthStatus: row.health_status,
-    healthCheckedAt: row.health_checked_at?.toISOString() ?? null,
-  };
-}
-
-/** The badge of every catalog, by id (the ones turned off too: an install keeps its source). */
-async function catalogSources(): Promise<Map<string, CatalogSource>> {
-  const records = await listCatalogRecords(createDb(env.DB));
-  return new Map(records.map((r) => [r.id, sourceOf(r)]));
-}
-
-function sourceOfRow(
-  row: Pick<typeof installs.$inferSelect, "catalog_id" | "origin">,
-  sources: ReadonlyMap<string, CatalogSource>,
-): CatalogSource | null {
-  if (row.origin === "repository") return null;
-  return sources.get(row.catalog_id ?? OFFICIAL_CATALOG_ID) ?? null;
-}
-
-/** The app's icon, served by the manager for the official catalog only (others show a monogram). */
-function iconOf(found: ListedApp | undefined): string | null {
-  if (found === undefined || !found.source.official) return null;
-  return mediaSrc(found.app.media?.icon, catalogIndexUrl(env));
-}
-
-async function subdomain(): Promise<string | null> {
-  const s = await readSettings(createDb(env.DB), [SETTING.accountSubdomain]);
-  return s.account_subdomain || null;
-}
-
 /** The account's id, for `{{accountId}}` in post-install notes and vars; null before setup. */
 async function accountId(): Promise<string | null> {
   const s = await readSettings(createDb(env.DB), [SETTING.accountId]);
   return s.account_id || null;
 }
-
-/**
- * Any signed-in user: every install that is not uninstalled, newest first.
- * Uninstalled ones that kept data are listed under Settings, Removed apps.
- */
-export const listInstalls = createServerFn({ method: "GET" }).handler(
-  async (): Promise<InstallRow[]> => {
-    await requireSession();
-    const db = createDb(env.DB);
-    const [rows, catalog, sub, domains] = await Promise.all([
-      db
-        .select()
-        .from(installs)
-        .where(ne(installs.status, "uninstalled"))
-        .orderBy(desc(installs.installed_at)),
-      catalogLookup(env),
-      subdomain(),
-      readAddressDomains(db),
-    ]);
-    const sources = await catalogSources();
-    const addressOf = (row: (typeof rows)[number]): string | null =>
-      appAddress(addressInput(row, domains.get(row.id) ?? [], sub));
-    return rows.map((row) => {
-      // An install from a repository is never the catalog's app of the same name,
-      // and an install is only ever compared with its own catalog's listing.
-      const found = row.origin === "repository" ? undefined : catalog.get(installAppKey(row));
-      const listed = found?.app;
-      return {
-        id: row.id,
-        slug: installAppKey(row),
-        catalogSource: sourceOfRow(row, sources),
-        origin: row.origin,
-        name: listed?.name ?? recordedName(row),
-        icon: iconOf(found),
-        ...namesOf(row),
-        status: row.status,
-        version: row.catalog_version,
-        latestVersion: listed?.version ?? null,
-        updateAvailable:
-          row.status === "installed" && isUpdateAvailable(row.catalog_version, listed?.version),
-        address: row.status === "installed" ? addressOf(row) : null,
-        updatedAt: row.updated_at.toISOString(),
-        uninstalledAt: row.uninstalled_at?.toISOString() ?? null,
-        ...healthOf(row),
-      };
-    });
-  },
-);
 
 export interface ResourceView {
   id: string;

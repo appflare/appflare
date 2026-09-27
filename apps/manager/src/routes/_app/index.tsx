@@ -1,193 +1,43 @@
-import { Badge, Button, Empty, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
-import { ArrowCircleUpIcon, PackageIcon, StorefrontIcon } from "@phosphor-icons/react";
-import { createFileRoute, getRouteApi } from "@tanstack/react-router";
-import { AppIcon } from "../../components/catalog-media";
-import { CatalogSourceBadge } from "../../components/catalog-source-badge";
-import { HealthIcon } from "../../components/install-health";
-import { ErrorMessageBanner } from "../../components/message-text";
-import { OpenAppButton } from "../../components/open-app-button";
-import { OriginBadge } from "../../components/origin-badge";
-import { PageHeader } from "../../components/page-header";
-import { PendingUpdatesBanner } from "../../components/pending-updates-banner";
-import { ResponsiveTable } from "../../components/responsive-table";
-import { StatusBadge } from "../../components/status-badge";
-import { type StartUpdateHandle, useStartUpdate } from "../../components/update-banner";
-import {
-  dismissDeployCopy,
-  getDeployCopyCleanup,
-  getSchemaDowngrade,
-} from "../../deploy-button/deploy-copy.functions";
-import { DeployCopyCard, DowngradeBanner } from "../../deploy-button/deploy-copy-card";
-import { type InstallRow, listInstalls } from "../../installs/installs.functions";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useState } from "react";
+import { useStartUpdate } from "../../components/update-banner";
+import { homeLanding } from "../../home/home-landing";
+import { HomeView } from "../../home/home-view";
+import { useAttention } from "../../home/use-attention";
 
 /**
- * `/` (Home): the pending app updates (read by the layout's loader), with
- * "Update" for one and "Update all" for several (admins), then every install
- * that is not uninstalled with its icon, label, app, Worker, status (with an
- * icon when its last health check did not verify the Worker), version, and
- * update-available (for admins with a single pending update, an "Update"
- * button on its row), and "Open" for the app's primary address (`appAddress`,
- * a new tab). Appflare's own update is
- * offered by the sidebar's Appflare card, not here. Several
- * installs of one app are listed one by one. Uninstalled apps that kept data
- * are listed under Settings, Removed apps; the others are not listed
- * anywhere. Before everything, a banner while an older Appflare serves a
- * database a newer one migrated; and for admins of a manager the "Deploy to
- * Cloudflare" button deployed, the "Clean up the deploy copy" card, until one
- * of them dismisses it (for all of them).
+ * `/` (Home): what needs attention, then the installed apps as cards, all
+ * from the signed-in layout's data (`getLayoutData`), which the sidebar's
+ * count and dots read too. With nothing installed, arriving here goes on
+ * to the catalog; a click on Home stays and says so (`home-landing.ts`).
  */
 export const Route = createFileRoute("/_app/")({
   staticData: { title: "Home" },
-  loader: async () => {
-    const [rows, deployCopy, downgrade] = await Promise.all([
-      listInstalls(),
-      getDeployCopyCleanup(),
-      getSchemaDowngrade(),
-    ]);
-    return { rows, deployCopy, downgrade };
+  loader: async ({ location, parentMatchPromise }) => {
+    const layout = await parentMatchPromise;
+    const installed = layout.loaderData?.apps.length;
+    if (installed !== undefined && homeLanding(installed, location.state) === "catalog") {
+      throw redirect({ to: "/catalog", replace: true });
+    }
   },
   component: HomePage,
 });
 
-const layout = getRouteApi("/_app");
-
-const mono = "font-mono text-[0.9em]";
-
 function HomePage() {
-  const { rows, deployCopy, downgrade } = Route.useLoaderData();
-  const pending = layout.useLoaderData();
-  const { viewer } = layout.useRouteContext();
-  const isAdmin = viewer.role === "admin";
+  const [leftForAdmin, setLeftForAdmin] = useState<ReadonlyMap<string, string>>();
+  const { data, isAdmin, items, dismissAccountRow } = useAttention(leftForAdmin);
   const update = useStartUpdate();
   return (
-    <>
-      <PageHeader
-        title="Home"
-        description="The apps Appflare manages in this Cloudflare account."
-        actions={
-          rows.length > 0 ? (
-            <LinkButton href="/catalog" variant="secondary" icon={<StorefrontIcon />}>
-              Catalog
-            </LinkButton>
-          ) : undefined
-        }
-      />
-      {downgrade !== null && (
-        <DowngradeBanner version={downgrade.version} deployButton={downgrade.deployButton} />
-      )}
-      {deployCopy !== null && (
-        <DeployCopyCard cleanup={deployCopy} onDismiss={() => dismissDeployCopy()} />
-      )}
-      <PendingUpdatesBanner apps={pending.apps} isAdmin={isAdmin} update={update} />
-      {update.error !== null && <ErrorMessageBanner message={update.error.message} />}
-      {update.dialog}
-      {rows.length > 0 ? (
-        <InstalledTable
-          rows={rows}
-          // One pending update: its row starts it too. Several: Update all only.
-          update={isAdmin && pending.apps.length === 1 ? update : null}
-        />
-      ) : (
-        <Empty
-          icon={<PackageIcon size={48} className="text-kumo-inactive" />}
-          title="No apps installed"
-          description="Install an app from the catalog. It runs in this account and Appflare keeps it updated."
-          contents={
-            <LinkButton href="/catalog" variant="primary" icon={<StorefrontIcon />}>
-              Browse the catalog
-            </LinkButton>
-          }
-        />
-      )}
-    </>
-  );
-}
-
-function InstalledTable({
-  rows,
-  update,
-}: {
-  rows: InstallRow[];
-  /**
-   * Starts an app's update from its row; null for members, and while
-   * several updates are pending (Update all starts them).
-   */
-  update: StartUpdateHandle | null;
-}) {
-  return (
-    <ResponsiveTable label="Installed apps" minWidth="lg" stickyFirstColumn>
-      <Table.Header>
-        <Table.Row>
-          <Table.Head>App</Table.Head>
-          <Table.Head>Worker</Table.Head>
-          <Table.Head>Status</Table.Head>
-          <Table.Head>Version</Table.Head>
-          <Table.Head>
-            <span className="sr-only">Open</span>
-          </Table.Head>
-        </Table.Row>
-      </Table.Header>
-      <Table.Body>
-        {rows.map((row) => (
-          <Table.Row key={row.id}>
-            <Table.Cell>
-              <div className="flex min-w-0 items-center gap-3">
-                <AppIcon src={row.icon} name={row.name} size={28} />
-                <div className="grid min-w-0 justify-items-start gap-0.5">
-                  <Link href={`/apps/${row.id}`}>{row.label}</Link>
-                  {row.name !== row.label && (
-                    <Text as="span" variant="secondary" size="sm" truncate>
-                      {row.name}
-                    </Text>
-                  )}
-                  <OriginBadge origin={row.origin} />
-                  {row.catalogSource !== null && !row.catalogSource.official && (
-                    <CatalogSourceBadge source={row.catalogSource} />
-                  )}
-                </div>
-              </div>
-            </Table.Cell>
-            <Table.Cell>
-              <span className={mono}>{row.workerName}</span>
-            </Table.Cell>
-            <Table.Cell>
-              <div className="flex items-center gap-2">
-                <StatusBadge status={row.status} of="install" />
-                {row.status === "installed" && (
-                  <HealthIcon status={row.healthStatus} checkedAt={row.healthCheckedAt} />
-                )}
-              </div>
-            </Table.Cell>
-            <Table.Cell>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={mono}>{row.version}</span>
-                {row.updateAvailable &&
-                  (update !== null ? (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      icon={<ArrowCircleUpIcon />}
-                      title={`Update to ${row.latestVersion ?? "the newest version"}`}
-                      loading={update.pendingId === row.id}
-                      onClick={() => update.start({ id: row.id, label: row.label })}
-                    >
-                      Update
-                    </Button>
-                  ) : (
-                    <Badge variant="info">Update available</Badge>
-                  ))}
-              </div>
-            </Table.Cell>
-            <Table.Cell>
-              <div className="flex justify-end">
-                {row.address !== null && (
-                  <OpenAppButton href={row.address} label={row.label} size="sm" />
-                )}
-              </div>
-            </Table.Cell>
-          </Table.Row>
-        ))}
-      </Table.Body>
-    </ResponsiveTable>
+    <HomeView
+      apps={data.apps}
+      items={items}
+      isAdmin={isAdmin}
+      update={update}
+      onDismissAccountRow={dismissAccountRow}
+      onUpdateAllOutcome={(outcome) =>
+        setLeftForAdmin(new Map(outcome.needsInput.map((i) => [i.installId, i.reason])))
+      }
+      now={new Date()}
+    />
   );
 }

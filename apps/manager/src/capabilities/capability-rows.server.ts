@@ -1,5 +1,5 @@
 import { ne } from "drizzle-orm";
-import { listedApps, readEnabledCatalogs } from "../catalog/merged.server";
+import { type CatalogIndexRead, listedApps, readEnabledCatalogs } from "../catalog/merged.server";
 import { appKey } from "../catalog/sources";
 import type { Database } from "../db/client";
 import { installs } from "../db/schema";
@@ -11,6 +11,7 @@ import { readCapabilitiesView } from "./capabilities.server";
 import {
   type CatalogNeeds,
   catalogNeeds,
+  type InstallOfApp,
   installedNeeds,
   type SandboxBuildsState,
 } from "./capability-rows";
@@ -37,24 +38,30 @@ export interface CapabilityRowsData {
  * running Worker has the `SANDBOX` binding) or being turned on, the cached
  * catalog, and the account's installs with the catalog entries they came
  * from. No Cloudflare API call; "Check again" refreshes the capabilities
- * first.
+ * first. A caller that already read the enabled catalogs or the installs
+ * passes them in `known`, which saves reading them again.
  */
 export async function readCapabilityRowsData(
   env: { KV: KVNamespace; SANDBOX?: unknown; DB: D1Database },
   db: Database,
+  known: {
+    reads?: readonly CatalogIndexRead[];
+    installs?: readonly InstallOfApp[];
+  } = {},
 ): Promise<CapabilityRowsData> {
   const [view, reads, sandboxJobs, present] = await Promise.all([
     readCapabilitiesView(db),
-    readEnabledCatalogs(env, { refreshOnMiss: false }),
+    known.reads ?? readEnabledCatalogs(env, { refreshOnMiss: false }),
     readSandboxJobState(env.DB),
-    db
-      .select({
-        appSlug: installs.app_slug,
-        catalogId: installs.catalog_id,
-        origin: installs.origin,
-      })
-      .from(installs)
-      .where(ne(installs.status, "uninstalled")),
+    known.installs ??
+      db
+        .select({
+          appSlug: installs.app_slug,
+          catalogId: installs.catalog_id,
+          origin: installs.origin,
+        })
+        .from(installs)
+        .where(ne(installs.status, "uninstalled")),
   ]);
   // What the enabled catalogs' apps need, from their cached indexes.
   const cached = reads.filter((r) => r.ok);

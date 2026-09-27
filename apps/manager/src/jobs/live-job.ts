@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
 import { compareVersions } from "../catalog/versions";
 import { getJob, type JobView } from "./jobs.functions";
 import {
@@ -65,6 +66,20 @@ export function useLiveJob(
       clearInterval(timer);
     };
   }, [jobId, active, unread]);
+  // A job seen running that has now finished changed what the signed-in
+  // layout shows (Home, the sidebar's apps and count), which it only reads
+  // again when asked to.
+  const router = useRouter();
+  const sawRunning = useRef(false);
+  useEffect(() => {
+    if (job == null) return;
+    if (isActive(job)) {
+      sawRunning.current = true;
+    } else if (sawRunning.current) {
+      sawRunning.current = false;
+      void router.invalidate();
+    }
+  }, [job, router]);
   return job;
 }
 

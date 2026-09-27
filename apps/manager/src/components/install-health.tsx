@@ -1,18 +1,16 @@
 import { Badge, Button, Text } from "@cloudflare/kumo";
-import { ArrowsClockwiseIcon, QuestionIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import type { HealthStatus } from "../db/schema";
 import { checkInstallHealth } from "../installs/health.functions";
-import { formatDateTime } from "./format";
 import { Timestamp } from "./timestamp";
-import { Tooltip } from "./tooltip";
 
 /**
  * The health of an install's Worker as its last check recorded it: a badge
  * with the check time and, for admins, "Check now" (one probe of the app's
- * health path) on the install page; an icon in the installed list when the
- * Worker could not be verified or answers with server errors.
+ * health path) on the install page. Home lists an app whose Worker could not
+ * be verified or answers with server errors as not responding.
  */
 
 type BadgeVariant = "success" | "warning" | "error" | "neutral";
@@ -110,33 +108,5 @@ export function InstallHealth({
         </Text>
       )}
     </span>
-  );
-}
-
-/** For the installed list: an icon when the last check did not verify the Worker, else nothing. */
-export function HealthIcon({
-  status,
-  checkedAt,
-}: {
-  status: HealthStatus | null;
-  checkedAt: string | null;
-}) {
-  if (status !== "unverified" && status !== "unhealthy") return null;
-  const entry = HEALTH[status];
-  const label = `Health: ${entry.label.toLowerCase()} (checked ${formatDateTime(checkedAt)})`;
-  const Icon = status === "unhealthy" ? WarningCircleIcon : QuestionIcon;
-  return (
-    <Tooltip
-      content={label}
-      render={
-        <span
-          role="img"
-          aria-label={label}
-          className={status === "unhealthy" ? "text-kumo-danger" : "text-kumo-warning"}
-        />
-      }
-    >
-      <Icon size={18} weight="fill" />
-    </Tooltip>
   );
 }

@@ -7,7 +7,7 @@ interface DeployCopyEnv {
   APPFLARE_INSTALL_SOURCE?: string;
 }
 
-/** The home page's "Clean up the deploy copy" card for this viewer, or null. */
+/** Home's "Clean up the deploy copy" row for this viewer, or null. */
 export async function readDeployCopyCleanup(
   env: DeployCopyEnv,
   isAdmin: boolean,
@@ -28,7 +28,7 @@ export async function readDeployCopyCleanup(
   });
 }
 
-/** Hides the card for every admin of this manager. Idempotent. */
+/** Hides the row for every admin of this manager. Idempotent. */
 export async function dismissDeployCopyCleanup(
   env: DeployCopyEnv,
   now: Date = new Date(),

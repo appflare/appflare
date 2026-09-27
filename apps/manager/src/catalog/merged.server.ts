@@ -193,13 +193,18 @@ export async function refreshOfficialCatalog(
  * Every enabled catalog's index, the official one first. With
  * `refreshOnMiss` (the pages), a catalog with nothing cached is fetched
  * once; without it (jobs, the cron's own checks), only caches are read.
+ * `records` are the catalogs as the caller already read them
+ * (`listCatalogRecords`), which saves reading them again.
  */
 export async function readEnabledCatalogs(
   env: MergedEnv,
   opts: CatalogOptions & { refreshOnMiss?: boolean } = {},
+  records?: readonly CatalogRecord[],
 ): Promise<CatalogIndexRead[]> {
-  const records = (await listCatalogRecords(createDb(env.DB))).filter((r) => r.enabled);
-  return Promise.all(records.map((r) => readOne(env, r, opts.refreshOnMiss ?? true, opts)));
+  const enabled = (records ?? (await listCatalogRecords(createDb(env.DB)))).filter(
+    (r) => r.enabled,
+  );
+  return Promise.all(enabled.map((r) => readOne(env, r, opts.refreshOnMiss ?? true, opts)));
 }
 
 /** Every app the reads list, by app key. */

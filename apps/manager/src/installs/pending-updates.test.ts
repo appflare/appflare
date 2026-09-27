@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  MANAGER_UPDATES_HREF,
-  type ManagerStatus,
-  type PendingInstallRow,
-  pendingUpdates,
-  pendingUpdatesTitle,
-  sidebarUpdateBadge,
-} from "./pending-updates";
+import { type ManagerStatus, type PendingInstallRow, pendingUpdates } from "./pending-updates";
 
 const row = (over: Partial<PendingInstallRow> & { id: string }): PendingInstallRow => ({
   status: "installed",
@@ -59,26 +52,7 @@ describe("pendingUpdates", () => {
     };
     const pending = pendingUpdates([], new Map(), manager);
     expect(pending).toEqual({ apps: [], manager });
-    // The sidebar's Home count and the home page's title only ever count apps.
+    // Only apps are ever counted.
     expect(pending.apps).toHaveLength(0);
-  });
-
-  it("puts the app count on Home only, never a count for Appflare's own update", () => {
-    const pending = pendingUpdates([row({ id: "a" })], new Map([["cut", "1.1.0"]]), {
-      current: "0.4.0",
-      latest: "0.5.0",
-      updateAvailable: true,
-      activeJobId: null,
-    });
-    expect(sidebarUpdateBadge("/", pending)).toEqual({ count: 1, label: "1 update available" });
-    for (const href of ["/settings", MANAGER_UPDATES_HREF, "/catalog", "/jobs"]) {
-      expect(sidebarUpdateBadge(href, pending).count).toBe(0);
-    }
-    expect(sidebarUpdateBadge("/", pendingUpdates([], new Map(), upToDate)).count).toBe(0);
-  });
-
-  it("titles the count", () => {
-    expect(pendingUpdatesTitle(1)).toBe("1 update available");
-    expect(pendingUpdatesTitle(3)).toBe("3 updates available");
   });
 });

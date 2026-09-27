@@ -45,8 +45,9 @@ version before it serves traffic follows the same mode.
 | **Unhealthy** | `unhealthy` | The Worker answered with a server error (5xx). |
 | **Not checked** | | No check has run yet. |
 
-The app's page shows the result and when it was checked. **Installed apps** marks
-installs that are not verified or unhealthy.
+The app's page shows the result and when it was checked. An app that is not verified
+or unhealthy is listed on Home under **Needs attention** as not responding, with
+**Check again** for admins, and its row in the sidebar gets an amber dot.
 
 ## Check again
 

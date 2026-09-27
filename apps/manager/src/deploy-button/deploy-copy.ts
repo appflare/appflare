@@ -6,7 +6,8 @@
  * from signed releases. Worse, a push to the copy rebuilds it and deploys the
  * old version it holds over whatever Appflare has updated itself to. Appflare
  * cannot remove either (the Workers Builds API refuses the account-owned
- * token it holds), so the home page asks an admin to, once per manager.
+ * token it holds), so Home asks an admin to, once per manager, in its
+ * "Needs attention" list.
  *
  * The deploy repository's `wrangler.jsonc` sets `APPFLARE_INSTALL_SOURCE` to
  * `deploy-button`. Self-updates copy plain-text variables from the running
@@ -22,7 +23,7 @@ export const INSTALL_SOURCE_DEPLOY_BUTTON = "deploy-button";
  * Whether this manager was deployed with the "Deploy to Cloudflare" button.
  * The button's form shows `APPFLARE_INSTALL_SOURCE` as an editable variable,
  * so any value starting with "deploy", in any case, counts: a visitor who
- * retyped it as `Deploy-Button` or `deploy` still gets the cleanup card.
+ * retyped it as `Deploy-Button` or `deploy` still gets the cleanup row.
  */
 export function deployButtonInstalled(env: { APPFLARE_INSTALL_SOURCE?: string }): boolean {
   return env.APPFLARE_INSTALL_SOURCE?.trim().toLowerCase().startsWith("deploy") === true;
@@ -59,7 +60,7 @@ export function deployCopySearchUrl(workerName: string | null): string {
   return `https://github.com/search?q=${encodeURIComponent(query)}&type=repositories`;
 }
 
-/** What the home page's "Clean up the deploy copy" card shows. */
+/** What Home's "Clean up the deploy copy" row shows. */
 export interface DeployCopyCleanup {
   workerName: string | null;
   workerSettingsUrl: string;
@@ -67,9 +68,9 @@ export interface DeployCopyCleanup {
 }
 
 /**
- * The card's content, or null when it is not shown: the manager was not
- * deployed with the button, an admin already dismissed the card, or the
- * viewer is not an admin (members cannot dismiss it, and the cleanup needs
+ * The row's content, or null when it is not shown: the manager was not
+ * deployed with the button, an admin already marked it done, or the
+ * viewer is not an admin (members cannot mark it done, and the cleanup needs
  * someone who administers the account anyway).
  */
 export function deployCopyCleanup(input: {

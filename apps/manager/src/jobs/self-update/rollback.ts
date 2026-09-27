@@ -10,10 +10,11 @@ import { VERSION_BINDING } from "./plan";
  *
  * The rule: the target's code must know every migration the database has.
  * Migrations only add to the schema and older code tolerates a database that
- * is ahead (that is what the home page's downgrade banner explains), but what
+ * is ahead (that is what the downgrade notice in Home's "Needs attention"
+ * explains), but what
  * the newer version added would then be missing, so a rollback across a
  * migration is refused rather than started. The same comparison as the
- * banner's (`schemaDowngrade`) decides it, with the target's own count read
+ * notice's (`schemaDowngrade`) decides it, with the target's own count read
  * from its preview's `/api/health` (`knownSchemaVersion`).
  */
 

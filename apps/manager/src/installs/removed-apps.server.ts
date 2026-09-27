@@ -128,7 +128,7 @@ function isRemovedApp() {
   );
 }
 
-/** How many removed apps there are, for the settings menu, which lists Removed apps only then (`getPendingUpdates`). */
+/** How many removed apps there are, for the settings menu, which lists Removed apps only then (`getLayoutData`). */
 export async function countRemovedAppsCore(d1: D1Database): Promise<number> {
   const [row] = await createDb(d1)
     .select({ count: sql<number>`count(*)` })

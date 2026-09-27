@@ -9,7 +9,8 @@ import {
 } from "@phosphor-icons/react";
 import { useLocation, useMatches, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
-import { type PendingUpdates, sidebarUpdateBadge } from "../installs/pending-updates";
+import { useHomeClick } from "../home/use-attention";
+import type { ManagerStatus } from "../installs/pending-updates";
 import type { Viewer } from "../server/session.functions";
 import { AccountMenu } from "./account-menu";
 import { AppflareCard, AppflareVersion } from "./appflare-card";
@@ -17,6 +18,8 @@ import { Logo, LogoMark } from "./logo";
 import { isCurrentPage, type SettingsPage, visibleSettingsPages } from "./navigation";
 import { type SettingsNavigation, SettingsNavigationContext } from "./settings-menu";
 import { SettingsNavItem } from "./settings-nav";
+import { SidebarAppsGroup } from "./sidebar-apps";
+import type { SidebarApp } from "./sidebar-apps-list";
 import { MOBILE_BREAKPOINT, useIsNarrow, useSidebarRail } from "./sidebar-rail";
 import { useHashTarget } from "./use-hash-target";
 
@@ -24,7 +27,10 @@ interface NavItem {
   href: string;
   label: string;
   icon: Icon;
-  /** Also current on the pages below it, such as an app's page under Home. */
+  /**
+   * Also current on the pages below it: an app's page is under Home while
+   * the sidebar does not list the apps (folded into its rail).
+   */
   covers?: readonly string[];
 }
 
@@ -34,14 +40,20 @@ const NAV: readonly NavItem[] = [
   { href: "/jobs", label: "Jobs", icon: ListChecksIcon },
 ];
 
-function isCurrent(pathname: string, item: NavItem): boolean {
+function isCurrent(pathname: string, item: NavItem, appsListed: boolean): boolean {
   if (item.href === "/") {
     return (
       isCurrentPage(pathname, "/", true) ||
-      (item.covers ?? []).some((c) => isCurrentPage(pathname, c, false))
+      (!appsListed && (item.covers ?? []).some((c) => isCurrentPage(pathname, c, false)))
     );
   }
   return isCurrentPage(pathname, item.href, false);
+}
+
+/** The count on the sidebar's Home item: the "Needs attention" rows. */
+export interface NavBadge {
+  count: number;
+  label: string;
 }
 
 function CountBadge({ count, label }: { count: number; label: string }) {
@@ -93,6 +105,7 @@ function useCloseDrawerOnNavigate(pathname: string): void {
 function ShellHeader() {
   const { isMobile } = useSidebar();
   const folded = useFolded();
+  const onHomeClick = useHomeClick();
   if (folded) {
     return (
       <Sidebar.Header className="justify-center px-[11px]">
@@ -110,7 +123,12 @@ function ShellHeader() {
   return (
     <Sidebar.Header className="justify-between">
       {/* The full logo alone, its mark in line with the menu's icons. */}
-      <Link href="/" variant="plain" className="flex items-center rounded-md px-2.5 py-1">
+      <Link
+        href="/"
+        variant="plain"
+        className="flex items-center rounded-md px-2.5 py-1"
+        onClick={onHomeClick}
+      >
         <Logo height={24} />
       </Link>
       {isMobile ? (
@@ -126,16 +144,23 @@ function ShellHeader() {
 
 function ShellSidebar({
   viewer,
-  pending,
+  manager,
+  apps,
+  badge,
   settingsPages,
 }: {
   viewer: Viewer;
-  pending: PendingUpdates;
+  manager: ManagerStatus;
+  apps: readonly SidebarApp[];
+  badge: NavBadge;
   settingsPages: readonly SettingsPage[];
 }) {
   const { pathname } = useLocation();
   const folded = useFolded();
+  const onHomeClick = useHomeClick();
   useCloseDrawerOnNavigate(pathname);
+  // Not in the folded rail, where there is no room for names.
+  const appsListed = !folded && apps.length > 0;
 
   return (
     <Sidebar>
@@ -144,34 +169,33 @@ function ShellSidebar({
         <Sidebar.Group>
           <Sidebar.Menu>
             {NAV.map((item) => {
-              const badge = sidebarUpdateBadge(item.href, pending);
+              // Only Home carries a count: what needs attention.
+              const count = item.href === "/" ? badge.count : 0;
               return (
                 <Sidebar.MenuButton
                   key={item.href}
                   href={item.href}
-                  icon={badge.count > 0 ? <CountedIcon icon={item.icon} /> : item.icon}
-                  active={isCurrent(pathname, item)}
+                  icon={count > 0 ? <CountedIcon icon={item.icon} /> : item.icon}
+                  active={isCurrent(pathname, item, appsListed)}
                   // Shown only while folded, when the label is hidden.
-                  tooltip={badge.count > 0 ? `${item.label}: ${badge.label}` : item.label}
+                  tooltip={count > 0 ? `${item.label}: ${badge.label}` : item.label}
+                  {...(item.href === "/" ? { onClick: onHomeClick } : {})}
                 >
                   {item.label}
-                  <CountBadge count={badge.count} label={badge.label} />
+                  <CountBadge count={count} label={badge.label} />
                 </Sidebar.MenuButton>
               );
             })}
             <SettingsNavItem pathname={pathname} pages={settingsPages} folded={folded} />
           </Sidebar.Menu>
         </Sidebar.Group>
+        {appsListed && <SidebarAppsGroup apps={apps} pathname={pathname} />}
       </Sidebar.Content>
-      <AppflareCard
-        manager={pending.manager}
-        isAdmin={viewer.role === "admin"}
-        collapsed={folded}
-      />
+      <AppflareCard manager={manager} isAdmin={viewer.role === "admin"} collapsed={folded} />
       {/* Appflare's version at the start, the account menu at the end; folded, the menu carries the version. */}
       <Sidebar.Footer className={folded ? "justify-center" : "justify-between gap-3"}>
-        {!folded && <AppflareVersion version={pending.manager.current} />}
-        <AccountMenu viewer={viewer} version={pending.manager.current} collapsed={folded} />
+        {!folded && <AppflareVersion version={manager.current} />}
+        <AccountMenu viewer={viewer} version={manager.current} collapsed={folded} />
       </Sidebar.Footer>
     </Sidebar>
   );
@@ -180,13 +204,19 @@ function ShellSidebar({
 /** On a narrow screen: the button that opens the navigation drawer, and the logo. */
 function MobileTopBar() {
   const { isMobile, openMobile } = useSidebar();
+  const onHomeClick = useHomeClick();
   if (!isMobile) return null;
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-kumo-line bg-kumo-base px-3">
       <Sidebar.Trigger aria-label="Open navigation" aria-expanded={openMobile}>
         <ListIcon size={20} />
       </Sidebar.Trigger>
-      <Link href="/" variant="plain" className="flex items-center rounded-md px-1 py-1">
+      <Link
+        href="/"
+        variant="plain"
+        className="flex items-center rounded-md px-1 py-1"
+        onClick={onHomeClick}
+      >
         <Logo height={22} />
       </Link>
     </header>
@@ -196,8 +226,9 @@ function MobileTopBar() {
 /**
  * Signed-in chrome: Kumo sidebar with the logo, Home, Catalog, Jobs and
  * Settings (a list of its pages that opens in place, `settings-nav.tsx`),
- * Appflare's own update while there is one, and a footer with the account
- * menu and Appflare's version. Home carries the count of app updates.
+ * then "Your apps" (`sidebar-apps.tsx`), Appflare's own update while there
+ * is one, and a footer with the account menu and Appflare's version. Home
+ * carries the count of what needs attention, and each app its status dot.
  *
  * On a wide screen the sidebar folds into an icon rail (the button next to
  * the logo), with each item's name as a tooltip; the choice is remembered in
@@ -206,12 +237,17 @@ function MobileTopBar() {
  */
 export function AppShell({
   viewer,
-  pending,
+  manager,
   removedApps,
+  apps,
+  badge,
   children,
 }: {
   viewer: Viewer;
-  pending: PendingUpdates;
+  manager: ManagerStatus;
+  /** The installs, by name, each with its status dot. */
+  apps: readonly SidebarApp[];
+  badge: NavBadge;
   /** How many uninstalled apps keep data: Settings lists Removed apps only while there are any. */
   removedApps: number;
   children: ReactNode;
@@ -257,7 +293,13 @@ export function AppShell({
       onOpenChange={onOpenChange}
       className="h-dvh"
     >
-      <ShellSidebar viewer={viewer} pending={pending} settingsPages={settingsPages} />
+      <ShellSidebar
+        viewer={viewer}
+        manager={manager}
+        apps={apps}
+        badge={badge}
+        settingsPages={settingsPages}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         <MobileTopBar />
         <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-6">

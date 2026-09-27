@@ -18,15 +18,10 @@ export const RouterAnchor = forwardRef<HTMLAnchorElement, LinkComponentProps>(fu
   function handleClick(event: MouseEvent<HTMLAnchorElement>) {
     onClick?.(event);
     if (
-      event.defaultPrevented ||
+      !isPlainClick(event) ||
       url === undefined ||
       !isInternalPagePath(url) ||
-      (target !== undefined && target !== "_self") ||
-      event.button !== 0 ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey
+      (target !== undefined && target !== "_self")
     ) {
       return;
     }
@@ -35,3 +30,18 @@ export const RouterAnchor = forwardRef<HTMLAnchorElement, LinkComponentProps>(fu
   }
   return <a ref={ref} href={url} target={target} onClick={handleClick} {...rest} />;
 });
+
+/**
+ * A click the router should handle: the main button, no modifier keys (which
+ * open a new tab or window), and not already handled.
+ */
+export function isPlainClick(event: MouseEvent<HTMLElement>): boolean {
+  return (
+    !event.defaultPrevented &&
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey
+  );
+}

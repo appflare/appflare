@@ -5,10 +5,16 @@ description: Updating an app, rolling it back, and restoring a database to an ea
 
 ## When an update is available
 
-When the catalog has a newer version of an app than the one installed, **Installed
-apps** shows **Update available**, and the app's page shows **Update available to
-&lt;version&gt;**. The manager compares versions every time you load the page, against the
+When the catalog has a newer version of an app than the one installed, Home lists it
+under **Needs attention**, the app's card says **Update available**, its row in the
+sidebar gets a blue dot, and the app's page shows **Update available to
+&lt;version&gt;**. The manager compares versions every time you load a page, against the
 catalog it refreshes every 30 minutes. It only offers the catalog's current version.
+
+On Home, admins select **Update** on the app's row. With two or more updates that need
+nothing from you, **Update all** starts them together. An update that needs your
+approval (an app built in your account), or one that failed or was rolled back before,
+shows **Review** instead, which opens the app's page.
 
 ## Update an app
 

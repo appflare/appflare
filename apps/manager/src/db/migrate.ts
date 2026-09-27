@@ -169,7 +169,7 @@ export function createMigrator(migrations: readonly Migration[], options: Migrat
       const outcome = await migrate(db);
       current = outcome.schemaVersion;
       if (current > target) {
-        // Detected once per isolate; the home page explains it (schemaDowngrade).
+        // Detected once per isolate; Home's "Needs attention" explains it (schemaDowngrade).
         console.warn("the database is ahead of this version", {
           schemaVersion: current,
           known: target,
