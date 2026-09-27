@@ -24,6 +24,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
 import { jobKindLabel } from "./format";
+import { SendReportButton } from "./job-report-dialog";
 import { useJobStarted } from "./job-started";
 
 /** The sandbox Worker's name, typed to confirm disabling. */
@@ -74,7 +75,7 @@ export function SandboxCard({
         </Text>
         {status.activeJob !== null && <RunningJob job={status.activeJob} />}
         {status.activeJob === null && status.lastFailure !== null && (
-          <LastFailure failure={status.lastFailure} />
+          <LastFailure failure={status.lastFailure} isAdmin={isAdmin} />
         )}
         {status.connected ? (
           <Connected status={status} isAdmin={isAdmin} />
@@ -109,7 +110,13 @@ function RunningJob({ job }: { job: { id: string; kind: string } }) {
 }
 
 /** The last enable, update or disable job failed, and none has succeeded since. */
-function LastFailure({ failure }: { failure: NonNullable<SandboxCardState["lastFailure"]> }) {
+function LastFailure({
+  failure,
+  isAdmin,
+}: {
+  failure: NonNullable<SandboxCardState["lastFailure"]>;
+  isAdmin: boolean;
+}) {
   return (
     <Banner
       variant="error"
@@ -122,6 +129,11 @@ function LastFailure({ failure }: { failure: NonNullable<SandboxCardState["lastF
             See <Link href={`/jobs/${failure.id}`}>its job log</Link> for what happened.
           </span>
         </span>
+      }
+      action={
+        isAdmin ? (
+          <SendReportButton jobId={failure.id} reportedAt={failure.reportedAt} />
+        ) : undefined
       }
     />
   );

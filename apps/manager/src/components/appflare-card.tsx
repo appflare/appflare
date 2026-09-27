@@ -19,6 +19,7 @@ import {
   UPDATED_CARD_MS,
   UPDATED_TO_KEY,
 } from "./appflare-card-state";
+import { SendReportButton } from "./job-report-dialog";
 
 /** Log lines and errors can hold long URLs: wrap anywhere, and show at most four lines. */
 const clamp = "line-clamp-4 [overflow-wrap:anywhere]";
@@ -200,6 +201,8 @@ export function AppflareCard({
       error={error}
       onUpdate={(version) => void onUpdate(version)}
       onDismiss={endUpdated}
+      isAdmin={isAdmin}
+      reportedAt={job?.reportedAt ?? null}
     />
   );
 }
@@ -211,6 +214,8 @@ function CardBody({
   error,
   onUpdate,
   onDismiss,
+  isAdmin,
+  reportedAt,
 }: {
   state: AppflareCardState;
   jobId: string | null;
@@ -218,6 +223,9 @@ function CardBody({
   error: string | null;
   onUpdate(version: string): void;
   onDismiss(): void;
+  isAdmin: boolean;
+  /** When the followed job's failure was reported to the Appflare team. */
+  reportedAt: string | null;
 }) {
   // Up to date: no card; the footer shows the version (AppflareVersion).
   if (state.kind === "current") return null;
@@ -330,6 +338,11 @@ function CardBody({
                 >
                   Try again
                 </Button>
+              )}
+              {isAdmin && jobId !== null && (
+                <div className="justify-self-start">
+                  <SendReportButton jobId={jobId} reportedAt={reportedAt} />
+                </div>
               )}
             </>
           )}

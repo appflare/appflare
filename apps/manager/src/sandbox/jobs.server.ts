@@ -157,6 +157,8 @@ export interface SandboxJobFailure {
   kind: string;
   /** The job's first error log line, else the first line of its recorded error. */
   message: string;
+  /** When an admin sent a report of this failure to the Appflare team; null when not. */
+  reportedAt: string | null;
 }
 
 /**
@@ -169,7 +171,13 @@ export async function lastSandboxJobFailure(db: D1Database): Promise<SandboxJobF
   const orm = createDb(db);
   // Job ids are ULIDs, so they sort by creation time.
   const recent = await orm
-    .select({ id: jobs.id, kind: jobs.kind, status: jobs.status, error: jobs.error })
+    .select({
+      id: jobs.id,
+      kind: jobs.kind,
+      status: jobs.status,
+      error: jobs.error,
+      reportedAt: jobs.reported_at,
+    })
     .from(jobs)
     .where(inArray(jobs.kind, SANDBOX_WORKER_KINDS))
     .orderBy(desc(jobs.id))
@@ -186,5 +194,6 @@ export async function lastSandboxJobFailure(db: D1Database): Promise<SandboxJobF
     id: failed.id,
     kind: failed.kind,
     message: firstLine(line?.message) ?? firstLine(failed.error) ?? "The job failed.",
+    reportedAt: failed.reportedAt?.toISOString() ?? null,
   };
 }

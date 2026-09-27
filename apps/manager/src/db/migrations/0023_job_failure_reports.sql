@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `reported_at` integer;

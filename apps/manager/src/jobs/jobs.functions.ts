@@ -60,6 +60,8 @@ export interface JobView {
   startedBy: JobStarter;
   startedAt: string | null;
   finishedAt: string | null;
+  /** When an admin sent a report of this failure to the Appflare team; null when not. */
+  reportedAt: string | null;
   install: {
     id: string;
     slug: string;
@@ -203,6 +205,7 @@ export const getJob = createServerFn({ method: "GET" })
       startedBy: job.started_by,
       startedAt: job.started_at?.toISOString() ?? null,
       finishedAt: job.finished_at?.toISOString() ?? null,
+      reportedAt: job.reported_at?.toISOString() ?? null,
       install,
       logs: logs.map((l) => ({
         id: l.id,

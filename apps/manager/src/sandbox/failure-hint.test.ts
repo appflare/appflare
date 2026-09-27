@@ -81,6 +81,7 @@ describe("lastSandboxJobFailure", () => {
       id: "01J0000000000000000000000B",
       kind: "sandbox_update",
       message: "deploy failed: 500 Internal",
+      reportedAt: null,
     });
   });
 

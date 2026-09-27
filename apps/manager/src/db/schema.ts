@@ -332,6 +332,12 @@ export const jobs = sqliteTable(
     started_by: text("started_by", { enum: JOB_STARTERS }).notNull().default("admin"),
     started_at: timestamp("started_at"),
     finished_at: timestamp("finished_at"),
+    /**
+     * When an admin sent a report of this failed job to the Appflare team.
+     * Set before the report goes out, so a job is reported at most once;
+     * cleared again when the report could not be delivered.
+     */
+    reported_at: timestamp("reported_at"),
   },
   (t) => [index("jobs_install_id_idx").on(t.install_id)],
 );

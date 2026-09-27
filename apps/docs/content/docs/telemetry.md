@@ -105,7 +105,8 @@ The installer sends one event per run, when the install ends:
 Your Cloudflare account id or name, email addresses, user names, Worker or instance
 names, domains or URLs, secret or variable names or values, tokens, resource ids,
 logs, error messages, or anything from a custom catalog, its app names and versions
-included.
+included. The one exception to logs and error messages is a
+[failure report](#failure-reports), which only an admin sends, by hand.
 
 ## How it is sent
 
@@ -128,6 +129,40 @@ Two more protections are PostHog project settings, not something the code
 enforces: the Appflare project is set to discard IP addresses, and events are kept
 for as long as PostHog's plan retains them (a year on the free plan).
 
+## Failure reports
+
+When a job fails, admins see **Send a report** on the failure message: on the job's
+page, and on the sandbox and Appflare update cards. Nothing is sent until an admin
+opens it, reads what the report contains, and clicks **Send**. A report is never sent
+automatically, and each failed job can be reported once.
+
+A report contains:
+
+- the kind of job, the app's catalog slug and version (with the same rules as the
+  job events above, so `custom` for an app from a custom catalog or a repository),
+  the Appflare version, and the Workers plan;
+- the step the job stopped at, its error, the error category and phase, and every
+  Cloudflare error code in the log;
+- the job's log (its last 400 lines at most);
+- a note, if the admin writes one;
+- the same random id as the usage data, and whether usage data is on.
+
+Before the report leaves, the error, the step, the log and the note are passed once
+more through a filter that takes out anything that looks private: tokens, keys and
+passwords, including every value of a `NAME=value` environment line and of flags
+such as `--password` (shown as `[redacted]`); email addresses (`[email]`); your
+Cloudflare account id (`[account id]`); other Cloudflare ids and UUIDs (`[id]`);
+your workers.dev subdomain and your custom hostnames (`[domain]`); and the names of
+your Workers (`[worker]`). What stays readable is what a fix needs: Cloudflare's
+error codes and HTTP statuses, step names, versions, and the app's catalog slug.
+The dialog's **See exactly what is sent** shows the report exactly as it will leave,
+after that filter.
+
+A report goes the same way as usage data: from the manager's Worker to the Appflare
+PostHog project in the EU, as an event called `job_failure_report`. It is sent even
+when usage data is turned off, because the admin chose to send it; the dialog says
+so. A development build never sends one.
+
 ## Turning it off
 
 Any one of these stops everything:
@@ -147,7 +182,8 @@ Any one of these stops everything:
 When the installer's usage data is off by the flag or a variable, it deploys the
 manager with `APPFLARE_TELEMETRY=off`, so the manager's is locked off too.
 
-When it is off, nothing is sent, not even the fact that it is off. Turning it on
+When it is off, nothing is sent, not even the fact that it is off, apart from a
+failure report an admin chooses to send. Turning it on
 again continues with the same random id, and jobs that ran while it was off are not
 reported.
 

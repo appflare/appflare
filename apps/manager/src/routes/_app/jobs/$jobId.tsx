@@ -12,6 +12,7 @@ import { startedByLabel } from "../../../auto-update/auto-update";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
 import { formatTime, jobKindLabel } from "../../../components/format";
+import { SendReportButton } from "../../../components/job-report-dialog";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { PageHeader } from "../../../components/page-header";
 import { ResponsiveTable } from "../../../components/responsive-table";
@@ -37,6 +38,8 @@ function JobPage() {
   const { jobId } = Route.useParams();
   const job = useLiveJob(jobId, Route.useLoaderData()) ?? null;
   const { switching } = useVersionSwitch(job);
+  const { viewer } = Route.useRouteContext();
+  const isAdmin = viewer.role === "admin";
 
   if (job === null) {
     return (
@@ -131,14 +134,19 @@ function JobPage() {
           }
         />
       )}
-      {job.status === "failed" && job.error !== null && (
+      {job.status === "failed" && (
         <Banner
           variant="error"
           icon={<WarningCircleIcon weight="fill" />}
           title="The job failed"
-          description={job.error}
+          description={job.error ?? undefined}
           action={
-            failureTopic === null ? undefined : <DocsLink topic={failureTopic} variant="inline" />
+            failureTopic === null && !isAdmin ? undefined : (
+              <div className="flex flex-wrap items-center gap-3">
+                {failureTopic !== null && <DocsLink topic={failureTopic} variant="inline" />}
+                {isAdmin && <SendReportButton jobId={job.id} reportedAt={job.reportedAt} />}
+              </div>
+            )
           }
         />
       )}

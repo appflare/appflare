@@ -153,11 +153,13 @@ const CATEGORY_BY_PHASE: Partial<Record<FailedPhase, ErrorCategory>> = {
   preflight: "preflight",
 };
 
-/** Classifies a failed job's error text. */
-export function classifyJobError(error: string | null): JobFailure {
+/**
+ * Splits a failed job's error text into the step it failed in and the
+ * message. A step name may itself contain ": " (`D1 DB: apply migrations`),
+ * so the first prefix that names a known phase is the step.
+ */
+export function splitJobError(error: string | null): { step: string; message: string } {
   const text = error ?? "";
-  // A step name may itself contain ": " (`D1 DB: apply migrations`), so the
-  // first prefix that names a known phase is the step.
   let step = "";
   let message = text;
   for (let at = text.indexOf(": "), tries = 0; at !== -1 && tries < 3; tries++) {
@@ -169,6 +171,30 @@ export function classifyJobError(error: string | null): JobFailure {
     }
     at = text.indexOf(": ", at + 2);
   }
+  return { step, message };
+}
+
+/**
+ * Every Cloudflare API error code the texts mention, in order of first
+ * appearance: the `[code]`s after `Cloudflare API request failed: … -> status:`.
+ */
+export function cloudflareErrorCodes(texts: readonly string[]): number[] {
+  const codes: number[] = [];
+  for (const text of texts) {
+    for (const failure of text.matchAll(/Cloudflare API request failed: [^\n]*/g)) {
+      for (const match of failure[0].matchAll(/\[(\d{3,6})\]/g)) {
+        const code = Number(match[1]);
+        if (!codes.includes(code)) codes.push(code);
+      }
+    }
+  }
+  return codes;
+}
+
+/** Classifies a failed job's error text. */
+export function classifyJobError(error: string | null): JobFailure {
+  const text = error ?? "";
+  const { step, message } = splitJobError(text);
   const cf = CLOUDFLARE_FAILURE.exec(text);
   const cfStatus = cf?.[1] === undefined ? null : Number(cf[1]);
   const cfCode = cf?.[2] === undefined ? null : Number(cf[2]);
