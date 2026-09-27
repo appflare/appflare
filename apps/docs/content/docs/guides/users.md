@@ -15,8 +15,8 @@ The first user, created in the setup wizard, is the owner. On a manager set up b
 owners existed, the admin who was created first becomes the owner when Appflare
 updates.
 
-Members see the account's capabilities and **Workers plan** in Settings but cannot
-change them. Only an admin can select **Re-check**, record the plan, or tick **Remember
+Members see **What this account can run** and the **Workers plan** in Settings but cannot
+change them. Only an admin can select **Check again**, choose the plan, or tick **Remember
 this for the account** while installing or updating. A recorded plan applies only when
 Appflare cannot detect it; recording Workers Paid lets later installs skip the Workers
 Paid confirmation, so set it only when the account really is on Workers Paid.

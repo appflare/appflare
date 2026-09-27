@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../capabilities/capability-rows";
 import { GITHUB_ACCESS_PLACE } from "../github/tokens";
 import { MANAGER_UPDATES_HREF } from "../installs/pending-updates";
-import { ANALYTICS_ENGINE_CHECKLIST_LINK } from "../onboarding/checklist";
 import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
-import { SANDBOX_CHECKLIST_HREF } from "../sandbox/readiness";
+import { SANDBOX_CAPABILITY_HREF } from "../sandbox/readiness";
 import { ACCOUNT_LINKS } from "./account";
 import { plainMessage } from "./message-links";
 import { SETTINGS_PAGES } from "./navigation";
@@ -21,6 +21,9 @@ describe("settingsLink", () => {
     expect(settingsLink("account", "connection")).toBe("/settings/account#connection");
     expect(settingsLink("account", "capabilities")).toBe("/settings/account#capabilities");
     expect(settingsLink("account", "capability-r2")).toBe("/settings/account#capability-r2");
+    expect(settingsLink("account", "capability-token-permissions")).toBe(
+      "/settings/account#capability-token-permissions",
+    );
     expect(settingsLink("account", "danger-zone")).toBe("/settings/account#danger-zone");
     expect(settingsLink("building", "sandbox")).toBe("/settings/building#sandbox");
     expect(settingsLink("building", "github-access")).toBe("/settings/building#github-access");
@@ -50,7 +53,6 @@ describe("settingsLink", () => {
     ]);
     expect(Object.keys(SETTINGS_SECTIONS.account.sections)).toEqual([
       "connection",
-      "checklist",
       "capabilities",
       "danger-zone",
     ]);
@@ -68,7 +70,9 @@ describe("settingsLink", () => {
     settingsLink("account", "sandbox");
     // @ts-expect-error: capability rows are on the account page only.
     settingsLink("users", "capability-r2");
-    // @ts-expect-error: the checklist's rows are capability rows now.
+    // @ts-expect-error: the account setup list is part of What this account can run.
+    settingsLink("account", "checklist");
+    // @ts-expect-error: its rows are capability rows.
     settingsLink("account", "checklist-r2");
   });
 
@@ -78,8 +82,8 @@ describe("settingsLink", () => {
     }
     expect(ACCOUNT_LINKS.passkeys).toBe("/settings/users#passkeys");
     expect(MANAGER_UPDATES_HREF).toBe("/settings/updates#appflare");
-    expect(SANDBOX_CHECKLIST_HREF).toBe("/settings/account#capability-sandbox");
-    expect(ANALYTICS_ENGINE_CHECKLIST_LINK.href).toBe(
+    expect(SANDBOX_CAPABILITY_HREF).toBe("/settings/account#capability-sandbox");
+    expect(ANALYTICS_ENGINE_CAPABILITY_LINK.href).toBe(
       "/settings/account#capability-analytics-engine",
     );
     expect(GITHUB_ACCESS_PLACE).toBe("[GitHub access settings](/settings/building#github-access)");

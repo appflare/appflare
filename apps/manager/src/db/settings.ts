@@ -53,7 +53,7 @@ export const SETTING = {
   accountPlan: "account_plan",
   /**
    * JSON: what the capability probes last found (R2, Containers, Workers
-   * plan) and when (capabilities/). Written at token save, on "Re-check",
+   * plan) and when (capabilities/). Written at token save, on "Check again",
    * and once a day by the cron.
    */
   accountCapabilities: "account_capabilities",

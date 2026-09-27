@@ -566,7 +566,7 @@ describe("startInstallCore", () => {
       }),
     });
     await expect(startInstallCore(h.deps, input({ requirementsConfirmed: true }))).rejects.toThrow(
-      "Cut writes to Analytics Engine, which is not turned on for this account. Turn on Analytics Engine once in the dashboard, then Re-check.",
+      "Cut writes to Analytics Engine, which is not turned on for this account. Turn on Analytics Engine once in the dashboard, then choose Check again on Your account.",
     );
     expect(h.created).toHaveLength(0);
     const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM installs").first<{ n: number }>();

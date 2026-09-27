@@ -1497,7 +1497,7 @@ describe("update job", () => {
       const r = await update(moreCrons, busy(), {}, { paidConfirmed: false });
       expect(r.job?.status).toBe("failed");
       expect(r.job?.error).toBe(
-        "check cron trigger limit: this version needs 3 cron triggers and the account's other Workers already use 3 (second-brain: 2, appflare: 1); Workers Free allows 5 per account, so this would make 6. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account). If it is already on Workers Paid, record that under Workers plan in [the account capabilities](/settings/account#capabilities). Then try again.",
+        "check cron trigger limit: this version needs 3 cron triggers and the account's other Workers already use 3 (second-brain: 2, appflare: 1); Workers Free allows 5 per account, so this would make 6. Remove a cron trigger from another Worker (for example by uninstalling an app that uses one), or upgrade the account to Workers Paid (1,000 per account). If it is already on Workers Paid, choose that plan under [Workers plan in Your account](/settings/account#capability-workers-plan). Then try again.",
       );
       expect(r.step.names).toEqual([
         "start",

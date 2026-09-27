@@ -1,4 +1,4 @@
-import type { ChecklistRowId } from "../onboarding/checklist";
+import type { CapabilityId } from "../capabilities/capability-rows";
 import { messageLink } from "./message-links";
 
 /**
@@ -13,8 +13,7 @@ export const SETTINGS_SECTIONS = {
     path: "/settings/account",
     sections: {
       connection: "Cloudflare connection",
-      checklist: "Onboarding checklist",
-      capabilities: "Account capabilities",
+      capabilities: "What this account can run",
       "danger-zone": "Danger zone",
     },
   },
@@ -72,10 +71,10 @@ export type SettingsSectionId<P extends SettingsPageKey> =
 
 /**
  * Anchors below a section: one row per capability on the account page
- * (`capability-r2`), which the account checklist gives its rows.
+ * (`capability-r2`), the rows of "What this account can run".
  */
 type SettingsRowAnchor<P extends SettingsPageKey> = P extends "account"
-  ? `capability-${ChecklistRowId}`
+  ? `capability-${CapabilityId}`
   : never;
 
 export type SettingsAnchor<P extends SettingsPageKey> = SettingsSectionId<P> | SettingsRowAnchor<P>;

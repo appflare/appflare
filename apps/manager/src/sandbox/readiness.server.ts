@@ -22,7 +22,7 @@ export async function readSandboxJobState(d1: D1Database): Promise<SandboxJobSta
 }
 
 /**
- * The sandbox builds row's state for the account checklist and the pages
+ * The sandbox builds row's state on Your account and on the pages
  * that start builds: from the stored capability probes, whether the
  * running Worker has its `SANDBOX` binding, and the sandbox jobs (an enable
  * in progress, the last one that failed). No Cloudflare API call.

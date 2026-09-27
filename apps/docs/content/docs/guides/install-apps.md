@@ -142,11 +142,13 @@ per account.
 ## Workers Free or Workers Paid
 
 Appflare reads your account's Workers plan from its subscriptions when the Cloudflare
-token has the optional **Billing: Read** permission, and shows it in **Settings**, under
-**Your account**, marked **Detected**. It checks when the token is saved, once a
-day, and when you select **Re-check**. Without that permission, you state the plan
-there yourself (marked **Set by you**); until you do, Appflare treats the account as on
-Workers Free. A detected plan always comes first.
+token has the optional **Billing: Read** permission (or from Containers, which only
+Workers Paid includes), and shows it in **Settings**, **Your account**, under **What this
+account can run**; the row's **Details** say it was detected. It checks when the token is
+saved, once a day, and when you select **Check again**. When Appflare cannot tell, the
+Workers plan row offers **Choose plan** so you state it yourself (its **Details** then say
+"set by you"); until you do, Appflare treats the account as on Workers Free. A detected
+plan always comes first.
 
 - On **Workers Paid**, the install form does not ask you to confirm Workers Paid for
   apps that need it, and installs and updates skip the count of the account's cron

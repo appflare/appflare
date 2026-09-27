@@ -119,10 +119,14 @@ const APPFLARE_UPDATES_ANCHORS: Record<string, string> = {
   versions: settingsLink("updates", "versions"),
 };
 
-/** Sections that moved off the account page. */
+/**
+ * Sections that moved off the account page, and the account setup list
+ * that became part of "What this account can run".
+ */
 const ACCOUNT_ANCHORS: Record<string, string> = {
   sandbox: settingsLink("building", "sandbox"),
   "github-access": settingsLink("building", "github-access"),
+  checklist: settingsLink("account", "capabilities"),
 };
 
 /**
@@ -134,7 +138,8 @@ const ACCOUNT_ANCHORS: Record<string, string> = {
  * - `/settings/appflare-updates` is the Updates page, at the section it
  *   named (Appflare's version when it named none);
  * - `/settings/account#sandbox` and `#github-access` moved to Building
- *   apps, and the account checklist's rows are `#capability-<id>` now.
+ *   apps; the account setup list (`#checklist`) is part of "What this
+ *   account can run" (`#capabilities`), and its rows are `#capability-<id>`.
  *
  * `hash` is the location hash, with or without its `#`.
  */

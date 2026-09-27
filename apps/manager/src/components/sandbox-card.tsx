@@ -43,7 +43,7 @@ const SANDBOX_WORKER = "appflare-sandbox";
  *   then starts a job that deploys the sandbox Worker release this Appflare
  *   pins, its bucket and container applications, and connects to it. What
  *   keeps it from working (R2 off, the token without Containers) is named
- *   first, from the account capabilities above.
+ *   first, from the account capabilities.
  * - Connected: the sandbox Worker's version and image; "Update sandbox"
  *   (confirmed the same way) when this Appflare pins a newer release;
  *   "Disable sandbox builds" behind the typed name, refused while an app
@@ -352,7 +352,7 @@ function NotConnected({
         <Text>
           Appflare has not detected Workers Paid on this account, which sandbox builds need. If the
           account is on Workers Paid, add Containers: Edit to Appflare's token (or Billing: Read)
-          and choose Re-check under Account capabilities.
+          and choose Check again under What this account can run, on Your account.
         </Text>
         {isAdmin && status.workerExists === true && (
           <LeftoverWorker status={status} disabled={busy} />

@@ -6,9 +6,10 @@ import { type AccountPlan, setAccountPlanInput } from "./plan";
 import { writeAccountPlan } from "./plan.server";
 
 /**
- * Settings, Workers plan: only admins set it. Reading it is part of the
- * account capabilities (capabilities/capabilities.functions.ts), which also
- * say whether the plan in force was detected or set here.
+ * The Workers plan an admin chooses on Your account ("Choose plan"): only
+ * admins set it. Reading it is part of the account capabilities
+ * (capabilities/), which also say whether the plan in force was detected
+ * or set here.
  */
 export const setAccountPlan = createServerFn({ method: "POST" })
   .validator(setAccountPlanInput)

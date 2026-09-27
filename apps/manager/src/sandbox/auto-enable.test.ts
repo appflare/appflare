@@ -32,7 +32,7 @@ import {
 import { fakeStep } from "../test/fake-step";
 import { seedInstall } from "../test/seed-install";
 import type { SandboxEnableJobParams } from "./enable-job";
-import { SANDBOX_CHECKLIST_HREF } from "./readiness";
+import { SANDBOX_CAPABILITY_HREF } from "./readiness";
 import { sandboxReleaseProblem } from "./release";
 
 /**
@@ -224,16 +224,19 @@ describe("an install that needs sandbox builds while they are off", () => {
       { releaseVersion: "0.1.2" },
       /cannot turn them on: GitHub has no sandbox Worker release sandbox@0\.1\.3\./,
     ],
-  ])("refuses when %s, naming it and linking the checklist row", async (_what, opts, message) => {
-    const s = await start(opts);
-    const refusal = s.run();
-    await expect(refusal).rejects.toThrow(StartInstallError);
-    await expect(refusal).rejects.toThrow(message);
-    await expect(s.run()).rejects.toThrow(SANDBOX_CHECKLIST_HREF);
-    expect(await jobRows()).toEqual([]);
-    expect(await env.DB.prepare("SELECT id FROM installs").all()).toMatchObject({ results: [] });
-    expect(s.created).toEqual([]);
-  });
+  ])(
+    "refuses when %s, naming it and linking its row on Your account",
+    async (_what, opts, message) => {
+      const s = await start(opts);
+      const refusal = s.run();
+      await expect(refusal).rejects.toThrow(StartInstallError);
+      await expect(refusal).rejects.toThrow(message);
+      await expect(s.run()).rejects.toThrow(SANDBOX_CAPABILITY_HREF);
+      expect(await jobRows()).toEqual([]);
+      expect(await env.DB.prepare("SELECT id FROM installs").all()).toMatchObject({ results: [] });
+      expect(s.created).toEqual([]);
+    },
+  );
 
   it("refuses while another job runs, leaving nothing behind", async () => {
     await env.DB.prepare(

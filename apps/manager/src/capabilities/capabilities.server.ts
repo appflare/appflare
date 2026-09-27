@@ -24,10 +24,10 @@ import {
 /**
  * Runs the account capability probes and keeps their answer in
  * `settings.account_capabilities`: at token save (with the new token), when an
- * admin chooses "Re-check", and once a UTC day from the cron. Each run is one
+ * admin chooses "Check again", and once a UTC day from the cron. Each run is one
  * read call per probe, eight in all: R2, Containers, the Workers plan, one zone
  * of the account, Email Routing on that zone (skipped when there is no
- * zone), and for the onboarding checklist the workers.dev subdomain, the Zero
+ * zone), the workers.dev subdomain, the Zero
  * Trust organization and an Analytics Engine `SHOW TABLES`. The plan probe reads further subscription pages, up to 4, only on
  * accounts with more than 50 subscriptions and no Workers entry on the
  * first. A probe that cannot tell for lack of permission is stored as

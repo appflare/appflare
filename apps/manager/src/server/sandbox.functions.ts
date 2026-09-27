@@ -81,10 +81,10 @@ export const getSandboxStatus = createServerFn({ method: "GET" }).handler(
 );
 
 /**
- * The account checklist's sandbox builds row: `on`, `ready-auto` (turned on
+ * The sandbox builds row's state on Your account: `on`, `ready-auto` (turned on
  * by the first install or build that needs it), or what is missing
  * (`needs-plan`, `needs-permission`, `needs-r2`). Any signed-in user; no
- * Cloudflare API call. "Enable now" is {@link startSandboxJob} with
+ * Cloudflare API call. Turning them on by hand (Building apps) is {@link startSandboxJob} with
  * `action: "enable"`.
  */
 export const getSandboxReadiness = createServerFn({ method: "GET" }).handler(

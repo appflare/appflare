@@ -9,8 +9,8 @@ export const DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/";
 
 /**
  * Setup runs in three steps on one page, `/setup`: connect Cloudflare (paste
- * an API token for this account), create the owner account, then the
- * onboarding checklist.
+ * an API token for this account), create the owner account, then check
+ * what the account can run.
  */
 export const SETUP_STEP_COUNT = 3;
 export type SetupStep = 1 | 2 | 3;

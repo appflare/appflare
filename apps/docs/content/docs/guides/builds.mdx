@@ -41,8 +41,8 @@ built this way.
 
 In **Settings > Building apps**, the **Build in your account** section shows **Enable
 sandbox builds** to admins. When R2 is off or the token lacks Containers: Edit, the card
-says so and the button stays disabled until the cause is fixed and the capabilities are
-checked again.
+says so and the button stays disabled until the cause is fixed and the account is
+checked again (**Check again** in **Settings > Your account**).
 
 Enabling runs as a job, so its log shows each step:
 
@@ -312,14 +312,14 @@ from releases that do not match. Update whichever is older: **Update sandbox** i
 **Settings > Building apps**, or update Appflare itself in **Settings > Updates**.
 
 **Sandbox builds need Workers Paid.** The account is on the free plan. Upgrade it
-under **Workers & Pages > Plans** in the dashboard, select **Re-check** under the
-account capabilities, and enable sandbox builds.
+under **Workers & Pages > Plans** in the dashboard, select **Check again** under
+**What this account can run** in **Settings > Your account**, and enable sandbox builds.
 
 **R2 is not enabled on this account.** Open **R2** in the dashboard once, select
-**Re-check**, and enable sandbox builds again.
+**Check again**, and enable sandbox builds again.
 
 **The token lacks Containers: Edit.** Edit Appflare's token in the dashboard, add
-Account > Containers > Edit, select **Re-check**, and enable sandbox builds again.
+Account > Containers > Edit, select **Check again**, and enable sandbox builds again.
 
 **The container applications are not ready yet.** Their containers took longer to start
 than the job waits (Docker Hub can be slow to serve the image). Enable sandbox builds

@@ -2,6 +2,7 @@ import { Banner, Button, Checkbox, Empty, Text } from "@cloudflare/kumo";
 import { PlusIcon, StorefrontIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
+import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capability-rows";
 import { accountNeeds, installAdds, needOfCheck } from "../../../catalog/account-needs";
 import {
   appLinks,
@@ -35,10 +36,9 @@ import { BuildFromSourceCard } from "../../../components/build-from-source-card"
 import { DocsLink } from "../../../components/docs-link";
 import { InstallForm } from "../../../components/install-form";
 import { PageHeader } from "../../../components/page-header";
-import { SANDBOX_CHECKLIST_LINK_LABEL } from "../../../components/sandbox-first";
+import { SANDBOX_CAPABILITY_LINK_LABEL } from "../../../components/sandbox-first";
 import { ScreenshotGallery } from "../../../components/screenshot-gallery";
-import { ANALYTICS_ENGINE_CHECKLIST_LINK } from "../../../onboarding/checklist";
-import { SANDBOX_CHECKLIST_HREF } from "../../../sandbox/readiness";
+import { SANDBOX_CAPABILITY_HREF } from "../../../sandbox/readiness";
 
 /**
  * `/catalog/$slug`: an app's page, laid out like an app store's. A header
@@ -288,10 +288,10 @@ function InstallPanel({
       : sandboxMissing !== null
         ? {
             reason: `${app.name} ${installer !== null ? "is deployed by its own installer in" : "is built in"} your account's sandbox Worker. Sandbox builds are off, and Appflare cannot turn them on: ${sandboxMissing}`,
-            link: { href: SANDBOX_CHECKLIST_HREF, label: SANDBOX_CHECKLIST_LINK_LABEL },
+            link: { href: SANDBOX_CAPABILITY_HREF, label: SANDBOX_CAPABILITY_LINK_LABEL },
           }
         : analyticsEngineOff !== null
-          ? { reason: analyticsEngineOff, link: ANALYTICS_ENGINE_CHECKLIST_LINK }
+          ? { reason: analyticsEngineOff, link: ANALYTICS_ENGINE_CAPABILITY_LINK }
           : null;
   const blockedReason = blocked?.reason ?? null;
   // Nothing left to confirm when the account is known to offer everything.

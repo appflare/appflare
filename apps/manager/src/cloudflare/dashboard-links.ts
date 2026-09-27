@@ -47,3 +47,26 @@ export function zoneDashboardUrl(
 export function zeroTrustDashboardUrl(accountId: string | null | undefined, path: string): string {
   return `${ZERO_TRUST_DASHBOARD}/?to=/${accountSegment(accountId)}/${withoutLeadingSlash(path)}`;
 }
+
+/**
+ * The dashboard pages Appflare sends people to, in the account it runs in
+ * (`:account` while the id is not known, so the dashboard asks). The routes
+ * are the ones Cloudflare's own docs link to (cloudflare-docs
+ * `src/content/dash-routes/*.json`, read 2026-09-24). The workers.dev
+ * registration page is where wrangler sends people
+ * (`/<account id>/workers/onboarding`, wrangler 4.136.2).
+ */
+export function dashboardLinks(accountId: string | null) {
+  return {
+    workersAndPages: dashboardUrl(accountId, "workers-and-pages"),
+    workersOnboarding: dashboardUrl(accountId, "workers/onboarding"),
+    workersPlans: dashboardUrl(accountId, "workers/plans"),
+    r2: dashboardUrl(accountId, "r2/overview"),
+    analyticsEngine: dashboardUrl(accountId, "workers/analytics-engine"),
+    domains: dashboardUrl(accountId, "domains/overview"),
+    emailRouting: dashboardUrl(accountId, "email-service/routing"),
+    zeroTrust: zeroTrustDashboardUrl(accountId, "home"),
+    /** Account-owned tokens; a user token is edited from the profile's API Tokens page. */
+    accountApiTokens: dashboardUrl(accountId, "api-tokens"),
+  };
+}

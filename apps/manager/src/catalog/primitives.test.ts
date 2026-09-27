@@ -169,7 +169,7 @@ describe("primitiveStatus", () => {
       id: "analytics-engine",
       availability: "unavailable",
       reason:
-        "Detected: Analytics Engine is not turned on. Turn on Analytics Engine once in the dashboard, then Re-check.",
+        "Detected: Analytics Engine is not turned on. Turn on Analytics Engine once in the dashboard, then choose Check again on Your account.",
     });
     expect(primitiveStatus("analytics-engine", refused, plain).availability).toBe("unknown");
     // A row stored before the probe existed: not known yet.

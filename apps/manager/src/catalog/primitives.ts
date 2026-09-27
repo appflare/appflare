@@ -169,10 +169,10 @@ function emailRoutingStatus(view: CapabilitiesView | null): PrimitiveStatus {
 /**
  * What an admin does about Analytics Engine being off: it is turned on once
  * per account, from its page in the dashboard, and the probe reads it again on
- * Re-check.
+ * Check again.
  */
 export const ANALYTICS_ENGINE_FIX =
-  "Turn on Analytics Engine once in the dashboard, then Re-check.";
+  "Turn on Analytics Engine once in the dashboard, then choose Check again on Your account.";
 
 /**
  * Analytics Engine, as its probe found it. It is off on an account until

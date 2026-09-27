@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { capabilitiesView } from "../capabilities/capabilities";
+import { catalogNeeds } from "../capabilities/capability-rows";
+import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
 import { NO_SANDBOX_JOBS } from "../sandbox/readiness";
-import type { ChecklistData } from "./checklist.server";
 import {
   initialWizardState,
   type SavedTokenSummary,
@@ -13,14 +14,14 @@ import {
   wizardStepNumber,
 } from "./wizard";
 
-const CHECKLIST: ChecklistData = {
-  view: capabilitiesView(undefined, null),
+const CHECKLIST: CapabilityRowsData = {
+  view: capabilitiesView(undefined, null, "acc0000000000000000000000000000a"),
   sandbox: "off",
   needs: null,
-  accountId: "acc0000000000000000000000000000a",
+  inUse: catalogNeeds([]),
   sandboxJobs: NO_SANDBOX_JOBS,
 };
-const LATER: ChecklistData = { ...CHECKLIST, sandbox: "enabled" };
+const LATER: CapabilityRowsData = { ...CHECKLIST, sandbox: "enabled" };
 
 const SAVED: SavedTokenSummary = {
   accountId: "acc0000000000000000000000000000a",
@@ -34,7 +35,7 @@ function run(start: WizardState, ...events: WizardEvent[]): WizardState {
 }
 
 describe("the setup wizard", () => {
-  it("starts where the server says, with the checklist for step 3", () => {
+  it("starts where the server says, with what the account can run for the last step", () => {
     expect(initialWizardState("connect", null)).toEqual({ step: "connect" });
     expect(initialWizardState("create-owner", null)).toEqual({ step: "create-owner" });
     expect(initialWizardState("checklist", CHECKLIST)).toEqual({
@@ -71,7 +72,7 @@ describe("the setup wizard", () => {
     expect(run(connect, { type: "token-saved", saved: SAVED })).toBe(connect);
   });
 
-  it("replaces the checklist in place on Re-check", () => {
+  it("replaces what the account can run in place on Check again", () => {
     const shown = run(
       { step: "checklist", checklist: CHECKLIST },
       {
@@ -111,6 +112,12 @@ describe("the setup wizard", () => {
       wizardCopy({ step: "create-owner" }).title,
     );
     expect(wizardCopy({ step: "connect" }).title).toBe("Connect Cloudflare");
+  });
+
+  it("points the last step at the same list on Your account", () => {
+    expect(wizardCopy({ step: "checklist", checklist: CHECKLIST }).description).toContain(
+      "[Your account](/settings/account#capabilities)",
+    );
   });
 });
 

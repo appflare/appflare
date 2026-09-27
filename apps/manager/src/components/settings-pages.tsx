@@ -1,7 +1,8 @@
 import type { AutoUpdateSettings } from "../auto-update/auto-update";
 import { AppsAutomaticUpdatesSection } from "../auto-update/automatic-updates-card";
-import { AccountCapabilitiesCard } from "../capabilities/account-capabilities-card";
 import type { CapabilitiesView } from "../capabilities/capabilities";
+import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
+import { CapabilitiesSection } from "../capabilities/capability-section";
 import type { CatalogView } from "../catalog/catalogs.functions";
 import type { ManagerUpdateState } from "../catalog/manager-releases.functions";
 import type { DangerZoneState } from "../danger/danger.functions";
@@ -10,8 +11,6 @@ import type { GatewayView } from "../gateway/gateway.server";
 import type { RemovedAppRow } from "../installs/removed-apps.functions";
 import type { ManagerVersionsState } from "../jobs/self-update/rollback.functions";
 import type { ChannelView } from "../notifications/channels";
-import type { ChecklistData } from "../onboarding/checklist.server";
-import { OnboardingChecklistCard } from "../onboarding/onboarding-checklist";
 import type { AccessStatus } from "../server/access.functions";
 import type { PasskeyRow } from "../server/passkeys.functions";
 import type { PasswordRecoverySettings } from "../server/recovery.functions";
@@ -78,19 +77,18 @@ function SettingsPageHeader({
 
 /**
  * `/settings/account` (Your account): the Cloudflare connection (admins
- * rotate the token), the onboarding checklist, what the account can run,
- * and last, for the owner only, the danger zone.
+ * rotate the token), what the account can run (admins check it again and
+ * choose the Workers plan while it cannot be detected), and last, for the
+ * owner only, the danger zone.
  */
 export function AccountSettingsView({
   tokenStatus,
   capabilities,
-  checklist,
   danger,
   viewer,
 }: {
   tokenStatus: TokenStatus;
-  capabilities: CapabilitiesView;
-  checklist: ChecklistData;
+  capabilities: CapabilityRowsData;
   /** Null for everyone but the owner. */
   danger: DangerZoneState | null;
   viewer: Pick<Viewer, "role" | "isOwner">;
@@ -100,8 +98,7 @@ export function AccountSettingsView({
     <>
       <SettingsPageHeader page="account" />
       <CloudflareTokenCard status={tokenStatus} canRotate={isAdmin} />
-      <OnboardingChecklistCard data={checklist} isAdmin={isAdmin} />
-      <AccountCapabilitiesCard view={capabilities} isAdmin={isAdmin} />
+      <CapabilitiesSection data={capabilities} isAdmin={isAdmin} />
       {viewer.isOwner && danger !== null && <DangerZone state={danger} />}
     </>
   );

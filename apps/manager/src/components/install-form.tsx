@@ -136,7 +136,7 @@ export function InstallForm({
   fixedWorkerName: boolean;
   /** Why the install is not possible right now (for example, already installed). */
   blockedReason: string | null;
-  /** Where to fix what blocks the install, shown under the reason (a checklist row). */
+  /** Where to fix what blocks the install, shown under the reason (a row of What this account can run). */
   blockedLink?: { href: string; label: string } | null;
   /** Sandbox builds are off and the install turns them on first; its confirmation says so. */
   sandboxFirst?: boolean;

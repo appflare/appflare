@@ -9,7 +9,7 @@ import { DOCS_URL } from "./components/auth-layout";
  */
 export const DOCS_TOPICS = {
   tokenPermissions: "start/install#1-connect-cloudflare",
-  capabilities: "guides/install-apps#workers-free-or-workers-paid",
+  capabilities: "start/install#3-check-your-account",
   requirements: "guides/catalog#requirements",
   customCatalogs: "guides/custom-catalogs#add-a-catalog",
   customDomains: "guides/custom-domains",

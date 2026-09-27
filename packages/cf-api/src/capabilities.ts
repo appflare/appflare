@@ -153,7 +153,7 @@ export type ZeroTrustCapability =
   | { state: "none" }
   | CapabilityUnknown;
 
-/** The account-wide setup the onboarding checklist reads besides the capabilities. */
+/** The account-wide setup read besides the capabilities: workers.dev, Zero Trust, Analytics Engine. */
 export interface AccountSetupCapabilities {
   workersDev: WorkersDevCapability;
   zeroTrust: ZeroTrustCapability;

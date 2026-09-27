@@ -47,7 +47,7 @@ export const storedCapabilitiesSchema = z.object({
   emailRouting: z
     .union([z.object({ state: z.enum(["available", "no-zone"]) }), unknownSchema])
     .optional(),
-  // Absent in rows written before the onboarding checklist existed.
+  // Absent in rows written before the workers.dev and Zero Trust probes existed.
   workersDev: z
     .union([
       z.object({ state: z.literal("registered"), subdomain: z.string().min(1) }),

@@ -25,6 +25,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
 import { requirementBadge } from "../../../capabilities/capabilities";
 import { CapabilityBadge } from "../../../capabilities/capability-badge";
+import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capability-rows";
 import { cronTriggerCount } from "../../../catalog/cron-triggers";
 import { analyticsEngineRefusal } from "../../../catalog/requirement-checks";
 import { requirementSentence } from "../../../catalog/requirements";
@@ -53,7 +54,6 @@ import {
   type SourceBuildView,
   updateFromSourceBuild,
 } from "../../../installs/source-builds.functions";
-import { ANALYTICS_ENGINE_CHECKLIST_LINK } from "../../../onboarding/checklist";
 
 /**
  * `/catalog/source/$buildId`: the review of a build from a repository (or
@@ -334,7 +334,7 @@ function Review({
               : analyticsEngineOff
           }
           blockedLink={
-            !refused && analyticsEngineOff !== null ? ANALYTICS_ENGINE_CHECKLIST_LINK : null
+            !refused && analyticsEngineOff !== null ? ANALYTICS_ENGINE_CAPABILITY_LINK : null
           }
           requirementsConfirmed={confirmed}
           cronTriggers={cronTriggerCount(review.crons)}

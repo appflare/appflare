@@ -126,17 +126,39 @@ export function SectionRow({
   title,
   description,
   action,
+  className,
+  stackAction = false,
   children,
 }: {
   id?: string;
   title: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
+  /** Merged over the row's own classes, such as `px-0` in a card with padding of its own. */
+  className?: string;
+  /**
+   * Always put the action under the text, for a narrow list whose rows
+   * would otherwise place it beside some texts and under others.
+   */
+  stackAction?: boolean;
   children?: ReactNode;
 }) {
   return (
-    <div id={id} className="grid min-w-0 scroll-mt-6 gap-3 px-5 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+    <div
+      id={id}
+      className={cn(
+        "grid min-w-0 scroll-mt-6 gap-3 px-5 py-4",
+        // Arriving at a row by its link rings it inside, clear of the dividers.
+        "[&.ring-2]:ring-inset [&.ring-2]:ring-offset-0",
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-x-4 gap-y-2",
+          stackAction && "flex-col items-start",
+        )}
+      >
         <div className="grid min-w-0 max-w-prose gap-1">
           <Text bold as="span">
             {title}

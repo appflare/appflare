@@ -3,6 +3,8 @@ import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { capabilitiesView } from "../capabilities/capabilities";
+import { catalogNeeds } from "../capabilities/capability-rows";
+import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
 
 import type { CatalogView } from "../catalog/catalogs.functions";
 import type { ManagerUpdateState } from "../catalog/manager-releases.functions";
@@ -10,7 +12,6 @@ import type { GatewayView } from "../gateway/gateway.server";
 import type { RemovedAppRow } from "../installs/removed-apps.functions";
 import type { ManagerVersionsState } from "../jobs/self-update/rollback.functions";
 import type { ChannelView } from "../notifications/channels";
-import type { ChecklistData } from "../onboarding/checklist.server";
 import { NO_SANDBOX_JOBS } from "../sandbox/readiness";
 import type { AccessStatus } from "../server/access.functions";
 import type { PasskeyRow } from "../server/passkeys.functions";
@@ -107,11 +108,11 @@ const capabilities = capabilitiesView(undefined, {
   zeroTrust: { state: "none" },
 });
 
-const checklist: ChecklistData = {
+const capabilityRowsData: CapabilityRowsData = {
   view: capabilities,
   sandbox: "off",
   needs: null,
-  accountId: null,
+  inUse: catalogNeeds([]),
   sandboxJobs: NO_SANDBOX_JOBS,
 };
 
@@ -131,25 +132,25 @@ const sandboxStatus: SandboxCardState = {
 describe("AccountSettingsView", () => {
   const owner = { role: "admin", isOwner: true } as const;
 
-  it("shows the connection, checklist and capabilities, then the danger zone last for the owner", () => {
+  it("shows the connection and what the account can run, then the danger zone last for the owner", () => {
     const html = render(
       createElement(AccountSettingsView, {
         tokenStatus,
-        capabilities,
-        checklist,
+        capabilities: capabilityRowsData,
         danger: { authSecretRotatedAt: null },
         viewer: owner,
       }),
     );
     expectPattern(
       html,
-      ["connection", "checklist", "capabilities", "danger-zone"],
-      ["Rotate token", "Re-check", "Rotate auth secret", "Remove Appflare"],
+      ["connection", "capabilities", "danger-zone"],
+      ["Rotate token", "Check again", "Rotate auth secret", "Remove Appflare"],
     );
     expect(html).toMatch(/<h1[^>]*>Your account<\/h1>/);
     expect(text(html)).toContain("Acme");
-    expect(count(html, ">Re-check<")).toBe(2);
-    // The checklist's rows are capability rows, each its own link target.
+    expect(text(html)).toContain("What this account can run");
+    expect(count(html, ">Check again<")).toBe(1);
+    // One row per capability, each its own link target.
     expect(html).toContain('id="capability-r2"');
     expect(html).not.toContain('id="checklist-r2"');
   });
@@ -158,13 +159,12 @@ describe("AccountSettingsView", () => {
     const html = render(
       createElement(AccountSettingsView, {
         tokenStatus,
-        capabilities,
-        checklist,
+        capabilities: capabilityRowsData,
         danger: null,
         viewer: { role: "admin", isOwner: false },
       }),
     );
-    expect(sectionIds(html)).toEqual(["connection", "checklist", "capabilities"]);
+    expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
     expect(text(html)).not.toContain("Remove Appflare");
     expect(text(html)).not.toContain("Rotate auth secret");
   });
@@ -173,15 +173,14 @@ describe("AccountSettingsView", () => {
     const html = render(
       createElement(AccountSettingsView, {
         tokenStatus,
-        capabilities,
-        checklist,
+        capabilities: capabilityRowsData,
         danger: null,
         viewer: { role: "member", isOwner: false },
       }),
     );
-    expect(sectionIds(html)).toEqual(["connection", "checklist", "capabilities"]);
+    expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
     expect(text(html)).not.toContain("Rotate token");
-    expect(count(html, ">Re-check<")).toBe(0);
+    expect(count(html, ">Check again<")).toBe(0);
   });
 });
 

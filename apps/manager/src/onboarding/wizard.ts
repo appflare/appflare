@@ -1,6 +1,6 @@
+import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
 import { settingsPlace } from "../components/settings-links";
 import type { SetupStep as GateStep } from "../server/gate";
-import type { ChecklistData } from "./checklist.server";
 
 /**
  * The setup wizard as one page: which step it shows and how it moves on.
@@ -25,7 +25,7 @@ export type WizardState =
   | { step: "connect" }
   | { step: "redeploying" }
   | { step: "create-owner" }
-  | { step: "checklist"; checklist: ChecklistData }
+  | { step: "checklist"; checklist: CapabilityRowsData }
   /** An admin whose manager has users but no token yet. */
   | { step: "cloudflare-token" }
   /** That admin's token is saved; waiting for the redeployed Worker to hold it. */
@@ -37,22 +37,25 @@ export type WizardEvent =
   | { type: "connected"; next: "create-owner" | "redeploying" }
   /** A version with the auth secret serves. */
   | { type: "auth-ready" }
-  /** The owner exists and is signed in; the checklist was read. */
-  | { type: "owner-created"; checklist: ChecklistData }
+  /** The owner exists and is signed in; what the account can run was read. */
+  | { type: "owner-created"; checklist: CapabilityRowsData }
   /** An admin saved the token outside first-run setup. */
   | { type: "token-saved"; saved: SavedTokenSummary }
-  /** The checklist was read (after the token-saved wait, or re-checked). */
-  | { type: "checklist-loaded"; checklist: ChecklistData }
+  /** What the account can run was read (after the token-saved wait, or checked again). */
+  | { type: "checklist-loaded"; checklist: CapabilityRowsData }
   /** The server's view of where setup stands, after a refusal or a reload. */
   | { type: "sync"; state: WizardState };
 
 /**
- * The state a visit starts in, from the server's gate and, for step 3, the
- * checklist the loader read with it.
+ * The state a visit starts in, from the server's gate and, for the last
+ * step, what the account can run, as the loader read it with the gate.
  */
-export function initialWizardState(step: GateStep, checklist: ChecklistData | null): WizardState {
+export function initialWizardState(
+  step: GateStep,
+  checklist: CapabilityRowsData | null,
+): WizardState {
   if (step !== "checklist") return { step };
-  if (checklist === null) throw new Error("The checklist step needs the checklist data.");
+  if (checklist === null) throw new Error("The last setup step needs what the account can run.");
   return { step, checklist };
 }
 
@@ -133,7 +136,7 @@ export function wizardCopy(state: WizardState): WizardCopy {
     case "checklist":
       return {
         title: "Check your account",
-        description: `What this Cloudflare account has that apps rely on. This list stays in ${settingsPlace("account", "checklist", "Your account")}, in Settings.`,
+        description: `What this Cloudflare account has that apps rely on. The same list stays in ${settingsPlace("account", "capabilities", "Your account")}, in Settings.`,
       };
     case "cloudflare-token":
       return {

@@ -107,11 +107,20 @@ describe("settingsRedirect", () => {
     );
   });
 
+  it("sends the account setup list to What this account can run", () => {
+    expect(settingsRedirect("/settings/account", "checklist")).toBe(
+      "/settings/account#capabilities",
+    );
+    expect(settingsRedirect("/settings/account", "#checklist")).toBe(
+      "/settings/account#capabilities",
+    );
+  });
+
   it("leaves current addresses alone", () => {
     expect(settingsRedirect("/settings/account", "")).toBeNull();
     expect(settingsRedirect("/settings/account", "connection")).toBeNull();
     expect(settingsRedirect("/settings/account", "capability-r2")).toBeNull();
-    expect(settingsRedirect("/settings/account", "checklist")).toBeNull();
+    expect(settingsRedirect("/settings/account", "capabilities")).toBeNull();
     expect(settingsRedirect("/settings/building", "sandbox")).toBeNull();
     expect(settingsRedirect("/settings/updates", "versions")).toBeNull();
     expect(settingsRedirect("/catalog", "")).toBeNull();

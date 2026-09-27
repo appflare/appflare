@@ -80,7 +80,7 @@ checks that R2 is enabled before it creates anything, except for a
 [self-deploying app](/guides/builds/#self-deploying-apps), whose own installer
 creates its resources. Analytics Engine is checked too: while the account check
 finds it off, the install is refused. Turn on Analytics Engine once in the
-dashboard, then choose **Re-check** in **Settings › Your account**.
+dashboard, then choose **Check again** in **Settings › Your account**.
 
 | Requirement | What it means |
 | --- | --- |

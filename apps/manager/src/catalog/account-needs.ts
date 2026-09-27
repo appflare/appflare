@@ -1,7 +1,7 @@
 import type { Plan } from "@appflare/schema";
 import type { CapabilitiesView } from "../capabilities/capabilities";
+import { dashboardLinks } from "../cloudflare/dashboard-links";
 import { resourceKindLabel } from "../components/format";
-import { dashboardLinks } from "../onboarding/checklist";
 import {
   type AppPrimitives,
   type Availability,
@@ -65,7 +65,7 @@ export interface NeedFix {
 
 /**
  * The fix for each need that can be missing and has a dashboard page to fix
- * it, the same deep links into the account as the account checklist. A need
+ * it, the same deep links into the account as "What this account can run" on Your account. A need
  * that needs Workers Paid is fixed by upgrading; Email Routing, by adding a
  * domain first.
  */

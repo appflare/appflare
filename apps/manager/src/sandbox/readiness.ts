@@ -13,7 +13,7 @@ import {
  * Whether sandbox builds are on, and if not, whether Appflare can turn them
  * on by itself the first time something needs them (an install of an app
  * built in the account or deployed by its own installer, or a build from a
- * repository). Client-safe: the account checklist, the app page and the
+ * repository). Client-safe: Your account, the setup step, the app page and the
  * repository dialog read the same words, and the install start applies the
  * same rules to live probes.
  *
@@ -85,8 +85,8 @@ export function withSandboxJobs(base: SandboxReadiness, jobs: SandboxJobState): 
   return { ...base, failure: { id: failed.id, message: failed.message } };
 }
 
-/** The account checklist's sandbox builds row. */
-export const SANDBOX_CHECKLIST_HREF = settingsLink("account", "capability-sandbox");
+/** The sandbox builds row of "What this account can run" on Your account. */
+export const SANDBOX_CAPABILITY_HREF = settingsLink("account", "capability-sandbox");
 
 /** The line an install or build confirmation adds when it turns sandbox builds on first. */
 export const SANDBOX_FIRST_NOTE = "Sandbox builds will be turned on first (about two minutes).";
@@ -143,7 +143,7 @@ export function sandboxReadiness(input: SandboxReadinessInput): SandboxReadiness
   };
 }
 
-/** From the stored capabilities, as the checklist and the app page show it. */
+/** From the stored capabilities, as Your account and the app page show it. */
 export function sandboxReadinessOf(view: CapabilitiesView, connected: boolean): SandboxReadiness {
   return sandboxReadiness({
     connected,

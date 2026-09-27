@@ -68,6 +68,7 @@ describe("old settings addresses", () => {
     ["/settings/account#sandbox", "/settings/building#sandbox"],
     ["/settings/account#github-access", "/settings/building#github-access"],
     ["/settings/account#checklist-sandbox", "/settings/account#capability-sandbox"],
+    ["/settings/account#checklist", "/settings/account#capabilities"],
   ])("%s opens %s", async (from, to) => {
     const { at, loaded } = await arrive(from);
     expect(at).toBe(to);
@@ -79,6 +80,8 @@ describe("old settings addresses", () => {
     for (const href of [
       "/settings/account",
       "/settings/account#danger-zone",
+      "/settings/account#capabilities",
+      "/settings/account#capability-token-permissions",
       "/settings/building#github-access",
     ]) {
       expect((await arrive(href)).at).toBe(href);

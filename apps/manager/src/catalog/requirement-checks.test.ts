@@ -115,7 +115,7 @@ describe("Analytics Engine", () => {
 
   it("refuses the install with the fix only when the probe found it off", () => {
     expect(analyticsEngineRefusal("Counterscale", { requires: ["analytics-engine"] }, off)).toBe(
-      "Counterscale writes to Analytics Engine, which is not turned on for this account. Turn on Analytics Engine once in the dashboard, then Re-check.",
+      "Counterscale writes to Analytics Engine, which is not turned on for this account. Turn on Analytics Engine once in the dashboard, then choose Check again on Your account.",
     );
     expect(analyticsEngineRefusal("Cut", { requires: ["r2"] }, off)).toBeNull();
     for (const view of [
@@ -143,7 +143,7 @@ describe("Analytics Engine", () => {
         key: "analytics-engine",
         label: "Analytics Engine",
         availability: "unavailable",
-        reason: expect.stringContaining("then Re-check"),
+        reason: expect.stringContaining("then choose Check again"),
       },
     ]);
   });

@@ -5,13 +5,13 @@ import { type FormEvent, useCallback, useEffect, useReducer, useState } from "re
 import { z } from "zod";
 import { authClient } from "../auth/client";
 import { serverErrorMessage } from "../auth/sign-in-errors";
+import { getCapabilityRowsData } from "../capabilities/capability-rows.functions";
+import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
+import { SetupCapabilities } from "../capabilities/capability-section";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { SetupTokenForm, type SetupTokenSaved } from "../components/cloudflare-token-form";
 import { MessageText } from "../components/message-text";
 import { PasswordInput } from "../components/password-input";
-import { getChecklistData } from "../onboarding/checklist.functions";
-import type { ChecklistData } from "../onboarding/checklist.server";
-import { SetupChecklist } from "../onboarding/onboarding-checklist";
 import {
   initialWizardState,
   type SavedTokenSummary,
@@ -36,8 +36,8 @@ import { loadAppflareVersion } from "../server/version.functions";
  * Step 1 (anyone, before any user exists): paste a Cloudflare API token for
  * the account this Appflare runs in; one Continue verifies and saves it, and
  * saving gives this browser the right to finish setup. Step 2 (only that
- * browser): create the owner, who is signed in at once. Step 3: the
- * onboarding checklist, then Finish goes home. Once the owner exists,
+ * browser): create the owner, who is signed in at once. Step 3: what the
+ * account can run (the same rows as on Your account), then Finish goes home. Once the owner exists,
  * everyone else is sent to sign in.
  *
  * `?checklist=true` marks step 3, so a reload stays there. `?token=` from
@@ -60,7 +60,7 @@ export const Route = createFileRoute("/setup")({
       enterSetup({ data: { checklist } }),
       loadAppflareVersion(),
     ]);
-    const checklistData = gate.step === "checklist" ? await getChecklistData() : null;
+    const checklistData = gate.step === "checklist" ? await getCapabilityRowsData() : null;
     return { initial: initialWizardState(gate.step, checklistData), version };
   },
   component: SetupPage,
@@ -206,7 +206,7 @@ function CreateOwnerStep({
   onCreated,
   resync,
 }: {
-  onCreated: (checklist: ChecklistData) => void;
+  onCreated: (checklist: CapabilityRowsData) => void;
   resync: () => Promise<void>;
 }) {
   const router = useRouter();
@@ -235,7 +235,7 @@ function CreateOwnerStep({
       await router.navigate({ to: "/login" });
       return;
     }
-    const checklist = await getChecklistData();
+    const checklist = await getCapabilityRowsData();
     onCreated(checklist);
     await showChecklist();
   }
@@ -260,18 +260,18 @@ function CreateOwnerStep({
   );
 }
 
-/** Step 3: what the account has that apps rely on, then Finish. */
+/** Step 3: what the account can run, then Finish. */
 function ChecklistStep({
   data,
   onRechecked,
 }: {
-  data: ChecklistData;
-  onRechecked: (data: ChecklistData) => void;
+  data: CapabilityRowsData;
+  onRechecked: (data: CapabilityRowsData) => void;
 }) {
   const router = useRouter();
   return (
     <>
-      <SetupChecklist data={data} onRechecked={onRechecked} />
+      <SetupCapabilities data={data} onChanged={onRechecked} />
       <Button
         variant="primary"
         className={FULL_WIDTH_ACTION}
@@ -321,14 +321,14 @@ const SECRET_POLL_MS = 3000;
 /**
  * An admin whose manager had users but no token: storing `CF_API_TOKEN`
  * deploys a new version of this Worker. Poll until a request lands on a
- * version that has the binding, then continue to the checklist.
+ * version that has the binding, then continue to what the account can run.
  */
 function TokenSavedStep({
   saved,
   onChecklist,
 }: {
   saved: SavedTokenSummary;
-  onChecklist: (checklist: ChecklistData) => void;
+  onChecklist: (checklist: CapabilityRowsData) => void;
 }) {
   const showChecklist = useShowChecklistInAddress();
   const [hasSecret, setHasSecret] = useState(false);
@@ -354,7 +354,7 @@ function TokenSavedStep({
   async function onContinue() {
     setContinuing(true);
     try {
-      onChecklist(await getChecklistData());
+      onChecklist(await getCapabilityRowsData());
       await showChecklist();
     } finally {
       setContinuing(false);

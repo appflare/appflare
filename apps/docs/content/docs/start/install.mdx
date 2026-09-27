@@ -148,24 +148,42 @@ manager again after 30 minutes and paste the token again.
 
 ### 3. Check your account
 
-The manager reads what your Cloudflare account has that apps rely on and shows how
-many items are done. Items that need you come first, each with a link to the page
-of the Cloudflare dashboard where you change it and how many catalog apps need it;
-done items take one line each; optional items come last:
+The manager reads what your Cloudflare account has that apps rely on. A bar shows how
+many things are ready, out of those your plan can have. Each row names one thing,
+says why apps need it, and shows its state:
 
-| Item | What it is for |
+- **Ready**: the account has it.
+- **Needs action**: it is off, and an app you installed (or are installing) needs it.
+- **Not set up**: it is off, and none of your apps needs it yet. Turn it on when an
+  app you want needs it.
+- **Paid plan only**: only Workers Paid includes it.
+- **Could not check**: Appflare could not read it. Select **Check again**.
+
+A row that is off has one button: **Turn on in Cloudflare** opens the right page of the
+Cloudflare dashboard, **Edit token in Cloudflare** opens the token's page,
+**Choose plan** lets you say which Workers plan the account is on when Appflare cannot
+read it, and **Set up** opens **Settings › Building apps**. **Details** shows what
+Appflare found, when it checked, what went wrong if it could not tell, and how many
+catalog apps use it.
+
+| Row | What it is for |
 | --- | --- |
-| `workers.dev` subdomain | Every app answers on its own `workers.dev` address unless you give it a domain. |
 | Workers plan | Workers Paid lifts the free plan's limits and runs containers; some apps need it. |
-| R2 | Object storage for apps that store files. Turning it on is free, but Cloudflare asks for a payment method first. |
+| workers.dev address | Every app answers on its own `workers.dev` address unless you give it a domain. |
+| R2 storage | Where apps keep files and uploads. Turning it on is free, but Cloudflare asks for a payment method first. |
+| A domain | A domain on Cloudflare, for [custom domains](/guides/custom-domains/) and [apps that receive email](/guides/email-apps/). |
+| Email Routing | Delivers a domain's email to an app. Installing such an app turns it on. |
 | Analytics Engine | Stores the events apps count and chart, such as page views and link clicks. It is off until you open its page in the dashboard once; apps that write to it cannot be installed until then. |
-| Active zone | A domain on Cloudflare, for [custom domains](/guides/custom-domains/) and [apps that receive email](/guides/email-apps/). |
-| Email Routing | Routes a domain's mail to an app. Installing such an app turns it on. |
-| Zero Trust organization | Needed before [Cloudflare Access](/security/#protect-with-cloudflare-access) can put a sign-in in front of the manager or an app. |
-| Sandbox builds | Builds apps that have no prebuilt release inside your account. Needs Workers Paid, R2 turned on, and the Containers permission; the first app that needs a build turns it on, or select **Enable now** for a faster first build. |
+| Zero Trust | Needed before [Cloudflare Access](/security/#protect-with-cloudflare-access) can put a sign-in page in front of the manager or an app. |
+| Sandbox builds | Builds apps that have no ready-made release inside your account. Paid plan only: it needs Workers Paid, R2 turned on, and the Containers permission. The first app that needs a build turns it on; **Set up** lets you turn it on sooner. |
+| Token permissions | Whether Appflare's token has the permissions it needs. **Details** names the optional ones it does not have. |
 
-Select **Re-check** after changing something in the dashboard. Select **Finish** to
-go to the manager. The same list stays in **Settings › Your account**.
+On a new account most rows read **Not set up**; that is expected. Only **Needs action**
+rows stand in the way of something you have installed.
+
+Select **Check again** after changing something in the dashboard. Select **Finish** to
+go to the manager. The same list stays in **Settings › Your account**, under **What
+this account can run**.
 
 The token template requests:
 

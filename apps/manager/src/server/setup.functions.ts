@@ -89,7 +89,7 @@ export interface ConnectedCloudflare {
 /**
  * Step 1's one call: verifies the token for the account this Worker runs in,
  * stores it and gives this browser the setup claim, then reads the account's
- * capabilities for the checklist (best effort; never fails the save). POST so
+ * capabilities for the last setup step (best effort; never fails the save). POST so
  * the token travels in the body, never in a logged URL.
  */
 export const connectCloudflare = createServerFn({ method: "POST" })

@@ -46,7 +46,7 @@ export type SetupStep =
   | "redeploying"
   /** Step 2: create the owner (only the browser that connected Cloudflare). */
   | "create-owner"
-  /** Step 3: the onboarding checklist, for admins, until they choose Finish. */
+  /** Step 3: what the account can run, for admins, until they choose Finish. */
   | "checklist"
   /**
    * A manager whose first admin was created before the token (installed

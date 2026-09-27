@@ -8,7 +8,7 @@ import { createDb } from "../db/client";
 import { jobs } from "../db/schema";
 import { reconcileJobs, type WorkflowLookup } from "../jobs/reconcile.server";
 import type { SandboxEnableJobParams } from "./enable-job";
-import { SANDBOX_CHECKLIST_HREF, sandboxReadiness } from "./readiness";
+import { SANDBOX_CAPABILITY_HREF, sandboxReadiness } from "./readiness";
 import { PINNED_SANDBOX_VERSION } from "./release";
 
 /**
@@ -45,7 +45,7 @@ export class SandboxAutoEnableError extends Error {
 }
 
 /** Where a refusal sends the admin. */
-export const SANDBOX_CHECKLIST_POINTER = `See ${messageLink("Sandbox builds in the account checklist", SANDBOX_CHECKLIST_HREF)}.`;
+export const SANDBOX_CAPABILITY_POINTER = `See ${messageLink("Sandbox builds in Your account", SANDBOX_CAPABILITY_HREF)}.`;
 
 const BUSY =
   "Sandbox builds are off, and Appflare turns them on first only while no other job is queued or running. Wait for it to finish, then try again.";
@@ -131,14 +131,14 @@ export async function planSandboxFirst(
   });
   if (readiness.missing !== null) {
     throw new SandboxAutoEnableError(
-      `Sandbox builds are off, and Appflare cannot turn them on: ${readiness.missing} ${SANDBOX_CHECKLIST_POINTER}`,
+      `Sandbox builds are off, and Appflare cannot turn them on: ${readiness.missing} ${SANDBOX_CAPABILITY_POINTER}`,
     );
   }
   const version = deps.sandboxVersion ?? PINNED_SANDBOX_VERSION;
   const releaseProblem = await deps.releaseProblem(version);
   if (releaseProblem !== null) {
     throw new SandboxAutoEnableError(
-      `Sandbox builds are off, and Appflare cannot turn them on: ${releaseProblem} ${SANDBOX_CHECKLIST_POINTER}`,
+      `Sandbox builds are off, and Appflare cannot turn them on: ${releaseProblem} ${SANDBOX_CAPABILITY_POINTER}`,
     );
   }
   const enableJobId = opts.newId();
