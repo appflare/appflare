@@ -170,7 +170,9 @@ function UpdateDialog({
 }) {
   const jobStarted = useJobStarted();
   const formId = useId();
-  const [secrets, setSecrets] = useState(() => initialSecretValues(needs.needsSecrets));
+  const [secrets, setSecrets] = useState(() =>
+    initialSecretValues(needs.needsSecrets, needs.heldSecrets),
+  );
   const [confirmed, setConfirmed] = useState(needs.skipsPreview === null);
   const [buildConfirmed, setBuildConfirmed] = useState(needs.build === null);
   /** A sandbox build may turn out to have no preview; the admin may accept that up front. */
@@ -289,6 +291,8 @@ function UpdateDialog({
                 </div>
                 <SecretFields
                   secrets={needs.needsSecrets}
+                  vars={needs.derivedVars ?? []}
+                  held={needs.heldSecrets ?? []}
                   values={secrets}
                   onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
                   after="the update"

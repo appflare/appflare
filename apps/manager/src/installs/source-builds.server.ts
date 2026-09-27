@@ -15,6 +15,7 @@ import {
   repositoryUrl,
   type SandboxInfo,
   sandboxObjectUrl,
+  secretValueProblem,
 } from "@appflare/schema";
 import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
@@ -37,6 +38,7 @@ import type { UsedGithubToken } from "../github/access.server";
 import type { InstallJobParams } from "../jobs/install";
 import type { PrebuiltBuildParams } from "../jobs/install/artifact-source";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
+import { parseStoredVars } from "../jobs/reconfigure/plan";
 import { NO_ACTIVE_SELF_UPDATE_SQL, refuseDuringSelfUpdate } from "../jobs/self-update/guard";
 import { type SourceBuildJobParams, sourceBuildRunId } from "../jobs/source-build";
 import type { UpdateJobParams } from "../jobs/update";
@@ -53,11 +55,17 @@ import {
 } from "../sandbox/auto-enable.server";
 import { buildsFromRepository } from "../sandbox/binding";
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
-import { secretsToAskFor, withDerivedSecrets } from "./derived-secrets";
+import {
+  derivedVarValues,
+  heldSecrets,
+  secretsToAskFor,
+  sourcesOfUnsetDerivedVars,
+  withDerivedSecrets,
+} from "./derived-secrets";
 import { GitRefError, type RemoteRefs, resolveRef } from "./git-refs";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import { repositoryAppSlug, reviewBuild } from "./source-review";
-import { resolveInstallInput } from "./start-install.server";
+import { resolveInstallInput, withDerivedValues } from "./start-install.server";
 import {
   claim,
   readInstall,
@@ -654,10 +662,7 @@ export async function installSourceBuildCore(
   } catch (error) {
     throw fail(error instanceof Error ? error.message : String(error));
   }
-  resolved = {
-    ...resolved,
-    secrets: await withDerivedSecrets(manifest.catalog.secrets, resolved.secrets),
-  };
+  resolved = await withDerivedValues(manifest.catalog, resolved);
   const workerName = input.workerName;
   const review = reviewBuild(manifest, built.detected, workerName, prebuilt.origin);
   if (review.problems.length > 0) throw fail(review.problems.join(" "));
@@ -825,6 +830,8 @@ export async function installSourceBuildCore(
 export interface SourceUpdateNeeds {
   /** Secrets the rebuild declares that the install does not have yet. */
   needsSecrets: CatalogSecret[];
+  /** Names among `needsSecrets` the Worker already has (asked for again for a derived var). */
+  heldSecrets?: string[];
   /** Why the new version cannot be checked on a preview first; null when it can. */
   skipsPreview: string | null;
 }
@@ -845,15 +852,23 @@ export async function sourceUpdateNeeds(
         isNull(resources.deleted_at),
       ),
     );
-  return {
-    // A derived secret the Worker lacks asks for its source.
-    needsSecrets: secretsToAskFor(
+  // A derived secret the Worker lacks, or a derived var the install has no
+  // value for, asks for its source.
+  const needsSecrets = secretsToAskFor(
+    manifest.catalog.secrets,
+    missingSecrets(
       manifest.catalog.secrets,
-      missingSecrets(
-        manifest.catalog.secrets,
-        recorded.map((r) => r.name),
-      ),
+      recorded.map((r) => r.name),
     ),
+    sourcesOfUnsetDerivedVars(manifest.catalog.vars, parseStoredVars(install.config_json)),
+  );
+  const held = heldSecrets(
+    needsSecrets,
+    recorded.map((r) => r.name),
+  );
+  return {
+    needsSecrets,
+    ...(held.length === 0 ? {} : { heldSecrets: held }),
     skipsPreview: updatePath(
       manifest,
       install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
@@ -891,9 +906,13 @@ export async function updateFromSourceBuildCore(
   for (const secret of needs.needsSecrets) {
     const value = given[secret.name] ?? "";
     if (value.length === 0) throw fail(`${secret.label} (${secret.name}) is required.`);
+    const problem = secretValueProblem(secret, value);
+    if (problem !== null) throw fail(problem);
     entered[secret.name] = value;
   }
   const secrets = await withDerivedSecrets(manifest.catalog.secrets, entered);
+  // A derived var follows its source's new value; the job stores it.
+  const vars = await derivedVarValues(manifest.catalog.vars, entered);
   const orm = createDb(deps.db);
   const now = (deps.now ?? (() => new Date()))();
   // Taken first, so two tabs cannot both update from it; given back if the update cannot start.
@@ -914,6 +933,7 @@ export async function updateFromSourceBuildCore(
         fromVersion: install.catalog_version,
         version: prebuilt.version,
         secrets: Object.keys(secrets),
+        ...(Object.keys(vars).length === 0 ? {} : { vars: Object.keys(vars) }),
         origin: prebuilt.origin,
         buildId: prebuilt.buildId,
       }),
@@ -923,6 +943,7 @@ export async function updateFromSourceBuildCore(
         installId: install.id,
         version: prebuilt.version,
         secrets,
+        ...(Object.keys(vars).length === 0 ? {} : { vars }),
         prebuilt,
         confirmNoPreview: input.confirmNoPreview === true,
       },

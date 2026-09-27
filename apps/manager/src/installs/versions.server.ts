@@ -5,8 +5,10 @@ import {
   artifactManifestSchema,
   type CatalogManifest,
   type CatalogSecret,
+  type CatalogVar,
   type IndexApp,
   type IndexBuild,
+  secretValueProblem,
 } from "@appflare/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
@@ -18,6 +20,7 @@ import { installs, type JobStarter, jobs, resources, snapshots } from "../db/sch
 import { otherDoTagsDiffer, otherWorkersMatch, storedOtherWorkers } from "../jobs/entry-workers";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { liveHyperdriveIds } from "../jobs/reconfigure/hyperdrive";
+import { parseStoredVars } from "../jobs/reconfigure/plan";
 import type { RollbackJobParams } from "../jobs/rollback";
 import { installerRunId } from "../jobs/self-deploying/phases";
 import {
@@ -37,7 +40,13 @@ import {
   updatePath,
   updateRefusal,
 } from "../jobs/update/plan";
-import { secretsToAskFor, withDerivedSecrets } from "./derived-secrets";
+import {
+  derivedVarValues,
+  heldSecrets,
+  secretsToAskFor,
+  sourcesOfUnsetDerivedVars,
+  withDerivedSecrets,
+} from "./derived-secrets";
 import { snapshotHasSameCode } from "./rollback-copy";
 
 /**
@@ -205,6 +214,14 @@ export interface UpdateNeeds {
   version: string;
   /** Secrets the new version introduces that the Worker does not have. */
   needsSecrets: CatalogSecret[];
+  /**
+   * Names among `needsSecrets` the Worker already has, asked for again only so
+   * a value derived from them can be computed: the form leaves them empty, so
+   * a generated key is never replaced without the admin choosing to.
+   */
+  heldSecrets?: string[];
+  /** The version's vars derived from `needsSecrets`, for the form's note on their source. */
+  derivedVars?: Array<Pick<CatalogVar, "name" | "derive">>;
   /** Why the new version cannot be checked before it serves traffic; null when it can. */
   skipsPreview: string | null;
   /**
@@ -300,13 +317,15 @@ export async function startUpdateCore(
         isNull(resources.deleted_at),
       ),
     );
-  // A derived secret the Worker lacks asks for its source.
+  // A derived secret the Worker lacks, or a derived var the install has no
+  // value for, asks for its source.
   const needed = secretsToAskFor(
     catalog.secrets,
     missingSecrets(
       catalog.secrets,
       recorded.filter((r) => r.kind === "secret").map((r) => r.name),
     ),
+    sourcesOfUnsetDerivedVars(catalog.vars, parseStoredVars(install.config_json)),
   );
   // The installed version's other Workers keep their cron triggers with them, not as rows.
   const recordedCrons =
@@ -326,9 +345,18 @@ export async function startUpdateCore(
     (sandbox !== null && request.buildConfirmed !== true) ||
     (cronTriggers !== null && request.paidConfirmed === undefined)
   ) {
+    const held = heldSecrets(
+      needed,
+      recorded.filter((r) => r.kind === "secret").map((r) => r.name),
+    );
+    const derivedVars = catalog.vars
+      .filter((v) => v.derive !== undefined && needed.some((s) => s.name === v.derive?.from))
+      .map((v) => ({ name: v.name, derive: v.derive }));
     return {
       version: app.version,
       needsSecrets: needed,
+      ...(held.length === 0 ? {} : { heldSecrets: held }),
+      ...(derivedVars.length === 0 ? {} : { derivedVars }),
       skipsPreview: skipPreview,
       build: sandbox,
       cronTriggers,
@@ -345,9 +373,13 @@ export async function startUpdateCore(
     if (value.length === 0) {
       throw new VersionActionError(`${secret.label} (${secret.name}) is required.`);
     }
+    const problem = secretValueProblem(secret, value);
+    if (problem !== null) throw new VersionActionError(problem);
     entered[secret.name] = value;
   }
   const secrets = await withDerivedSecrets(catalog.secrets, entered);
+  // A derived var follows its source's new value; the job stores it.
+  const vars = await derivedVarValues(catalog.vars, entered);
   const rememberPaid =
     cronTriggers !== null && request.paidConfirmed === true && request.rememberPaidPlan === true;
   const jobId = (deps.newId ?? (() => ulid()))();
@@ -359,6 +391,7 @@ export async function startUpdateCore(
       fromVersion: install.catalog_version,
       version: app.version,
       secrets: Object.keys(secrets),
+      ...(Object.keys(vars).length === 0 ? {} : { vars: Object.keys(vars) }),
       ...(sandbox === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
     }),
     params: {
@@ -367,6 +400,7 @@ export async function startUpdateCore(
       installId: install.id,
       version: app.version,
       secrets,
+      ...(Object.keys(vars).length === 0 ? {} : { vars }),
       ...(sandbox === null
         ? {}
         : { buildConfirmed: true, confirmNoPreview: request.confirmNoPreview === true }),
@@ -446,6 +480,8 @@ async function startSelfDeployingUpdate(
     if (value.length === 0) {
       throw new VersionActionError(`${secret.label} (${secret.name}) is required.`);
     }
+    const problem = secretValueProblem(secret, value);
+    if (problem !== null) throw new VersionActionError(problem);
     entered[secret.name] = value;
   }
   const secrets = await withDerivedSecrets(catalog.secrets, entered);

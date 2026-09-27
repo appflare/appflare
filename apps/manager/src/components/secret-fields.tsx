@@ -1,6 +1,8 @@
 import {
   type CatalogSecret,
+  type CatalogVar,
   enteredSecrets,
+  generateVapidPrivateKey,
   isDerivedSecret,
   isOptionalSecret,
 } from "@appflare/schema";
@@ -11,7 +13,7 @@ import { GENERATED_SECRET_LENGTH } from "../installs/install-input";
 
 /**
  * One field per catalog secret, shared by the install form and the update
- * form. `generate: true` secrets are prefilled once with a random value the
+ * form. Generated secrets (`generate`) are prefilled once with a fresh value the
  * admin can copy now (it is shown only here) or regenerate; the others are
  * password fields the admin fills in. An optional secret (`optional: true`)
  * is left unset behind a "Set now" switch; turning it on opens its field.
@@ -22,17 +24,42 @@ import { GENERATED_SECRET_LENGTH } from "../installs/install-input";
  * whose field says so.
  */
 
-export function generatedSecret(): string {
-  return generateTemporaryPassword(GENERATED_SECRET_LENGTH);
+/**
+ * A fresh value for a secret the catalog generates: a random password for
+ * `generate: true`, a new VAPID private key for `"vapid-private-key"`
+ * (WebCrypto's `getRandomValues`, in the browser).
+ */
+export function generatedSecret(generate: CatalogSecret["generate"]): string {
+  return generate === "vapid-private-key"
+    ? generateVapidPrivateKey()
+    : generateTemporaryPassword(GENERATED_SECRET_LENGTH);
 }
 
-/** Initial values: generated for `generate: true` secrets, empty otherwise; none for optional or derived ones. */
-export function initialSecretValues(secrets: readonly CatalogSecret[]): Record<string, string> {
+/**
+ * Initial values: generated for generated secrets, empty otherwise; none for
+ * optional or derived ones. A `held` secret (the Worker has it already, and
+ * an update asks for it again) starts empty even when generated: a fresh
+ * value would replace the current one unasked.
+ */
+export function initialSecretValues(
+  secrets: readonly CatalogSecret[],
+  held: readonly string[] = [],
+): Record<string, string> {
   return Object.fromEntries(
     enteredSecrets(secrets)
       .filter((s) => !isOptionalSecret(s))
-      .map((s) => [s.name, s.generate ? generatedSecret() : ""]),
+      .map((s) => [
+        s.name,
+        s.generate && !held.includes(s.name) ? generatedSecret(s.generate) : "",
+      ]),
   );
+}
+
+/** What the field of a secret the Worker already has says, asked for again by an update. */
+export function heldSecretNote(secret: Pick<CatalogSecret, "generate">): string {
+  return secret.generate === "vapid-private-key"
+    ? "The app already has this key. Paste it to keep existing push subscriptions, or generate a new one (subscribers must subscribe again)."
+    : "The app already has this secret. Enter its current value to keep it, or a new one to replace it.";
 }
 
 /** `values` with one secret's new value; undefined drops it (an optional secret left unset). */
@@ -59,11 +86,17 @@ export function secretsComplete(
 
 export function SecretFields({
   secrets,
+  vars = [],
+  held = [],
   values,
   onChange,
   after,
 }: {
   secrets: readonly CatalogSecret[];
+  /** Secrets the Worker already has, asked for again by an update; their fields start empty. */
+  held?: readonly string[];
+  /** The catalog's vars, for the vars derived from a secret. */
+  vars?: readonly Pick<CatalogVar, "name" | "derive">[];
   values: Readonly<Record<string, string | undefined>>;
   /** A new value; undefined leaves an optional secret unset. */
   onChange(name: string, value: string | undefined): void;
@@ -72,7 +105,8 @@ export function SecretFields({
 }) {
   return enteredSecrets(secrets).map((secret) => {
     const value = values[secret.name];
-    const derived = derivedNote(secrets, secret.name);
+    const derived = derivedNote(secrets, secret.name, vars);
+    const isHeld = held.includes(secret.name);
     if (!isOptionalSecret(secret)) {
       return (
         <SecretField
@@ -81,7 +115,12 @@ export function SecretFields({
           value={value ?? ""}
           onChange={(next) => onChange(secret.name, next)}
           after={after}
-          note={derived}
+          note={
+            [derived, isHeld ? heldSecretNote(secret) : undefined]
+              .filter((t) => t !== undefined)
+              .join(" ") || undefined
+          }
+          held={isHeld}
         />
       );
     }
@@ -99,7 +138,10 @@ export function SecretFields({
           label="Set now"
           checked={value !== undefined}
           onCheckedChange={(on: boolean) =>
-            onChange(secret.name, on ? (secret.generate ? generatedSecret() : "") : undefined)
+            onChange(
+              secret.name,
+              on ? (secret.generate ? generatedSecret(secret.generate) : "") : undefined,
+            )
           }
         />
         {value !== undefined && (
@@ -117,11 +159,18 @@ export function SecretFields({
 }
 
 /**
- * What the field of `name` says about the secrets derived from it, or
- * undefined when none is.
+ * What the field of `name` says about the secrets and vars derived from it,
+ * or undefined when none is.
  */
-export function derivedNote(secrets: readonly CatalogSecret[], name: string): string | undefined {
-  const derived = secrets.filter((s) => isDerivedSecret(s) && s.derive?.from === name);
+export function derivedNote(
+  secrets: readonly CatalogSecret[],
+  name: string,
+  vars: readonly Pick<CatalogVar, "name" | "derive">[] = [],
+): string | undefined {
+  const derived = [
+    ...secrets.filter((s) => isDerivedSecret(s) && s.derive?.from === name),
+    ...vars.filter((v) => v.derive?.from === name),
+  ];
   if (derived.length === 0) return undefined;
   return `Appflare also sets ${derived.map((s) => s.name).join(" and ")} from it.`;
 }
@@ -134,6 +183,7 @@ function SecretField({
   after,
   withHelp = true,
   note,
+  held = false,
 }: {
   secret: CatalogSecret;
   value: string;
@@ -143,6 +193,8 @@ function SecretField({
   withHelp?: boolean;
   /** A sentence after the help, such as which secrets are derived from this one. */
   note?: string | undefined;
+  /** The Worker has it already: the admin keeps it by entering it, or chooses a new one. */
+  held?: boolean;
 }) {
   const label = `${secret.label} (${secret.name})`;
   const help =
@@ -155,7 +207,11 @@ function SecretField({
           label={label}
           value={value}
           onValueChange={(next: string) => onChange(next)}
-          description={`${help ? `${help} ` : ""}Generated for you. Copy it now: it is shown only here and cannot be read back after ${after}.`}
+          description={
+            held && value.length === 0
+              ? help
+              : `${help ? `${help} ` : ""}Generated for you. Copy it now: it is shown only here and cannot be read back after ${after}.`
+          }
         />
         <div>
           <Button
@@ -163,9 +219,9 @@ function SecretField({
             variant="secondary"
             size="sm"
             icon={<ArrowsClockwiseIcon />}
-            onClick={() => onChange(generatedSecret())}
+            onClick={() => onChange(generatedSecret(secret.generate))}
           >
-            Regenerate
+            {value.length === 0 ? "Generate" : "Regenerate"}
           </Button>
         </div>
       </div>

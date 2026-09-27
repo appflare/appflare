@@ -181,6 +181,18 @@ Points that need care:
   ordinary secret of the same manifest, neither optional nor derived, and a derived
   secret cannot be `generate` or `optional`. Self-deploying entries cannot derive
   secrets.
+- **Web Push (VAPID) keys.** For an app that sends push notifications, give the
+  private key secret `"generate": "vapid-private-key"`: the install form fills in a
+  new P-256 private key, as the unpadded base64url of its 32 raw bytes (the format
+  `web-push` and similar libraries take), and the manager refuses a value that is
+  not one. Declare the public key as a var with
+  `"derive": { "from": "VAPID_PRIVATE_KEY", "method": "vapid-public-key" }`: the
+  manager computes it (the unpadded base64url of the 65-byte uncompressed point)
+  at install and whenever the private key gets a new value, and the install and
+  settings forms show it read-only. A derived var has no `default`, `type`,
+  `options` or `required: true`, and its source is a `vapid-private-key` secret of
+  the same manifest that is not optional. The same `derive` works on a secret, for
+  an app that reads the public key as one. Self-deploying entries cannot derive vars.
 - **Optional secrets.** Add `"optional": true` to a secret the app works without,
   such as an SMTP password for a feature that stays off until it is set. The install
   form leaves it unset unless the admin chooses **Set now**, updates never ask for it,

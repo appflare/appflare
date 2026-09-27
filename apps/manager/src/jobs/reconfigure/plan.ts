@@ -2,10 +2,12 @@ import type { EnvBinding } from "@appflare/cf-api";
 import {
   type CatalogHyperdrive,
   type CatalogSecret,
+  type CatalogVar,
   connectionStringProblems,
   hyperdriveFieldLabel,
   isOptionalSecret,
   MAX_CONNECTION_STRING_LENGTH,
+  secretValueProblem,
 } from "@appflare/schema";
 import { z } from "zod";
 import { parseEmailRouteCfId } from "../../installs/email-routing";
@@ -52,8 +54,11 @@ export interface SecretSlot {
   /** The catalog's label, or the name for a secret the version no longer declares. */
   label: string;
   help?: string;
-  /** A fresh value is generated in the form (the catalog's `generate: true`). */
-  generate: boolean;
+  /**
+   * A fresh value is generated in the form (the catalog's `generate`): a
+   * random password for `true`, or a value of the kind it names.
+   */
+  generate: CatalogSecret["generate"];
   /** The installed version declares it. */
   declared: boolean;
   /**
@@ -71,22 +76,28 @@ export interface SecretSlot {
   derivedFrom?: string;
   /** For a source of derived secrets: their names, which a new value of it replaces too. */
   derives?: string[];
+  /** For a source of derived vars: their names, which a new value of it replaces too. */
+  derivesVars?: string[];
 }
 
 /**
  * The install's secrets: every one the installed version declares, in the
  * catalog's order, then those the Worker still has that the version no longer
  * declares (left from an earlier version). The latter, and those the version
- * declares optional, can be removed.
+ * declares optional, can be removed. `vars` names the vars derived from
+ * each secret.
  */
 export function secretSlots(
   declared: readonly CatalogSecret[],
   recordedNames: readonly string[],
+  vars: readonly Pick<CatalogVar, "name" | "derive">[] = [],
 ): SecretSlot[] {
   const recorded = new Set(recordedNames);
   const slots: SecretSlot[] = declared.map((s) => {
     const derives = declared.filter((d) => d.derive?.from === s.name).map((d) => d.name);
+    const derivesVars = vars.filter((v) => v.derive?.from === s.name).map((v) => v.name);
     return {
+      ...(derivesVars.length > 0 ? { derivesVars } : {}),
       name: s.name,
       label: s.label,
       ...(s.help === undefined ? {} : { help: s.help }),
@@ -179,19 +190,25 @@ export function replacementConfigName(workerName: string, binding: string, jobId
 
 /**
  * Why the secrets an admin entered cannot be taken as they are, one sentence
- * each: a derived secret is never entered, only its source. Checked on the
- * form's values before the derived ones are computed (`withDerivedSecrets`).
+ * each: a derived secret is never entered, only its source, and a generated
+ * kind (a VAPID private key) must be one. Checked on the form's values before
+ * the derived ones are computed (`withDerivedSecrets`). Never repeats a value.
  */
 export function enteredSecretProblems(
   set: Readonly<Record<string, string>>,
   slots: readonly SecretSlot[],
 ): string[] {
   const byName = new Map(slots.map((s) => [s.name, s]));
-  return Object.keys(set).flatMap((name) => {
-    const from = byName.get(name)?.derivedFrom;
-    return from === undefined
-      ? []
-      : [`${name} is computed from ${from}; give ${from} a new value instead.`];
+  return Object.entries(set).flatMap(([name, value]) => {
+    const slot = byName.get(name);
+    const from = slot?.derivedFrom;
+    if (from !== undefined) {
+      return [`${name} is computed from ${from}; give ${from} a new value instead.`];
+    }
+    // An empty value is `secretChangeProblems`' to name.
+    const problem =
+      slot === undefined || value.length === 0 ? null : secretValueProblem(slot, value);
+    return problem === null ? [] : [problem];
   });
 }
 

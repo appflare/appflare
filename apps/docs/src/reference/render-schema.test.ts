@@ -88,6 +88,21 @@ describe("renderSchemaReference", () => {
     expect(page).toContain("| `generate` | boolean | no (default `false`) |");
   });
 
+  it("names each type of a union", () => {
+    const union = renderSchemaReference({
+      type: "object",
+      properties: {
+        generate: {
+          anyOf: [{ type: "boolean" }, { type: "string", enum: ["vapid-private-key"] }],
+          default: false,
+        },
+      },
+    });
+    expect(union).toContain(
+      '| `generate` | boolean, or `"vapid-private-key"` | no (default `false`) |',
+    );
+  });
+
   it("escapes pipes so they do not split table cells", () => {
     expect(page).toContain("Each must match `a\\|b`.");
   });

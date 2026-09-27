@@ -1,6 +1,8 @@
 import type { ArtifactManifest, CatalogVar, WorkerBinding } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import {
+  enteredDerivedVarProblems,
+  enteredVarFields,
   type InstallVarField,
   installVarFields,
   missingRequiredVar,
@@ -24,6 +26,46 @@ const v = (name: string, extra: Partial<CatalogVar> = {}): CatalogVar => ({
   label: name.toLowerCase(),
   required: false,
   ...extra,
+});
+
+describe("a derived var", () => {
+  const publicKey = v("VAPID_PUBLIC_KEY", {
+    derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+  });
+
+  it("is a field that names its source and starts empty, never with the config's value", () => {
+    const fields = installVarFields(
+      manifest(
+        [{ type: "plain_text", name: "VAPID_PUBLIC_KEY", text: "dev-key" }],
+        [v("HOME"), publicKey],
+      ),
+    );
+    expect(fields[1]).toMatchObject({
+      name: "VAPID_PUBLIC_KEY",
+      derivedFrom: "VAPID_PRIVATE_KEY",
+      shownDefault: "",
+    });
+    expect(fields[0]).not.toHaveProperty("derivedFrom");
+    expect(enteredVarFields(fields).map((f) => f.name)).toEqual(["HOME"]);
+  });
+
+  it("is never taken from a form", () => {
+    const fields = installVarFields(manifest([], [v("HOME"), publicKey]));
+    expect(enteredDerivedVarProblems(["HOME", "VAPID_PUBLIC_KEY"], fields)).toEqual([
+      "VAPID_PUBLIC_KEY is computed from VAPID_PRIVATE_KEY; give VAPID_PRIVATE_KEY a new value instead.",
+    ]);
+  });
+
+  it("reaches the Worker with the value the install stored", () => {
+    const m = manifest(
+      [{ type: "plain_text", name: "VAPID_PUBLIC_KEY", text: "dev-key" }],
+      [publicKey],
+    );
+    const placeholders = { workerUrl: null, workerName: "app" };
+    expect(resolveVars(m, { VAPID_PUBLIC_KEY: "BPub" }, placeholders).vars).toEqual([
+      { type: "plain_text", name: "VAPID_PUBLIC_KEY", text: "BPub" },
+    ]);
+  });
 });
 
 describe("installVarFields", () => {

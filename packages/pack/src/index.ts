@@ -4,8 +4,12 @@
  * signs it (in the same step or separately), and verifies one.
  */
 
-/** What one Appflare upload may carry and cost; `verify --check-upload` applies it. */
+/**
+ * What one Appflare upload may carry and cost (`verify --check-upload` applies
+ * it), and a new VAPID private key for a `generate: "vapid-private-key"` secret.
+ */
 export {
+  generateVapidPrivateKey,
   MAX_WORKER_UPLOAD_BYTES,
   MAX_WORKER_UPLOAD_SUBREQUESTS,
   workerUploadCost,

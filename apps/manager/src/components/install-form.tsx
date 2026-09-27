@@ -29,6 +29,7 @@ import {
   WORKER_NAME_PATTERN,
 } from "../installs/install-input";
 import {
+  enteredVarFields,
   type InstallVarField,
   MAX_CARD_OPTIONS,
   missingRequiredVar,
@@ -61,9 +62,10 @@ import {
  * name, one field
  * per secret and var, and the Workers Paid confirmation. The confirmation of
  * the app's account requirements is a checkbox in the page's prerequisites
- * callout; it arrives here as `requirementsConfirmed`. `generate: true`
- * secrets are prefilled with a random value the admin can copy now; it is
- * shown only here. Optional secrets stay unset unless the admin turns on
+ * callout; it arrives here as `requirementsConfirmed`. Generated secrets
+ * (`generate`) are prefilled with a fresh value the admin can copy now; it is
+ * shown only here. A derived var is shown read-only: the install computes it
+ * from its source secret. Optional secrets stay unset unless the admin turns on
  * "Set now". An app that receives email (`install.emailRouting`) also
  * asks for a zone and previews what the install sets up there. An app with
  * cron triggers says how many it uses against the free plan's 5 per account;
@@ -203,7 +205,8 @@ export function InstallForm({
    */
   const submittedVars = (): Record<string, string> => {
     const out: Record<string, string> = {};
-    for (const field of varFields) {
+    // A derived var is never sent: the server computes it from its source.
+    for (const field of enteredVarFields(varFields)) {
       const edited = editedVars[field.name];
       const shown = shownDefault(field);
       if (edited !== undefined && edited !== shown) out[field.name] = edited;
@@ -373,6 +376,7 @@ export function InstallForm({
                 </div>
                 <SecretFields
                   secrets={catalog.secrets}
+                  vars={catalog.vars}
                   values={secrets}
                   onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
                   after="the install"
@@ -484,6 +488,11 @@ export function VarField({
   /** When placeholders are filled in, for the field's note. */
   when?: string;
 }) {
+  if (field.derivedFrom !== undefined) {
+    return (
+      <DerivedVarField field={field} derivedFrom={field.derivedFrom} value={value} when={when} />
+    );
+  }
   const notes = [
     field.help,
     hasPlaceholder(value)
@@ -549,6 +558,37 @@ export function VarField({
       autoComplete="off"
       onChange={(e) => onChange(e.currentTarget.value)}
       description={description}
+    />
+  );
+}
+
+/**
+ * A derived var (the catalog's `derive`), read-only: Appflare computes it from
+ * a secret, at install and whenever that secret gets a new value. Empty until
+ * the install computes it.
+ */
+function DerivedVarField({
+  field,
+  derivedFrom,
+  value,
+  when,
+}: {
+  field: Pick<InstallVarField, "name" | "label" | "help">;
+  derivedFrom: string;
+  value: string;
+  /** When the value is computed, for the empty field's placeholder. */
+  when: string;
+}) {
+  return (
+    <Input
+      label={`${field.label} (${field.name})`}
+      value={value}
+      readOnly
+      placeholder={`Computed ${when}`}
+      autoComplete="off"
+      spellCheck={false}
+      className="font-mono"
+      description={`${field.help ? `${field.help} ` : ""}Derived from ${derivedFrom}: Appflare sets it, and sets it again whenever ${derivedFrom} gets a new value.`}
     />
   );
 }

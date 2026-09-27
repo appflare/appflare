@@ -41,7 +41,8 @@ Secret values are never shown, not even to admins. To replace one:
 1. Select **Set new value** next to the secret and enter the new value. For a secret
    the app generates, the field is filled with a fresh random value; copy it now, as
    it is shown only here and cannot be read back once saved. **Keep current value**
-   undoes the change.
+   undoes the change. A new value also replaces what Appflare derives from the
+   secret, such as the read-only public key setting of a VAPID private key.
 2. Select **Save and redeploy**.
 
 The current value keeps serving until the new version takes over. Once the job has

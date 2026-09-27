@@ -608,7 +608,9 @@ function UpdateFromBuild({
   canUpdate: boolean;
 }) {
   const jobStarted = useJobStarted();
-  const [secrets, setSecrets] = useState(() => initialSecretValues(review.needsSecrets));
+  const [secrets, setSecrets] = useState(() =>
+    initialSecretValues(review.needsSecrets, review.heldSecrets),
+  );
   const [noPreview, setNoPreview] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -675,6 +677,8 @@ function UpdateFromBuild({
               </div>
               <SecretFields
                 secrets={review.needsSecrets}
+                vars={review.catalog.vars}
+                held={review.heldSecrets}
                 values={secrets}
                 onChange={(name, value) => setSecrets((s) => withSecretValue(s, name, value))}
                 after="the update"

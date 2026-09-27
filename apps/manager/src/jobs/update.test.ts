@@ -1,7 +1,12 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
-import { type ArtifactManifest, withRevisedCatalog } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  generateVapidPrivateKey,
+  vapidPublicKey,
+  withRevisedCatalog,
+} from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
@@ -487,6 +492,53 @@ describe("update job", () => {
     expect(r.logs.some((l) => l.message === "New secret API_KEY: set with the new version.")).toBe(
       true,
     );
+  });
+
+  it("sets a new VAPID private key with its public key var, and stores the var once it serves", async () => {
+    const privateKey = generateVapidPrivateKey();
+    const r = await update(
+      {
+        ...NEW_APP,
+        catalog: {
+          secrets: [
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+            { name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" },
+          ],
+          vars: [
+            {
+              name: "VAPID_PUBLIC_KEY",
+              label: "Push public key",
+              required: false,
+              derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+            },
+          ],
+        },
+      },
+      {},
+      {},
+      { secrets: { VAPID_PRIVATE_KEY: privateKey } },
+    );
+    expect(r.error).toBeNull();
+    const publicKey = await vapidPublicKey(privateKey);
+    const bindings = r.fake.state.versions[0]?.metadata.bindings as Array<Record<string, unknown>>;
+    expect(bindings).toContainEqual({
+      type: "secret_text",
+      name: "VAPID_PRIVATE_KEY",
+      text: privateKey,
+    });
+    expect(bindings).toContainEqual({
+      type: "plain_text",
+      name: "VAPID_PUBLIC_KEY",
+      text: publicKey,
+    });
+    // The seeded setting stays, the public key joins it, and the snapshot keeps the settings from before.
+    expect(JSON.parse(String(r.install?.config_json))).toEqual({
+      HOME_PAGE: "admin",
+      VAPID_PUBLIC_KEY: publicKey,
+    });
+    expect(r.snapshot?.config_json).toBe('{"HOME_PAGE":"admin"}');
+    expect(JSON.stringify(r.job)).not.toContain(privateKey);
+    expect(JSON.stringify(r.logs)).not.toContain(privateKey);
   });
 
   it("updates to a release with the form of the revision the catalog lists for it", async () => {

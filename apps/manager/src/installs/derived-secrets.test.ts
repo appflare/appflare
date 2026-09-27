@@ -1,12 +1,19 @@
-import type { CatalogSecret } from "@appflare/schema";
+import { type CatalogSecret, type CatalogVar, generateVapidPrivateKey } from "@appflare/schema";
 import bcrypt from "bcryptjs";
 import { describe, expect, it } from "vitest";
 import {
+  derivedVarValues,
   deriveSecretValue,
+  heldSecrets,
   secretsToAskFor,
   secretsToSet,
+  sourcesOfUnsetDerivedVars,
   withDerivedSecrets,
 } from "./derived-secrets";
+
+function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+}
 
 // Counterscale's shape: a password the admin types, its bcrypt hash, and a generated key.
 const secrets: CatalogSecret[] = [
@@ -79,5 +86,83 @@ describe("secretsToAskFor and secretsToSet", () => {
     expect(secretsToSet(secrets, [hash])).toEqual([password, hash]);
     expect(secretsToAskFor(secrets, [jwt, hash, password])).toEqual([password, jwt]);
     expect(secretsToSet(secrets, [jwt])).toEqual([jwt]);
+  });
+});
+
+// A push app's shape: a generated VAPID private key, and its public key as a var.
+const push: { secrets: CatalogSecret[]; vars: CatalogVar[] } = {
+  secrets: [
+    { name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" },
+    { name: "SESSION", label: "Session key", generate: true },
+  ],
+  vars: [
+    { name: "HOME", label: "Home", required: false },
+    {
+      name: "VAPID_PUBLIC_KEY",
+      label: "Push public key",
+      required: false,
+      derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+    },
+  ],
+};
+
+describe("VAPID keys in the Workers runtime", () => {
+  it("derive the public key WebCrypto made with the private key", async () => {
+    const pair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+      "sign",
+      "verify",
+    ])) as CryptoKeyPair;
+    const jwk = (await crypto.subtle.exportKey("jwk", pair.privateKey)) as JsonWebKey;
+    const raw = new Uint8Array(
+      (await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer,
+    );
+    const publicKey = await deriveSecretValue("vapid-public-key", jwk.d ?? "");
+    expect(publicKey).toHaveLength(87);
+    expect(fromBase64Url(publicKey)).toEqual(raw);
+  });
+
+  it("generate a private key whose public key WebCrypto imports", async () => {
+    const privateKey = generateVapidPrivateKey();
+    expect(privateKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(fromBase64Url(privateKey)).toHaveLength(32);
+    const point = fromBase64Url(await deriveSecretValue("vapid-public-key", privateKey));
+    expect(point).toHaveLength(65);
+    expect(point[0]).toBe(4);
+    await expect(
+      crypto.subtle.importKey("raw", point, { name: "ECDSA", namedCurve: "P-256" }, true, [
+        "verify",
+      ]),
+    ).resolves.toBeDefined();
+  });
+
+  it("refuse a value that is not a private key, never repeating it", async () => {
+    await expect(deriveSecretValue("vapid-public-key", "hunter2")).rejects.toThrow(
+      /^not a VAPID private key/,
+    );
+  });
+});
+
+describe("derived vars", () => {
+  it("are computed from their source's new value, and only then", async () => {
+    const privateKey = generateVapidPrivateKey();
+    expect(await derivedVarValues(push.vars, { VAPID_PRIVATE_KEY: privateKey })).toEqual({
+      VAPID_PUBLIC_KEY: await deriveSecretValue("vapid-public-key", privateKey),
+    });
+    expect(await derivedVarValues(push.vars, { SESSION: "k" })).toEqual({});
+  });
+
+  it("without a stored value ask for their source again, which the update sets with them", () => {
+    expect(sourcesOfUnsetDerivedVars(push.vars, {})).toEqual(["VAPID_PRIVATE_KEY"]);
+    expect(sourcesOfUnsetDerivedVars(push.vars, { VAPID_PUBLIC_KEY: "BK" })).toEqual([]);
+    const [privateKey] = push.secrets as [CatalogSecret];
+    expect(secretsToAskFor(push.secrets, [], ["VAPID_PRIVATE_KEY"])).toEqual([privateKey]);
+    expect(secretsToSet(push.secrets, [], ["VAPID_PRIVATE_KEY"])).toEqual([privateKey]);
+    // The source the Worker has already is held: its field must start empty.
+    expect(heldSecrets([privateKey], ["VAPID_PRIVATE_KEY", "SESSION"])).toEqual([
+      "VAPID_PRIVATE_KEY",
+    ]);
+    expect(heldSecrets([privateKey], [])).toEqual([]);
+    // A secret derived from a source asked for again is set again with it.
+    expect(secretsToSet(secrets, [], ["CF_PASSWORD"])).toEqual([password, hash]);
   });
 });

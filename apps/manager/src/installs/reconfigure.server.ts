@@ -31,8 +31,10 @@ import { recordedCatalog, settingsRunId } from "../jobs/self-deploying/phases";
 import { lastDurableObjectTagOf, updatePath } from "../jobs/update/plan";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
 import { readAppBaseUrl } from "./app-address.server";
-import { withDerivedSecrets } from "./derived-secrets";
+import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
 import {
+  enteredDerivedVarProblems,
+  enteredVarFields,
   type InstallVarField,
   installVarFields,
   missingRequiredVar,
@@ -203,7 +205,7 @@ async function settingsContext(
   return {
     catalog: manifest.catalog,
     fields: installVarFields(manifest),
-    slots: secretSlots(manifest.catalog.secrets, secretNames),
+    slots: secretSlots(manifest.catalog.secrets, secretNames, manifest.catalog.vars),
     databases: databaseSlots(
       manifest.catalog.resources?.hyperdrive ?? [],
       rows.filter((r) => r.kind === HYPERDRIVE_KIND),
@@ -294,12 +296,15 @@ export async function startReconfigureCore(
   const selfDeploying = install.build_kind === "self-deploying";
 
   const entered = request.vars ?? {};
-  const fieldNames = ctx.fields.map((f) => f.name);
-  const unknown = Object.keys(entered).filter((name) => !fieldNames.includes(name));
+  const unknown = Object.keys(entered).filter((name) => !ctx.fields.some((f) => f.name === name));
   if (unknown.length > 0) {
     throw new VersionActionError(`${ctx.catalog.name} has no setting ${unknown.join(", ")}.`);
   }
-  for (const field of ctx.fields) {
+  // A derived var is never entered: it follows its source secret.
+  const derivedProblems = enteredDerivedVarProblems(Object.keys(entered), ctx.fields);
+  if (derivedProblems.length > 0) throw new VersionActionError(derivedProblems.join(" "));
+  const fields = enteredVarFields(ctx.fields);
+  for (const field of fields) {
     const value = (entered[field.name] ?? "").trim();
     if (missingRequiredVar(field, value)) {
       throw new VersionActionError(`${field.label} (${field.name}) is required.`);
@@ -308,7 +313,6 @@ export async function startReconfigureCore(
     if (problem !== null) throw new VersionActionError(problem);
   }
   const before = parseStoredVars(install.config_json);
-  const vars = nextStoredVars(before, fieldNames, entered);
 
   const enteredSecrets = request.secrets?.set ?? {};
   const enteredProblems = enteredSecretProblems(enteredSecrets, ctx.slots);
@@ -317,6 +321,15 @@ export async function startReconfigureCore(
     // A new value of a source secret replaces what is derived from it too.
     set: await withDerivedSecrets(ctx.catalog.secrets, enteredSecrets),
     unset: [...new Set(request.secrets?.unset ?? [])],
+  };
+  // Derived vars keep their stored value unless their source gets a new one.
+  const vars = {
+    ...nextStoredVars(
+      before,
+      fields.map((f) => f.name),
+      entered,
+    ),
+    ...(await derivedVarValues(ctx.catalog.vars, enteredSecrets)),
   };
   const secretProblems = secretChangeProblems(secrets, ctx.slots, { canRemove: !selfDeploying });
   if (secretProblems.length > 0) throw new VersionActionError(secretProblems.join(" "));

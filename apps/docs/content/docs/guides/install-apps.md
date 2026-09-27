@@ -17,7 +17,8 @@ never takes over a Worker it did not create.
 
 **Secrets.** Stored as encrypted secrets on the app's Worker. Appflare keeps only
 their names. Some secrets are generated for you: the field is filled with a random
-32-character value that you can copy, replace, or regenerate. Copy it before you
+32-character value (or, for an app that sends push notifications, a new VAPID
+private key) that you can copy, replace, or regenerate. Copy it before you
 install. It is shown only on this form and cannot be read back afterwards. A secret
 marked optional is one the app works without: it is left unset unless you turn on
 **Set now**, and you can set or remove it later in the app's
@@ -29,7 +30,9 @@ form shows it filled in for the Worker name you typed, and the install fills in 
 real workers.dev address (also when you attach a custom domain later). Only settings
 you change are stored; the others follow the app's default on each update. Settings marked JSON take a JSON value, such as `["inbox@example.com"]`,
 and the form checks it before you can install. A setting with a fixed set of values
-shows them as choices: cards for up to four, a dropdown for more.
+shows them as choices: cards for up to four, a dropdown for more. A setting derived
+from a secret, such as the public key of a VAPID private key, is read-only: Appflare
+computes it at install, and again whenever that secret gets a new value.
 
 **Address.** Where the app answers besides its `workers.dev` URL: **workers.dev
 only** (the default), a [custom domain](/guides/custom-domains/) in one of this

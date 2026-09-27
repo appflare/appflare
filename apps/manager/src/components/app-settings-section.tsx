@@ -23,7 +23,7 @@ import {
   WarningIcon,
 } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useState } from "react";
-import { missingRequiredVar, varValueProblem } from "../installs/install-vars";
+import { enteredVarFields, missingRequiredVar, varValueProblem } from "../installs/install-vars";
 import type { InstallDetail } from "../installs/installs.functions";
 import { startReconfigure } from "../installs/reconfigure.functions";
 import type { InstallSettings, SettingField } from "../installs/reconfigure.server";
@@ -118,11 +118,12 @@ export function AppSettingsSection({
   /**
    * The settings to store: what is stored now for a setting left alone, and
    * for an edited one its value unless it is back at the default (the
-   * others follow the default of the version each job deploys).
+   * others follow the default of the version each job deploys). A derived
+   * var is never sent: the server keeps it, or computes it from its source.
    */
   function submittedVars(): Record<string, string> {
     const out: Record<string, string> = {};
-    for (const field of settings.fields) {
+    for (const field of enteredVarFields(settings.fields)) {
       const edit = edited[field.name];
       if (edit === undefined || edit === initialOf(field)) {
         if (field.stored !== null) out[field.name] = field.stored;
@@ -588,7 +589,7 @@ function SecretRow({
               size="sm"
               icon={<KeyIcon />}
               disabled={disabled}
-              onClick={() => onValueChange(slot.generate ? generatedSecret() : "")}
+              onClick={() => onValueChange(slot.generate ? generatedSecret(slot.generate) : "")}
             >
               Set new value
             </Button>
@@ -624,9 +625,11 @@ function SecretRow({
           {slot.help}
         </Text>
       )}
-      {slot.derives !== undefined && (
+      {(slot.derives !== undefined || slot.derivesVars !== undefined) && (
         <Text variant="secondary" size="sm">
-          A new value also replaces {slot.derives.join(" and ")}, which Appflare computes from it.
+          A new value also replaces{" "}
+          {[...(slot.derives ?? []), ...(slot.derivesVars ?? [])].join(" and ")}, which Appflare
+          computes from it.
         </Text>
       )}
       {value !== undefined &&
@@ -645,7 +648,7 @@ function SecretRow({
                 size="sm"
                 icon={<ArrowsClockwiseIcon />}
                 disabled={disabled}
-                onClick={() => onValueChange(generatedSecret())}
+                onClick={() => onValueChange(generatedSecret(slot.generate))}
               >
                 Regenerate
               </Button>

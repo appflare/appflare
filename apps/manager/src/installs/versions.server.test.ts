@@ -1,6 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createClient, type RequestLog } from "@appflare/cf-api";
+import { generateVapidPrivateKey, vapidPublicKey } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { createDb } from "../db/client";
@@ -210,6 +211,63 @@ describe("startUpdateCore: what an update needs first", () => {
     }>();
     expect(job?.input_json).not.toContain("value-DO-NOT-LEAK");
     expect(JSON.parse(job?.input_json ?? "{}").secrets).toEqual(["API_KEY"]);
+  });
+
+  it("asks for a VAPID private key again when a version adds its public key var, and carries the var", async () => {
+    await seedInstall({
+      resources: [
+        { kind: "secret", binding: "ADMIN_PASSWORD", name: "ADMIN_PASSWORD" },
+        { kind: "secret", binding: "VAPID_PRIVATE_KEY", name: "VAPID_PRIVATE_KEY" },
+      ],
+    });
+    const vapid = {
+      name: "VAPID_PRIVATE_KEY",
+      label: "Push signing key",
+      generate: "vapid-private-key" as const,
+    };
+    const fixture = await buildArtifactFixture({
+      version: "1.1.0",
+      catalog: {
+        secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password", generate: true }, vapid],
+        vars: [
+          {
+            name: "VAPID_PUBLIC_KEY",
+            label: "Push public key",
+            required: false,
+            derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+          },
+        ],
+      },
+    });
+    // The Worker has the private key, but its value cannot be read back.
+    const first = await start(fixture);
+    // Held: the form leaves it empty, so the key is never rotated unasked.
+    expect(first.result).toMatchObject({
+      needsSecrets: [vapid],
+      heldSecrets: ["VAPID_PRIVATE_KEY"],
+      derivedVars: [
+        {
+          name: "VAPID_PUBLIC_KEY",
+          derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+        },
+      ],
+    });
+    await expect(start(fixture, { secrets: { VAPID_PRIVATE_KEY: "hunter2" } })).rejects.toThrow(
+      "Push signing key (VAPID_PRIVATE_KEY) must be a VAPID private key",
+    );
+    const privateKey = generateVapidPrivateKey();
+    const second = await start(fixture, { secrets: { VAPID_PRIVATE_KEY: privateKey } });
+    expect(second.created).toEqual([
+      expect.objectContaining({
+        secrets: { VAPID_PRIVATE_KEY: privateKey },
+        vars: { VAPID_PUBLIC_KEY: await vapidPublicKey(privateKey) },
+      }),
+    ]);
+    const job = await env.DB.prepare("SELECT input_json FROM jobs WHERE id = 'job1'").first<{
+      input_json: string;
+    }>();
+    expect(job?.input_json).not.toContain(privateKey);
+    expect(JSON.parse(job?.input_json ?? "{}").vars).toEqual(["VAPID_PUBLIC_KEY"]);
   });
 
   it("asks to confirm an update that cannot be checked on a preview", async () => {

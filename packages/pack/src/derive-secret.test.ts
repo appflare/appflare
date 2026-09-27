@@ -1,3 +1,4 @@
+import { generateVapidPrivateKey, vapidPublicKey } from "@appflare/schema";
 import bcrypt from "bcryptjs";
 import { describe, expect, it } from "vitest";
 import { deriveSecretValue } from "./derive-secret.ts";
@@ -16,5 +17,17 @@ describe("deriveSecretValue", () => {
     expect(deriveSecretValue("bcrypt", "correct horse")).not.toBe(first);
     expect(bcrypt.compareSync("correct horse", first)).toBe(true);
     expect(bcrypt.compareSync("wrong", first)).toBe(false);
+  });
+
+  it("gives the VAPID public key WebCrypto computes for the private key", async () => {
+    for (let i = 0; i < 4; i++) {
+      const privateKey = generateVapidPrivateKey();
+      const publicKey = deriveSecretValue("vapid-public-key", privateKey);
+      expect(Buffer.from(publicKey, "base64url")).toHaveLength(65);
+      expect(publicKey).toBe(await vapidPublicKey(privateKey));
+    }
+    expect(() => deriveSecretValue("vapid-public-key", "hunter2")).toThrow(
+      /^not a VAPID private key/,
+    );
   });
 });

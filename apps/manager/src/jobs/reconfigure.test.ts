@@ -1,6 +1,11 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { buildKeys, sandboxObjectUrl } from "@appflare/schema";
+import {
+  buildKeys,
+  generateVapidPrivateKey,
+  sandboxObjectUrl,
+  vapidPublicKey,
+} from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { recordCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
@@ -1084,6 +1089,96 @@ describe("starting a settings change", () => {
     expect(job?.input_json).not.toContain(ROTATED);
     const install = await env.DB.prepare("SELECT status FROM installs").first();
     expect(install).toEqual({ status: "updating" });
+  });
+});
+
+describe("a VAPID key pair in a settings change", () => {
+  const PUSH_APP: ArtifactFixtureOptions = {
+    ...APP,
+    catalog: {
+      secrets: [
+        { name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" },
+      ],
+      vars: [
+        TITLE_VAR,
+        {
+          name: "VAPID_PUBLIC_KEY",
+          label: "Push public key",
+          required: false,
+          derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+        },
+      ],
+    },
+  };
+  const installed = generateVapidPrivateKey();
+  let params: ReconfigureJobParams | null = null;
+
+  async function start(input: Partial<StartReconfigureInput>) {
+    return startReconfigureCore(
+      {
+        db: env.DB,
+        createJob: async (id, p) => {
+          params = p;
+          return { id };
+        },
+        newId: () => "job9",
+      },
+      { installId: INSTALL_ID, ...input },
+    );
+  }
+
+  beforeEach(async () => {
+    params = null;
+    await seed(await buildArtifactFixture(PUSH_APP), {
+      resources: [...RESOURCES, { kind: "secret", name: "VAPID_PRIVATE_KEY" }],
+    });
+    await env.DB.prepare("UPDATE installs SET config_json = ?2 WHERE id = ?1")
+      .bind(INSTALL_ID, JSON.stringify({ VAPID_PUBLIC_KEY: await vapidPublicKey(installed) }))
+      .run();
+  });
+
+  it("shows the public key read-only beside its source", async () => {
+    const settings = await readInstallSettingsCore(
+      { db: env.DB, sandboxConnected: false, subdomain: SUBDOMAIN },
+      INSTALL_ID,
+    );
+    const field = settings?.fields.find((f) => f.name === "VAPID_PUBLIC_KEY");
+    expect(field).toMatchObject({
+      derivedFrom: "VAPID_PRIVATE_KEY",
+      stored: await vapidPublicKey(installed),
+    });
+    expect(settings?.secrets.find((s) => s.name === "VAPID_PRIVATE_KEY")).toMatchObject({
+      generate: "vapid-private-key",
+      derivesVars: ["VAPID_PUBLIC_KEY"],
+    });
+  });
+
+  it("keeps the public key through other changes, and never takes it from the form", async () => {
+    await start({ vars: { TITLE: "Push" } });
+    expect(params?.vars).toEqual({
+      TITLE: "Push",
+      VAPID_PUBLIC_KEY: await vapidPublicKey(installed),
+    });
+    await env.DB.prepare("DELETE FROM jobs").run();
+    await env.DB.prepare("UPDATE installs SET status = 'installed'").run();
+    await expect(start({ vars: { VAPID_PUBLIC_KEY: "forged" } })).rejects.toThrow(
+      "VAPID_PUBLIC_KEY is computed from VAPID_PRIVATE_KEY; give VAPID_PRIVATE_KEY a new value instead.",
+    );
+  });
+
+  it("computes the public key again from a new private key, and refuses one that is not a key", async () => {
+    await expect(
+      start({ secrets: { set: { VAPID_PRIVATE_KEY: "hunter2" }, unset: [] } }),
+    ).rejects.toThrow("Push signing key (VAPID_PRIVATE_KEY) must be a VAPID private key");
+    const rotated = generateVapidPrivateKey();
+    await start({ secrets: { set: { VAPID_PRIVATE_KEY: rotated }, unset: [] } });
+    expect(params?.secrets.set).toEqual({ VAPID_PRIVATE_KEY: rotated });
+    expect(params?.vars).toEqual({ VAPID_PUBLIC_KEY: await vapidPublicKey(rotated) });
+    const job = await env.DB.prepare("SELECT input_json FROM jobs WHERE id = 'job9'").first<{
+      input_json: string;
+    }>();
+    expect(JSON.parse(job?.input_json ?? "{}").vars).toEqual(["VAPID_PUBLIC_KEY"]);
+    expect(job?.input_json).not.toContain(rotated);
   });
 });
 

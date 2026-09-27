@@ -488,7 +488,18 @@
           },
           "generate": {
             "default": false,
-            "type": "boolean"
+            "description": "`true`: the install form fills in a random value the admin can copy, regenerate, or replace. `\"vapid-private-key\"`: it fills in a new Web Push (VAPID) private key, a P-256 private key as the unpadded base64url of its raw 32 bytes (the form web-push libraries take), and the manager refuses a value that is not one. Pair it with a `derive: { method: \"vapid-public-key\" }` var for the public key.",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "vapid-private-key"
+                ]
+              }
+            ]
           },
           "optional": {
             "type": "boolean",
@@ -505,9 +516,10 @@
               "method": {
                 "type": "string",
                 "enum": [
-                  "bcrypt"
+                  "bcrypt",
+                  "vapid-public-key"
                 ],
-                "description": "How the value is computed. `\"bcrypt\"`: a bcrypt hash (`$2b$`, cost 10) of the source value, for apps that check a password against a stored hash."
+                "description": "How the value is computed. `\"bcrypt\"`: a bcrypt hash (`$2b$`, cost 10) of the source value, for apps that check a password against a stored hash. `\"vapid-public-key\"`: the Web Push (VAPID) public key of a source secret with `generate: \"vapid-private-key\"`, as the unpadded base64url of its 65-byte uncompressed point."
               }
             },
             "required": [
@@ -546,9 +558,7 @@
           {
             "properties": {
               "generate": {
-                "not": {
-                  "const": true
-                }
+                "const": false
               },
               "optional": {
                 "not": {
@@ -620,6 +630,29 @@
             },
             "description": "The values a `type: \"select\"` var can take, in the order the form shows them. Required for, and only allowed with, `select`. Values must be distinct."
           },
+          "derive": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The name of the secret whose value this var is computed from. It must be a secret of this manifest, not itself derived, not optional."
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "vapid-public-key"
+                ],
+                "description": "`\"vapid-public-key\"`: the Web Push (VAPID) public key of a source secret with `generate: \"vapid-private-key\"`, as the unpadded base64url of its 65-byte uncompressed point: public config the app hands to browsers."
+              }
+            },
+            "required": [
+              "from",
+              "method"
+            ],
+            "additionalProperties": false,
+            "description": "Computes this var from a secret instead of asking for it: the install and settings forms show it read-only, and the manager sets it at install, and again whenever the source secret gets a new value in the app's settings or an update. Not allowed with `default`, `required: true`, `type` or `options`, nor on self-deploying entries."
+          },
           "workers": {
             "minItems": 1,
             "type": "array",
@@ -663,6 +696,38 @@
                     "not": {
                       "const": "select"
                     }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "not": {
+                  "required": [
+                    "derive"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "default"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "type"
+                      ]
+                    }
+                  ]
+                },
+                "properties": {
+                  "required": {
+                    "const": false
                   }
                 }
               }
@@ -901,6 +966,15 @@
                         "derive"
                       ]
                     }
+                  ]
+                }
+              }
+            },
+            "vars": {
+              "items": {
+                "not": {
+                  "required": [
+                    "derive"
                   ]
                 }
               }

@@ -1,3 +1,4 @@
+import { generateVapidPrivateKey } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import {
   changedVarNames,
@@ -208,6 +209,42 @@ describe("derived secrets in a settings change", () => {
     expect(secretChangeProblems({ set: {}, unset: ["CF_PASSWORD_HASH"] }, slots)).toEqual([
       "Admin password hash (CF_PASSWORD_HASH) is required by the installed version; it can be replaced, not removed.",
     ]);
+  });
+});
+
+describe("a VAPID private key and the var derived from it", () => {
+  const slots = secretSlots(
+    [{ name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" }],
+    ["VAPID_PRIVATE_KEY"],
+    [
+      { name: "HOME" },
+      {
+        name: "VAPID_PUBLIC_KEY",
+        derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+      },
+    ],
+  );
+
+  it("name the var a new value replaces, and generate the key's kind", () => {
+    expect(slots[0]).toMatchObject({
+      generate: "vapid-private-key",
+      derivesVars: ["VAPID_PUBLIC_KEY"],
+    });
+    expect(slots[0]?.derives).toBeUndefined();
+  });
+
+  it("take only a VAPID private key as its new value, never repeating what was typed", () => {
+    expect(enteredSecretProblems({ VAPID_PRIVATE_KEY: generateVapidPrivateKey() }, slots)).toEqual(
+      [],
+    );
+    const problems = enteredSecretProblems({ VAPID_PRIVATE_KEY: "hunter2" }, slots);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(
+      "Push signing key (VAPID_PRIVATE_KEY) must be a VAPID private key",
+    );
+    expect(problems[0]).not.toContain("hunter2");
+    // An empty value is named by the change check instead.
+    expect(enteredSecretProblems({ VAPID_PRIVATE_KEY: "" }, slots)).toEqual([]);
   });
 });
 

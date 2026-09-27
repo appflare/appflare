@@ -5,7 +5,8 @@
  * the reference always matches the schema the catalog validates against. It
  * understands the subset of JSON Schema that `z.toJSONSchema` emits for the
  * manifest: objects, arrays, string enums, patterns, lengths, integer ranges,
- * defaults, and records (objects keyed by a free-form name).
+ * defaults, unions of scalar types, and records (objects keyed by a free-form
+ * name).
  */
 
 /** The JSON Schema keywords this renderer reads. Anything else is ignored. */
@@ -18,6 +19,11 @@ export interface JsonSchemaNode {
   additionalProperties?: boolean | JsonSchemaNode;
   propertyNames?: JsonSchemaNode;
   items?: JsonSchemaNode;
+  /**
+   * A union of scalar types, such as `boolean` or one of some strings. Loosely
+   * typed: the manifest also uses `anyOf` for rules whose members are not fields.
+   */
+  anyOf?: readonly unknown[];
   enum?: readonly (string | number | boolean)[];
   pattern?: string;
   format?: string;
@@ -172,8 +178,12 @@ function describeType(field: JsonSchemaNode, path: string, anchors: Map<string, 
 }
 
 function scalarType(field: JsonSchemaNode): string {
+  if (field.type === undefined && field.anyOf !== undefined && field.anyOf.length > 0) {
+    return field.anyOf.map((member) => scalarType(member as JsonSchemaNode)).join(", or ");
+  }
   if (field.enum) {
     const values = enumValues(field.enum);
+    if (values.length === 1) return values.join("");
     return values.length === 2 ? values.join(" or ") : `one of ${values.join(", ")}`;
   }
   if (field.type === "string" && field.format === "uri") return "string (URL)";

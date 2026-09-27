@@ -13,6 +13,7 @@ import {
   DEFAULT_EXPECTED_BUILD_MINUTES,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
   derivedSecretProblems,
+  derivedVarProblems,
   EMAIL_ROUTING_MAX_RULES,
   enteredSecrets,
   hasFixedWorkerName,
@@ -20,6 +21,7 @@ import {
   INSTALL_PLACEHOLDERS,
   installTierSchema,
   isDerivedSecret,
+  isDerivedVar,
   isOptionalSecret,
   MAX_BUILD_COMMANDS,
   MAX_VAR_OPTIONS,
@@ -28,8 +30,10 @@ import {
   runsInSandbox,
   SANDBOX_RUN_TIERS,
   sandboxBuildSettings,
+  secretValueProblem,
   semverSchema,
 } from "./catalog";
+import { generateVapidPrivateKey } from "./vapid";
 
 const validManifest = {
   $schema: "https://appflare.github.io/catalog/schema/v1.json",
@@ -730,6 +734,13 @@ describe("vars[].type select", () => {
             { not: { required: ["options"] } },
           ],
         },
+        // A derived var has no default, type or options, and is not required.
+        {
+          anyOf: [
+            { not: { required: ["derive"] } },
+            { properties: { required: { const: false } } },
+          ],
+        },
       ],
       properties: {
         type: { enum: ["text", "select"] },
@@ -860,5 +871,169 @@ describe("derived secrets", () => {
     });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain("derived secrets are not allowed");
+  });
+});
+
+describe("VAPID keys", () => {
+  const push = {
+    ...validManifest,
+    secrets: [
+      { name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" },
+    ],
+    vars: [
+      {
+        name: "VAPID_PUBLIC_KEY",
+        label: "Push public key",
+        derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+      },
+    ],
+  };
+
+  it("generate a private key secret and derive a public key var from it", () => {
+    const parsed = catalogManifestSchema.parse(push);
+    expect(parsed.secrets[0]?.generate).toBe("vapid-private-key");
+    const publicKey = parsed.vars[0];
+    expect(publicKey?.derive).toEqual({ from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" });
+    expect(publicKey !== undefined && isDerivedVar(publicKey)).toBe(true);
+    // A var without `derive` keeps its parsed shape.
+    const plain = catalogManifestSchema.parse({
+      ...push,
+      vars: [{ name: "HOME", label: "Home" }],
+    });
+    expect(plain.vars[0]).toEqual({ name: "HOME", label: "Home", required: false });
+  });
+
+  it("derive a public key secret too", () => {
+    const result = catalogManifestSchema.safeParse({
+      ...push,
+      secrets: [
+        ...push.secrets,
+        {
+          name: "VAPID_PUBLIC_KEY",
+          label: "Push public key",
+          derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+        },
+      ],
+      vars: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("refuse a var derived from anything but an ordinary VAPID private key secret", () => {
+    const derived = (from: string, extra: Record<string, unknown> = {}) => ({
+      name: "PUB",
+      label: "Public key",
+      derive: { from, method: "vapid-public-key" },
+      ...extra,
+    });
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ vars: [derived("NOPE")] }, "not a secret of this manifest"],
+      [{ vars: [{ name: "K", label: "K" }, derived("K")] }, "not a secret of this manifest"],
+      [
+        { secrets: [{ name: "K", label: "K", generate: true }], vars: [derived("K")] },
+        'must then be generate: \\"vapid-private-key\\"',
+      ],
+      [
+        {
+          secrets: [{ name: "K", label: "K", generate: "vapid-private-key", optional: true }],
+          vars: [derived("K")],
+        },
+        "optional",
+      ],
+      [{ vars: [derived("VAPID_PRIVATE_KEY", { default: "x" })] }, "cannot also have default"],
+      [{ vars: [derived("VAPID_PRIVATE_KEY", { required: true })] }, "cannot be required"],
+      [
+        {
+          vars: [
+            derived("VAPID_PRIVATE_KEY", {
+              type: "select",
+              options: [
+                { value: "a", label: "A" },
+                { value: "b", label: "B" },
+              ],
+            }),
+          ],
+        },
+        "cannot also have type",
+      ],
+      [
+        {
+          vars: [
+            {
+              ...derived("VAPID_PRIVATE_KEY"),
+              derive: { from: "VAPID_PRIVATE_KEY", method: "bcrypt" },
+            },
+          ],
+        },
+        "vapid-public-key",
+      ],
+      [
+        {
+          secrets: [
+            { name: "P", label: "P" },
+            { name: "H", label: "H", derive: { from: "P", method: "vapid-public-key" } },
+          ],
+          vars: [],
+        },
+        'must then be generate: \\"vapid-private-key\\"',
+      ],
+      [{ secrets: [{ name: "K", label: "K", generate: "rsa-key" }], vars: [] }, "generate"],
+    ];
+    for (const [patch, why] of cases) {
+      const result = catalogManifestSchema.safeParse({ ...push, ...patch });
+      expect(result.success, why).toBe(false);
+      expect(JSON.stringify(result.error?.issues), why).toContain(why);
+    }
+  });
+
+  it("name the var each problem is about", () => {
+    expect(
+      derivedVarProblems(
+        [{ name: "K", generate: true }],
+        [{ name: "PUB", derive: { from: "K", method: "vapid-public-key" } }],
+      ),
+    ).toEqual([
+      {
+        path: [0, "derive", "method"],
+        message:
+          'PUB is the vapid-public-key of K, which must then be generate: "vapid-private-key"',
+      },
+    ]);
+  });
+
+  it("check a VAPID private key's value, never repeating it", () => {
+    const secret = { name: "K", label: "Key", generate: "vapid-private-key" } as const;
+    expect(secretValueProblem(secret, generateVapidPrivateKey())).toBeNull();
+    const problem = secretValueProblem(secret, "hunter2");
+    expect(problem).toContain("Key (K) must be a VAPID private key");
+    expect(problem).not.toContain("hunter2");
+    expect(secretValueProblem({ name: "P", label: "P", generate: true }, "x")).toBeNull();
+  });
+
+  it("state the derived var rules in the JSON Schema", () => {
+    const text = JSON.stringify(z.toJSONSchema(catalogManifestSchema));
+    expect(text).toContain('"vapid-private-key"');
+    expect(text).toContain('"vapid-public-key"');
+    expect(text).toContain('"vars":{"items":{"not":{"required":["derive"]}}}');
+  });
+
+  it("are refused on self-deploying entries as derived vars", () => {
+    const result = catalogManifestSchema.safeParse({
+      ...push,
+      plan: "paid",
+      install: {
+        ...validManifest.install,
+        tier: "self-deploying",
+        selfDeploying: {
+          tool: "alchemy",
+          deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
+          destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
+          stateStore: "cloudflare",
+          workers: ["cut-{{stage}}"],
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain("derived vars are not allowed");
   });
 });

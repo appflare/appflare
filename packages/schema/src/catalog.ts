@@ -3,6 +3,7 @@ import { z } from "zod";
 // Node's type stripping, which resolves relative imports literally.
 import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
+import { isVapidPrivateKey, VAPID_PRIVATE_KEY_LENGTH } from "./vapid.ts";
 
 /**
  * Schemas for the human-authored catalog manifest `appflare.jsonc`.
@@ -278,13 +279,36 @@ export const requirementSchema = z.enum([
 export type Requirement = z.infer<typeof requirementSchema>;
 
 /**
+ * What kind of value the install form generates for a secret, besides the
+ * random password of `generate: true`. `vapid-private-key`: a Web Push
+ * (VAPID) private key, a P-256 private key as the unpadded base64url of its
+ * raw 32 bytes, the form web-push libraries take (see ./vapid.ts).
+ */
+export const SECRET_GENERATE_KINDS = ["vapid-private-key"] as const;
+export type SecretGenerateKind = (typeof SECRET_GENERATE_KINDS)[number];
+
+/**
  * How the manager computes a derived secret from its source secret's value.
  * `bcrypt`: a bcrypt hash (`$2b$`, cost {@link BCRYPT_COST}, a fresh random
  * salt each time), as apps that check a password with `bcrypt.compare` expect
- * (Counterscale's `CF_PASSWORD_HASH`, for example).
+ * (Counterscale's `CF_PASSWORD_HASH`, for example). `vapid-public-key`: the
+ * Web Push (VAPID) public key of a `generate: "vapid-private-key"` secret, as
+ * the unpadded base64url of its 65-byte uncompressed point.
  */
-export const SECRET_DERIVE_METHODS = ["bcrypt"] as const;
+export const SECRET_DERIVE_METHODS = ["bcrypt", "vapid-public-key"] as const;
 export type SecretDeriveMethod = (typeof SECRET_DERIVE_METHODS)[number];
+
+/**
+ * How the manager computes a derived var: only methods whose result is
+ * public config. A password hash stays a secret.
+ */
+export const VAR_DERIVE_METHODS = ["vapid-public-key"] as const;
+export type VarDeriveMethod = (typeof VAR_DERIVE_METHODS)[number];
+
+/** What a derive method needs its source secret to generate; undefined when any value will do. */
+export function deriveSourceKind(method: SecretDeriveMethod): SecretGenerateKind | undefined {
+  return method === "vapid-public-key" ? "vapid-private-key" : undefined;
+}
 
 /** The bcrypt cost (log2 of the rounds) of a derived `bcrypt` secret. */
 export const BCRYPT_COST = 10;
@@ -306,7 +330,9 @@ export const catalogSecretDeriveSchema = z
       .enum(SECRET_DERIVE_METHODS)
       .describe(
         `How the value is computed. \`"bcrypt"\`: a bcrypt hash (\`$2b$\`, cost ${BCRYPT_COST}) of ` +
-          "the source value, for apps that check a password against a stored hash.",
+          "the source value, for apps that check a password against a stored hash. " +
+          '`"vapid-public-key"`: the Web Push (VAPID) public key of a source secret with ' +
+          '`generate: "vapid-private-key"`, as the unpadded base64url of its 65-byte uncompressed point.',
       ),
   })
   .describe(
@@ -318,9 +344,40 @@ export const catalogSecretDeriveSchema = z
 export type CatalogSecretDerive = z.infer<typeof catalogSecretDeriveSchema>;
 
 /**
- * A secret the installer prompts for. `generate: true` means the manager mints a
- * random value instead of asking the user. Defaults are seeded by catalog CI from
- * `.dev.vars.example` when the manifest omits them.
+ * A var the manager computes from a secret instead of asking for: `method`
+ * applied to the value of the secret named `from`. See {@link catalogVarSchema}.
+ */
+export const catalogVarDeriveSchema = z
+  .object({
+    from: z
+      .string()
+      .min(1)
+      .describe(
+        "The name of the secret whose value this var is computed from. It must be a secret of " +
+          "this manifest, not itself derived, not optional.",
+      ),
+    method: z
+      .enum(VAR_DERIVE_METHODS)
+      .describe(
+        '`"vapid-public-key"`: the Web Push (VAPID) public key of a source secret with ' +
+          '`generate: "vapid-private-key"`, as the unpadded base64url of its 65-byte uncompressed ' +
+          "point: public config the app hands to browsers.",
+      ),
+  })
+  .describe(
+    "Computes this var from a secret instead of asking for it: the install and settings forms " +
+      "show it read-only, and the manager sets it at install, and again whenever the source " +
+      "secret gets a new value in the app's settings or an update. Not allowed with `default`, " +
+      "`required: true`, `type` or `options`, nor on self-deploying entries.",
+  );
+export type CatalogVarDerive = z.infer<typeof catalogVarDeriveSchema>;
+
+/**
+ * A secret the installer prompts for. `generate: true` means the form fills
+ * in a random value instead of asking the user; `generate: "vapid-private-key"`
+ * fills in a new Web Push (VAPID) private key ({@link SECRET_GENERATE_KINDS}).
+ * Defaults are seeded by catalog CI from `.dev.vars.example` when the
+ * manifest omits them.
  *
  * `derive` makes the manager compute the secret from another secret's value
  * instead of asking for it ({@link catalogSecretDeriveSchema}); the manifest's
@@ -339,7 +396,16 @@ export const catalogSecretSchema = z
     name: z.string().min(1),
     label: z.string().min(1),
     help: z.string().optional(),
-    generate: z.boolean().default(false),
+    generate: z
+      .union([z.boolean(), z.enum(SECRET_GENERATE_KINDS)])
+      .default(false)
+      .describe(
+        "`true`: the install form fills in a random value the admin can copy, regenerate, or " +
+          'replace. `"vapid-private-key"`: it fills in a new Web Push (VAPID) private key, a ' +
+          "P-256 private key as the unpadded base64url of its raw 32 bytes (the form web-push " +
+          "libraries take), and the manager refuses a value that is not one. Pair it with a " +
+          '`derive: { method: "vapid-public-key" }` var for the public key.',
+      ),
     optional: z
       .boolean()
       .describe(
@@ -360,14 +426,14 @@ export const catalogSecretSchema = z
     workers: entryWorkerTargetsSchema.optional(),
   })
   // The manifest-level refinement does not reach the JSON Schema; this states
-  // its per-secret half there (no `generate: true` or `optional: true` next to
-  // `derive`), so editors refuse the same secrets.
+  // its per-secret half there (no `generate` but false and no `optional: true`
+  // next to `derive`), so editors refuse the same secrets.
   .meta({
     anyOf: [
       { not: { required: ["derive"] } },
       {
         properties: {
-          generate: { not: { const: true } },
+          generate: { const: false },
           optional: { not: { const: true } },
         },
       },
@@ -383,6 +449,22 @@ export function isOptionalSecret(secret: Pick<CatalogSecret, "optional">): boole
 /** Whether the manager computes the secret from another one (`derive`). */
 export function isDerivedSecret(secret: Pick<CatalogSecret, "derive">): boolean {
   return secret.derive !== undefined;
+}
+
+/**
+ * Why `value` cannot be the value of `secret`, or null when it can. Only a
+ * generated kind has a format: a `generate: "vapid-private-key"` secret takes
+ * a VAPID private key, whatever the admin typed over the generated one.
+ * Never repeats the value.
+ */
+export function secretValueProblem(
+  secret: Pick<CatalogSecret, "name" | "label" | "generate">,
+  value: string,
+): string | null {
+  if (secret.generate === "vapid-private-key" && !isVapidPrivateKey(value)) {
+    return `${secret.label} (${secret.name}) must be a VAPID private key: the unpadded base64url of a 32-byte P-256 private key (${VAPID_PRIVATE_KEY_LENGTH} characters), as web-push libraries generate it.`;
+  }
+  return null;
 }
 
 /** The secrets an admin enters (or has generated): every one but the derived ones, in order. */
@@ -439,6 +521,60 @@ export function derivedSecretProblems(
         path: [i, "derive", "from"],
         message: `${secret.name} derives from ${derive.from}, which is optional; its source must be a secret every install has`,
       });
+    } else {
+      const kind = sourceKindProblem(secret.name, derive, source);
+      if (kind !== null) problems.push({ path: [i, "derive", "method"], message: kind });
+    }
+  });
+  return problems;
+}
+
+/** Why `source` cannot feed `derive.method`, or null when it can. */
+function sourceKindProblem(
+  name: string,
+  derive: { from: string; method: SecretDeriveMethod },
+  source: Pick<CatalogSecret, "generate">,
+): string | null {
+  const kind = deriveSourceKind(derive.method);
+  if (kind === undefined || source.generate === kind) return null;
+  return `${name} is the ${derive.method} of ${derive.from}, which must then be generate: "${kind}"`;
+}
+
+/**
+ * What is wrong with the `derive` blocks of a manifest's vars, one issue
+ * each (the Zod refinement and catalog tooling share it): the source must be
+ * a declared secret, neither derived nor optional, that generates the kind
+ * of value the method reads.
+ */
+export function derivedVarProblems(
+  secrets: readonly Pick<CatalogSecret, "name" | "generate" | "optional" | "derive">[],
+  vars: ReadonlyArray<{ name: string; derive?: CatalogVarDerive | undefined }>,
+): Array<{ path: Array<string | number>; message: string }> {
+  const byName = new Map(secrets.map((s) => [s.name, s]));
+  const problems: Array<{ path: Array<string | number>; message: string }> = [];
+  vars.forEach((v, i) => {
+    const derive = v.derive;
+    if (derive === undefined) return;
+    const source = byName.get(derive.from);
+    const from = [i, "derive", "from"];
+    if (source === undefined) {
+      problems.push({
+        path: from,
+        message: `${v.name} derives from ${derive.from}, which is not a secret of this manifest`,
+      });
+    } else if (isDerivedSecret(source)) {
+      problems.push({
+        path: from,
+        message: `${v.name} derives from ${derive.from}, which is itself derived; derive from the secret the admin enters`,
+      });
+    } else if (isOptionalSecret(source)) {
+      problems.push({
+        path: from,
+        message: `${v.name} derives from ${derive.from}, which is optional; its source must be a secret every install has`,
+      });
+    } else {
+      const kind = sourceKindProblem(v.name, derive, source);
+      if (kind !== null) problems.push({ path: [i, "derive", "method"], message: kind });
     }
   });
   return problems;
@@ -647,6 +783,11 @@ export const catalogVarSchema = z
       )
       .optional(),
     /**
+     * Computed from a secret instead of asked for. Optional rather than
+     * defaulted for the same reason as `type`.
+     */
+    derive: catalogVarDeriveSchema.optional(),
+    /**
      * For an entry with `install.workers`: the Workers that get the var.
      * Omitted means the Workers whose wrangler config declares it, else every Worker.
      */
@@ -656,9 +797,29 @@ export const catalogVarSchema = z
     for (const problem of selectVarProblems(v)) {
       ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
     }
+    if (v.derive === undefined) return;
+    // The manager sets a derived var itself: nothing for the form to start with or ask.
+    for (const field of ["default", "type", "options"] as const) {
+      if (v[field] !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${v.name} is derived from ${v.derive.from}; it cannot also have ${field}`,
+        });
+      }
+    }
+    if (v.required) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["required"],
+        message: `${v.name} is derived from ${v.derive.from}, which every install has; it cannot be required`,
+      });
+    }
   })
   // The refinements do not reach the JSON Schema; `allOf` states the pairing
-  // of `type: "select"` and `options` there, so editors refuse the same vars.
+  // of `type: "select"` and `options` there, and that a derived var has no
+  // `default`, `type`, `options` or `required: true`, so editors refuse the
+  // same vars.
   .meta({
     allOf: [
       {
@@ -670,9 +831,23 @@ export const catalogVarSchema = z
           },
         ],
       },
+      {
+        anyOf: [
+          { not: { required: ["derive"] } },
+          {
+            not: { anyOf: [{ required: ["default"] }, { required: ["type"] }] },
+            properties: { required: { const: false } },
+          },
+        ],
+      },
     ],
   });
 export type CatalogVar = z.infer<typeof catalogVarSchema>;
+
+/** Whether the manager computes the var from a secret (`derive`). */
+export function isDerivedVar(v: Pick<CatalogVar, "derive">): boolean {
+  return v.derive !== undefined;
+}
 
 /** The choices of a `type: "select"` var; null for any other var. */
 export function catalogVarOptions(
@@ -1335,6 +1510,9 @@ export const catalogManifestSchema = z
         message: problem.message,
       });
     }
+    for (const problem of derivedVarProblems(manifest.secrets, manifest.vars)) {
+      ctx.addIssue({ code: "custom", path: ["vars", ...problem.path], message: problem.message });
+    }
     // `workers` on a secret or var names Workers of `install.workers`.
     const declared = manifest.install.workers;
     const names = new Set((declared ?? []).map((w) => w.name));
@@ -1406,10 +1584,20 @@ export const catalogManifestSchema = z
         });
       }
     });
+    manifest.vars.forEach((v, i) => {
+      if (isDerivedVar(v)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["vars", i, "derive"],
+          message:
+            "derived vars are not allowed for the self-deploying tier: the app's own installer reads its variables as entered",
+        });
+      }
+    });
   })
   // The refinements do not reach the JSON Schema; `allOf` states the
-  // self-deploying ones there (no optional and no derived secrets, no
-  // Hyperdrive declarations). Whether a `derive.from` names another secret, or
+  // self-deploying ones there (no optional and no derived secrets, no derived
+  // vars, no Hyperdrive declarations). Whether a `derive.from` names another secret, or
   // a Hyperdrive binding is declared twice, cannot be said in JSON Schema.
   .meta({
     allOf: [
@@ -1438,6 +1626,7 @@ export const catalogManifestSchema = z
                   },
                 },
               },
+              vars: { items: { not: { required: ["derive"] } } },
             },
           },
         ],

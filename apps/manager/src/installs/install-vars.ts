@@ -41,6 +41,35 @@ export interface InstallVarField {
   shownDefault: string;
   /** The values it can take (a catalog `type: "select"` var); null for any value. */
   options: CatalogVarOption[] | null;
+  /**
+   * For a derived var (the catalog's `derive`): the secret it is computed
+   * from. The forms show it read-only; the manager sets it, never the admin.
+   */
+  derivedFrom?: string;
+}
+
+/** The fields the admin fills in: every one but the derived ones. */
+export function enteredVarFields<T extends Pick<InstallVarField, "derivedFrom">>(
+  fields: readonly T[],
+): T[] {
+  return fields.filter((f) => f.derivedFrom === undefined);
+}
+
+/**
+ * Why `names`, as a form sent them, cannot be taken, one sentence each: a
+ * derived var is computed from its source secret, never entered.
+ */
+export function enteredDerivedVarProblems(
+  names: Iterable<string>,
+  fields: readonly Pick<InstallVarField, "name" | "derivedFrom">[],
+): string[] {
+  const byName = new Map(fields.map((f) => [f.name, f]));
+  return [...names].flatMap((name) => {
+    const from = byName.get(name)?.derivedFrom;
+    return from === undefined
+      ? []
+      : [`${name} is computed from ${from}; give ${from} a new value instead.`];
+  });
 }
 
 /** A choice with at most this many options is shown as cards; one with more as a dropdown. */
@@ -114,8 +143,11 @@ export function installVarFields(
       ...(v.help === undefined ? {} : { help: v.help }),
       required: v.required,
       kind,
-      shownDefault: v.default ?? (isVarOption(v, ownText) ? ownText : ""),
+      // A derived var shows what the manager computed, never the wrangler config's own value.
+      shownDefault:
+        v.derive !== undefined ? "" : (v.default ?? (isVarOption(v, ownText) ? ownText : "")),
       options: options === null ? null : [...options],
+      ...(v.derive === undefined ? {} : { derivedFrom: v.derive.from }),
     };
   });
 }

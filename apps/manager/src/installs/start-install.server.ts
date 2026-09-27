@@ -7,6 +7,7 @@ import {
   type IndexApp,
   indexAppArtifact,
   isOptionalSecret,
+  secretValueProblem,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
@@ -44,10 +45,16 @@ import {
   sandboxEnableClaim,
   sandboxFirstGuardSql,
 } from "../sandbox/auto-enable.server";
-import { withDerivedSecrets } from "./derived-secrets";
+import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
 import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
-import { installVarFields, missingRequiredVar, varValueProblem } from "./install-vars";
+import {
+  enteredDerivedVarProblems,
+  enteredVarFields,
+  installVarFields,
+  missingRequiredVar,
+  varValueProblem,
+} from "./install-vars";
 import { ADDRESS_KINDS } from "./resource-kinds";
 
 /**
@@ -178,6 +185,8 @@ export function resolveInstallInput(
       if (isOptionalSecret(secret)) continue;
       throw new StartInstallError(`${secret.label} (${secret.name}) is required.`);
     }
+    const problem = secretValueProblem(secret, value);
+    if (problem !== null) throw new StartInstallError(problem);
     secrets[secret.name] = value;
   }
   // One connection string per database the app reaches through Hyperdrive.
@@ -192,9 +201,13 @@ export function resolveInstallInput(
     throw new StartInstallError(connectionProblems.join(" "));
   }
   // Values are stored as entered, placeholders included, and filled in by
-  // each install and update job.
+  // each install and update job. A derived var is not taken from the form:
+  // the caller computes it from its source with `derivedVarValues`.
+  const fields = installVarFields(manifest);
+  const derivedProblems = enteredDerivedVarProblems(Object.keys(input.vars), fields);
+  if (derivedProblems.length > 0) throw new StartInstallError(derivedProblems.join(" "));
   const vars: Record<string, string> = {};
-  for (const field of installVarFields(manifest)) {
+  for (const field of enteredVarFields(fields)) {
     const value = (input.vars[field.name] ?? "").trim();
     if (missingRequiredVar(field, value)) {
       throw new StartInstallError(`${field.label} (${field.name}) is required.`);
@@ -237,6 +250,22 @@ export function resolveInstallInput(
   };
 }
 
+/**
+ * `resolved` with the derived secrets and vars computed from the secrets it
+ * sets. Derived vars are stored like entered settings, so every later job
+ * deploys the same value until the source secret gets a new one.
+ */
+export async function withDerivedValues(
+  catalog: Pick<CatalogManifest, "secrets" | "vars">,
+  resolved: ResolvedInstallInput,
+): Promise<ResolvedInstallInput> {
+  return {
+    ...resolved,
+    secrets: await withDerivedSecrets(catalog.secrets, resolved.secrets),
+    vars: { ...resolved.vars, ...(await derivedVarValues(catalog.vars, resolved.secrets)) },
+  };
+}
+
 export async function startInstallCore(
   deps: StartInstallDeps,
   input: StartInstallInput,
@@ -263,11 +292,9 @@ export async function startInstallCore(
   const accountPlan = await readAccountPlan(createDb(deps.db));
   const paidConfirmed = input.paidConfirmed || accountPlan === "paid";
   const checked = resolveInstallInput(manifest, { ...input, paidConfirmed });
-  // Derived secrets (a bcrypt hash of a password, say) join the job's secrets here.
-  const resolved = {
-    ...checked,
-    secrets: await withDerivedSecrets(manifest.catalog.secrets, checked.secrets),
-  };
+  // Derived secrets (a bcrypt hash of a password, say) join the job's
+  // secrets here, and derived vars (a VAPID public key) its stored settings.
+  const resolved = await withDerivedValues(manifest.catalog, checked);
   // Where the artifact comes from: the signed release, or a build of the pin
   // in the account's sandbox Worker, which the admin confirms paying for.
   // A self-deploying app has no artifact at all: its own installer runs in

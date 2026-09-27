@@ -71,7 +71,7 @@ import {
 import { assignRateLimitsPhase } from "./install/rate-limits";
 import { RESOURCE_LABEL } from "./install/resources";
 import { deleteSupersededPhase, supersededConfigs } from "./reconfigure/hyperdrive";
-import { secretSlots } from "./reconfigure/plan";
+import { secretSlots, storedVarsJson } from "./reconfigure/plan";
 import { undoSecretChangesPhase } from "./reconfigure/secrets";
 import type { JobContext } from "./run-job";
 import { runSelfDeployingUpdate } from "./self-deploying/jobs";
@@ -147,6 +147,12 @@ export const updateJobParams = z.object({
    * their names.
    */
   secrets: z.record(z.string(), z.string()).default({}),
+  /**
+   * Values of the derived vars computed from the secrets above (a VAPID
+   * public key from its private key). Public settings: the job stores them
+   * with the install's other settings once the new version serves.
+   */
+  vars: z.record(z.string(), z.string()).optional(),
   /** For a sandbox tier app: the admin confirmed the build's cost on Workers Paid. */
   buildConfirmed: z.boolean().optional(),
   /**
@@ -365,7 +371,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           consumers: consumerPlans(w.manifest.worker.queueConsumers),
         })),
         emailRouting: emailRoutingOfManifest(install.manifest_json),
-        userVars: parseVars(install.config_json),
+        userVars: { ...parseVars(install.config_json), ...(params.vars ?? {}) },
         workersDev: install.workers_dev_enabled,
         servedDomain: install.served_domain,
         // The app's domains, live ones first, for where it is reached below.
@@ -424,10 +430,14 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const fullDeploy = path.fullDeploy;
     const recordedSecrets = started.resources.filter((r) => r.kind === "secret").map((r) => r.name);
     // A derived secret the Worker lacks comes with its source, which the
-    // update asked for again and set together with the value derived from it.
+    // update asked for again and set together with the value derived from it;
+    // so does the source of a derived var the update computed.
     const newSecrets = secretsToSet(
       manifest.catalog.secrets,
       missingSecrets(manifest.catalog.secrets, recordedSecrets),
+      manifest.catalog.vars.flatMap((v) =>
+        v.derive !== undefined && params.vars?.[v.name] !== undefined ? [v.derive.from] : [],
+      ),
     );
     const secretValues: Record<string, string> = {};
     for (const secret of newSecrets) {
@@ -700,6 +710,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
               ...promotedVersions,
             }),
           }),
+      // Derived vars computed for this update join the stored settings; the
+      // snapshot keeps the settings from before, for a rollback.
+      ...(Object.keys(params.vars ?? {}).length === 0
+        ? {}
+        : { config_json: storedVarsJson(started.userVars) }),
     });
 
     /**

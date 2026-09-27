@@ -61,8 +61,6 @@ export const manifestFieldNotes: FieldNotes = {
   "secrets[].name": "The secret's name as the Worker reads it from `env`.",
   "secrets[].label": "Label of the form field.",
   "secrets[].help": "Help text under the form field.",
-  "secrets[].generate":
-    "When `true`, the install form fills in a random value that the user can copy, regenerate, or replace.",
   "vars[].name": "The variable's name as the Worker reads it from `env`.",
   "vars[].label": "Label of the form field.",
   "vars[].help": "Help text under the form field.",

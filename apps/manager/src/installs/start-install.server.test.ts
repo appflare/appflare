@@ -1,5 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { generateVapidPrivateKey, vapidPublicKey } from "@appflare/schema";
 import bcrypt from "bcryptjs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
@@ -379,6 +380,54 @@ describe("startInstallCore", () => {
     ]);
     expect(job?.input_json).not.toContain("correct horse");
     expect(job?.input_json).not.toContain("$2b$");
+  });
+
+  it("stores a VAPID public key var derived from the private key secret", async () => {
+    const f = await buildArtifactFixture({
+      catalog: {
+        secrets: [
+          { name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" },
+        ],
+        vars: [
+          {
+            name: "VAPID_PUBLIC_KEY",
+            label: "Push public key",
+            required: false,
+            derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
+          },
+        ],
+      },
+    });
+    const privateKey = generateVapidPrivateKey();
+    // The form never sends a derived var, and a private key must be one.
+    expect(() =>
+      resolveInstallInput(
+        f.manifest,
+        input({
+          secrets: { VAPID_PRIVATE_KEY: privateKey },
+          vars: { VAPID_PUBLIC_KEY: "forged" },
+        }),
+      ),
+    ).toThrow("VAPID_PUBLIC_KEY is computed from VAPID_PRIVATE_KEY");
+    expect(() =>
+      resolveInstallInput(
+        f.manifest,
+        input({ secrets: { VAPID_PRIVATE_KEY: "not-a-key" }, vars: {} }),
+      ),
+    ).toThrow("Push signing key (VAPID_PRIVATE_KEY) must be a VAPID private key");
+
+    const h = harness(f);
+    await startInstallCore(h.deps, input({ secrets: { VAPID_PRIVATE_KEY: privateKey }, vars: {} }));
+    const params = h.created[0]?.params;
+    expect(params?.secrets).toEqual({ VAPID_PRIVATE_KEY: privateKey });
+    expect(params?.vars).toEqual({ VAPID_PUBLIC_KEY: await vapidPublicKey(privateKey) });
+    const install = await env.DB.prepare("SELECT config_json FROM installs").first<{
+      config_json: string;
+    }>();
+    expect(JSON.parse(install?.config_json ?? "{}")).toEqual({
+      VAPID_PUBLIC_KEY: await vapidPublicKey(privateKey),
+    });
+    expect(install?.config_json).not.toContain(privateKey);
   });
 
   it("leaves an optional secret unset when it has no value", async () => {

@@ -131,6 +131,8 @@ export interface SourceBuildReview {
   baseline: { added: string[]; removed: string[] } | null;
   /** For an update: secrets the build introduces, and why no preview check is possible. */
   needsSecrets: CatalogSecret[];
+  /** Names among `needsSecrets` the Worker already has; their fields start empty. */
+  heldSecrets: string[];
   skipsPreview: string | null;
   suggestedWorkerName: string;
   subdomain: string | null;
@@ -262,6 +264,7 @@ export const getSourceBuild = createServerFn({ method: "GET" })
         problems: facts.problems,
         baseline: release?.ok === true ? bindingChanges(release.manifest, manifest) : null,
         needsSecrets: needs.needsSecrets,
+        heldSecrets: needs.heldSecrets ?? [],
         skipsPreview: needs.skipsPreview,
         suggestedWorkerName: suggested,
         subdomain: settings.account_subdomain || null,
