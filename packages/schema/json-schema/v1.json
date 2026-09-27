@@ -1885,18 +1885,36 @@
                 ],
                 "additionalProperties": false,
                 "description": "Rows the app needs before anyone can sign in (a first admin account), added once at install with values from the install form, bound as D1 parameters. Not allowed on self-deploying entries."
+              },
+              "baseline": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?!(?:.*\\/)?\\.{1,2}(?:\\/|$))[0-9A-Za-z.@+_-]+(?:\\/[0-9A-Za-z.@+_-]+)*$",
+                "description": "One SQL file with the binding's whole current schema, for apps whose migrations only bring older databases up to date. It runs once, on the new database, before the migrations (at install, or in the update that adds the binding); every migration the version ships is then recorded in `d1_migrations` as applied without running, and updates run only migrations added later. It may create without IF NOT EXISTS and insert rows, but not ATTACH or DETACH a database, set a PRAGMA, open or end a transaction, or name `d1_migrations` or a `sqlite_` or `_cf_` table. Not together with `schema`."
               }
             },
             "additionalProperties": false,
-            "not": {
-              "required": [
-                "migrationsDir",
-                "migrations"
-              ]
-            },
+            "allOf": [
+              {
+                "not": {
+                  "required": [
+                    "migrationsDir",
+                    "migrations"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "baseline",
+                    "schema"
+                  ]
+                }
+              }
+            ],
             "minProperties": 1
           },
-          "description": "Where each D1 binding's SQL lives when the wrangler config's migrations folder does not describe it, keyed by the binding's name: a migrations folder or glob, schema files that run on every install and update, and migrations that run after the new version serves. Paths are relative to the checkout's root. Not allowed on self-deploying entries."
+          "description": "Where each D1 binding's SQL lives when the wrangler config's migrations folder does not describe it, keyed by the binding's name: a migrations folder or glob, schema files that run on every install and update, migrations that run after the new version serves, seed statements, and a baseline schema that runs once on a new database. Paths are relative to the checkout's root. Not allowed on self-deploying entries."
         }
       },
       "additionalProperties": false

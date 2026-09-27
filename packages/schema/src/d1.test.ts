@@ -103,6 +103,18 @@ describe("resources.d1", () => {
     expect(withD1({ DB: { schema: [] } }).success).toBe(false);
   });
 
+  it("takes a baseline beside migrations, but not beside schema files", () => {
+    const d1 = { DB: { baseline: "db/schema.sql", migrationsDir: "db/migrations" } };
+    expect(withD1(d1).data?.resources?.d1).toEqual(d1);
+    expect(withD1({ DB: { baseline: "schema.sql" } }).success).toBe(true);
+    const both = withD1({ DB: { baseline: "schema.sql", schema: ["schema.sql"] } });
+    expect(both.success).toBe(false);
+    expect(both.error?.issues[0]?.path).toEqual(["resources", "d1", "DB", "baseline"]);
+    expect(withD1({ DB: { baseline: "../schema.sql" } }).success).toBe(false);
+    const json = JSON.stringify(z.toJSONSchema(catalogManifestSchema));
+    expect(json).toContain('{"not":{"required":["baseline","schema"]}}');
+  });
+
   it("refuses paths that leave the checkout or are not relative", () => {
     for (const path of [
       "../schema.sql",
@@ -270,6 +282,31 @@ describe("artifact D1 lists", () => {
     ]);
   });
 
+  it("takes the one baseline the catalog manifest names, and refuses any other", () => {
+    const baselineLayout = { DB: { baseline: "db/schema.sql" } };
+    const baseline = { DB: [file("d1-baseline", "DB", "db/schema.sql")] };
+    const parsed = artifactManifestSchema.parse(
+      artifact({ format: 5, d1Baseline: baseline }, baselineLayout),
+    );
+    expect(artifactD1Files(parsed).map((f) => f.path)).toEqual([
+      "d1/DB/0001_init.sql",
+      "d1-baseline/DB/db/schema.sql",
+    ]);
+    const problems = (over: Record<string, unknown>, d1?: unknown) =>
+      artifactD1Problems(artifact(over, d1) as unknown as Parameters<typeof artifactD1Problems>[0]);
+    expect(problems({ d1Baseline: baseline }, undefined)).toEqual([
+      "A D1 baseline is recorded for DB, but the catalog manifest declares no resources.d1.DB.baseline.",
+    ]);
+    expect(
+      problems({ d1Baseline: { DB: [file("d1-baseline", "DB", "other.sql")] } }, baselineLayout),
+    ).toEqual([
+      "The D1 baseline recorded for DB is not the one file resources.d1.DB.baseline names.",
+    ]);
+    expect(problems({}, baselineLayout)).toEqual([
+      "resources.d1.DB.baseline names a baseline, but the artifact records none for DB.",
+    ]);
+  });
+
   it("refuses a post-deploy migration named like a migration, since both are tracked by name", () => {
     const result = artifactManifestSchema.safeParse(
       artifact(
@@ -298,13 +335,32 @@ describe("artifact formats", () => {
     expect(artifactFormatFor({ workers: [{}] })).toBe(2);
     expect(artifactFormatFor(schemaFile)).toBe(3);
     expect(artifactFormatFor({ workers: [{}], d1PostDeploy: { DB: [{}] } })).toBe(3);
+    expect(artifactFormatFor({ d1Baseline: { DB: [{}] } })).toBe(5);
+    expect(
+      artifactFormatFor({
+        d1Baseline: { DB: [{}] },
+        catalog: { resources: { d1: { DB: { seed: {} } } } },
+      }),
+    ).toBe(5);
+    expect(artifactFormatFor({ d1Baseline: { DB: [] } })).toBe(1);
+  });
+
+  it("refuses a D1 baseline in formats before 5", () => {
+    const result = artifactManifestSchema.safeParse(
+      artifact(
+        { format: 4, d1Baseline: { DB: [file("d1-baseline", "DB", "schema.sql")] } },
+        { DB: { baseline: "schema.sql" } },
+      ),
+    );
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(/^the artifact needs format 5 /);
   });
 
   it("refuses D1 schema files or post-deploy migrations in formats 1 and 2", () => {
     const result = artifactManifestSchema.safeParse(artifact({ format: 1, ...schemaFile }, layout));
     expect(result.success).toBe(false);
     expect(result.error?.issues.map((i) => i.message)).toContain(
-      "the artifact needs format 3 for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements); a manager that reads only format 1 would install it without them",
+      "the artifact needs format 3 for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline); a manager that reads only format 1 would install it without them",
     );
     expect(
       artifactManifestSchema.safeParse(artifact({ format: 3, ...schemaFile }, layout)).success,
@@ -330,8 +386,9 @@ describe("artifact formats", () => {
     expect(unknownArtifactFormatProblem({ format: 3 })).toBeNull();
     expect(unknownArtifactFormatProblem({ format: "3" })).toBeNull();
     expect(unknownArtifactFormatProblem({ format: 4 })).toBeNull();
-    expect(unknownArtifactFormatProblem({ format: 5 })).toBe(
-      `the artifact is format 5, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in Settings, then try again`,
+    expect(unknownArtifactFormatProblem({ format: 5 })).toBeNull();
+    expect(unknownArtifactFormatProblem({ format: 6 })).toBe(
+      `the artifact is format 6, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in Settings, then try again`,
     );
     expect(unknownArtifactFormatProblem({ format: 0 })).toMatch(/no version of Appflare reads/);
   });

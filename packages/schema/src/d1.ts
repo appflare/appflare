@@ -27,6 +27,14 @@ import { catalogD1SeedSchema } from "./seed.ts";
  *   on), tracked in `d1_migrations` like the others.
  * - `seed` holds statements that run once, at install only, with values
  *   from the install form bound as parameters (see `seed.ts`).
+ * - `baseline` names one SQL file that holds the app's whole current schema,
+ *   for apps whose migrations only bring older databases up to date (ALTERs
+ *   that fail on an empty one). It runs once, on the new database, before
+ *   the migrations (at install, or in the update that adds the binding);
+ *   every migration the version ships is then recorded in `d1_migrations`
+ *   as applied without running, so updates run only migrations added
+ *   later. It need not be safe to run again, so it may not be combined with
+ *   `schema` files, which run on every update.
  *
  * The catalog decides these because they are part of the build: a revision
  * cannot change `resources`, so a released version always runs the SQL it
@@ -158,6 +166,18 @@ export const catalogD1Schema = z
       )
       .optional(),
     seed: catalogD1SeedSchema.optional(),
+    baseline: checkoutRelativePathSchema
+      .describe(
+        "One SQL file with the binding's whole current schema, for apps whose migrations only bring " +
+          "older databases up to date. It runs once, on the new database, before the migrations " +
+          "(at install, or in the update that adds the binding); every migration the version ships " +
+          "is then recorded in `d1_migrations` as applied without running, and updates run only " +
+          "migrations added later. It may create " +
+          "without IF NOT EXISTS and insert rows, but not ATTACH or DETACH a database, set a PRAGMA, " +
+          "open or end a transaction, or name `d1_migrations` or a `sqlite_` or `_cf_` table. Not " +
+          "together with `schema`.",
+      )
+      .optional(),
   })
   .superRefine((d1, ctx) => {
     if (d1.migrationsDir !== undefined && d1.migrations !== undefined) {
@@ -165,6 +185,14 @@ export const catalogD1Schema = z
         code: "custom",
         path: ["migrations"],
         message: "give the migrations as migrationsDir or as a migrations glob, not both",
+      });
+    }
+    if (d1.baseline !== undefined && d1.schema !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["baseline"],
+        message:
+          "give the schema as a baseline (run once, at install) or as schema files (run on every install and update), not both",
       });
     }
     const seen = new Set<string>();
@@ -182,12 +210,23 @@ export const catalogD1Schema = z
       ctx.addIssue({
         code: "custom",
         message:
-          "say at least one of migrationsDir, migrations, schema, postDeployMigrationsDir, seed",
+          "say at least one of migrationsDir, migrations, schema, postDeployMigrationsDir, seed, baseline",
       });
     }
   })
   .meta({
-    not: { required: ["migrationsDir", "migrations"] },
+    allOf: [
+      { not: { required: ["migrationsDir", "migrations"] } },
+      { not: { required: ["baseline", "schema"] } },
+    ],
     minProperties: 1,
   });
 export type CatalogD1 = z.infer<typeof catalogD1Schema>;
+
+/**
+ * The `info().features` entry of a sandbox Worker whose builds keep an
+ * entry's D1 baseline. One without it hands its packer the catalog manifest
+ * without it, and the build would run the migrations on an empty database,
+ * so the manager refuses to send such an entry to it.
+ */
+export const SANDBOX_FEATURE_D1_BASELINE = "d1-baseline";

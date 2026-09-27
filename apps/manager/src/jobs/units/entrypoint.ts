@@ -17,6 +17,7 @@ import type { SandboxSettleResult } from "./sandbox-settle";
 import {
   type AssetPartResult,
   createJobUnits,
+  type D1BaselineResult,
   type D1MigrationsResult,
   type D1SchemaResult,
   type R2PageResult,
@@ -46,6 +47,10 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   applyD1Schema(input: unknown): Promise<UnitResult<D1SchemaResult>> {
     return createJobUnits(this.env).applyD1Schema(input);
+  }
+
+  applyD1Baseline(input: unknown): Promise<UnitResult<D1BaselineResult>> {
+    return createJobUnits(this.env).applyD1Baseline(input);
   }
 
   seedD1(input: unknown): Promise<UnitResult<D1SeedResult>> {

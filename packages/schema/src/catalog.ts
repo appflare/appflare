@@ -1024,8 +1024,8 @@ export const catalogResourcesSchema = z.object({
     .describe(
       "Where each D1 binding's SQL lives when the wrangler config's migrations folder does not " +
         "describe it, keyed by the binding's name: a migrations folder or glob, schema files that " +
-        "run on every install and update, and migrations that run after the new version serves. " +
-        "Paths are relative to the checkout's root. Not allowed on self-deploying entries.",
+        "run on every install and update, migrations that run after the new version serves, seed " +
+        "statements, and a baseline schema that runs once on a new database. Paths are relative to the checkout's root. Not allowed on self-deploying entries.",
     )
     .optional(),
 });

@@ -67,6 +67,7 @@ import {
 import { healthLabel } from "./install/health";
 import { buildScriptMetadata, type CreatedResource, installVars } from "./install/metadata";
 import {
+  applyD1BaselinePhase,
   applyD1MigrationsPhase,
   applyD1PostDeployPhase,
   applyD1SchemaPhase,
@@ -739,6 +740,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         },
       });
     for (const target of d1Databases) {
+      // Every database here is new, so a baseline runs first and records the
+      // migrations as applied; the migrations phase then has nothing to do.
+      // A retried job finds it already run (tables there) and skips it.
+      await applyD1BaselinePhase(steps, source.zipUrl, target, source.host);
       await applyD1MigrationsPhase(steps, source.zipUrl, target, undefined, source.host);
       // A seed that claims a row before a schema file adds its default one.
       if (target.seed?.beforeSchema === true) {

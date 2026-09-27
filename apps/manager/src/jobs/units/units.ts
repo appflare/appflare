@@ -3,6 +3,7 @@ import { type FetchLike, isAddressableObjectKey, type ScriptMetadata } from "@ap
 import {
   type AssetFile,
   assetFileSchema,
+  baselineFileProblems,
   type D1MigrationFile,
   d1MigrationFileSchema,
   githubTokenSecretNameSchema,
@@ -28,12 +29,15 @@ import { isNotFound, JobError } from "../errors";
 import { artifactReader } from "../install/artifact";
 import type { CronTriggerScan } from "../install/cron-limit";
 import {
+  BASELINE_STATE_SQL,
+  buildBaselineQuery,
   buildMigrationQuery,
   CREATE_MIGRATIONS_TABLE_SQL,
   D1_SCHEMA_LIMITS,
   LIST_APPLIED_MIGRATIONS_SQL,
   nextMigrationBatch,
   unappliedMigrations,
+  unshippedMigrations,
 } from "../install/d1-migrations";
 import { uploadModule } from "../install/metadata";
 import { assetContentType } from "../install/mime";
@@ -182,6 +186,12 @@ export const d1MigrationsInputSchema = z.object({
    * filename order, as many as fit one call (`nextMigrationBatch`).
    */
   files: z.array(d1MigrationFileSchema).min(1),
+  /**
+   * Every tracked migration name the version ships for this database,
+   * post-deploy ones included. A recorded name outside it is logged and
+   * left alone. Absent from jobs started before it existed.
+   */
+  shipped: z.array(z.string().min(1)).optional(),
 });
 export type D1MigrationsInput = z.infer<typeof d1MigrationsInputSchema>;
 export interface D1MigrationsResult {
@@ -225,6 +235,31 @@ export interface D1SchemaResult {
   failed: UnitFailure | null;
 }
 
+export const d1BaselineInputSchema = z.object({
+  accountId: accountIdSchema,
+  artifact: artifactSchema,
+  databaseId: z.string().min(1),
+  databaseName: z.string().min(1),
+  /** The baseline: the database's whole current schema. */
+  file: d1MigrationFileSchema,
+  /**
+   * Every tracked migration name the version ships for this database
+   * (migrations and post-deploy ones), recorded as applied without running,
+   * since the baseline already holds what they do.
+   */
+  migrations: z.array(z.string().min(1)),
+});
+export type D1BaselineInput = z.infer<typeof d1BaselineInputSchema>;
+export interface D1BaselineResult {
+  /**
+   * Whether this call ran the baseline; false when the database already has
+   * tables of its own or recorded migrations.
+   */
+  ran: boolean;
+  /** Migration names this call recorded as applied; 0 when it did not run. */
+  recorded: number;
+}
+
 /** Objects one R2 page lists and deletes: one list call plus one delete per object. */
 export const R2_PAGE_MAX_OBJECTS = 36;
 
@@ -256,6 +291,11 @@ export interface JobUnitsApi {
   applyD1Migrations(input: D1MigrationsInput): Promise<UnitResult<D1MigrationsResult>>;
   /** Runs the next D1 schema files, which are never recorded, in the order given. */
   applyD1Schema(input: D1SchemaInput): Promise<UnitResult<D1SchemaResult>>;
+  /**
+   * Runs a D1 baseline on a database the job has just created and records
+   * the version's migrations as applied without running them.
+   */
+  applyD1Baseline(input: D1BaselineInput): Promise<UnitResult<D1BaselineResult>>;
   /** Derives a D1 binding's seed hashes and runs its seed statements with bound params (install only). */
   seedD1(input: D1SeedInput): Promise<UnitResult<D1SeedResult>>;
   /** Lists one page of an R2 bucket's objects and deletes them. */
@@ -451,6 +491,16 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
           // the last file an earlier one recorded and never runs a file twice.
           const rows = (await api.d1.query(db, LIST_APPLIED_MIGRATIONS_SQL))[0]?.results ?? [];
           const pending: D1MigrationFile[] = unappliedMigrations(target.files, rows);
+          if (target.shipped !== undefined) {
+            // Upstream renamed or removed a migration this database already
+            // has. Its effect stays in the database; nothing reruns it.
+            const gone = unshippedMigrations(target.shipped, rows);
+            if (gone.length > 0) {
+              log.info(
+                `d1_migrations of ${target.databaseName} records ${gone.length} migration(s) this version does not ship (${gone.slice(0, 5).join(", ")}${gone.length > 5 ? ", ..." : ""}); they stay recorded and nothing runs for them.`,
+              );
+            }
+          }
           if (pending.length === 0) {
             log.info(`${target.databaseName} already has every migration this version ships.`);
             return { pending: 0, applied: 0, remaining: 0, next: null, failed: null };
@@ -517,6 +567,55 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
           }
           const rest = target.files.slice(applied);
           return { applied, remaining: rest.length, next: rest[0]?.name ?? null, failed };
+        }),
+      ),
+
+    applyD1Baseline: (input) =>
+      parsed(d1BaselineInputSchema, input, "applyD1Baseline", (target) =>
+        runUnit(env, deps, target.accountId, async ({ log, fetch, count, cf }) => {
+          const api = cf();
+          const db = target.databaseId;
+          await api.d1.query(db, CREATE_MIGRATIONS_TABLE_SQL);
+          // The baseline and the rows that record the migrations go in one
+          // query, which D1 applies whole or not at all, and the baseline
+          // creates at least one table. So only a database with no table of
+          // its own and nothing recorded is one it has not run on: any other
+          // was set up before (by an earlier version, by migrations, or by
+          // an earlier attempt of this step that lost its answer), and is
+          // left to the migrations.
+          const found = (await api.d1.query(db, BASELINE_STATE_SQL))[0]?.results?.[0];
+          const tables = Number(found?.tables ?? 0);
+          const recorded = Number(found?.recorded ?? 0);
+          const names = target.migrations;
+          if (tables > 0 || recorded > 0) {
+            log.info(
+              `${target.databaseName} already has ${tables} table(s) and ${recorded} recorded migration(s), so the baseline ${target.file.name} does not run; the migrations bring it up to date.`,
+            );
+            return { ran: false, recorded: 0 };
+          }
+          const reader = artifactReader(
+            artifactFetch(env, fetch, target.artifact.host, count),
+            target.artifact.zipUrl,
+          );
+          const [bytes] = await reader.read([target.file]);
+          const sql = new TextDecoder().decode(bytes ?? new Uint8Array(0));
+          // Checked again here: SQL that ended inside a comment or string
+          // would swallow the rows that record the migrations.
+          const problems = baselineFileProblems(sql);
+          if (problems.length > 0) {
+            throw new JobError(
+              `the baseline ${target.file.name} cannot run: ${problems.join("; ")}`,
+            );
+          }
+          try {
+            await api.d1.query(db, buildBaselineQuery(sql, names));
+          } catch (error) {
+            throw new UnitItemError(target.file.name, error);
+          }
+          log.info(
+            `Ran the baseline ${target.file.name} on ${target.databaseName} and recorded ${names.length} migration(s) as applied without running them.`,
+          );
+          return { ran: true, recorded: names.length };
         }),
       ),
 

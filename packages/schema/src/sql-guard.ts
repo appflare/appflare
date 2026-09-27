@@ -14,6 +14,10 @@
  * Seed statements ({@link seedStatementProblems}) are stricter: one `INSERT`
  * that only adds a missing row, whose values arrive as bound `?` parameters.
  *
+ * A baseline ({@link baselineFileProblems}) runs once on a new database, so
+ * it need not be safe to run again; it may only keep to the app's own
+ * database and leave how D1 runs it alone.
+ *
  * The checks read SQLite's syntax only as far as they must: comments are
  * stripped, strings and quoted identifiers are skipped whole, and statements
  * end at `;`, except inside a trigger's `BEGIN ... END` body.
@@ -39,8 +43,11 @@ export interface SqlStatement {
 const WORD_START = /[A-Za-z_]/;
 const WORD_PART = /[A-Za-z0-9_$]/;
 
-/** The end of a quoted run starting at `start`, where a doubled closing quote is part of it. */
-function quotedEnd(sql: string, start: number, close: string): number {
+/**
+ * The end of a quoted run starting at `start`, where a doubled closing quote
+ * is part of it; null when the text ends before the run is closed.
+ */
+function quotedClose(sql: string, start: number, close: string): number | null {
   let i = start + 1;
   while (i < sql.length) {
     if (sql[i] === close) {
@@ -52,7 +59,45 @@ function quotedEnd(sql: string, start: number, close: string): number {
     }
     i += 1;
   }
-  return sql.length;
+  return null;
+}
+
+/** The end of a quoted run starting at `start`, or the end of the text when it is never closed. */
+function quotedEnd(sql: string, start: number, close: string): number {
+  return quotedClose(sql, start, close) ?? sql.length;
+}
+
+/**
+ * Why `sql` ends inside a block comment, a string or a quoted name that is
+ * never closed, or null when it does not. Whatever follows such SQL in the
+ * same query (the row that records a migration, the next statement) becomes
+ * part of the comment or string, so it would silently not run.
+ */
+export function unclosedAtEndProblem(sql: string): string | null {
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i] as string;
+    if (c === "-" && sql[i + 1] === "-") {
+      const next = sql.indexOf("\n", i);
+      if (next === -1) return null;
+      i = next + 1;
+    } else if (c === "/" && sql[i + 1] === "*") {
+      const close = sql.indexOf("*/", i + 2);
+      if (close === -1) return "it ends inside a /* comment that is never closed";
+      i = close + 2;
+    } else if (c === "'" || c === '"' || c === "`" || c === "[") {
+      const stop = quotedClose(sql, i, c === "[" ? "]" : c);
+      if (stop === null) {
+        return c === "'"
+          ? "it ends inside a string that is never closed"
+          : `it ends inside a name quoted with ${c} that is never closed`;
+      }
+      i = stop;
+    } else {
+      i += 1;
+    }
+  }
+  return null;
 }
 
 /**
@@ -245,6 +290,123 @@ export function schemaFileProblems(sql: string): string[] {
   return statements.map(statementProblem).filter((p): p is string => p !== null);
 }
 
+/**
+ * PRAGMAs a baseline may call with an argument in parentheses: they only
+ * read. Any other PRAGMA with an argument, and every `PRAGMA name = value`,
+ * changes how the database behaves and is refused.
+ */
+const READ_ONLY_PRAGMAS = new Set([
+  "TABLE_INFO",
+  "TABLE_XINFO",
+  "TABLE_LIST",
+  "INDEX_INFO",
+  "INDEX_XINFO",
+  "INDEX_LIST",
+  "FOREIGN_KEY_LIST",
+  "FOREIGN_KEY_CHECK",
+  "INTEGRITY_CHECK",
+  "QUICK_CHECK",
+]);
+
+/** Statement kinds a baseline may not start with: D1 runs the file as one transaction. */
+const TRANSACTION_WORDS = new Set(["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"]);
+
+/** Why one baseline statement may not run, or null when it may. */
+function baselineStatementProblem(statement: SqlStatement): string | null {
+  const { tokens } = statement;
+  const first = tokens[0];
+  const at = `line ${statement.line}`;
+  if (isWord(first, "ATTACH") || isWord(first, "DETACH")) {
+    return `${at}: ${first?.value} reaches another database; a baseline builds only the app's own`;
+  }
+  if (isWord(first, "DROP") && isWord(tokens[1], "DATABASE")) {
+    return `${at}: DROP DATABASE is not something a baseline may run`;
+  }
+  if (first?.kind === "word" && TRANSACTION_WORDS.has(first.value)) {
+    return `${at}: ${first.value} controls a transaction; the baseline already runs as one, and D1 refuses its own`;
+  }
+  if (isWord(first, "PRAGMA")) {
+    // `PRAGMA [schema.]name`, then `= value`, `(argument)` or nothing.
+    const dotted = tokens[2]?.kind === "punct" && tokens[2].value === ".";
+    const name = tokens[dotted ? 3 : 1];
+    const next = tokens[dotted ? 4 : 2];
+    const sets = next?.kind === "punct" && next.value === "=";
+    const called = next?.kind === "punct" && next.value === "(";
+    const pragma = name?.value.toUpperCase() ?? "";
+    // defer_foreign_keys lasts until the transaction ends, the way D1
+    // suggests loading rows whose references come later in the file.
+    if (pragma !== "DEFER_FOREIGN_KEYS" && (sets || (called && !READ_ONLY_PRAGMAS.has(pragma)))) {
+      return `${at}: PRAGMA ${name?.text ?? ""} changes a database setting; a baseline may only create the schema and its rows`;
+    }
+  }
+  const internal = internalTableNames(tokens);
+  if (internal.length > 0) {
+    return `${at}: it names ${internal.join(", ")}; Appflare records the migrations in d1_migrations itself, and the sqlite_ and _cf_ tables belong to SQLite and D1`;
+  }
+  return null;
+}
+
+/**
+ * Whether a statement creates a table that outlives the query (plain or
+ * virtual). A temporary table is gone once the query ends, so it does not
+ * count.
+ */
+function createsTable(statement: SqlStatement): boolean {
+  const { tokens } = statement;
+  if (!isWord(tokens[0], "CREATE")) return false;
+  let i = 1;
+  let temporary = false;
+  while (tokens[i]?.kind === "word" && CREATE_MODIFIERS.has(tokens[i]?.value ?? "")) {
+    if (isWord(tokens[i], "TEMP") || isWord(tokens[i], "TEMPORARY")) temporary = true;
+    i += 1;
+  }
+  return !temporary && isWord(tokens[i], "TABLE");
+}
+
+/**
+ * Why `sql` may not be a D1 baseline, as sentences naming the line of each
+ * statement at fault; empty when it may.
+ *
+ * A baseline runs once, at install, on the database the install has just
+ * created, as one D1 query (all of it applies or none of it does), and every
+ * migration the version ships is recorded as applied in the same query. So
+ * it may create without IF NOT EXISTS, insert rows, and drop or alter what it
+ * made itself. It may not reach past the app's database or change how D1
+ * runs it: no ATTACH, DETACH or DROP DATABASE, no PRAGMA that sets a value
+ * (but `defer_foreign_keys`, which ends with the transaction), no statement
+ * that opens or ends a transaction, and no mention of `d1_migrations` or a
+ * `sqlite_` or `_cf_` table, even in a string. It must create at least one
+ * table (a temporary one does not count), which is also how a retried step
+ * sees that the baseline already ran, and it may not end inside an unclosed
+ * comment or string, which would swallow the rows that record the
+ * migrations.
+ */
+export function baselineFileProblems(sql: string): string[] {
+  const statements = splitSqlStatements(sql);
+  if (statements.length === 0) return ["it has no SQL statements"];
+  const problems = statements.map(baselineStatementProblem).filter((p): p is string => p !== null);
+  const unclosed = unclosedAtEndProblem(sql);
+  if (unclosed !== null) problems.push(unclosed);
+  if (!statements.some(createsTable)) {
+    problems.push("it creates no table; a baseline holds the app's whole schema");
+  }
+  return problems;
+}
+
+/**
+ * Whether `sql` ends inside a statement: its last statement has no closing
+ * `;` (comments after it aside). Text appended after such SQL would run into
+ * that statement, and a `;` appended after SQL that is already closed would
+ * be an empty statement, which D1 refuses ("SQL code did not contain a
+ * statement"). Read with the statement splitter, so a `;` in a comment, a
+ * string or a trigger body does not count.
+ */
+export function endsInsideStatement(sql: string): boolean {
+  // A closed file gains a statement from the probe; an open one absorbs it.
+  const probe = `${sql}\nSELECT 1`;
+  return splitSqlStatements(probe).length === splitSqlStatements(sql).length;
+}
+
 /** Most statements one D1 binding's seed runs. */
 export const MAX_SEED_STATEMENTS = 10;
 /** Most parameters one seed statement binds. */
@@ -282,13 +444,29 @@ function isInternalTable(name: string): boolean {
   return lower === "d1_migrations" || lower.startsWith("sqlite_") || lower.startsWith("_cf_");
 }
 
-/** A quoted name without its quotes (doubled quotes undone); a word as written. */
+/** A quoted name or string without its quotes (doubled quotes undone); a word as written. */
 function unquoted(token: Token): string {
-  if (token.kind !== "quoted") return token.text;
+  if (token.kind !== "quoted" && token.kind !== "string") return token.text;
   const open = token.text[0] ?? "";
   const close = open === "[" ? "]" : open;
   const inner = token.text.slice(1, token.text.endsWith(close) ? -1 : undefined);
   return open === "[" ? inner : inner.split(`${close}${close}`).join(close);
+}
+
+/**
+ * The internal tables `tokens` name, as words, quoted names or strings:
+ * SQLite reads a single-quoted string as a table name where a name belongs
+ * (`INSERT INTO 'd1_migrations' ...`), so strings count too.
+ */
+function internalTableNames(tokens: readonly Token[]): string[] {
+  return [
+    ...new Set(
+      tokens
+        .filter((t) => t.kind === "word" || t.kind === "quoted" || t.kind === "string")
+        .map(unquoted)
+        .filter(isInternalTable),
+    ),
+  ];
 }
 
 /**
@@ -301,7 +479,8 @@ function unquoted(token: Token): string {
  *   so running it again (a retried step) keeps the row the first run added;
  * - hold no `WITH`, no `DO UPDATE` and no other statement kind (`CREATE`,
  *   `DROP`, `ALTER`, `UPDATE`, `DELETE`, `PRAGMA`, `ATTACH` and the like);
- * - name neither `d1_migrations` nor a `sqlite_` or `_cf_` table;
+ * - name neither `d1_migrations` nor a `sqlite_` or `_cf_` table, even in a
+ *   string, and not end inside an unclosed comment or string;
  * - take its values only as anonymous `?` parameters, exactly as many as it
  *   declares params: no `?1`, `:name`, `@name` or `$name`.
  *
@@ -352,14 +531,9 @@ export function seedStatementProblems(sql: string, paramCount: number): string[]
   if (banned.length > 0) {
     problems.push(`it uses ${banned.join(", ")}; a seed statement is one INSERT and nothing else`);
   }
-  const internal = [
-    ...new Set(
-      tokens
-        .filter((t) => t.kind === "word" || t.kind === "quoted")
-        .map(unquoted)
-        .filter(isInternalTable),
-    ),
-  ];
+  const unclosed = unclosedAtEndProblem(sql);
+  if (unclosed !== null) problems.push(unclosed);
+  const internal = internalTableNames(tokens);
   if (internal.length > 0) {
     problems.push(
       `it names ${internal.join(", ")}; a seed may not touch d1_migrations or the sqlite_ and _cf_ tables`,

@@ -906,6 +906,78 @@ describe("update job", () => {
     });
   });
 
+  describe("an app with a D1 baseline", () => {
+    const BASELINE = "CREATE TABLE links (id TEXT, hits INTEGER);\n";
+    const LOGS_BASELINE = "CREATE TABLE logs (id TEXT, level TEXT);\n";
+    const WITH_BASELINE: ArtifactFixtureOptions = {
+      ...NEW_APP,
+      bindings: [...(NEW_APP.bindings ?? []), { type: "d1", name: "LOGS" }],
+      d1: {
+        ...NEW_APP.d1,
+        LOGS: [{ name: "0001_add_level.sql", content: "ALTER TABLE logs ADD COLUMN level TEXT;" }],
+      },
+      d1Baseline: {
+        DB: { name: "schema.sql", content: BASELINE },
+        LOGS: { name: "logs/schema.sql", content: LOGS_BASELINE },
+      },
+    };
+
+    it("applies only the new migrations to a database the install has, and never its baseline", async () => {
+      const r = await update(WITH_BASELINE, {
+        applied: { "d1-1": ["0000_renamed_upstream.sql", "0001_init.sql"] },
+      });
+      expect(r.error).toBeNull();
+      // The step looks and leaves the database to the migrations.
+      expect(r.step.names).toContain("D1 DB: apply baseline");
+      expect(r.fake.state.queries.some((q) => q.startsWith(BASELINE))).toBe(false);
+      expect(r.fake.state.applied["d1-1"]).toEqual([
+        "0000_renamed_upstream.sql",
+        "0001_init.sql",
+        "0002_hits.sql",
+      ]);
+      expect(r.logs.map((l) => l.message)).toContain(
+        "d1_migrations of cut-db records 1 migration(s) this version does not ship (0000_renamed_upstream.sql); they stay recorded and nothing runs for them.",
+      );
+    });
+
+    it("runs the baseline on a database the update creates, as an install would", async () => {
+      const r = await update(WITH_BASELINE);
+      expect(r.error).toBeNull();
+      const names = r.step.names;
+      expect(names.filter((n) => n.startsWith("D1 LOGS"))).toEqual([
+        "D1 LOGS: apply baseline",
+        "D1 LOGS: apply migrations",
+      ]);
+      const created = r.fake.state.d1.find((d) => d.name === "cut-logs");
+      if (created === undefined) throw new Error("the update created no LOGS database");
+      expect(r.fake.state.applied[created.uuid]).toEqual(["0001_add_level.sql"]);
+      expect(r.fake.state.queries.filter((q) => q.startsWith(LOGS_BASELINE))).toHaveLength(1);
+      expect(r.fake.state.queries.some((q) => q.includes("ADD COLUMN level"))).toBe(false);
+    });
+
+    it("runs the baseline on a database an earlier failed attempt created and left empty", async () => {
+      const r = await update(
+        WITH_BASELINE,
+        {
+          d1: [{ uuid: "d1-2", name: "cut-logs" }],
+          bookmarks: { "d1-1": "00000001-bookmark-before", "d1-2": "00000001-bookmark-logs" },
+        },
+        {
+          resources: [
+            ...RESOURCES,
+            { kind: "d1", binding: "LOGS", name: "cut-logs", cfId: "d1-2" },
+          ],
+        },
+      );
+      expect(r.error).toBeNull();
+      // Recorded already, so not created again; empty, so it gets its baseline.
+      expect(r.step.names.some((n) => n.startsWith("create D1"))).toBe(false);
+      expect(r.fake.state.queries.filter((q) => q.startsWith(LOGS_BASELINE))).toHaveLength(1);
+      expect(r.fake.state.applied["d1-2"]).toEqual(["0001_add_level.sql"]);
+      expect(r.fake.state.queries.some((q) => q.includes("ADD COLUMN level"))).toBe(false);
+    });
+  });
+
   it("never seeds, nor asks for or sets a seed-only secret, even when the version adds a seed", async () => {
     const base = baseCatalog();
     const seeded: ArtifactFixtureOptions = {

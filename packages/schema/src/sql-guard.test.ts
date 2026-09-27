@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { schemaFileProblems, splitSqlStatements } from "./sql-guard";
+import {
+  baselineFileProblems,
+  endsInsideStatement,
+  schemaFileProblems,
+  splitSqlStatements,
+} from "./sql-guard";
+
+describe("endsInsideStatement", () => {
+  it("reads a closing ; outside comments, strings and trigger bodies", () => {
+    expect(endsInsideStatement("CREATE TABLE a (x);")).toBe(false);
+    expect(endsInsideStatement("CREATE TABLE a (x);\n-- done; really\n")).toBe(false);
+    expect(endsInsideStatement("CREATE TABLE a (x)")).toBe(true);
+    expect(endsInsideStatement("CREATE TABLE a (x)\n-- no end;")).toBe(true);
+    expect(endsInsideStatement("INSERT INTO a VALUES ('x;')")).toBe(true);
+    expect(endsInsideStatement("CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; END")).toBe(
+      true,
+    );
+    expect(endsInsideStatement("CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; END;")).toBe(
+      false,
+    );
+  });
+});
 
 /**
  * Shaped like the schema files of apps that keep one idempotent schema.sql:
@@ -170,5 +191,112 @@ describe("schemaFileProblems", () => {
 
   it("refuses a file with no statements", () => {
     expect(schemaFileProblems("-- nothing yet\n")).toEqual(["it has no SQL statements"]);
+  });
+});
+
+/**
+ * Shaped like the schema.sql of apps that keep their whole schema in one file
+ * and ALTER migrations for older databases: plain CREATEs, a virtual table
+ * with a trigger, and default rows.
+ */
+const BASELINE = `CREATE TABLE posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL
+);
+CREATE INDEX idx_posts_slug ON posts(slug);
+CREATE VIRTUAL TABLE posts_fts USING fts5(title, content='posts', content_rowid='id');
+CREATE TRIGGER posts_ai AFTER INSERT ON posts BEGIN
+  INSERT INTO posts_fts(rowid, title) VALUES (new.id, new.title);
+END;
+PRAGMA defer_foreign_keys = true;
+PRAGMA table_info(posts);
+INSERT INTO posts (slug, title) VALUES ('hello', 'Hello');
+DROP TABLE IF EXISTS legacy;
+`;
+
+const TRANSACTION_WHY =
+  "controls a transaction; the baseline already runs as one, and D1 refuses its own";
+
+describe("baselineFileProblems", () => {
+  it("accepts a whole schema without IF NOT EXISTS, with rows and drops of its own", () => {
+    expect(baselineFileProblems(BASELINE)).toEqual([]);
+  });
+
+  it("refuses ATTACH, DETACH, DROP DATABASE and PRAGMAs that change a setting, naming the line", () => {
+    const sql = `CREATE TABLE a (id INTEGER);
+ATTACH DATABASE 'other.db' AS other;
+DETACH other;
+DROP DATABASE main;
+PRAGMA foreign_keys = OFF;
+PRAGMA main.journal_mode = WAL;
+PRAGMA user_version(3);`;
+    const problems = baselineFileProblems(sql);
+    expect(problems.map((p) => p.split(":")[0])).toEqual([
+      "line 2",
+      "line 3",
+      "line 4",
+      "line 5",
+      "line 6",
+      "line 7",
+    ]);
+    expect(problems[3]).toContain("PRAGMA foreign_keys changes a database setting");
+    expect(problems[4]).toContain("PRAGMA journal_mode changes a database setting");
+  });
+
+  it("refuses statements that open or end a transaction, but not a trigger's BEGIN ... END", () => {
+    const sql = "BEGIN TRANSACTION;\nCREATE TABLE a (id INTEGER);\nCOMMIT;";
+    expect(baselineFileProblems(sql)).toEqual([
+      `line 1: BEGIN ${TRANSACTION_WHY}`,
+      `line 3: COMMIT ${TRANSACTION_WHY}`,
+    ]);
+  });
+
+  it("refuses d1_migrations and the sqlite_ and _cf_ tables, quoted or not", () => {
+    const problems = baselineFileProblems(
+      "CREATE TABLE a (id INTEGER);\n" +
+        "INSERT INTO \"d1_migrations\" (name) VALUES ('x');\n" +
+        "DELETE FROM _cf_KV;\n" +
+        "DELETE FROM sqlite_sequence;",
+    );
+    expect(problems).toHaveLength(3);
+    expect(problems[0]).toMatch(/^line 2: it names d1_migrations;/);
+  });
+
+  it("refuses internal tables named in single quotes too", () => {
+    expect(
+      baselineFileProblems(
+        "CREATE TABLE a (id INTEGER);\nINSERT INTO 'd1_migrations' (name) VALUES ('x');",
+      ),
+    ).toEqual([
+      "line 2: it names d1_migrations; Appflare records the migrations in d1_migrations itself, and the sqlite_ and _cf_ tables belong to SQLite and D1",
+    ]);
+  });
+
+  it("refuses a file that ends inside an unclosed comment, string or quoted name", () => {
+    const base = "CREATE TABLE a (id INTEGER);\n";
+    expect(baselineFileProblems(`${base}/* trailing note`)).toEqual([
+      "it ends inside a /* comment that is never closed",
+    ]);
+    expect(baselineFileProblems(`${base}INSERT INTO a VALUES ('it''s`)).toContain(
+      "it ends inside a string that is never closed",
+    );
+    expect(baselineFileProblems(`${base}CREATE TABLE "b (id INTEGER);`)).toContain(
+      'it ends inside a name quoted with " that is never closed',
+    );
+    // Closed ones, and a last line comment, are fine.
+    expect(baselineFileProblems(`${base}/* note */ INSERT INTO a VALUES ('x''y'); -- end`)).toEqual(
+      [],
+    );
+  });
+
+  it("refuses a file that creates no table, or only temporary ones, or has no statements", () => {
+    expect(baselineFileProblems("CREATE INDEX i ON a(x);")).toEqual([
+      "it creates no table; a baseline holds the app's whole schema",
+    ]);
+    expect(baselineFileProblems("CREATE TEMP TABLE t (x);\nCREATE TEMPORARY TABLE u (x);")).toEqual(
+      ["it creates no table; a baseline holds the app's whole schema"],
+    );
+    expect(baselineFileProblems("-- empty\n")).toEqual(["it has no SQL statements"]);
   });
 });

@@ -60,7 +60,9 @@ An artifact that carries D1 schema files or post-deploy migrations (from
 than format 3 refuses it rather than installing the app without them, and a
 manager that meets a format newer than it reads asks the admin to update Appflare.
 Every artifact is written in the oldest format that can carry it, so apps without
-these files stay format 1 or 2.
+these files stay format 1 or 2. A D1 baseline (`resources.d1[binding].baseline`) is
+recorded as `d1Baseline` and makes the artifact format 5, since a manager that did not
+run it would apply the migrations to an empty database.
 
 Releases are immutable. A change to `appflare.jsonc` alone, without a new pin, cannot
 be published as a new release; re-pin `source` to ship it. Two exceptions need no

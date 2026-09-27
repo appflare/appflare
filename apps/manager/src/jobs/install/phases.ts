@@ -409,6 +409,50 @@ export interface D1Target {
    * the binding has none. Updates ignore it.
    */
   seed?: CatalogD1Seed | undefined;
+  /**
+   * The database's whole current schema (the catalog manifest's
+   * `resources.d1[binding].baseline`), run only on a database the job has
+   * just created, before the migrations; null when the binding has none.
+   */
+  baseline: D1MigrationFile | null;
+}
+
+/**
+ * Step "D1 <binding>: apply baseline", before the migrations of a binding
+ * with a baseline: on an empty database (no table of the app's, nothing in
+ * `d1_migrations`) it runs the baseline and records every migration and
+ * post-deploy migration the version ships as applied without running them,
+ * since the baseline already holds what they do; the migrations phase that
+ * follows then finds nothing to apply. On any other database it does
+ * nothing, and the migrations bring it up to date. One `applyD1Baseline`
+ * unit call: the baseline and the records go in one D1 query, applied whole
+ * or not at all, so a retried step (or job) whose earlier attempt succeeded
+ * finds the tables there and does nothing, and one whose earlier attempt
+ * failed before the query finds the database still empty.
+ */
+export async function applyD1BaselinePhase(
+  steps: JobSteps,
+  zipUrl: string,
+  target: D1Target,
+  host: ArtifactHost = { kind: "catalog" },
+): Promise<void> {
+  const file = target.baseline;
+  if (file === null) return;
+  const migrations = [...target.files, ...target.postDeploy].map((f) => f.name);
+  await steps.run(`D1 ${target.binding}: apply baseline`, async ({ log }) => {
+    const got = settleUnit(
+      await steps.units.api.applyD1Baseline({
+        accountId: steps.accountId(),
+        artifact: { zipUrl, host },
+        databaseId: target.cfId,
+        databaseName: target.name,
+        file,
+        migrations,
+      }),
+      log,
+    );
+    return { ran: got.ran, recorded: got.recorded };
+  });
 }
 
 /**
@@ -500,6 +544,7 @@ async function applyTrackedPhase(
             databaseId: target.cfId,
             databaseName: target.name,
             files: [...files],
+            shipped: [...target.files, ...target.postDeploy].map((f) => f.name),
           }),
           log,
         );
@@ -571,7 +616,8 @@ export async function applyD1SchemaPhase(
 
 /**
  * The D1 targets of a manifest: every database resource whose binding ships
- * migrations, schema files, post-deploy migrations or seed statements.
+ * migrations, schema files, post-deploy migrations, seed statements or a
+ * baseline.
  */
 export function d1Targets(
   manifest: ArtifactManifest,
@@ -590,9 +636,13 @@ export function d1Targets(
       schema: of(manifest.d1Schema, r.binding),
       postDeploy: of(manifest.d1PostDeploy, r.binding),
       seed: Object.hasOwn(layouts, r.binding) ? layouts[r.binding]?.seed : undefined,
+      baseline: of(manifest.d1Baseline, r.binding)[0] ?? null,
     }))
     .filter(
-      (t) => t.files.length + t.schema.length + t.postDeploy.length > 0 || t.seed !== undefined,
+      (t) =>
+        t.files.length + t.schema.length + t.postDeploy.length > 0 ||
+        t.seed !== undefined ||
+        t.baseline !== null,
     );
 }
 

@@ -8,6 +8,7 @@ import {
   type RepositoryBuildOutcome,
   repositoryBuildOutcomeSchema,
   SANDBOX_FEATURE_CONFIG_PATCH,
+  SANDBOX_FEATURE_D1_BASELINE,
   SANDBOX_FEATURE_D1_SEED,
   SANDBOX_FEATURE_GITHUB_TOKENS,
   SANDBOX_FEATURE_INSTALL_DIRS,
@@ -211,6 +212,31 @@ export function d1SeedRefusal(
   const seeded = Object.values(catalog.resources?.d1 ?? {}).some((d1) => d1.seed !== undefined);
   if (!seeded) return null;
   return `the sandbox Worker ${info.sandboxVersion} cannot build an app that seeds its database (resources.d1 seed) and would build it without the seed; to update it, ${updateHint}`;
+}
+
+/**
+ * Why the sandbox Worker cannot build `catalog`, or null when it can: the
+ * entry gives a D1 baseline (`resources.d1[binding].baseline`) and the
+ * sandbox Worker predates baselines, so its build would leave it out and
+ * the install would run the migrations on an empty database.
+ */
+export function d1BaselineRefusal(
+  info: Pick<SandboxInfo, "sandboxVersion" | "features">,
+  catalog:
+    | {
+        resources?:
+          | { d1?: Readonly<Record<string, { baseline?: unknown }>> | undefined }
+          | undefined;
+      }
+    | undefined,
+  updateHint: string,
+): string | null {
+  if (catalog === undefined || info.features?.includes(SANDBOX_FEATURE_D1_BASELINE) === true) {
+    return null;
+  }
+  const d1 = Object.values(catalog.resources?.d1 ?? {});
+  if (!d1.some((layout) => layout.baseline !== undefined)) return null;
+  return `the sandbox Worker ${info.sandboxVersion} cannot build an app with a D1 baseline (resources.d1 baseline) and would build it without one; to update it, ${updateHint}`;
 }
 
 /** Whether the sandbox Worker holds GitHub access tokens and reads GitHub with them. */

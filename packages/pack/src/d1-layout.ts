@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import {
+  baselineFileProblems,
   type CatalogD1,
   compareMigrationNames,
   migrationsGlobBase,
@@ -40,6 +41,7 @@ export const D1_ZIP_DIRS = {
   migrations: "d1",
   schema: "d1-schema",
   postDeploy: "d1-post-deploy",
+  baseline: "d1-baseline",
 } as const;
 
 /** wrangler's default `migrations_pattern`, relative to the migrations folder. */
@@ -244,18 +246,22 @@ export function collectD1Migrations(
   return result;
 }
 
-/** The schema files and post-deploy migrations the catalog manifest declares. */
+/** The schema files, post-deploy migrations and baselines the catalog manifest declares. */
 export interface D1Extras {
   schema: D1Files;
   postDeploy: D1Files;
+  /** One file per binding that declares a baseline. */
+  baseline: D1Files;
 }
 
 /**
- * Reads the schema files and post-deploy migrations of `resources.d1`.
- * Refuses a declaration for a name no Worker binds as D1, a schema file that
- * is not safe to run on every install and update (`schemaFileProblems` from `@appflare/schema`), and a
- * post-deploy migration named like one of the binding's migrations: both are
- * recorded in `d1_migrations` by name, so one of the two would never run.
+ * Reads the schema files, post-deploy migrations and baselines of
+ * `resources.d1`. Refuses a declaration for a name no Worker binds as D1, a
+ * schema file that is not safe to run on every install and update
+ * (`schemaFileProblems` from `@appflare/schema`), a baseline that may not
+ * run at install (`baselineFileProblems`), and a post-deploy migration named
+ * like one of the binding's migrations: both are recorded in `d1_migrations`
+ * by name, so one of the two would never run.
  */
 export function collectD1Extras(
   checkoutDir: string,
@@ -265,6 +271,7 @@ export function collectD1Extras(
 ): D1Extras {
   const schema: D1Files = {};
   const postDeploy: D1Files = {};
+  const baseline: D1Files = {};
   for (const [binding, layout] of Object.entries(declared ?? {})) {
     if (!bound.has(binding)) {
       throw new Error(
@@ -308,6 +315,21 @@ export function collectD1Extras(
       }
       if (files.length > 0) postDeploy[binding] = files;
     }
+    if (layout.baseline !== undefined) {
+      const file = layout.baseline;
+      const abs = insideCheckout(checkoutDir, file, "the baseline");
+      if (!statSync(abs).isFile()) throw new Error(`the baseline ${file} is not a file`);
+      const bytes = readFileSync(abs);
+      const problems = baselineFileProblems(bytes.toString("utf8"));
+      if (problems.length > 0) {
+        throw new Error(
+          `the baseline ${file} of resources.d1.${binding} cannot run at install: ${problems.join("; ")}`,
+        );
+      }
+      baseline[binding] = [
+        { name: file, path: `${D1_ZIP_DIRS.baseline}/${binding}/${file}`, bytes },
+      ];
+    }
   }
-  return { schema, postDeploy };
+  return { schema, postDeploy, baseline };
 }

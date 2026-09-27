@@ -6,6 +6,7 @@ import {
   type BuildResult,
   buildOutcomeSchema,
   SANDBOX_FEATURE_CONFIG_PATCH,
+  SANDBOX_FEATURE_D1_BASELINE,
   SANDBOX_FEATURE_D1_SEED,
   SANDBOX_FEATURE_GITHUB_TOKENS,
   SANDBOX_FEATURE_INSTALL_DIRS,
@@ -367,7 +368,7 @@ describe("runBuild", () => {
     expect(failure.message).toContain("worker/index.js: sha256 does not match manifest.json");
   });
 
-  it("checks the D1 schema files and post-deploy migrations of the stored zip too", async () => {
+  it("checks the D1 schema files, post-deploy migrations and baseline of the stored zip too", async () => {
     const d1File = (dir: string, name: string) => ({
       name,
       path: `${dir}/DB/${name}`,
@@ -378,10 +379,11 @@ describe("runBuild", () => {
     for (const [field, dir, layout] of [
       ["d1Schema", "d1-schema", { schema: ["schema.sql"] }],
       ["d1PostDeploy", "d1-post-deploy", { postDeployMigrationsDir: "after" }],
+      ["d1Baseline", "d1-baseline", { baseline: "schema.sql" }],
     ] as const) {
-      const name = field === "d1Schema" ? "schema.sql" : "0001_after.sql";
+      const name = field === "d1PostDeploy" ? "0001_after.sql" : "schema.sql";
       const manifest = packedManifest({
-        format: 3,
+        format: field === "d1Baseline" ? 5 : 3,
         [field]: { DB: [d1File(dir, name)] },
         catalog: { ...catalogManifest, resources: { d1: { DB: layout } } },
       });
@@ -540,6 +542,7 @@ describe("cleanup and progress", () => {
         SANDBOX_FEATURE_INSTALL_DIRS,
         SANDBOX_FEATURE_CONFIG_PATCH,
         SANDBOX_FEATURE_D1_SEED,
+        SANDBOX_FEATURE_D1_BASELINE,
       ],
       // The version metadata binding's id (vitest.config.ts).
       versionId: "version-under-test",

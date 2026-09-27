@@ -214,6 +214,31 @@ describe("collectD1Extras", () => {
     DB: [{ name: "0001_init.sql", path: "d1/DB/0001_init.sql", bytes: Buffer.from("") }],
   };
 
+  it("reads a baseline as one file, and refuses one that may not run at install", () => {
+    files({
+      "db/schema.sql": "CREATE TABLE posts (id INTEGER);\nINSERT INTO posts VALUES (1);",
+      "db/attach.sql": "CREATE TABLE a (id INTEGER);\nATTACH DATABASE 'x' AS x;",
+    });
+    const extras = collectD1Extras(
+      checkout,
+      { DB: { baseline: "db/schema.sql" } },
+      bound,
+      migrations,
+    );
+    expect(extras.baseline.DB?.map((f) => [f.name, f.path])).toEqual([
+      ["db/schema.sql", "d1-baseline/DB/db/schema.sql"],
+    ]);
+    expect(extras.schema).toEqual({});
+    expect(() =>
+      collectD1Extras(checkout, { DB: { baseline: "db/attach.sql" } }, bound, migrations),
+    ).toThrow(
+      /the baseline db\/attach\.sql of resources\.d1\.DB cannot run at install: line 2: ATTACH reaches another database/,
+    );
+    expect(() =>
+      collectD1Extras(checkout, { DB: { baseline: "db/missing.sql" } }, bound, migrations),
+    ).toThrow(/the baseline db\/missing\.sql does not exist/);
+  });
+
   it("reads schema files in the listed order and post-deploy migrations in name order", () => {
     files({
       "src/db/tables.sql": "CREATE TABLE IF NOT EXISTS t (id);",

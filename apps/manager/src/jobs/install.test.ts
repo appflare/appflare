@@ -512,6 +512,14 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
       }
       state.queries.push(sql);
       state.queryParams.push(params ?? null);
+      if (sql.startsWith("SELECT (SELECT count(*) FROM sqlite_master")) {
+        // The app's tables: every CREATE TABLE sent so far but d1_migrations.
+        const tables = state.queries.flatMap(
+          (q) => q.match(/CREATE TABLE (?!IF NOT EXISTS "d1_migrations")/g) ?? [],
+        ).length;
+        const recorded = state.applied.length;
+        return ok([{ results: [{ tables, recorded }], success: true, meta: {} }]);
+      }
       if (sql.startsWith("SELECT")) {
         return ok([
           {
@@ -520,6 +528,13 @@ function fakeWorld(fixture: ArtifactFixture, over: Partial<FakeState> = {}) {
             meta: {},
           },
         ]);
+      }
+      const recordAt = sql.indexOf('INSERT OR IGNORE INTO "d1_migrations"');
+      if (recordAt !== -1) {
+        for (const row of sql.slice(recordAt).matchAll(/\('([^']+)'\)/g)) {
+          if (row[1] !== undefined && !state.applied.includes(row[1])) state.applied.push(row[1]);
+        }
+        return ok([{ results: [], success: true, meta: {} }]);
       }
       const m = /values \('([^']+)'\);$/.exec(sql);
       if (m?.[1]) state.applied.push(m[1]);
@@ -820,6 +835,50 @@ describe("install job", () => {
     expect(r.fake.state.applied).toEqual(["20240101_init", "0001_drop_legacy.sql"]);
     expect(r.logs.map((l) => l.message)).toContain(
       "Ran the schema file src/db/indexes.sql on cut-db.",
+    );
+  });
+
+  it("runs a baseline before the migrations and records them without running them", async () => {
+    const BASELINE = "CREATE TABLE links (id TEXT, slug TEXT);\nCREATE TABLE clicks (id TEXT);\n";
+    const r = await install({
+      bindings: [{ type: "d1", name: "DB" }],
+      d1: {
+        DB: [
+          { name: "0001_add_slug.sql", content: "ALTER TABLE links ADD COLUMN slug TEXT;" },
+          { name: "0002_clicks.sql", content: "CREATE TABLE clicks (id TEXT);" },
+        ],
+      },
+      d1PostDeploy: { DB: [{ name: "0003_drop_legacy.sql", content: "DROP TABLE legacy;" }] },
+      d1Baseline: { DB: { name: "db/schema.sql", content: BASELINE } },
+    });
+    expect(r.error).toBeNull();
+    const names = r.step.names;
+    expect(
+      names.slice(
+        names.indexOf("record Worker script") + 1,
+        names.indexOf("set secret ADMIN_PASSWORD"),
+      ),
+    ).toEqual([
+      "D1 DB: apply baseline",
+      "D1 DB: apply migrations",
+      "D1 DB: apply post-deploy migrations",
+    ]);
+    expect(r.self.calls.map((c) => c.unit).filter((u) => u.startsWith("applyD1"))).toEqual([
+      "applyD1Baseline",
+      "applyD1Migrations",
+      "applyD1Migrations",
+    ]);
+    // The baseline ran once; no migration's SQL did, yet all are recorded.
+    const ran = r.fake.state.queries.filter((q) => !q.startsWith("SELECT"));
+    expect(ran.filter((q) => q.startsWith(BASELINE))).toHaveLength(1);
+    expect(ran.some((q) => q.includes("ALTER TABLE") || q.includes("DROP TABLE"))).toBe(false);
+    expect(r.fake.state.applied).toEqual([
+      "0001_add_slug.sql",
+      "0002_clicks.sql",
+      "0003_drop_legacy.sql",
+    ]);
+    expect(r.logs.map((l) => l.message)).toContain(
+      "Ran the baseline db/schema.sql on cut-db and recorded 3 migration(s) as applied without running them.",
     );
   });
 

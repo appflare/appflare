@@ -118,6 +118,11 @@ export interface PackResult {
   /** Post-deploy migrations (`resources.d1[binding].postDeployMigrationsDir`), every binding together. */
   d1PostDeployCount: number;
   /**
+   * Baselines (`resources.d1[binding].baseline`), one per binding at most;
+   * any makes the artifact format 5.
+   */
+  d1BaselineCount: number;
+  /**
    * Seed statements (`resources.d1[binding].seed`), every binding together.
    * The artifact carries them in its embedded catalog manifest, and any
    * makes it format 4.
@@ -693,7 +698,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
 
   // Lay the zip out so byte offsets are recorded as each file is added. Order:
   // worker/, assets/, each other Worker's workers/<name>/, d1/, d1-schema/,
-  // d1-post-deploy/, then manifest.json LAST.
+  // d1-post-deploy/, d1-baseline/, then manifest.json LAST.
   const zip = new ZipStore();
   const ordered = [...built.filter((b) => b.primary), ...built.filter((b) => !b.primary)];
   const sections = ordered.map((b) => {
@@ -770,6 +775,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   const d1Manifest = placeD1(d1);
   const d1SchemaManifest = placeD1(d1Extras.schema);
   const d1PostDeployManifest = placeD1(d1Extras.postDeploy);
+  const d1BaselineManifest = placeD1(d1Extras.baseline);
 
   const { version, origin: versionOrigin } = deriveVersionWithOrigin({
     installVersion: catalog.install.version,
@@ -783,7 +789,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // (`artifactFormatFor`): 1 for one Worker, 2 for several (the primary
   // Worker as `worker`, the others in `workers`), 3 once it has D1 files
   // older managers would skip, 4 once the entry keeps a Worker off workers.dev
-  // or has seed statements.
+  // or has seed statements, 5 once it has a D1 baseline.
   const primarySection = sections[0];
   if (primarySection === undefined) {
     throw new Error("internal error: no Worker was packed");
@@ -801,6 +807,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     // Omitted when empty, so artifacts of apps without them keep their shape.
     ...(Object.keys(d1SchemaManifest).length > 0 ? { d1Schema: d1SchemaManifest } : {}),
     ...(Object.keys(d1PostDeployManifest).length > 0 ? { d1PostDeploy: d1PostDeployManifest } : {}),
+    ...(Object.keys(d1BaselineManifest).length > 0 ? { d1Baseline: d1BaselineManifest } : {}),
     catalog,
   };
   const others =
@@ -883,6 +890,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   const d1MigrationCount = count(d1Manifest);
   const d1SchemaCount = count(d1SchemaManifest);
   const d1PostDeployCount = count(d1PostDeployManifest);
+  const d1BaselineCount = count(d1BaselineManifest);
   const d1SeedCount = seedStatementCount(catalog);
   const size = primarySection.size;
   const workers: PackedWorker[] = sections.map((s) => ({
@@ -900,6 +908,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       `${assetCount} assets, ${d1MigrationCount} migrations, ` +
       (d1SchemaCount > 0 ? `${d1SchemaCount} schema files, ` : "") +
       (d1PostDeployCount > 0 ? `${d1PostDeployCount} post-deploy migrations, ` : "") +
+      (d1BaselineCount > 0 ? `${d1BaselineCount} baselines (run once at install), ` : "") +
       (d1SeedCount > 0 ? `${d1SeedCount} seed statements (run once at install), ` : "") +
       `${zipBytes.length} bytes`,
   );
@@ -917,6 +926,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     d1MigrationCount,
     d1SchemaCount,
     d1PostDeployCount,
+    d1BaselineCount,
     d1SeedCount,
     zipSize: zipBytes.length,
     workerSize: size,

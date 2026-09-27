@@ -39,6 +39,7 @@ import type { BuildKind, InstallOrigin } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import {
   configPatchRefusal,
+  d1BaselineRefusal,
   d1SeedRefusal,
   installDirsRefusal,
   parseBuildOutcome,
@@ -490,7 +491,8 @@ async function buildInSandboxPhase(
     const refused =
       installDirsRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
       configPatchRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
-      d1SeedRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT);
+      d1SeedRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
+      d1BaselineRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT);
     if (refused !== null) throw new JobError(refused);
   }
   const parsedRequest = buildRequestSchema.safeParse({

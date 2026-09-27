@@ -1,4 +1,9 @@
-import { compareMigrationNames, planSpans, SPAN_LIMITS } from "@appflare/schema";
+import {
+  compareMigrationNames,
+  endsInsideStatement,
+  planSpans,
+  SPAN_LIMITS,
+} from "@appflare/schema";
 import type { ArtifactFileRef } from "./artifact";
 import { ARTIFACT_FETCH_COST } from "./budget";
 
@@ -25,6 +30,59 @@ export function buildMigrationQuery(fileSql: string, fileName: string): string {
   return `${fileSql}
 INSERT INTO "d1_migrations" (name)
 values ('${fileName.replace(/'/g, "''")}');`;
+}
+
+/*
+ * A baseline (`resources.d1[binding].baseline` in the catalog manifest) is
+ * the app's whole current schema, for apps whose migrations only bring older
+ * databases up to date. It runs once, on the database the install has just
+ * created, in one `/query` call together with the rows that record every
+ * migration the version ships, so those never run there. D1 runs a query of
+ * several statements as one transaction: when a statement fails, none of
+ * them applies (verified against the D1 REST API, 2026-09-27: a failing
+ * third statement left the first two's table absent).
+ *
+ * Whether a database already ran its baseline is read from its tables, not
+ * from a row: a baseline creates at least one table (the packer refuses one
+ * that creates none), and the database was empty before it.
+ */
+
+/**
+ * How many of the app's own tables a database has (every table but
+ * `d1_migrations`, SQLite's and D1's own; a new database holds `_cf_KV`),
+ * and how many migrations `d1_migrations` records (it must exist). A
+ * baseline runs only where both are 0.
+ */
+export const BASELINE_STATE_SQL = `SELECT (SELECT count(*) FROM sqlite_master
+		WHERE type = 'table' AND name <> 'd1_migrations'
+		AND substr(name, 1, 7) <> 'sqlite_' AND substr(name, 1, 4) <> '_cf_') AS tables,
+	(SELECT count(*) FROM "d1_migrations") AS recorded`;
+
+/** The query that records `names` as applied; empty when there are none. Already recorded names stay. */
+export function recordMigrationsQuery(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  const rows = names.map((name) => `('${name.replace(/'/g, "''")}')`).join(",\n");
+  return `INSERT OR IGNORE INTO "d1_migrations" (name)
+values ${rows};`;
+}
+
+/** One `/query` call: the baseline's SQL, then the rows that record `names` as applied. */
+export function buildBaselineQuery(fileSql: string, names: readonly string[]): string {
+  const record = recordMigrationsQuery(names);
+  if (record === "") return fileSql;
+  // A last statement without its `;` would run into the insert, and a `;`
+  // after one that has it is an empty statement, which D1 refuses.
+  const closed = endsInsideStatement(fileSql) ? `${fileSql}\n;` : fileSql;
+  return `${closed}\n${record}`;
+}
+
+/** Recorded names this version does not ship, in the order they were recorded. */
+export function unshippedMigrations(
+  shipped: readonly string[],
+  appliedRows: ReadonlyArray<Record<string, unknown>>,
+): string[] {
+  const known = new Set(shipped);
+  return appliedRows.map((row) => String(row.name)).filter((name) => !known.has(name));
 }
 
 /** Files not yet recorded in `d1_migrations`, in the order wrangler applies them. */

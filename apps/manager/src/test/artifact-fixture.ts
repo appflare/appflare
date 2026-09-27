@@ -38,6 +38,8 @@ export interface ArtifactFixtureOptions {
   d1Schema?: Record<string, Array<{ name: string; content: string }>>;
   /** Post-deploy migrations by binding, declared in `resources.d1` the same way. */
   d1PostDeploy?: Record<string, Array<{ name: string; content: string }>>;
+  /** A baseline by binding, declared in `resources.d1` the same way; makes the artifact format 5. */
+  d1Baseline?: Record<string, { name: string; content: string }>;
   crons?: string[];
   migrations?: ArtifactManifest["worker"]["migrations"];
   /** The primary Worker's `exports` and `cacheOptions`; either makes the artifact format 3. */
@@ -223,6 +225,12 @@ export async function buildArtifactFixture(
   };
   const d1Schema = await placeD1("d1-schema", opts.d1Schema);
   const d1PostDeploy = await placeD1("d1-post-deploy", opts.d1PostDeploy);
+  const d1Baseline = await placeD1(
+    "d1-baseline",
+    opts.d1Baseline === undefined
+      ? undefined
+      : Object.fromEntries(Object.entries(opts.d1Baseline).map(([b, f]) => [b, [f]])),
+  );
   const zip = new Uint8Array(offset);
   let at = 0;
   for (const c of chunks) {
@@ -231,10 +239,21 @@ export async function buildArtifactFixture(
   }
 
   const catalog = baseCatalog(opts.catalog);
-  if (opts.catalog?.resources === undefined && (opts.d1Schema ?? opts.d1PostDeploy) !== undefined) {
+  if (
+    opts.catalog?.resources === undefined &&
+    (opts.d1Schema ?? opts.d1PostDeploy ?? opts.d1Baseline) !== undefined
+  ) {
     const d1: NonNullable<CatalogManifest["resources"]>["d1"] = {};
-    for (const binding of new Set([...Object.keys(d1Schema), ...Object.keys(d1PostDeploy)])) {
+    const bindings = [
+      ...Object.keys(d1Schema),
+      ...Object.keys(d1PostDeploy),
+      ...Object.keys(d1Baseline),
+    ];
+    for (const binding of new Set(bindings)) {
       d1[binding] = {
+        ...(Object.hasOwn(d1Baseline, binding)
+          ? { baseline: d1Baseline[binding]?.[0]?.name ?? "" }
+          : {}),
         ...(Object.hasOwn(d1Schema, binding)
           ? { schema: (d1Schema[binding] ?? []).map((f) => f.name) }
           : {}),
@@ -285,6 +304,7 @@ export async function buildArtifactFixture(
     d1Migrations: d1,
     ...(opts.d1Schema === undefined ? {} : { d1Schema }),
     ...(opts.d1PostDeploy === undefined ? {} : { d1PostDeploy }),
+    ...(opts.d1Baseline === undefined ? {} : { d1Baseline }),
     catalog,
   };
   // The format the packer would write: `artifactFormatFor` over what it carries.

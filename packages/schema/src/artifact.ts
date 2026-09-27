@@ -580,13 +580,20 @@ export interface ArtifactD1 {
   d1Migrations: D1Migrations;
   d1Schema?: D1Migrations | undefined;
   d1PostDeploy?: D1Migrations | undefined;
+  d1Baseline?: D1Migrations | undefined;
 }
 
-/** Every D1 SQL file the artifact carries: migrations, schema files, post-deploy migrations. */
+/**
+ * Every D1 SQL file the artifact carries: migrations, schema files,
+ * post-deploy migrations, baselines.
+ */
 export function artifactD1Files(manifest: ArtifactD1): D1MigrationFile[] {
-  return [manifest.d1Migrations, manifest.d1Schema ?? {}, manifest.d1PostDeploy ?? {}].flatMap(
-    (byBinding) => Object.values(byBinding).flat(),
-  );
+  return [
+    manifest.d1Migrations,
+    manifest.d1Schema ?? {},
+    manifest.d1PostDeploy ?? {},
+    manifest.d1Baseline ?? {},
+  ].flatMap((byBinding) => Object.values(byBinding).flat());
 }
 
 /**
@@ -643,6 +650,31 @@ export function artifactD1Problems(
       tracked.add(file.name);
     }
   }
+  const baseline = manifest.d1Baseline ?? {};
+  for (const [binding, files] of Object.entries(baseline)) {
+    const want = layout(binding)?.baseline;
+    if (want === undefined) {
+      problems.push(
+        `A D1 baseline is recorded for ${binding}, but the catalog manifest declares no resources.d1.${binding}.baseline.`,
+      );
+    } else if (files.length !== 1 || files[0]?.name !== want) {
+      problems.push(
+        `The D1 baseline recorded for ${binding} is not the one file resources.d1.${binding}.baseline names.`,
+      );
+    }
+    if (Object.hasOwn(schema, binding)) {
+      problems.push(
+        `${binding} has both a D1 baseline and schema files; the baseline runs once and schema files on every update, so an entry gives one or the other.`,
+      );
+    }
+  }
+  for (const [binding, d1] of Object.entries(declared)) {
+    if (d1.baseline !== undefined && !Object.hasOwn(baseline, binding)) {
+      problems.push(
+        `resources.d1.${binding}.baseline names a baseline, but the artifact records none for ${binding}.`,
+      );
+    }
+  }
   return problems;
 }
 
@@ -681,6 +713,13 @@ const artifactManifestFields = {
    * Omitted when there are none.
    */
   d1PostDeploy: d1MigrationsSchema.optional(),
+  /**
+   * One SQL file per binding with the database's whole current schema
+   * (`resources.d1[binding].baseline`), run once on a new database before
+   * the migrations, which are then recorded as applied without running.
+   * Omitted when there is none.
+   */
+  d1Baseline: d1MigrationsSchema.optional(),
   catalog: catalogManifestSchema,
 };
 
@@ -697,8 +736,8 @@ export const artifactEntryWorkerSchema = z.object({
 export type ArtifactEntryWorker = z.infer<typeof artifactEntryWorkerSchema>;
 
 /** The artifact formats this version reads: 1 to {@link LATEST_ARTIFACT_FORMAT}. */
-export const LATEST_ARTIFACT_FORMAT = 4;
-export type ArtifactFormat = 1 | 2 | 3 | 4;
+export const LATEST_ARTIFACT_FORMAT = 5;
+export type ArtifactFormat = 1 | 2 | 3 | 4 | 5;
 
 /** What decides an artifact's format, as a packer knows it before writing one. */
 /** What of one Worker decides an artifact's format. */
@@ -714,6 +753,8 @@ export interface ArtifactFormatFacts {
   workers?: ReadonlyArray<{ worker?: WorkerFormatFacts | undefined }> | undefined;
   d1Schema?: Record<string, readonly unknown[]> | undefined;
   d1PostDeploy?: Record<string, readonly unknown[]> | undefined;
+  /** A D1 baseline needs format 5. */
+  d1Baseline?: Record<string, readonly unknown[]> | undefined;
   /**
    * The catalog manifest: a Worker it keeps off workers.dev, or a D1 seed,
    * needs format 4.
@@ -733,6 +774,9 @@ export interface ArtifactFormatFacts {
  * install it correctly reads it and every older one refuses it rather than
  * install it without what it does not know:
  *
+ * - 5: it carries a D1 baseline (`d1Baseline`), which a manager that reads
+ *   only formats 1 to 4 would drop, running the migrations on an empty
+ *   database instead, where they fail or leave the app without its tables;
  * - 4: its catalog manifest keeps a Worker off workers.dev
  *   (`install.workers[].workersDev: false`), which a manager that reads only
  *   formats 1 to 3 would not know and would put on its workers.dev URL,
@@ -758,6 +802,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
     w !== undefined &&
     ((w.exports !== undefined && Object.keys(w.exports).length > 0) ||
       w.cacheOptions !== undefined);
+  if (has(facts.d1Baseline)) return 5;
   if (facts.catalog?.install?.workers?.some((w) => w.workersDev === false) === true) return 4;
   const d1 = facts.catalog?.resources?.d1 ?? {};
   if (Object.values(d1).some((layout) => layout.seed !== undefined)) return 4;
@@ -773,7 +818,7 @@ export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
 function formatProblem(manifest: ArtifactFormatFacts & { format: number }): string | null {
   const needed = artifactFormatFor(manifest);
   if (needed <= manifest.format) return null;
-  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements); a manager that reads only format ${manifest.format} would install it without them`;
+  return `the artifact needs format ${needed} for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline); a manager that reads only format ${manifest.format} would install it without them`;
 }
 
 /**
@@ -868,12 +913,12 @@ export const artifactManifestV2Schema = z
  * An artifact that carries what managers reading formats 1 and 2 would skip
  * (see {@link artifactFormatFor}): one Worker, or several with `workers` as
  * in format 2. Those managers refuse it, since their schema knows no format 3.
- * Format 4 has the same shape; managers that read only formats 1 to 3 refuse
- * it in the same way.
+ * Formats 4 and 5 have the same shape; managers that read only the formats
+ * before them refuse them in the same way.
  */
 export const artifactManifestV3Schema = z
   .object({
-    format: z.literal([3, 4]),
+    format: z.literal([3, 4, 5]),
     ...artifactManifestFields,
     workers: z.array(artifactEntryWorkerSchema).min(1).optional(),
   })
@@ -899,8 +944,9 @@ export const artifactManifestV3Schema = z
 
 /**
  * The full artifact manifest, `manifest.json`: format 1 (one Worker), 2
- * (several), 3 (either, with D1 files older managers do not know), or 4 (as
- * 3, with a Worker kept off workers.dev or D1 seed statements).
+ * (several), 3 (either, with D1 files older managers do not know), 4 (as
+ * 3, with a Worker kept off workers.dev or D1 seed statements), or 5 (as 4,
+ * with a D1 baseline).
  */
 export const artifactManifestSchema = z.discriminatedUnion("format", [
   artifactManifestV1Schema,

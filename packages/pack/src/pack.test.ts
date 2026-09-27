@@ -662,6 +662,48 @@ describe("pack with resources.d1", () => {
     }
   }, 120_000);
 
+  it("records a baseline beside the migrations and writes format 5", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-d1-baseline-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    const BASELINE = "CREATE TABLE links (id TEXT);\nCREATE TABLE clicks (id TEXT);\n";
+    try {
+      const checkout = d1LayoutCheckout(parent, SCHEMA);
+      writeFileSync(path.join(checkout.dir, "db-schema.sql"), BASELINE);
+      const catalog = JSON.parse(readFileSync(checkout.manifest, "utf8")) as {
+        resources: { d1: { DB: Record<string, unknown> } };
+      };
+      catalog.resources.d1.DB = {
+        migrations: "prisma/migrations/*/migration.sql",
+        baseline: "db-schema.sql",
+      };
+      writeFileSync(checkout.manifest, JSON.stringify(catalog));
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      expect(res.manifest.d1Baseline?.DB?.map((f) => [f.name, f.path])).toEqual([
+        ["db-schema.sql", "d1-baseline/DB/db-schema.sql"],
+      ]);
+      expect(res.manifest.d1Migrations.DB).toHaveLength(2);
+      expect(res.manifest.d1Schema).toBeUndefined();
+      expect(res.d1BaselineCount).toBe(1);
+      // Managers that know only formats 1 to 4 must refuse it, not run the migrations alone.
+      expect(res.manifest.format).toBe(5);
+      expect(logs.at(-1)).toMatch(/2 migrations, 1 baselines \(run once at install\)/);
+      const entry = res.manifest.d1Baseline?.DB?.[0];
+      expect(readRange(res.zipPath, entry?.offset ?? 0, entry?.size ?? 0).toString()).toBe(
+        BASELINE,
+      );
+      await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true });
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it("refuses an unguarded schema file before building or writing anything", async () => {
     const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-d1-refused-"));
     const outDir = path.join(parent, "out");

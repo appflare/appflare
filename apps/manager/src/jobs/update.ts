@@ -52,6 +52,7 @@ import {
 import { healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
+  applyD1BaselinePhase,
   applyD1MigrationsPhase,
   applyD1PostDeployPhase,
   applyD1SchemaPhase,
@@ -125,7 +126,10 @@ import { takeSnapshotPhase } from "./update/snapshot";
  *    no answer, or a JSON `version` other than the target fails the job
  *    before anything serves the new version.
  * 7. Apply new D1 migration files, before promotion (as wrangler does), then
- *    each database's schema files (run on every update, never recorded).
+ *    each database's schema files (run on every update, never recorded). A
+ *    D1 baseline runs only on an empty database (one created in step 3, now
+ *    or by an earlier attempt), as a new install's would; a database an
+ *    earlier version set up never gets it.
  * 8. Promote the version to 100% of traffic, then set its queue consumers
  *    and cron triggers.
  * 9. Health check on the app's address (its workers.dev URL, or its first custom
@@ -777,6 +781,10 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
      */
     async function migrateDatabases(): Promise<void> {
       for (const target of databases) {
+        // A baseline runs only on an empty database: one this update (or an
+        // earlier attempt of it) created. One an earlier version set up has
+        // tables or recorded migrations, and only takes the new migrations.
+        await applyD1BaselinePhase(steps, source.zipUrl, target, source.host);
         await applyD1MigrationsPhase(
           steps,
           source.zipUrl,

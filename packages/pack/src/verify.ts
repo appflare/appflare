@@ -7,6 +7,7 @@ import {
   appWorkers,
   artifactD1Files,
   artifactManifestSchema,
+  baselineFileProblems,
   catalogVarProblems,
   combinedWorkerFacts,
   type D1MigrationFile,
@@ -245,6 +246,7 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   }
 
   const schemaFiles = new Set(Object.values(manifest.d1Schema ?? {}).flat());
+  const baselineFiles = new Set(Object.values(manifest.d1Baseline ?? {}).flat());
   const entries: Addressable[] = [
     ...workers.flatMap((w) => [...w.worker.modules, ...w.assets.files]),
     ...artifactD1Files(manifest),
@@ -272,6 +274,14 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
         if (problems.length > 0) {
           throw new Error(
             `the D1 schema file ${entry.path} cannot run on every install and update: ${problems.join("; ")}`,
+          );
+        }
+      }
+      if (baselineFiles.has(entry as D1MigrationFile)) {
+        const problems = baselineFileProblems(buf.toString("utf8"));
+        if (problems.length > 0) {
+          throw new Error(
+            `the D1 baseline ${entry.path} cannot run at install: ${problems.join("; ")}`,
           );
         }
       }

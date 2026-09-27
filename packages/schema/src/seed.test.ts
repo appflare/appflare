@@ -341,6 +341,20 @@ describe("seedStatementProblems", () => {
     ).toEqual([]);
   });
 
+  it("refuses an internal table in single quotes and an unclosed comment or string", () => {
+    expect(
+      seedStatementProblems("INSERT OR IGNORE INTO 'd1_migrations' (name) VALUES (?)", 1),
+    ).toEqual([
+      "it names d1_migrations; a seed may not touch d1_migrations or the sqlite_ and _cf_ tables",
+    ]);
+    expect(seedStatementProblems("INSERT OR IGNORE INTO t (a) VALUES (?) /* note", 1)).toEqual([
+      "it ends inside a /* comment that is never closed",
+    ]);
+    expect(seedStatementProblems("INSERT OR IGNORE INTO t (a, b) VALUES (?, 'x", 1)).toContain(
+      "it ends inside a string that is never closed",
+    );
+  });
+
   it("does not count a ? inside a string or a quoted name", () => {
     expect(
       seedStatementProblems(`INSERT OR IGNORE INTO "t?" (a, b) VALUES ('what?', ?) -- ?`, 1),

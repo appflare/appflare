@@ -10,6 +10,7 @@ import { StepLog } from "../step-log";
 import { failureError, settleUnit } from "./result";
 import {
   createJobUnits,
+  type D1BaselineInput,
   type D1MigrationsInput,
   type D1SchemaInput,
   type WorkerUploadInput,
@@ -301,6 +302,170 @@ describe("applyD1Migrations", () => {
     expect(stepError.message).toBe(
       `0024_table24.sql: Cloudflare API request failed: POST /accounts/${ACC}/d1/database/d1-1/query -> 400: [7500] near "BROKEN": syntax error`,
     );
+  });
+});
+
+describe("applyD1Migrations and names upstream no longer ships", () => {
+  it("logs recorded names the version does not ship and applies only the new files", async () => {
+    const d = await d1World(3);
+    d.account.state.applied["d1-1"] = ["0001_table1.sql", "0002_renamed.sql"];
+    const result = await d.units.applyD1Migrations({
+      ...d.input,
+      shipped: d.names,
+    });
+    expect(result).toMatchObject({ ok: true, value: { applied: 2, remaining: 0 } });
+    expect(result.log.lines.map((l) => l.message)).toContain(
+      "d1_migrations of cut-db records 1 migration(s) this version does not ship (0002_renamed.sql); they stay recorded and nothing runs for them.",
+    );
+    expect(d.account.state.applied["d1-1"]).toEqual([
+      "0001_table1.sql",
+      "0002_renamed.sql",
+      "0002_table2.sql",
+      "0003_table3.sql",
+    ]);
+  });
+});
+
+const BASELINE_SQL = "CREATE TABLE links (id TEXT, slug TEXT);\nCREATE TABLE clicks (id TEXT);";
+
+/** A new database, a baseline and three migrations served through a release redirect. */
+async function baselineWorld(content: string = BASELINE_SQL) {
+  const fixture = await buildArtifactFixture({
+    bindings: [{ type: "d1", name: "DB" }],
+    d1: {
+      DB: [
+        { name: "0001_add_slug.sql", content: "ALTER TABLE links ADD COLUMN slug TEXT;" },
+        { name: "0002_clicks.sql", content: "CREATE TABLE clicks (id TEXT);" },
+        { name: "0003_it's.sql", content: "SELECT 1;" },
+      ],
+    },
+    d1Baseline: { DB: { name: "db/schema.sql", content } },
+  });
+  const account = fakeAccount(fixture, { d1: [{ uuid: "d1-1", name: "cut-db" }] });
+  const host = redirectingArtifactHost(fixture);
+  let failBaseline = 0;
+  const fetch = async (input: string, init?: RequestInit) => {
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { sql?: string }) : {};
+    if (failBaseline > 0 && body.sql?.startsWith("CREATE TABLE links")) {
+      failBaseline -= 1;
+      return Response.json(
+        { success: false, errors: [{ code: 7500, message: "table links already exists" }] },
+        { status: 400 },
+      );
+    }
+    return host.serve(input, init) ?? account.fetch(input, init);
+  };
+  const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch });
+  const file = fixture.manifest.d1Baseline?.DB?.[0];
+  if (file === undefined) throw new Error("the fixture has no baseline");
+  const input: D1BaselineInput = {
+    accountId: ACC,
+    artifact: { zipUrl: ZIP_URL, host: { kind: "catalog" } },
+    databaseId: "d1-1",
+    databaseName: "cut-db",
+    file,
+    migrations: (fixture.manifest.d1Migrations.DB ?? []).map((f) => f.name),
+  };
+  return {
+    fixture,
+    account,
+    host,
+    units,
+    input,
+    failNext: () => {
+      failBaseline = 1;
+    },
+  };
+}
+
+describe("applyD1Baseline", () => {
+  it("runs the baseline and records every migration in one query, without running them", async () => {
+    const d = await baselineWorld();
+    const result = await d.units.applyD1Baseline(d.input);
+    expect(result).toMatchObject({
+      ok: true,
+      value: { ran: true, recorded: 3 },
+      // The table, the count, the redirect and the range, the baseline query.
+      subrequests: 5,
+    });
+    const [create, count, baseline, ...rest] = d.account.state.queries;
+    expect(create).toMatch(/^CREATE TABLE IF NOT EXISTS "d1_migrations"/);
+    expect(count).toMatch(/^SELECT \(SELECT count\(\*\) FROM sqlite_master/);
+    expect(baseline).toBe(
+      `${BASELINE_SQL}\nINSERT OR IGNORE INTO "d1_migrations" (name)\nvalues ('0001_add_slug.sql'),\n('0002_clicks.sql'),\n('0003_it''s.sql');`,
+    );
+    expect(rest).toEqual([]);
+    expect(d.account.state.applied["d1-1"]).toEqual([
+      "0001_add_slug.sql",
+      "0002_clicks.sql",
+      "0003_it's.sql",
+    ]);
+    // No migration's SQL ran.
+    expect(d.account.state.queries.some((q) => q.includes("ALTER TABLE"))).toBe(false);
+    expect(result.log.lines.map((l) => l.message)).toContain(
+      "Ran the baseline db/schema.sql on cut-db and recorded 3 migration(s) as applied without running them.",
+    );
+  });
+
+  it("leaves the migrations unit nothing to apply afterwards", async () => {
+    const d = await baselineWorld();
+    await d.units.applyD1Baseline(d.input);
+    const files = d.fixture.manifest.d1Migrations.DB ?? [];
+    const next = await d.units.applyD1Migrations({ ...d.input, files });
+    expect(next).toMatchObject({ ok: true, value: { pending: 0, applied: 0 } });
+  });
+
+  it("does not run the baseline again on a retry, and records nothing", async () => {
+    const d = await baselineWorld();
+    await d.units.applyD1Baseline(d.input);
+    const before = d.account.state.queries.length;
+    const again = await d.units.applyD1Baseline(d.input);
+    // The table and the state, nothing read, nothing written.
+    expect(again).toMatchObject({ ok: true, value: { ran: false, recorded: 0 }, subrequests: 2 });
+    expect(d.account.state.queries.slice(before).map((q) => q.split("\n")[0])).toEqual([
+      'CREATE TABLE IF NOT EXISTS "d1_migrations"(',
+      "SELECT (SELECT count(*) FROM sqlite_master",
+    ]);
+    expect(d.account.state.applied["d1-1"]).toHaveLength(3);
+  });
+
+  it("leaves a database with recorded migrations and no tables to the migrations", async () => {
+    const d = await baselineWorld();
+    d.account.state.applied["d1-1"] = ["0001_add_slug.sql"];
+    const result = await d.units.applyD1Baseline(d.input);
+    expect(result).toMatchObject({ ok: true, value: { ran: false, recorded: 0 } });
+    expect(d.account.state.queries.some((q) => q.startsWith("CREATE TABLE links"))).toBe(false);
+    expect(d.account.state.applied["d1-1"]).toEqual(["0001_add_slug.sql"]);
+    expect(result.log.lines.map((l) => l.message)).toContain(
+      "cut-db already has 0 table(s) and 1 recorded migration(s), so the baseline db/schema.sql does not run; the migrations bring it up to date.",
+    );
+  });
+
+  it("refuses a baseline that ends inside an unclosed comment, before sending it", async () => {
+    const d = await baselineWorld(`${BASELINE_SQL}\n/* note`);
+    const result = await d.units.applyD1Baseline(d.input);
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "final",
+        message:
+          "the baseline db/schema.sql cannot run: it ends inside a /* comment that is never closed",
+      },
+    });
+    expect(d.account.state.queries.some((q) => q.startsWith("CREATE TABLE links"))).toBe(false);
+    expect(d.account.state.applied["d1-1"] ?? []).toEqual([]);
+  });
+
+  it("fails with Cloudflare's error, naming the baseline, and records nothing", async () => {
+    const d = await baselineWorld();
+    d.failNext();
+    const result = await d.units.applyD1Baseline(d.input);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(toStepError(failureError(result.failure)).message).toBe(
+      `db/schema.sql: Cloudflare API request failed: POST /accounts/${ACC}/d1/database/d1-1/query -> 400: [7500] table links already exists`,
+    );
+    expect(d.account.state.applied["d1-1"] ?? []).toEqual([]);
   });
 });
 

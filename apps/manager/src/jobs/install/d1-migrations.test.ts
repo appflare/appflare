@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildBaselineQuery,
   buildMigrationQuery,
   CREATE_MIGRATIONS_TABLE_SQL,
   D1_MIGRATIONS_STEP_BYTES,
@@ -20,6 +21,30 @@ function files(count: number, size: number, gap = 60) {
     offset: 100 + i * (size + gap),
   }));
 }
+
+describe("buildBaselineQuery", () => {
+  const record = `INSERT OR IGNORE INTO "d1_migrations" (name)\nvalues ('0001_a.sql'),\n('0002_it''s.sql');`;
+
+  it("follows the baseline with the rows that record the migrations", () => {
+    expect(buildBaselineQuery("CREATE TABLE a (x);", ["0001_a.sql", "0002_it's.sql"])).toBe(
+      `CREATE TABLE a (x);\n${record}`,
+    );
+  });
+
+  it("closes a last statement without its ; and adds none after a closed one", () => {
+    // Both shapes verified against D1: an empty statement is refused.
+    expect(buildBaselineQuery("CREATE TABLE a (x)\n-- end", ["0001_a.sql", "0002_it's.sql"])).toBe(
+      `CREATE TABLE a (x)\n-- end\n;\n${record}`,
+    );
+    expect(buildBaselineQuery("CREATE TABLE a (x);\n-- end", ["0001_a.sql", "0002_it's.sql"])).toBe(
+      `CREATE TABLE a (x);\n-- end\n${record}`,
+    );
+  });
+
+  it("is the baseline alone when there is nothing to record", () => {
+    expect(buildBaselineQuery("CREATE TABLE a (x)", [])).toBe("CREATE TABLE a (x)");
+  });
+});
 
 describe("wrangler-style D1 migrations", () => {
   it("creates d1_migrations with wrangler's exact statement", () => {

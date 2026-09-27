@@ -1,0 +1,5 @@
+---
+"@appflare/manager": minor
+---
+
+Apps whose database schema lives in one full schema file, with migrations only for older databases, install without failing on those migrations. The install job runs a D1 binding's baseline first, through a new `applyD1Baseline` job unit, in one D1 query with the rows that record every migration and post-deploy migration of the version as applied, so none of them runs; D1 applies such a query whole or not at all. The unit runs the baseline only on an empty database (no tables of the app's, nothing in `d1_migrations`) and checks the file again first, so a retried step or job does nothing the second time, updates never run it on a database an earlier version set up and apply only the migrations added since, and a database an update creates for a new binding (in this attempt or an earlier one) gets its baseline as a new install's would. When `d1_migrations` records names the new version no longer ships, the job logs them and continues. Artifacts of format 5 are read, and a sandbox Worker that predates baselines is asked to update before it builds an entry that has one.

@@ -27,6 +27,8 @@ export interface FakeAccount {
   d1: Array<{ uuid: string; name: string }>;
   /** Applied D1 migration names per database id. */
   applied: Record<string, string[]>;
+  /** Tables the queries created per database id, `d1_migrations` aside. */
+  tables: Record<string, number>;
   queries: string[];
   /** The `params` sent with each of `queries`, in order; null for a query sent without. */
   queryParams: Array<unknown[] | null>;
@@ -103,6 +105,7 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     kv: [],
     d1: [],
     applied: {},
+    tables: {},
     queries: [],
     queryParams: [],
     bookmarks: {},
@@ -298,6 +301,12 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
       }
       case "GET /d1/database":
         return ok(state.d1, { result_info: { page: 1, total_pages: 1 } });
+      case "POST /d1/database": {
+        const { name } = (await request.json()) as { name: string };
+        const db = { uuid: `d1-new-${state.d1.length + 1}`, name };
+        state.d1.push(db);
+        return ok(db);
+      }
       case "GET /queues":
         return ok(state.queues);
       case "POST /queues": {
@@ -411,10 +420,27 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
         return fail(failing.status, 'near "BROKEN": syntax error');
       state.queries.push(sql);
       state.queryParams.push(params ?? null);
+      if (sql.startsWith("SELECT (SELECT count(*) FROM sqlite_master")) {
+        const counts = { tables: state.tables[m[1]] ?? 0, recorded: applied.length };
+        return ok([{ results: [counts], success: true, meta: {} }]);
+      }
       if (sql.startsWith("SELECT")) {
         return ok([
           { results: applied.map((name, i) => ({ id: i + 1, name })), success: true, meta: {} },
         ]);
+      }
+      const created = (
+        sql.match(/CREATE (?:VIRTUAL )?TABLE (?!IF NOT EXISTS "d1_migrations")/g) ?? []
+      ).length;
+      state.tables[m[1]] = (state.tables[m[1]] ?? 0) + created;
+      // A baseline's records: several rows, and names already there stay once.
+      const recordAt = sql.indexOf('INSERT OR IGNORE INTO "d1_migrations"');
+      if (recordAt !== -1) {
+        for (const row of sql.slice(recordAt).matchAll(/\('((?:[^']|'')*)'\)/g)) {
+          const name = (row[1] ?? "").replace(/''/g, "'");
+          if (!applied.includes(name)) applied.push(name);
+        }
+        return ok([{ results: [], success: true, meta: {} }]);
       }
       const inserted = /values \('([^']+)'\);$/.exec(sql);
       if (inserted?.[1] !== undefined) applied.push(inserted[1]);

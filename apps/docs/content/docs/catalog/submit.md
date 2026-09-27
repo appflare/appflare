@@ -276,6 +276,27 @@ Points that need care:
   adds a column to a table that already exists, so when upstream changes a table in
   its schema file, installs made before the change keep the old table. Changing an
   existing table needs a migration.
+- **A full schema file with migrations for older databases.** Some apps keep their
+  whole current schema in one file (plain `CREATE TABLE`, default rows) and their
+  migrations only bring databases made by older versions up to date, so the
+  migrations fail on an empty database. Name that file as the binding's `baseline`:
+  `"resources": { "d1": { "DB": { "baseline": "db/schema.sql" } } }`. On install,
+  the baseline runs once on the new database, before the migrations, in one D1 query
+  that also records every migration and post-deploy migration of that version in
+  `d1_migrations` as applied, so none of them runs there. The baseline runs only on an
+  empty database (no tables of the app's, nothing in `d1_migrations`), so updates never
+  run it on a database the install already has; they apply only the migrations added
+  after the installed version, as for any app. A database an update creates for a new
+  binding gets its baseline, since it starts empty. The baseline need not be
+  safe to run twice, but it may not `ATTACH`, `DETACH` or `DROP DATABASE`, set a
+  PRAGMA (`PRAGMA defer_foreign_keys` is allowed), open or end a transaction, or name
+  `d1_migrations` or a `sqlite_` or `_cf_` table (even in quotes), or end inside an
+  unclosed comment or string, and it must create at least one table that is not
+  temporary. A binding has a baseline or `schema` files, not both. This works only while
+  upstream keeps the baseline in step with its migrations: an install gets the
+  baseline as it is at the pinned commit and never the migrations of that commit, so
+  a column a migration adds must also be in the baseline. Check that when you submit
+  the entry and when you move its pin.
 - **`secrets` and `vars`.** List every secret and setting the app reads from `env`
   that is not in its wrangler config. Use `"generate": true` for passwords and
   signing keys the user does not need to choose. List a var from the wrangler config

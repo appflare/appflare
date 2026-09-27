@@ -387,6 +387,7 @@ export function entryWorkerProblems(manifest: {
   d1Migrations: D1Migrations;
   d1Schema?: D1Migrations | undefined;
   d1PostDeploy?: D1Migrations | undefined;
+  d1Baseline?: D1Migrations | undefined;
   catalog: Pick<CatalogManifest, "install">;
 }): string[] {
   const problems: string[] = [];
@@ -467,6 +468,7 @@ export function entryWorkerProblems(manifest: {
     ["D1 migrations", manifest.d1Migrations],
     ["D1 schema files", manifest.d1Schema],
     ["Post-deploy D1 migrations", manifest.d1PostDeploy],
+    ["D1 baselines", manifest.d1Baseline],
   ];
   for (const [what, byBinding] of d1Lists) {
     for (const binding of Object.keys(byBinding ?? {})) {
