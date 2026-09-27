@@ -74,6 +74,10 @@ jobs:
       # scripts/ is not a workspace package, so `pnpm check` does not cover it.
       # The test packs the manager built above and checks the artifact.
       - name: Check the root release scripts
+        # Packing the sandbox Worker artifact in-process holds the whole zip and its
+        # module index in memory, which no longer fits Node's default heap.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           pnpm exec tsc -p scripts --noEmit
           pnpm exec biome check scripts
