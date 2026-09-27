@@ -146,7 +146,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: "Appflare update available",
         lines: [`Appflare ${facts.to} is available. This manager runs ${facts.from}.`],
-        url: managerLink(managerUrl, settingsLink("appflareUpdates", "appflare")),
+        url: managerLink(managerUrl, settingsLink("updates", "appflare")),
       };
     case "domain_active":
       return {

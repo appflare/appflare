@@ -25,7 +25,7 @@ Paid confirmation, so set it only when the account really is on Workers Paid.
 
 Appflare has no email provider, so there are no invitations. Instead:
 
-1. Open **Settings > Users and access** and select **Add user**.
+1. Open **Settings > Users and sign-in** and select **Add user**.
 2. Enter an email and a name, and pick **Member (read only)** or **Admin**.
 3. Select **Create user**. Appflare shows a temporary password once.
 4. Copy it and give it to the person. Appflare stores only a hash; closing the dialog
@@ -41,7 +41,7 @@ password** in any other user's row menu, and admins in a member's.
 Only the owner can do this. Admins see the list of users without these actions, and
 members do not see the list.
 
-1. Open **Settings > Users and access**.
+1. Open **Settings > Users and sign-in**.
 2. Open the menu at the end of the user's row.
 3. Pick **Make admin** or **Make member** and confirm. The new role applies on the
    person's next click.
@@ -61,7 +61,7 @@ Access**.
 
 Ownership can go only to an admin. Make the person an admin first if they are a member.
 
-1. Open **Settings > Users and access**.
+1. Open **Settings > Users and sign-in**.
 2. Open the menu at the end of the admin's row and pick **Transfer ownership**.
 3. Type their email and select **Transfer ownership**.
 
@@ -73,7 +73,7 @@ Every user, members included, can add passkeys to their own account. A passkey s
 you in with your fingerprint, face, screen lock, or a security key instead of your
 password. Your password keeps working.
 
-1. Open **Settings > Users and access** and find **Your passkeys**.
+1. Open **Settings > Users and sign-in** and find **Your passkeys**.
 2. Select **Add passkey**. Name it after the device or password manager that keeps
    it, for example `Work laptop`, so you can tell your passkeys apart.
 3. Select **Create passkey** and follow your browser's prompt.

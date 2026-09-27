@@ -18,7 +18,7 @@ Nobody reviewed its code for you, and Appflare never updates it on its own.
 
 ## What you need
 
-- **Sandbox builds** turned on in **Settings > Account and capabilities**, which also
+- **Sandbox builds** turned on in **Settings > Building apps**, which also
   means **Workers Paid** and R2 on the account. See [Sandbox builds](/guides/builds/).
   If the card offers **Update sandbox**, update first: older sandbox Workers cannot
   build from a repository.
@@ -122,7 +122,7 @@ apply to these installs.
 ## Private repositories
 
 A private repository needs a GitHub access token that can read it. Tokens are listed and
-managed in **Settings > Account and capabilities > GitHub access**, which only admins
+managed in **Settings > Building apps > GitHub access**, which only admins
 see; members get nothing about them. With sandbox builds on, an admin adds one:
 
 1. Choose **Add token**, then **Create it on GitHub**. It opens GitHub's page for a new

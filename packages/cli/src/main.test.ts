@@ -89,9 +89,9 @@ describe("main", () => {
         `\`${command}\` is no longer part of the installer; ${REMOVED_COMMANDS[command]}.`,
       );
     }
-    expect(REMOVED_COMMANDS.status).toContain("Settings > Appflare updates");
+    expect(REMOVED_COMMANDS.status).toContain("Settings > Updates");
     expect(REMOVED_COMMANDS.uninstall).toContain("Remove Appflare");
-    expect(REMOVED_COMMANDS.sandbox).toContain("Sandbox builds");
+    expect(REMOVED_COMMANDS.sandbox).toContain("Settings > Building apps");
     expect(REMOVED_COMMANDS.rollback).toContain("Deployments page");
   });
 

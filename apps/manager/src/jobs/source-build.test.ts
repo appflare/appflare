@@ -493,7 +493,7 @@ describe("building a repository for review", () => {
         costConfirmed: true,
       }),
     ).rejects.toThrow(
-      /Sandbox builds are off, and Appflare cannot turn them on: R2 is not enabled on this account.*\/settings\/account#checklist-sandbox/,
+      /Sandbox builds are off, and Appflare cannot turn them on: R2 is not enabled on this account.*\/settings\/account#capability-sandbox/,
     );
     expect(await env.DB.prepare("SELECT id FROM jobs").all()).toMatchObject({ results: [] });
   });

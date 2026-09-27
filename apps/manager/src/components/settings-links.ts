@@ -9,21 +9,28 @@ import { messageLink } from "./message-links";
  * Client-safe and server-safe (job errors are built from it too).
  */
 export const SETTINGS_SECTIONS = {
-  general: {
-    path: "/settings",
-    sections: {
-      "automatic-updates": "Automatic updates",
-      "danger-zone": "Danger zone",
-    },
-  },
   account: {
     path: "/settings/account",
     sections: {
       connection: "Cloudflare connection",
       checklist: "Onboarding checklist",
       capabilities: "Account capabilities",
-      sandbox: "Sandbox builds",
+      "danger-zone": "Danger zone",
+    },
+  },
+  building: {
+    path: "/settings/building",
+    sections: {
+      sandbox: "Build in your account",
       "github-access": "GitHub access",
+    },
+  },
+  updates: {
+    path: "/settings/updates",
+    sections: {
+      apps: "Automatic app updates",
+      appflare: "Appflare version",
+      versions: "Recent versions",
     },
   },
   users: {
@@ -34,10 +41,6 @@ export const SETTINGS_SECTIONS = {
       passkeys: "Your passkeys",
       access: "Cloudflare Access",
     },
-  },
-  usageData: {
-    path: "/settings/usage-data",
-    sections: { "usage-data": "Usage data" },
   },
   domains: {
     path: "/settings/domains",
@@ -55,12 +58,9 @@ export const SETTINGS_SECTIONS = {
     path: "/settings/removed-apps",
     sections: { "removed-apps": "Removed apps" },
   },
-  appflareUpdates: {
-    path: "/settings/appflare-updates",
-    sections: {
-      appflare: "Appflare",
-      versions: "Versions",
-    },
+  usageData: {
+    path: "/settings/usage-data",
+    sections: { "usage-data": "Usage data" },
   },
 } as const satisfies Record<string, { path: string; sections: Record<string, string> }>;
 
@@ -71,19 +71,19 @@ export type SettingsSectionId<P extends SettingsPageKey> =
   keyof (typeof SETTINGS_SECTIONS)[P]["sections"] & string;
 
 /**
- * Anchors below a section: the onboarding checklist's rows on the account
- * page (`checklist-r2`), which the checklist itself gives those ids.
+ * Anchors below a section: one row per capability on the account page
+ * (`capability-r2`), which the account checklist gives its rows.
  */
 type SettingsRowAnchor<P extends SettingsPageKey> = P extends "account"
-  ? `checklist-${ChecklistRowId}`
+  ? `capability-${ChecklistRowId}`
   : never;
 
 export type SettingsAnchor<P extends SettingsPageKey> = SettingsSectionId<P> | SettingsRowAnchor<P>;
 
 /**
  * The path of a settings page, or of one section (or row) on it:
- * `settingsLink("account", "github-access")` is
- * `/settings/account#github-access`.
+ * `settingsLink("building", "github-access")` is
+ * `/settings/building#github-access`.
  */
 export function settingsLink<P extends SettingsPageKey>(
   page: P,
@@ -118,7 +118,7 @@ export function settingsSection<P extends SettingsPageKey>(
 /**
  * A link to a settings section inside a message string (see
  * `message-links.ts`), labelled "<heading> settings" unless `label` says
- * otherwise: "Enable sandbox builds in [Sandbox builds settings](…) first."
+ * otherwise: "Add a token in [GitHub access settings](…) first."
  */
 export function settingsPlace<P extends SettingsPageKey>(
   page: P,

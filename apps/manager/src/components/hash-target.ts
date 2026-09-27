@@ -1,5 +1,5 @@
 /**
- * Arriving at a link to a part of a page (`/settings/account#github-access`):
+ * Arriving at a link to a part of a page (`/settings/building#github-access`):
  * once the element with that id is on the page, scroll it into view (its
  * `scroll-mt-*` keeps it clear of the top) and ring it for a moment, so the
  * eye lands on the right section. Pure over a small window interface, so the

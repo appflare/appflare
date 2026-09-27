@@ -13,7 +13,7 @@ import { SANDBOX_BINDING, type SandboxBuildsBinding, sandboxInfo } from "./bindi
 import { ENABLE_SANDBOX_PLACE } from "./connect-copy";
 
 /**
- * Settings, Sandbox builds: whether this manager can build sandbox tier apps,
+ * Settings, Building apps: whether this manager can build sandbox tier apps,
  * and connecting it to the sandbox Worker (or disconnecting it).
  *
  * Connected means the running Worker has its `SANDBOX` service binding; that
@@ -219,7 +219,7 @@ export async function changeSandboxBinding(
   const latest = [...versions].sort((a, b) => (b.number ?? 0) - (a.number ?? 0))[0];
   if (latest === undefined || (latest.id !== serving && !isConnectAttempt(latest, serving))) {
     throw fail(
-      `The newest uploaded version of Appflare's Worker (${latest?.id ?? "unknown"}) is not the one serving (${serving}), and ${connect ? "connecting" : "disconnecting"} would deploy it too. If it is a version you want, deploy it from the Worker's Deployments page in the Cloudflare dashboard; otherwise update Appflare in ${settingsPlace("appflareUpdates", "appflare", "the Appflare updates settings")}, which uploads and deploys a new version. Then try again.`,
+      `The newest uploaded version of Appflare's Worker (${latest?.id ?? "unknown"}) is not the one serving (${serving}), and ${connect ? "connecting" : "disconnecting"} would deploy it too. If it is a version you want, deploy it from the Worker's Deployments page in the Cloudflare dashboard; otherwise update Appflare in ${settingsPlace("updates", "appflare", "the Updates settings")}, which uploads and deploys a new version. Then try again.`,
     );
   }
 

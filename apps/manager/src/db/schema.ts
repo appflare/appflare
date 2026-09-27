@@ -519,7 +519,7 @@ export const source_builds = sqliteTable(
 );
 
 /**
- * GitHub access tokens an admin added (Settings, Account): fine-grained,
+ * GitHub access tokens an admin added (Settings, Building apps): fine-grained,
  * read-only tokens for building private repositories. Only the record is
  * here; each token's value is a secret on the sandbox Worker
  * (`githubTokenSecretName(id)`), never in this database. Disabling sandbox

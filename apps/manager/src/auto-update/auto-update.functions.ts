@@ -14,7 +14,7 @@ import {
   writeInstallAutoUpdate,
 } from "./auto-update.server";
 
-/** Settings, "Automatic updates", and an install's own choice on its page. */
+/** Settings, Updates, "Automatic app updates", and an install's own choice on its page. */
 
 /** Any signed-in user: the account settings (members see them read-only). */
 export const getAutoUpdateSettings = createServerFn({ method: "GET" }).handler(

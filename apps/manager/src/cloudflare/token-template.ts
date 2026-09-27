@@ -80,7 +80,7 @@ export const EMAIL_ROUTING_FEATURE = "Email Routing";
 export const PLAN_DETECTION_FEATURE = "Workers plan detection";
 
 /**
- * Settings > Account and capabilities > Sandbox builds: Appflare deploys,
+ * Settings > Building apps > Build in your account: Appflare deploys,
  * updates and removes the sandbox Worker's container applications itself
  * (Workers Paid only). Kept on the token after enabling, because every
  * sandbox update rolls the applications to a new image and disabling

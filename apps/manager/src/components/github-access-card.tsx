@@ -35,7 +35,7 @@ import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
- * The account settings' GitHub access section: fine-grained, read-only
+ * The Building apps settings' GitHub access section: fine-grained, read-only
  * GitHub tokens for installing from private repositories (and, while
  * Appflare's own releases are private, reading them). Each token is stored
  * as a secret on the sandbox Worker and never shown again; the list shows
@@ -72,7 +72,7 @@ export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
   const notice = state === null ? null : accessNotice(state);
   return (
     <Section
-      {...settingsSection("account", "github-access")}
+      {...settingsSection("building", "github-access")}
       titleAction={<DocsLink topic="githubAccess" />}
       badge={
         state !== null && (

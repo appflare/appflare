@@ -47,7 +47,7 @@ const EXTERNAL = { target: "_blank", rel: "noopener noreferrer" } as const;
  * The sidebar footer's account menu (Kumo's DropdownMenu, with the avatar
  * trigger from its docs): the signed-in user's initial, with a dot while
  * release notes are unread. Open, their name (or email), email and role;
- * links to Users and access and to their passkeys; Appearance (light, the
+ * links to Users and sign-in and to their passkeys; Appearance (light, the
  * default, dark, or the browser's setting); "What's new" (Appflare's
  * release notes, with the unread count), Documentation, Feedback (a new
  * issue on the repository, prefilled with the version) and "Give us a
@@ -135,7 +135,7 @@ export function AccountMenu({
             // The page changes in place, so the menu closes itself.
             closeOnClick
           >
-            Users and access
+            Users and sign-in
           </DropdownMenu.LinkItem>
           <DropdownMenu.LinkItem
             href={ACCOUNT_LINKS.passkeys}

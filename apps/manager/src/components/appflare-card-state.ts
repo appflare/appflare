@@ -110,7 +110,7 @@ export const UPDATED_CARD_MS = 30_000;
 export interface AppflareRailItem {
   tone: "success" | "update" | "progress" | "warning" | "danger";
   label: string;
-  /** The job's log while one is followed; else Settings, Appflare updates. */
+  /** The job's log while one is followed; else Settings, Updates. */
   href: string;
 }
 

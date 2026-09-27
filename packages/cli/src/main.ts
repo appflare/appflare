@@ -39,9 +39,9 @@ open the login for you. With several accounts, set CLOUDFLARE_ACCOUNT_ID or pick
 one when asked.
 
 Once the manager runs, you manage it from its own Settings:
-  Settings > Appflare updates                 the running version, updates
-  Settings > Account and capabilities         sandbox builds: enable, update, disable
-  Settings > General > Remove Appflare        remove the manager and its data
+  Settings > Updates                          the running version, updates
+  Settings > Building apps                    sandbox builds: enable, update, disable
+  Settings > Your account > Danger zone       remove the manager and its data
 To return to an earlier manager version, roll back on the Worker's Deployments
 page in the Cloudflare dashboard, or run \`npx wrangler rollback --name <name>\`.
 
@@ -60,12 +60,13 @@ export const NO_TELEMETRY_FLAG = "--no-telemetry";
  * "unexpected argument".
  */
 export const REMOVED_COMMANDS: Readonly<Record<string, string>> = {
-  status: "open the manager: Settings > Appflare updates shows the running version and updates",
+  status: "open the manager: Settings > Updates shows the running version and updates",
   rollback:
     "roll back on the manager Worker's Deployments page in the Cloudflare dashboard, or run `npx wrangler rollback --name <name>`",
-  uninstall: "open the manager: Settings > General > Remove Appflare removes it and its data",
+  uninstall:
+    "open the manager: Remove Appflare, in the danger zone of Settings > Your account, removes it and its data",
   sandbox:
-    "open the manager: Settings > Account and capabilities > Sandbox builds enables, updates and disables them",
+    "open the manager: Settings > Building apps enables, updates and disables sandbox builds",
 };
 
 /**

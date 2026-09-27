@@ -50,6 +50,24 @@ describe("Section", () => {
     expect(text(html)).toContain("Body");
   });
 
+  it("stacks the action under the text on phones and puts it at the right from 640 px", () => {
+    const html = renderToStaticMarkup(
+      h(Section, {
+        id: "appflare",
+        title: "Appflare version",
+        description: "The version of Appflare running here.",
+        action: h(Button, { variant: "primary" }, "Update Appflare to 0.5.0"),
+      }),
+    );
+    // A column by default (the text keeps the full width), a row only from `sm`.
+    expect(html).toContain(
+      'class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"',
+    );
+    // The text only grows beside the action in the row; in the column it is full width.
+    expect(html).toContain('class="grid min-w-0 gap-1 sm:flex-1"');
+    expect(html).toMatch(/<div class="sm:shrink-0"><button/);
+  });
+
   it("takes one action at most, by type", () => {
     const one = h(Button, null, "One");
     // @ts-expect-error: a section has one primary action, not a list of them.
@@ -63,14 +81,14 @@ describe("Section", () => {
         {
           id: "github-access",
           title: "GitHub access",
-          error: "Enable sandbox builds in [Sandbox builds settings](/settings/account#sandbox).",
+          error: "Enable sandbox builds in [Sandbox builds settings](/settings/building#sandbox).",
         },
         h(SectionBody, null, "Body"),
       ),
     );
     expect(count(html, CARD)).toBe(1);
     expect(html.indexOf("Enable sandbox")).toBeLessThan(html.indexOf("Body"));
-    expect(html).toContain('href="/settings/account#sandbox"');
+    expect(html).toContain('href="/settings/building#sandbox"');
   });
 
   it("shows the empty state instead of the body", () => {

@@ -10,10 +10,9 @@ import { setAutoUpdateDefaults } from "./auto-update.functions";
 
 /**
  * The automatic update switches: "Automatically update apps" (the default of
- * every app that follows it), a section of the general settings, and
- * "Automatically update Appflare", a row of the Appflare section on the
- * Appflare updates page. Admins change them; members see them. A switch
- * saves on change.
+ * every app that follows it), the first section of the Updates settings,
+ * and "Automatically update Appflare", a row of its Appflare version
+ * section. Admins change them; members see them. A switch saves on change.
  */
 
 /** Saves one switch at once; the switch goes back when the save fails. */
@@ -50,7 +49,7 @@ function MembersNote({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
-/** The general settings' automatic updates section. */
+/** The Updates settings' automatic app updates section. */
 export function AppsAutomaticUpdatesSection({
   settings,
   isAdmin,
@@ -61,7 +60,7 @@ export function AppsAutomaticUpdatesSection({
   const { checked, pending, error, save } = useAutoUpdateSwitch(settings.apps, "apps");
   return (
     <Section
-      {...settingsSection("general", "automatic-updates")}
+      {...settingsSection("updates", "apps")}
       description="Whether apps update on their own when a new version needs nothing from you."
       error={error}
     >
@@ -83,7 +82,7 @@ export function AppsAutomaticUpdatesSection({
   );
 }
 
-/** "Automatically update Appflare", for the Appflare section of the Appflare updates page. */
+/** "Automatically update Appflare", for the Appflare version section of the Updates settings. */
 export function AppflareAutomaticUpdates({
   settings,
   isAdmin,

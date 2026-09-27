@@ -8,7 +8,7 @@ import { releaseSettingsLock, tryAcquireSettingsLock } from "../db/settings-lock
 import { DangerError } from "./errors";
 
 /**
- * Rotating the auth secret (Settings > General, owner only).
+ * Rotating the auth secret (Settings > Your account, danger zone, owner only).
  *
  * `BETTER_AUTH_SECRET` signs every session cookie, and the key that encrypts
  * notification channel credentials is derived from it. A new random value is

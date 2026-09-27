@@ -16,7 +16,7 @@ import {
 } from "./removed-apps.server";
 import { installIdInput } from "./uninstall-input";
 
-/** Settings, Removed apps: list them, delete what they kept, or forget them. */
+/** The Removed apps settings page: list them, delete what they kept, or forget them. */
 
 export interface RemovedAppRow extends RemovedAppView {
   /** The app's name from the catalog; the slug when the catalog no longer lists it. */

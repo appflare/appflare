@@ -83,7 +83,7 @@ function useUpdatedCardTimeout(version: string | null, onDone: () => void): void
 
 /**
  * The footer's Appflare version, next to the account menu: muted, blue on
- * hover, linking to Settings, Appflare updates.
+ * hover, linking to Settings, Updates.
  */
 export function AppflareVersion({ version }: { version: string }) {
   return (
@@ -127,9 +127,9 @@ function RailItem({ item }: { item: AppflareRailItem }) {
  * reloads the page onto it; the reloaded page says it was updated (until
  * dismissed, the next health poll, or 30 seconds), and a failure is shown in
  * the card with a link to the log. The self-update's
- * details and the automatic-update setting stay on Settings, Appflare updates.
+ * details and the automatic-update setting stay on Settings, Updates.
  * In the folded sidebar (`collapsed`) the card is one icon with its message
- * as a tooltip, linking to the job's log or to Settings, Appflare updates;
+ * as a tooltip, linking to the job's log or to Settings, Updates;
  * it keeps following the job, so the page still reloads onto a new version.
  */
 export function AppflareCard({

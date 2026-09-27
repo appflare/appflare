@@ -17,11 +17,11 @@ import { getRemovalReview } from "./danger.functions";
 import type { RemovalReview } from "./removal-plan.server";
 
 /**
- * The general settings' danger zone, the page's last section: rotating the
- * auth secret and removing Appflare from the account. Owner only; other
- * users see the actions disabled. Both confirm in a dialog, then post a
- * plain form, so the browser leaves the app for the static page each action
- * answers with.
+ * The danger zone, the last section of Your account: rotating the auth
+ * secret and removing Appflare from the account. Only the owner sees it
+ * (the endpoints refuse anyone else too). Both confirm in a dialog, then
+ * post a plain form, so the browser leaves the app for the static page each
+ * action answers with.
  */
 
 /**
@@ -45,15 +45,11 @@ function submitForm(path: string, confirm: string): Promise<void> {
   });
 }
 
-export function DangerZone({ isOwner, state }: { isOwner: boolean; state: DangerZoneState }) {
+export function DangerZone({ state }: { state: DangerZoneState }) {
   return (
     <Section
-      {...settingsSection("general", "danger-zone")}
-      description={
-        isOwner
-          ? "Actions that cannot be undone. Each asks you to type a confirmation first."
-          : "Only the owner can use these actions."
-      }
+      {...settingsSection("account", "danger-zone")}
+      description="Actions that cannot be undone. Each asks you to type a confirmation first."
     >
       <SectionRows>
         <SectionRow
@@ -65,23 +61,23 @@ export function DangerZone({ isOwner, state }: { isOwner: boolean; state: Danger
               <Timestamp iso={state.authSecretRotatedAt} fallback="never from here" />.
             </>
           }
-          action={<RotateAuthSecretDialog disabled={!isOwner} />}
+          action={<RotateAuthSecretDialog />}
         />
         <SectionRow
           title="Remove Appflare from this account"
           description="Deletes Appflare and everything it runs on. The apps it installed stay and keep running, unmanaged."
-          action={<RemoveAppflareDialog disabled={!isOwner} />}
+          action={<RemoveAppflareDialog />}
         />
       </SectionRows>
     </Section>
   );
 }
 
-function RotateAuthSecretDialog({ disabled }: { disabled: boolean }) {
+function RotateAuthSecretDialog() {
   return (
     <ConfirmDialog
       trigger={(p) => (
-        <Button {...p} variant="destructive" icon={<KeyIcon />} disabled={disabled}>
+        <Button {...p} variant="destructive" icon={<KeyIcon />}>
           Rotate auth secret
         </Button>
       )}
@@ -114,7 +110,7 @@ type ReviewState =
   | { kind: "error"; message: string }
   | { kind: "ready"; review: RemovalReview };
 
-function RemoveAppflareDialog({ disabled }: { disabled: boolean }) {
+function RemoveAppflareDialog() {
   const [state, setState] = useState<ReviewState>({ kind: "loading" });
 
   function onOpen() {
@@ -136,7 +132,7 @@ function RemoveAppflareDialog({ disabled }: { disabled: boolean }) {
     <ConfirmDialog
       size="lg"
       trigger={(p) => (
-        <Button {...p} variant="destructive" icon={<TrashIcon />} disabled={disabled}>
+        <Button {...p} variant="destructive" icon={<TrashIcon />}>
           Remove Appflare
         </Button>
       )}

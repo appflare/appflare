@@ -9,7 +9,7 @@ import { readAuthSecretRotatedAt } from "./auth-secret.server";
 import { DangerError, OWNER_ONLY } from "./errors";
 import { type RemovalReview, readRemovalReview } from "./removal-plan.server";
 
-/** Settings > General, danger zone. The actions themselves are form posts (routes.server.ts). */
+/** Settings > Your account, danger zone. The actions themselves are form posts (routes.server.ts). */
 
 export interface DangerZoneState {
   /** ISO 8601 time the auth secret was last rotated from Settings, or null. */

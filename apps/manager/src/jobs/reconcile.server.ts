@@ -82,7 +82,7 @@ export function isRestoreJob(row: Pick<ActiveJobRow, "kind" | "input_json">): bo
 const REQUEST_ENDED: Record<"restore" | "self_rollback", string> = {
   restore:
     "the restore request ended without recording its result; check the database's Time Travel history in the Cloudflare dashboard",
-  self_rollback: `the rollback request ended without recording its result; the ${settingsPlace("appflareUpdates", "versions", "Versions list")} shows which version serves`,
+  self_rollback: `the rollback request ended without recording its result; the ${settingsPlace("updates", "versions", "list of versions")} shows which version serves`,
 };
 
 /** Settles a restore or Appflare rollback row whose request died; true when it changed. */

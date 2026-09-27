@@ -24,10 +24,12 @@ import { Route as AppJobsJobIdRouteImport } from './routes/_app/jobs/$jobId'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
 import { Route as AppSettingsAccountRouteImport } from './routes/_app/settings/account'
 import { Route as AppSettingsAppflareUpdatesRouteImport } from './routes/_app/settings/appflare-updates'
+import { Route as AppSettingsBuildingRouteImport } from './routes/_app/settings/building'
 import { Route as AppSettingsCatalogsRouteImport } from './routes/_app/settings/catalogs'
 import { Route as AppSettingsDomainsRouteImport } from './routes/_app/settings/domains'
 import { Route as AppSettingsNotificationsRouteImport } from './routes/_app/settings/notifications'
 import { Route as AppSettingsRemovedAppsRouteImport } from './routes/_app/settings/removed-apps'
+import { Route as AppSettingsUpdatesRouteImport } from './routes/_app/settings/updates'
 import { Route as AppSettingsUsageDataRouteImport } from './routes/_app/settings/usage-data'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -112,6 +114,11 @@ const AppSettingsAppflareUpdatesRoute =
     path: '/settings/appflare-updates',
     getParentRoute: () => AppRoute,
   } as any)
+const AppSettingsBuildingRoute = AppSettingsBuildingRouteImport.update({
+  id: '/settings/building',
+  path: '/settings/building',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSettingsCatalogsRoute = AppSettingsCatalogsRouteImport.update({
   id: '/settings/catalogs',
   path: '/settings/catalogs',
@@ -131,6 +138,11 @@ const AppSettingsNotificationsRoute =
 const AppSettingsRemovedAppsRoute = AppSettingsRemovedAppsRouteImport.update({
   id: '/settings/removed-apps',
   path: '/settings/removed-apps',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsUpdatesRoute = AppSettingsUpdatesRouteImport.update({
+  id: '/settings/updates',
+  path: '/settings/updates',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSettingsUsageDataRoute = AppSettingsUsageDataRouteImport.update({
@@ -187,10 +199,12 @@ export interface FileRoutesByFullPath {
   '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/settings/account': typeof AppSettingsAccountRoute
   '/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
+  '/settings/building': typeof AppSettingsBuildingRoute
   '/settings/catalogs': typeof AppSettingsCatalogsRoute
   '/settings/domains': typeof AppSettingsDomainsRoute
   '/settings/notifications': typeof AppSettingsNotificationsRoute
   '/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
+  '/settings/updates': typeof AppSettingsUpdatesRoute
   '/settings/usage-data': typeof AppSettingsUsageDataRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -215,10 +229,12 @@ export interface FileRoutesByTo {
   '/jobs/$jobId': typeof AppJobsJobIdRoute
   '/settings/account': typeof AppSettingsAccountRoute
   '/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
+  '/settings/building': typeof AppSettingsBuildingRoute
   '/settings/catalogs': typeof AppSettingsCatalogsRoute
   '/settings/domains': typeof AppSettingsDomainsRoute
   '/settings/notifications': typeof AppSettingsNotificationsRoute
   '/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
+  '/settings/updates': typeof AppSettingsUpdatesRoute
   '/settings/usage-data': typeof AppSettingsUsageDataRoute
   '/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -245,10 +261,12 @@ export interface FileRoutesById {
   '/_app/jobs/$jobId': typeof AppJobsJobIdRoute
   '/_app/settings/account': typeof AppSettingsAccountRoute
   '/_app/settings/appflare-updates': typeof AppSettingsAppflareUpdatesRoute
+  '/_app/settings/building': typeof AppSettingsBuildingRoute
   '/_app/settings/catalogs': typeof AppSettingsCatalogsRoute
   '/_app/settings/domains': typeof AppSettingsDomainsRoute
   '/_app/settings/notifications': typeof AppSettingsNotificationsRoute
   '/_app/settings/removed-apps': typeof AppSettingsRemovedAppsRoute
+  '/_app/settings/updates': typeof AppSettingsUpdatesRoute
   '/_app/settings/usage-data': typeof AppSettingsUsageDataRoute
   '/_app/settings/users': typeof AppSettingsUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -275,10 +293,12 @@ export interface FileRouteTypes {
     | '/jobs/$jobId'
     | '/settings/account'
     | '/settings/appflare-updates'
+    | '/settings/building'
     | '/settings/catalogs'
     | '/settings/domains'
     | '/settings/notifications'
     | '/settings/removed-apps'
+    | '/settings/updates'
     | '/settings/usage-data'
     | '/settings/users'
     | '/api/auth/$'
@@ -303,10 +323,12 @@ export interface FileRouteTypes {
     | '/jobs/$jobId'
     | '/settings/account'
     | '/settings/appflare-updates'
+    | '/settings/building'
     | '/settings/catalogs'
     | '/settings/domains'
     | '/settings/notifications'
     | '/settings/removed-apps'
+    | '/settings/updates'
     | '/settings/usage-data'
     | '/settings/users'
     | '/api/auth/$'
@@ -332,10 +354,12 @@ export interface FileRouteTypes {
     | '/_app/jobs/$jobId'
     | '/_app/settings/account'
     | '/_app/settings/appflare-updates'
+    | '/_app/settings/building'
     | '/_app/settings/catalogs'
     | '/_app/settings/domains'
     | '/_app/settings/notifications'
     | '/_app/settings/removed-apps'
+    | '/_app/settings/updates'
     | '/_app/settings/usage-data'
     | '/_app/settings/users'
     | '/api/auth/$'
@@ -470,6 +494,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsAppflareUpdatesRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings/building': {
+      id: '/_app/settings/building'
+      path: '/settings/building'
+      fullPath: '/settings/building'
+      preLoaderRoute: typeof AppSettingsBuildingRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings/catalogs': {
       id: '/_app/settings/catalogs'
       path: '/settings/catalogs'
@@ -496,6 +527,13 @@ declare module '@tanstack/react-router' {
       path: '/settings/removed-apps'
       fullPath: '/settings/removed-apps'
       preLoaderRoute: typeof AppSettingsRemovedAppsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings/updates': {
+      id: '/_app/settings/updates'
+      path: '/settings/updates'
+      fullPath: '/settings/updates'
+      preLoaderRoute: typeof AppSettingsUpdatesRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/settings/usage-data': {
@@ -564,10 +602,12 @@ interface AppRouteChildren {
   AppJobsJobIdRoute: typeof AppJobsJobIdRoute
   AppSettingsAccountRoute: typeof AppSettingsAccountRoute
   AppSettingsAppflareUpdatesRoute: typeof AppSettingsAppflareUpdatesRoute
+  AppSettingsBuildingRoute: typeof AppSettingsBuildingRoute
   AppSettingsCatalogsRoute: typeof AppSettingsCatalogsRoute
   AppSettingsDomainsRoute: typeof AppSettingsDomainsRoute
   AppSettingsNotificationsRoute: typeof AppSettingsNotificationsRoute
   AppSettingsRemovedAppsRoute: typeof AppSettingsRemovedAppsRoute
+  AppSettingsUpdatesRoute: typeof AppSettingsUpdatesRoute
   AppSettingsUsageDataRoute: typeof AppSettingsUsageDataRoute
   AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppCatalogIndexRoute: typeof AppCatalogIndexRoute
@@ -583,10 +623,12 @@ const AppRouteChildren: AppRouteChildren = {
   AppJobsJobIdRoute: AppJobsJobIdRoute,
   AppSettingsAccountRoute: AppSettingsAccountRoute,
   AppSettingsAppflareUpdatesRoute: AppSettingsAppflareUpdatesRoute,
+  AppSettingsBuildingRoute: AppSettingsBuildingRoute,
   AppSettingsCatalogsRoute: AppSettingsCatalogsRoute,
   AppSettingsDomainsRoute: AppSettingsDomainsRoute,
   AppSettingsNotificationsRoute: AppSettingsNotificationsRoute,
   AppSettingsRemovedAppsRoute: AppSettingsRemovedAppsRoute,
+  AppSettingsUpdatesRoute: AppSettingsUpdatesRoute,
   AppSettingsUsageDataRoute: AppSettingsUsageDataRoute,
   AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppCatalogIndexRoute: AppCatalogIndexRoute,

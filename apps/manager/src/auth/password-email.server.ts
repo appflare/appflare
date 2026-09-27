@@ -29,7 +29,7 @@ export const PASSWORD_EMAIL_MESSAGES = {
   gradual:
     "No single version serves all of Appflare's traffic (a gradual deployment is in progress). Finish or undo it in the Cloudflare dashboard first.",
   unreleased: (latest: string, serving: string) =>
-    `The newest uploaded version of Appflare's Worker (${latest}) is not the one serving (${serving}), and changing reset emails would deploy it too. Deploy the version you want from the Worker's Deployments page in the Cloudflare dashboard, or update Appflare in ${settingsPlace("appflareUpdates", "appflare", "the Appflare updates settings")}, then try again.`,
+    `The newest uploaded version of Appflare's Worker (${latest}) is not the one serving (${serving}), and changing reset emails would deploy it too. Deploy the version you want from the Worker's Deployments page in the Cloudflare dashboard, or update Appflare in ${settingsPlace("updates", "appflare", "the Updates settings")}, then try again.`,
   noWorkerName: `Appflare does not know its own Worker name yet. Save the Cloudflare token in ${settingsPlace("account", "connection", "the Cloudflare connection settings")} first.`,
 } as const;
 

@@ -7,10 +7,11 @@ import { enterApp } from "../server/gate.functions";
  * Pathless layout for every signed-in page. `enterApp` returns the viewer or
  * redirects: to `/login` without a session, to `/setup` before the owner
  * exists or while the Cloudflare token is not configured. This is
- * UX; each server function still enforces its own guard. The loader reads
- * the pending updates the sidebar counts and the home page lists; it reruns
- * on navigation and whenever a page invalidates the router after an action,
- * so the count follows finished updates.
+ * UX; each server function still enforces its own guard. The loader reads,
+ * in one call, the pending updates the sidebar counts and the home page
+ * lists, and how many removed apps there are (Settings lists that page only
+ * then); it reruns on navigation and whenever a page invalidates the router
+ * after an action, so both follow finished jobs.
  */
 export const Route = createFileRoute("/_app")({
   beforeLoad: () => enterApp(),
@@ -20,9 +21,9 @@ export const Route = createFileRoute("/_app")({
 
 function AppLayout() {
   const { viewer } = Route.useRouteContext();
-  const pending = Route.useLoaderData();
+  const { removedApps, ...pending } = Route.useLoaderData();
   return (
-    <AppShell viewer={viewer} pending={pending}>
+    <AppShell viewer={viewer} pending={pending} removedApps={removedApps}>
       <Outlet />
     </AppShell>
   );

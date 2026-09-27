@@ -458,7 +458,7 @@ export async function runRepositoryBuild(
       if (token === null) {
         throw new StepError<BuildStage>(
           "checkout",
-          `the sandbox Worker does not hold the GitHub access token ${request.tokenSecret}: if it was just added, try again in a minute; otherwise delete it in Settings > Account and capabilities > GitHub access, and add it again`,
+          `the sandbox Worker does not hold the GitHub access token ${request.tokenSecret}: if it was just added, try again in a minute; otherwise delete it in Settings > Building apps > GitHub access, and add it again`,
           null,
           false,
         );

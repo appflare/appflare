@@ -22,7 +22,7 @@ export function accountRoleLabel(viewer: AccountViewer): string {
   return viewer.role === "admin" ? "Admin" : "Member";
 }
 
-/** Where the menu's links go: the Users and access page, and its passkeys section. */
+/** Where the menu's links go: the Users and sign-in page, and its passkeys section. */
 export const ACCOUNT_LINKS = {
   users: settingsLink("users"),
   passkeys: settingsLink("users", "passkeys"),

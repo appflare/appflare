@@ -222,7 +222,7 @@ export function planSelfUpdate(input: {
   return { action: "try", version: input.latestVersion };
 }
 
-/** Settings, "Automatic updates". */
+/** Settings, Updates, "Automatic app updates". */
 export interface AutoUpdateSettings {
   apps: boolean;
   manager: boolean;

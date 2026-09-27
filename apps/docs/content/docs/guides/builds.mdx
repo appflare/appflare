@@ -10,7 +10,7 @@ from the same pinned commit, inside a [Cloudflare Sandbox](https://developers.cl
 container in your own account.
 
 That work is done by an optional second Worker, `appflare-sandbox`. You enable it once
-from the manager, in **Settings > Account and capabilities**, and disable it there too.
+from the manager, in **Settings > Building apps**, and disable it there too.
 It also builds repositories that are not in the catalog, and catalog apps at another
 commit: see [Install from a repository](/guides/install-from-a-repository/).
 
@@ -25,8 +25,8 @@ built this way.
 ## What you need
 
 - **Workers Paid** on the account (US$5 a month). The builds run in Cloudflare
-  Containers, which the free plan does not include. The **Sandbox builds** card offers
-  to enable them only once the manager has detected Workers Paid (see
+  Containers, which the free plan does not include. The **Build in your account**
+  section offers to enable them only once the manager has detected Workers Paid (see
   [Workers Free or Workers Paid](/guides/install-apps/#workers-free-or-workers-paid)).
 - **R2** enabled on the account. The sandbox Worker keeps build outputs and logs in an R2
   bucket. If you have never used R2, open **R2** in the Cloudflare dashboard once to
@@ -39,7 +39,7 @@ built this way.
 
 ## Enable it
 
-In **Settings > Account and capabilities**, the **Sandbox builds** card shows **Enable
+In **Settings > Building apps**, the **Build in your account** section shows **Enable
 sandbox builds** to admins. When R2 is off or the token lacks Containers: Edit, the card
 says so and the button stays disabled until the cause is fixed and the capabilities are
 checked again.
@@ -305,11 +305,11 @@ uninstalling one app leaves it in place.
 ## Troubleshooting
 
 **Appflare is not connected to a sandbox Worker.** Choose **Enable sandbox builds** in
-Settings, or **Connect only** when the sandbox Worker is already there.
+**Settings > Building apps**, or **Connect only** when the sandbox Worker is already there.
 
 **The sandbox Worker speaks another protocol.** The manager and the sandbox Worker are
 from releases that do not match. Update whichever is older: **Update sandbox** in
-Settings, or update Appflare itself.
+**Settings > Building apps**, or update Appflare itself in **Settings > Updates**.
 
 **Sandbox builds need Workers Paid.** The account is on the free plan. Upgrade it
 under **Workers & Pages > Plans** in the dashboard, select **Re-check** under the

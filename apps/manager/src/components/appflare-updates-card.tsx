@@ -22,7 +22,7 @@ import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
- * The Appflare section of the Appflare updates page: the running version,
+ * The Appflare version section of the Updates settings: the running version,
  * the newest release the release feed reported, and "Update Appflare to
  * <version>" at the right of the header when there is one (admins; else
  * "Check now" is there). The update opens a confirmation, then the job's log.
@@ -68,7 +68,7 @@ export function AppflareUpdatesCard({
   ) : null;
   return (
     <Section
-      {...settingsSection("appflareUpdates", "appflare")}
+      {...settingsSection("updates", "appflare")}
       badge={
         state.activeJobId !== null ? (
           <Badge variant="info">Updating</Badge>

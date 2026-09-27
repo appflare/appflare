@@ -96,10 +96,10 @@ describe("the checklist view", () => {
     expect(free).not.toContain('id="enable-now"');
   });
 
-  it("gives every row an anchor, the sandbox row checklist-sandbox", () => {
+  it("gives every row an anchor, capability-<id>", () => {
     const html = render(data());
-    expect(html).toContain('id="checklist-sandbox"');
-    expect(html).toContain('id="checklist-workers-dev"');
+    expect(html).toContain('id="capability-sandbox"');
+    expect(html).toContain('id="capability-workers-dev"');
   });
 
   it("draws every row as one fixed-height line with no paragraph in it", () => {

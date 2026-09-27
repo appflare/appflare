@@ -20,7 +20,7 @@ import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
 
 /**
- * Settings, Appflare updates, "Versions": the newest versions of Appflare's
+ * Settings, Updates, "Recent versions": the newest versions of Appflare's
  * own Worker, the one serving marked, and for admins "Roll back" on each
  * older one. The rollback runs in the request; this section then follows the
  * switch the way the sidebar's update card does (polling `/api/health`) and
@@ -118,7 +118,7 @@ export function ManagerVersionsSection({
   const pending = result !== null && result.version !== current && !stalled;
   return (
     <Section
-      {...settingsSection("appflareUpdates", "versions")}
+      {...settingsSection("updates", "versions")}
       titleAction={<DocsLink topic="appflareRollback" />}
       description="Appflare's newest versions on its Worker. A rollback redeploys an older one to all traffic; the database is not rolled back."
       error={state.ok ? null : state.error}

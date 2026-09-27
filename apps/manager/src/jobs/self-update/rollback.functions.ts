@@ -11,7 +11,7 @@ import {
   rollBackManagerAs,
 } from "./rollback.server";
 
-/** Settings, Appflare updates, Versions: Appflare's own recent versions and the rollback. */
+/** Settings, Updates, Recent versions: Appflare's own recent versions and the rollback. */
 
 export type ManagerVersionsState =
   | ({ ok: true } & ManagerVersionsView)

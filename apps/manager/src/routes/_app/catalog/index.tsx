@@ -99,10 +99,7 @@ function CatalogPage() {
             <>
               The catalog lists apps this version of Appflare does not understand yet. Update
               Appflare in the{" "}
-              <Link href={settingsLink("appflareUpdates", "appflare")}>
-                Appflare updates settings
-              </Link>{" "}
-              to see them.
+              <Link href={settingsLink("updates", "appflare")}>Updates settings</Link> to see them.
             </>
           }
         />

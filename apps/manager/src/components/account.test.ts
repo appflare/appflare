@@ -27,7 +27,7 @@ describe("account menu", () => {
     expect(accountRoleLabel({ ...ada, isOwner: false })).toBe("Admin");
   });
 
-  it("links to Users and access and to the passkeys on it", () => {
+  it("links to Users and sign-in and to the passkeys on it", () => {
     expect(ACCOUNT_LINKS).toEqual({
       users: "/settings/users",
       passkeys: "/settings/users#passkeys",

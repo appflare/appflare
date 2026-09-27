@@ -25,7 +25,7 @@ describe("isMessageLinkPath", () => {
   it("accepts the manager's signed-in pages, with a section", () => {
     for (const href of [
       "/settings",
-      "/settings/account#github-access",
+      "/settings/building#github-access",
       "/settings/users#passkeys",
       "/apps/01J9ZQ7K3M",
       "/jobs/01J9ZQ7K3M",
@@ -50,7 +50,7 @@ describe("isInternalPagePath", () => {
       "/forgot-password",
       "/catalog?category=media&plan=free",
       "/apps/01J9ZQ7K3M?tab=domains",
-      "/settings/account#sandbox",
+      "/settings/building#sandbox",
     ]) {
       expect(isInternalPagePath(href), href).toBe(true);
     }

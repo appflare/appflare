@@ -8,18 +8,20 @@ import { createDb } from "../db/client";
 import { installs } from "../db/schema";
 import { activeSelfUpdateJob } from "../jobs/self-update/guard";
 import { requireSession } from "../server/auth.server";
-import { type PendingUpdates, pendingUpdates } from "./pending-updates";
+import { type LayoutData, pendingUpdates } from "./pending-updates";
+import { countRemovedAppsCore } from "./removed-apps.server";
 
 /**
  * Any signed-in user: the pending app updates the sidebar and the home page
- * show, and Appflare's own version for the sidebar's Appflare card. Reads
- * the installs, the cached catalog index, the cached Appflare release, and
- * the self-update in progress; no Cloudflare API calls.
+ * show, Appflare's own version for the sidebar's Appflare card, and how many
+ * removed apps there are for the settings menu. Reads the installs, the
+ * cached catalog index, the cached Appflare release, and the self-update in
+ * progress; no Cloudflare API calls.
  */
 export const getPendingUpdates = createServerFn({ method: "GET" }).handler(
-  async (): Promise<PendingUpdates> => {
+  async (): Promise<LayoutData> => {
     await requireSession();
-    const [rows, listed, latest, activeJobId] = await Promise.all([
+    const [rows, listed, latest, activeJobId, removedApps] = await Promise.all([
       createDb(env.DB)
         .select({
           id: installs.id,
@@ -36,6 +38,7 @@ export const getPendingUpdates = createServerFn({ method: "GET" }).handler(
       catalogLookup(env),
       readManagerLatest(env.KV),
       activeSelfUpdateJob(env.DB, env.JOBS),
+      countRemovedAppsCore(env.DB),
     ]);
     const versions = new Map([...listed].map(([key, l]) => [key, l.app.version]));
     const manager = managerUpdateView(env.APPFLARE_VERSION, latest);
@@ -44,11 +47,12 @@ export const getPendingUpdates = createServerFn({ method: "GET" }).handler(
       ...row,
       appSlug: installAppKey({ app_slug: row.appSlug, catalog_id: catalogId }),
     }));
-    return pendingUpdates(keyed, versions, {
+    const pending = pendingUpdates(keyed, versions, {
       current: manager.current,
       latest: manager.latest?.version ?? null,
       updateAvailable: manager.updateAvailable,
       activeJobId,
     });
+    return { ...pending, removedApps };
   },
 );

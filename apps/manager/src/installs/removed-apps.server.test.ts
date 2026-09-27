@@ -5,6 +5,7 @@ import { AuthGuardError, requireRole } from "../auth/guards";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import {
+  countRemovedAppsCore,
   deleteRetainedDataAs,
   forgetRemovedAppAs,
   forgetRemovedAppCore,
@@ -87,6 +88,8 @@ describe("listRemovedAppsCore", () => {
     const rows = await listRemovedAppsCore(env.DB);
 
     expect(rows.map((r) => r.id)).toEqual(["b", "a"]);
+    // The settings menu counts the same installs.
+    expect(await countRemovedAppsCore(env.DB)).toBe(2);
     expect(rows[1]).toEqual({
       id: "a",
       slug: "cut",
@@ -129,9 +132,11 @@ describe("forgetRemovedAppCore", () => {
     await job("j1", "a", "succeeded");
     const before = await env.DB.prepare("SELECT * FROM resources ORDER BY rowid").all();
 
+    expect(await countRemovedAppsCore(env.DB)).toBe(1);
     await forgetRemovedAppCore(env.DB, "a", new Date(AT + 5));
 
     expect(await listRemovedAppsCore(env.DB)).toEqual([]);
+    expect(await countRemovedAppsCore(env.DB)).toBe(0);
     const row = await env.DB.prepare(
       "SELECT status, forgotten_at FROM installs WHERE id = 'a'",
     ).first();

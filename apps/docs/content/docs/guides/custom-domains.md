@@ -22,7 +22,7 @@ If the token lacks them, the **Add a domain** dialog says which ones. Open **API
 Tokens** in the Cloudflare dashboard, edit the Appflare token, add the permissions
 for your domains, and save. An edited token keeps its value, so nothing changes in
 Appflare. You can also create a new token and replace the old one under **Settings**,
-**Account and capabilities**, with **Rotate token**.
+**Your account**, with **Rotate token**.
 
 ## Add a domain
 

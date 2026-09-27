@@ -60,7 +60,7 @@ export function InstallAutoUpdateCard({
           legend={AUTO_UPDATE_COPY.installLegend}
           description={
             <>
-              <Link href={settingsLink("general", "automatic-updates")}>Change the default</Link>
+              <Link href={settingsLink("updates", "apps")}>Change the default</Link>
               {" · "}
               <DocsLink topic="automaticUpdates" variant="inline" />
             </>

@@ -114,10 +114,10 @@ Everything after the install happens in the manager itself:
 
 | To | Open |
 |---|---|
-| See the running version and update Appflare | **Settings > Appflare updates** |
-| Enable, update, or disable sandbox builds (Workers Paid) | **Settings > Account and capabilities > Sandbox builds** |
-| Remove Appflare, its database and its KV namespace | **Settings > General > Remove Appflare** (owner only) |
-| Return to an earlier manager version | **Settings > Appflare updates > Versions** (admins); if the manager does not load, the Worker's **Deployments** page in the Cloudflare dashboard |
+| See the running version and update Appflare | **Settings > Updates** |
+| Enable, update, or disable sandbox builds (Workers Paid) | **Settings > Building apps** |
+| Remove Appflare, its database and its KV namespace | **Settings > Your account > Remove Appflare** (owner only) |
+| Return to an earlier manager version | **Settings > Updates > Recent versions** (admins); if the manager does not load, the Worker's **Deployments** page in the Cloudflare dashboard |
 
 ## Forgot your password
 

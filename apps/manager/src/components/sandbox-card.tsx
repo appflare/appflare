@@ -34,8 +34,8 @@ import { settingsSection } from "./settings-links";
 const SANDBOX_WORKER = "appflare-sandbox";
 
 /**
- * The account settings' sandbox builds section: whether this manager can
- * install apps that have no prebuilt release (the `sandbox` tier), which the
+ * The Building apps settings' sandbox builds section: whether this manager can
+ * install apps that have no ready-made release (the `sandbox` tier), which the
  * account's sandbox Worker builds on Workers Paid.
  *
  * - Off, on an account where Workers Paid is detected: "Enable sandbox
@@ -63,10 +63,10 @@ export function SandboxCard({
 }) {
   return (
     <Section
-      {...settingsSection("account", "sandbox")}
+      {...settingsSection("building", "sandbox")}
       titleAction={<DocsLink topic="sandboxBuilds" />}
       badge={<StateBadge status={status} />}
-      description="Some catalog apps have no prebuilt release. Appflare can build them from their pinned commit in a container in your own account, with the optional sandbox Worker. Builds need Workers Paid and are not signed."
+      description="Some catalog apps have no ready-made release. Appflare can build them from their pinned commit in a container in your own account, with the optional sandbox Worker. Builds need Workers Paid and are not signed."
     >
       <SectionBody>
         {status.activeJob !== null && <RunningJob job={status.activeJob} />}

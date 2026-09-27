@@ -37,7 +37,7 @@ export interface GithubTokenView {
 }
 
 /** Where the GitHub access tokens are listed and added in the manager, as a link inside a message. */
-export const GITHUB_ACCESS_PLACE = settingsPlace("account", "github-access");
+export const GITHUB_ACCESS_PLACE = settingsPlace("building", "github-access");
 
 /** GitHub's page for a new fine-grained personal access token. */
 export const NEW_FINE_GRAINED_TOKEN_URL = "https://github.com/settings/personal-access-tokens/new";

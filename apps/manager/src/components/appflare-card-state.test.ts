@@ -137,13 +137,13 @@ describe("appflareCardState", () => {
 });
 
 describe("appflareRailItem", () => {
-  const updates = "/settings/appflare-updates";
+  const updates = "/settings/updates#appflare";
 
   it("shows nothing while Appflare is up to date", () => {
     expect(appflareRailItem({ kind: "current", version: "0.4.0" }, null, updates)).toBeNull();
   });
 
-  it("links an available release to Appflare updates", () => {
+  it("links an available release to the Updates settings", () => {
     expect(
       appflareRailItem(
         { kind: "available", current: "0.4.0", latest: "0.5.0", canUpdate: true },

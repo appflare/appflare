@@ -133,7 +133,7 @@ export function wizardCopy(state: WizardState): WizardCopy {
     case "checklist":
       return {
         title: "Check your account",
-        description: `What this Cloudflare account has that apps rely on. This list stays in ${settingsPlace("account", "checklist", "the account settings")}.`,
+        description: `What this Cloudflare account has that apps rely on. This list stays in ${settingsPlace("account", "checklist", "Your account")}, in Settings.`,
       };
     case "cloudflare-token":
       return {

@@ -5,7 +5,7 @@ import { messageLink, messageSegments, plainMessage } from "./message-links";
 import { ErrorMessageBanner, MessageLinkButtons, MessageText } from "./message-text";
 
 const MESSAGE =
-  "Appflare is not connected to a sandbox Worker; enable sandbox builds in [Sandbox builds settings](/settings/account#sandbox) and try again";
+  "Appflare is not connected to a sandbox Worker; enable sandbox builds in [Sandbox builds settings](/settings/building#sandbox) and try again";
 
 describe("messageLink", () => {
   it("writes a link token for a path inside the manager", () => {
@@ -29,7 +29,7 @@ describe("messageSegments", () => {
         kind: "text",
         text: "Appflare is not connected to a sandbox Worker; enable sandbox builds in ",
       },
-      { kind: "link", label: "Sandbox builds settings", href: "/settings/account#sandbox" },
+      { kind: "link", label: "Sandbox builds settings", href: "/settings/building#sandbox" },
       { kind: "text", text: " and try again" },
     ]);
   });
@@ -54,7 +54,7 @@ describe("plainMessage", () => {
 describe("MessageText", () => {
   it("renders the links as links, in the same tab by default", () => {
     const html = renderToStaticMarkup(createElement(MessageText, { message: MESSAGE }));
-    expect(html).toContain('href="/settings/account#sandbox"');
+    expect(html).toContain('href="/settings/building#sandbox"');
     expect(html).toContain(">Sandbox builds settings</a>");
     expect(html).not.toContain("target=");
     expect(html.replace(/<[^>]+>/g, "")).toBe(plainMessage(MESSAGE));
@@ -72,7 +72,7 @@ describe("MessageText", () => {
 describe("ErrorMessageBanner", () => {
   it("puts a message with a link in the description, and a plain one in the title", () => {
     const linked = renderToStaticMarkup(createElement(ErrorMessageBanner, { message: MESSAGE }));
-    expect(linked).toContain('href="/settings/account#sandbox"');
+    expect(linked).toContain('href="/settings/building#sandbox"');
     const plain = renderToStaticMarkup(
       createElement(ErrorMessageBanner, { message: "Could not save." }),
     );
@@ -84,7 +84,7 @@ describe("ErrorMessageBanner", () => {
 describe("MessageLinkButtons", () => {
   it("offers each place a message links to as a button, and nothing for a plain message", () => {
     const html = renderToStaticMarkup(createElement(MessageLinkButtons, { message: MESSAGE }));
-    expect(html).toContain('href="/settings/account#sandbox"');
+    expect(html).toContain('href="/settings/building#sandbox"');
     expect(html).toContain("Open Sandbox builds settings");
     expect(renderToStaticMarkup(createElement(MessageLinkButtons, { message: "plain" }))).toBe("");
   });

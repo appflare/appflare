@@ -1,6 +1,5 @@
 import { cn, Link, Sidebar, useSidebar } from "@cloudflare/kumo";
 import {
-  GearIcon,
   HouseIcon,
   type Icon,
   ListChecksIcon,
@@ -8,15 +7,16 @@ import {
   SidebarSimpleIcon,
   StorefrontIcon,
 } from "@phosphor-icons/react";
-import { useLocation, useMatches } from "@tanstack/react-router";
-import { type ReactNode, useCallback, useEffect, useRef } from "react";
+import { useLocation, useMatches, useRouter } from "@tanstack/react-router";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
 import { type PendingUpdates, sidebarUpdateBadge } from "../installs/pending-updates";
 import type { Viewer } from "../server/session.functions";
 import { AccountMenu } from "./account-menu";
 import { AppflareCard, AppflareVersion } from "./appflare-card";
 import { Logo, LogoMark } from "./logo";
-import { isCurrentPage, SETTINGS_PAGE_LIST } from "./navigation";
-import { settingsLink } from "./settings-links";
+import { isCurrentPage, type SettingsPage, visibleSettingsPages } from "./navigation";
+import { type SettingsNavigation, SettingsNavigationContext } from "./settings-menu";
+import { SettingsNavItem } from "./settings-nav";
 import { MOBILE_BREAKPOINT, useIsNarrow, useSidebarRail } from "./sidebar-rail";
 import { useHashTarget } from "./use-hash-target";
 
@@ -32,7 +32,6 @@ const NAV: readonly NavItem[] = [
   { href: "/", label: "Home", icon: HouseIcon, covers: ["/apps"] },
   { href: "/catalog", label: "Catalog", icon: StorefrontIcon },
   { href: "/jobs", label: "Jobs", icon: ListChecksIcon },
-  { href: settingsLink("general"), label: "Settings", icon: GearIcon },
 ];
 
 function isCurrent(pathname: string, item: NavItem): boolean {
@@ -125,7 +124,15 @@ function ShellHeader() {
   );
 }
 
-function ShellSidebar({ viewer, pending }: { viewer: Viewer; pending: PendingUpdates }) {
+function ShellSidebar({
+  viewer,
+  pending,
+  settingsPages,
+}: {
+  viewer: Viewer;
+  pending: PendingUpdates;
+  settingsPages: readonly SettingsPage[];
+}) {
   const { pathname } = useLocation();
   const folded = useFolded();
   useCloseDrawerOnNavigate(pathname);
@@ -137,45 +144,22 @@ function ShellSidebar({ viewer, pending }: { viewer: Viewer; pending: PendingUpd
         <Sidebar.Group>
           <Sidebar.Menu>
             {NAV.map((item) => {
-              const current = isCurrent(pathname, item);
               const badge = sidebarUpdateBadge(item.href, pending);
-              const subPages =
-                item.href === settingsLink("general") && current && !folded
-                  ? SETTINGS_PAGE_LIST
-                  : [];
-              // Only the innermost current entry is highlighted: a settings
-              // page, or Settings itself when no page in the list matches.
-              const subActive = subPages.some((page) => isCurrentPage(pathname, page.href, true));
               return (
-                <Sidebar.MenuItem key={item.href}>
-                  <Sidebar.MenuButton
-                    href={item.href}
-                    icon={badge.count > 0 ? <CountedIcon icon={item.icon} /> : item.icon}
-                    active={current && !subActive}
-                    // Shown only while folded, when the label is hidden.
-                    tooltip={badge.count > 0 ? `${item.label}: ${badge.label}` : item.label}
-                  >
-                    {item.label}
-                    <CountBadge count={badge.count} label={badge.label} />
-                  </Sidebar.MenuButton>
-                  {subPages.length > 0 && (
-                    // Kumo's sub-menu starts right under its parent; a small gap keeps
-                    // the two apart when both are hovered or highlighted.
-                    <Sidebar.MenuSub aria-label="Settings pages" className="mt-1">
-                      {subPages.map((page) => (
-                        <Sidebar.MenuSubButton
-                          key={page.href}
-                          href={page.href}
-                          active={isCurrentPage(pathname, page.href, true)}
-                        >
-                          {page.label}
-                        </Sidebar.MenuSubButton>
-                      ))}
-                    </Sidebar.MenuSub>
-                  )}
-                </Sidebar.MenuItem>
+                <Sidebar.MenuButton
+                  key={item.href}
+                  href={item.href}
+                  icon={badge.count > 0 ? <CountedIcon icon={item.icon} /> : item.icon}
+                  active={isCurrent(pathname, item)}
+                  // Shown only while folded, when the label is hidden.
+                  tooltip={badge.count > 0 ? `${item.label}: ${badge.label}` : item.label}
+                >
+                  {item.label}
+                  <CountBadge count={badge.count} label={badge.label} />
+                </Sidebar.MenuButton>
               );
             })}
+            <SettingsNavItem pathname={pathname} pages={settingsPages} folded={folded} />
           </Sidebar.Menu>
         </Sidebar.Group>
       </Sidebar.Content>
@@ -211,9 +195,9 @@ function MobileTopBar() {
 
 /**
  * Signed-in chrome: Kumo sidebar with the logo, Home, Catalog, Jobs and
- * Settings (whose pages are listed under it while one is open), Appflare's
- * own update while there is one, and a footer with the account menu and
- * Appflare's version. Home carries the count of app updates.
+ * Settings (a list of its pages that opens in place, `settings-nav.tsx`),
+ * Appflare's own update while there is one, and a footer with the account
+ * menu and Appflare's version. Home carries the count of app updates.
  *
  * On a wide screen the sidebar folds into an icon rail (the button next to
  * the logo), with each item's name as a tooltip; the choice is remembered in
@@ -223,13 +207,29 @@ function MobileTopBar() {
 export function AppShell({
   viewer,
   pending,
+  removedApps,
   children,
 }: {
   viewer: Viewer;
   pending: PendingUpdates;
+  /** How many uninstalled apps keep data: Settings lists Removed apps only while there are any. */
+  removedApps: number;
   children: ReactNode;
 }) {
   const [rail, setRail] = useSidebarRail();
+  const router = useRouter();
+  const { pathname } = useLocation();
+  const settingsPages = useMemo(
+    () => visibleSettingsPages(removedApps, pathname),
+    [removedApps, pathname],
+  );
+  const settingsNavigation = useMemo<SettingsNavigation>(
+    () => ({
+      pages: settingsPages,
+      navigate: (href) => void router.navigate({ href }),
+    }),
+    [settingsPages, router],
+  );
   useHashTarget();
   const narrow = useIsNarrow(MOBILE_BREAKPOINT);
   // The deepest page decides; see `StaticDataRouteOption.width`.
@@ -257,12 +257,14 @@ export function AppShell({
       onOpenChange={onOpenChange}
       className="h-dvh"
     >
-      <ShellSidebar viewer={viewer} pending={pending} />
+      <ShellSidebar viewer={viewer} pending={pending} settingsPages={settingsPages} />
       <div className="flex min-w-0 flex-1 flex-col">
         <MobileTopBar />
         <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-6">
           <div className={cn("mx-auto grid gap-6", wide ? "max-w-[72rem]" : "max-w-5xl")}>
-            {children}
+            <SettingsNavigationContext.Provider value={settingsNavigation}>
+              {children}
+            </SettingsNavigationContext.Provider>
           </div>
         </main>
       </div>

@@ -33,7 +33,7 @@ import {
 
 /**
  * Rolling the manager back to one of its own earlier Worker versions, from
- * Settings, Appflare updates, Versions (admins), and the list that offers it.
+ * Settings, Updates, Recent versions (admins), and the list that offers it.
  *
  * It runs inside the admin's request rather than as a Workflow job. The
  * switch is one API call (a deployment of an existing version), and a

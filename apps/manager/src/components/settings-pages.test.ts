@@ -18,14 +18,16 @@ import type { PasswordRecoverySettings } from "../server/recovery.functions";
 import type { SandboxCardState } from "../server/sandbox.functions";
 import type { TokenStatus } from "../server/token.functions";
 import type { UserRow } from "../server/users.functions";
+import { visibleSettingsPages } from "./navigation";
+import { SettingsNavigationContext } from "./settings-menu";
 import {
   AccountSettingsView,
-  AppflareUpdatesSettingsView,
+  BuildingSettingsView,
   CatalogsSettingsView,
   DomainsSettingsView,
-  GeneralSettingsView,
   NotificationsSettingsView,
   RemovedAppsSettingsView,
+  UpdatesSettingsView,
   UsageDataSettingsView,
   UsersSettingsView,
 } from "./settings-pages";
@@ -126,42 +128,45 @@ const sandboxStatus: SandboxCardState = {
   readiness: { state: "ready-auto", missing: null, confirmed: true },
 };
 
-describe("GeneralSettingsView", () => {
-  it("shows automatic updates, then the danger zone last with both actions", () => {
-    const html = render(
-      createElement(GeneralSettingsView, {
-        autoUpdate,
-        danger: { authSecretRotatedAt: null },
-        viewer: { role: "admin", isOwner: true },
-      }),
-    );
-    expectPattern(
-      html,
-      ["automatic-updates", "danger-zone"],
-      ["Automatically update apps", "Rotate auth secret", "Remove Appflare"],
-    );
-    expect(html).toMatch(/<h1[^>]*>Settings<\/h1>/);
-  });
-});
-
 describe("AccountSettingsView", () => {
-  it("keeps the connection, checklist, capabilities, sandbox builds and GitHub access", () => {
+  const owner = { role: "admin", isOwner: true } as const;
+
+  it("shows the connection, checklist and capabilities, then the danger zone last for the owner", () => {
     const html = render(
       createElement(AccountSettingsView, {
         tokenStatus,
         capabilities,
-        sandboxStatus,
         checklist,
-        isAdmin: true,
+        danger: { authSecretRotatedAt: null },
+        viewer: owner,
       }),
     );
     expectPattern(
       html,
-      ["connection", "checklist", "capabilities", "sandbox", "github-access"],
-      ["Rotate token", "Re-check", "Enable sandbox builds", "Loading the tokens"],
+      ["connection", "checklist", "capabilities", "danger-zone"],
+      ["Rotate token", "Re-check", "Rotate auth secret", "Remove Appflare"],
     );
+    expect(html).toMatch(/<h1[^>]*>Your account<\/h1>/);
     expect(text(html)).toContain("Acme");
     expect(count(html, ">Re-check<")).toBe(2);
+    // The checklist's rows are capability rows, each its own link target.
+    expect(html).toContain('id="capability-r2"');
+    expect(html).not.toContain('id="checklist-r2"');
+  });
+
+  it("shows no danger zone to admins who are not the owner", () => {
+    const html = render(
+      createElement(AccountSettingsView, {
+        tokenStatus,
+        capabilities,
+        checklist,
+        danger: null,
+        viewer: { role: "admin", isOwner: false },
+      }),
+    );
+    expect(sectionIds(html)).toEqual(["connection", "checklist", "capabilities"]);
+    expect(text(html)).not.toContain("Remove Appflare");
+    expect(text(html)).not.toContain("Rotate auth secret");
   });
 
   it("offers members no action", () => {
@@ -169,15 +174,35 @@ describe("AccountSettingsView", () => {
       createElement(AccountSettingsView, {
         tokenStatus,
         capabilities,
-        sandboxStatus,
         checklist,
-        isAdmin: false,
+        danger: null,
+        viewer: { role: "member", isOwner: false },
       }),
     );
-    // GitHub access is for admins only.
-    expect(sectionIds(html)).toEqual(["connection", "checklist", "capabilities", "sandbox"]);
+    expect(sectionIds(html)).toEqual(["connection", "checklist", "capabilities"]);
     expect(text(html)).not.toContain("Rotate token");
     expect(count(html, ">Re-check<")).toBe(0);
+  });
+});
+
+describe("BuildingSettingsView", () => {
+  it("shows building in your account and GitHub access", () => {
+    const html = render(
+      createElement(BuildingSettingsView, { sandboxStatus, capabilities, isAdmin: true }),
+    );
+    expectPattern(
+      html,
+      ["sandbox", "github-access"],
+      ["Build in your account", "Enable sandbox builds", "GitHub access", "Loading the tokens"],
+    );
+    expect(html).toMatch(/<h1[^>]*>Building apps<\/h1>/);
+  });
+
+  it("shows GitHub access to admins only", () => {
+    const html = render(
+      createElement(BuildingSettingsView, { sandboxStatus, capabilities, isAdmin: false }),
+    );
+    expect(sectionIds(html)).toEqual(["sandbox"]);
   });
 });
 
@@ -386,7 +411,7 @@ describe("RemovedAppsSettingsView", () => {
   });
 });
 
-describe("AppflareUpdatesSettingsView", () => {
+describe("UpdatesSettingsView", () => {
   const managerUpdate: ManagerUpdateState = {
     current: "0.4.0",
     latest: { version: "0.5.0", tag: "manager@0.5.0", publishedAt: ISO },
@@ -421,9 +446,9 @@ describe("AppflareUpdatesSettingsView", () => {
     ],
   };
 
-  it("keeps the version, the update, automatic updates and the versions with Roll back", () => {
+  it("shows automatic app updates, then Appflare's version and its recent versions", () => {
     const html = render(
-      createElement(AppflareUpdatesSettingsView, {
+      createElement(UpdatesSettingsView, {
         managerUpdate,
         autoUpdate,
         versions,
@@ -432,21 +457,73 @@ describe("AppflareUpdatesSettingsView", () => {
     );
     expectPattern(
       html,
-      ["appflare", "versions"],
-      ["Update Appflare to 0.5.0", "Check now", "Automatically update Appflare", "Roll back"],
+      ["apps", "appflare", "versions"],
+      [
+        "Automatic app updates",
+        "Automatically update apps",
+        "Appflare version",
+        "Update Appflare to 0.5.0",
+        "Check now",
+        "Automatically update Appflare",
+        "Recent versions",
+        "Roll back",
+      ],
     );
+    expect(html).toMatch(/<h1[^>]*>Updates<\/h1>/);
   });
 
   it("shows why the versions cannot be listed", () => {
     const html = render(
-      createElement(AppflareUpdatesSettingsView, {
+      createElement(UpdatesSettingsView, {
         managerUpdate: { ...managerUpdate, updateAvailable: false },
         autoUpdate,
         versions: { ok: false, error: "The token cannot read Workers." },
         isAdmin: true,
       }),
     );
-    expectPattern(html, ["appflare", "versions"], ["Check now", "The token cannot read Workers."]);
+    expectPattern(
+      html,
+      ["apps", "appflare", "versions"],
+      ["Check now", "The token cannot read Workers."],
+    );
     expect(text(html)).not.toContain("Update Appflare to");
+  });
+});
+
+describe("the list of settings pages on narrow screens", () => {
+  const navigate = vi.fn();
+
+  function inShell(element: ReactElement, removedApps: number, pathname: string): string {
+    const pages = visibleSettingsPages(removedApps, pathname);
+    return render(
+      createElement(SettingsNavigationContext.Provider, { value: { pages, navigate } }, element),
+    );
+  }
+
+  const updates = createElement(UpdatesSettingsView, {
+    managerUpdate: {
+      current: "0.4.0",
+      latest: null,
+      updateAvailable: false,
+      checkedAt: ISO,
+      activeJobId: null,
+    },
+    autoUpdate,
+    versions: { ok: true, servingVersionId: "v1", versions: [] },
+    isAdmin: true,
+  });
+
+  it("sits under the page title, shows the page open, and is hidden from 768 px", () => {
+    const html = inShell(updates, 0, "/settings/updates");
+    const select = html.indexOf('aria-label="Settings page"');
+    expect(select).toBeGreaterThan(html.indexOf("</h1>"));
+    expect(select).toBeLessThan(html.indexOf('<section id="apps"'));
+    // Its trigger shows the page open; the wrapper hides it on wide screens.
+    expect(html).toMatch(/<div class="md:hidden">.*aria-label="Settings page"/s);
+    expect(text(html.slice(select, html.indexOf('<section id="apps"')))).toContain("Updates");
+  });
+
+  it("is not there outside the app shell", () => {
+    expect(render(updates)).not.toContain('aria-label="Settings page"');
   });
 });

@@ -10,7 +10,7 @@ signature.
 
 ## Update from Settings
 
-Open **Settings > Appflare updates** and find the **Appflare** card. It shows the running version, the
+Open **Settings > Updates** and find **Appflare version**. It shows the running version, the
 latest release, and when it last checked. Admins can select **Check now** to look
 for a release right away.
 
@@ -45,7 +45,7 @@ with **Appflare update available**.
 
 ## Roll back
 
-Open **Settings > Appflare updates** and find **Versions**. It lists the newest
+Open **Settings > Updates** and find **Recent versions**. It lists the newest
 versions of the manager's Worker, up to ten, with the Appflare version each one runs,
 and marks the one serving. Admins, the owner included, can select **Roll back** on an
 older version, type its version number to confirm, and roll back to it.
@@ -71,7 +71,8 @@ Before it switches, the manager:
 The rollback is listed under **Jobs** as an Appflare rollback, with its log. It turns
 **Automatically update Appflare** off, so the cron does not update straight back to
 the release you left; turn it on again when you are ready. The page reloads once the
-older version answers. To move forward again, update from the **Appflare** card.
+older version answers. To move forward again, update from **Appflare version** on the
+same page.
 
 ### If the manager does not load
 

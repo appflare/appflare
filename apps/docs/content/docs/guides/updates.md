@@ -87,8 +87,8 @@ declaring the class in `exports`, or mark it `"state": "deleted"` there to retir
 
 ## Automatic updates
 
-Under **Settings**, **Automatic updates**, admins can turn on **Automatically update
-apps**. It is off by default. Each app's page has an **Automatic updates** choice: use
+Under **Settings**, **Updates**, **Automatic app updates**, admins can turn on
+**Automatically update apps**. It is off by default. Each app's page has an **Automatic updates** choice: use
 the account setting, or turn automatic updates on or off for that app.
 
 When automatic updates are on for an app, the cron checks every 30 minutes whether the

@@ -39,7 +39,7 @@ async function preflight(wrangler: Wrangler, config: GeneratedWranglerConfig): P
   if ((await listDeployments(wrangler, name)) !== null) {
     throw new Error(
       `A Worker named "${name}" already exists in this account. If it is an Appflare manager, ` +
-        "open it and update it from Settings > Appflare updates; otherwise install another " +
+        "open it and update it from Settings > Updates; otherwise install another " +
         "copy with --name <other>.",
     );
   }

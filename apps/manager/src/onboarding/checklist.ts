@@ -4,7 +4,6 @@ import { dashboardUrl, zeroTrustDashboardUrl } from "../cloudflare/dashboard-lin
 import { settingsLink } from "../components/settings-links";
 import {
   NO_SANDBOX_JOBS,
-  SANDBOX_CHECKLIST_ROW_ID,
   type SandboxJobState,
   type SandboxRowState,
   sandboxReadinessOf,
@@ -15,8 +14,8 @@ import {
  * The onboarding checklist: what the account has that apps rely on, read from
  * the capability probes, each row Done, Needs you, or Optional, with a
  * dashboard link and one line on why it matters, counted from the cached
- * catalog. Shown as the last setup step and on Settings › Account and
- * capabilities. Pure and client-safe; the rules are tested here.
+ * catalog. Shown as the last setup step and on Settings › Your account.
+ * Pure and client-safe; the rules are tested here.
  */
 
 export type ChecklistStatus = "done" | "needs-you" | "optional";
@@ -565,17 +564,17 @@ export function groupChecklist(rows: readonly ChecklistRow[]): {
 
 /** The account checklist's Analytics Engine row, where a refused install points. */
 export const ANALYTICS_ENGINE_CHECKLIST_LINK: ChecklistLink = {
-  href: settingsLink("account", "checklist-analytics-engine"),
+  href: settingsLink("account", "capability-analytics-engine"),
   label: "Analytics Engine in the account checklist",
   external: false,
 };
 
 /**
  * The element id of a row, so other pages can link to it (the sandbox row is
- * `checklist-sandbox`, where a refused install points).
+ * `capability-sandbox`, where a refused install points).
  */
 export function checklistRowAnchor(row: Pick<ChecklistRow, "id">): string {
-  return row.id === "sandbox" ? SANDBOX_CHECKLIST_ROW_ID : `checklist-${row.id}`;
+  return `capability-${row.id}`;
 }
 
 /**

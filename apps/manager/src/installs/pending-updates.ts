@@ -37,6 +37,15 @@ export interface PendingUpdates {
   manager: ManagerStatus;
 }
 
+/**
+ * What the signed-in layout loads on every page, in one call: the pending
+ * updates, and how many uninstalled apps still keep data (Settings lists
+ * Removed apps only while there are any).
+ */
+export interface LayoutData extends PendingUpdates {
+  removedApps: number;
+}
+
 export interface PendingInstallRow {
   id: string;
   status: string;
@@ -85,5 +94,5 @@ export function sidebarUpdateBadge(
   return { count: pending.apps.length, label: pendingUpdatesTitle(pending.apps.length) };
 }
 
-/** The Appflare updates settings page: the running version, the release feed, and automatic self-updates. */
-export const MANAGER_UPDATES_HREF = settingsLink("appflareUpdates");
+/** Appflare's own version on the Updates settings page: the running version, the release feed, and automatic self-updates. */
+export const MANAGER_UPDATES_HREF = settingsLink("updates", "appflare");

@@ -45,7 +45,7 @@ The owner can reset the password of any other user. An admin can reset a member'
 password, but not another admin's. Nobody can reset the owner's password from
 Settings:
 
-1. Open **Settings > Users and access**.
+1. Open **Settings > Users and sign-in**.
 2. Open the menu at the end of the person's row and pick **Reset password**.
 3. With reset emails on, choose **Email a reset link** or **Show a recovery code**.
    Without them, Appflare shows a recovery code.
@@ -91,7 +91,7 @@ account. Sending to any address needs Email Sending, which needs Workers Paid. W
 it, emails reach only the addresses verified in the account's Email Routing.
 
 1. Set up the domain for sending in the Cloudflare dashboard, under **Email Service**.
-2. In Appflare, open **Settings > Users and access** and find **Password reset emails**
+2. In Appflare, open **Settings > Users and sign-in** and find **Password reset emails**
    under **Forgotten passwords**.
 3. Enter the address to send from, for example `appflare@example.com`, and select
    **Turn on**. Appflare adds an email sending binding to its own Worker and restarts,

@@ -1,12 +1,11 @@
 ---
 title: Rotate the auth secret or remove Appflare
-description: The two owner-only actions in Settings, General, Danger zone.
+description: The two owner-only actions in the danger zone of Settings, Your account.
 ---
 
-The **Danger zone** at the bottom of **Settings**, **General** holds two actions that
-cannot be undone. Only the [owner](/guides/users/) can use them; other users see them
-disabled. Each one asks you to confirm by typing, then opens a plain page with the
-result.
+The **Danger zone** at the bottom of **Settings**, **Your account** holds two actions
+that cannot be undone. Only the [owner](/guides/users/) sees it; other users do not.
+Each one asks you to confirm by typing, then opens a plain page with the result.
 
 ## Rotate the auth secret
 
@@ -107,7 +106,7 @@ The page says which step failed and why, and whether Cloudflare Access protectio
 still on. What was deleted stays deleted; the manager, its database and everything
 after the failed step are still there, so Appflare keeps working and jobs can start
 again. Fix the cause if the message names one, then run **Remove Appflare** again from
-Settings. Steps that are already done are skipped. The same holds if you close the
+**Settings**, **Your account**. Steps that are already done are skipped. The same holds if you close the
 page before the database is deleted: the removal stops where it was.
 
 One run empties at most 720 objects from the build bucket. A bucket holding more stops

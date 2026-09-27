@@ -29,7 +29,7 @@ import { requireRole, requireSession } from "./auth.server";
 export type { SandboxStatus } from "../sandbox/connect.server";
 
 /**
- * Settings, Sandbox builds. Reading the state is open to every signed-in
+ * Settings, Building apps. Reading the state is open to every signed-in
  * user (admins also learn whether the sandbox Worker exists, which costs one
  * API call); enabling, updating, disabling and connecting are admin only.
  */

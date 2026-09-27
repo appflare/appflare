@@ -17,8 +17,9 @@ import { DATA_RESOURCE_KINDS } from "./resource-kinds";
 /**
  * Removed apps: uninstalled installs that still keep data resources in the
  * account (the admin unticked them in the uninstall dialog). They leave the
- * list of installed apps and are listed under Settings until nothing they
- * kept is left, or until an admin forgets them. Two actions:
+ * list of installed apps and are listed on the Removed apps settings page
+ * until nothing they kept is left, or until an admin forgets them. Two
+ * actions:
  *
  * - Delete retained data: an `uninstall` job with `deleteRetained`, which
  *   runs only the uninstall's data resource steps, for everything kept. A
@@ -117,20 +118,32 @@ export async function namesHeldElsewhere(
   return held;
 }
 
+/** Which installs are removed apps: uninstalled, not forgotten, and still keeping something. */
+function isRemovedApp() {
+  return and(
+    eq(installs.status, "uninstalled"),
+    isNull(installs.forgotten_at),
+    sql`EXISTS (SELECT 1 FROM resources r WHERE r.install_id = ${installs.id}
+          AND r.retained_at IS NOT NULL AND r.deleted_at IS NULL)`,
+  );
+}
+
+/** How many removed apps there are, for the settings menu, which lists Removed apps only then (`getPendingUpdates`). */
+export async function countRemovedAppsCore(d1: D1Database): Promise<number> {
+  const [row] = await createDb(d1)
+    .select({ count: sql<number>`count(*)` })
+    .from(installs)
+    .where(isRemovedApp());
+  return row?.count ?? 0;
+}
+
 /** Removed apps that still keep something and were not forgotten, most recently uninstalled first. */
 export async function listRemovedAppsCore(d1: D1Database): Promise<RemovedAppView[]> {
   const db = createDb(d1);
   const rows = await db
     .select()
     .from(installs)
-    .where(
-      and(
-        eq(installs.status, "uninstalled"),
-        isNull(installs.forgotten_at),
-        sql`EXISTS (SELECT 1 FROM resources r WHERE r.install_id = ${installs.id}
-              AND r.retained_at IS NOT NULL AND r.deleted_at IS NULL)`,
-      ),
-    )
+    .where(isRemovedApp())
     .orderBy(desc(installs.uninstalled_at), desc(installs.id));
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);

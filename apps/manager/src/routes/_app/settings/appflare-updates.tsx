@@ -1,31 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { getAutoUpdateSettings } from "../../../auto-update/auto-update.functions";
-import { getManagerUpdate } from "../../../catalog/manager-releases.functions";
-import { SETTINGS_PAGES } from "../../../components/navigation";
-import { AppflareUpdatesSettingsView } from "../../../components/settings-pages";
-import { getManagerVersions } from "../../../jobs/self-update/rollback.functions";
+import { redirectMovedSettings } from "../../../components/settings-redirect";
 
 /**
- * `/settings/appflare-updates`: the running version, the newest release,
- * the self-update (admins), whether Appflare updates itself, and Appflare's
- * own recent versions with the rollback to an older one (admins). The home
- * page's list of pending updates and the sidebar link here.
+ * `/settings/appflare-updates`, where Appflare's own version and updates
+ * used to be: they are on the Updates page now, and the anchor this address
+ * carried (`#versions`) opens the same section there.
  */
 export const Route = createFileRoute("/_app/settings/appflare-updates")({
-  staticData: { title: SETTINGS_PAGES.appflareUpdates.label },
-  loader: async () => {
-    const [managerUpdate, autoUpdate, versions] = await Promise.all([
-      getManagerUpdate(),
-      getAutoUpdateSettings(),
-      getManagerVersions(),
-    ]);
-    return { managerUpdate, autoUpdate, versions };
-  },
-  component: AppflareUpdatesPage,
+  beforeLoad: ({ location }) => redirectMovedSettings(location),
 });
-
-function AppflareUpdatesPage() {
-  const data = Route.useLoaderData();
-  const { viewer } = Route.useRouteContext();
-  return <AppflareUpdatesSettingsView {...data} isAdmin={viewer.role === "admin"} />;
-}

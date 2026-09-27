@@ -22,7 +22,7 @@ import type { ChecklistData } from "./checklist.server";
 
 /**
  * How the onboarding checklist looks, the same in the last setup step and on
- * Settings › Account and capabilities: progress (rows done out of the rows
+ * Settings › Your account: progress (rows done out of the rows
  * that count), then every row as one line of the same height (status icon,
  * title with a help tooltip, a short value, the action on the right). Rows
  * that need the admin come first, then the done ones, then the optional

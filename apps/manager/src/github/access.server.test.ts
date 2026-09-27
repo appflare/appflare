@@ -103,7 +103,7 @@ describe("readRepositoryRefs", () => {
     const none = readRepositoryRefs({ db: env.DB, fetch: anon.fetch }, "acme/api");
     await expect(none).rejects.toThrow(GitRefError);
     await expect(none).rejects.toThrow(
-      /add a GitHub access token that can read it in \[GitHub access settings\]\(\/settings\/account#github-access\)/,
+      /add a GitHub access token that can read it in \[GitHub access settings\]\(\/settings\/building#github-access\)/,
     );
 
     await addToken(EXACT, "acme/api", 1);

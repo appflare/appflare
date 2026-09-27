@@ -76,7 +76,7 @@ export const PAGE_HEADERS = {
 export function errorPage(title: string, message: string): string {
   return `${head(title)}<h1>${escapeHtml(title)}</h1>
 <p>${escapeHtml(plainMessage(message))}</p>
-<p><a href="${settingsLink("general")}">Back to Settings</a></p>
+<p><a href="${settingsLink("account")}">Back to Settings</a></p>
 ${TAIL}`;
 }
 
@@ -152,7 +152,7 @@ export function removalPageEnd(summary: RemovalSummary): string {
 <h2>The removal stopped</h2>
 <p>What was deleted stays deleted. The manager Worker <code>${worker}</code>, its database and everything after the failed step are still in the account, so Appflare keeps working and jobs can start again.</p>
 ${accessStatus(summary)}
-<p>Fix the cause if the message names one, then run <strong>Remove Appflare from this account</strong> again from the <a href="${settingsLink("general", "danger-zone")}">danger zone</a>. Steps that are already done are skipped.</p>
+<p>Fix the cause if the message names one, then run <strong>Remove Appflare from this account</strong> again from the <a href="${settingsLink("account", "danger-zone")}">danger zone</a>. Steps that are already done are skipped.</p>
 </div>
 ${TAIL}`;
   }

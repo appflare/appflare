@@ -20,7 +20,7 @@ import { VERSION_BINDING } from "./plan";
 /** How many of the Worker's newest versions the list shows (the API's default page). */
 export const MANAGER_VERSIONS_LIMIT = 10;
 
-/** One row of Settings, Appflare updates, Versions. */
+/** One row of Settings, Updates, Recent versions. */
 export interface ManagerVersionRow {
   /** The Workers version id. */
   id: string;

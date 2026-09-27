@@ -100,10 +100,10 @@ The installer only installs. Once the manager runs, you manage it from its own
 
 | To | Go to |
 | --- | --- |
-| See the running version and update Appflare | **Settings > Appflare updates**. See [Update Appflare](/guides/update-appflare/). |
-| Return to an earlier manager version | **Settings > Appflare updates > Versions**. See [Roll back](/guides/update-appflare/#roll-back). |
-| Enable, update, or disable sandbox builds | **Settings > Account and capabilities**. See [Sandbox builds](/guides/builds/). |
-| Remove Appflare and its data | **Settings > General > Remove Appflare**. See [Remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account). |
+| See the running version and update Appflare | **Settings > Updates**. See [Update Appflare](/guides/update-appflare/). |
+| Return to an earlier manager version | **Settings > Updates > Recent versions**. See [Roll back](/guides/update-appflare/#roll-back). |
+| Enable, update, or disable sandbox builds | **Settings > Building apps**. See [Sandbox builds](/guides/builds/). |
+| Remove Appflare and its data | **Settings > Your account > Remove Appflare**. See [Remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account). |
 
 ## The setup wizard
 
@@ -165,7 +165,7 @@ done items take one line each; optional items come last:
 | Sandbox builds | Builds apps that have no prebuilt release inside your account. Needs Workers Paid, R2 turned on, and the Containers permission; the first app that needs a build turns it on, or select **Enable now** for a faster first build. |
 
 Select **Re-check** after changing something in the dashboard. Select **Finish** to
-go to the manager. The same list stays in **Settings › Account and capabilities**.
+go to the manager. The same list stays in **Settings › Your account**.
 
 The token template requests:
 
@@ -203,7 +203,7 @@ Worker, through the Cloudflare API. Saving it redeploys the manager, which takes
 few seconds. The token is never shown again, never written to the database, and
 never included in logs. See [Security model](/security/).
 
-To replace the token later, open **Settings**, find **Cloudflare API token**, and
+To replace the token later, open **Settings**, **Your account**, find **Cloudflare connection**, and
 select **Rotate token**. The new token must be for the same account. Revoke the old
 one in the Cloudflare dashboard afterwards.
 

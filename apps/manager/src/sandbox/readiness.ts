@@ -85,11 +85,8 @@ export function withSandboxJobs(base: SandboxReadiness, jobs: SandboxJobState): 
   return { ...base, failure: { id: failed.id, message: failed.message } };
 }
 
-/** The id of the sandbox builds row in the account checklist, for links to it. */
-export const SANDBOX_CHECKLIST_ROW_ID = "checklist-sandbox";
-
 /** The account checklist's sandbox builds row. */
-export const SANDBOX_CHECKLIST_HREF = settingsLink("account", SANDBOX_CHECKLIST_ROW_ID);
+export const SANDBOX_CHECKLIST_HREF = settingsLink("account", "capability-sandbox");
 
 /** The line an install or build confirmation adds when it turns sandbox builds on first. */
 export const SANDBOX_FIRST_NOTE = "Sandbox builds will be turned on first (about two minutes).";

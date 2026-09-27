@@ -110,7 +110,7 @@ export const CONTAINER_WAIT_CALLS = 10;
 export function requireSelf(remote: boolean): void {
   if (!remote) {
     throw new JobError(
-      `this deployment of Appflare has no SELF binding, which sandbox builds need to stay within Cloudflare's subrequest limit; update Appflare in ${settingsPlace("appflareUpdates", "appflare", "the Appflare updates settings")} first, then try again`,
+      `this deployment of Appflare has no SELF binding, which sandbox builds need to stay within Cloudflare's subrequest limit; update Appflare in ${settingsPlace("updates", "appflare", "the Updates settings")} first, then try again`,
     );
   }
 }

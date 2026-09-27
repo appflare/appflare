@@ -35,19 +35,25 @@ import { PasskeysSection } from "./passkeys-section";
 import { PasswordRecoveryCard } from "./password-recovery-card";
 import { RemovedAppsSection } from "./removed-apps-section";
 import { SandboxCard } from "./sandbox-card";
+import { SettingsPageSelect } from "./settings-nav";
 import { UsageDataCard } from "./usage-data-card";
 import { UsersSection } from "./users-section";
 
 /**
  * The settings pages, each a page header (title, one line under it, an
- * optional docs link; no breadcrumbs, since the sidebar shows where you are)
- * and its sections, one card each (`section.tsx`). The routes load the data
- * and render these, so the pages render the same in tests.
+ * optional docs link; no breadcrumbs, since the sidebar shows where you are;
+ * on narrow screens, a list of the settings pages under it) and its
+ * sections, one card each (`section.tsx`). The routes load the data and
+ * render these, so the pages render the same in tests.
  */
 
 type SettingsPageKey = keyof typeof SETTINGS_PAGES;
 
-/** A settings page's title and the line under it, from the settings page list. */
+/**
+ * A settings page's title and the line under it, from the settings page
+ * list, and the list of pages that stands in for the sidebar's on narrow
+ * screens.
+ */
 function SettingsPageHeader({
   page,
   title,
@@ -57,61 +63,96 @@ function SettingsPageHeader({
   title?: string;
   docs?: Parameters<typeof DocsLink>[0]["topic"];
 }) {
-  const { label, description } = SETTINGS_PAGES[page];
-  return (
-    <PageHeader
-      title={title ?? label}
-      description={description}
-      titleAction={docs === undefined ? undefined : <DocsLink topic={docs} />}
-    />
-  );
-}
-
-/** `/settings`: whether apps update on their own by default, and the danger zone (last). */
-export function GeneralSettingsView({
-  autoUpdate,
-  danger,
-  viewer,
-}: {
-  autoUpdate: AutoUpdateSettings;
-  danger: DangerZoneState;
-  viewer: Pick<Viewer, "role" | "isOwner">;
-}) {
+  const { href, label, description } = SETTINGS_PAGES[page];
   return (
     <>
-      <SettingsPageHeader page="general" title="Settings" />
-      <AppsAutomaticUpdatesSection settings={autoUpdate} isAdmin={viewer.role === "admin"} />
-      <DangerZone isOwner={viewer.isOwner} state={danger} />
+      <PageHeader
+        title={title ?? label}
+        description={description}
+        titleAction={docs === undefined ? undefined : <DocsLink topic={docs} />}
+      />
+      <SettingsPageSelect href={href} />
     </>
   );
 }
 
 /**
- * `/settings/account`: the Cloudflare connection (admins rotate the token),
- * the onboarding checklist, what the account can run, sandbox builds, and
- * GitHub access.
+ * `/settings/account` (Your account): the Cloudflare connection (admins
+ * rotate the token), the onboarding checklist, what the account can run,
+ * and last, for the owner only, the danger zone.
  */
 export function AccountSettingsView({
   tokenStatus,
   capabilities,
-  sandboxStatus,
   checklist,
-  isAdmin,
+  danger,
+  viewer,
 }: {
   tokenStatus: TokenStatus;
   capabilities: CapabilitiesView;
-  sandboxStatus: SandboxCardState;
   checklist: ChecklistData;
-  isAdmin: boolean;
+  /** Null for everyone but the owner. */
+  danger: DangerZoneState | null;
+  viewer: Pick<Viewer, "role" | "isOwner">;
 }) {
+  const isAdmin = viewer.role === "admin";
   return (
     <>
       <SettingsPageHeader page="account" />
       <CloudflareTokenCard status={tokenStatus} canRotate={isAdmin} />
       <OnboardingChecklistCard data={checklist} isAdmin={isAdmin} />
       <AccountCapabilitiesCard view={capabilities} isAdmin={isAdmin} />
+      {viewer.isOwner && danger !== null && <DangerZone state={danger} />}
+    </>
+  );
+}
+
+/**
+ * `/settings/building` (Building apps): sandbox builds, which build apps
+ * with no ready-made release in the account, and GitHub access for private
+ * repositories (admins only).
+ */
+export function BuildingSettingsView({
+  sandboxStatus,
+  capabilities,
+  isAdmin,
+}: {
+  sandboxStatus: SandboxCardState;
+  capabilities: CapabilitiesView;
+  isAdmin: boolean;
+}) {
+  return (
+    <>
+      <SettingsPageHeader page="building" />
       <SandboxCard status={sandboxStatus} capabilities={capabilities} isAdmin={isAdmin} />
       <GithubAccessCard isAdmin={isAdmin} />
+    </>
+  );
+}
+
+/**
+ * `/settings/updates` (Updates): whether apps update on their own by
+ * default, then Appflare itself: the running version, the newest release,
+ * the self-update and whether Appflare updates itself (admins), and its
+ * recent versions with the rollback to an older one.
+ */
+export function UpdatesSettingsView({
+  autoUpdate,
+  managerUpdate,
+  versions,
+  isAdmin,
+}: {
+  autoUpdate: AutoUpdateSettings;
+  managerUpdate: ManagerUpdateState;
+  versions: ManagerVersionsState;
+  isAdmin: boolean;
+}) {
+  return (
+    <>
+      <SettingsPageHeader page="updates" />
+      <AppsAutomaticUpdatesSection settings={autoUpdate} isAdmin={isAdmin} />
+      <AppflareUpdatesCard state={managerUpdate} autoUpdate={autoUpdate} isAdmin={isAdmin} />
+      <ManagerVersionsSection state={versions} isAdmin={isAdmin} current={managerUpdate.current} />
     </>
   );
 }
@@ -231,31 +272,6 @@ export function RemovedAppsSettingsView({
     <>
       <SettingsPageHeader page="removedApps" docs="removedApps" />
       <RemovedAppsSection rows={rows} isAdmin={isAdmin} />
-    </>
-  );
-}
-
-/**
- * `/settings/appflare-updates`: the running version, the newest release,
- * the self-update and whether Appflare updates itself (admins), then
- * Appflare's own recent versions with the rollback to an older one.
- */
-export function AppflareUpdatesSettingsView({
-  managerUpdate,
-  autoUpdate,
-  versions,
-  isAdmin,
-}: {
-  managerUpdate: ManagerUpdateState;
-  autoUpdate: AutoUpdateSettings;
-  versions: ManagerVersionsState;
-  isAdmin: boolean;
-}) {
-  return (
-    <>
-      <SettingsPageHeader page="appflareUpdates" />
-      <AppflareUpdatesCard state={managerUpdate} autoUpdate={autoUpdate} isAdmin={isAdmin} />
-      <ManagerVersionsSection state={versions} isAdmin={isAdmin} current={managerUpdate.current} />
     </>
   );
 }

@@ -14,7 +14,7 @@ Each app's catalog card shows **Free plan** or **Workers Paid**.
 | --- | --- |
 | 50 subrequests per invocation | The manager installs apps from a Workflow that must stay within this budget. It reads a Worker's modules with one request per 8 MiB of adjacent modules, so the number of modules does not matter, and it uploads at most 32 MiB of modules per Worker, which one upload holds in memory at once. |
 | 64 MiB Worker size, uncompressed (on every plan) | No plan difference: Cloudflare no longer limits the compressed size. Appflare's own cap is lower, 32 MiB of module bytes per Worker, because one upload holds them all in memory. |
-| 5 cron triggers per account | The manager uses one (every 30 minutes). Apps with cron triggers share the other four. The catalog page says how many an app uses, and an install stops before it creates anything if the account would pass 5. The count is skipped when the account's Workers plan (detected, or set in **Settings**, **Account and capabilities**) is Workers Paid, or when you tick **This account is on Workers Paid** for that install or update. |
+| 5 cron triggers per account | The manager uses one (every 30 minutes). Apps with cron triggers share the other four. The catalog page says how many an app uses, and an install stops before it creates anything if the account would pass 5. The count is skipped when the account's Workers plan (detected, or set in **Settings**, **Your account**) is Workers Paid, or when you tick **This account is on Workers Paid** for that install or update. |
 | 10 D1 databases per account | The manager uses one. Each app that binds D1 uses one per database, per install. |
 
 Other free plan quotas, such as requests per day and KV writes per day, apply to
@@ -54,7 +54,7 @@ No. Installs and updates use the catalog's current version. After an update you 
 
 Nothing. Installed apps are ordinary Workers in your account and do not depend on
 the manager at runtime. To repair the manager, roll it back under **Settings >
-Appflare updates > Versions**. If its pages do not load, roll it back from the
+Updates > Recent versions**. If its pages do not load, roll it back from the
 Worker's **Deployments** page in the Cloudflare dashboard, or with
 `npx wrangler rollback --name appflare`. See
 [Roll back](/guides/update-appflare/#roll-back).
@@ -67,7 +67,7 @@ Worker's **Deployments** page in the Cloudflare dashboard, or with
 2. Note any resources you kept. Each app's page lists them under **Kept in the
    account**; after the next step, nothing lists them. Delete them in the Cloudflare
    dashboard when you no longer need them.
-3. As the owner, open **Settings**, **General**, and select **Remove Appflare** in
+3. As the owner, open **Settings**, **Your account**, and select **Remove Appflare** in
    the danger zone. It deletes the manager Worker, its Workflow, its D1 database and
    its KV namespace, and also the external domains gateway and the sandbox Worker with
    its build bucket. See

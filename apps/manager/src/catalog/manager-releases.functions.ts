@@ -12,7 +12,7 @@ import {
   refreshManagerReleases,
 } from "./manager-releases.server";
 
-/** Settings, "Appflare updates": the release feed and the self-update. */
+/** Settings, Updates, "Appflare version": the release feed and the self-update. */
 
 export interface ManagerUpdateState extends ManagerUpdateView {
   /** The self-update queued or running, if any. */

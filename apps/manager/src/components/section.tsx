@@ -52,9 +52,10 @@ export function Section({
   const hasError = error !== undefined && error !== null && error !== "";
   return (
     <section id={id} aria-labelledby={`${id}-heading`} className="grid scroll-mt-6 gap-3">
-      {/* The action stays at the right, beside a description of any length. */}
-      <div className="flex flex-wrap items-start justify-between gap-3 sm:flex-nowrap">
-        <div className="grid min-w-0 flex-1 gap-1">
+      {/* On phones the action goes under the text; from 640 px it stays at the
+          right, beside a description of any length. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="grid min-w-0 gap-1 sm:flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="flex items-center gap-1">
               <Text variant="heading" as="h2" id={`${id}-heading`}>
@@ -66,7 +67,7 @@ export function Section({
           </div>
           {description !== undefined && <Text variant="secondary">{description}</Text>}
         </div>
-        {action !== undefined && action !== null && <div className="shrink-0">{action}</div>}
+        {action !== undefined && action !== null && <div className="sm:shrink-0">{action}</div>}
       </div>
       <LayerCard className="min-w-0">
         {hasError && (
