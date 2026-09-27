@@ -37,11 +37,13 @@ import {
   listCatalog,
   refreshCatalog,
 } from "../../../catalog/catalog.functions";
+import { LICENSE_FILTERS } from "../../../catalog/license";
 import { UNSIGNED_INDEX_REFUSAL } from "../../../catalog/sources";
 import {
   AvailabilityLegend,
   InstallCheckBadge,
   InstalledBadge,
+  LicenseBadge,
   PlanBadge,
   PrimitiveIcons,
   TierBadge,
@@ -58,6 +60,8 @@ function lenient<T extends z.ZodType>(schema: T) {
   return schema.optional().catch(undefined);
 }
 
+const licenseFilterSchema = z.enum(["open-source", "source-available", "none"]);
+
 const searchSchema = z.object({
   q: lenient(z.string().max(200)),
   installed: lenient(z.enum(["yes", "no"])),
@@ -65,14 +69,15 @@ const searchSchema = z.object({
   tier: lenient(installTierSchema),
   category: lenient(z.string().min(1).max(60)),
   source: lenient(z.string().min(1).max(64)),
+  license: lenient(licenseFilterSchema),
   sort: lenient(z.enum(["popular", "name", "checked"])),
 });
 
 /**
  * `/catalog`: apps from every enabled catalog's KV-cached `index.json`, with
  * a search over names, summaries, authors and primitives, filters for
- * installed, plan, tier, category and (with more than one catalog) source,
- * and a sort; all kept in the URL so a filtered list can be shared. Each
+ * installed, plan, tier, category, license and (with more than one catalog)
+ * source, and a sort; all kept in the URL so a filtered list can be shared. Each
  * card carries its catalog's source badge when there is more than one.
  * The sponsored item (if any) sits above the list. Every card has the same
  * slots in the same order so apps can be compared down a column.
@@ -94,6 +99,7 @@ const TIER_ITEMS = {
   sandbox: "Built in your account",
   "self-deploying": "Self-deploying",
 };
+const LICENSE_ITEMS = { [ANY]: "Any license", ...LICENSE_FILTERS };
 
 function CatalogPage() {
   const catalog = Route.useLoaderData();
@@ -231,6 +237,15 @@ function CatalogPage() {
                   update({ tier: tier.success ? tier.data : undefined });
                 }}
               />
+              <Select
+                aria-label="License"
+                value={search.license ?? ANY}
+                items={LICENSE_ITEMS}
+                onValueChange={(value) => {
+                  const license = licenseFilterSchema.safeParse(value);
+                  update({ license: license.success ? license.data : undefined });
+                }}
+              />
               {manySources && (
                 <Select
                   aria-label="Source"
@@ -364,7 +379,7 @@ function useSearchText(
 /**
  * One app, with the same slots in the same order on every card: header
  * (icon or monogram, name, tier and plan), summary (two lines), meta
- * (authors, version), status (install check, popularity), primitives
+ * (authors, version), status (install check, license, popularity), primitives
  * (always), and a footer with the installed state and the one action.
  */
 function AppCard({
@@ -407,6 +422,7 @@ function AppCard({
         <div className="flex min-h-7 flex-wrap items-center gap-x-4 gap-y-2">
           {showSource && <CatalogSourceBadge source={app.source} />}
           <InstallCheckBadge lastVerified={app.lastVerified} />
+          {app.appLicense !== null && <LicenseBadge license={app.appLicense} />}
           <PopularityLine popularity={app.popularity} />
         </div>
         <PrimitiveIcons primitives={app.primitives} capabilities={capabilities} tier={app.tier} />

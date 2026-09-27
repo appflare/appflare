@@ -317,6 +317,32 @@ describe("pack leaves nothing behind on failure", () => {
   }, 120_000);
 });
 
+describe("pack with a license that is not an SPDX expression", () => {
+  it("packs it and warns", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-license-"));
+    const catalog = parseJsonc(readFileSync(FIXTURE_MANIFEST, "utf8")) as Record<string, unknown>;
+    catalog.license = "MIT License";
+    const manifestPath = path.join(parent, "appflare.jsonc");
+    writeFileSync(manifestPath, JSON.stringify(catalog));
+    const logs: string[] = [];
+    try {
+      const res = await pack({
+        checkoutDir: FIXTURE,
+        manifestPath,
+        outDir: path.join(parent, "out"),
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      expect(res.manifest.catalog.license).toBe("MIT License");
+      expect(logs).toContain(
+        'warning: license is not an SPDX expression: it has "License" where AND, OR or WITH belongs',
+      );
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
 /** Writes the fixture's catalog manifest with `install.version` set into `dir`. */
 function manifestWithInstallVersion(dir: string, version: unknown): string {
   const catalog = parseJsonc(readFileSync(FIXTURE_MANIFEST, "utf8")) as {

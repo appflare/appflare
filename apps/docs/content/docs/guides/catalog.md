@@ -18,6 +18,7 @@ Each app shows:
   free plan lacks.
 - **The authors**: who wrote the app upstream.
 - **The version** the catalog offers.
+- **The license**, as the app's repository declares it (see [Licenses](#licenses)).
 - **Install checked** with a date: the last time the catalog's nightly job
   reinstalled this exact version into a test account and got an answer from it. A
   new version shows **Not checked yet** until its first check passes. A check that
@@ -32,7 +33,8 @@ Each app shows:
 ## The app page
 
 Select **View and install** (or **Details** for an app you already have). The page
-shows the version, the source repository, homepage, license, the app's authors with
+shows the version, the source repository, homepage, license (with a line on what it
+allows), the app's authors with
 links to their website, GitHub, and X profiles, the catalog maintainers who package it
 under **Packaged by**, and the install check date under **Last checked**, and lists what the install will create: the Worker, plus each KV namespace, D1 database,
 R2 bucket, queue, Vectorize index, and Durable Object class the app binds.
@@ -74,6 +76,26 @@ permissions filled in, and narrow it to the accounts and zones the app needs.
 Permissions the dashboard cannot prefill are marked **Add by hand**. When the
 install form asks for the token, it is stored as a secret on the app's Worker;
 otherwise the app's post-install steps say where it goes.
+
+## Licenses
+
+The catalog lists apps whatever their license and never leaves one out for it. It
+shows the license the app's own repository declares, so the choice is yours:
+
+- **An open-source license**, such as **MIT** or **AGPL-3.0-only**, is shown by its
+  id. On the app's page each id links to a plain explanation of it.
+- **A source-available license**, such as **BUSL-1.1**, **FSL-1.1-MIT**, a PolyForm
+  license, **Elastic-2.0** or **SSPL-1.0**, is marked **Source-available**. The code
+  is public, but the license restricts some uses, often production or commercial
+  use. The catalog entry can add a short note on what is restricted; hover over the
+  badge to read it.
+- **No license** means the repository publishes none. You may run the app, but
+  you have no license to modify or redistribute it.
+- **Custom license** means the app has a license of its own with no standard id;
+  its page links to the file.
+
+The license filter above the list (**Any license**) narrows it to open-source,
+source-available, or unlicensed apps.
 
 ## Catalog images, popularity and the sponsored slot
 

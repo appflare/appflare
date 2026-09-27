@@ -31,6 +31,7 @@ import {
   type D1MigrationFile,
   type DoMigration,
   installDirList,
+  licenseWarning,
   secretTargets,
   type WorkerModule,
   workerManifest,
@@ -501,6 +502,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   const catalog: CatalogManifest = catalogManifestSchema.parse(
     parseJsonc(readFileSync(path.resolve(options.manifestPath), "utf8")),
   );
+  // Any text parses, so manifests already stored keep working; a new entry
+  // should still name its license the way the catalog shows it best.
+  const licenseNotice = licenseWarning(catalog.license);
+  if (licenseNotice !== null) logger(`warning: ${licenseNotice}`);
 
   // (a2) A config kept as a template (`wrangler.toml.example`) gets its real
   // name first, so the build and wrangler's reader both find it: the

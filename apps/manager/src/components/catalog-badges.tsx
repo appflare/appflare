@@ -24,6 +24,7 @@ import {
 } from "@phosphor-icons/react";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import { installedState } from "../catalog/installed-state";
+import { type AppLicense, licenseBadgeCopy } from "../catalog/license";
 import {
   type AppPrimitives,
   AVAILABILITY_LABELS,
@@ -98,6 +99,23 @@ export function InstallCheckBadge({ lastVerified }: { lastVerified: string | nul
       ) : (
         <Badge variant="neutral">{copy.label}</Badge>
       )}
+    </Tooltip>
+  );
+}
+
+/**
+ * The app's license as its repository declares it: the id in a neutral
+ * badge, a muted "Source-available" before a source-available one, and "No
+ * license" in the warning tone; what the license allows in the tooltip.
+ */
+export function LicenseBadge({ license }: { license: AppLicense }) {
+  const copy = licenseBadgeCopy(license);
+  return (
+    <Tooltip content={copy.tooltip}>
+      <Badge variant={copy.variant}>
+        {copy.prefix !== null && <span className="font-normal opacity-75">{copy.prefix}</span>}
+        {copy.label}
+      </Badge>
     </Tooltip>
   );
 }

@@ -10,6 +10,7 @@ import {
   requirementSchema,
   sandboxInstanceTypeSchema,
 } from "./catalog";
+import { licenseNoteSchema, licenseSchema } from "./license";
 
 /**
  * Schema for the generated `index.json` published to GitHub Pages.
@@ -156,6 +157,14 @@ export const indexAppSchema = z
     keyValueDurableObjects: z.boolean().optional(),
     /** The catalog manifest's `categories`; optional for the same reason as `services`. */
     categories: z.array(z.string().min(1)).optional(),
+    /**
+     * The catalog manifest's `license` and `licenseNote`, for the catalog
+     * card. Optional so an index published before the fields existed still
+     * parses; a manager without them shows the license from the app's catalog
+     * manifest once it has read it.
+     */
+    license: licenseSchema.optional(),
+    licenseNote: licenseNoteSchema.optional(),
     /**
      * The catalog manifest's `revision`: with `version`, which edit of the
      * entry this row describes. Optional so an index published before the

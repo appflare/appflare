@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { appFacts } from "./app-facts";
 
 const catalog = {
+  license: "BUSL-1.1",
+  licenseNote: "Production use restricted.",
   requires: ["zone"],
   categories: ["email", "bots"],
   tokenPermissions: [],
@@ -26,6 +28,7 @@ describe("appFacts", () => {
     expect(appFacts({ tier: "artifact", requires: ["r2"] }, null)).toEqual({
       primitives: { ids: ["r2"], complete: false, keyValueDurableObjects: false },
       categories: [],
+      appLicense: null,
     });
   });
 
@@ -37,6 +40,7 @@ describe("appFacts", () => {
         keyValueDurableObjects: false,
       },
       categories: ["email", "bots"],
+      appLicense: { expression: "BUSL-1.1", note: "Production use restricted." },
     });
   });
 
@@ -52,10 +56,12 @@ describe("appFacts", () => {
       requires: ["r2"],
       services: ["kv", "r2"],
       categories: ["utilities"],
+      license: "MIT",
     };
     const expected = {
       primitives: { ids: ["kv", "r2"], complete: true, keyValueDurableObjects: false },
       categories: ["utilities"],
+      appLicense: { expression: "MIT", note: null },
     };
     expect(appFacts(row, null)).toEqual(expected);
     expect(appFacts(row, { catalog, manifest })).toEqual(expected);
@@ -78,5 +84,21 @@ describe("appFacts", () => {
     expect(
       appFacts({ tier: "artifact", requires: [], services: [] }, { catalog, manifest }).categories,
     ).toEqual(["email", "bots"]);
+  });
+
+  it("takes the license from the row, else from the catalog manifest", () => {
+    const row: Parameters<typeof appFacts>[0] = {
+      tier: "artifact",
+      requires: [],
+      license: "NONE",
+    };
+    expect(appFacts(row, { catalog, manifest }).appLicense).toEqual({
+      expression: "NONE",
+      note: null,
+    });
+    expect(appFacts({ tier: "artifact", requires: [] }, { catalog, manifest }).appLicense).toEqual({
+      expression: "BUSL-1.1",
+      note: "Production use restricted.",
+    });
   });
 });

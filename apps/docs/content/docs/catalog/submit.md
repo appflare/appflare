@@ -9,7 +9,10 @@ app's own repository.
 
 ## Before you start
 
-- **The app needs a public repository and a license.**
+- **The app needs a public repository.** Its license does not decide whether it is
+  listed: the catalog takes any app the platform can run, open-source,
+  source-available, or with no license at all, and shows the license as the
+  repository declares it. See [`license`](#1-write-the-manifest) below.
 - **No proxies, tunnels, or circumvention tools.**
 - **It deploys with wrangler.** If the app works with Cloudflare's Deploy button, it
   should work with Appflare. Bindings, compatibility settings, static assets, Durable
@@ -121,6 +124,16 @@ example:
 
 Points that need care:
 
+- **`license`.** Write the license the app's own repository declares, as an SPDX
+  license expression: `MIT`, `Apache-2.0`, `MIT OR Apache-2.0`, or a
+  source-available license such as `BUSL-1.1`, `FSL-1.1-MIT`, `PolyForm-Noncommercial-1.0.0`
+  or `Elastic-2.0`. Use `NONE` when the repository publishes no license, and
+  `SEE LICENSE IN <file>` (a path in the repository) for a license with no SPDX id.
+  Add `licenseNote`, one short line such as `"Source-available: production use
+  restricted; see the license"`, when the id does not say what matters. Managers
+  show the license on the app's card and page: `NONE` as **No license**, and
+  source-available licenses (and any license with a note) marked
+  **Source-available**. It is never a reason to leave an app out.
 - **`source`.** Set `sha` to the full 40-character commit SHA, and `ref` to the tag it
   belongs to (`v1.2.3`) or the branch (`main`) for an untagged app. A semver tag
   gives the version `1.2.3`; anything else gives `0.0.0-<commit date>.<sha7>`.

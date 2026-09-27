@@ -2,6 +2,8 @@ import {
   appTokenPermissions,
   type CatalogAuthor,
   type IndexBuild,
+  isLicense,
+  licenseFile,
   SELF_DEPLOYING_TOOLS,
 } from "@appflare/schema";
 import {
@@ -33,7 +35,12 @@ import { CapabilityBadge } from "../../../capabilities/capability-badge";
 import { type AuthorLink, authorLinks, maintainerProfile } from "../../../catalog/authors";
 import { avatarSrc } from "../../../catalog/avatar";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
-import { licenseParts } from "../../../catalog/license";
+import {
+  type AppLicense,
+  licenseBadgeCopy,
+  licenseFileHref,
+  licenseParts,
+} from "../../../catalog/license";
 import {
   analyticsEngineRefusal,
   type RequirementCheck,
@@ -45,6 +52,7 @@ import { AppTokenPermissions } from "../../../components/app-token-permissions";
 import { BuildFromSourceCard } from "../../../components/build-from-source-card";
 import {
   InstallCheckBadge,
+  LicenseBadge,
   PlanBadge,
   PrimitiveBadges,
   TierBadge,
@@ -293,9 +301,9 @@ function hostOf(url: string): string {
 
 /**
  * The app at a glance, as a centred grid of facts (version, license, the
- * catalog's install check, popularity, links), then who wrote and who
- * packages it, then the Cloudflare primitives it uses and whether this
- * account offers each.
+ * catalog's install check, popularity, links) with a line on what the
+ * license allows, then who wrote and who packages it, then the Cloudflare
+ * primitives it uses and whether this account offers each.
  */
 function AboutCard({ detail }: { detail: CatalogDetail }) {
   const { app, catalog } = detail;
@@ -315,6 +323,7 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
         <div className="flex flex-wrap items-center gap-2">
           <TierBadge tier={app.tier} />
           <PlanBadge plan={app.plan} />
+          {detail.appLicense !== null && <LicenseBadge license={detail.appLicense} />}
         </div>
       </LayerCard.Secondary>
       <LayerCard.Primary className="grid gap-5 px-5 py-4">
@@ -328,12 +337,15 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
             <span className="font-mono text-[0.9em]">{app.version}</span>
           </Fact>
           <Fact label="License">
-            {catalog === null ? (
+            {detail.appLicense === null ? (
               <Text as="span" variant="secondary">
                 Not known
               </Text>
             ) : (
-              <License expression={catalog.license} />
+              <License
+                license={detail.appLicense}
+                pinned={catalog === null ? null : { repo: catalog.repo, sha: catalog.source.sha }}
+              />
             )}
           </Fact>
           {detail.source !== null && (
@@ -380,6 +392,13 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
             )}
           </Fact>
         </div>
+        {detail.appLicense !== null && (
+          <div className="mx-auto max-w-3xl text-center">
+            <Text as="p" variant="secondary" size="sm">
+              {licenseBadgeCopy(detail.appLicense).tooltip}
+            </Text>
+          </div>
+        )}
         <div className="mx-auto grid w-full max-w-5xl gap-5 border-kumo-hairline border-t pt-5 sm:grid-cols-2">
           <Fact label={detail.authors.length === 1 ? "Author" : "Authors"}>
             {detail.authors.length === 0 ? (
@@ -433,8 +452,37 @@ function AboutCard({ detail }: { detail: CatalogDetail }) {
   );
 }
 
-/** Each SPDX id of the license linked to a plain-language explanation of it. */
-function License({ expression }: { expression: string }) {
+/**
+ * The license as the repository declares it: each SPDX id linked to a
+ * plain-language explanation of it, a `SEE LICENSE IN <file>` license as a
+ * link to that file at the pinned commit, and plain words for no license.
+ */
+function License({
+  license,
+  pinned,
+}: {
+  license: AppLicense;
+  /** Where the license file lives; null while the catalog manifest is not loaded. */
+  pinned: { repo: string; sha: string } | null;
+}) {
+  const { expression } = license;
+  const copy = licenseBadgeCopy(license);
+  if (copy.kind === "none") {
+    return <Text as="span">{copy.label}</Text>;
+  }
+  const fileHref = pinned === null ? null : licenseFileHref(expression, pinned.repo, pinned.sha);
+  if (fileHref !== null) {
+    return (
+      <Link href={fileHref} target="_blank" rel="noopener noreferrer">
+        {licenseFile(expression)}
+        <Link.ExternalIcon />
+      </Link>
+    );
+  }
+  // Text that is not an SPDX expression is shown as it is, with nothing linked.
+  if (copy.label !== expression || !isLicense(expression)) {
+    return <Text as="span">{copy.label}</Text>;
+  }
   return (
     <span>
       {licenseParts(expression).map((part, i) =>

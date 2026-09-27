@@ -1,4 +1,5 @@
 import type { CatalogAuthor, InstallTier, Plan } from "@appflare/schema";
+import { type AppLicense, type LicenseFilter, licenseKind } from "./license";
 import { type AppPopularity, comparePopularity } from "./popularity";
 import { type AppPrimitives, PRIMITIVE_LABELS } from "./primitives";
 
@@ -24,6 +25,8 @@ export interface BrowsableApp {
   popularity: AppPopularity | null;
   /** The catalog that lists it, for the source filter. */
   source?: { id: string } | undefined;
+  /** Its license, for the license filter; null or absent while not known. */
+  appLicense?: AppLicense | null | undefined;
 }
 
 export const SORTS = {
@@ -42,6 +45,8 @@ export interface BrowseQuery {
   category?: string | undefined;
   /** A catalog id: only that catalog's apps. */
   source?: string | undefined;
+  /** Only apps whose license is of this kind; an app whose license is not known yet matches none. */
+  license?: LicenseFilter | undefined;
   sort?: Sort | undefined;
 }
 
@@ -82,6 +87,9 @@ export function matchesFilters(app: BrowsableApp, query: BrowseQuery): boolean {
   if (query.tier !== undefined && app.tier !== query.tier) return false;
   if (query.category !== undefined && !app.categories.includes(query.category)) return false;
   if (query.source !== undefined && app.source?.id !== query.source) return false;
+  if (query.license !== undefined) {
+    if (app.appLicense == null || licenseKind(app.appLicense) !== query.license) return false;
+  }
   return true;
 }
 
@@ -126,7 +134,8 @@ export function isFiltered(query: BrowseQuery): boolean {
     query.plan !== undefined ||
     query.tier !== undefined ||
     query.category !== undefined ||
-    query.source !== undefined
+    query.source !== undefined ||
+    query.license !== undefined
   );
 }
 

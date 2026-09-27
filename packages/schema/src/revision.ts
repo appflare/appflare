@@ -50,6 +50,7 @@ export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
   "summary",
   "homepage",
   "license",
+  "licenseNote",
   "categories",
   "authors",
   "maintainers",

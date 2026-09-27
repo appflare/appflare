@@ -67,6 +67,7 @@ describe("listAppFacts", () => {
     expect(facts.get("a")).toEqual({
       primitives: { ids: ["r2"], complete: false, keyValueDurableObjects: false },
       categories: [],
+      appLicense: null,
     });
     expect(deferred).toHaveLength(1);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -138,6 +139,7 @@ describe("listAppFacts", () => {
     expect(facts.get("cut")).toEqual({
       primitives: { ids: ["r2", "zone"], complete: false, keyValueDurableObjects: false },
       categories: ["notes"],
+      appLicense: { expression: "MIT", note: null },
     });
     expect(deferred).toEqual([]);
     expect(upstream.urls).toEqual([]);
@@ -172,6 +174,7 @@ describe("listAppFacts", () => {
     expect(facts.get("a")).toEqual({
       primitives: { ids: ["kv", "cron"], complete: true, keyValueDurableObjects: false },
       categories: ["utilities"],
+      appLicense: null,
     });
     await Promise.all(deferred);
     // Only the older row's manifest is looked up, cached or fetched.

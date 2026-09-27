@@ -32,7 +32,6 @@ export const manifestFieldNotes: FieldNotes = {
   summary: "One sentence shown on the catalog card.",
   homepage: "Link shown on the app's catalog page.",
   repo: "The upstream GitHub repository, as `owner/repo`. It must be public.",
-  license: "The upstream license, for example `MIT`.",
   categories: "Free-form labels such as `utilities` or `ai`.",
   maintainers:
     "GitHub usernames of the people who package the app for the catalog, shown as \"Packaged by\" on the app's page. They own the app's folder in CODEOWNERS and review changes to it, including version bumps.",

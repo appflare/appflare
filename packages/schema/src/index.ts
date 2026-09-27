@@ -9,6 +9,7 @@ export * from "./hyperdrive";
 export * from "./install-dirs";
 export * from "./jsonc";
 export * from "./keys";
+export * from "./license";
 export * from "./limits";
 export * from "./pipelines";
 export * from "./random-key";

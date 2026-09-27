@@ -108,6 +108,26 @@ describe("matchesFilters", () => {
     ]);
     expect(APPS.every((a) => matchesFilters(a, {}))).toBe(true);
   });
+
+  it("filters on the kind of license, leaving out apps whose license is not known yet", () => {
+    const licensed = [
+      app({ slug: "mit", appLicense: { expression: "MIT", note: null } }),
+      app({ slug: "busl", appLicense: { expression: "BUSL-1.1", note: null } }),
+      app({ slug: "noted", appLicense: { expression: "MIT", note: "Commons Clause applies." } }),
+      app({ slug: "none", appLicense: { expression: "NONE", note: null } }),
+      app({ slug: "free-text", appLicense: { expression: "MIT License", note: null } }),
+      app({ slug: "custom", appLicense: { expression: "SEE LICENSE IN LICENSE", note: null } }),
+      app({ slug: "unknown", appLicense: null }),
+      app({ slug: "older" }),
+    ];
+    const kind = (license: "open-source" | "source-available" | "none") =>
+      slugs(licensed.filter((a) => matchesFilters(a, { license })));
+    expect(kind("open-source")).toEqual(["mit"]);
+    expect(kind("source-available")).toEqual(["busl", "noted"]);
+    expect(kind("none")).toEqual(["none"]);
+    expect(licensed.every((a) => matchesFilters(a, {}))).toBe(true);
+    expect(isFiltered({ license: "none" })).toBe(true);
+  });
 });
 
 describe("sortApps and browseApps", () => {

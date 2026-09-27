@@ -34,6 +34,7 @@ import { cronTriggerCount } from "./cron-triggers";
 import { type FeaturedCard, featuredCard, pickFeatured } from "./featured";
 import { dismissedFeaturedIds, dismissFeaturedItem } from "./featured.server";
 import { CatalogError, catalogIndexUrl } from "./index.server";
+import type { AppLicense } from "./license";
 import { type AppMediaView, appMediaView } from "./media";
 import {
   type CatalogIndexRead,
@@ -73,6 +74,8 @@ export interface CatalogListItem extends IndexApp {
   primitives: AppPrimitives;
   /** The catalog manifest's categories; empty until it has been read. */
   categories: string[];
+  /** The license from the index row, else the catalog manifest; null until either states it. */
+  appLicense: AppLicense | null;
 }
 
 export interface CatalogList {
@@ -385,6 +388,8 @@ export interface CatalogDetail {
   primitives: AppPrimitives;
   /** The catalog manifest's categories; empty when it could not be loaded. */
   categories: string[];
+  /** The license from the index row, else the catalog manifest; null when neither states it. */
+  appLicense: AppLicense | null;
   /**
    * "Build from source at a commit" is offered: the viewer is an admin, the
    * account is on Workers Paid, and the app does not deploy itself.

@@ -5,6 +5,7 @@ import { configPatchSchema } from "./config-patch.ts";
 import { catalogD1Schema } from "./d1.ts";
 import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
 import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
+import { licenseNoteSchema, licenseSchema } from "./license.ts";
 import { catalogPipelinesSchema, pipelineManifestProblems } from "./pipelines.ts";
 import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
 import { isSeedOnly, seedManifestProblems } from "./seed.ts";
@@ -1665,9 +1666,10 @@ export const catalogRevisionSchema = z
   .describe(
     "Which edit of this entry's form and copy the catalog publishes for the build its `source` " +
       "already released, starting at 1 (the default when omitted). Raise it by one to publish a " +
-      "change to `name`, `summary`, `homepage`, `license`, `categories`, `authors`, " +
-      "`maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving `source`: the " +
-      "released artifact stays as it is, and managers show the new form without an update. " +
+      "change to `name`, `summary`, `homepage`, `license`, `licenseNote`, `categories`, " +
+      "`authors`, `maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving " +
+      "`source`: the released artifact stays as it is, and managers show the new form without " +
+      "an update. " +
       "Anything else needs a new build, so move `source` instead.",
   );
 
@@ -1683,7 +1685,13 @@ export const catalogManifestSchema = z
       .url({ protocol: /^https$/, error: "must be an https:// URL" })
       .regex(/^https:\/\//, "must be an https:// URL"),
     repo: ownerRepoSchema,
-    license: z.string().min(1),
+    license: licenseSchema,
+    /**
+     * A short line shown next to the license. Optional rather than defaulted
+     * so manifests and artifacts written before the field existed keep the
+     * same parsed shape.
+     */
+    licenseNote: licenseNoteSchema.optional(),
     categories: z.array(z.string().min(1)),
     /**
      * Who wrote the app upstream, as the catalog shows them. Optional rather

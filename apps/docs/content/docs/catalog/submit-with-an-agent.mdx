@@ -52,7 +52,7 @@ Rules for this whole session:
 Steps:
 
 1. Check that the app qualifies. If it does not, stop and tell me why.
-   - A public GitHub repository with a license.
+   - A public GitHub repository. Any license qualifies, source-available ones and none at all included; the catalog shows the license, it does not decide on it.
    - Not a proxy, tunnel, or circumvention tool.
    - It deploys with wrangler: it has its own wrangler config (wrangler.jsonc, wrangler.json, or wrangler.toml).
    - It is self-contained: its own Worker defines its Durable Objects and Workflows, and its only service binding, if any, points at its own Worker.
@@ -65,7 +65,8 @@ Steps:
      pnpm install
 4. Choose the slug: short, lower case, the app's usual name, not already used in apps/. Pin the version: if the repository has stable semver tags, take the newest one; source.ref is the tag and source.sha the full 40-character commit it points to (for an annotated tag, the commit, not the tag object). Otherwise take the head of the default branch, with source.ref set to the branch name. When the tags do not describe this app, as in a repository of many templates, also set install.version.
 5. Write apps/<slug>/appflare.jsonc, starting from a copy of apps/cut/appflare.jsonc. Read the app's wrangler config, README, .dev.vars.example if there is one, and the code that reads env. Fill in:
-   - $schema, slug, name, summary (one sentence), homepage (https), repo (owner/name), license (as upstream states it), categories.
+   - $schema, slug, name, summary (one sentence), homepage (https), repo (owner/name), license, categories.
+   - license: the SPDX license expression the repository declares (MIT, Apache-2.0, BUSL-1.1, FSL-1.1-MIT, ...); NONE when it publishes no license; SEE LICENSE IN <file> for a license with no SPDX id. Add licenseNote, one short line, when the id does not say what matters, such as "Source-available: production use restricted; see the license".
    - authors: who wrote the app upstream, as the repository owner, its README, or its license names them. Each is { "name", "url"?, "github"?, "x"? }, with handles written without @.
    - maintainers: [<MY GITHUB USERNAME>].
    - install: tier "artifact"; packageManager from the app's lockfile; wranglerConfig, the path of the app's own wrangler config (never a config a build generates; a template such as wrangler.toml.example is fine when the repository has no real config, and the packer copies it to its real name); workerName, the config's name. Only when needed: buildCommand, a single command without shell syntax (or a list of such commands run in order, when the build has several steps or relies on a prebuild hook, which does not run), when the app needs a build step before wrangler deploy and its wrangler config has no build.command; healthPath, when / returns an error or needs a login; healthMode "status-only", when every route sits behind a login or Cloudflare Access; fixedWorkerName, when the app only works under one Worker name; installDirs, when the dependencies to install are not (only) at the root, such as [{ "path": "templates/blog" }], with "lockfile": "none" on a directory only when upstream ships no lockfile for it; configPatch, only when the wrangler config itself must change to install (an empty id, a service binding to a Worker outside the app, new_classes on the Free plan), after opening an upstream pull request with the same change and linking it in a comment beside the patch.
