@@ -1,5 +1,10 @@
 # @appflare/sandbox-worker
 
+## 0.1.6
+
+- Builds keep a catalog entry's D1 seed statements (`resources.d1[binding].seed`) and its seed-only secrets and vars, and `info().features` lists `d1-seed`. The manager refuses to build an entry with seeds on a sandbox Worker that lacks it, since an older one would drop them, and asks for the sandbox Worker to be updated first.
+- The image carries the packer of this release: D1 seed statements checked as the catalog manifest is read, before anything is built (one guarded INSERT per statement, one param per `?`, every param naming a declared var, secret or hash), carried in the artifact's signed catalog manifest and counted in the pack log; a seed-only secret that the wrangler config lists in `secrets.required`, or a seed-only var the config also declares, refused, and a seed-only secret no longer taking the place of a config var of its name; artifacts written as format 4 when an entry has seeds or keeps one of its Workers off workers.dev (`install.workers[].workersDev: false`), so managers that read only formats 1 to 3 refuse them; and the SQL checks of schema files and seeds taken from `@appflare/schema`.
+
 ## 0.1.5
 
 - The image provides `bunx` beside `bun`, so repository builds whose scripts call it (such as `bunx vite build`) work in the sandbox.
