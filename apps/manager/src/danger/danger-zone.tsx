@@ -1,17 +1,12 @@
 import { Banner, Button, Link, Loader, Text } from "@cloudflare/kumo";
 import { KeyIcon, TrashIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { type ReactNode, useState } from "react";
+import { appLink } from "../components/app-links";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { Section, SectionRow, SectionRows } from "../components/section";
 import { settingsSection } from "../components/settings-links";
 import { Timestamp } from "../components/timestamp";
-import {
-  deletesBuildBucket,
-  domainsTabPath,
-  REMOVE_PATH,
-  ROTATE_CONFIRMATION,
-  ROTATE_PATH,
-} from "./danger";
+import { deletesBuildBucket, REMOVE_PATH, ROTATE_CONFIRMATION, ROTATE_PATH } from "./danger";
 import type { DangerZoneState } from "./danger.functions";
 import { getRemovalReview } from "./danger.functions";
 import type { RemovalReview } from "./removal-plan.server";
@@ -328,7 +323,8 @@ function ExternalDomainsBanner({ domains }: { domains: RemovalReview["externalDo
           <ul className="mt-1.5 grid list-disc gap-1 pl-5">
             {[...apps.entries()].map(([id, app]) => (
               <li key={id}>
-                <Link href={domainsTabPath(id)}>{app.label}</Link>: {app.hostnames.join(", ")}
+                <Link href={appLink(id, "external-domains")}>{app.label}</Link>:{" "}
+                {app.hostnames.join(", ")}
               </li>
             ))}
           </ul>

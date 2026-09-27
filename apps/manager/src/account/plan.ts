@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { messageLink } from "../components/message-links";
+import { settingsLink } from "../components/settings-links";
 
 /**
  * The account's Workers plan. Client-safe: no server imports.
@@ -38,6 +40,6 @@ export const ACCOUNT_PLAN_COPY = {
   /** Under the manual choice when the token cannot read the account's subscriptions. */
   billingHint: "Add Billing: Read to the token and Appflare detects this itself.",
   remember: "Remember this for the account",
-  rememberDescription:
-    "Records Workers Paid in Settings, so installs and updates stop asking while Appflare cannot detect the plan. Change it there if the plan changes.",
+  /** A message string (`message-links.ts`): the plan's row on Your account is a link. */
+  rememberDescription: `Records Workers Paid as the ${messageLink("Workers plan on Your account", settingsLink("account", "capability-workers-plan"))}, so installs and updates stop asking while Appflare cannot detect the plan. Change it there if the plan changes.`,
 } as const;

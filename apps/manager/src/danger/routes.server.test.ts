@@ -154,7 +154,27 @@ describe("handleRemoveAppflare", () => {
     expect(response.status).toBe(409);
     const html = await response.text();
     expect(html).toContain("Remove these external domains first, or their visitors lose the site");
-    expect(html).toContain("cut (shop.example.com; /apps/i1?tab=domains)");
+    expect(html).toContain('<a href="/apps/i1#external-domains">cut</a> (shop.example.com)');
+    expect(s.account.deletes()).toEqual([]);
+  });
+
+  it("still explains the external domains when an app's name has brackets", async () => {
+    await seedInstall({
+      resources: [{ kind: "custom_hostname", name: "shop.example.com", cfId: "ch-1" }],
+    });
+    await env.DB.prepare("UPDATE installs SET display_name = 'Links [beta]'").run();
+    const s = setup();
+    const response = await handleRemoveAppflare(
+      post(REMOVE_PATH, ACCOUNT_NAME),
+      s.dangerEnv,
+      s.deps,
+    );
+    expect(response.status).toBe(409);
+    const html = await response.text();
+    expect(html).toContain("Remove these external domains first, or their visitors lose the site");
+    expect(html).toContain(
+      '<a href="/apps/i1#external-domains">Links (beta)</a> (shop.example.com)',
+    );
     expect(s.account.deletes()).toEqual([]);
   });
 

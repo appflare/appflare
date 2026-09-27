@@ -7,7 +7,7 @@ Appflare collects anonymous usage data to decide what to build and fix. It is on
 default and easy to turn off. The manager's first report goes out with its first
 scheduled run after setup finishes (or, on a manager updated from a version without
 usage data, after the update). No banner in the manager announces it: this page,
-**Settings**, **Usage data** in the manager, and the installer's notice when it
+**Settings > Usage data** in the manager, and the installer's notice when it
 starts are where it is disclosed, and nothing waits for an answer. A development
 build never sends anything.
 
@@ -37,9 +37,9 @@ a count, a yes or no, a version, a duration, or a value from a fixed list.
 
 Once a day, the manager sends one report with:
 
-- **Manager:** its database schema version, the Workers plan set in Settings (`free`,
+- **Manager:** its database schema version, the Workers plan chosen in **Settings > Your account** (`free`,
   `paid` or unset), whether it uses Appflare's catalog or a custom one, how many
-  catalogs were added in Settings > Catalogs (a count only, never their URLs or
+  catalogs were added in **Settings > Catalogs** (a count only, never their URLs or
   labels), days since setup, and whether a newer manager release exists.
 - **Users:** how many users and admins there are, whether passkeys are in use, and
   how many users have one.
@@ -116,7 +116,7 @@ the same id. The manager sends from its Worker, not from your browser: there is 
 tracking script, no cookie and no page view. The installer sends from your machine,
 and gives up after 3 seconds so a run is never held up.
 
-**Settings**, **Usage data**, **Preview** shows the next daily report, built the
+**Preview** in **Settings > Usage data** shows the next daily report, built the
 same way the scheduled one is.
 
 ## Where it goes
@@ -167,14 +167,14 @@ so. A development build never sends one.
 
 Any one of these stops everything:
 
-- The **Send anonymous usage data** switch under **Settings**, **Usage data**
+- The **Send anonymous usage data** switch in **Settings > Usage data**
   (admins).
 - The installer's flag: `npx create-appflare --no-telemetry`.
 - `APPFLARE_TELEMETRY=off` (`0` and `false` work too) or `DO_NOT_TRACK=1` in the
   installer's environment.
 - The same variables on the manager's Worker, set in the Cloudflare dashboard under
   the Worker's **Settings**, **Variables and Secrets**. Either one locks usage data
-  off: Settings shows the switch off and disabled, with "Turned off by the
+  off: **Settings > Usage data** shows the switch off and disabled, with "Turned off by the
   APPFLARE_TELEMETRY variable on this Worker. Remove the variable to change this
   here." (naming `DO_NOT_TRACK` when that is the one set). Updates of the manager
   keep the variable.

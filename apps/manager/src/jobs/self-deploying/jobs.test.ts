@@ -634,7 +634,9 @@ describe("updating a self-deploying app", () => {
         env: s.jobEnv,
         deps: { fetch: s.w.fetch, now: () => NOW },
       }),
-    ).rejects.toThrow(/enter it again on the install page/);
+    ).rejects.toThrow(
+      /enter it again under \[Secrets in the app's settings\]\(\/apps\/id1#secrets\)/,
+    );
     expect(s.sandbox.runs).toHaveLength(1);
     expect((await installRow("id1"))?.status).toBe("installed");
   });
@@ -737,9 +739,11 @@ describe("uninstalling a self-deploying app", () => {
     await install(s);
     s.held.clear();
     await uninstall(s);
-    expect((await jobRow("x1"))?.error).toMatch(/enter it again on the install page/);
+    expect((await jobRow("x1"))?.error).toMatch(
+      /enter it again under \[Secrets in the app's settings\]/,
+    );
 
-    // Entering it again on the install page puts it back where the job reads it.
+    // Entering it again on the app's page puts it back where the job reads it.
     const stored = await replaceAppCredentialsCore(
       {
         db: env.DB,

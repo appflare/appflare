@@ -24,6 +24,7 @@ import { useState } from "react";
 import { accountTokenTemplateUrl } from "../cloudflare/token-template";
 import {
   EXTERNAL_DOMAIN_COST,
+  externalDomainsInUse,
   GATEWAY_WORKER_NAME,
   saasCheckMessage,
   type ZoneSaasCheck,
@@ -33,6 +34,7 @@ import type { GatewayView } from "../gateway/gateway.server";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
+import { MessageText } from "./message-text";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 import { Timestamp } from "./timestamp";
@@ -348,7 +350,9 @@ function GatewayDetails({
           {gateway.readyAt === null ? "Not finished" : <Timestamp iso={gateway.readyAt} />}
         </DescriptionItem>
         <DescriptionItem label="External domains">
-          {gateway.domains.length === 0 ? "None yet" : gateway.domains.join(", ")}
+          {gateway.domains.length === 0
+            ? "None yet"
+            : gateway.domains.map((d) => d.hostname).join(", ")}
         </DescriptionItem>
       </DescriptionList>
       {!gateway.ready && (
@@ -414,9 +418,11 @@ function TurnOffDialog({ gateway }: { gateway: NonNullable<GatewayView["gateway"
       )}
       title="Turn off the gateway"
       description={
-        blocked
-          ? `Apps still use external domains (${gateway.domains.join(", ")}). Remove them on each app's Domains and email tab first.`
-          : `Removes the route, the Worker ${GATEWAY_WORKER_NAME} and its routing table from ${gateway.zoneName}, and the DNS record and fallback origin if Appflare added them. Cloudflare for SaaS stays on for the domain.`
+        blocked ? (
+          <MessageText message={externalDomainsInUse(gateway.domains)} newTab />
+        ) : (
+          `Removes the route, the Worker ${GATEWAY_WORKER_NAME} and its routing table from ${gateway.zoneName}, and the DNS record and fallback origin if Appflare added them. Cloudflare for SaaS stays on for the domain.`
+        )
       }
       actionLabel="Turn off"
       disabled={blocked}

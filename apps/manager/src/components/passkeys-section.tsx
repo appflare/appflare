@@ -35,7 +35,7 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
           <Banner
             icon={<WarningCircleIcon weight="fill" />}
             title={PASSKEY_MESSAGES.registerUnsupported}
-            description="Open Settings in a current browser to add a passkey."
+            description="Open this page in a current browser to add a passkey."
           />
         </SectionBody>
       )}

@@ -62,7 +62,7 @@ Registrar. Either also lets apps use custom domains. Until then, apps answer on
 Cloudflare for SaaS is off on every domain until a person turns it on in the
 dashboard. The API cannot do it.
 
-1. In **Settings**, **Domains**, choose the domain under **Gateway domain**. Appflare
+1. In **Settings > Domains > External domains**, choose the domain under **Gateway domain**. Appflare
    asks Cloudflare about it. While Cloudflare for SaaS is off, it says so and offers
    **Open Custom Hostnames**.
 2. On that page of the Cloudflare dashboard (the domain, **SSL/TLS**, **Custom
@@ -103,7 +103,7 @@ The gateway Worker looks at each request's hostname:
 - Any other hostname passes through to the origin too, so a custom hostname you added
   outside Appflare keeps working.
 
-**Settings**, **Domains** then shows the gateway domain, the **CNAME target**, whether
+**Settings > Domains > External domains** then shows the gateway domain, the **CNAME target**, whether
 Cloudflare for SaaS is on and how many custom hostnames are in use, whether the
 gateway Worker answers, and the external domains it serves. If setting up stopped
 part way, **Finish setup** continues where it stopped without creating anything
@@ -228,7 +228,7 @@ so; add the permission and select **Retry uninstall**.
 
 ## Turn off the gateway
 
-**Turn off gateway** in **Settings**, **Domains** is refused while any app has an
+**Turn off gateway** in **Settings > Domains > External domains** is refused while any app has an
 external domain; remove those first. It then removes the route, the Worker
 `appflare-gateway` and its routing table, and the DNS record and fallback origin if
 Appflare added them. The gateway domain's own sites keep working without it.

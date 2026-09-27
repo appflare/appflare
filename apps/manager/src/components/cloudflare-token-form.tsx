@@ -46,8 +46,8 @@ const optional = optionalGroupsByFeature();
  */
 const FEATURE_PLACES: Readonly<Record<string, string>> = {
   [ACCESS_FEATURE]: `"${ACCESS_FEATURE}" in ${settingsPlace("users", "access", "Cloudflare Access settings")}`,
-  [CUSTOM_DOMAINS_FEATURE]: "Custom domains on an installed app's Domains and email tab",
-  [EXTERNAL_DOMAINS_FEATURE]: `External domains (${settingsPlace("domains", "external-domains", "the domains settings")}, then an installed app's Domains and email tab)`,
+  [CUSTOM_DOMAINS_FEATURE]: "Custom domains, added on each installed app's page",
+  [EXTERNAL_DOMAINS_FEATURE]: `External domains (${settingsPlace("domains", "external-domains", "the domains settings")}, then on each installed app's page)`,
   [EMAIL_ROUTING_FEATURE]:
     "Installing an app that receives email (it also needs Zone: Read and DNS: Edit from the custom domains list)",
   [PLAN_DETECTION_FEATURE]: `Reading this account's Workers plan for ${settingsPlace("account", "capabilities", "What this account can run")}, instead of asking you. Appflare only reads the plan names from the account's subscriptions; it never reads invoices or payment details`,

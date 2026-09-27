@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { install } from "./commands/install.ts";
 import { recover } from "./commands/recover.ts";
 import type { CommandContext } from "./context.ts";
+import { MANAGER_ADDRESS_PLACEHOLDER, MANAGER_PAGES, managerPageRef } from "./manager-pages.ts";
 import { CliTelemetry, cliVersion } from "./telemetry.ts";
 import { CancelledError } from "./ui.ts";
 
@@ -38,12 +39,17 @@ It uses wrangler: log in with \`npx wrangler login\` first, or let the installer
 open the login for you. With several accounts, set CLOUDFLARE_ACCOUNT_ID or pick
 one when asked.
 
-Once the manager runs, you manage it from its own Settings:
-  Settings > Updates                          the running version, updates
-  Settings > Building apps                    sandbox builds: enable, update, disable
-  Settings > Your account > Danger zone       remove the manager and its data
-To return to an earlier manager version, roll back on the Worker's Deployments
-page in the Cloudflare dashboard, or run \`npx wrangler rollback --name <name>\`.
+Once the manager runs, you manage it from its own settings pages, at its address
+(${MANAGER_ADDRESS_PLACEHOLDER} below):
+  ${MANAGER_PAGES.updates.name}: the running version and updates
+    ${MANAGER_ADDRESS_PLACEHOLDER}${MANAGER_PAGES.updates.path}
+  ${MANAGER_PAGES.building.name}: enable, update or disable sandbox builds
+    ${MANAGER_ADDRESS_PLACEHOLDER}${MANAGER_PAGES.building.path}
+  ${MANAGER_PAGES.dangerZone.name}: remove the manager and its data
+    ${MANAGER_ADDRESS_PLACEHOLDER}${MANAGER_PAGES.dangerZone.path}
+To return to an earlier manager version, use ${MANAGER_PAGES.versions.name}; if
+the manager does not load, roll back on the Worker's Deployments page in the
+Cloudflare dashboard, or run \`npx wrangler rollback --name <name>\`.
 
 The installer sends anonymous usage data (one event when it ends: outcome,
 duration, error category, OS and Node.js version; never account ids, names or
@@ -60,13 +66,11 @@ export const NO_TELEMETRY_FLAG = "--no-telemetry";
  * "unexpected argument".
  */
 export const REMOVED_COMMANDS: Readonly<Record<string, string>> = {
-  status: "open the manager: Settings > Updates shows the running version and updates",
+  status: `open ${managerPageRef(null, "updates")} in the manager: it shows the running version and updates`,
   rollback:
     "roll back on the manager Worker's Deployments page in the Cloudflare dashboard, or run `npx wrangler rollback --name <name>`",
-  uninstall:
-    "open the manager: Remove Appflare, in the danger zone of Settings > Your account, removes it and its data",
-  sandbox:
-    "open the manager: Settings > Building apps enables, updates and disables sandbox builds",
+  uninstall: `open ${managerPageRef(null, "dangerZone")} in the manager: Remove Appflare there removes it and its data`,
+  sandbox: `open ${managerPageRef(null, "building")} in the manager: it enables, updates and disables sandbox builds`,
 };
 
 /**

@@ -1,0 +1,217 @@
+import { Toasty } from "@cloudflare/kumo";
+import { act, type ComponentType } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * The app page, arriving from a link to one of its sections. The route runs
+ * under the router and loads through server functions, which only exist
+ * under the Start Vite plugin; the loader data and the location are given
+ * here instead.
+ */
+const loader = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("@tanstack/react-router", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (cb: () => void) => {
+    window.addEventListener("hashchange", cb);
+    return () => window.removeEventListener("hashchange", cb);
+  };
+  const useHash = () => useSyncExternalStore(subscribe, () => window.location.hash.slice(1));
+  return {
+    createFileRoute: () => (options: Record<string, unknown>) => ({
+      options,
+      fullPath: "/apps/$installId",
+      useLoaderData: () => loader.current,
+      useRouteContext: () => ({ viewer: { id: "u1", role: "admin" } }),
+      useSearch: () => ({}),
+      useParams: () => ({ installId: "i1" }),
+    }),
+    useLocation: (opts?: { select?: (l: { hash: string }) => unknown }) => {
+      const hash = useHash();
+      return opts?.select ? opts.select({ hash }) : { hash };
+    },
+    useNavigate: () => async () => {},
+    useRouter: () => ({ invalidate: async () => {}, subscribe: () => () => {} }),
+    getRouteApi: () => ({
+      useRouteContext: (opts?: { select?: (c: { accountId: string }) => unknown }) =>
+        opts?.select ? opts.select({ accountId: "acc" }) : { accountId: "acc" },
+    }),
+  };
+});
+
+// Every server function the page and its parts import.
+vi.mock("../auto-update/auto-update.functions", () => ({
+  getAutoUpdateSettings: vi.fn(),
+  setAutoUpdateDefaults: vi.fn(),
+  setInstallAutoUpdate: vi.fn(),
+}));
+vi.mock("../installs/app-credentials.functions", () => ({ replaceAppCredentials: vi.fn() }));
+vi.mock("../installs/reconfigure.functions", () => ({
+  getInstallSettings: vi.fn(),
+  startReconfigure: vi.fn(),
+}));
+vi.mock("../installs/email-routing.functions", () => ({
+  getEmailZoneOptions: vi.fn(),
+  previewEmailRoutingInput: vi.fn(),
+  previewEmailRouting: vi.fn(),
+}));
+vi.mock("../installs/custom-domains.functions", () => ({
+  getDomainOptions: vi.fn(),
+  addCustomDomain: vi.fn(),
+  removeCustomDomain: vi.fn(),
+  checkCustomDomain: vi.fn(),
+}));
+vi.mock("../installs/wildcard-domains.functions", () => ({
+  addWildcardDomain: vi.fn(),
+  removeWildcardDomain: vi.fn(),
+}));
+vi.mock("../installs/health.functions", () => ({ checkInstallHealth: vi.fn() }));
+vi.mock("../installs/external-domains.functions", () => ({
+  getExternalDomainOptions: vi.fn(),
+  addExternalDomain: vi.fn(),
+  getExternalDomainStatus: vi.fn(),
+  removeExternalDomain: vi.fn(),
+}));
+vi.mock("../installs/removed-apps.functions", () => ({
+  listRemovedApps: vi.fn(),
+  deleteRetainedData: vi.fn(),
+  forgetRemovedApp: vi.fn(),
+}));
+vi.mock("../installs/installs.functions", () => ({
+  startInstall: vi.fn(),
+  renameInstall: vi.fn(),
+  getInstall: vi.fn(),
+}));
+vi.mock("../installs/source-builds.functions", () => ({
+  startSourceBuild: vi.fn(),
+  getSourceBuild: vi.fn(),
+  installSourceBuild: vi.fn(),
+  updateFromSourceBuild: vi.fn(),
+  discardSourceBuild: vi.fn(),
+  checkSourceChanges: vi.fn(),
+}));
+vi.mock("../installs/uninstall.functions", () => ({
+  startUninstall: vi.fn(),
+  retryUninstall: vi.fn(),
+  getResourceUsage: vi.fn(),
+}));
+vi.mock("../installs/versions.functions", () => ({
+  startUpdate: vi.fn(),
+  startRollback: vi.fn(),
+  restoreDatabase: vi.fn(),
+  listSnapshots: vi.fn(),
+}));
+vi.mock("../installs/workers-dev.functions", () => ({ setWorkersDev: vi.fn() }));
+
+const { Route } = await import("../routes/_app/apps/$installId");
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const install = {
+  id: "i1",
+  slug: "cut",
+  catalogSource: null,
+  origin: "catalog",
+  name: "Cut",
+  icon: null,
+  displayName: "Links for Ada",
+  label: "Links for Ada",
+  workerName: "cut-links",
+  status: "installed",
+  version: "1.2.0",
+  latestVersion: "1.2.0",
+  updateAvailable: false,
+  address: null,
+  updatedAt: "2026-09-27T09:00:00.000Z",
+  uninstalledAt: null,
+  healthStatus: "verified",
+  healthCheckedAt: "2026-09-27T09:00:00.000Z",
+  currentVersionId: null,
+  pinSha: null,
+  source: null,
+  build: { kind: "artifact", image: null, builtAt: null, installer: null, stage: null },
+  vars: {},
+  resources: [],
+  retained: [],
+  secretNames: ["ADMIN_PASSWORD"],
+  domains: [],
+  wildcard: null,
+  externalDomains: [],
+  emailRoutes: [],
+  uninstall: "start",
+  forgotten: false,
+  activeJobId: null,
+  workersDevEnabled: true,
+  workersDevNote: null,
+  workersDevChoice: "auto",
+  workersDevUrl: null,
+  otherWorkers: [],
+  autoUpdate: "inherit",
+  autoUpdateWaiting: null,
+  autoUpdateDefault: false,
+  jobs: [],
+  postInstall: [],
+  tokenPermissions: [],
+};
+
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+  loader.current = { install, snapshots: [], settings: null };
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  window.history.replaceState(null, "", "/");
+});
+
+function renderAt(hash: string) {
+  window.history.replaceState(null, "", `/apps/i1${hash}`);
+  const Page = Route.options.component as ComponentType;
+  act(() =>
+    root.render(
+      <Toasty>
+        <Page />
+      </Toasty>,
+    ),
+  );
+}
+
+function selectedTab(): string | null | undefined {
+  return container.querySelector('[role="tab"][aria-selected="true"]')?.textContent;
+}
+
+describe("the app page, opened from a link to a section", () => {
+  it("opens the Settings tab for #secrets, with the Secrets section on it", () => {
+    renderAt("#secrets");
+    expect(selectedTab()).toBe("Settings");
+    const secrets = container.querySelector("#secrets");
+    expect(secrets).not.toBeNull();
+    expect(secrets?.textContent).toContain("ADMIN_PASSWORD");
+    expect(container.querySelector("#danger-zone")).toBeNull();
+  });
+
+  it("opens the tab of a later link without a reload", () => {
+    renderAt("#secrets");
+    act(() => {
+      window.location.hash = "#danger-zone";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(selectedTab()).toBe("Overview");
+    expect(container.querySelector("#danger-zone")).not.toBeNull();
+  });
+
+  it("stays on Overview without a hash, or with one that names no section", () => {
+    renderAt("");
+    expect(selectedTab()).toBe("Overview");
+    act(() => root.unmount());
+    root = createRoot(container);
+    renderAt("#nothing");
+    expect(selectedTab()).toBe("Overview");
+  });
+});

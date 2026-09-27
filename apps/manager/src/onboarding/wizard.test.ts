@@ -116,7 +116,7 @@ describe("the setup wizard", () => {
 
   it("points the last step at the same list on Your account", () => {
     expect(wizardCopy({ step: "checklist", checklist: CHECKLIST }).description).toContain(
-      "[Your account](/settings/account#capabilities)",
+      "[Your account settings](/settings/account#capabilities)",
     );
   });
 });

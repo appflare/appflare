@@ -43,9 +43,9 @@ After a few wrong tries Appflare asks you to wait ten minutes before trying agai
 
 The owner can reset the password of any other user. An admin can reset a member's
 password, but not another admin's. Nobody can reset the owner's password from
-Settings:
+the manager's settings:
 
-1. Open **Settings > Users and sign-in**.
+1. Open **Settings > Users and sign-in > Users**.
 2. Open the menu at the end of the person's row and pick **Reset password**.
 3. With reset emails on, choose **Email a reset link** or **Show a recovery code**.
    Without them, Appflare shows a recovery code.

@@ -22,6 +22,8 @@ import { deleteSettings, readSettings, SETTING, writeSettings } from "../db/sett
 import { isPermissionError, listAccountZones } from "../installs/custom-domains.server";
 import { CUSTOM_HOSTNAME_KIND } from "../installs/resource-kinds";
 import {
+  type ExternalDomainRef,
+  externalDomainsInUse,
   GATEWAY_CODE_VERSION,
   GATEWAY_KV_TITLE,
   GATEWAY_ROUTE_PATTERN,
@@ -522,12 +524,12 @@ export async function setUpGatewayCore(
 }
 
 /** The hostnames of external domains recorded on any install and not removed. */
-export async function liveExternalDomains(orm: Database): Promise<string[]> {
+export async function liveExternalDomains(orm: Database): Promise<ExternalDomainRef[]> {
   const rows = await orm
-    .select({ name: resources.name })
+    .select({ name: resources.name, installId: resources.install_id })
     .from(resources)
     .where(and(eq(resources.kind, CUSTOM_HOSTNAME_KIND), isNull(resources.deleted_at)));
-  return rows.map((r) => r.name);
+  return rows.map((r) => ({ hostname: r.name, installId: r.installId }));
 }
 
 function gone(error: unknown): boolean {
@@ -560,9 +562,7 @@ export async function turnOffGatewayCore(deps: GatewayDeps): Promise<void> {
   if (state === null) return;
   const live = await liveExternalDomains(orm);
   if (live.length > 0) {
-    throw new GatewayError(
-      `Apps still use external domains (${live.join(", ")}). Remove them on the apps' Domains and email tabs first.`,
-    );
+    throw new GatewayError(externalDomainsInUse(live));
   }
   const api = deps.api;
   const zone = state.zoneName;
@@ -630,8 +630,8 @@ export interface GatewayView {
     check: ZoneSaasCheck;
     /** Whether the gateway answered on its hostname just now; null when not asked. */
     answering: boolean | null;
-    /** External domains recorded on apps. */
-    domains: string[];
+    /** External domains recorded on apps, with the app that has each. */
+    domains: ExternalDomainRef[];
   } | null;
   /** Active zones of the account to choose from; null when the token may not list them. */
   zones: Array<{ id: string; name: string }> | null;

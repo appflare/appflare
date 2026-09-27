@@ -900,7 +900,7 @@ describe("update job", () => {
         new RegExp(`after version ${NEW_VERSION} was promoted: it serves all traffic`),
       );
       expect(last).toContain("rolling back would not undo them");
-      expect(last).not.toContain("Roll back from the install page if the app misbehaves");
+      expect(last).not.toContain("if the app misbehaves");
       // The database is not "ahead of the code": the new code serves.
       expect(r.logs.some((l) => l.message.startsWith("The D1 database"))).toBe(false);
     });

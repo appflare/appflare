@@ -1,5 +1,6 @@
 import { Button, Switch } from "@cloudflare/kumo";
 import { createContext, type ReactNode, useContext, useState } from "react";
+import { MessageText } from "./message-text";
 import { Tooltip } from "./tooltip";
 
 /**
@@ -89,13 +90,25 @@ export function splitHelp(text: string): { short: string; more: string | null } 
  * A field's help: one line, the rest behind "More". Every part is inline
  * content, so it sits inside a field's description paragraph.
  */
-export function FieldHelp({ text, after }: { text: string; after?: ReactNode }) {
+export function FieldHelp({
+  text,
+  after,
+  links = false,
+}: {
+  text: string;
+  after?: ReactNode;
+  /**
+   * Render `[label](/path)` in `text` as links (`message-links.ts`). Only for
+   * Appflare's own wording: help from a catalog entry stays plain text.
+   */
+  links?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const { short, more } = splitHelp(text);
   return (
     <>
-      {short}
-      {more !== null && open && <> {more}</>}
+      {links ? <MessageText message={short} /> : short}
+      {more !== null && open && <> {links ? <MessageText message={more} /> : more}</>}
       {after !== undefined && after !== null && <> {after}</>}
       {more !== null && (
         <>

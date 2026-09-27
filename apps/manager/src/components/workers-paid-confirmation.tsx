@@ -1,5 +1,6 @@
 import { Checkbox, Text } from "@cloudflare/kumo";
 import { ACCOUNT_PLAN_COPY } from "../account/plan";
+import { MessageText } from "./message-text";
 
 /** The state of one "This account is on Workers Paid" confirmation and its "Remember" option. */
 export interface WorkersPaidConfirmationState {
@@ -57,7 +58,8 @@ export function WorkersPaidConfirmation({
             onCheckedChange={(checked: boolean) => state.onRememberChange(checked)}
           />
           <Text as="p" variant="secondary" size="sm">
-            {ACCOUNT_PLAN_COPY.rememberDescription}
+            {/* In the middle of an install or update: the link opens a new tab. */}
+            <MessageText message={ACCOUNT_PLAN_COPY.rememberDescription} newTab />
           </Text>
         </div>
       )}

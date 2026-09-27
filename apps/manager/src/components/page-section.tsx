@@ -1,5 +1,6 @@
-import { Text } from "@cloudflare/kumo";
+import { cn, Text } from "@cloudflare/kumo";
 import type { ReactNode } from "react";
+import { FLUSH_RING_CLASS } from "./hash-target";
 
 /**
  * A titled part of a page that lays out its own body: a heading, an optional
@@ -28,7 +29,7 @@ export function PageSection({
     </Text>
   );
   return (
-    <section id={id} className="grid scroll-mt-6 gap-3">
+    <section id={id} className={cn("grid scroll-mt-6 gap-3", FLUSH_RING_CLASS)}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="grid gap-1">
           {titleAction === undefined ? (

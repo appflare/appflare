@@ -79,7 +79,7 @@ export function provenance(source: CatalogSource | null, tier: InstallTier): Pro
     return {
       kind: "custom",
       label: `Custom catalog: ${source.label}`,
-      tooltip: `Listed by ${source.label}, a catalog an admin added. Appflare checks its releases with the key saved for that catalog in Settings. That shows where a release came from; it is not a review of the code.`,
+      tooltip: `Listed by ${source.label}, a catalog an admin added. Appflare checks its releases with the key saved for that catalog on the Catalogs settings page. That shows where a release came from; it is not a review of the code.`,
     };
   }
   if (tier === "sandbox") {

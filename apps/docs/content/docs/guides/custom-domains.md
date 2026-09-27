@@ -21,8 +21,8 @@ For a hostname whose DNS is managed somewhere else, see
 If the token lacks them, the **Add a domain** dialog says which ones. Open **API
 Tokens** in the Cloudflare dashboard, edit the Appflare token, add the permissions
 for your domains, and save. An edited token keeps its value, so nothing changes in
-Appflare. You can also create a new token and replace the old one under **Settings**,
-**Your account**, with **Rotate token**.
+Appflare. You can also create a new token and replace the old one with **Rotate token** under
+**Settings > Your account > Cloudflare connection**.
 
 ## Add a domain
 
@@ -155,7 +155,7 @@ one domain of this account, the gateway domain:
    method; the first 100 external domains cost nothing, then $0.10 a month each.
 2. Give the Appflare token **SSL and Certificates: Edit** on that domain, besides the
    three permissions above, with **Zone: Read** on all zones of the account.
-3. In **Settings**, **Domains**, choose the domain and select **Set up gateway**.
+3. In **Settings > Domains > External domains**, choose the domain and select **Set up gateway**.
    Appflare adds the Worker `appflare-gateway`, its route and a DNS record; the
    domain's own sites keep working.
 4. On the app's **Domains and email** tab, select **Add an external domain**. The

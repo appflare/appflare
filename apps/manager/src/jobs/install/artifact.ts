@@ -6,9 +6,11 @@ import {
   planSpans,
   type SigningKey,
   signingKeys,
+  UPDATE_APPFLARE_PLACE,
   unknownArtifactFormatProblem,
   verifyManifestSignature,
 } from "@appflare/schema";
+import { settingsPlace } from "../../components/settings-links";
 import { fetchCost, isSubrequestLimitError } from "./budget";
 
 /**
@@ -59,7 +61,14 @@ export async function verifyArtifactManifest(
   const json: unknown = JSON.parse(new TextDecoder().decode(manifestBytes));
   // A newer packer's format says to update Appflare rather than list schema errors.
   const unknownFormat = unknownArtifactFormatProblem(json);
-  if (unknownFormat !== null) throw new ArtifactError(unknownFormat);
+  if (unknownFormat !== null) {
+    throw new ArtifactError(
+      unknownFormat.replace(
+        UPDATE_APPFLARE_PLACE,
+        settingsPlace("updates", "appflare", UPDATE_APPFLARE_PLACE),
+      ),
+    );
+  }
   const parsed = artifactManifestSchema.safeParse(json);
   if (!parsed.success) {
     throw new ArtifactError(

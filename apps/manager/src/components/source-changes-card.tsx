@@ -1,10 +1,11 @@
-import { Banner, Button, LayerCard, LayerDialog, Link, Text } from "@cloudflare/kumo";
+import { Banner, Button, cn, LayerCard, LayerDialog, Link, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, GitBranchIcon, MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { type FormEvent, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { checkSourceChanges, startSourceBuild } from "../installs/source-builds.functions";
 import type { SourceChanges } from "../installs/source-builds.server";
 import { DocsLink } from "./docs-link";
+import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner } from "./message-text";
 import { OriginBadge } from "./origin-badge";
@@ -47,7 +48,7 @@ export function SourceChangesCard({
   }
 
   return (
-    <LayerCard>
+    <LayerCard id="source" className={cn("scroll-mt-6", FLUSH_RING_CLASS)}>
       <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
         <span className="flex items-center gap-1">
           Source

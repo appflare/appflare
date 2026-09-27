@@ -75,7 +75,7 @@ release:
   with the catalog's release key (the same key and key id as the release's
   `manifest.sig`), and the catalog publishes it next to `index.json`, which lists
   its sha256 and signature. The version stays the same, so managers offer no update
-  and start no job; they show the new form on the install page and in the Settings
+  and start no job; they show the new form on the install page and on the **Settings** tab
   of apps already installed from that release.
 
 A revision may change only form fields and copy, but those still reach the app:

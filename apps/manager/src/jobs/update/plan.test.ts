@@ -535,9 +535,9 @@ describe("snapshot shape", () => {
     expect(parseSnapshotHyperdrive(null)).toBeNull();
     expect(parseSnapshotHyperdrive("not json")).toBeNull();
     expect(parseSnapshotHyperdrive('{"DB":"hd-1"}')).toEqual({ DB: "hd-1" });
-    expect(hyperdriveRollbackRefusal({ DB: "hd-1" }, new Set(["hd-1", "hd-0"]))).toBeNull();
-    expect(hyperdriveRollbackRefusal({ DB: "hd-0" }, new Set(["hd-1"]))).toMatch(
-      /connects DB through a Hyperdrive configuration that has since been deleted/,
+    expect(hyperdriveRollbackRefusal("i1", { DB: "hd-1" }, new Set(["hd-1", "hd-0"]))).toBeNull();
+    expect(hyperdriveRollbackRefusal("i1", { DB: "hd-0" }, new Set(["hd-1"]))).toMatch(
+      /connects DB through a Hyperdrive configuration that has since been deleted.*\[Databases in the app.s settings\]\(\/apps\/i1#databases\)/,
     );
   });
 

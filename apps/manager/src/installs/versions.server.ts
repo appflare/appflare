@@ -586,6 +586,7 @@ export async function startRollbackCore(
   // snapshot taken before they were recorded is checked by the job, which
   // reads the version itself.
   const lost = hyperdriveRollbackRefusal(
+    install.id,
     parseSnapshotHyperdrive(snapshot.hyperdrive_json) ?? {},
     await liveHyperdriveIds(createDb(deps.db), install.id),
   );
@@ -868,6 +869,7 @@ export async function listSnapshotsCore(
         otherDoTagsDiffer(row.manifest_json, install.manifestJson, install.workerName) ||
         durableObjectExportsDiffer(row.manifest_json, install.manifestJson, install.workerName),
       lostDatabase: hyperdriveRollbackRefusal(
+        installId,
         parseSnapshotHyperdrive(row.hyperdrive_json) ?? {},
         liveConfigs,
       ),

@@ -20,6 +20,7 @@ import {
 } from "@appflare/schema";
 import { z } from "zod";
 import { isUpdateAvailable } from "../../catalog/versions";
+import { appPlace } from "../../components/app-links";
 import type { BuildKind, InstallOrigin, snapshots } from "../../db/schema";
 import {
   type BindingPlan,
@@ -694,12 +695,13 @@ export function parseSnapshotHyperdrive(json: string | null): Record<string, str
  * in `live`, the configuration ids the install records and has not deleted.
  */
 export function hyperdriveRollbackRefusal(
+  installId: string,
   bound: Readonly<Record<string, string>>,
   live: ReadonlySet<string>,
 ): string | null {
   const gone = Object.entries(bound).filter(([, id]) => !live.has(id));
   if (gone.length === 0) return null;
-  return `The version this snapshot recorded connects ${gone.map(([binding]) => binding).join(" and ")} through a Hyperdrive configuration that has since been deleted, so rolling back to it would leave the app without its database. Roll back to a later snapshot, or replace the connection string in Settings instead.`;
+  return `The version this snapshot recorded connects ${gone.map(([binding]) => binding).join(" and ")} through a Hyperdrive configuration that has since been deleted, so rolling back to it would leave the app without its database. Roll back to a later snapshot, or replace the connection string under ${appPlace(installId, "databases", "Databases in the app's settings")} instead.`;
 }
 
 /** The `snapshots` row an update or a settings change inserts before it changes anything. */

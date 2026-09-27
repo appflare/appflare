@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { zoneDashboardUrl } from "../cloudflare/dashboard-links";
+import { appPlace } from "../components/app-links";
 import { settingsPlace } from "../components/settings-links";
 
 /**
@@ -23,6 +24,23 @@ export const GATEWAY_SETUP_PLACE = settingsPlace(
   "external-domains",
   "the domains settings",
 );
+
+/** An external domain recorded on an app: its hostname and the install it serves. */
+export interface ExternalDomainRef {
+  hostname: string;
+  installId: string;
+}
+
+/**
+ * Why the gateway cannot be turned off yet, each hostname linking to the
+ * external domains of the app that has it.
+ */
+export function externalDomainsInUse(domains: readonly ExternalDomainRef[]): string {
+  const listed = domains
+    .map((d) => appPlace(d.installId, "external-domains", d.hostname))
+    .join(", ");
+  return `Apps still use external domains (${listed}). Remove them from each app's page first.`;
+}
 
 /** The gateway Worker the manager deploys into the account. */
 export const GATEWAY_WORKER_NAME = "appflare-gateway";

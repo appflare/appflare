@@ -1,5 +1,6 @@
 import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
+import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import { refuseDuringSelfUpdate } from "../jobs/self-update/guard";
@@ -83,7 +84,10 @@ function refusal(title: string, error: unknown): Response {
 /** Checks origin, session and ownership, and returns the typed confirmation. */
 async function guard(request: Request, env: DangerEnv, deps: DangerDeps): Promise<string> {
   if (request.method !== "POST" || !isSameOrigin(request)) {
-    throw new DangerError("This action only runs from Appflare's own Settings page.", 403);
+    throw new DangerError(
+      `This action only runs from ${settingsPlace("account", "danger-zone", "the Danger zone")} on Appflare's Your account page.`,
+      403,
+    );
   }
   const userId = await deps.userId(request);
   if (userId === null) throw new DangerError("Sign in as the owner, then try again.", 403);

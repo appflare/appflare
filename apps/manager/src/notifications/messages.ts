@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { appLink } from "../components/app-links";
 import { settingsLink } from "../components/settings-links";
 import type { NOTIFICATION_EVENTS } from "./schema";
 
@@ -92,7 +93,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
         lines: [
           `${facts.app.app} ${facts.to} is available. ${worker(facts.app)} runs ${facts.from}.`,
         ],
-        url: managerLink(managerUrl, `/apps/${facts.app.installId}`),
+        url: managerLink(managerUrl, appLink(facts.app.installId)),
       };
     case "update_applied":
       return {
@@ -140,7 +141,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: `Health check failing: ${facts.app.instance}`,
         lines: [`${worker(facts.app)} answers its health check with a server error.`],
-        url: managerLink(managerUrl, `/apps/${facts.app.installId}`),
+        url: managerLink(managerUrl, appLink(facts.app.installId, "health")),
       };
     case "manager_update_available":
       return {
@@ -154,7 +155,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
         lines: [
           `${facts.hostname} now serves ${worker(facts.app)}. Cloudflare validated it and issued its certificate.`,
         ],
-        url: managerLink(managerUrl, `/apps/${facts.app.installId}?tab=domains`),
+        url: managerLink(managerUrl, appLink(facts.app.installId, "external-domains")),
       };
     case "domain_failed":
       return {
@@ -162,7 +163,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
         lines: [
           `${facts.hostname}, an external domain of ${worker(facts.app)}, does not serve the app. ${facts.reason}`,
         ],
-        url: managerLink(managerUrl, `/apps/${facts.app.installId}?tab=domains`),
+        url: managerLink(managerUrl, appLink(facts.app.installId, "external-domains")),
       };
     case "test":
       return {

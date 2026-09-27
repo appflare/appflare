@@ -1,6 +1,7 @@
 import {
   Badge,
   Banner,
+  cn,
   Empty,
   InlineCopyText,
   LayerCard,
@@ -11,12 +12,19 @@ import {
   Text,
 } from "@cloudflare/kumo";
 import { ArrowRightIcon, InfoIcon, PackageIcon, WarningCircleIcon } from "@phosphor-icons/react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { startedByLabel } from "../../../auto-update/auto-update";
 import { InstallAutoUpdateCard } from "../../../auto-update/install-auto-update-card";
 import { AppCredentialsCard } from "../../../components/app-credentials-card";
+import {
+  APP_TAB_LABELS,
+  APP_TABS,
+  type AppTab,
+  appLink,
+  appSectionTab,
+} from "../../../components/app-links";
 import { AppSettingsSection } from "../../../components/app-settings-section";
 import { AppIcon } from "../../../components/catalog-media";
 import { CatalogSourceBadge } from "../../../components/catalog-source-badge";
@@ -26,6 +34,7 @@ import { DocsLink } from "../../../components/docs-link";
 import { DomainName, DomainNameList } from "../../../components/domain-name";
 import { ExternalDomainsSection } from "../../../components/external-domains-section";
 import { jobKindLabel, resourceKindLabel } from "../../../components/format";
+import { FLUSH_RING_CLASS } from "../../../components/hash-target";
 import { InstallHealth } from "../../../components/install-health";
 import { Markdown } from "../../../components/markdown";
 import { OpenAppButton } from "../../../components/open-app-button";
@@ -35,6 +44,7 @@ import { PageSection } from "../../../components/page-section";
 import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
 import { RenameInstallDialog } from "../../../components/rename-install-dialog";
 import { ResponsiveTable } from "../../../components/responsive-table";
+import { revealSelectedTab } from "../../../components/reveal-tab";
 import { SourceChangesCard } from "../../../components/source-changes-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
@@ -53,16 +63,8 @@ import type { InstallSettings } from "../../../installs/reconfigure.server";
 import { listSnapshots } from "../../../installs/versions.functions";
 import type { SnapshotView } from "../../../installs/versions.server";
 
-const TABS = ["overview", "settings", "domains", "resources", "jobs"] as const;
-type Tab = (typeof TABS)[number];
-
-const TAB_LABELS: Record<Tab, string> = {
-  overview: "Overview",
-  settings: "Settings",
-  domains: "Domains and email",
-  resources: "Resources",
-  jobs: "Jobs",
-};
+const TABS = APP_TABS;
+type Tab = AppTab;
 
 /**
  * `/apps/$installId`: the install's display name (else the app's name) and icon,
@@ -76,7 +78,8 @@ const TAB_LABELS: Record<Tab, string> = {
  * updates. Domains and email: the workers.dev switch, custom domains, external domains, email
  * routes. Resources: what the install created, and what an uninstall kept.
  * Jobs: versions to roll back to, and every job with who started it. The
- * tab is in the URL (`?tab=`), so links and reloads keep it.
+ * tab is in the URL (`?tab=`), so links and reloads keep it. A link to one
+ * section (`#secrets`, see `app-links.ts`) opens the tab that holds it.
  */
 export const Route = createFileRoute("/_app/apps/$installId")({
   validateSearch: z.object({ tab: z.enum(TABS).optional() }),
@@ -121,6 +124,16 @@ function InstallPage() {
   const { viewer } = Route.useRouteContext();
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
+  const hash = useLocation({ select: (location) => location.hash });
+  // The tab a link to a section asks for, read after the first render: the
+  // server never sees the hash, so the first render matches its markup.
+  const [hashTab, setHashTab] = useState<Tab | null>(null);
+  useEffect(() => setHashTab(appSectionTab(hash)), [hash]);
+  // On a phone the tab strip scrolls sideways: keep the open tab in sight,
+  // above all when a link opened a tab far along it.
+  const tabsRef = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs again whenever the open tab changes, which only the DOM shows.
+  useEffect(() => revealSelectedTab(tabsRef.current), [hashTab, search.tab]);
   const isAdmin = viewer.role === "admin";
   if (install === null) {
     return (
@@ -135,7 +148,8 @@ function InstallPage() {
     );
   }
   const tabs = tabsFor(install);
-  const tab: Tab = search.tab !== undefined && tabs.includes(search.tab) ? search.tab : "overview";
+  const wanted = search.tab ?? hashTab ?? "overview";
+  const tab: Tab = tabs.includes(wanted) ? wanted : "overview";
   return (
     <>
       <PageHeader
@@ -156,19 +170,22 @@ function InstallPage() {
       />
       <UpdateBanner install={install} isAdmin={isAdmin} />
       <UninstallState install={install} />
-      <Tabs
-        variant="underline"
-        value={tab}
-        onValueChange={(next) => {
-          const picked = TABS.find((t) => t === next) ?? "overview";
-          void navigate({
-            search: picked === "overview" ? {} : { tab: picked },
-            replace: true,
-            resetScroll: false,
-          });
-        }}
-        tabs={tabs.map((value) => ({ value, label: TAB_LABELS[value] }))}
-      />
+      <div ref={tabsRef} className="min-w-0">
+        <Tabs
+          variant="underline"
+          value={tab}
+          onValueChange={(next) => {
+            const picked = TABS.find((t) => t === next) ?? "overview";
+            setHashTab(null);
+            void navigate({
+              search: picked === "overview" ? {} : { tab: picked },
+              replace: true,
+              resetScroll: false,
+            });
+          }}
+          tabs={tabs.map((value) => ({ value, label: APP_TAB_LABELS[value] }))}
+        />
+      </div>
       {tab === "overview" && <OverviewTab install={install} isAdmin={isAdmin} />}
       {tab === "settings" && (
         <SettingsTab install={install} settings={settings} isAdmin={isAdmin} />
@@ -187,7 +204,7 @@ function OverviewTab({ install, isAdmin }: { install: InstallDetail; isAdmin: bo
       <Details install={install} isAdmin={isAdmin} />
       {!gone && <SourceChangesCard install={install} isAdmin={isAdmin} />}
       {!gone && install.postInstall.length > 0 && (
-        <PageSection title="Next steps">
+        <PageSection id="next-steps" title="Next steps">
           <LayerCard>
             <LayerCard.Primary className="grid gap-4 px-5 py-4">
               {install.postInstall.map((content) => (
@@ -231,7 +248,7 @@ function SettingsTab({
           isAdmin={isAdmin}
         />
       ) : (
-        <PageSection title="Secrets">
+        <PageSection id="secrets" title="Secrets">
           {install.secretNames.length === 0 ? (
             <Text variant="secondary">No secrets are set.</Text>
           ) : (
@@ -251,13 +268,25 @@ function SettingsTab({
         </PageSection>
       )}
       {install.origin === "catalog" ? (
-        <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />
+        <div id="automatic-updates" className={cn("scroll-mt-6", FLUSH_RING_CLASS)}>
+          <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />
+        </div>
       ) : (
-        <PageSection title="Automatic updates">
+        <PageSection id="automatic-updates" title="Automatic updates">
           <Text variant="secondary">
-            {install.origin === "repository"
-              ? "Never: this app is not from the catalog. Check for changes on the Overview tab, then rebuild and review the update."
-              : "Never: this app was built from source at a commit you chose. Update it from the catalog, or rebuild it from the Overview tab."}
+            {install.origin === "repository" ? (
+              <>
+                Never: this app is not from the catalog. Check for changes under{" "}
+                <Link href={appLink(install.id, "source")}>Source</Link>, then rebuild and review
+                the update.
+              </>
+            ) : (
+              <>
+                Never: this app was built from source at a commit you chose. Update it from the
+                catalog, or rebuild it under{" "}
+                <Link href={appLink(install.id, "source")}>Source</Link>.
+              </>
+            )}
           </Text>
         </PageSection>
       )}
@@ -269,7 +298,7 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
   return (
     <>
       {isAdmin && install.build.kind !== "self-deploying" && (
-        <PageSection title="workers.dev URL">
+        <PageSection id="workers-dev" title="workers.dev URL">
           <WorkersDevSwitch install={install} />
         </PageSection>
       )}
@@ -277,6 +306,7 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
         <CustomDomainsSection install={install} />
       ) : (
         <PageSection
+          id="domains"
           title={install.wildcard === null ? "Custom domains" : "Wildcard domain"}
           titleAction={<DocsLink topic="customDomains" />}
         >
@@ -288,7 +318,7 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
         </PageSection>
       )}
       <ExternalDomainsSection install={install} isAdmin={isAdmin} />
-      <PageSection title="Email">
+      <PageSection id="email" title="Email">
         {install.emailRoutes.length === 0 ? (
           <Text variant="secondary">This app does not receive email through Email Routing.</Text>
         ) : (
@@ -302,7 +332,8 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
                 ))}
               </ul>
               <Text variant="secondary" size="sm">
-                To receive email for another zone, use the Settings tab.
+                To receive email for another zone, change{" "}
+                <Link href={appLink(install.id, "email-zone")}>Email in the app's settings</Link>.
               </Text>
             </LayerCard.Primary>
           </LayerCard>
@@ -318,14 +349,26 @@ function ResourcesTab({ install }: { install: InstallDetail }) {
     <>
       {install.retained.length > 0 && (
         <PageSection
+          id="kept-resources"
           title="Kept in the account"
-          description="These were kept when the app was uninstalled. Appflare no longer uses them. When you no longer need the data, an admin can delete them from the danger zone on the Overview tab, or you can delete them in the Cloudflare dashboard."
+          description={
+            <>
+              These were kept when the app was uninstalled. Appflare no longer uses them. When you
+              no longer need the data, an admin can delete them from the{" "}
+              <Link href={appLink(install.id, "danger-zone")}>danger zone</Link>, or you can delete
+              them in the Cloudflare dashboard.
+            </>
+          }
         >
           <ResourceTable rows={install.retained} />
         </PageSection>
       )}
       {!gone && (
-        <PageSection title="Resources" description="What the install created in this account.">
+        <PageSection
+          id="resources"
+          title="Resources"
+          description="What the install created in this account."
+        >
           {install.resources.length === 0 ? (
             <Text variant="secondary">No resources have been created yet.</Text>
           ) : (
@@ -356,7 +399,7 @@ function JobsTab({
       {install.status !== "uninstalled" && (
         <VersionsSection install={install} snapshots={snapshots} isAdmin={isAdmin} />
       )}
-      <PageSection title="Job history">
+      <PageSection id="job-history" title="Job history">
         <ResponsiveTable label="Job history" stickyFirstColumn>
           <Table.Header>
             <Table.Row>
@@ -426,7 +469,7 @@ function DangerZone({ install }: { install: InstallDetail }) {
   const selfDeploying = install.build.kind === "self-deploying";
   const busy = install.activeJobId !== null;
   return (
-    <PageSection title="Danger zone">
+    <PageSection id="danger-zone" title="Danger zone">
       <LayerCard>
         <LayerCard.Primary className="grid gap-4 px-5 py-4">
           {install.uninstall === "start" && (
@@ -523,9 +566,15 @@ function UninstallState({ install }: { install: InstallDetail }) {
         description={
           <>
             Uninstalled <Timestamp iso={install.uninstalledAt} />.{" "}
-            {install.retained.length > 0
-              ? "The Worker is deleted. The resources listed on the Resources tab, under Kept in the account, are still there."
-              : "The Worker and every resource Appflare created for it are deleted."}
+            {install.retained.length > 0 ? (
+              <>
+                The Worker is deleted. The resources listed under{" "}
+                <Link href={appLink(install.id, "kept-resources")}>Kept in the account</Link> are
+                still there.
+              </>
+            ) : (
+              "The Worker and every resource Appflare created for it are deleted."
+            )}
           </>
         }
       />
@@ -555,7 +604,13 @@ function UninstallState({ install }: { install: InstallDetail }) {
       variant="error"
       icon={<WarningCircleIcon weight="fill" />}
       title="The uninstall did not finish"
-      description="Resources already deleted stay deleted. An admin can finish the uninstall from the danger zone at the bottom of the Overview tab, and keep anything Cloudflare refuses to delete."
+      description={
+        <>
+          Resources already deleted stay deleted. An admin can finish the uninstall from the{" "}
+          <Link href={appLink(install.id, "danger-zone")}>danger zone</Link>, and keep anything
+          Cloudflare refuses to delete.
+        </>
+      }
     />
   );
 }
@@ -590,7 +645,7 @@ function OtherWorkers({ workers }: { workers: OtherWorkerView[] }) {
 function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
   const vars = Object.entries(install.vars);
   return (
-    <LayerCard>
+    <LayerCard id="details" className={cn("scroll-mt-6", FLUSH_RING_CLASS)}>
       <LayerCard.Secondary className="flex items-center justify-between gap-3">
         <span>Details</span>
         <div className="flex items-center gap-2">
@@ -664,7 +719,7 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
             </DescriptionItem>
           )}
           {(install.status === "installed" || install.status === "updating") && (
-            <DescriptionItem label="Health">
+            <DescriptionItem id="health" label="Health">
               <InstallHealth
                 installId={install.id}
                 status={install.healthStatus}

@@ -26,6 +26,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
+import { appPlace } from "../../components/app-links";
 import type { Database } from "../../db/client";
 import { job_logs, resources } from "../../db/schema";
 import { isVarOption } from "../../installs/install-vars";
@@ -450,7 +451,7 @@ export async function awaitAppCredentialsPhase(
       }
       if (target.mode === "required") {
         throw new JobError(
-          `the sandbox Worker does not hold ${what} for this install (it was removed, or the sandbox Worker was deleted and enabled again); enter it again on the install page, then retry`,
+          `the sandbox Worker does not hold ${what} for this install (it was removed, or the sandbox Worker was deleted and enabled again); enter it again under ${appPlace(target.installId, "secrets", "Secrets in the app's settings")}, then retry`,
         );
       }
       log.warn(`The sandbox Worker does not hold ${what} for this install.`);

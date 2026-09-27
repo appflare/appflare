@@ -93,7 +93,7 @@ declaring the class in `exports`, or mark it `"state": "deleted"` there to retir
 
 ## Automatic updates
 
-Under **Settings**, **Updates**, **Automatic app updates**, admins can turn on
+Under **Settings > Updates > Automatic app updates**, admins can turn on
 **Automatically update apps**. It is off by default. Each app's page has an **Automatic updates** choice: use
 the account setting, or turn automatic updates on or off for that app.
 

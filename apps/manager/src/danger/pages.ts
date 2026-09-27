@@ -1,6 +1,6 @@
 import { dashboardUrl } from "../cloudflare/dashboard-links";
 import { COLOR_MODE_SCRIPT, COLOR_MODE_SCRIPT_SHA256 } from "../components/color-mode";
-import { plainMessage } from "../components/message-links";
+import { messageSegments } from "../components/message-links";
 import { settingsLink } from "../components/settings-links";
 import type { RemovalStep } from "./removal.server";
 
@@ -72,11 +72,25 @@ export const PAGE_HEADERS = {
   "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${COLOR_MODE_SCRIPT_SHA256}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
 } as const;
 
+/**
+ * A message string as HTML: its text escaped, and its links to pages of the
+ * manager (`message-links.ts`, paths only, from an allow-list) as links.
+ */
+export function messageHtml(message: string): string {
+  return messageSegments(message)
+    .map((s) =>
+      s.kind === "text"
+        ? escapeHtml(s.text)
+        : `<a href="${escapeHtml(s.href)}">${escapeHtml(s.label)}</a>`,
+    )
+    .join("");
+}
+
 /** A refused or failed action, with the way back. */
 export function errorPage(title: string, message: string): string {
   return `${head(title)}<h1>${escapeHtml(title)}</h1>
-<p>${escapeHtml(plainMessage(message))}</p>
-<p><a href="${settingsLink("account")}">Back to Settings</a></p>
+<p>${messageHtml(message)}</p>
+<p><a href="${settingsLink("account", "danger-zone")}">Back to the danger zone</a></p>
 ${TAIL}`;
 }
 

@@ -35,7 +35,7 @@ another job runs.
 
 ## Update automatically
 
-Under **Settings**, **Automatic updates**, admins can turn on **Automatically update
+Under **Settings > Updates > Appflare version**, admins can turn on **Automatically update
 Appflare**. It is off by default. The cron then starts the same self-update when a
 newer release is known and no other job is queued or running. It does not try a
 release again after its self-update failed.

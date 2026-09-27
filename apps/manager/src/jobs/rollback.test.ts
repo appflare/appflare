@@ -156,7 +156,7 @@ describe("rollback job", () => {
       }>()
     ).results.map((l) => l.message);
     expect(logs).toContain(
-      "Automatic updates of this app are now off, so the cron does not update it to 1.1.0 again. Turn them back on on the app's page once a fixed version is out.",
+      `Automatic updates of this app are now off, so the cron does not update it to 1.1.0 again. Turn them back on under [Automatic updates on the app's page](/apps/${INSTALL_ID}#automatic-updates) once a fixed version is out.`,
     );
   });
 

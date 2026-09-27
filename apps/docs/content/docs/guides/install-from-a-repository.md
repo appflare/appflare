@@ -18,7 +18,7 @@ Nobody reviewed its code for you, and Appflare never updates it on its own.
 
 ## What you need
 
-- **Sandbox builds** turned on in **Settings > Building apps**, which also
+- **Sandbox builds** turned on in **Settings > Building apps > Build in your account**, which also
   means **Workers Paid** and R2 on the account. See [Sandbox builds](/guides/builds/).
   If the card offers **Update sandbox**, update first: older sandbox Workers cannot
   build from a repository.

@@ -72,6 +72,7 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
   const canRemove = install.status !== "uninstalling" && install.status !== "uninstalled";
   return (
     <PageSection
+      id="domains"
       title={wildcard === null ? "Custom domains" : "Wildcard domain"}
       titleAction={<DocsLink topic="customDomains" />}
       actions={

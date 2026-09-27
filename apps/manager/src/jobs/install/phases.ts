@@ -17,6 +17,7 @@ import {
 } from "@appflare/schema";
 import { inArray } from "drizzle-orm";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../../catalog/app-manifest.server";
+import { appPlace } from "../../components/app-links";
 import type { Database } from "../../db/client";
 import { type RESOURCE_KINDS, resources } from "../../db/schema";
 import { readSettings, SETTING, writeSettings } from "../../db/settings";
@@ -823,8 +824,16 @@ export async function checkLiveHealthPhase(
    * `routeWasLive`: the URL was serving before the job, so a plain 404 is
    * the app's own answer and settles the check at once.
    */
-  opts: { routeWasLive?: boolean } = {},
+  opts: {
+    routeWasLive?: boolean;
+    /** The install checked, so a warning links to its health check. */
+    installId?: string;
+  } = {},
 ): Promise<LiveHealthResult> {
+  const checkAgain =
+    opts.installId === undefined
+      ? "check again from its page"
+      : `check again from ${appPlace(opts.installId, "health", "its page")}`;
   let firstProbeAt: number | null = null;
   for (let attempt = 1; ; attempt++) {
     const checked = await steps.run(`health check ${attempt}`, async ({ log, fetch }) => {
@@ -844,11 +853,11 @@ export async function checkLiveHealthPhase(
         log.info(`GET ${url} -> ${decision.detail}; the Worker is serving.`);
       } else if (decision.status === "unhealthy") {
         log.warn(
-          `GET ${url} -> ${decision.detail}: the Worker answers with a server error. Everything was created; open the app to check, or check again from its page.`,
+          `GET ${url} -> ${decision.detail}: the Worker answers with a server error. Everything was created; open the app to check, or ${checkAgain}.`,
         );
       } else {
         log.warn(
-          `Could not verify ${url} after ${attempt} attempts (${decision.detail}). Everything was created; the route may still be going live. Open the app to check, or check again from its page.`,
+          `Could not verify ${url} after ${attempt} attempts (${decision.detail}). Everything was created; the route may still be going live. Open the app to check, or ${checkAgain}.`,
         );
       }
       return { at, decision };

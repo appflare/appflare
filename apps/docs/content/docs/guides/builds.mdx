@@ -42,7 +42,7 @@ built this way.
 In **Settings > Building apps**, the **Build in your account** section shows **Enable
 sandbox builds** to admins. When R2 is off or the token lacks Containers: Edit, the card
 says so and the button stays disabled until the cause is fixed and the account is
-checked again (**Check again** in **Settings > Your account**).
+checked again (**Check again** in **Settings > Your account > What this account can run**).
 
 Enabling runs as a job, so its log shows each step:
 
@@ -92,7 +92,7 @@ image, then waits until the rollouts complete.
 
 The manager reaches the sandbox Worker through a service binding named `SANDBOX`.
 Enabling adds it at the end. A sandbox Worker that is already in the account but not
-connected, such as one deployed before Appflare could enable it from Settings, can be
+connected, such as one deployed before Appflare could enable it from its settings, can be
 connected with **Connect only** on the card.
 
 Connecting does not re-upload the manager. It creates a new version of the manager's
@@ -305,11 +305,12 @@ uninstalling one app leaves it in place.
 ## Troubleshooting
 
 **Appflare is not connected to a sandbox Worker.** Choose **Enable sandbox builds** in
-**Settings > Building apps**, or **Connect only** when the sandbox Worker is already there.
+**Settings > Building apps > Build in your account**, or **Connect only** when the sandbox Worker is already there.
 
 **The sandbox Worker speaks another protocol.** The manager and the sandbox Worker are
 from releases that do not match. Update whichever is older: **Update sandbox** in
-**Settings > Building apps**, or update Appflare itself in **Settings > Updates**.
+**Settings > Building apps > Build in your account**, or update Appflare itself in
+**Settings > Updates > Appflare version**.
 
 **Sandbox builds need Workers Paid.** The account is on the free plan. Upgrade it
 under **Workers & Pages > Plans** in the dashboard, select **Check again** under

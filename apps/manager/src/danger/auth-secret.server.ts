@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import type { CloudflareClient } from "@appflare/cf-api";
 import { count } from "drizzle-orm";
+import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
 import { notification_channels, session } from "../db/schema";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
@@ -53,9 +54,8 @@ export interface RotateAuthSecretResult {
 }
 
 export const ROTATION_MESSAGES = {
-  busy: "The auth secret is being rotated already. Wait a minute, then reload Settings.",
-  noWorkerName:
-    "Appflare does not know its own Worker name yet. Save the Cloudflare token under Settings first.",
+  busy: `The auth secret is being rotated already. Wait a minute, then open ${settingsPlace("account", "danger-zone", "the danger zone")} again.`,
+  noWorkerName: `Appflare does not know its own Worker name yet. Save the Cloudflare token in ${settingsPlace("account", "connection")} first.`,
 } as const;
 
 export async function rotateAuthSecretCore(

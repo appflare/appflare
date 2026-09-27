@@ -64,7 +64,7 @@ Deleting data is permanent.
 
 ## Removed apps
 
-**Settings**, **Removed apps** lists every uninstalled app that still keeps
+**Settings > Removed apps** lists every uninstalled app that still keeps
 resources in your account, with what each one kept. An uninstalled app that kept
 nothing is not listed. Admins have two actions for each app:
 

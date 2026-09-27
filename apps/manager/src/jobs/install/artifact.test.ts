@@ -97,7 +97,7 @@ describe("verifyArtifactManifest", () => {
     await expect(
       verifyArtifactManifest(future.manifestBytes, future.signature, expected(future), future.keys),
     ).rejects.toThrow(
-      "the artifact is format 7, and this version of Appflare reads formats 1 to 6; update Appflare in Settings, then try again",
+      "the artifact is format 7, and this version of Appflare reads formats 1 to 6; update Appflare in [Settings > Updates](/settings/updates#appflare), then try again",
     );
   });
 

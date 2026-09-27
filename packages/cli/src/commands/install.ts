@@ -5,6 +5,7 @@ import { unpackArtifact, verifyArtifact } from "../artifact.ts";
 import { type CommandContext, wranglerFor } from "../context.ts";
 import { parseDeployOutput } from "../deploy-output.ts";
 import { waitForHealth } from "../health.ts";
+import { managerPageLines, managerPageRef } from "../manager-pages.ts";
 import { autoProvisionedResourceName, DEFAULT_WORKER_NAME, validateWorkerName } from "../names.ts";
 import { checkNodeVersion } from "../node-version.ts";
 import { downloadManagerRelease, findManagerRelease } from "../release.ts";
@@ -39,8 +40,8 @@ async function preflight(wrangler: Wrangler, config: GeneratedWranglerConfig): P
   if ((await listDeployments(wrangler, name)) !== null) {
     throw new Error(
       `A Worker named "${name}" already exists in this account. If it is an Appflare manager, ` +
-        "open it and update it from Settings > Updates; otherwise install another " +
-        "copy with --name <other>.",
+        `open it and update it from ${managerPageRef(null, "updates")}; otherwise ` +
+        "install another copy with --name <other>.",
     );
   }
   const databases = await listD1Databases(wrangler);
@@ -222,7 +223,9 @@ export async function install(options: InstallOptions, ctx: CommandContext): Pro
       ui.step(
         "Done. Open your manager to finish setup (you will paste a Cloudflare API token, then create the owner account):",
       );
-      ui.result(formatManagerUrl(deployed.url));
+      const managerUrl = formatManagerUrl(deployed.url);
+      ui.result(managerUrl);
+      for (const line of managerPageLines(managerUrl)) ui.info(line);
     } catch (error) {
       ui.warn(
         `The manager Worker "${name}" was deployed, but setup did not finish. To start over, ` +

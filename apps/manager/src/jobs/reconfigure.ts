@@ -12,6 +12,7 @@ import {
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { effectiveManifest } from "../catalog/revisions.server";
+import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -1070,12 +1071,12 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       const log = new StepLog(now);
       if (moveEmail) {
         log.error(
-          `Settings change failed at "${failedAt}" while removing the old zone's email routes. The new zone already receives the app's email; finish the move from the Settings section of the install page to remove what is left.${serving === null ? "" : ` Version ${serving} serves all traffic with the new settings, and they are recorded.`}`,
+          `Settings change failed at "${failedAt}" while removing the old zone's email routes. The new zone already receives the app's email; finish the move under ${appPlace(params.installId, "email-zone", "Email in the app's settings")} to remove what is left.${serving === null ? "" : ` Version ${serving} serves all traffic with the new settings, and they are recorded.`}`,
           serving === null ? undefined : { versionId: serving },
         );
       } else if (serving !== null) {
         log.error(
-          `Settings change failed at "${failedAt}" after version ${serving} was promoted: it serves all traffic with the new settings, and they are recorded. Roll back from the install page if the app misbehaves.`,
+          `Settings change failed at "${failedAt}" after version ${serving} was promoted: it serves all traffic with the new settings, and they are recorded. Roll back from ${appPlace(params.installId, "versions", "the app's versions")} if the app misbehaves.`,
           { versionId: serving },
         );
       } else if (version !== null) {

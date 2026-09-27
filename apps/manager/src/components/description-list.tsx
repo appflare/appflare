@@ -1,5 +1,6 @@
 import { cn, Text } from "@cloudflare/kumo";
 import type { ReactNode } from "react";
+import { FLUSH_RING_CLASS } from "./hash-target";
 
 /**
  * Key-value rows: a label column sized to its longest label, and the values.
@@ -25,14 +26,33 @@ export function DescriptionList({
   );
 }
 
-/** One row of a {@link DescriptionList}. */
-export function DescriptionItem({ label, children }: { label: ReactNode; children: ReactNode }) {
+/**
+ * One row of a {@link DescriptionList}. `id` goes on the value, so a link to
+ * the row (`#health`) scrolls to it and rings it.
+ */
+export function DescriptionItem({
+  id,
+  label,
+  children,
+}: {
+  id?: string;
+  label: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <>
       <Text as="dt" variant="secondary">
         {label}
       </Text>
-      <dd className="min-w-0 text-base text-kumo-default">{children}</dd>
+      <dd
+        id={id}
+        className={cn(
+          "min-w-0 text-base text-kumo-default",
+          id !== undefined && ["scroll-mt-6", FLUSH_RING_CLASS],
+        )}
+      >
+        {children}
+      </dd>
     </>
   );
 }

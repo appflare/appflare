@@ -4,6 +4,7 @@ import {
   Banner,
   Button,
   Checkbox,
+  cn,
   Input,
   Label,
   LayerCard,
@@ -28,6 +29,7 @@ import type { InstallDetail } from "../installs/installs.functions";
 import { startReconfigure } from "../installs/reconfigure.functions";
 import type { InstallSettings, SettingField } from "../installs/reconfigure.server";
 import type { DatabaseSlot, SecretSlot } from "../jobs/reconfigure/plan";
+import { appPlace } from "./app-links";
 import { AppTokenHelp } from "./app-token-permissions";
 import { connectionsComplete, DatabaseField } from "./database-fields";
 import { DocsLink } from "./docs-link";
@@ -39,6 +41,7 @@ import {
   TechnicalNamesSwitch,
   useTechnicalNames,
 } from "./field-label";
+import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner } from "./message-text";
 import { placeholderOptions } from "./placeholder-chips";
@@ -212,7 +215,11 @@ export function AppSettingsSection({
   const notice = settingsNotice(isAdmin, busy, settings.unavailable);
 
   return (
-    <section aria-label="Settings and secrets" className="grid gap-3">
+    <section
+      id="settings"
+      aria-label="Settings and secrets"
+      className={cn("grid scroll-mt-6 gap-3", FLUSH_RING_CLASS)}
+    >
       <LayerCard>
         <LayerCard.Primary className="px-5 py-4">
           <form className="grid gap-6" onSubmit={onSubmit}>
@@ -253,10 +260,11 @@ export function AppSettingsSection({
               <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
                 <Text variant="secondary" size="sm">
                   <FieldHelp
+                    links
                     text={
                       selfDeploying
                         ? "Saving runs the app's own installer again with these values. It changes the app in place: there is no snapshot and no undo."
-                        : "Saving deploys the app again with these values, after checking them on a preview where Cloudflare allows it. You can undo it from Versions on the Jobs tab."
+                        : `Saving deploys the app again with these values, after checking them on a preview where Cloudflare allows it. You can undo it from ${appPlace(install.id, "versions", "Versions")}.`
                     }
                     after={
                       <DocsLink
@@ -296,6 +304,7 @@ export function AppSettingsSection({
 
                 {settings.secrets.length > 0 && (
                   <Group
+                    id="secrets"
                     title="Secrets"
                     description={
                       selfDeploying
@@ -357,6 +366,7 @@ export function AppSettingsSection({
 
                 {settings.databases.length > 0 && (
                   <Group
+                    id="databases"
                     title="Databases"
                     description="Connection strings are never stored, so they are never shown. A new one gets a new Hyperdrive configuration, which the new version binds. The old configuration is kept until the next update or settings change, so undoing this change from Versions still reaches the old database."
                   >
@@ -384,6 +394,7 @@ export function AppSettingsSection({
 
                 {settings.email !== null && (
                   <Group
+                    id="email-zone"
                     title="Email"
                     description={
                       settings.email.zoneName === null
@@ -524,16 +535,19 @@ export function AppSettingsSection({
 
 /** A titled group of fields, its title and note set closer together than the fields. */
 function Group({
+  id,
   title,
   description,
   children,
 }: {
+  /** The group's link target on the app's page (`app-links.ts`). */
+  id?: string;
   title: string;
   description: string;
   children: ReactNode;
 }) {
   return (
-    <div className="grid gap-4">
+    <div id={id} className={cn("grid scroll-mt-6 gap-4", FLUSH_RING_CLASS)}>
       <div className="grid gap-1.5">
         <Text bold>{title}</Text>
         <Text variant="secondary" size="sm">

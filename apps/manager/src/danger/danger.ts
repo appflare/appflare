@@ -15,8 +15,3 @@ export const ROTATE_CONFIRMATION = "rotate";
 export function deletesBuildBucket(sandbox: { worker: string; bucket: boolean }): boolean {
   return sandbox.bucket && sandbox.worker === "sandbox";
 }
-
-/** The app page tab where an app's external domains are removed. */
-export function domainsTabPath(installId: string): string {
-  return `/apps/${encodeURIComponent(installId)}?tab=domains`;
-}

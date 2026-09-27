@@ -13,6 +13,7 @@ import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { readCachedListing } from "../catalog/merged.server";
 import { unsignedTierRefusal } from "../catalog/sources";
+import { appPlace } from "../components/app-links";
 import { createDb } from "../db/client";
 import { installs, jobs, resources, source_builds } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -1217,7 +1218,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       const log = new StepLog(now);
       if (aheadOfCode.length > 0) {
         log.error(
-          `The D1 database${aheadOfCode.length === 1 ? "" : "s"} ${aheadOfCode.join(", ")} ${aheadOfCode.length === 1 ? "is" : "are"} already migrated to the new schema while the previous code still serves. Retry the update, or restore ${aheadOfCode.length === 1 ? "it" : "them"} from this update's snapshot on the install page.`,
+          `The D1 database${aheadOfCode.length === 1 ? "" : "s"} ${aheadOfCode.join(", ")} ${aheadOfCode.length === 1 ? "is" : "are"} already migrated to the new schema while the previous code still serves. Retry the update, or restore ${aheadOfCode.length === 1 ? "it" : "them"} from this update's snapshot under ${appPlace(params.installId, "versions", "the app's versions")}.`,
           { migrated: aheadOfCode },
         );
       }
@@ -1229,7 +1230,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       }
       if (othersPromoted.length > 0) {
         log.error(
-          `The app's Workers ${othersPromoted.map((n) => `"${n}"`).join(", ")} may still serve the new version while the primary Worker serves the previous one. Roll back to this update's snapshot from the install page, or retry the update.`,
+          `The app's Workers ${othersPromoted.map((n) => `"${n}"`).join(", ")} may still serve the new version while the primary Worker serves the previous one. Roll back to this update's snapshot from ${appPlace(params.installId, "versions", "the app's versions")}, or retry the update.`,
           { promoted: othersPromoted },
         );
       }
@@ -1251,7 +1252,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         );
       } else if (wasPromoted) {
         log.error(
-          `Update failed at "${failedAt}" after version ${version} was promoted: it serves all traffic and is recorded as the install's version. Roll back from the install page if the app misbehaves.`,
+          `Update failed at "${failedAt}" after version ${version} was promoted: it serves all traffic and is recorded as the install's version. Roll back from ${appPlace(params.installId, "versions", "the app's versions")} if the app misbehaves.`,
           { versionId: version },
         );
       } else if (version !== null) {

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { errorPage, escapeHtml, removalPageEnd, removalStepLine, rotationPage } from "./pages";
+import {
+  errorPage,
+  escapeHtml,
+  messageHtml,
+  removalPageEnd,
+  removalStepLine,
+  rotationPage,
+} from "./pages";
 
 describe("danger-zone pages", () => {
   it("escapes every value", () => {
@@ -10,6 +17,20 @@ describe("danger-zone pages", () => {
     expect(line).not.toContain("<script>");
     expect(line).toContain('class="status failed"');
     expect(errorPage("<t>", "<m>")).not.toMatch(/<t>|<m>/);
+  });
+
+  it("shows a message's links to the manager as links, and nothing else as markup", () => {
+    expect(
+      messageHtml(
+        "Save it in [Cloudflare connection settings](/settings/account#connection) <now>.",
+      ),
+    ).toBe(
+      'Save it in <a href="/settings/account#connection">Cloudflare connection settings</a> &lt;now&gt;.',
+    );
+    expect(messageHtml("[x](https://example.com)")).toBe("[x](https://example.com)");
+    expect(
+      errorPage("Refused", "Open [the danger zone](/settings/account#danger-zone)."),
+    ).toContain('<a href="/settings/account#danger-zone">the danger zone</a>');
   });
 
   it("tells the owner which notification channels need their credentials again", () => {

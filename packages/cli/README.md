@@ -10,7 +10,7 @@
 
 Installs [Appflare](https://github.com/appflare/appflare), a self-hosted app manager
 for Cloudflare, into your own Cloudflare account. Once it runs, you manage it from its
-own Settings.
+own settings pages.
 
 ```sh
 npx create-appflare
@@ -110,14 +110,15 @@ complete release and prints a warning; run it again later for the newest one.
 
 ## Managing the manager
 
-Everything after the install happens in the manager itself:
+Everything after the install happens in the manager itself. The installer prints
+these addresses with your manager's own address in front when it finishes:
 
-| To | Open |
-|---|---|
-| See the running version and update Appflare | **Settings > Updates** |
-| Enable, update, or disable sandbox builds (Workers Paid) | **Settings > Building apps** |
-| Remove Appflare, its database and its KV namespace | **Settings > Your account > Remove Appflare** (owner only) |
-| Return to an earlier manager version | **Settings > Updates > Recent versions** (admins); if the manager does not load, the Worker's **Deployments** page in the Cloudflare dashboard |
+| To | Open | Address in the manager |
+|---|---|---|
+| See the running version and update Appflare | **Settings > Updates** | `/settings/updates#appflare` |
+| Enable, update, or disable sandbox builds (Workers Paid) | **Settings > Building apps** | `/settings/building#sandbox` |
+| Remove Appflare, its database and its KV namespace | **Settings > Your account > Danger zone**, **Remove Appflare** (owner only) | `/settings/account#danger-zone` |
+| Return to an earlier manager version | **Settings > Updates > Recent versions** (admins); if the manager does not load, the Worker's **Deployments** page in the Cloudflare dashboard | `/settings/updates#versions` |
 
 ## Forgot your password
 
@@ -159,8 +160,9 @@ PostHog project is set to discard IP addresses.
 `create-appflare` deploys the manager with that random id as the variable
 `APPFLARE_INSTALL_ID`, so the manager's own usage data continues it. The manager's
 reports start with its first scheduled run after setup, and the last setup screen
-says so; turn them off under Settings, Usage data. That switch covers the manager's
-reports only, not the installer's.
+says so; turn them off in **Settings > Usage data**
+(`/settings/usage-data#usage-data`). That switch covers the manager's reports only,
+not the installer's.
 
 Turn the installer's off with any one of:
 
@@ -169,7 +171,7 @@ Turn the installer's off with any one of:
 
 With it off, the installer sends nothing and deploys the manager with
 `APPFLARE_TELEMETRY=off`, which keeps the manager's usage data off for good (remove
-the variable from the Worker to decide in Settings instead).
+the variable from the Worker to decide in **Settings > Usage data** instead).
 
 The installer also turns off wrangler's own usage metrics and error reports (which
 would go to Cloudflare) for the commands it runs, unless you set

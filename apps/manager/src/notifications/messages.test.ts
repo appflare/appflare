@@ -53,7 +53,7 @@ describe("renderMessage", () => {
       { type: "health_failing", app },
       "Health check failing: Links for Ada",
       "Links for Ada (Worker my-links) answers its health check with a server error.",
-      `${M}/apps/i1`,
+      `${M}/apps/i1#health`,
     ],
     [
       { type: "manager_update_available", from: "0.5.0", to: "0.6.0" },
@@ -65,7 +65,7 @@ describe("renderMessage", () => {
       { type: "domain_active", app, hostname: "go.customer.test" },
       "Domain active: go.customer.test",
       "go.customer.test now serves Links for Ada (Worker my-links). Cloudflare validated it and issued its certificate.",
-      `${M}/apps/i1?tab=domains`,
+      `${M}/apps/i1#external-domains`,
     ],
     [
       {
@@ -76,7 +76,7 @@ describe("renderMessage", () => {
       },
       "Domain failed: go.customer.test",
       "go.customer.test, an external domain of Links for Ada (Worker my-links), does not serve the app. Cloudflare reports the hostname as blocked.",
-      `${M}/apps/i1?tab=domains`,
+      `${M}/apps/i1#external-domains`,
     ],
   ];
 
@@ -98,19 +98,19 @@ describe("per-service text", () => {
 
   it("Telegram is plain text with the link on its own line", () => {
     expect(plainText(message)).toBe(
-      `Health check failing: <b>&_*bold*_\n<b>&_*bold*_ (Worker my-links) answers its health check with a server error.\n${M}/apps/i1`,
+      `Health check failing: <b>&_*bold*_\n<b>&_*bold*_ (Worker my-links) answers its health check with a server error.\n${M}/apps/i1#health`,
     );
   });
 
   it("Slack escapes &, < and > and links with a label", () => {
     const text = slackText(message);
     expect(text).toContain("*Health check failing: &lt;b&gt;&amp;_*bold*_*");
-    expect(text).toContain(`<${M}/apps/i1|Open in Appflare>`);
+    expect(text).toContain(`<${M}/apps/i1#health|Open in Appflare>`);
   });
 
   it("Discord escapes markdown and suppresses the link preview", () => {
     const text = discordText(message);
     expect(text).toContain("**Health check failing: <b\\>&\\_\\*bold\\*\\_**");
-    expect(text.endsWith(`<${M}/apps/i1>`)).toBe(true);
+    expect(text.endsWith(`<${M}/apps/i1#health>`)).toBe(true);
   });
 });

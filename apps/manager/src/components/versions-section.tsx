@@ -21,9 +21,10 @@ import type { InstallDetail } from "../installs/installs.functions";
 import { rollbackDialogCopy } from "../installs/rollback-copy";
 import { restoreDatabase, startRollback } from "../installs/versions.functions";
 import type { RestoreDatabaseResult, SnapshotView } from "../installs/versions.server";
+import { appPlace } from "./app-links";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useJobStarted } from "./job-started";
-import { ErrorMessageBanner } from "./message-text";
+import { ErrorMessageBanner, MessageText } from "./message-text";
 import { PageSection } from "./page-section";
 import { ResponsiveTable } from "./responsive-table";
 import { StatusBadge } from "./status-badge";
@@ -55,7 +56,7 @@ export function VersionsSection({
   // Actions need an installed app with no job running.
   const canAct = isAdmin && install.status === "installed" && install.activeJobId === null;
   return (
-    <PageSection title="Versions">
+    <PageSection id="versions" title="Versions">
       {install.build.kind === "self-deploying" ? (
         <Text variant="secondary">
           This app's own installer changes it in place on every update, so Appflare takes no
@@ -174,7 +175,7 @@ function RollbackUnavailable({ reason }: { reason: string }) {
         Roll back
       </Button>
       <Text variant="secondary" size="sm">
-        {reason}
+        <MessageText message={reason} />
       </Text>
     </div>
   );
@@ -223,7 +224,12 @@ function RollbackDialog({ install, snapshot }: { install: InstallDetail; snapsho
           variant="secondary"
           icon={<InfoIcon weight="fill" />}
           title="Email Routing is not changed"
-          description="A rollback does not move the app's email back to another zone. If email moved since this snapshot, move it back on the Settings tab."
+          description={
+            <MessageText
+              message={`A rollback does not move the app's email back to another zone. If email moved since this snapshot, move it back under ${appPlace(install.id, "email-zone", "Email in the app's settings")}.`}
+              newTab
+            />
+          }
         />
       )}
       {!copy.warnData && install.emailRoutes.length === 0 && (

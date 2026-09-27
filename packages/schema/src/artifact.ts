@@ -1065,6 +1065,12 @@ export type ArtifactManifestV2 = z.infer<typeof artifactManifestV2Schema>;
 export type ArtifactManifestV3 = z.infer<typeof artifactManifestV3Schema>;
 
 /**
+ * Where in the manager Appflare is updated, as the manager names the page.
+ * The manager turns it into a link where it shows the sentence below.
+ */
+export const UPDATE_APPFLARE_PLACE = "Settings > Updates";
+
+/**
  * Why a manifest's `format` is one this version cannot read, as a sentence
  * that says to update Appflare, or null when it can read it (or it has no
  * numeric format, which the schema then refuses on its own).
@@ -1075,6 +1081,6 @@ export function unknownArtifactFormatProblem(json: unknown): string | null {
   if (typeof format !== "number" || !Number.isInteger(format)) return null;
   if (format >= 1 && format <= LATEST_ARTIFACT_FORMAT) return null;
   return format > LATEST_ARTIFACT_FORMAT
-    ? `the artifact is format ${format}, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in Settings, then try again`
+    ? `the artifact is format ${format}, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in ${UPDATE_APPFLARE_PLACE}, then try again`
     : `the artifact is format ${format}, which no version of Appflare reads`;
 }

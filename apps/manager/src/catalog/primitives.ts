@@ -213,14 +213,15 @@ export function workersPaidStatus(view: CapabilitiesView | null): {
     return { availability: "unknown", reason: "Needs Workers Paid; the plan is not known." };
   }
   if (plan.plan === "paid") {
-    const how = plan.source === "detected" ? "detected" : "set in Settings";
+    const how = plan.source === "detected" ? "detected" : "as chosen on Your account";
     return { availability: "available", reason: `Needs Workers Paid, ${how}.` };
   }
   return plan.source === "detected"
     ? { availability: "unavailable", reason: "Needs Workers Paid; this account is on Free." }
     : {
         availability: "unknown",
-        reason: "Needs Workers Paid; Settings says Free, which Appflare did not detect.",
+        reason:
+          "Needs Workers Paid; the plan chosen on Your account is Free, which Appflare did not detect.",
       };
 }
 

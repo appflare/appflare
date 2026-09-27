@@ -389,7 +389,7 @@ describe("artifact formats", () => {
     expect(unknownArtifactFormatProblem({ format: 5 })).toBeNull();
     expect(unknownArtifactFormatProblem({ format: 6 })).toBeNull();
     expect(unknownArtifactFormatProblem({ format: 7 })).toBe(
-      `the artifact is format 7, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in Settings, then try again`,
+      `the artifact is format 7, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in Settings > Updates, then try again`,
     );
     expect(unknownArtifactFormatProblem({ format: 0 })).toMatch(/no version of Appflare reads/);
   });

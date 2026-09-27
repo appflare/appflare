@@ -21,7 +21,7 @@ The token you paste in the setup wizard is stored as an encrypted secret,
   enter for them. An app that needs Cloudflare API access gets its own token, which
   you create with only the permissions it lists.
 
-To replace the token, use **Rotate token** in Settings, then revoke the old one in
+To replace the token, use **Rotate token** in **Settings > Your account > Cloudflare connection**, then revoke the old one in
 the Cloudflare dashboard.
 
 ## Signed artifacts
@@ -140,7 +140,7 @@ app, never the manager's.
   carry fixed messages. A manager that cannot identify its own version refuses
   every token unless it is opened at its `workers.dev` address.
 - **Better Auth.** Users sign in with email and password, or with a passkey they
-  added in Settings. Passkeys are bound to the manager's own hostname. There is no
+  added in **Settings > Users and sign-in > Your passkeys**. Passkeys are bound to the manager's own hostname. There is no
   public sign-up; admins create users. Session cookies are `HttpOnly`, `Secure`, and
   `SameSite=Lax`, and only the manager's own URL is a trusted origin. Sign-in
   attempts are rate limited, with the counters in the manager's D1 database.
@@ -171,7 +171,7 @@ responds, and whether a newer release exists.
 
 ## Protect with Cloudflare Access
 
-Settings has an optional extra layer for admins: **Protect with Cloudflare Access**.
+**Settings > Users and sign-in > Cloudflare Access** has an optional extra layer for admins: **Protect with Cloudflare Access**.
 When it is on, [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
 asks every visitor to prove they own an admin's email before the manager's own
 sign-in page loads, and the manager itself checks the Access token on every request
@@ -186,7 +186,7 @@ What turning it on does:
   request except `/api/health` must carry a `Cf-Access-Jwt-Assertion` token signed
   by your team's keys and issued for that application; otherwise the manager answers
   with a 403 page that says why. The token is never logged.
-- Keeps the allow list current: adding an admin in Settings adds their email, and
+- Keeps the allow list current: adding an admin in **Settings > Users and sign-in** adds their email, and
   **Re-sync admins** rewrites the list after any other change.
 
 Turning it off deletes both applications and stops the checks. The manager's own
@@ -210,7 +210,7 @@ sign-in keeps protecting it either way.
 ### If you are locked out
 
 If Access will not let you in, you see Cloudflare's Access page, not the manager's,
-and Settings is out of reach. Recover in two steps:
+and the manager's settings are out of reach. Recover in two steps:
 
 1. In the Zero Trust dashboard, under Access applications, delete the application
    named "Appflare (<your manager's hostname>)". Access stops asking for a sign-in.
@@ -225,7 +225,7 @@ and Settings is out of reach. Recover in two steps:
 
 The manager picks up the change within about 15 seconds. Delete the leftover
 application for `/api/health` in the dashboard as well. Once your Access sign-in
-works, you can turn the protection on again from Settings.
+works, you can turn the protection on again from **Settings > Users and sign-in > Cloudflare Access**.
 
 ## Notification credentials
 
@@ -252,7 +252,7 @@ the outcome of each job) to PostHog's EU region, from its Worker and never from 
 browser. It holds counts, versions and error categories, never your account, emails,
 domains, secrets or tokens. It is on by
 default and starts with the first scheduled run after setup. No banner in the app
-announces it: Settings, Usage data and these docs disclose it, and nothing waits for
-an answer. One switch in Settings turns it off; see [Usage data](/telemetry/) for
+announces it: **Settings > Usage data** and these docs disclose it, and nothing waits for
+an answer. One switch there turns it off; see [Usage data](/telemetry/) for
 exactly what is sent and every way to turn it off. The installer keeps wrangler's
 own usage metrics and error reports off for the commands it runs.

@@ -6,8 +6,8 @@ description: Send messages about updates, jobs, failing health checks and extern
 Appflare can tell you when something needs attention: an update is available, an
 update or install finished, an app's health check started failing, an external domain
 went active or failed. Messages go to
-**notification channels**, which admins manage under **Settings**,
-**Notifications**. Members cannot view or change them.
+**notification channels**, which admins manage under
+**Settings > Notifications > Channels**. Members cannot view or change them.
 
 Messages name the app, its version and its Worker, and link to the manager. They
 never contain secrets or tokens. A failed job links to its log instead of quoting
@@ -74,7 +74,7 @@ wants these events. Without external domains, the run asks Cloudflare nothing.
 
 ## Add a channel
 
-1. Open **Settings**, **Notifications**, and select **Add channel**.
+1. Open **Settings > Notifications** and select **Add channel**.
 2. Choose the **Kind** and give the channel a **Name**, such as "Team chat".
 3. Enter the credentials, as described below for each kind.
 4. Pick the **Events**.

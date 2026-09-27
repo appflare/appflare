@@ -35,6 +35,8 @@ import { AppStatStrip } from "../../../components/app-stat-strip";
 import { BuildFromSourceCard } from "../../../components/build-from-source-card";
 import { DocsLink } from "../../../components/docs-link";
 import { InstallForm } from "../../../components/install-form";
+import { plainMessage } from "../../../components/message-links";
+import { MessageLinkButtons, MessageText } from "../../../components/message-text";
 import { PageHeader } from "../../../components/page-header";
 import { SANDBOX_CAPABILITY_LINK_LABEL } from "../../../components/sandbox-first";
 import { ScreenshotGallery } from "../../../components/screenshot-gallery";
@@ -77,7 +79,8 @@ function CatalogEntryPage() {
           <Empty
             icon={<WarningCircleIcon size={48} className="text-kumo-inactive" />}
             title="The catalog is unavailable"
-            description={detail.error}
+            description={plainMessage(detail.error)}
+            contents={<MessageLinkButtons message={detail.error} />}
           />
         ) : (
           <Empty
@@ -171,7 +174,7 @@ function AppPage({
           variant="error"
           icon={<WarningCircleIcon weight="fill" />}
           title="This app cannot be installed right now"
-          description={detail.error}
+          description={<MessageText message={detail.error} />}
         />
       )}
 

@@ -15,7 +15,7 @@ The first user, created in the setup wizard, is the owner. On a manager set up b
 owners existed, the admin who was created first becomes the owner when Appflare
 updates.
 
-Members see **What this account can run** and the **Workers plan** in Settings but cannot
+Members see **What this account can run** and the **Workers plan** in **Settings > Your account** but cannot
 change them. Only an admin can select **Check again**, choose the plan, or tick **Remember
 this for the account** while installing or updating. A recorded plan applies only when
 Appflare cannot detect it; recording Workers Paid lets later installs skip the Workers
@@ -25,7 +25,7 @@ Paid confirmation, so set it only when the account really is on Workers Paid.
 
 Appflare has no email provider, so there are no invitations. Instead:
 
-1. Open **Settings > Users and sign-in** and select **Add user**.
+1. Open **Settings > Users and sign-in > Users** and select **Add user**.
 2. Enter an email and a name, and pick **Member (read only)** or **Admin**.
 3. Select **Create user**. Appflare shows a temporary password once.
 4. Copy it and give it to the person. Appflare stores only a hash; closing the dialog

@@ -864,6 +864,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       step,
       `https://${host}${appHealthPath(manifest.catalog.install)}`,
       appHealthMode(manifest.catalog.install),
+      { installId: params.installId },
     );
 
     // The address the admin asked for besides workers.dev, now that the

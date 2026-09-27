@@ -96,14 +96,14 @@ If the install fails after the deploy, the installer prints the `wrangler` comma
 that delete what it created, so you can run it again.
 
 The installer only installs. Once the manager runs, you manage it from its own
-**Settings**:
+settings pages. The installer prints each address with your manager's address in front:
 
 | To | Go to |
 | --- | --- |
-| See the running version and update Appflare | **Settings > Updates**. See [Update Appflare](/guides/update-appflare/). |
-| Return to an earlier manager version | **Settings > Updates > Recent versions**. See [Roll back](/guides/update-appflare/#roll-back). |
-| Enable, update, or disable sandbox builds | **Settings > Building apps**. See [Sandbox builds](/guides/builds/). |
-| Remove Appflare and its data | **Settings > Your account > Remove Appflare**. See [Remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account). |
+| See the running version and update Appflare | **Settings > Updates > Appflare version** (`/settings/updates#appflare`). See [Update Appflare](/guides/update-appflare/). |
+| Return to an earlier manager version | **Settings > Updates > Recent versions** (`/settings/updates#versions`). See [Roll back](/guides/update-appflare/#roll-back). |
+| Enable, update, or disable sandbox builds | **Settings > Building apps > Build in your account** (`/settings/building#sandbox`). See [Sandbox builds](/guides/builds/). |
+| Remove Appflare and its data | **Remove Appflare** in **Settings > Your account > Danger zone** (`/settings/account#danger-zone`). See [Remove Appflare](/guides/danger-zone/#remove-appflare-from-this-account). |
 
 ## The setup wizard
 
@@ -162,7 +162,7 @@ says why apps need it, and shows its state:
 A row that is off has one button: **Turn on in Cloudflare** opens the right page of the
 Cloudflare dashboard, **Edit token in Cloudflare** opens the token's page,
 **Choose plan** lets you say which Workers plan the account is on when Appflare cannot
-read it, and **Set up** opens **Settings › Building apps**. **Details** shows what
+read it, and **Set up** opens **Settings > Building apps > Build in your account**. **Details** shows what
 Appflare found, when it checked, what went wrong if it could not tell, and how many
 catalog apps use it.
 
@@ -182,7 +182,7 @@ On a new account most rows read **Not set up**; that is expected. Only **Needs a
 rows stand in the way of something you have installed.
 
 Select **Check again** after changing something in the dashboard. Select **Finish** to
-go to the manager. The same list stays in **Settings › Your account**, under **What
+go to the manager. The same list stays in **Settings > Your account > What
 this account can run**.
 
 The token template requests:
@@ -221,7 +221,7 @@ Worker, through the Cloudflare API. Saving it redeploys the manager, which takes
 few seconds. The token is never shown again, never written to the database, and
 never included in logs. See [Security model](/security/).
 
-To replace the token later, open **Settings**, **Your account**, find **Cloudflare connection**, and
+To replace the token later, open **Settings > Your account > Cloudflare connection** and
 select **Rotate token**. The new token must be for the same account. Revoke the old
 one in the Cloudflare dashboard afterwards.
 

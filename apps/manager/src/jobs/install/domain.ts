@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { appPlace } from "../../components/app-links";
 import type { Database } from "../../db/client";
 import { resources } from "../../db/schema";
 import { GATEWAY_SETUP_PLACE, gatewayBindingName, gatewayHostname } from "../../gateway/gateway";
@@ -121,6 +122,12 @@ export async function installDomainPhase(
   },
 ): Promise<{ servedBy: string | null }> {
   const { domain } = request;
+  // Where the admin adds, retries and follows this domain.
+  const domainsPlace = appPlace(
+    request.installId,
+    domain.kind === "external" ? "external-domains" : "domains",
+    "the app's domains",
+  );
   const label =
     domain.kind === "custom"
       ? "custom domain"
@@ -143,7 +150,7 @@ export async function installDomainPhase(
       const gateway = domain.kind === "external" ? await readGateway(orm) : null;
       if (domain.kind === "external" && !isGatewayReady(gateway)) {
         log.warn(
-          `${domain.hostname} was not added: the external domains gateway is not set up any more. Set it up in ${GATEWAY_SETUP_PLACE}, then add the domain on the app's Domains and email tab.`,
+          `${domain.hostname} was not added: the external domains gateway is not set up any more. Set it up in ${GATEWAY_SETUP_PLACE}, then add the domain from ${domainsPlace}.`,
         );
         return none;
       }
@@ -152,7 +159,7 @@ export async function installDomainPhase(
       const taken = await heldElsewhere(orm, request.installId, domain.hostname);
       if (taken) {
         log.warn(
-          `${domain.hostname} was not added: it is already a domain of another app. Remove it there first, then add it on this app's Domains and email tab.`,
+          `${domain.hostname} was not added: it is already a domain of another app. Remove it there first, then add it from ${domainsPlace}.`,
         );
         return none;
       }
@@ -189,7 +196,7 @@ export async function installDomainPhase(
       if (result.kind === "wildcard") {
         if (!result.ok) {
           log.warn(
-            `The app is installed, but ${wildcardPattern(result.hostname)} could not be set up: ${result.reason} Add it on the app's Domains and email tab once that is fixed.`,
+            `The app is installed, but ${wildcardPattern(result.hostname)} could not be set up: ${result.reason} Add it from ${domainsPlace} once that is fixed.`,
           );
           return none;
         }
@@ -219,7 +226,7 @@ export async function installDomainPhase(
       if (result.kind === "custom") {
         if (!result.ok) {
           log.warn(
-            `${result.hostname} already has DNS records${result.records.length > 0 ? ` (${result.records.map((r) => (r.content === null ? r.type : `${r.type} ${r.content}`)).join(", ")})` : ""}, so the install did not replace them. Add the domain on the app's Domains and email tab, where you can choose to replace them.`,
+            `${result.hostname} already has DNS records${result.records.length > 0 ? ` (${result.records.map((r) => (r.content === null ? r.type : `${r.type} ${r.content}`)).join(", ")})` : ""}, so the install did not replace them. Add the domain from ${domainsPlace}, where you can choose to replace them.`,
           );
           return none;
         }
@@ -250,7 +257,7 @@ export async function installDomainPhase(
       if (!result.ok) {
         await releaseExternalDomain(request.db, claim.id, at);
         log.warn(
-          `The app is installed, but ${result.hostname} could not be added: ${result.reason} Add it on the app's Domains and email tab once that is fixed.`,
+          `The app is installed, but ${result.hostname} could not be added: ${result.reason} Add it from ${domainsPlace} once that is fixed.`,
         );
         return none;
       }
@@ -280,7 +287,7 @@ export async function installDomainPhase(
   } catch (error) {
     await steps.run(`${label} not added`, async ({ log }) => {
       log.warn(
-        `The app is installed, but ${domain.hostname} could not be added: ${errorMessage(error)}. Add it on the app's Domains and email tab once that is fixed.`,
+        `The app is installed, but ${domain.hostname} could not be added: ${errorMessage(error)}. Add it from ${domainsPlace} once that is fixed.`,
       );
       return {};
     });
@@ -304,7 +311,7 @@ export async function installDomainPhase(
         );
         if (!result.serves) {
           log.info(
-            `${attached.hostname} does not reach the app yet (${result.health.detail}); its certificate or DNS record may still be on the way. The app's Domains and email tab checks it again.`,
+            `${attached.hostname} does not reach the app yet (${result.health.detail}); its certificate or DNS record may still be on the way. You can check it again from ${domainsPlace}.`,
           );
         }
         return { serves: result.serves };
@@ -313,7 +320,7 @@ export async function installDomainPhase(
     } catch (error) {
       await steps.run(`${attached.hostname} not checked`, async ({ log }) => {
         log.warn(
-          `Could not check ${attached.hostname} (${errorMessage(error)}). The app's Domains and email tab checks it again.`,
+          `Could not check ${attached.hostname} (${errorMessage(error)}). You can check it again from ${domainsPlace}.`,
         );
         return {};
       });
@@ -342,7 +349,7 @@ export async function installDomainPhase(
       );
       if (!status.active) {
         log.info(
-          `After ${polls} check(s), ${waiting.hostname} is still waiting for its DNS records (${[...status.errors].join(" ") || `hostname ${status.status}, certificate ${status.sslStatus ?? "unknown"}`}). Add them at the domain's DNS host: ${recordLines(status)}. The app's Domains and email tab shows its progress.`,
+          `After ${polls} check(s), ${waiting.hostname} is still waiting for its DNS records (${[...status.errors].join(" ") || `hostname ${status.status}, certificate ${status.sslStatus ?? "unknown"}`}). Add them at the domain's DNS host: ${recordLines(status)}. Its progress shows under ${domainsPlace}.`,
         );
       }
       return { serves };
@@ -351,7 +358,7 @@ export async function installDomainPhase(
   } catch (error) {
     await steps.run(`${waiting.hostname} not checked`, async ({ log }) => {
       log.warn(
-        `Could not check ${waiting.hostname} (${errorMessage(error)}). The app's Domains and email tab shows its progress.`,
+        `Could not check ${waiting.hostname} (${errorMessage(error)}). Its progress shows under ${domainsPlace}.`,
       );
       return {};
     });
@@ -377,7 +384,7 @@ export async function unservedWildcardPhase(
   request: { installId: string; hostname: string },
 ): Promise<void> {
   const pattern = wildcardPattern(request.hostname);
-  const later = `Save the app's settings once to fill them in without ${pattern}, or add the domain on its Domains and email tab.`;
+  const later = `Save ${appPlace(request.installId, "settings", "the app's settings")} once to fill them in without ${pattern}, or add the domain from ${appPlace(request.installId, "domains", "the app's domains")}.`;
   try {
     await steps.run(`settings without ${pattern}`, async ({ log, orm }) => {
       if (
@@ -428,13 +435,18 @@ export async function unservedWildcardPhase(
 }
 
 /** The job log line for what a domain going live did to workers.dev. */
-export function domainLiveMessage(hostname: string, result: DomainLiveResult): string {
+export function domainLiveMessage(
+  installId: string,
+  hostname: string,
+  result: DomainLiveResult,
+): string {
+  const workersDev = appPlace(installId, "workers-dev", "Serve on workers.dev");
   if (result.turnedOff) {
-    return `Turned off the workers.dev URL: https://${hostname} serves the app. Turn it back on with Serve on workers.dev on the app's Domains and email tab.`;
+    return `Turned off the workers.dev URL: https://${hostname} serves the app. Turn it back on with ${workersDev} on the app's page.`;
   }
   switch (result.kept) {
     case "settings":
-      return `https://${hostname} serves the app. The workers.dev URL stays on because the app's settings use it; turn it off on the Domains and email tab, then save the app's settings.`;
+      return `https://${hostname} serves the app. The workers.dev URL stays on because the app's settings use it; turn off ${workersDev}, then save ${appPlace(installId, "settings", "the app's settings")}.`;
     case "manual":
       return `https://${hostname} serves the app. The workers.dev URL stays as an admin set it.`;
     default:
@@ -465,14 +477,14 @@ async function domainLivePhase(
           job: { settingsUseWorkerUrl: request.settingsUseWorkerUrl },
         },
       );
-      log.info(domainLiveMessage(domain.hostname, result));
+      log.info(domainLiveMessage(request.installId, domain.hostname, result));
       return { turnedOff: result.turnedOff };
     });
     return done.turnedOff ? domain.hostname : null;
   } catch (error) {
     await steps.run(`workers.dev left on for ${domain.hostname}`, async ({ log }) => {
       log.warn(
-        `https://${domain.hostname} serves the app, but the workers.dev URL could not be turned off (${errorMessage(error)}). Turn it off with Serve on workers.dev on the app's Domains and email tab.`,
+        `https://${domain.hostname} serves the app, but the workers.dev URL could not be turned off (${errorMessage(error)}). Turn it off with ${appPlace(request.installId, "workers-dev", "Serve on workers.dev")} on the app's page.`,
       );
       return {};
     });

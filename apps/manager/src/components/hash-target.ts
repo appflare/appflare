@@ -25,6 +25,12 @@ export const HIGHLIGHT_CLASSES = [
   "ring-offset-kumo-base",
 ] as const;
 
+/**
+ * For a target that runs to the edge of the page's column (the parts of an
+ * app's page): the ring sits on the target's edge instead of 8 px outside it.
+ */
+export const FLUSH_RING_CLASS = "[&.ring-2]:ring-offset-0";
+
 export interface HashTargetElement {
   scrollIntoView(options: ScrollIntoViewOptions): void;
   classList: { add(...tokens: string[]): void; remove(...tokens: string[]): void };

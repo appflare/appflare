@@ -82,6 +82,7 @@ export function ExternalDomainsSection({
   if (install.wildcard !== null && install.externalDomains.length === 0) {
     return (
       <PageSection
+        id="external-domains"
         title="External domains"
         description="Hostnames in DNS outside this account, such as a customer's domain."
       >
@@ -91,6 +92,7 @@ export function ExternalDomainsSection({
   }
   return (
     <PageSection
+      id="external-domains"
       title="External domains"
       description="Hostnames in DNS outside this account, such as a customer's domain."
       actions={canAdd ? <AddExternalDomainDialog install={install} /> : undefined}

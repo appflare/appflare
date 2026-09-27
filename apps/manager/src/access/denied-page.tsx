@@ -1,9 +1,10 @@
-import { Banner, LinkButton, Text } from "@cloudflare/kumo";
+import { Banner, Link, LinkButton, Text } from "@cloudflare/kumo";
 import { LockKeyIcon } from "@phosphor-icons/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { COLOR_MODE_SCRIPT } from "../components/color-mode";
 import { FAVICON_LINKS, FAVICON_META } from "../components/favicons";
+import { settingsLink } from "../components/settings-links";
 import appCss from "../styles.css?url";
 import { ACCESS_RECOVERY_COMMAND } from "./recovery";
 
@@ -46,7 +47,9 @@ export function AccessDeniedPage({
         description={
           <span className="grid gap-2">
             <span>
-              An admin turns Access protection off in Settings. If Settings cannot be reached:
+              An admin turns Access protection off in{" "}
+              <Link href={settingsLink("users", "access")}>Cloudflare Access settings</Link>. If
+              that page cannot be reached:
             </span>
             <span>1. {steps[0]}</span>
             <span>2. {steps[1]}</span>

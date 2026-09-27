@@ -109,7 +109,7 @@ describe("primitiveStatus", () => {
     );
     expect(primitiveStatus("containers", setByAdmin, plain)).toMatchObject({
       availability: "available",
-      reason: "Needs Workers Paid, set in Settings.",
+      reason: "Needs Workers Paid, as chosen on Your account.",
     });
     expect(primitiveStatus("containers", NOTHING_KNOWN, plain).availability).toBe("unknown");
   });

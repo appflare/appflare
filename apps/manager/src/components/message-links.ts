@@ -11,11 +11,14 @@
  */
 import { isMessageLinkPath } from "./internal-path";
 
-/** The link token for `label` pointing at `href`, a path inside the manager. */
+/**
+ * The link token for `label` pointing at `href`, a path inside the manager.
+ * A label can be a name someone typed ("Links [beta]"); brackets would end
+ * the token early, so they show as parentheses.
+ */
 export function messageLink(label: string, href: string): string {
   if (!isMessageLinkPath(href)) throw new Error(`not a path inside the manager: ${href}`);
-  if (/[[\]]/.test(label)) throw new Error(`a link label cannot contain brackets: ${label}`);
-  return `[${label}](${href})`;
+  return `[${label.replace(/\[/g, "(").replace(/\]/g, ")")}](${href})`;
 }
 
 export type MessageSegment =

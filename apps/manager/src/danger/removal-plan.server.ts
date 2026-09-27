@@ -7,6 +7,8 @@ import {
 } from "@appflare/schema";
 import { and, asc, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import { readAccessConfig } from "../access/config";
+import { appPlace } from "../components/app-links";
+import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -18,7 +20,6 @@ import {
   WILDCARD_DOMAIN_KIND,
 } from "../installs/resource-kinds";
 import { reconcileJobs, type WorkflowLookup } from "../jobs/reconcile.server";
-import { domainsTabPath } from "./danger";
 import { DangerError } from "./errors";
 
 /**
@@ -149,7 +150,7 @@ export async function findRemovalTargets(
   const { worker_name: workerName } = await readSettings(orm, [SETTING.workerName]);
   if (!workerName) {
     throw new DangerError(
-      "Appflare does not know its own Worker name yet. Save the Cloudflare token under Settings first.",
+      `Appflare does not know its own Worker name yet. Save the Cloudflare token in ${settingsPlace("account", "connection")} first.`,
       409,
     );
   }
@@ -310,7 +311,7 @@ export function externalDomainsMessage(domains: readonly BlockingExternalDomain[
     apps.set(d.installId, app);
   }
   const listed = [...apps.entries()]
-    .map(([id, a]) => `${a.label} (${a.hostnames.join(", ")}; ${domainsTabPath(id)})`)
+    .map(([id, a]) => `${appPlace(id, "external-domains", a.label)} (${a.hostnames.join(", ")})`)
     .join("; ");
   return `Apps still have external domains: ${listed}. Remove these external domains first, or their visitors lose the site: they reach the apps only through the gateway, which removing Appflare deletes.`;
 }

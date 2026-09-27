@@ -14,11 +14,18 @@ describe("messageLink", () => {
     );
   });
 
-  it("refuses anything but a path inside the manager, and labels that would break the token", () => {
+  it("refuses anything but a path inside the manager", () => {
     expect(() => messageLink("x", "https://example.com")).toThrow();
     expect(() => messageLink("x", "//example.com/a")).toThrow();
     expect(() => messageLink("x", "/a b")).toThrow();
-    expect(() => messageLink("[x]", "/settings")).toThrow();
+  });
+
+  it("shows brackets in a label as parentheses, so the link stays whole", () => {
+    const link = messageLink("Links [beta]", "/apps/i1#external-domains");
+    expect(link).toBe("[Links (beta)](/apps/i1#external-domains)");
+    expect(messageSegments(link)).toEqual([
+      { kind: "link", label: "Links (beta)", href: "/apps/i1#external-domains" },
+    ]);
   });
 });
 

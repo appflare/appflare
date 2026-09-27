@@ -3,6 +3,7 @@ import { type ArtifactManifest, artifactManifestSchema } from "@appflare/schema"
 import { and, eq, inArray, isNull, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { effectiveAutoUpdate, settingOn } from "../auto-update/auto-update";
+import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -403,6 +404,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           await cf().versions.getVersion(workerName, started.versionId),
         );
         const refusal = hyperdriveRollbackRefusal(
+          params.installId,
           Object.fromEntries(bound.map((b) => [b.binding, b.id])),
           await liveHyperdriveIds(orm, params.installId),
         );
@@ -514,13 +516,13 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         }
         if (outcome.missing.length > 0) {
           log.warn(
-            `This version binds a Hyperdrive configuration Appflare has no live record of for ${outcome.missing.join(", ")}; the app may not reach that database. Replace its connection string in Settings.`,
+            `This version binds a Hyperdrive configuration Appflare has no live record of for ${outcome.missing.join(", ")}; the app may not reach that database. Replace its connection string under ${appPlace(params.installId, "databases", "Databases in the app's settings")}.`,
           );
         }
       }
       if (await turnOffAutoUpdate(orm, params.installId)) {
         log.info(
-          `Automatic updates of this app are now off, so the cron does not update it to ${started.fromVersion} again. Turn them back on on the app's page once a fixed version is out.`,
+          `Automatic updates of this app are now off, so the cron does not update it to ${started.fromVersion} again. Turn them back on under ${appPlace(params.installId, "automatic-updates", "Automatic updates on the app's page")} once a fixed version is out.`,
         );
       }
       return {};
@@ -709,13 +711,13 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       }
       if (strandedNames.length > 0) {
         log.error(
-          `The app's Workers ${strandedNames.map((n) => `"${n}"`).join(", ")} may still serve the snapshot's version while the app's own Worker serves the current one. Roll back to this snapshot again from the install page.`,
+          `The app's Workers ${strandedNames.map((n) => `"${n}"`).join(", ")} may still serve the snapshot's version while the app's own Worker serves the current one. Roll back to this snapshot again from ${appPlace(params.installId, "versions", "the app's versions")}.`,
           { stranded: strandedNames },
         );
       }
       if (routesBack.length > 0) {
         log.error(
-          `Appflare could not turn the workers.dev URL of ${routesBack.map((n) => `"${n}"`).join(", ")} back on for the version it serves; roll back again, or change the address on the install page.`,
+          `Appflare could not turn the workers.dev URL of ${routesBack.map((n) => `"${n}"`).join(", ")} back on for the version it serves; roll back again, or change the address under ${appPlace(params.installId, "workers-dev", "workers.dev URL on the app's page")}.`,
           { routesBack },
         );
       }
