@@ -336,6 +336,31 @@ describe("runBuild", () => {
     expect(failure.message).toContain("worker/index.js: sha256 does not match manifest.json");
   });
 
+  it("checks the D1 schema files and post-deploy migrations of the stored zip too", async () => {
+    const d1File = (dir: string, name: string) => ({
+      name,
+      path: `${dir}/DB/${name}`,
+      offset: 10,
+      size: 2,
+      sha256: "0".repeat(64),
+    });
+    for (const [field, dir, layout] of [
+      ["d1Schema", "d1-schema", { schema: ["schema.sql"] }],
+      ["d1PostDeploy", "d1-post-deploy", { postDeployMigrationsDir: "after" }],
+    ] as const) {
+      const name = field === "d1Schema" ? "schema.sql" : "0001_after.sql";
+      const manifest = packedManifest({
+        format: 3,
+        [field]: { DB: [d1File(dir, name)] },
+        catalog: { ...catalogManifest, resources: { d1: { DB: layout } } },
+      });
+      const sandbox = fake({ packOutput: { "widget-1.2.3.zip": ZIP, "manifest.json": manifest } });
+      const failure = asFailure(await build(sandbox).promise);
+      expect(failure).toMatchObject({ stage: "verify", retryable: false });
+      expect(failure.message).toContain(`${dir}/DB/${name}: sha256 does not match manifest.json`);
+    }
+  });
+
   it("fetches the pinned commit when the ref has moved", async () => {
     const sandbox = fake({ refHead: OTHER_SHA });
     asResult(await build(sandbox).promise);

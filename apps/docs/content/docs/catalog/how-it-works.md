@@ -54,6 +54,14 @@ the entry instead, and the manager fills in the name it installed that Worker un
 One-Worker apps stay format 1. A manager older than format 2 refuses such an
 artifact rather than installing half the app.
 
+An artifact that carries D1 schema files or post-deploy migrations (from
+`resources.d1`) is format 3, whether it has one Worker or several: `d1Schema` and
+`d1PostDeploy` list those files by binding, beside `d1Migrations`. A manager older
+than format 3 refuses it rather than installing the app without them, and a
+manager that meets a format newer than it reads asks the admin to update Appflare.
+Every artifact is written in the oldest format that can carry it, so apps without
+these files stay format 1 or 2.
+
 Releases are immutable. A change to `appflare.jsonc` alone, without a new pin, cannot
 be published as a new release; re-pin `source` to ship it. Two exceptions need no
 release:

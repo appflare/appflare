@@ -21,6 +21,7 @@ import {
   type ArtifactManifest,
   type AssetFile,
   appWorkers,
+  artifactFormatFor,
   artifactManifestSchema,
   buildCommandList,
   type CatalogManifest,
@@ -44,6 +45,7 @@ import {
   resolveWranglerConfig,
   type WranglerConfigTarget,
 } from "./config-redirect.ts";
+import { collectD1Extras, collectD1Migrations, type D1Files } from "./d1-layout.ts";
 import { installDependencies } from "./install.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { scrubEnv } from "./scrub-env.ts";
@@ -103,6 +105,10 @@ export interface PackResult {
   moduleCount: number;
   assetCount: number;
   d1MigrationCount: number;
+  /** Schema files (`resources.d1[binding].schema`), every binding together. */
+  d1SchemaCount: number;
+  /** Post-deploy migrations (`resources.d1[binding].postDeployMigrationsDir`), every binding together. */
+  d1PostDeployCount: number;
   zipSize: number;
   /** The Worker's size, as wrangler reports it after a dry run; the primary Worker's for an app of several. */
   workerSize: WorkerSize;
@@ -389,11 +395,11 @@ function bundleWorker(
  * (or none); a Worker that brings none takes the others'.
  */
 export function mergeD1Migrations(
-  workers: ReadonlyArray<{ worker: string; d1: Record<string, CollectedFile[]> }>,
-): Record<string, CollectedFile[]> {
-  const merged: Record<string, CollectedFile[]> = {};
+  workers: ReadonlyArray<{ worker: string; d1: D1Files }>,
+): D1Files {
+  const merged: D1Files = {};
   const from: Record<string, string> = {};
-  const key = (files: readonly CollectedFile[]) =>
+  const key = (files: D1Files[string]) =>
     files.map((f) => `${f.name}:${sha256Hex(f.bytes)}`).join("\n");
   for (const { worker, d1 } of workers) {
     for (const [binding, files] of Object.entries(d1)) {
@@ -410,32 +416,6 @@ export function mergeD1Migrations(
     }
   }
   return merged;
-}
-
-/** Collects D1 migration `.sql` files per D1 binding, sorted by filename. */
-function collectD1Migrations(
-  config: ResolvedWranglerConfig,
-  configDir: string,
-): Record<string, CollectedFile[]> {
-  const result: Record<string, CollectedFile[]> = {};
-  for (const d1 of config.d1_databases ?? []) {
-    const dirName = d1.migrations_dir ?? "migrations";
-    const dir = path.resolve(configDir, dirName);
-    const files: CollectedFile[] = [];
-    if (existsSync(dir) && statSync(dir).isDirectory()) {
-      const names = readdirSync(dir)
-        .filter((f) => f.toLowerCase().endsWith(".sql"))
-        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-      for (const name of names) {
-        const abs = path.join(dir, name);
-        if (statSync(abs).isFile()) {
-          files.push({ name, path: `d1/${d1.binding}/${name}`, bytes: readFileSync(abs) });
-        }
-      }
-    }
-    result[d1.binding] = files;
-  }
-  return result;
 }
 
 /** Reads the commit date (YYYYMMDD) of HEAD, or null when `dir` is not a git repo. */
@@ -606,10 +586,31 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     }
   }
 
+  // (c2) The D1 SQL, before bundling so a refused schema file fails fast:
+  // each Worker's migrations (Workers that bind one name share one
+  // database, so they must bring the same files), then the schema files and
+  // post-deploy migrations the catalog manifest declares.
+  const declaredD1 = catalog.resources?.d1;
+  const d1 = mergeD1Migrations(
+    read.map((r) => ({
+      worker: r.name ?? r.config.name,
+      // `migrations_dir` is relative to the declared config, as `wrangler d1
+      // migrations apply` reads it, else to the config the build redirected to.
+      d1: collectD1Migrations(
+        r.config,
+        [...new Set([path.dirname(r.target.declaredPath), r.configDir])],
+        checkoutDir,
+        declaredD1,
+      ),
+    })),
+  );
+  const boundD1 = new Set(read.flatMap((r) => (r.config.d1_databases ?? []).map((d) => d.binding)));
+  const d1Extras = collectD1Extras(checkoutDir, declaredD1, boundD1, d1);
+
   // (d) Bundle each Worker via a scrubbed dry-run, then collect (e) its
-  // modules, (f) its static assets and (g) its D1 migrations. The primary
-  // Worker's files keep the paths of a one-Worker artifact; every other
-  // Worker's go under `workers/<name>/`.
+  // modules and (f) its static assets. The primary Worker's files keep the
+  // paths of a one-Worker artifact; every other Worker's go under
+  // `workers/<name>/`.
   const built = collected.map((c) => {
     if (c.name !== null) logger(`bundling the Worker "${c.name}"`);
     const prefix = c.primary || c.name === null ? "" : `workers/${c.name}/`;
@@ -621,14 +622,12 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       ...c,
       modules,
       assets: collectAssets(c.config, c.configDir, logger, prefix),
-      d1: collectD1Migrations(c.config, c.configDir),
     };
   });
-  const d1 = mergeD1Migrations(built.map((b) => ({ worker: b.name ?? b.config.name, d1: b.d1 })));
 
   // Lay the zip out so byte offsets are recorded as each file is added. Order:
-  // worker/, assets/, each other Worker's workers/<name>/, d1/, then
-  // manifest.json LAST.
+  // worker/, assets/, each other Worker's workers/<name>/, d1/, d1-schema/,
+  // d1-post-deploy/, then manifest.json LAST.
   const zip = new ZipStore();
   const ordered = [...built.filter((b) => b.primary), ...built.filter((b) => !b.primary)];
   const sections = ordered.map((b) => {
@@ -685,19 +684,25 @@ export async function pack(options: PackOptions): Promise<PackResult> {
       assets: { config: b.assets.config, binding: b.assets.binding, files: assetManifest },
     };
   });
-  const d1Manifest: Record<string, D1MigrationFile[]> = {};
-  for (const [binding, files] of Object.entries(d1)) {
-    d1Manifest[binding] = files.map((f) => {
-      const { dataOffset } = zip.addFile(f.path, f.bytes);
-      return {
-        name: f.name,
-        path: f.path,
-        size: f.bytes.length,
-        sha256: sha256Hex(f.bytes),
-        offset: dataOffset,
-      };
-    });
-  }
+  const placeD1 = (files: D1Files): Record<string, D1MigrationFile[]> =>
+    Object.fromEntries(
+      Object.entries(files).map(([binding, list]) => [
+        binding,
+        list.map((f) => {
+          const { dataOffset } = zip.addFile(f.path, f.bytes);
+          return {
+            name: f.name,
+            path: f.path,
+            size: f.bytes.length,
+            sha256: sha256Hex(f.bytes),
+            offset: dataOffset,
+          };
+        }),
+      ]),
+    );
+  const d1Manifest = placeD1(d1);
+  const d1SchemaManifest = placeD1(d1Extras.schema);
+  const d1PostDeployManifest = placeD1(d1Extras.postDeploy);
 
   const { version, origin: versionOrigin } = deriveVersionWithOrigin({
     installVersion: catalog.install.version,
@@ -707,8 +712,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     buildDate: formatBuildDate(new Date()),
   });
 
-  // (i) Assemble + validate the manifest: format 1 for one Worker, format 2
-  // (the primary Worker as `worker`, the others in `workers`) for several.
+  // (i) Assemble + validate the manifest in the oldest format that carries it
+  // (`artifactFormatFor`): 1 for one Worker, 2 for several (the primary
+  // Worker as `worker`, the others in `workers`), 3 once it has D1 files
+  // older managers would skip.
   const primarySection = sections[0];
   if (primarySection === undefined) {
     throw new Error("internal error: no Worker was packed");
@@ -723,19 +730,22 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     worker: primarySection.worker,
     assets: primarySection.assets,
     d1Migrations: d1Manifest,
+    // Omitted when empty, so artifacts of apps without them keep their shape.
+    ...(Object.keys(d1SchemaManifest).length > 0 ? { d1Schema: d1SchemaManifest } : {}),
+    ...(Object.keys(d1PostDeployManifest).length > 0 ? { d1PostDeploy: d1PostDeployManifest } : {}),
     catalog,
   };
-  const manifestInput =
+  const others =
     entry === undefined
-      ? { format: 1 as const, ...common }
-      : {
-          format: 2 as const,
-          ...common,
-          workers: sections
-            .filter((s) => !s.primary)
-            .map((s) => ({ name: s.name, worker: s.worker, assets: s.assets })),
-        };
-  const manifest = artifactManifestSchema.parse(manifestInput);
+      ? undefined
+      : sections
+          .filter((s) => !s.primary)
+          .map((s) => ({ name: s.name, worker: s.worker, assets: s.assets }));
+  const withWorkers = others === undefined ? common : { ...common, workers: others };
+  const manifest = artifactManifestSchema.parse({
+    format: artifactFormatFor(withWorkers),
+    ...withWorkers,
+  });
   if (entry !== undefined) {
     // Each Worker against the catalog vars it gets.
     const varProblems = appWorkers(manifest).flatMap((w) =>
@@ -800,7 +810,11 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     rmSync(staging, { recursive: true, force: true });
   }
 
-  const d1MigrationCount = Object.values(d1Manifest).reduce((n, f) => n + f.length, 0);
+  const count = (files: Record<string, D1MigrationFile[]>) =>
+    Object.values(files).reduce((n, f) => n + f.length, 0);
+  const d1MigrationCount = count(d1Manifest);
+  const d1SchemaCount = count(d1SchemaManifest);
+  const d1PostDeployCount = count(d1PostDeployManifest);
   const size = primarySection.size;
   const workers: PackedWorker[] = sections.map((s) => ({
     name: s.name,
@@ -814,7 +828,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   logger(
     `packed ${catalog.slug}@${version} (${describeVersionOrigin(versionOrigin)}): ` +
       `${workers.length > 1 ? `${workers.length} Workers, ` : ""}${moduleCount} modules, ` +
-      `${assetCount} assets, ${d1MigrationCount} migrations, ${zipBytes.length} bytes`,
+      `${assetCount} assets, ${d1MigrationCount} migrations, ` +
+      (d1SchemaCount > 0 ? `${d1SchemaCount} schema files, ` : "") +
+      (d1PostDeployCount > 0 ? `${d1PostDeployCount} post-deploy migrations, ` : "") +
+      `${zipBytes.length} bytes`,
   );
 
   return {
@@ -828,6 +845,8 @@ export async function pack(options: PackOptions): Promise<PackResult> {
     moduleCount: primarySection.worker.modules.length,
     assetCount: primarySection.assets.files.length,
     d1MigrationCount,
+    d1SchemaCount,
+    d1PostDeployCount,
     zipSize: zipBytes.length,
     workerSize: size,
     workers,

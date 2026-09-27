@@ -86,11 +86,11 @@ export function primaryEntryWorkerName(
   return catalog.install.workers?.find((w) => w.primary === true)?.name ?? null;
 }
 
-/** The Workers other than the primary one: the manifest's `workers`, empty for `format: 1`. */
+/** The Workers other than the primary one: the manifest's `workers`, empty for one Worker. */
 export function secondaryWorkers(
   manifest: Pick<ArtifactManifest, "format"> & { workers?: readonly AppWorkerEntry[] },
 ): readonly AppWorkerEntry[] {
-  return manifest.format === 2 ? (manifest.workers ?? []) : [];
+  return manifest.format === 1 ? [] : (manifest.workers ?? []);
 }
 
 /** One entry of a `format: 2` manifest's `workers`. */
@@ -330,7 +330,7 @@ export function combinedWorkerFacts(
     workers?: readonly { worker: ArtifactWorker }[];
   },
 ): Pick<ArtifactWorker, "bindings" | "migrations" | "crons" | "queueConsumers"> {
-  const others = manifest.format === 2 ? (manifest.workers ?? []) : [];
+  const others = manifest.format === 1 ? [] : (manifest.workers ?? []);
   const workers = [manifest.worker, ...others.map((w) => w.worker)];
   return {
     bindings: workers.flatMap((w) => w.bindings),
@@ -358,6 +358,8 @@ export function entryWorkerProblems(manifest: {
   worker: ArtifactWorker;
   workers: readonly AppWorkerEntry[];
   d1Migrations: D1Migrations;
+  d1Schema?: D1Migrations | undefined;
+  d1PostDeploy?: D1Migrations | undefined;
   catalog: Pick<CatalogManifest, "install">;
 }): string[] {
   const problems: string[] = [];
@@ -434,12 +436,19 @@ export function entryWorkerProblems(manifest: {
       }
     }
   }
-  for (const binding of Object.keys(manifest.d1Migrations)) {
-    const bound = all.some((w) =>
-      w.worker.bindings.some((b) => b.type === "d1" && b.name === binding),
-    );
-    if (!bound) {
-      problems.push(`D1 migrations are recorded for ${binding}, which no Worker binds.`);
+  const d1Lists: ReadonlyArray<[string, D1Migrations | undefined]> = [
+    ["D1 migrations", manifest.d1Migrations],
+    ["D1 schema files", manifest.d1Schema],
+    ["Post-deploy D1 migrations", manifest.d1PostDeploy],
+  ];
+  for (const [what, byBinding] of d1Lists) {
+    for (const binding of Object.keys(byBinding ?? {})) {
+      const bound = all.some((w) =>
+        w.worker.bindings.some((b) => b.type === "d1" && b.name === binding),
+      );
+      if (!bound) {
+        problems.push(`${what} are recorded for ${binding}, which no Worker binds.`);
+      }
     }
   }
   const order = entryWorkerOrder(all);

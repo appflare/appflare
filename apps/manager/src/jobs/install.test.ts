@@ -672,6 +672,46 @@ describe("install job", () => {
     expect(r.logs.at(-1)?.message).toMatch(/^Installed cut 1\.0\.0 at https:\/\/cut\.appflare-dev/);
   });
 
+  it("runs schema files after the migrations and post-deploy migrations after both", async () => {
+    const r = await install({
+      bindings: [{ type: "d1", name: "DB" }],
+      d1: { DB: [{ name: "20240101_init", content: "CREATE TABLE links (id TEXT);" }] },
+      d1Schema: {
+        DB: [
+          { name: "src/db/tables.sql", content: "CREATE TABLE IF NOT EXISTS s (id TEXT);" },
+          { name: "src/db/indexes.sql", content: "CREATE INDEX IF NOT EXISTS i ON s(id);" },
+        ],
+      },
+      d1PostDeploy: { DB: [{ name: "0001_drop_legacy.sql", content: "DROP TABLE legacy;" }] },
+    });
+    expect(r.error).toBeNull();
+    const names = r.step.names;
+    expect(
+      names.slice(
+        names.indexOf("record Worker script") + 1,
+        names.indexOf("set secret ADMIN_PASSWORD"),
+      ),
+    ).toEqual([
+      "D1 DB: apply migrations",
+      "D1 DB: apply schema",
+      "D1 DB: apply post-deploy migrations",
+    ]);
+    expect(r.self.calls.map((c) => c.unit).filter((u) => u.startsWith("applyD1"))).toEqual([
+      "applyD1Migrations",
+      "applyD1Schema",
+      "applyD1Migrations",
+    ]);
+    // The schema files run as they are; only the tracked files are recorded.
+    expect(r.fake.state.queries.filter((q) => !/d1_migrations/.test(q))).toEqual([
+      "CREATE TABLE IF NOT EXISTS s (id TEXT);",
+      "CREATE INDEX IF NOT EXISTS i ON s(id);",
+    ]);
+    expect(r.fake.state.applied).toEqual(["20240101_init", "0001_drop_legacy.sql"]);
+    expect(r.logs.map((l) => l.message)).toContain(
+      "Ran the schema file src/db/indexes.sql on cut-db.",
+    );
+  });
+
   it("sends the install's stored workers.dev choice, keeping version previews on", async () => {
     const r = await install({}, {}, {}, {}, undefined, "self", async (installId) => {
       await env.DB.prepare("UPDATE installs SET workers_dev_enabled = 0 WHERE id = ?1")

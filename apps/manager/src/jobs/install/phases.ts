@@ -391,12 +391,17 @@ export async function uploadAssetsPhase(
   return completion;
 }
 
-/** A D1 database of the install and the migration files the artifact ships for its binding. */
+/** A D1 database of the install and the SQL the artifact ships for its binding. */
 export interface D1Target {
   binding: string;
   name: string;
   cfId: string;
+  /** Migrations, recorded in `d1_migrations`; applied before the new code serves. */
   files: readonly D1MigrationFile[];
+  /** Schema files, run after the migrations on every install and update, never recorded. */
+  schema: readonly D1MigrationFile[];
+  /** Migrations applied once the new code serves all traffic, recorded like the others. */
+  postDeploy: readonly D1MigrationFile[];
 }
 
 /**
@@ -415,7 +420,7 @@ export interface D1Target {
  * the phase returns or throws, so a caller can say the database is ahead of
  * the code that serves even when a later file fails.
  */
-export async function applyD1MigrationsPhase(
+export function applyD1MigrationsPhase(
   steps: JobSteps,
   zipUrl: string,
   target: D1Target,
@@ -423,7 +428,48 @@ export async function applyD1MigrationsPhase(
   /** Where the zip lives (a sandbox build is read through the sandbox Worker). */
   host: ArtifactHost = { kind: "catalog" },
 ): Promise<number> {
-  if (target.files.length === 0) return 0;
+  return applyTrackedPhase(steps, zipUrl, target, target.files, "migrations", onMigrated, host);
+}
+
+/**
+ * The post-deploy migrations (the catalog manifest's
+ * `resources.d1[binding].postDeployMigrationsDir`), once the new version
+ * serves all traffic: changes the previous version's code would break on,
+ * such as dropping what only it used. Tracked in `d1_migrations` beside the
+ * migrations and applied the same way, so each runs once per database.
+ *
+ * Nothing reverts them. A rollback redeploys the previous Worker version and
+ * leaves the database as it is, as it does after every migration; the
+ * snapshot's Time Travel bookmark, taken before the update, is the way back.
+ */
+export function applyD1PostDeployPhase(
+  steps: JobSteps,
+  zipUrl: string,
+  target: D1Target,
+  host: ArtifactHost = { kind: "catalog" },
+): Promise<number> {
+  return applyTrackedPhase(
+    steps,
+    zipUrl,
+    target,
+    target.postDeploy,
+    "post-deploy migrations",
+    undefined,
+    host,
+  );
+}
+
+/** Tracked files (`files`) through `applyD1Migrations` units; `label` names the steps. */
+async function applyTrackedPhase(
+  steps: JobSteps,
+  zipUrl: string,
+  target: D1Target,
+  files: readonly D1MigrationFile[],
+  label: string,
+  onMigrated: (() => void) | undefined,
+  host: ArtifactHost,
+): Promise<number> {
+  if (files.length === 0) return 0;
   // Files not yet recorded when this job first listed the database. It rides
   // on each step's result, so it survives a retried step whose earlier
   // attempt applied files and lost the answer (the retry finds fewer pending)
@@ -434,11 +480,11 @@ export async function applyD1MigrationsPhase(
   try {
     let next: string | null = null;
     // Every call applies at least one file, so this many calls always suffice.
-    for (let call = 1; call <= target.files.length; call++) {
+    for (let call = 1; call <= files.length; call++) {
       const name: string =
         next === null
-          ? `D1 ${target.binding}: apply migrations`
-          : `D1 ${target.binding}: apply migrations from ${next}`;
+          ? `D1 ${target.binding}: apply ${label}`
+          : `D1 ${target.binding}: apply ${label} from ${next}`;
       const result = await steps.run(name, async ({ log }) => {
         const got = settleUnit(
           await steps.units.api.applyD1Migrations({
@@ -446,7 +492,7 @@ export async function applyD1MigrationsPhase(
             artifact: { zipUrl, host },
             databaseId: target.cfId,
             databaseName: target.name,
-            files: [...target.files],
+            files: [...files],
           }),
           log,
         );
@@ -460,29 +506,83 @@ export async function applyD1MigrationsPhase(
       if (result.remaining === 0) return before;
       next = result.next;
     }
-    steps.current = `D1 ${target.binding}: apply migrations`;
-    throw new JobError(
-      `${target.name} still has migrations to apply after ${target.files.length} calls`,
-    );
+    steps.current = `D1 ${target.binding}: apply ${label}`;
+    throw new JobError(`${target.name} still has ${label} to apply after ${files.length} calls`);
   } finally {
     if (before !== null && left !== null && before > left) onMigrated?.();
   }
 }
 
-/** The D1 targets of a manifest: every database resource whose binding ships migrations. */
+/**
+ * The schema files (the catalog manifest's `resources.d1[binding].schema`),
+ * after the migrations, on every install and update, in the order the
+ * catalog lists them. They are not recorded: the packer accepts only files
+ * whose every CREATE says IF NOT EXISTS and that drop and alter nothing, so
+ * running one again creates what is missing and leaves the rest alone.
+ *
+ * The work runs in `applyD1Schema` job units, one step per call; a call runs
+ * as many files as fit its invocation and the next step continues with the
+ * rest. A retried step runs its files again, which is harmless.
+ */
+export async function applyD1SchemaPhase(
+  steps: JobSteps,
+  zipUrl: string,
+  target: D1Target,
+  host: ArtifactHost = { kind: "catalog" },
+): Promise<void> {
+  let rest = [...target.schema];
+  // Every call runs at least one file, so this many calls always suffice.
+  for (let call = 1; call <= target.schema.length && rest.length > 0; call++) {
+    const name =
+      call === 1
+        ? `D1 ${target.binding}: apply schema`
+        : `D1 ${target.binding}: apply schema from ${rest[0]?.name}`;
+    const files = rest;
+    const result = await steps.run(name, async ({ log }) => {
+      const got = settleUnit(
+        await steps.units.api.applyD1Schema({
+          accountId: steps.accountId(),
+          artifact: { zipUrl, host },
+          databaseId: target.cfId,
+          databaseName: target.name,
+          files,
+        }),
+        log,
+      );
+      if (got.failed !== null) throw failureError(got.failed);
+      return { applied: got.applied };
+    });
+    rest = rest.slice(result.applied);
+  }
+  if (rest.length > 0) {
+    steps.current = `D1 ${target.binding}: apply schema`;
+    throw new JobError(
+      `${target.name} still has schema files to run after ${target.schema.length} calls`,
+    );
+  }
+}
+
+/**
+ * The D1 targets of a manifest: every database resource whose binding ships
+ * migrations, schema files or post-deploy migrations.
+ */
 export function d1Targets(
   manifest: ArtifactManifest,
   databases: readonly CreatedResource[],
 ): D1Target[] {
+  const of = (lists: ArtifactManifest["d1Migrations"] | undefined, binding: string) =>
+    lists !== undefined && Object.hasOwn(lists, binding) ? (lists[binding] ?? []) : [];
   return databases
     .filter((r) => r.type === "d1")
     .map((r) => ({
       binding: r.binding,
       name: r.name,
       cfId: r.cfId,
-      files: manifest.d1Migrations[r.binding] ?? [],
+      files: of(manifest.d1Migrations, r.binding),
+      schema: of(manifest.d1Schema, r.binding),
+      postDeploy: of(manifest.d1PostDeploy, r.binding),
     }))
-    .filter((t) => t.files.length > 0);
+    .filter((t) => t.files.length + t.schema.length + t.postDeploy.length > 0);
 }
 
 /** Step "look up workers.dev subdomain": cached in settings after the first lookup. */

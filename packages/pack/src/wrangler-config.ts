@@ -26,7 +26,11 @@ export interface ResolvedWranglerConfig {
   compatibility_flags?: string[];
   vars?: Record<string, unknown>;
   kv_namespaces?: Array<{ binding: string }>;
-  d1_databases?: Array<{ binding: string; migrations_dir?: string | null }>;
+  d1_databases?: Array<{
+    binding: string;
+    migrations_dir?: string | null;
+    migrations_pattern?: string | null;
+  }>;
   r2_buckets?: Array<{ binding: string }>;
   queues?: {
     producers?: Array<{ binding: string; queue?: string; delivery_delay?: number }>;

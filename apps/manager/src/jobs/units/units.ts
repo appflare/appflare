@@ -30,6 +30,7 @@ import type { CronTriggerScan } from "../install/cron-limit";
 import {
   buildMigrationQuery,
   CREATE_MIGRATIONS_TABLE_SQL,
+  D1_SCHEMA_LIMITS,
   LIST_APPLIED_MIGRATIONS_SQL,
   nextMigrationBatch,
   unappliedMigrations,
@@ -199,6 +200,30 @@ export interface D1MigrationsResult {
   failed: UnitFailure | null;
 }
 
+export const d1SchemaInputSchema = z.object({
+  accountId: accountIdSchema,
+  artifact: artifactSchema,
+  databaseId: z.string().min(1),
+  databaseName: z.string().min(1),
+  /**
+   * The schema files still to run, in the order they run. The call runs as
+   * many as fit one call from the first, and the job calls again with the
+   * rest. None is recorded anywhere: they run on every install and update.
+   */
+  files: z.array(d1MigrationFileSchema).min(1),
+});
+export type D1SchemaInput = z.infer<typeof d1SchemaInputSchema>;
+export interface D1SchemaResult {
+  /** Files this call ran, from the first. */
+  applied: number;
+  /** Files still to run after this call; the job calls again with them. */
+  remaining: number;
+  /** The first file still to run, or null when none remain. */
+  next: string | null;
+  /** Why the file after the ones run failed, naming it, or null. */
+  failed: UnitFailure | null;
+}
+
 /** Objects one R2 page lists and deletes: one list call plus one delete per object. */
 export const R2_PAGE_MAX_OBJECTS = 36;
 
@@ -228,6 +253,8 @@ export interface JobUnitsApi {
   uploadWorker(input: WorkerUploadInput): Promise<UnitResult<WorkerUploadResult>>;
   /** Applies the next D1 migration files not yet recorded, the way wrangler does. */
   applyD1Migrations(input: D1MigrationsInput): Promise<UnitResult<D1MigrationsResult>>;
+  /** Runs the next D1 schema files, which are never recorded, in the order given. */
+  applyD1Schema(input: D1SchemaInput): Promise<UnitResult<D1SchemaResult>>;
   /** Lists one page of an R2 bucket's objects and deletes them. */
   emptyR2Page(input: R2PageInput): Promise<UnitResult<R2PageResult>>;
   /** Reads a zone's Email Routing state before an email app is installed there. */
@@ -457,6 +484,36 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
             next: rest[0]?.name ?? null,
             failed,
           };
+        }),
+      ),
+
+    applyD1Schema: (input) =>
+      parsed(d1SchemaInputSchema, input, "applyD1Schema", (target) =>
+        runUnit(env, deps, target.accountId, async ({ log, fetch, count, cf }) => {
+          const api = cf();
+          const batch = nextMigrationBatch(target.files, D1_SCHEMA_LIMITS);
+          const reader = artifactReader(
+            artifactFetch(env, fetch, target.artifact.host, count),
+            target.artifact.zipUrl,
+          );
+          const contents = await reader.read(batch);
+          let applied = 0;
+          let failed: UnitFailure | null = null;
+          for (const [i, file] of batch.entries()) {
+            const sql = new TextDecoder().decode(contents[i] ?? new Uint8Array(0));
+            // The file as it is, recorded nowhere: it creates only what is
+            // missing, so running it on every install and update is safe.
+            try {
+              await api.d1.query(target.databaseId, sql);
+            } catch (error) {
+              failed = describeFailure(new UnitItemError(file.name, error));
+              break;
+            }
+            applied += 1;
+            log.info(`Ran the schema file ${file.name} on ${target.databaseName}.`);
+          }
+          const rest = target.files.slice(applied);
+          return { applied, remaining: rest.length, next: rest[0]?.name ?? null, failed };
         }),
       ),
 

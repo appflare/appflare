@@ -8,7 +8,12 @@ import { redirectingArtifactHost } from "../../test/redirecting-host";
 import { toStepError } from "../errors";
 import { StepLog } from "../step-log";
 import { failureError, settleUnit } from "./result";
-import { createJobUnits, type D1MigrationsInput, type WorkerUploadInput } from "./units";
+import {
+  createJobUnits,
+  type D1MigrationsInput,
+  type D1SchemaInput,
+  type WorkerUploadInput,
+} from "./units";
 
 /**
  * The job units on their own: what each call costs in subrequests, and how a
@@ -296,5 +301,91 @@ describe("applyD1Migrations", () => {
     expect(stepError.message).toBe(
       `0024_table24.sql: Cloudflare API request failed: POST /accounts/${ACC}/d1/database/d1-1/query -> 400: [7500] near "BROKEN": syntax error`,
     );
+  });
+});
+
+/** A database, `count` schema files served through a release redirect, and the units. */
+async function schemaWorld(count: number) {
+  const files = Array.from({ length: count }, (_, i) => ({
+    // Listed out of name order on purpose: schema files run in the catalog's order.
+    name: `schema/${String(count - i).padStart(2, "0")}.sql`,
+    content: `CREATE TABLE IF NOT EXISTS s${count - i} (id TEXT);`,
+  }));
+  const fixture = await buildArtifactFixture({
+    bindings: [{ type: "d1", name: "DB" }],
+    d1Schema: { DB: files },
+  });
+  const account = fakeAccount(fixture, { d1: [{ uuid: "d1-1", name: "cut-db" }] });
+  const host = redirectingArtifactHost(fixture);
+  /** Queries containing this text answer with this status, without running, while `times` lasts. */
+  const failing = new Map<string, { status: number; times: number }>();
+  const fetch = async (input: string, init?: RequestInit) => {
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { sql?: string }) : {};
+    for (const [text, fail] of failing) {
+      if (fail.times > 0 && body.sql?.includes(text)) {
+        fail.times -= 1;
+        return Response.json(
+          { success: false, errors: [{ code: 7500, message: "no such table: s0" }] },
+          { status: fail.status },
+        );
+      }
+    }
+    return host.serve(input, init) ?? account.fetch(input, init);
+  };
+  const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch });
+  const input: D1SchemaInput = {
+    accountId: ACC,
+    artifact: { zipUrl: ZIP_URL, host: { kind: "catalog" } },
+    databaseId: "d1-1",
+    databaseName: "cut-db",
+    files: fixture.manifest.d1Schema?.DB ?? [],
+  };
+  return { account, host, units, input, files, failing };
+}
+
+describe("applyD1Schema", () => {
+  it("runs the files as they are, in the order given, and records none of them", async () => {
+    const d = await schemaWorld(3);
+    const result = await d.units.applyD1Schema(d.input);
+    expect(result).toMatchObject({
+      ok: true,
+      value: { applied: 3, remaining: 0, next: null, failed: null },
+      // The redirect, one range for the three files, one query per file.
+      subrequests: 5,
+    });
+    expect(d.account.state.queries).toEqual(d.files.map((f) => f.content));
+    expect(d.account.state.applied["d1-1"] ?? []).toEqual([]);
+    expect(result.log.lines.map((l) => l.message)).toContain(
+      "Ran the schema file schema/03.sql on cut-db.",
+    );
+    // Run again, they run again: nothing says they already ran.
+    await d.units.applyD1Schema(d.input);
+    expect(d.account.state.queries).toHaveLength(6);
+  });
+
+  it("runs as many as fit its subrequest budget and names the next one", async () => {
+    const d = await schemaWorld(40);
+    const first = await d.units.applyD1Schema(d.input);
+    expect(first).toMatchObject({
+      ok: true,
+      value: { applied: 34, remaining: 6, next: "schema/06.sql" },
+      subrequests: 36,
+    });
+    const rest = d.input.files.slice(34);
+    const second = await d.units.applyD1Schema({ ...d.input, files: rest });
+    expect(second).toMatchObject({ ok: true, value: { applied: 6, remaining: 0, next: null } });
+    expect(d.account.state.queries).toEqual(d.files.map((f) => f.content));
+  });
+
+  it("stops at the file that fails and reports it with Cloudflare's error", async () => {
+    const d = await schemaWorld(3);
+    d.failing.set("s2 ", { status: 400, times: 1 });
+    const value = settleUnit(await d.units.applyD1Schema(d.input), new StepLog());
+    expect(value).toMatchObject({ applied: 1, remaining: 2, next: "schema/02.sql" });
+    if (value.failed === null) throw new Error("the call did not report its failure");
+    expect(toStepError(failureError(value.failed)).message).toBe(
+      `schema/02.sql: Cloudflare API request failed: POST /accounts/${ACC}/d1/database/d1-1/query -> 400: [7500] no such table: s0`,
+    );
+    expect(d.account.state.queries).toEqual([d.files[0]?.content]);
   });
 });

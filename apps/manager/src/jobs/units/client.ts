@@ -13,7 +13,9 @@ import { createJobUnits, type JobUnitsApi } from "./units";
  *
  *   - 1 per unit call: each asset part, the Worker upload, each call that
  *     applies D1 migrations (one per database for up to about 30 small
- *     files; the call itself makes 2 + 2 + 1 per file), each R2 page, the
+ *     files; the call itself makes 2 + 2 + 1 per file), each call that runs
+ *     D1 schema files and each that applies post-deploy migrations (one
+ *     each per database that has them), each R2 page, the
  *     Email Routing check, the cron trigger count (for an app with cron
  *     triggers, unless the account is known to be on Workers Paid);
  *   - 1 per Cloudflare API step: token check, script list, each resource's

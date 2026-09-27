@@ -5,9 +5,11 @@ import { assetHash } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
   appWorkers,
+  artifactD1Files,
   artifactManifestSchema,
   catalogVarProblems,
   combinedWorkerFacts,
+  type D1MigrationFile,
   hyperdriveDeclarationProblems,
   isVectorizeBinding,
   queueConsumerProblems,
@@ -17,6 +19,7 @@ import {
   workerUploadProblem,
 } from "@appflare/schema";
 import { UNSIGNED_KEY_ID } from "./signing.ts";
+import { schemaFileProblems } from "./sql-guard.ts";
 
 /** Options for {@link verify}. */
 export interface VerifyOptions {
@@ -140,8 +143,10 @@ function resolveZipPath(dir: string, manifest: ArtifactManifest): string {
  * Verifies an artifact directory. Checks the
  * manifest signature (against `signingKeys` by keyId, or `--public-key`) unless
  * the artifact is unsigned or `hashesOnly` is set, then reads exactly `bytes[offset, offset+size)` from
- * the zip for every recorded worker module, asset, and D1 migration and checks
- * its size and sha256 — never by unzipping. Also checks that each Vectorize
+ * the zip for every recorded worker module, asset, and D1 SQL file and checks
+ * its size and sha256 — never by unzipping. D1 schema files, which run on
+ * every install and update, must still pass the packer's check that they
+ * create only what is missing (sql-guard.ts). Also checks that each Vectorize
  * binding records the index shape the embedded catalog manifest declares, and
  * that no service binding points anywhere but the app's own Worker. With
  * `checkUpload`, also fails an artifact whose Worker Appflare could not upload.
@@ -224,9 +229,10 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
     }
   }
 
+  const schemaFiles = new Set(Object.values(manifest.d1Schema ?? {}).flat());
   const entries: Addressable[] = [
     ...workers.flatMap((w) => [...w.worker.modules, ...w.assets.files]),
-    ...Object.values(manifest.d1Migrations).flat(),
+    ...artifactD1Files(manifest),
   ];
 
   const zipPath = resolveZipPath(dir, manifest);
@@ -244,6 +250,15 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
         throw new Error(
           `sha256 mismatch for ${entry.path}: manifest=${entry.sha256} zip=${digest}`,
         );
+      }
+      if (schemaFiles.has(entry as D1MigrationFile)) {
+        // Run on every install and update, so held to the packer's rule again.
+        const problems = schemaFileProblems(buf.toString("utf8"));
+        if (problems.length > 0) {
+          throw new Error(
+            `the D1 schema file ${entry.path} cannot run on every install and update: ${problems.join("; ")}`,
+          );
+        }
       }
       if (entry.hash !== undefined) {
         // The extension comes from the file's basename, exactly as the packer

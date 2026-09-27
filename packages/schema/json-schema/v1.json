@@ -915,6 +915,54 @@
             "additionalProperties": false
           },
           "description": "The Hyperdrive bindings of the wrangler config, each with the database it connects to (`postgres` or `mysql`). The database runs outside Cloudflare: the install form asks for its connection string, and Appflare creates a Hyperdrive configuration of the install's own from it. Every Hyperdrive binding must be listed, each once. Not allowed on self-deploying entries."
+        },
+        "d1": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "migrationsDir": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?!(?:.*\\/)?\\.{1,2}(?:\\/|$))[0-9A-Za-z.@+_-]+(?:\\/[0-9A-Za-z.@+_-]+)*$",
+                "description": "The folder of the binding's migrations, relative to the checkout's root. Replaces the wrangler config's `migrations_dir`: its `.sql` files run and are recorded in `d1_migrations` as `wrangler d1 migrations apply` does."
+              },
+              "migrations": {
+                "type": "string",
+                "pattern": "^[0-9A-Za-z.@+_*/-]+$",
+                "description": "A glob of the binding's migration files, relative to the checkout's root, for tools that write one folder per migration: `prisma/migrations/*/migration.sql`. The folder before the first `*` segment works as wrangler's `migrations_dir` and the glob as its `migrations_pattern`: each file is recorded by its path from that folder (`20240101_init/migration.sql`), as wrangler records it. Prefer `migrations_pattern` in the wrangler config when upstream sets it."
+              },
+              "schema": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^(?!(?:.*\\/)?\\.{1,2}(?:\\/|$))[0-9A-Za-z.@+_-]+(?:\\/[0-9A-Za-z.@+_-]+)*$"
+                },
+                "description": "SQL files that run on every install and update, in this order, after the migrations, and are not recorded in `d1_migrations`. Each must be safe to run again: every CREATE TABLE, INDEX, TRIGGER and VIEW says IF NOT EXISTS, and no statement drops or alters anything."
+              },
+              "postDeployMigrationsDir": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?!(?:.*\\/)?\\.{1,2}(?:\\/|$))[0-9A-Za-z.@+_-]+(?:\\/[0-9A-Za-z.@+_-]+)*$",
+                "description": "A folder of migrations that run once the new version serves all traffic, for changes the previous version's code would break on. Recorded in `d1_migrations` like the others, so their file names must differ from the migrations'. Rolling back does not undo them."
+              }
+            },
+            "additionalProperties": false,
+            "not": {
+              "required": [
+                "migrationsDir",
+                "migrations"
+              ]
+            },
+            "minProperties": 1
+          },
+          "description": "Where each D1 binding's SQL lives when the wrangler config's migrations folder does not describe it, keyed by the binding's name: a migrations folder or glob, schema files that run on every install and update, and migrations that run after the new version serves. Paths are relative to the checkout's root. Not allowed on self-deploying entries."
         }
       },
       "additionalProperties": false
@@ -981,6 +1029,34 @@
               "not": {
                 "required": [
                   "hyperdrive"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "properties": {
+            "install": {
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "resources": {
+              "not": {
+                "required": [
+                  "d1"
                 ]
               }
             }

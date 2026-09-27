@@ -1,5 +1,11 @@
 import { assetHash } from "@appflare/cf-api";
-import type { ArtifactManifest, CatalogManifest, IndexApp, SigningKey } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  artifactFormatFor,
+  type CatalogManifest,
+  type IndexApp,
+  type SigningKey,
+} from "@appflare/schema";
 import { sha256Hex } from "../jobs/install/artifact";
 
 /**
@@ -25,6 +31,13 @@ export interface ArtifactFixtureOptions {
   bindings?: ArtifactManifest["worker"]["bindings"];
   assets?: Array<{ route: string; content: string }>;
   d1?: Record<string, Array<{ name: string; content: string }>>;
+  /**
+   * Schema files by binding, in the order they run; the catalog manifest
+   * declares them in `resources.d1` (unless `catalog.resources` is given).
+   */
+  d1Schema?: Record<string, Array<{ name: string; content: string }>>;
+  /** Post-deploy migrations by binding, declared in `resources.d1` the same way. */
+  d1PostDeploy?: Record<string, Array<{ name: string; content: string }>>;
   crons?: string[];
   migrations?: ArtifactManifest["worker"]["migrations"];
   /**
@@ -188,6 +201,21 @@ export async function buildArtifactFixture(
       d1[binding].push({ name: f.name, ...placed });
     }
   }
+  const placeD1 = async (dir: string, byBinding: ArtifactFixtureOptions["d1"]) => {
+    const placed: ArtifactManifest["d1Migrations"] = {};
+    for (const [binding, files] of Object.entries(byBinding ?? {})) {
+      placed[binding] = [];
+      for (const f of files) {
+        placed[binding].push({
+          name: f.name,
+          ...(await place(`${dir}/${binding}/${f.name}`, f.content)),
+        });
+      }
+    }
+    return placed;
+  };
+  const d1Schema = await placeD1("d1-schema", opts.d1Schema);
+  const d1PostDeploy = await placeD1("d1-post-deploy", opts.d1PostDeploy);
   const zip = new Uint8Array(offset);
   let at = 0;
   for (const c of chunks) {
@@ -196,6 +224,20 @@ export async function buildArtifactFixture(
   }
 
   const catalog = baseCatalog(opts.catalog);
+  if (opts.catalog?.resources === undefined && (opts.d1Schema ?? opts.d1PostDeploy) !== undefined) {
+    const d1: NonNullable<CatalogManifest["resources"]>["d1"] = {};
+    for (const binding of new Set([...Object.keys(d1Schema), ...Object.keys(d1PostDeploy)])) {
+      d1[binding] = {
+        ...(Object.hasOwn(d1Schema, binding)
+          ? { schema: (d1Schema[binding] ?? []).map((f) => f.name) }
+          : {}),
+        ...(Object.hasOwn(d1PostDeploy, binding)
+          ? { postDeployMigrationsDir: "after-deploy" }
+          : {}),
+      };
+    }
+    catalog.resources = { d1 };
+  }
   if (others.length > 0) {
     catalog.install.workers = [
       { name: "app", wranglerConfig: catalog.install.wranglerConfig, primary: true },
@@ -228,10 +270,13 @@ export async function buildArtifactFixture(
     },
     assets: { config: {}, binding: null, files: assets },
     d1Migrations: d1,
+    ...(opts.d1Schema === undefined ? {} : { d1Schema }),
+    ...(opts.d1PostDeploy === undefined ? {} : { d1PostDeploy }),
     catalog,
   };
-  const manifest: ArtifactManifest =
-    others.length > 0 ? { format: 2, ...fields, workers: others } : { format: 1, ...fields };
+  // The format the packer would write: `artifactFormatFor` over what it carries.
+  const withWorkers = others.length > 0 ? { ...fields, workers: others } : fields;
+  const manifest = { format: artifactFormatFor(withWorkers), ...withWorkers } as ArtifactManifest;
   opts.tweak?.(manifest);
 
   const manifestBytes = enc.encode(JSON.stringify(manifest, null, 2));

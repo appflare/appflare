@@ -59,6 +59,8 @@ import { healthLabel } from "./install/health";
 import { buildScriptMetadata, type CreatedResource, installVars } from "./install/metadata";
 import {
   applyD1MigrationsPhase,
+  applyD1PostDeployPhase,
+  applyD1SchemaPhase,
   checkLiveHealthPhase,
   checkWorkflowNamePhase,
   d1Targets,
@@ -640,9 +642,17 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // The other Workers that bind to the primary one, now that it exists.
     await deployOthers(others.after);
 
-    // 6. D1 migrations, wrangler-style, once for every Worker of the app.
-    for (const target of d1Targets(manifest, created)) {
+    // 6. D1 migrations, wrangler-style, once for every Worker of the app,
+    // then each database's schema files.
+    const d1Databases = d1Targets(manifest, created);
+    for (const target of d1Databases) {
       await applyD1MigrationsPhase(steps, source.zipUrl, target, undefined, source.host);
+      await applyD1SchemaPhase(steps, source.zipUrl, target, source.host);
+    }
+    // The upload above already put the Worker in front of all traffic, so
+    // the post-deploy migrations follow at once, recorded like the others.
+    for (const target of d1Databases) {
+      await applyD1PostDeployPhase(steps, source.zipUrl, target, source.host);
     }
 
     // 7. Secrets. An optional secret the admin left unset gets no step.

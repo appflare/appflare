@@ -116,7 +116,10 @@ async function runPack(argv: string[]): Promise<number> {
     process.stdout.write(`  signature: ${result.signaturePath}\n`);
   }
   process.stdout.write(
-    `  modules=${result.moduleCount} assets=${result.assetCount} migrations=${result.d1MigrationCount}\n`,
+    `  modules=${result.moduleCount} assets=${result.assetCount} migrations=${result.d1MigrationCount}` +
+      (result.d1SchemaCount > 0 ? ` schemaFiles=${result.d1SchemaCount}` : "") +
+      (result.d1PostDeployCount > 0 ? ` postDeployMigrations=${result.d1PostDeployCount}` : "") +
+      "\n",
   );
   if (result.workers.length > 1) {
     for (const w of result.workers) {

@@ -26,6 +26,32 @@ describe("verifyArtifactManifest", () => {
     expect(manifest.catalog.secrets[0]?.name).toBe("ADMIN_PASSWORD");
   });
 
+  it("reads format 3 and asks to update Appflare for a format it does not know", async () => {
+    const d1 = await buildArtifactFixture({
+      bindings: [{ type: "d1", name: "DB" }],
+      d1Schema: { DB: [{ name: "schema.sql", content: "CREATE TABLE IF NOT EXISTS t (id);" }] },
+    });
+    const manifest = await verifyArtifactManifest(
+      d1.manifestBytes,
+      d1.signature,
+      expected(d1),
+      d1.keys,
+    );
+    expect(manifest.format).toBe(3);
+    expect(manifest.d1Schema?.DB?.[0]?.name).toBe("schema.sql");
+
+    const future = await buildArtifactFixture({
+      tweak: (m) => {
+        (m as { format: number }).format = 4;
+      },
+    });
+    await expect(
+      verifyArtifactManifest(future.manifestBytes, future.signature, expected(future), future.keys),
+    ).rejects.toThrow(
+      "the artifact is format 4, and this version of Appflare reads formats 1 to 3; update Appflare in Settings, then try again",
+    );
+  });
+
   it("rejects a digest that differs from the catalog index", async () => {
     const f = await buildArtifactFixture();
     await expect(

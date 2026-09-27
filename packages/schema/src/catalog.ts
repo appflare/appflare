@@ -1,6 +1,7 @@
 import { z } from "zod";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
+import { catalogD1Schema } from "./d1.ts";
 import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
 import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
@@ -899,8 +900,9 @@ export type VectorizeIndexConfig = z.infer<typeof vectorizeIndexConfigSchema>;
  * `hyperdrive` lists every Hyperdrive binding with the database protocol
  * behind it: the database lives outside Cloudflare, so the install form asks
  * for its connection string, and the packer refuses a Hyperdrive binding the
- * list does not declare. Both optional so manifests written before them keep
- * the same parsed shape.
+ * list does not declare. `d1` says where a D1 binding's SQL lives when the
+ * wrangler config's migrations folder does not (see `d1.ts`). All optional so
+ * manifests written before them keep the same parsed shape.
  */
 export const catalogResourcesSchema = z.object({
   vectorize: z.record(z.string().min(1), vectorizeIndexConfigSchema).optional(),
@@ -914,6 +916,15 @@ export const catalogResourcesSchema = z.object({
         "its connection string, and Appflare creates a Hyperdrive configuration of the install's " +
         "own from it. Every Hyperdrive binding must be listed, each once. Not allowed on " +
         "self-deploying entries.",
+    )
+    .optional(),
+  d1: z
+    .record(z.string().min(1), catalogD1Schema)
+    .describe(
+      "Where each D1 binding's SQL lives when the wrangler config's migrations folder does not " +
+        "describe it, keyed by the binding's name: a migrations folder or glob, schema files that " +
+        "run on every install and update, and migrations that run after the new version serves. " +
+        "Paths are relative to the checkout's root. Not allowed on self-deploying entries.",
     )
     .optional(),
 });
@@ -1596,6 +1607,14 @@ export const catalogManifestSchema = z
           "resources.hyperdrive is not allowed for the self-deploying tier: the app's own installer creates its Hyperdrive configurations",
       });
     }
+    if (manifest.resources?.d1 !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["resources", "d1"],
+        message:
+          "resources.d1 is not allowed for the self-deploying tier: the app's own installer sets up its databases",
+      });
+    }
     manifest.secrets.forEach((secret, i) => {
       if (isOptionalSecret(secret)) {
         ctx.addIssue({
@@ -1627,8 +1646,9 @@ export const catalogManifestSchema = z
   })
   // The refinements do not reach the JSON Schema; `allOf` states the
   // self-deploying ones there (no optional and no derived secrets, no derived
-  // vars, no Hyperdrive declarations). Whether a `derive.from` names another secret, or
-  // a Hyperdrive binding is declared twice, cannot be said in JSON Schema.
+  // vars, no Hyperdrive declarations, no D1 layout). Whether a `derive.from`
+  // names another secret, or a Hyperdrive binding is declared twice, cannot
+  // be said in JSON Schema.
   .meta({
     allOf: [
       {
@@ -1637,6 +1657,14 @@ export const catalogManifestSchema = z
             properties: { install: { properties: { tier: { not: { const: "self-deploying" } } } } },
           },
           { properties: { resources: { not: { required: ["hyperdrive"] } } } },
+        ],
+      },
+      {
+        anyOf: [
+          {
+            properties: { install: { properties: { tier: { not: { const: "self-deploying" } } } } },
+          },
+          { properties: { resources: { not: { required: ["d1"] } } } },
         ],
       },
       {

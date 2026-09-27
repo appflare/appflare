@@ -2,6 +2,7 @@ export * from "./artifact";
 export * from "./catalog";
 export * from "./catalog-index";
 export * from "./catalog-stats";
+export * from "./d1";
 export * from "./github-tokens";
 export * from "./hyperdrive";
 export * from "./install-dirs";

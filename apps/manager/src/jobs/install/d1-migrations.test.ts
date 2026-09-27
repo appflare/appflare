@@ -46,6 +46,15 @@ describe("wrangler-style D1 migrations", () => {
       "0003_c.sql",
     ]);
   });
+
+  it("orders files by their leading number, as wrangler applies them", () => {
+    const named = ["10_c.sql", "9_b/migration.sql", "1_a.sql"].map((name) => ({ name }));
+    expect(unappliedMigrations(named, []).map((f) => f.name)).toEqual([
+      "1_a.sql",
+      "9_b/migration.sql",
+      "10_c.sql",
+    ]);
+  });
 });
 
 describe("nextMigrationBatch", () => {

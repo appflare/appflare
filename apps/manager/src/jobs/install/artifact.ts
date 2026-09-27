@@ -6,6 +6,7 @@ import {
   planSpans,
   type SigningKey,
   signingKeys,
+  unknownArtifactFormatProblem,
   verifyManifestSignature,
 } from "@appflare/schema";
 import { fetchCost, isSubrequestLimitError } from "./budget";
@@ -55,9 +56,11 @@ export async function verifyArtifactManifest(
   } catch (error) {
     throw new ArtifactError(error instanceof Error ? error.message : String(error));
   }
-  const parsed = artifactManifestSchema.safeParse(
-    JSON.parse(new TextDecoder().decode(manifestBytes)),
-  );
+  const json: unknown = JSON.parse(new TextDecoder().decode(manifestBytes));
+  // A newer packer's format says to update Appflare rather than list schema errors.
+  const unknownFormat = unknownArtifactFormatProblem(json);
+  if (unknownFormat !== null) throw new ArtifactError(unknownFormat);
+  const parsed = artifactManifestSchema.safeParse(json);
   if (!parsed.success) {
     throw new ArtifactError(
       `manifest.json is not a valid artifact manifest: ${parsed.error.message}`,

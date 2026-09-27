@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  type CatalogManifest,
   type CatalogVar,
   catalogManifestSchema,
   catalogVarOptions,
@@ -453,6 +454,77 @@ export type ArtifactAssets = z.infer<typeof artifactAssetsSchema>;
 export const d1MigrationsSchema = z.record(z.string(), z.array(d1MigrationFileSchema));
 export type D1Migrations = z.infer<typeof d1MigrationsSchema>;
 
+/** The D1 SQL an artifact carries, as the manager and the checks read it. */
+export interface ArtifactD1 {
+  d1Migrations: D1Migrations;
+  d1Schema?: D1Migrations | undefined;
+  d1PostDeploy?: D1Migrations | undefined;
+}
+
+/** Every D1 SQL file the artifact carries: migrations, schema files, post-deploy migrations. */
+export function artifactD1Files(manifest: ArtifactD1): D1MigrationFile[] {
+  return [manifest.d1Migrations, manifest.d1Schema ?? {}, manifest.d1PostDeploy ?? {}].flatMap(
+    (byBinding) => Object.values(byBinding).flat(),
+  );
+}
+
+/**
+ * What is wrong with an artifact's D1 SQL, as sentences; empty when nothing
+ * is. Schema files and post-deploy migrations come only from the catalog
+ * manifest's `resources.d1`, so each list must match what it declares (the
+ * schema files by path, in its order). Post-deploy migrations are recorded in
+ * `d1_migrations` beside the others, so a name may appear once per database
+ * across both lists, or one of the files would never run.
+ */
+export function artifactD1Problems(
+  manifest: ArtifactD1 & { catalog: Pick<CatalogManifest, "resources"> },
+): string[] {
+  const problems: string[] = [];
+  const declared = manifest.catalog.resources?.d1 ?? {};
+  const layout = (binding: string) =>
+    Object.hasOwn(declared, binding) ? declared[binding] : undefined;
+  const schema = manifest.d1Schema ?? {};
+  for (const [binding, files] of Object.entries(schema)) {
+    const want = layout(binding)?.schema;
+    if (want === undefined) {
+      problems.push(
+        `D1 schema files are recorded for ${binding}, but the catalog manifest declares none in resources.d1.${binding}.schema.`,
+      );
+    } else if (files.map((f) => f.name).join("\n") !== want.join("\n")) {
+      problems.push(
+        `The D1 schema files recorded for ${binding} are not the ones resources.d1.${binding}.schema lists, in its order.`,
+      );
+    }
+  }
+  for (const [binding, d1] of Object.entries(declared)) {
+    if (d1.schema !== undefined && !Object.hasOwn(schema, binding)) {
+      problems.push(
+        `resources.d1.${binding}.schema lists schema files, but the artifact records none for ${binding}.`,
+      );
+    }
+  }
+  for (const [binding, files] of Object.entries(manifest.d1PostDeploy ?? {})) {
+    if (layout(binding)?.postDeployMigrationsDir === undefined) {
+      problems.push(
+        `Post-deploy D1 migrations are recorded for ${binding}, but the catalog manifest declares no resources.d1.${binding}.postDeployMigrationsDir.`,
+      );
+    }
+    const migrations = Object.hasOwn(manifest.d1Migrations, binding)
+      ? (manifest.d1Migrations[binding] ?? [])
+      : [];
+    const tracked = new Set(migrations.map((f) => f.name));
+    for (const file of files) {
+      if (tracked.has(file.name)) {
+        problems.push(
+          `The D1 migration ${file.name} of ${binding} is both a migration and a post-deploy migration; both are recorded in d1_migrations by name, so their names must differ.`,
+        );
+      }
+      tracked.add(file.name);
+    }
+  }
+  return problems;
+}
+
 /** The upstream source the artifact was built from. */
 export const artifactSourceSchema = z.object({
   repo: ownerRepoSchema,
@@ -475,6 +547,19 @@ const artifactManifestFields = {
   assets: artifactAssetsSchema,
   /** Every D1 migration of the app, by binding (shared by the Workers that bind it). */
   d1Migrations: d1MigrationsSchema,
+  /**
+   * SQL files run on every install and update after the migrations, never
+   * recorded in `d1_migrations`, by binding, in the order the catalog lists
+   * them (`resources.d1[binding].schema`). Omitted when there are none, so
+   * artifacts without them keep the shape they always had.
+   */
+  d1Schema: d1MigrationsSchema.optional(),
+  /**
+   * Migrations run once the new version serves all traffic, recorded in
+   * `d1_migrations` like the others (`resources.d1[binding].postDeployMigrationsDir`).
+   * Omitted when there are none.
+   */
+  d1PostDeploy: d1MigrationsSchema.optional(),
   catalog: catalogManifestSchema,
 };
 
@@ -490,6 +575,75 @@ export const artifactEntryWorkerSchema = z.object({
 });
 export type ArtifactEntryWorker = z.infer<typeof artifactEntryWorkerSchema>;
 
+/** The artifact formats this version reads: 1 to {@link LATEST_ARTIFACT_FORMAT}. */
+export const LATEST_ARTIFACT_FORMAT = 3;
+export type ArtifactFormat = 1 | 2 | 3;
+
+/** What decides an artifact's format, as a packer knows it before writing one. */
+export interface ArtifactFormatFacts {
+  /** The Workers besides the primary one; several Workers need format 2 or later. */
+  workers?: readonly unknown[] | undefined;
+  d1Schema?: Record<string, readonly unknown[]> | undefined;
+  d1PostDeploy?: Record<string, readonly unknown[]> | undefined;
+}
+
+/**
+ * The oldest format that can carry an artifact, so every manager that can
+ * install it correctly reads it and every older one refuses it rather than
+ * install it without what it does not know:
+ *
+ * - 3: it carries D1 schema files or post-deploy migrations (`d1Schema`,
+ *   `d1PostDeploy`), which a manager that reads only formats 1 and 2 would
+ *   drop without a word, leaving the app without its tables;
+ * - 2: it has several Workers (`workers`);
+ * - 1: anything else.
+ *
+ * A field that older managers must not skip goes here, and moves the
+ * artifacts that carry it to a new format.
+ */
+export function artifactFormatFor(facts: ArtifactFormatFacts): ArtifactFormat {
+  const has = (lists: Record<string, readonly unknown[]> | undefined) =>
+    lists !== undefined && Object.values(lists).some((files) => files.length > 0);
+  if (has(facts.d1Schema) || has(facts.d1PostDeploy)) return 3;
+  if (facts.workers !== undefined && facts.workers.length > 0) return 2;
+  return 1;
+}
+
+/** Why an artifact of `format` cannot carry what it does, or null when it can. */
+function formatProblem(manifest: ArtifactFormatFacts & { format: number }): string | null {
+  const needed = artifactFormatFor(manifest);
+  if (needed <= manifest.format) return null;
+  return `the artifact needs format ${needed} for what it carries (D1 schema files or post-deploy migrations); a manager that reads only format ${manifest.format} would install it without them`;
+}
+
+/**
+ * What is wrong with an artifact of one Worker, as sentences: its catalog
+ * manifest must not declare `install.workers`, and no binding may name
+ * another Worker of the entry.
+ */
+function singleWorkerProblems(manifest: {
+  worker: ArtifactWorker;
+  catalog: Pick<CatalogManifest, "install">;
+}): Array<{ path: string[]; message: string }> {
+  const problems: Array<{ path: string[]; message: string }> = [];
+  if (manifest.catalog.install.workers !== undefined) {
+    problems.push({
+      path: ["format"],
+      message:
+        "the catalog manifest declares several Workers (install.workers), so the artifact must be format 2 (or 3) with a workers list",
+    });
+  }
+  for (const binding of manifest.worker.bindings) {
+    if (bindingEntryRefs(binding).length > 0) {
+      problems.push({
+        path: ["worker", "bindings"],
+        message: `binding ${binding.name} names another Worker of the entry, but the artifact has one Worker`,
+      });
+    }
+  }
+  return problems;
+}
+
 /**
  * An artifact of one Worker. Its catalog manifest has no `install.workers`,
  * and no binding names another Worker of the entry.
@@ -497,22 +651,13 @@ export type ArtifactEntryWorker = z.infer<typeof artifactEntryWorkerSchema>;
 export const artifactManifestV1Schema = z
   .object({ format: z.literal(1), ...artifactManifestFields })
   .superRefine((manifest, ctx) => {
-    if (manifest.catalog.install.workers !== undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["format"],
-        message:
-          "the catalog manifest declares several Workers (install.workers), so the artifact must be format 2 with a workers list",
-      });
+    for (const problem of singleWorkerProblems(manifest)) {
+      ctx.addIssue({ code: "custom", ...problem });
     }
-    for (const binding of manifest.worker.bindings) {
-      if (bindingEntryRefs(binding).length > 0) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["worker", "bindings"],
-          message: `binding ${binding.name} names another Worker of the entry, but the artifact has one Worker`,
-        });
-      }
+    const format = formatProblem(manifest);
+    if (format !== null) ctx.addIssue({ code: "custom", path: ["format"], message: format });
+    for (const message of artifactD1Problems(manifest)) {
+      ctx.addIssue({ code: "custom", path: ["d1Migrations"], message });
     }
   });
 
@@ -529,16 +674,68 @@ export const artifactManifestV2Schema = z
     workers: z.array(artifactEntryWorkerSchema).min(1),
   })
   .superRefine((manifest, ctx) => {
+    const format = formatProblem(manifest);
+    if (format !== null) ctx.addIssue({ code: "custom", path: ["format"], message: format });
+    for (const message of artifactD1Problems(manifest)) {
+      ctx.addIssue({ code: "custom", path: ["d1Migrations"], message });
+    }
     for (const message of entryWorkerProblems(manifest)) {
       ctx.addIssue({ code: "custom", path: ["workers"], message });
     }
   });
 
-/** The full artifact manifest, `manifest.json`: format 1 (one Worker) or 2 (several). */
+/**
+ * An artifact that carries what managers reading formats 1 and 2 would skip
+ * (see {@link artifactFormatFor}): one Worker, or several with `workers` as
+ * in format 2. Those managers refuse it, since their schema knows no format 3.
+ */
+export const artifactManifestV3Schema = z
+  .object({
+    format: z.literal(3),
+    ...artifactManifestFields,
+    workers: z.array(artifactEntryWorkerSchema).min(1).optional(),
+  })
+  .superRefine((manifest, ctx) => {
+    for (const message of artifactD1Problems(manifest)) {
+      ctx.addIssue({ code: "custom", path: ["d1Migrations"], message });
+    }
+    const workers = manifest.workers;
+    if (workers === undefined) {
+      for (const problem of singleWorkerProblems(manifest)) {
+        ctx.addIssue({ code: "custom", ...problem });
+      }
+      return;
+    }
+    for (const message of entryWorkerProblems({ ...manifest, workers })) {
+      ctx.addIssue({ code: "custom", path: ["workers"], message });
+    }
+  });
+
+/**
+ * The full artifact manifest, `manifest.json`: format 1 (one Worker), 2
+ * (several), or 3 (either, with D1 files older managers do not know).
+ */
 export const artifactManifestSchema = z.discriminatedUnion("format", [
   artifactManifestV1Schema,
   artifactManifestV2Schema,
+  artifactManifestV3Schema,
 ]);
 export type ArtifactManifest = z.infer<typeof artifactManifestSchema>;
 export type ArtifactManifestV1 = z.infer<typeof artifactManifestV1Schema>;
 export type ArtifactManifestV2 = z.infer<typeof artifactManifestV2Schema>;
+export type ArtifactManifestV3 = z.infer<typeof artifactManifestV3Schema>;
+
+/**
+ * Why a manifest's `format` is one this version cannot read, as a sentence
+ * that says to update Appflare, or null when it can read it (or it has no
+ * numeric format, which the schema then refuses on its own).
+ */
+export function unknownArtifactFormatProblem(json: unknown): string | null {
+  if (typeof json !== "object" || json === null || !("format" in json)) return null;
+  const format = (json as { format: unknown }).format;
+  if (typeof format !== "number" || !Number.isInteger(format)) return null;
+  if (format >= 1 && format <= LATEST_ARTIFACT_FORMAT) return null;
+  return format > LATEST_ARTIFACT_FORMAT
+    ? `the artifact is format ${format}, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in Settings, then try again`
+    : `the artifact is format ${format}, which no version of Appflare reads`;
+}

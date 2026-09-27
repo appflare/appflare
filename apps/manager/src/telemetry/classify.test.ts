@@ -72,10 +72,17 @@ describe("classifyJobError", () => {
   });
 
   it("falls back to the phase for job-specific failures", () => {
-    expect(classifyJobError('D1 DB: apply migrations: near "FROM": syntax error')).toMatchObject({
-      errorCategory: "d1_migration",
-      failedPhase: "d1_migrations",
-    });
+    for (const step of [
+      "D1 DB: apply migrations",
+      "D1 DB: apply schema",
+      "D1 DB: apply schema from src/db/indexes.sql",
+      "D1 DB: apply post-deploy migrations",
+    ]) {
+      expect(classifyJobError(`${step}: near "FROM": syntax error`)).toMatchObject({
+        errorCategory: "d1_migration",
+        failedPhase: "d1_migrations",
+      });
+    }
     expect(classifyJobError("canary check 5: the preview never served")).toMatchObject({
       errorCategory: "canary",
       failedPhase: "canary",

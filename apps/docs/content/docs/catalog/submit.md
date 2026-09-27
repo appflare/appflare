@@ -178,6 +178,29 @@ Points that need care:
   manifest does not declare, and a declaration the config does not bind. The
   database is the admin's: an uninstall deletes the Hyperdrive configuration, never
   the database. Self-deploying entries cannot declare databases.
+- **D1 SQL outside the migrations folder.** The packer reads each D1 binding's
+  `migrations_dir` and `migrations_pattern` as `wrangler d1 migrations apply` does,
+  relative to the config you name in `install.wranglerConfig`. When the app's D1 SQL
+  is elsewhere, say where under `resources.d1`, keyed by the D1 binding, with paths
+  relative to the repository's root:
+  `migrationsDir` for another folder of migrations; `migrations` for a glob such as
+  `prisma/migrations/*/migration.sql`, which works as wrangler's `migrations_dir`
+  (the folder before the first `*`) plus `migrations_pattern`, so each file is
+  recorded as wrangler records it (`20240101_init/migration.sql`) and they run in
+  wrangler's order; `schema` for SQL files that run on every
+  install and update after the migrations (the packer accepts them only when every
+  CREATE TABLE, INDEX, TRIGGER and VIEW says `IF NOT EXISTS`, nothing is dropped or
+  altered, and rows are only added when missing, with `INSERT OR IGNORE` or
+  `ON CONFLICT DO NOTHING`; `UPDATE`, `DELETE` and other inserts are refused); and
+  `postDeployMigrationsDir` for migrations that must wait until
+  the new version serves all traffic. Migrations and post-deploy migrations are
+  recorded in `d1_migrations` by file name, so their names must differ. A rollback
+  reverts neither. For example
+  `"resources": { "d1": { "DB": { "schema": ["src/db/schema.sql"] } } }`. A schema
+  file creates what is missing and nothing more: `CREATE TABLE IF NOT EXISTS` never
+  adds a column to a table that already exists, so when upstream changes a table in
+  its schema file, installs made before the change keep the old table. Changing an
+  existing table needs a migration.
 - **`secrets` and `vars`.** List every secret and setting the app reads from `env`
   that is not in its wrangler config. Use `"generate": true` for passwords and
   signing keys the user does not need to choose. List a var from the wrangler config

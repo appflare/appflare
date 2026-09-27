@@ -51,6 +51,8 @@ import { healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
   applyD1MigrationsPhase,
+  applyD1PostDeployPhase,
+  applyD1SchemaPhase,
   checkLiveHealthPhase,
   checkWorkflowNamePhase,
   d1Targets,
@@ -116,11 +118,16 @@ import { takeSnapshotPhase } from "./update/snapshot";
  * 6. Canary: GET the version's preview URL at the app's health path; a 5xx,
  *    no answer, or a JSON `version` other than the target fails the job
  *    before anything serves the new version.
- * 7. Apply new D1 migration files, before promotion (as wrangler does).
- * 8. Promote the version to 100% of traffic.
+ * 7. Apply new D1 migration files, before promotion (as wrangler does), then
+ *    each database's schema files (run on every update, never recorded).
+ * 8. Promote the version to 100% of traffic, then set its queue consumers
+ *    and cron triggers.
  * 9. Health check on the app's address (its workers.dev URL, or its first custom
  *    domain while workers.dev is off). The version already serves, so
  *    the result is recorded on the install and never fails the job.
+ * 10. Apply the post-deploy migrations, which the previous code could not
+ *    have run against, last of all. A rollback does not revert them, as it
+ *    reverts no migration.
  *
  * A version that brings Durable Object migrations takes another path from
  * step 5 on: Cloudflare applies those only on a full script upload, which
@@ -229,6 +236,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
   /** Set once the new version exists / serves traffic, for the failure report. */
   let uploadedVersionId: string | null = null;
   let promoted = false;
+  /** Set once post-deploy migrations began: the database may be past the previous code. */
+  let postDeployStarted = false;
   /** The install's record once the new version serves; written again if the job fails later. */
   let servingRecord: Partial<typeof installs.$inferInsert> | null = null;
   /** D1 databases that got new migration files (named when a failure leaves them ahead of the code). */
@@ -717,12 +726,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         : { config_json: storedVarsJson(started.userVars) }),
     });
 
+    const databases = d1Targets(manifest, bound);
     /**
-     * New D1 migration files, one database at a time; remembers which
-     * databases changed, including one where a later file failed.
+     * New D1 migration files, one database at a time, each followed by its
+     * schema files; remembers which databases got new migrations, including
+     * one where a later file failed. Schema files only create what is
+     * missing, which the previous code never notices, so they do not count.
      */
     async function migrateDatabases(): Promise<void> {
-      for (const target of d1Targets(manifest, bound)) {
+      for (const target of databases) {
         await applyD1MigrationsPhase(
           steps,
           source.zipUrl,
@@ -730,6 +742,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           () => migrated.push(target.name),
           source.host,
         );
+        await applyD1SchemaPhase(steps, source.zipUrl, target, source.host);
       }
     }
 
@@ -959,6 +972,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const url = `${appBase}${healthPath}`;
     const health = await checkLiveHealthPhase(steps, step, url, healthMode);
 
+    // 10. Post-deploy migrations, once no request reaches the previous code
+    // and everything else about the new version (queue consumers, cron
+    // triggers) is in place, so a failure here leaves nothing else behind.
+    // Nothing reverts them, a rollback included (see applyD1PostDeployPhase).
+    for (const target of databases) {
+      if (target.postDeploy.length > 0) postDeployStarted = true;
+      await applyD1PostDeployPhase(steps, source.zipUrl, target, source.host);
+    }
+
     // A sandbox build stays in the bucket while it may be needed: the version
     // now serving and the one before it (which a rollback returns to).
     if (source.provenance.build_kind === "sandbox") {
@@ -1124,7 +1146,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           `Appflare could not take the secrets this version introduced off the newest version of ${othersBack.map((n) => `"${n}"`).join(", ")}; the next upload would carry them.`,
         );
       }
-      if (wasPromoted) {
+      if (wasPromoted && postDeployStarted) {
+        log.error(
+          `Update failed at "${failedAt}" after version ${version} was promoted: it serves all traffic and is recorded as the install's version. Post-deploy D1 migrations already applied stay applied, and rolling back would not undo them, so the previous version may not work with the database. Retry the update, or restore the database from this update's snapshot together with a rollback.`,
+          { versionId: version },
+        );
+      } else if (wasPromoted) {
         log.error(
           `Update failed at "${failedAt}" after version ${version} was promoted: it serves all traffic and is recorded as the install's version. Roll back from the install page if the app misbehaves.`,
           { versionId: version },

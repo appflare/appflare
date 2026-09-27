@@ -779,6 +779,65 @@ describe("update job", () => {
     );
   });
 
+  describe("an app with schema files and post-deploy migrations", () => {
+    const WITH_D1_LAYOUT: ArtifactFixtureOptions = {
+      ...NEW_APP,
+      d1Schema: {
+        DB: [{ name: "schema.sql", content: "CREATE TABLE IF NOT EXISTS s (id TEXT);" }],
+      },
+      d1PostDeploy: {
+        DB: [{ name: "0001_drop_legacy.sql", content: "ALTER TABLE links DROP COLUMN legacy;" }],
+      },
+    };
+
+    it("runs the schema files before promotion and the post-deploy migrations after it", async () => {
+      const r = await update(WITH_D1_LAYOUT);
+      expect(r.error).toBeNull();
+      const names = r.step.names;
+      expect(names.slice(names.indexOf("D1 DB: apply migrations"))).toEqual([
+        "D1 DB: apply migrations",
+        "D1 DB: apply schema",
+        "promote version",
+        "record promotion",
+        "set cron triggers",
+        "health check 1",
+        "D1 DB: apply post-deploy migrations",
+        "finish",
+      ]);
+      expect(r.fake.state.applied["d1-1"]).toEqual([
+        "0001_init.sql",
+        "0002_hits.sql",
+        "0001_drop_legacy.sql",
+      ]);
+      expect(r.fake.state.queries).toContain("CREATE TABLE IF NOT EXISTS s (id TEXT);");
+    });
+
+    it("keeps the promoted version recorded when a post-deploy migration fails", async () => {
+      const r = await update(WITH_D1_LAYOUT, {
+        failMigration: { file: "0001_drop_legacy.sql", status: 400, times: 1 },
+      });
+      expect(r.job?.error).toMatch(/^D1 DB: apply post-deploy migrations: 0001_drop_legacy\.sql: /);
+      expect(r.install).toMatchObject({
+        status: "installed",
+        catalog_version: "1.1.0",
+        current_version_id: NEW_VERSION,
+      });
+      expect(r.fake.state.applied["d1-1"]).toEqual(["0001_init.sql", "0002_hits.sql"]);
+      // Everything else about the version was in place first.
+      expect(r.step.names.indexOf("set cron triggers")).toBeLessThan(
+        r.step.names.indexOf("D1 DB: apply post-deploy migrations"),
+      );
+      const last = r.logs.at(-1)?.message ?? "";
+      expect(last).toMatch(
+        new RegExp(`after version ${NEW_VERSION} was promoted: it serves all traffic`),
+      );
+      expect(last).toContain("rolling back would not undo them");
+      expect(last).not.toContain("Roll back from the install page if the app misbehaves");
+      // The database is not "ahead of the code": the new code serves.
+      expect(r.logs.some((l) => l.message.startsWith("The D1 database"))).toBe(false);
+    });
+  });
+
   it("names the migrated databases when the promotion fails after D1 migrations", async () => {
     const r = await update(NEW_APP, {
       failOnce: new Map([["POST /workers/scripts/cut/deployments", 400]]),

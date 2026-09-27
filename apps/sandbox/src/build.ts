@@ -1,4 +1,5 @@
 import {
+  artifactD1Files,
   artifactManifestSchema,
   type BuildFailure,
   type BuildKeys,
@@ -376,7 +377,7 @@ export class BuildSteps {
     const zipProblems = await checkZipFiles(zipBody.body, zipBody.size, [
       ...manifest.worker.modules,
       ...manifest.assets.files,
-      ...Object.values(manifest.d1Migrations).flat(),
+      ...artifactD1Files(manifest),
     ]);
     if (zipProblems.length > 0) {
       throw new StepError<BuildStage>(

@@ -1,4 +1,4 @@
-import { planSpans, SPAN_LIMITS } from "@appflare/schema";
+import { compareMigrationNames, planSpans, SPAN_LIMITS } from "@appflare/schema";
 import type { ArtifactFileRef } from "./artifact";
 import { ARTIFACT_FETCH_COST } from "./budget";
 
@@ -27,14 +27,14 @@ INSERT INTO "d1_migrations" (name)
 values ('${fileName.replace(/'/g, "''")}');`;
 }
 
-/** Files not yet recorded in `d1_migrations`, in filename order. */
+/** Files not yet recorded in `d1_migrations`, in the order wrangler applies them. */
 export function unappliedMigrations<T extends { name: string }>(
   files: readonly T[],
   appliedRows: ReadonlyArray<Record<string, unknown>>,
 ): T[] {
   const applied = new Set(appliedRows.map((row) => String(row.name)));
   return [...files]
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .sort((a, b) => compareMigrationNames(a.name, b.name))
     .filter((file) => !applied.has(file.name));
 }
 
@@ -65,15 +65,41 @@ export const D1_MIGRATIONS_STEP_BYTES = SPAN_LIMITS.maxBytes;
 const MIGRATIONS_CALL_OVERHEAD = 2;
 
 /** Worst-case subrequests of a call that reads `ranges` ranges and applies `files` files. */
-export function d1MigrationsStepCost(ranges: number, files: number): number {
+export function d1MigrationsStepCost(
+  ranges: number,
+  files: number,
+  overhead: number = MIGRATIONS_CALL_OVERHEAD,
+): number {
   const fetches = ranges === 0 ? 0 : ARTIFACT_FETCH_COST + ranges - 1;
-  return MIGRATIONS_CALL_OVERHEAD + fetches + files;
+  return overhead + fetches + files;
 }
 
 export interface MigrationBatchLimits {
   subrequests: number;
   bytes: number;
+  /**
+   * Subrequests a call makes besides reading and running the files: the
+   * table check and the list for tracked migrations (the default), none for
+   * schema files ({@link D1_SCHEMA_LIMITS}).
+   */
+  overhead?: number;
 }
+
+/*
+ * Schema files (`resources.d1[binding].schema` in the catalog manifest) run
+ * on every install and update after the tracked migrations and are never
+ * recorded, so a call runs them one `/query` call per file, in the order the
+ * catalog lists them, with nothing to check first. Running one again is
+ * harmless: the packer accepts only files whose every CREATE says
+ * IF NOT EXISTS and that drop and alter nothing.
+ */
+
+/** The limits of one call that runs schema files. */
+export const D1_SCHEMA_LIMITS: MigrationBatchLimits = {
+  subrequests: D1_MIGRATIONS_STEP_SUBREQUESTS,
+  bytes: D1_MIGRATIONS_STEP_BYTES,
+  overhead: 0,
+};
 
 /**
  * The files one call applies: the longest prefix of `pending` (already in the
@@ -91,7 +117,7 @@ export function nextMigrationBatch<F extends ArtifactFileRef>(
   let count = 0;
   for (const file of pending) {
     const next = pending.slice(0, count + 1);
-    const cost = d1MigrationsStepCost(planSpans(next).length, next.length);
+    const cost = d1MigrationsStepCost(planSpans(next).length, next.length, limits.overhead);
     if (count > 0 && (cost > limits.subrequests || bytes + file.size > limits.bytes)) break;
     bytes += file.size;
     count += 1;

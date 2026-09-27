@@ -4,6 +4,7 @@ import {
   closeSync,
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readdirSync,
@@ -569,6 +570,124 @@ describe("pack with a Hyperdrive binding and a template config", () => {
 });
 
 /**
+ * A copy of the hello fixture whose D1 SQL is laid out the way wrangler's
+ * migrations folder cannot describe: Prisma's folder per migration, an
+ * idempotent schema file, and migrations for after the deploy.
+ */
+function d1LayoutCheckout(parent: string, schemaSql: string): { dir: string; manifest: string } {
+  const dir = path.join(parent, "checkout");
+  cpSync(FIXTURE, dir, { recursive: true });
+  const write = (rel: string, content: string) => {
+    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    writeFileSync(path.join(dir, rel), content);
+  };
+  write("prisma/migrations/20240201000000_clicks/migration.sql", "CREATE TABLE clicks (id TEXT);");
+  write("prisma/migrations/20240101000000_init/migration.sql", "CREATE TABLE links (id TEXT);");
+  write("prisma/migrations/migration_lock.toml", 'provider = "sqlite"\n');
+  write("src/db/schema.sql", schemaSql);
+  write("after-deploy/0001_drop_legacy.sql", "DROP TABLE IF EXISTS legacy;");
+  const catalog = parseJsonc(readFileSync(path.join(dir, "appflare.jsonc"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  catalog.resources = {
+    d1: {
+      DB: {
+        migrations: "prisma/migrations/*/migration.sql",
+        schema: ["src/db/schema.sql"],
+        postDeployMigrationsDir: "after-deploy",
+      },
+    },
+  };
+  const manifest = path.join(parent, "appflare.jsonc");
+  writeFileSync(manifest, JSON.stringify(catalog));
+  return { dir, manifest };
+}
+
+describe("pack with resources.d1", () => {
+  const SCHEMA =
+    "-- run on every deploy\nCREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY);\n";
+
+  it("records the glob's migrations by folder, the schema file and the post-deploy migrations", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-d1-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = d1LayoutCheckout(parent, SCHEMA);
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      // The glob replaces the config's migrations folder; files keep wrangler's names.
+      expect(res.manifest.d1Migrations.DB?.map((f) => [f.name, f.path])).toEqual([
+        ["20240101000000_init/migration.sql", "d1/DB/20240101000000_init/migration.sql"],
+        ["20240201000000_clicks/migration.sql", "d1/DB/20240201000000_clicks/migration.sql"],
+      ]);
+      expect(res.manifest.d1Schema?.DB?.map((f) => [f.name, f.path])).toEqual([
+        ["src/db/schema.sql", "d1-schema/DB/src/db/schema.sql"],
+      ]);
+      expect(res.manifest.d1PostDeploy?.DB?.map((f) => [f.name, f.path])).toEqual([
+        ["0001_drop_legacy.sql", "d1-post-deploy/DB/0001_drop_legacy.sql"],
+      ]);
+      expect([res.d1MigrationCount, res.d1SchemaCount, res.d1PostDeployCount]).toEqual([2, 1, 1]);
+      // Managers that know only formats 1 and 2 must refuse it, not skip the new files.
+      expect(res.manifest.format).toBe(3);
+      expect(logs.at(-1)).toMatch(/2 migrations, 1 schema files, 1 post-deploy migrations/);
+      const schemaFile = res.manifest.d1Schema?.DB?.[0];
+      expect(
+        readRange(res.zipPath, schemaFile?.offset ?? 0, schemaFile?.size ?? 0).toString(),
+      ).toBe(SCHEMA);
+      await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true, checkedFiles: 8 });
+
+      // verify holds the schema file to the packer's rule even when its hashes match.
+      const manifestPath = path.join(outDir, "manifest.json");
+      const edited = JSON.parse(readFileSync(manifestPath, "utf8")) as ArtifactManifest;
+      const entry = edited.d1Schema?.DB?.[0];
+      if (entry === undefined) throw new Error("no schema file recorded");
+      const unsafe = Buffer.from(SCHEMA.replace("IF NOT EXISTS", " ".repeat(13)));
+      expect(unsafe.length).toBe(entry.size);
+      const zip = readFileSync(res.zipPath);
+      unsafe.copy(zip, entry.offset);
+      writeFileSync(res.zipPath, zip);
+      entry.sha256 = createHash("sha256").update(unsafe).digest("hex");
+      writeFileSync(manifestPath, JSON.stringify(edited));
+      await expect(verify({ dir: outDir })).rejects.toThrow(
+        /the D1 schema file d1-schema\/DB\/src\/db\/schema\.sql cannot run on every install and update: line 2: CREATE TABLE settings has no IF NOT EXISTS/,
+      );
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("refuses an unguarded schema file before building or writing anything", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-d1-refused-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = d1LayoutCheckout(parent, "CREATE TABLE settings (k TEXT);\nDROP TABLE old;");
+      await expect(
+        pack({
+          checkoutDir: checkout.dir,
+          manifestPath: checkout.manifest,
+          outDir,
+          install: false,
+          logger: (m) => logs.push(m),
+        }),
+      ).rejects.toThrow(
+        /schema file src\/db\/schema\.sql of resources\.d1\.DB cannot run on every install and update: line 1: CREATE TABLE settings has no IF NOT EXISTS.*; line 2: DROP TABLE old drops/,
+      );
+      expect(existsSync(outDir)).toBe(false);
+      expect(logs.some((l) => l.includes("dry-run"))).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+/**
  * A copy of the hello fixture whose wrangler config adds `services`, each
  * pointing at the config's own name unless it says otherwise.
  */
@@ -824,7 +943,11 @@ describe("pack with install.buildCommand", () => {
  * `legacy_env`, which wrangler accepts only in a redirected config, and a
  * var that is an array.
  */
-function redirectedCheckout(parent: string): { dir: string; manifest: string } {
+function redirectedCheckout(
+  parent: string,
+  /** `migrations_dir` as the generated config states it. */
+  generatedMigrationsDir = "../../migrations",
+): { dir: string; manifest: string } {
   const dir = path.join(parent, "checkout");
   cpSync(FIXTURE, dir, { recursive: true });
   const config = parseJsonc(readFileSync(path.join(dir, "wrangler.jsonc"), "utf8")) as Record<
@@ -846,7 +969,7 @@ function redirectedCheckout(parent: string): { dir: string; manifest: string } {
     topLevelName: "hello",
     assets: { ...(config.assets as object), directory: "../../public" },
     d1_databases: [
-      { binding: "DB", database_name: "hello-db", migrations_dir: "../../migrations" },
+      { binding: "DB", database_name: "hello-db", migrations_dir: generatedMigrationsDir },
     ],
     vars: { GREETING: "Hello", PUBLIC_URL: "{{workerUrl}}", EMAIL_ADDRESSES: [] },
   };
@@ -907,6 +1030,30 @@ describe("pack with a redirected wrangler config", () => {
         text: "{{workerUrl}}",
       });
       await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true });
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("finds migrations_dir beside the declared config when the generated one copies it as is", async () => {
+    // As the Cloudflare Vite plugin writes it: `migrations` beside
+    // dist/hello/wrangler.json does not exist, but wrangler's own
+    // `d1 migrations apply` reads it from beside wrangler.jsonc.
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-redirect-d1-"));
+    const outDir = path.join(parent, "out");
+    try {
+      const checkout = redirectedCheckout(parent, "migrations");
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+      });
+      expect(res.manifest.worker.wranglerConfig?.effective).toBe("dist/hello/wrangler.json");
+      expect(res.manifest.d1Migrations.DB?.map((f) => f.name)).toEqual([
+        "0001_init.sql",
+        "0002_add_clicks.sql",
+      ]);
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
