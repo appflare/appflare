@@ -56,6 +56,15 @@ installing an app that would run without it. When the app works without that
 section, drop it with the config patch the message names, such as
 `{ "vpc_services": null }`.
 
+An app that needs every name under one hostname, such as a tunnel that gives each
+session `<id>.<hostname>`, sets `install.wildcardHostname: true` and a one-sentence
+`install.wildcardReason` that the admin sees when assigning the hostname. Appflare
+then serves the app's Worker on the hostname the admin chooses and every name under
+it, through Workers routes in one of the account's domains (see
+[Wildcard domains](/guides/custom-domains/#wildcard-domains)). An app that needs its
+hostname in a variable uses `{{wildcardHostname}}`, for example
+`{ "name": "TUNNEL_DOMAIN", "label": "Tunnel domain", "default": "{{wildcardHostname}}" }`.
+
 An app whose data lives in a PostgreSQL or MySQL database outside Cloudflare, reached
 through Hyperdrive, is installed too: its manifest declares the database (see
 [Databases elsewhere](#1-write-the-manifest)), and the admin enters its connection
@@ -431,8 +440,12 @@ Points that need care:
   `{ "name": "PUBLIC_URL", "label": "Public URL", "default": "{{workerUrl}}" }`.
   `{{accountId}}` becomes the id of the account the app is installed in, for apps
   that query the Cloudflare API about their own account, such as the
-  Analytics Engine SQL API. Vars are filled in again on every update and settings
-  change. `{{workerUrl}}` is always the
+  Analytics Engine SQL API. `{{wildcardHostname}}` becomes the hostname of the
+  app's [wildcard domain](/guides/custom-domains/#wildcard-domains) (no scheme, such
+  as `tunnels.example.com`) for an entry with `install.wildcardHostname`, and is
+  empty until the admin assigns one; assigning or removing it deploys the settings
+  again, so the var follows the domain. Vars are filled in again on every update and
+  settings change. `{{workerUrl}}` is always the
   workers.dev address, even when a custom domain is attached to the install. An
   [app of several Workers](#apps-of-several-workers) can also name each of its
   Workers.

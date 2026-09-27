@@ -1,4 +1,4 @@
-import { CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND } from "./resource-kinds";
+import { CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
 import { workersDevBase } from "./workers-dev";
 
 /**
@@ -10,7 +10,10 @@ import { workersDevBase } from "./workers-dev";
  * still be waiting for its certificate.
  */
 
-/** A custom domain (`domain`) or external domain (`custom_hostname`) of the install. */
+/**
+ * A custom domain (`domain`), external domain (`custom_hostname`) or
+ * wildcard domain (`wildcard_domain`, by its base hostname) of the install.
+ */
 export interface AddressDomain {
   /** `resources.id`; it ends with a ULID, so ids sort by when the domain was added. */
   id: string;
@@ -39,7 +42,8 @@ function byId(a: AddressDomain, b: AddressDomain): number {
 /**
  * Where the app is opened: the domain that answered when workers.dev was
  * turned off (while it is still attached), else the first live custom
- * domain, else the first live external domain, else the workers.dev URL
+ * domain, else the base of the first live wildcard domain, else the first
+ * live external domain, else the workers.dev URL
  * while that is on. Null when none of these is there (workers.dev off and
  * no live domain, or the subdomain unknown).
  */
@@ -51,6 +55,7 @@ export function appAddress(install: AppAddressInput): string | null {
   const live = domains.filter((d) => d.live).sort(byId);
   const domain =
     live.find((d) => d.kind === CUSTOM_DOMAIN_KIND) ??
+    live.find((d) => d.kind === WILDCARD_DOMAIN_KIND) ??
     live.find((d) => d.kind === CUSTOM_HOSTNAME_KIND);
   if (domain !== undefined) return `https://${domain.name}`;
   if (install.workersDevEnabled && install.subdomain) {

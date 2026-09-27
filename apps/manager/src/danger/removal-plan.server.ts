@@ -12,7 +12,11 @@ import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { type GatewayState, readGateway } from "../gateway/gateway.server";
 import { installLabel } from "../installs/display-name";
-import { CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND } from "../installs/resource-kinds";
+import {
+  CUSTOM_DOMAIN_KIND,
+  CUSTOM_HOSTNAME_KIND,
+  WILDCARD_DOMAIN_KIND,
+} from "../installs/resource-kinds";
 import { reconcileJobs, type WorkflowLookup } from "../jobs/reconcile.server";
 import { domainsTabPath } from "./danger";
 import { DangerError } from "./errors";
@@ -254,7 +258,8 @@ export async function readRemovalStays(db: D1Database): Promise<RemovalStays> {
     .innerJoin(installs, eq(installs.id, resources.install_id))
     .where(
       and(
-        eq(resources.kind, CUSTOM_DOMAIN_KIND),
+        // A wildcard domain's routes and records stay in its zone too.
+        inArray(resources.kind, [CUSTOM_DOMAIN_KIND, WILDCARD_DOMAIN_KIND]),
         isNull(resources.deleted_at),
         ne(installs.status, "uninstalled"),
       ),

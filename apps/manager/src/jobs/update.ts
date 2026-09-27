@@ -19,6 +19,7 @@ import { readSettings, SETTING } from "../db/settings";
 import { secretsToSet } from "../installs/derived-secrets";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
 import { appSlugLabel } from "../installs/source-review";
+import { wildcardHostnameOf } from "../installs/wildcard-domain-input";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
 import { entryBudgetLine, entryBudgetProblem, entryJobCost } from "./entry-budget";
 import {
@@ -408,6 +409,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         servedDomain: install.served_domain,
         // The app's domains, live ones first, for where it is reached below.
         domains: domainHostnames(rows) as string[] | undefined,
+        // What `{{wildcardHostname}}` becomes (absent in a step output recorded before it existed).
+        wildcardHostname: wildcardHostnameOf(rows) as string | null | undefined,
         origin,
         resources: recorded,
       };
@@ -670,6 +673,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       subdomain,
       accountId: steps.accountId(),
       workerUrl: appBase,
+      wildcardHostname: started.wildcardHostname ?? null,
       ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
     });
 
@@ -809,6 +813,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       subdomain,
       accountId: steps.accountId(),
       appUrl: appBase,
+      wildcardHostname: started.wildcardHostname ?? null,
       placeholders,
       entryNames,
     };

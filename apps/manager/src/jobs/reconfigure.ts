@@ -15,7 +15,9 @@ import { effectiveManifest } from "../catalog/revisions.server";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { varsUseWildcardHostname } from "../installs/install-vars";
 import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND } from "../installs/resource-kinds";
+import { wildcardHostnameOf } from "../installs/wildcard-domain-input";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
 import { sandboxBinding } from "../sandbox/binding";
 import {
@@ -169,6 +171,12 @@ export const reconfigureJobParams = z.object({
   emailRouting: emailRoutingJobInput.optional(),
   /** The admin accepted that the new settings cannot be checked on a preview first. */
   confirmNoPreview: z.boolean().optional(),
+  /**
+   * Deploy the settings again although none changed: a value they are filled
+   * in with changed (the wildcard domain behind `{{wildcardHostname}}` was
+   * assigned or removed). `vars` are the stored settings, unchanged.
+   */
+  refreshVars: z.boolean().optional(),
   /**
    * A self-deploying tier app: its own installer runs again with the new
    * settings (see ./self-deploying/reconfigure.ts); none of the steps below apply.
@@ -377,6 +385,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         servedDomain: install.served_domain,
         // The app's domains, live ones first, for where it is reached below.
         domains: domainHostnames(rows) as string[] | undefined,
+        // What `{{wildcardHostname}}` becomes (absent in a step output recorded before it existed).
+        wildcardHostname: wildcardHostnameOf(rows) as string | null | undefined,
         resources: rows
           .filter((r) => r.kind !== EMAIL_ROUTE_KIND)
           .map(
@@ -469,7 +479,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
      * Only settings, secrets and database connections need a new version;
      * Email Routing names the Worker, not a version.
      */
-    const redeploy = changedVars.length > 0 || secretsChange || replacing.length > 0;
+    const refresh = params.refreshVars === true;
+    const redeploy = changedVars.length > 0 || secretsChange || replacing.length > 0 || refresh;
     // Each Worker gets the secret changes of the secrets that go to it; a
     // secret the catalog no longer declares is the primary Worker's.
     const declaredSecrets = new Set(manifest.catalog.secrets.map((s) => s.name));
@@ -488,7 +499,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     const affectedOthers = workers.filter(
       (w) =>
         !w.primary &&
-        (changedVars.some((n) => w.manifest.catalog.vars.some((v) => v.name === n)) ||
+        ((refresh && varsUseWildcardHostname(w.manifest, params.vars)) ||
+          changedVars.some((n) => w.manifest.catalog.vars.some((v) => v.name === n)) ||
           changedSecrets.some((n) => w.manifest.catalog.secrets.some((s) => s.name === n))),
     );
     /** The recorded configuration each replaced connection's binding uses now. */
@@ -562,6 +574,11 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       }
       if (problems.length > 0) throw new JobError(problems.join(" "));
       if (changedVars.length > 0) log.info(`Settings changed: ${changedVars.join(", ")}.`);
+      if (refresh) {
+        log.info(
+          `Settings that use {{wildcardHostname}} are filled in again: ${started.wildcardHostname ? started.wildcardHostname : "empty, since the app has no wildcard domain now"}.`,
+        );
+      }
       const set = Object.keys(params.secrets.set).sort();
       if (set.length > 0) log.info(`Secrets with a new value: ${set.join(", ")}.`);
       if (params.secrets.unset.length > 0) {
@@ -677,6 +694,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         subdomain,
         accountId: steps.accountId(),
         workerUrl: appBase,
+        wildcardHostname: started.wildcardHostname ?? null,
         ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });
 
@@ -692,6 +710,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         subdomain,
         accountId: steps.accountId(),
         appUrl: appBase,
+        wildcardHostname: started.wildcardHostname ?? null,
         placeholders,
         entryNames,
       };

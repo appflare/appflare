@@ -13,7 +13,12 @@ import {
   settleHealthProbe,
 } from "../jobs/install/health";
 import { varsUseWorkerUrl } from "./install-vars";
-import { ADDRESS_KINDS, CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND } from "./resource-kinds";
+import {
+  ADDRESS_KINDS,
+  CUSTOM_DOMAIN_KIND,
+  CUSTOM_HOSTNAME_KIND,
+  WILDCARD_DOMAIN_KIND,
+} from "./resource-kinds";
 import {
   domainHostnames,
   type SetWorkersDevInput,
@@ -269,8 +274,8 @@ export async function applyDomainLive(
 
 /**
  * The live domain that takes over as the served one: the first custom
- * domain, else the first external domain (oldest first, as `appAddress`
- * picks); null with none.
+ * domain, else the first wildcard domain's base, else the first external
+ * domain (oldest first, as `appAddress` picks); null with none.
  */
 export function nextServedDomain(
   live: readonly { id: string; kind: string; name: string }[],
@@ -278,6 +283,7 @@ export function nextServedDomain(
   const byId = [...live].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return (
     byId.find((d) => d.kind === CUSTOM_DOMAIN_KIND)?.name ??
+    byId.find((d) => d.kind === WILDCARD_DOMAIN_KIND)?.name ??
     byId.find((d) => d.kind === CUSTOM_HOSTNAME_KIND)?.name ??
     null
   );

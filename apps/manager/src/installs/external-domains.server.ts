@@ -33,6 +33,7 @@ import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/i
 import { listAccountZones } from "./custom-domains.server";
 import type { ExternalDomainOptions, ExternalDomainStatus } from "./external-domain-input";
 import { ADDRESS_KINDS, CUSTOM_HOSTNAME_KIND } from "./resource-kinds";
+import { WILDCARD_EXTERNAL_REFUSAL, wildcardOfManifest } from "./wildcard-domain-input";
 import {
   applyDomainLive,
   beforeDomainRemoval,
@@ -585,6 +586,9 @@ export async function addExternalDomainCore(
     throw new ExternalDomainError(
       `An external domain can be added only to an installed app; this one is ${install.status}.`,
     );
+  }
+  if (wildcardOfManifest(install.manifestJson) !== null) {
+    throw new ExternalDomainError(WILDCARD_EXTERNAL_REFUSAL);
   }
   const gateway = await readyGateway(deps.db);
   // The name as Cloudflare and every check see it (lower case, Punycode).

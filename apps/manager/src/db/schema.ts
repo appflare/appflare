@@ -55,6 +55,9 @@ export const RESOURCE_KINDS = [
   "ratelimit",
   "domain",
   "custom_hostname",
+  "wildcard_domain",
+  "dns_record",
+  "worker_route",
   "email_route",
 ] as const;
 

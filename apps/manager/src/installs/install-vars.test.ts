@@ -14,6 +14,7 @@ import {
   missingRequiredVar,
   resolveVars,
   settingsVarFields,
+  varsUseWildcardHostname,
   varsUseWorkerUrl,
   varValueProblem,
 } from "./install-vars";
@@ -197,6 +198,29 @@ describe("resolveVars", () => {
     expect(resolveVars(m, {}, { workerUrl: null, workerName: "app" }).vars).toEqual([
       { type: "plain_text", name: "URL", text: "{{workerUrl}}/x" },
     ]);
+  });
+});
+
+describe("{{wildcardHostname}}", () => {
+  const m = manifest([], [v("TUNNEL_DOMAIN", { default: "{{wildcardHostname}}" })]);
+
+  it("is filled in with the wildcard domain, and empty without one", () => {
+    const values = { workerUrl: "https://cut.acme.workers.dev", workerName: "cut" };
+    expect(resolveVars(m, {}, { ...values, wildcardHostname: "tunnels.example.com" }).vars).toEqual(
+      [{ type: "plain_text", name: "TUNNEL_DOMAIN", text: "tunnels.example.com" }],
+    );
+    expect(resolveVars(m, {}, { ...values, wildcardHostname: null }).vars).toEqual([
+      { type: "plain_text", name: "TUNNEL_DOMAIN", text: "" },
+    ]);
+  });
+
+  it("is found in a default or an entered value, not in a fixed one", () => {
+    expect(varsUseWildcardHostname(m, {})).toBe(true);
+    expect(varsUseWildcardHostname(m, { TUNNEL_DOMAIN: "t.example.org" })).toBe(false);
+    const plain = manifest([], [v("BASE")]);
+    expect(varsUseWildcardHostname(plain, {})).toBe(false);
+    expect(varsUseWildcardHostname(plain, { BASE: "https://{{ wildcardHostname }}" })).toBe(true);
+    expect(varsUseWorkerUrl(m, {})).toBe(false);
   });
 });
 

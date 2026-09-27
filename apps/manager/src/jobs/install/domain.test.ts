@@ -310,4 +310,74 @@ describe("installDomainPhase", () => {
     expect(r.self.calls).toEqual([]);
     expect(r.logs.at(-1)?.message).toContain("gateway is not set up any more");
   });
+
+  it("sets up a wildcard domain, waits until the app answers on its base, then turns workers.dev off", async () => {
+    const saas = fakeSaas();
+    const r = await run(
+      { kind: "wildcard", zoneId: "z-own", hostname: "tunnels.own.example" },
+      saas,
+    );
+    expect(r.step.names).toEqual([
+      "add wildcard domain tunnels.own.example",
+      "wait for tunnels.own.example",
+      "tunnels.own.example is live",
+    ]);
+    expect(r.self.calls.map((c) => c.unit)).toEqual(["attachDomain", "waitForCustomDomain"]);
+    expect(r.probes).toEqual(["https://tunnels.own.example/"]);
+    expect(saas.world.records.map((rec) => [rec.type, rec.name, rec.content, rec.proxied])).toEqual(
+      [
+        ["AAAA", "tunnels.own.example", "100::", true],
+        ["AAAA", "*.tunnels.own.example", "100::", true],
+      ],
+    );
+    expect(saas.world.routes.map((route) => [route.pattern, route.script])).toEqual([
+      ["tunnels.own.example/*", "cut"],
+      ["*.tunnels.own.example/*", "cut"],
+    ]);
+    const recorded = (
+      await env.DB.prepare(
+        "SELECT kind, binding, name FROM resources WHERE install_id = ?1 AND kind IN ('wildcard_domain', 'dns_record', 'worker_route') ORDER BY rowid",
+      )
+        .bind(INSTALL_ID)
+        .all()
+    ).results;
+    expect(recorded).toEqual([
+      { kind: "wildcard_domain", binding: null, name: "tunnels.own.example" },
+      { kind: "dns_record", binding: "tunnels.own.example", name: "tunnels.own.example" },
+      { kind: "dns_record", binding: "tunnels.own.example", name: "*.tunnels.own.example" },
+      { kind: "worker_route", binding: "tunnels.own.example", name: "tunnels.own.example/*" },
+      { kind: "worker_route", binding: "tunnels.own.example", name: "*.tunnels.own.example/*" },
+    ]);
+    expect(r.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
+    expect(await installRow()).toMatchObject({ served_domain: "tunnels.own.example" });
+    expect(await liveDomains()).toEqual(["tunnels.own.example"]);
+    expect(r.servedBy).toBe("tunnels.own.example");
+  });
+
+  it("leaves a wildcard name that has DNS records of its own, and finishes the install", async () => {
+    const saas = fakeSaas({
+      records: [
+        {
+          id: "rec-site",
+          zone: "z-own",
+          type: "A",
+          name: "tunnels.own.example",
+          content: "192.0.2.1",
+          proxied: true,
+        },
+      ],
+    });
+    const r = await run(
+      { kind: "wildcard", zoneId: "z-own", hostname: "tunnels.own.example" },
+      saas,
+    );
+    expect(r.step.names).toEqual(["add wildcard domain tunnels.own.example"]);
+    expect(saas.world.routes).toEqual([]);
+    expect(saas.world.records.map((rec) => rec.id)).toEqual(["rec-site"]);
+    expect(r.logs.at(-1)).toMatchObject({ level: "warn" });
+    expect(r.logs.at(-1)?.message).toContain(
+      "*.tunnels.own.example could not be set up: tunnels.own.example already has DNS records (A 192.0.2.1)",
+    );
+    expect(r.servedBy).toBeNull();
+  });
 });

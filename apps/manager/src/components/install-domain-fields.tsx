@@ -12,11 +12,17 @@ import type { DomainOptions } from "../installs/custom-domains.server";
 import type { ExternalDomainOptions } from "../installs/external-domain-input";
 import { getExternalDomainOptions } from "../installs/external-domains.functions";
 import type { InstallDomainInput } from "../installs/install-input";
+import {
+  checkWildcardSubdomain,
+  WILDCARD_EXPLAINER,
+  WILDCARD_EXTERNAL_REFUSAL,
+} from "../installs/wildcard-domain-input";
 import { WORKERS_DEV_COPY } from "../installs/workers-dev";
 import { ValidationChoice } from "./external-domains-section";
+import { WildcardNotes } from "./wildcard-notes";
 import { ZoneHostnameField } from "./zone-hostname-field";
 
-type Choice = "none" | "custom" | "external";
+type Choice = "none" | "custom" | "external" | "wildcard";
 
 const mono = "font-mono text-[0.9em]";
 
@@ -27,12 +33,20 @@ const mono = "font-mono text-[0.9em]";
  * the domain once the Worker serves; a domain that cannot be added then does
  * not fail the install. `onChange` reports the domain to send (null for none)
  * and whether the choice is complete.
+ *
+ * An app that needs every name under one hostname (`wildcard`) is offered a
+ * wildcard domain instead of both: a base in one of the account's zones,
+ * served with every name under it. External domains cannot do that below
+ * Cloudflare's Enterprise plan, and the section says so.
  */
 export function InstallDomainFields({
   disabled,
   onChange,
+  wildcard,
 }: {
   disabled: boolean;
+  /** The app's manifest sets `install.wildcardHostname`, with its reason; null otherwise. */
+  wildcard: { reason: string } | null;
   /** A state setter (stable). */
   onChange(domain: InstallDomainInput | null, complete: boolean): void;
 }) {
@@ -47,13 +61,16 @@ export function InstallDomainFields({
   const [hostname, setHostname] = useState("");
   const [touched, setTouched] = useState(false);
   const [method, setMethod] = useState<ValidationMethod>("http");
+  /** Wildcard domain on the zone itself: the admin agreed every name in it reaches the app. */
+  const [wholeDomain, setWholeDomain] = useState(false);
+  const inZone = choice === "custom" || choice === "wildcard";
 
   // Read the zones and the gateway the first time a domain is chosen.
   useEffect(() => {
     if (choice === "none") return;
     let live = true;
     const load =
-      choice === "custom"
+      choice === "custom" || choice === "wildcard"
         ? custom === null
           ? getDomainOptions().then((o) => {
               if (!live) return;
@@ -75,6 +92,7 @@ export function InstallDomainFields({
 
   const zone = custom?.zones.find((z) => z.id === zoneId) ?? null;
   const customCheck = zone === null ? null : checkSubdomainInZone(subdomain, zone.name);
+  const wildcardCheck = zone === null ? null : checkWildcardSubdomain(subdomain, zone.name);
   const gateway = external?.gateway ?? null;
   const externalCheck =
     gateway === null
@@ -83,15 +101,32 @@ export function InstallDomainFields({
           gateway: gateway.zoneName,
           account: external?.accountZones ?? [],
         });
-  const check = choice === "custom" ? customCheck : choice === "external" ? externalCheck : null;
+  const check =
+    choice === "custom"
+      ? customCheck
+      : choice === "wildcard"
+        ? wildcardCheck
+        : choice === "external"
+          ? externalCheck
+          : null;
   const hostnameError = touched && check !== null && !check.ok ? check.error : undefined;
 
   const chosen: InstallDomainInput | null =
     choice === "custom" && customCheck?.ok === true && zone !== null
       ? { kind: "custom", zoneId: zone.id, hostname: customCheck.hostname }
-      : choice === "external" && externalCheck?.ok === true
-        ? { kind: "external", hostname: externalCheck.hostname, validation: method }
-        : null;
+      : choice === "wildcard" &&
+          wildcardCheck?.ok === true &&
+          zone !== null &&
+          (!wildcardCheck.wholeDomain || wholeDomain)
+        ? {
+            kind: "wildcard",
+            zoneId: zone.id,
+            hostname: wildcardCheck.hostname,
+            ...(wildcardCheck.wholeDomain ? { wholeDomain: true } : {}),
+          }
+        : choice === "external" && externalCheck?.ok === true
+          ? { kind: "external", hostname: externalCheck.hostname, validation: method }
+          : null;
   // Reported by value, so an unchanged choice does not update the form again.
   const reported = JSON.stringify(chosen);
   const complete = choice === "none" || chosen !== null;
@@ -99,8 +134,7 @@ export function InstallDomainFields({
     onChange(JSON.parse(reported) as InstallDomainInput | null, complete);
   }, [reported, complete, onChange]);
 
-  const loading =
-    (choice === "custom" && custom === null) || (choice === "external" && external === null);
+  const loading = (inZone && custom === null) || (choice === "external" && external === null);
 
   return (
     <div className="grid gap-4">
@@ -109,9 +143,10 @@ export function InstallDomainFields({
         description="The install adds a domain once the app runs."
         value={choice}
         onValueChange={(v) => {
-          setChoice(v === "custom" || v === "external" ? v : "none");
+          setChoice(v === "custom" || v === "external" || v === "wildcard" ? v : "none");
           setTouched(false);
           setLoadError(null);
+          setWholeDomain(false);
         }}
         disabled={disabled}
         appearance="card"
@@ -121,17 +156,33 @@ export function InstallDomainFields({
           label="workers.dev only"
           description="The app answers on its workers.dev URL. Domains can be added on its page later."
         />
-        <Radio.Item
-          value="custom"
-          label="Custom domain"
-          description="A hostname in one of this account's domains. Cloudflare creates its DNS record and certificate."
-        />
-        <Radio.Item
-          value="external"
-          label="External domain"
-          description="A hostname whose DNS is managed elsewhere. Its owner adds a CNAME to the gateway."
-        />
+        {wildcard === null ? (
+          <>
+            <Radio.Item
+              value="custom"
+              label="Custom domain"
+              description="A hostname in one of this account's domains. Cloudflare creates its DNS record and certificate."
+            />
+            <Radio.Item
+              value="external"
+              label="External domain"
+              description="A hostname whose DNS is managed elsewhere. Its owner adds a CNAME to the gateway."
+            />
+          </>
+        ) : (
+          <Radio.Item
+            value="wildcard"
+            label="Wildcard domain"
+            description={`A hostname in one of this account's domains, with every name under it. ${wildcard.reason}`}
+          />
+        )}
       </Radio.Group>
+
+      {wildcard !== null && (
+        <Text variant="secondary" size="sm">
+          {choice === "wildcard" ? WILDCARD_EXPLAINER : WILDCARD_EXTERNAL_REFUSAL}
+        </Text>
+      )}
 
       {choice !== "none" && (
         <Text variant="secondary" size="sm">
@@ -149,7 +200,7 @@ export function InstallDomainFields({
         <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={loadError} />
       )}
 
-      {choice === "custom" && custom !== null && custom.zones.length === 0 && (
+      {inZone && custom !== null && custom.zones.length === 0 && (
         <Banner
           variant="alert"
           icon={<WarningIcon weight="fill" />}
@@ -161,26 +212,47 @@ export function InstallDomainFields({
           }
         />
       )}
-      {choice === "custom" && custom !== null && custom.zones.length > 0 && (
+      {inZone && custom !== null && custom.zones.length > 0 && (
         <>
           <Select
             label="Domain"
             placeholder="Choose a domain"
             value={zoneId}
-            onValueChange={(v) => setZoneId(typeof v === "string" ? v : null)}
+            onValueChange={(v) => {
+              setZoneId(typeof v === "string" ? v : null);
+              setWholeDomain(false);
+            }}
             items={Object.fromEntries(custom.zones.map((z) => [z.id, z.name]))}
             disabled={disabled}
           />
           <ZoneHostnameField
             zoneName={zone?.name ?? null}
             value={subdomain}
-            onChange={setSubdomain}
+            onChange={(next) => {
+              setSubdomain(next);
+              setWholeDomain(false);
+            }}
             onBlur={() => setTouched(true)}
-            checked={customCheck}
+            checked={choice === "wildcard" ? wildcardCheck : customCheck}
             error={hostnameError}
             disabled={disabled}
-            hint="If it already has DNS records, the install leaves them; add the domain on the app's page then."
+            wildcard={choice === "wildcard"}
+            hint={
+              choice === "wildcard"
+                ? "If a name already has DNS records or routes, the install leaves them; add the domain on the app's page then."
+                : "If it already has DNS records, the install leaves them; add the domain on the app's page then."
+            }
           />
+          {choice === "wildcard" && zone !== null && wildcardCheck?.ok === true && (
+            <WildcardNotes
+              zoneName={zone.name}
+              base={wildcardCheck.hostname}
+              wholeDomain={wildcardCheck.wholeDomain}
+              agreed={wholeDomain}
+              onAgree={setWholeDomain}
+              disabled={disabled}
+            />
+          )}
         </>
       )}
 

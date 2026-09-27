@@ -16,6 +16,12 @@ import {
   externalDomainStatus,
 } from "../../installs/external-domains.server";
 import { installDomainInput } from "../../installs/install-input";
+import {
+  attachWildcardDomain,
+  checkWildcardRequest,
+  WildcardDomainError,
+  type WildcardPart,
+} from "../../installs/wildcard-domains.server";
 import { domainServesApp } from "../../installs/workers-dev.server";
 import { isNotFound, JobError } from "../errors";
 import {
@@ -31,9 +37,10 @@ import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result"
  * of its own when the `SELF` binding exists:
  *
  * - `attachDomain`: a custom domain (zone read, domain list, DNS read,
- *   attach: 4 requests) or an external domain (zone list, custom hostname
+ *   attach: 4 requests), an external domain (zone list, custom hostname
  *   list and create, gateway bindings read, version patch and deployment,
- *   routing entry: about 7).
+ *   routing entry: about 7), or a wildcard domain (zone read, domain list,
+ *   route list, two DNS reads, two records and two routes: 9).
  * - `waitForExternalDomain`: reads the custom hostname every few seconds
  *   until it and its certificate are active, then asks the app through it
  *   (up to 24 reads and 3 probes).
@@ -77,7 +84,10 @@ export type AttachDomainResult =
       status: ExternalDomainStatus;
     }
   /** Refused before anything was created (the job gives up its claim). */
-  | { kind: "external"; ok: false; hostname: string; reason: string };
+  | { kind: "external"; ok: false; hostname: string; reason: string }
+  | { kind: "wildcard"; ok: true; hostname: string; zoneId: string; parts: WildcardPart[] }
+  /** Refused before anything was created. */
+  | { kind: "wildcard"; ok: false; hostname: string; reason: string };
 
 /** A refusal becomes final: retrying would be refused the same way. */
 function refusal(error: unknown): unknown {
@@ -100,6 +110,40 @@ export function runAttachDomain(
     const api = cf();
     try {
       const { domain } = input;
+      if (domain.kind === "wildcard") {
+        try {
+          const { zone, hostname } = await checkWildcardRequest(api, {
+            zoneId: domain.zoneId,
+            hostname: domain.hostname,
+            ...(domain.wholeDomain === undefined ? {} : { wholeDomain: domain.wholeDomain }),
+          });
+          const attached = await attachWildcardDomain(api, {
+            zone,
+            hostname,
+            workerName: input.workerName,
+          });
+          log.info(
+            `Set up ${hostname} and every name under it for "${input.workerName}": ${attached.parts.map((p) => `${p.created ? "created" : "found"} ${p.name}`).join(", ")}.`,
+          );
+          return {
+            kind: "wildcard",
+            ok: true,
+            hostname,
+            zoneId: attached.zoneId,
+            parts: attached.parts,
+          };
+        } catch (error) {
+          if (error instanceof WildcardDomainError) {
+            return {
+              kind: "wildcard",
+              ok: false,
+              hostname: domain.hostname,
+              reason: error.message,
+            };
+          }
+          throw error;
+        }
+      }
       if (domain.kind === "custom") {
         const zone = await readZone(api, domain.zoneId);
         const checked = checkHostnameInZone(domain.hostname, zone.name);

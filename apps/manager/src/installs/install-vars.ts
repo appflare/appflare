@@ -292,3 +292,25 @@ export function varsUseWorkerUrl(
     (v.type === "json" ? JSON.stringify(v.json) : v.text).includes(WORKER_URL_MARKER),
   );
 }
+
+/** Stands in for the wildcard domain while looking for where it ends up. */
+const WILDCARD_HOSTNAME_MARKER = "wildcard-hostname.appflare.invalid";
+
+/**
+ * Whether any var the Worker gets is filled in with the install's wildcard
+ * domain (`{{wildcardHostname}}`), so assigning or removing that domain
+ * deploys the settings again.
+ */
+export function varsUseWildcardHostname(
+  manifest: VarManifest,
+  userVars: Readonly<Record<string, string>>,
+): boolean {
+  const { vars } = resolveVars(manifest, userVars, {
+    workerUrl: "",
+    workerName: "",
+    wildcardHostname: WILDCARD_HOSTNAME_MARKER,
+  });
+  return vars.some((v) =>
+    (v.type === "json" ? JSON.stringify(v.json) : v.text).includes(WILDCARD_HOSTNAME_MARKER),
+  );
+}

@@ -257,6 +257,16 @@
             }
           ]
         },
+        "wildcardHostname": {
+          "type": "boolean",
+          "description": "`true` when the app needs every name under one hostname (`*.<base>`) rather than one exact hostname, for example a tunnel that gives each session a name of its own. The admin assigns the base (`tunnels.example.com`) in one of the account's domains; the manager then serves the primary Worker on the base and every name under it (a proxied wildcard DNS record and Workers routes). Needs `wildcardReason`. Not for the self-deploying tier."
+        },
+        "wildcardReason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "One short sentence, shown where the admin assigns the hostname, on why the app needs every name under it, for example \"Each tunnel gets its own address under this hostname.\" Required with `wildcardHostname: true`, not allowed otherwise. At most 200 characters."
+        },
         "sandbox": {
           "type": "object",
           "properties": {
@@ -2507,6 +2517,38 @@
               }
             }
           ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "wildcardHostname",
+                "wildcardReason"
+              ],
+              "properties": {
+                "wildcardHostname": {
+                  "const": true
+                },
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            },
+            {
+              "not": {
+                "required": [
+                  "wildcardReason"
+                ]
+              },
+              "properties": {
+                "wildcardHostname": {
+                  "const": false
+                }
+              }
+            }
+          ]
         }
       ]
     },
@@ -2730,7 +2772,7 @@
           },
           "default": {
             "type": "string",
-            "description": "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL (`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and `{{workerName}}` its Worker name, and `{{accountId}}` the id of the Cloudflare account it is installed in, filled in on every install, update and settings change. `{{workerUrl}}` is always the workers.dev address, even when a custom domain is attached. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{workerUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
+            "description": "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL (`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and `{{workerName}}` its Worker name, and `{{accountId}}` the id of the Cloudflare account it is installed in, filled in on every install, update and settings change. `{{workerUrl}}` is always the workers.dev address, even when a custom domain is attached. `{{wildcardHostname}}` becomes the hostname of the app's wildcard domain (for an entry with `install.wildcardHostname`), empty until one is assigned, and follows it when it is assigned or removed. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{workerUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
           },
           "required": {
             "default": false,

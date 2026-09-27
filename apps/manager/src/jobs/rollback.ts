@@ -7,12 +7,7 @@ import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { emailRoutingChangeWarning, emailRoutingOfManifest } from "../installs/email-routing";
-import {
-  CUSTOM_DOMAIN_KIND,
-  CUSTOM_HOSTNAME_KIND,
-  HYPERDRIVE_KINDS,
-  QUEUE_CONSUMER_KIND,
-} from "../installs/resource-kinds";
+import { ADDRESS_KINDS, HYPERDRIVE_KINDS, QUEUE_CONSUMER_KIND } from "../installs/resource-kinds";
 import {
   rollbackFinishMessage,
   rollbackStartMessage,
@@ -282,7 +277,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         .where(
           and(
             eq(resources.install_id, params.installId),
-            inArray(resources.kind, ["cron", CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND]),
+            inArray(resources.kind, ["cron", ...ADDRESS_KINDS]),
             isNull(resources.deleted_at),
           ),
         );

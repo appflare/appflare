@@ -39,10 +39,11 @@ import {
   installVarFields,
   missingRequiredVar,
   settingsVarFields,
+  varsUseWildcardHostname,
   varValueProblem,
 } from "./install-vars";
 import type { StartReconfigureInput } from "./reconfigure-input";
-import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND } from "./resource-kinds";
+import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
 import { catalogOnlyManifest } from "./start-install.server";
 import {
   claim,
@@ -51,6 +52,7 @@ import {
   statusRefusal,
   VersionActionError,
 } from "./versions.server";
+import { wildcardHostnameOf } from "./wildcard-domain-input";
 
 /**
  * Changing an installed app's settings: what the app page's Settings section
@@ -76,10 +78,12 @@ export interface InstallSettings {
   unavailable: string | null;
   /** One per setting the installed version declares, in the catalog's order. */
   fields: SettingField[];
-  /** What `{{workerName}}` and `{{workerUrl}}` stand for in this install. */
+  /** What `{{workerName}}`, `{{workerUrl}}` and `{{wildcardHostname}}` stand for in this install. */
   placeholders: {
     workerName: string;
     workerUrl: string | null;
+    /** The wildcard domain's base hostname; null (filled in empty) without one. */
+    wildcardHostname: string | null;
     /** An app of several Workers: what `{{workerUrl:<name>}}` and `{{workerName:<name>}}` become. */
     entryWorkers?: EntryWorkerPlaceholders;
   };
@@ -255,9 +259,21 @@ export async function readInstallSettingsCore(
         catalog === undefined
           ? undefined
           : entryPlaceholderValues(catalog, install.worker_name, deps.subdomain, workerUrl);
+      const wildcard = await orm
+        .select({ kind: resources.kind, name: resources.name })
+        .from(resources)
+        .where(
+          and(
+            eq(resources.install_id, install.id),
+            eq(resources.kind, WILDCARD_DOMAIN_KIND),
+            isNull(resources.deleted_at),
+            isNull(resources.retained_at),
+          ),
+        );
       return {
         workerName: install.worker_name,
         workerUrl,
+        wildcardHostname: wildcardHostnameOf(wildcard),
         ...(entryWorkers === undefined ? {} : { entryWorkers }),
       };
     })(),
@@ -416,6 +432,57 @@ export async function startReconfigureCore(
       ...(zoneId === null ? {} : { emailRouting: { zoneId } }),
       ...(redeploy && ctx.skipsPreview !== null ? { confirmNoPreview: true } : {}),
       ...(selfDeploying ? { selfDeploying: true, buildConfirmed: true } : {}),
+    },
+  });
+}
+
+/**
+ * After the install's wildcard domain was assigned or removed: when any var
+ * the Worker gets is filled in with it (`{{wildcardHostname}}`), starts the
+ * `reconfigure` job with the stored settings unchanged and `refreshVars`, so
+ * the serving version is deployed again with the new value, as a settings
+ * change deploys it. Returns the job id; null when no var uses it (or the
+ * app is not one Appflare deploys itself), so nothing needs deploying.
+ * Refused like any settings change while another job of the app runs.
+ */
+export async function startVarsRefreshCore(
+  deps: StartReconfigureDeps,
+  installId: string,
+): Promise<{ jobId: string } | null> {
+  const install = await readInstall(deps.db, installId);
+  if (install.build_kind === "self-deploying") return null;
+  const refusal = statusRefusal(install.status);
+  if (refusal !== null) throw new VersionActionError(refusal);
+  const ctx = await settingsContext(deps.db, install, deps.sandboxConnected === true);
+  const signed = parseManifest(install.manifest_json);
+  if (ctx === null || signed === null) return null;
+  const stored = parseStoredVars(install.config_json);
+  // The primary Worker's vars, with the form of the newest revision: the
+  // wildcard domain routes to the primary Worker, which is what reads it.
+  if (!varsUseWildcardHostname({ catalog: ctx.catalog, worker: signed.worker }, stored)) {
+    return null;
+  }
+  if (ctx.problem !== null) throw new VersionActionError(ctx.problem);
+  const jobId = (deps.newId ?? (() => ulid()))();
+  return claim(deps, {
+    installId: install.id,
+    kind: "reconfigure",
+    inputJson: JSON.stringify({
+      installId: install.id,
+      version: install.catalog_version,
+      vars: [],
+      secrets: { set: [], unset: [] },
+      refreshVars: true,
+    }),
+    params: {
+      kind: "reconfigure",
+      jobId,
+      installId: install.id,
+      vars: stored,
+      secrets: { set: {}, unset: [] },
+      refreshVars: true,
+      // Nothing the admin entered changes; the value it follows already did.
+      ...(ctx.skipsPreview !== null ? { confirmNoPreview: true } : {}),
     },
   });
 }

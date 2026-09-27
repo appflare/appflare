@@ -576,6 +576,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const subdomain = await lookupSubdomainPhase(steps);
     const workflowNames = Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name]));
     const placeholders = entryPlaceholders(manifest, params.workerName, subdomain);
+    // The wildcard domain the form asked for, set up once the Worker serves:
+    // `{{wildcardHostname}}` names it from the first upload on.
+    const wildcardHostname = params.domain?.kind === "wildcard" ? params.domain.hostname : null;
     const entryContext: EntryUploadContext = {
       installId: params.installId,
       installWorkerName: params.workerName,
@@ -586,6 +589,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       userVars: params.vars,
       subdomain,
       accountId: steps.accountId(),
+      wildcardHostname,
       placeholders,
       entryNames,
     };
@@ -634,6 +638,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         workerName: params.workerName,
         subdomain,
         accountId: steps.accountId(),
+        wildcardHostname,
         ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });
       for (const warning of vars.warnings) log.warn(warning);
@@ -729,6 +734,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           workerName: params.workerName,
           subdomain,
           accountId: steps.accountId(),
+          wildcardHostname,
           ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
         }).vars,
         secrets: params.secrets,
@@ -737,6 +743,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           workerName: params.workerName,
           workerUrl: workersDevUrl(params.workerName, subdomain),
           accountId: steps.accountId(),
+          wildcardHostname,
         },
       });
     for (const target of d1Databases) {

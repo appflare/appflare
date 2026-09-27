@@ -746,13 +746,22 @@ export function derivedVarProblems(
  * - `{{accountId}}`: the id of the Cloudflare account the app is installed
  *   in, for apps that call the Cloudflare API about their own account (the
  *   Analytics Engine SQL API, for example).
+ * - `{{wildcardHostname}}`: for an app with `install.wildcardHostname`, the
+ *   base hostname of its wildcard domain (`tunnels.example.com`, no scheme);
+ *   empty while none is assigned. Assigning or removing the domain fills the
+ *   Worker's vars in again.
  *
  * Vars are rendered on every install, update and settings change, so they
  * follow the Worker name the admin chose. Whitespace inside the braces is
  * allowed (`{{ workerUrl }}`); anything else in double braces is left as
  * written.
  */
-export const INSTALL_PLACEHOLDERS = ["workerUrl", "workerName", "accountId"] as const;
+export const INSTALL_PLACEHOLDERS = [
+  "workerUrl",
+  "workerName",
+  "accountId",
+  "wildcardHostname",
+] as const;
 export type InstallPlaceholder = (typeof INSTALL_PLACEHOLDERS)[number];
 
 /** The values {@link renderPlaceholders} fills in. */
@@ -765,6 +774,12 @@ export interface PlaceholderValues {
    * a default before the install runs); `{{accountId}}` is then kept.
    */
   accountId?: string | null;
+  /**
+   * The base hostname of the install's wildcard domain; null or empty when
+   * it has none, which fills in an empty string. Absent where it is not
+   * known (a form showing a default); `{{wildcardHostname}}` is then kept.
+   */
+  wildcardHostname?: string | null;
 }
 
 const PLACEHOLDER_PATTERN = new RegExp(
@@ -787,6 +802,8 @@ export function renderPlaceholders(text: string, values: PlaceholderValues): str
         return values.workerUrl ?? match;
       case "accountId":
         return values.accountId ?? match;
+      case "wildcardHostname":
+        return values.wildcardHostname === undefined ? match : (values.wildcardHostname ?? "");
     }
   });
 }
@@ -911,7 +928,10 @@ export const catalogVarSchema = z
           "(`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and " +
           "`{{workerName}}` its Worker name, and `{{accountId}}` the id of the Cloudflare account it " +
           "is installed in, filled in on every install, update and settings change. `{{workerUrl}}` is " +
-          "always the workers.dev address, even when a custom domain is attached. When the app's " +
+          "always the workers.dev address, even when a custom domain is attached. " +
+          "`{{wildcardHostname}}` becomes the hostname of the app's wildcard domain (for an entry with " +
+          "`install.wildcardHostname`), empty until one is assigned, and follows it when it is " +
+          "assigned or removed. When the app's " +
           "wrangler config gives this var a value that is not a string (an array, object, number, or " +
           "boolean), the var reaches the Worker as JSON and `default` must be JSON text, for " +
           'example `["{{workerUrl}}"]`. Without `default`, the form starts with the wrangler config\'s value. ' +
@@ -1389,6 +1409,43 @@ interface InlineConfigTarget {
 }
 
 /** How the packer builds and names the app. */
+/** The longest `install.wildcardReason`. */
+export const WILDCARD_REASON_MAX_LENGTH = 200;
+
+/**
+ * What is wrong with an entry's `wildcardHostname` and `wildcardReason`;
+ * empty when nothing is. The reason goes with the flag and only with it, and
+ * a self-deploying entry's own installer decides where its Workers answer.
+ */
+export function wildcardHostnameProblems(install: {
+  tier: InstallTier;
+  wildcardHostname?: boolean | undefined;
+  wildcardReason?: string | undefined;
+}): Array<{ path: "wildcardHostname" | "wildcardReason"; message: string }> {
+  const problems: Array<{ path: "wildcardHostname" | "wildcardReason"; message: string }> = [];
+  if (install.wildcardHostname === true && install.tier === "self-deploying") {
+    problems.push({
+      path: "wildcardHostname",
+      message:
+        "install.wildcardHostname is not allowed for the self-deploying tier: the app's own installer decides where its Workers answer",
+    });
+  }
+  if (install.wildcardHostname === true && install.wildcardReason === undefined) {
+    problems.push({
+      path: "wildcardReason",
+      message:
+        "install.wildcardHostname needs install.wildcardReason: one short sentence the admin sees on why the app needs every name under its hostname",
+    });
+  }
+  if (install.wildcardHostname !== true && install.wildcardReason !== undefined) {
+    problems.push({
+      path: "wildcardReason",
+      message: "install.wildcardReason is only for an entry with install.wildcardHostname: true",
+    });
+  }
+  return problems;
+}
+
 export const catalogInstallSchema = z
   .object({
     tier: installTierSchema,
@@ -1492,6 +1549,37 @@ export const catalogInstallSchema = z
      * installer deploys the app, and Appflare sets up no routing for it.
      */
     emailRouting: catalogEmailRoutingSchema.optional(),
+    /**
+     * The app needs every name under one hostname (`*.<base>`), not one
+     * exact hostname: a tunnel that gives each session a name of its own,
+     * for example. The admin assigns the base, and the manager serves the
+     * primary Worker on the base and every name under it. Optional for the
+     * same reason as `fixedWorkerName`; requires `wildcardReason`, and a
+     * `self-deploying` entry cannot set it (its installer deploys the app
+     * and decides where it answers).
+     */
+    wildcardHostname: z
+      .boolean()
+      .describe(
+        "`true` when the app needs every name under one hostname (`*.<base>`) rather than one " +
+          "exact hostname, for example a tunnel that gives each session a name of its own. The admin " +
+          "assigns the base (`tunnels.example.com`) in one of the account's domains; the manager then " +
+          "serves the primary Worker on the base and every name under it (a proxied wildcard DNS " +
+          "record and Workers routes). Needs `wildcardReason`. Not for the self-deploying tier.",
+      )
+      .optional(),
+    /** Why the app needs `wildcardHostname`, one short sentence shown where the admin assigns the base. */
+    wildcardReason: z
+      .string()
+      .trim()
+      .min(1)
+      .max(WILDCARD_REASON_MAX_LENGTH)
+      .describe(
+        "One short sentence, shown where the admin assigns the hostname, on why the app needs every " +
+          'name under it, for example "Each tunnel gets its own address under this hostname." ' +
+          `Required with \`wildcardHostname: true\`, not allowed otherwise. At most ${WILDCARD_REASON_MAX_LENGTH} characters.`,
+      )
+      .optional(),
     /**
      * The size of a run in the sandbox Worker (a `sandbox` entry's build or a
      * `self-deploying` entry's installer); see {@link catalogSandboxSchema}.
@@ -1631,6 +1719,9 @@ export const catalogInstallSchema = z
           "install.emailRouting is not allowed for the self-deploying tier: the app's own installer deploys it, and Appflare sets up no Email Routing for it",
       });
     }
+    for (const problem of wildcardHostnameProblems(install)) {
+      ctx.addIssue({ code: "custom", path: [problem.path], message: problem.message });
+    }
   })
   // The refinements do not reach the JSON Schema; `allOf` states them there
   // (no `sandbox`, or a tier that runs in the sandbox Worker; `selfDeploying`
@@ -1702,9 +1793,31 @@ export const catalogInstallSchema = z
           { properties: { tier: { const: "artifact" } } },
         ],
       },
+      // `wildcardReason` exactly when `wildcardHostname` is true, and neither
+      // on a self-deploying entry.
+      {
+        anyOf: [
+          {
+            required: ["wildcardHostname", "wildcardReason"],
+            properties: {
+              wildcardHostname: { const: true },
+              tier: { not: { const: "self-deploying" } },
+            },
+          },
+          {
+            not: { required: ["wildcardReason"] },
+            properties: { wildcardHostname: { const: false } },
+          },
+        ],
+      },
     ],
   });
 export type CatalogInstall = z.infer<typeof catalogInstallSchema>;
+
+/** Whether the app needs every name under one hostname (`install.wildcardHostname`). */
+export function needsWildcardHostname(install: Pick<CatalogInstall, "wildcardHostname">): boolean {
+  return install.wildcardHostname === true;
+}
 
 /** Whether the app must run under its catalog `workerName` (and so installs once). */
 export function hasFixedWorkerName(install: Pick<CatalogInstall, "fixedWorkerName">): boolean {

@@ -52,8 +52,41 @@ export const CUSTOM_DOMAIN_KIND = "domain" as const;
  */
 export const CUSTOM_HOSTNAME_KIND = "custom_hostname" as const;
 
+/**
+ * A wildcard domain: a hostname in one of the account's zones (the base,
+ * `tunnels.example.com`) whose every name serves the Worker, for an app
+ * whose catalog manifest sets `install.wildcardHostname`. Workers custom
+ * domains match one exact hostname, so the base is served through Workers
+ * routes instead (`WILDCARD_PARTS_KINDS`). `name` is the base, `cf_id` the
+ * zone id. It holds no data, so an uninstall always removes it, with its
+ * routes and records, before the Worker.
+ */
+export const WILDCARD_DOMAIN_KIND = "wildcard_domain" as const;
+
+/**
+ * A proxied DNS record Appflare created for a wildcard domain (the base, and
+ * `*.<base>`), so requests for those names reach Cloudflare and its routes.
+ * `name` is the record's name, `cf_id` `<zone id>/<record id>`, `binding`
+ * the wildcard domain's base hostname.
+ */
+export const DNS_RECORD_KIND = "dns_record" as const;
+
+/**
+ * A Workers route Appflare created for a wildcard domain (`<base>/*` and
+ * `*.<base>/*`), sending those names to the Worker. `name` is the pattern,
+ * `cf_id` `<zone id>/<route id>`, `binding` the wildcard domain's base.
+ */
+export const WORKER_ROUTE_KIND = "worker_route" as const;
+
+/** What serves a wildcard domain; removed with it, never kept. */
+export const WILDCARD_PARTS_KINDS = [DNS_RECORD_KIND, WORKER_ROUTE_KIND] as const;
+
 /** The kinds that give an install an address besides workers.dev, oldest first by id. */
-export const ADDRESS_KINDS = [CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND] as const;
+export const ADDRESS_KINDS = [
+  CUSTOM_DOMAIN_KIND,
+  CUSTOM_HOSTNAME_KIND,
+  WILDCARD_DOMAIN_KIND,
+] as const;
 
 /**
  * A queue consumer: the link that delivers a queue's messages to the Worker.

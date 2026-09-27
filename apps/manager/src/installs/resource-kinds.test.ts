@@ -15,6 +15,8 @@ import {
   PIPELINE_STREAM_KIND,
   QUEUE_CONSUMER_KIND,
   R2_CATALOG_KIND,
+  WILDCARD_DOMAIN_KIND,
+  WILDCARD_PARTS_KINDS,
   WORKER_BOUND_KINDS,
 } from "./resource-kinds";
 
@@ -35,6 +37,8 @@ describe("resource kinds", () => {
         (WORKER_BOUND_KINDS as readonly string[]).includes(kind),
         kind === CUSTOM_DOMAIN_KIND,
         kind === CUSTOM_HOSTNAME_KIND,
+        kind === WILDCARD_DOMAIN_KIND,
+        (WILDCARD_PARTS_KINDS as readonly string[]).includes(kind),
         kind === QUEUE_CONSUMER_KIND,
         kind === EMAIL_ROUTE_KIND,
         (HYPERDRIVE_KINDS as readonly string[]).includes(kind),
@@ -55,7 +59,19 @@ describe("resource kinds", () => {
     expect(RESOURCE_KINDS).toContain(CUSTOM_HOSTNAME_KIND);
     expect(resourceKindLabel(CUSTOM_HOSTNAME_KIND)).toBe("External domain");
     expect(isDataResourceKind(CUSTOM_HOSTNAME_KIND)).toBe(false);
-    expect(ADDRESS_KINDS).toEqual([CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND]);
+    expect(ADDRESS_KINDS).toEqual([CUSTOM_DOMAIN_KIND, CUSTOM_HOSTNAME_KIND, WILDCARD_DOMAIN_KIND]);
+  });
+
+  it("records a wildcard domain as an address, and its records and routes apart, never data", () => {
+    expect(RESOURCE_KINDS).toContain(WILDCARD_DOMAIN_KIND);
+    expect(resourceKindLabel(WILDCARD_DOMAIN_KIND)).toBe("Wildcard domain");
+    expect(isDataResourceKind(WILDCARD_DOMAIN_KIND)).toBe(false);
+    for (const kind of WILDCARD_PARTS_KINDS) {
+      expect(RESOURCE_KINDS).toContain(kind);
+      expect(isDataResourceKind(kind)).toBe(false);
+      expect(ADDRESS_KINDS as readonly string[]).not.toContain(kind);
+    }
+    expect(WILDCARD_PARTS_KINDS.map(resourceKindLabel)).toEqual(["DNS record", "Workers route"]);
   });
 
   it("records Hyperdrive configurations as their own kind, never data to keep", () => {

@@ -41,6 +41,7 @@ import {
   removeExternalDomain,
 } from "../installs/external-domains.functions";
 import type { CustomDomainView, InstallDetail } from "../installs/installs.functions";
+import { WILDCARD_EXTERNAL_REFUSAL } from "../installs/wildcard-domain-input";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
@@ -66,9 +67,25 @@ export function ExternalDomainsSection({
   install: InstallDetail;
   isAdmin: boolean;
 }) {
-  const canAdd = isAdmin && install.status === "installed" && install.activeJobId === null;
+  const canAdd =
+    isAdmin &&
+    install.status === "installed" &&
+    install.activeJobId === null &&
+    install.wildcard === null;
   const canRemove =
     isAdmin && install.status !== "uninstalling" && install.status !== "uninstalled";
+  // An app that needs every name under its hostname cannot use one: wildcard
+  // custom hostnames are Enterprise only.
+  if (install.wildcard !== null && install.externalDomains.length === 0) {
+    return (
+      <Section
+        title="External domains"
+        description="Hostnames in DNS outside this account, such as a customer's domain."
+      >
+        <Text variant="secondary">{WILDCARD_EXTERNAL_REFUSAL}</Text>
+      </Section>
+    );
+  }
   return (
     <Section
       title="External domains"

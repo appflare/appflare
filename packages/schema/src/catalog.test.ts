@@ -29,6 +29,7 @@ import {
   MAX_BUILD_COMMANDS,
   MAX_VAR_OPTIONS,
   multilineSecretProblems,
+  needsWildcardHostname,
   renderJsonPlaceholders,
   renderPlaceholders,
   runsInSandbox,
@@ -36,6 +37,7 @@ import {
   sandboxBuildSettings,
   secretValueProblem,
   semverSchema,
+  WILDCARD_REASON_MAX_LENGTH,
 } from "./catalog";
 import { generateVapidPrivateKey } from "./vapid";
 
@@ -290,6 +292,86 @@ describe("catalogManifestSchema", () => {
   });
 });
 
+describe("install.wildcardHostname", () => {
+  const reason = "Each tunnel gets its own address under this hostname.";
+  const withWildcard = (install: Record<string, unknown>) =>
+    catalogManifestSchema.safeParse({
+      ...validManifest,
+      install: { ...validManifest.install, ...install },
+    });
+
+  it("is optional, so manifests without it keep their parsed shape", () => {
+    const parsed = catalogManifestSchema.parse(validManifest);
+    expect("wildcardHostname" in parsed.install).toBe(false);
+    expect("wildcardReason" in parsed.install).toBe(false);
+    expect(needsWildcardHostname(parsed.install)).toBe(false);
+  });
+
+  it("accepts the flag with a reason, trimmed", () => {
+    const parsed = withWildcard({ wildcardHostname: true, wildcardReason: ` ${reason} ` });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.install.wildcardReason).toBe(reason);
+    expect(parsed.data !== undefined && needsWildcardHostname(parsed.data.install)).toBe(true);
+    expect(withWildcard({ wildcardHostname: false }).success).toBe(true);
+  });
+
+  it("needs the reason with the flag, and only with it", () => {
+    for (const install of [
+      { wildcardHostname: true },
+      { wildcardHostname: true, wildcardReason: "  " },
+      { wildcardReason: reason },
+      { wildcardHostname: false, wildcardReason: reason },
+      { wildcardHostname: true, wildcardReason: "x".repeat(WILDCARD_REASON_MAX_LENGTH + 1) },
+    ]) {
+      expect(withWildcard(install).success, JSON.stringify(install)).toBe(false);
+    }
+    const missing = withWildcard({ wildcardHostname: true });
+    expect(missing.error?.issues.map((i) => i.path.join("."))).toContain("install.wildcardReason");
+  });
+
+  it("is refused on a self-deploying entry, whose installer decides where it answers", () => {
+    const result = catalogManifestSchema.safeParse({
+      ...validManifest,
+      install: {
+        ...validManifest.install,
+        tier: "self-deploying",
+        wildcardHostname: true,
+        wildcardReason: reason,
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => i.message).join("\n")).toContain(
+      "install.wildcardHostname is not allowed for the self-deploying tier",
+    );
+  });
+
+  it("states the rules in the JSON Schema, so editors refuse the same manifests", () => {
+    const install = z.toJSONSchema(catalogManifestSchema).properties?.install;
+    const allOf = typeof install === "object" ? (install.allOf ?? []) : [];
+    expect(allOf).toContainEqual({
+      anyOf: [
+        {
+          required: ["wildcardHostname", "wildcardReason"],
+          properties: {
+            wildcardHostname: { const: true },
+            tier: { not: { const: "self-deploying" } },
+          },
+        },
+        {
+          not: { required: ["wildcardReason"] },
+          properties: { wildcardHostname: { const: false } },
+        },
+      ],
+    });
+    const properties = typeof install === "object" ? install.properties : undefined;
+    expect(properties?.wildcardHostname).toMatchObject({ type: "boolean" });
+    expect(properties?.wildcardReason).toMatchObject({
+      type: "string",
+      maxLength: WILDCARD_REASON_MAX_LENGTH,
+    });
+  });
+});
+
 describe("install.emailRouting", () => {
   const withRouting = (emailRouting: unknown) =>
     catalogManifestSchema.safeParse({
@@ -517,6 +599,8 @@ describe("install.sandbox", () => {
             { properties: { tier: { const: "artifact" } } },
           ],
         },
+        // The wildcard hostname rule (see the install.wildcardHostname tests).
+        expect.anything(),
       ],
       properties: {
         sandbox: {
@@ -545,8 +629,24 @@ describe("semverSchema", () => {
 describe("install placeholders", () => {
   const values = { workerUrl: "https://inbox.acme.workers.dev", workerName: "inbox" };
 
-  it("list the account id", () => {
-    expect(INSTALL_PLACEHOLDERS).toEqual(["workerUrl", "workerName", "accountId"]);
+  it("list the account id and the wildcard hostname", () => {
+    expect(INSTALL_PLACEHOLDERS).toEqual([
+      "workerUrl",
+      "workerName",
+      "accountId",
+      "wildcardHostname",
+    ]);
+  });
+
+  it("fill in the wildcard hostname, empty while none is assigned, kept while unknown", () => {
+    expect(
+      renderPlaceholders("{{wildcardHostname}}", { ...values, wildcardHostname: "t.example.com" }),
+    ).toBe("t.example.com");
+    expect(
+      renderPlaceholders("[{{ wildcardHostname }}]", { ...values, wildcardHostname: null }),
+    ).toBe("[]");
+    expect(renderPlaceholders("{{wildcardHostname}}", values)).toBe("{{wildcardHostname}}");
+    expect(hasPlaceholder("{{wildcardHostname}}")).toBe(true);
   });
 
   it("fill in the account id, and keep {{accountId}} while it is unknown", () => {

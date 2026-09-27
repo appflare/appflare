@@ -42,8 +42,9 @@ export interface CreatedResource {
  * Every var the install's Worker gets (`resolveVars`), with `{{workerUrl}}`
  * and `{{workerName}}` filled in from its Worker name and the account's
  * workers.dev subdomain, or from `workerUrl` when the app is reached
- * elsewhere (its custom domain while workers.dev is off), and `{{accountId}}`
- * from the account the job works in. The job logs the warnings: a stored
+ * elsewhere (its custom domain while workers.dev is off), `{{accountId}}`
+ * from the account the job works in, and `{{wildcardHostname}}` from the
+ * install's wildcard domain (empty without one). The job logs the warnings: a stored
  * value the app can no longer read falls back to the default instead of
  * failing the job.
  */
@@ -56,6 +57,11 @@ export function installVars(
     accountId: string;
     workerUrl?: string;
     /**
+     * The base hostname of the install's wildcard domain, for
+     * `{{wildcardHostname}}`; null or absent when it has none (filled in empty).
+     */
+    wildcardHostname?: string | null;
+    /**
      * For an app of several Workers: what `{{workerUrl:<name>}}` and
      * `{{workerName:<name>}}` are filled in with (`entryPlaceholders`).
      */
@@ -66,6 +72,7 @@ export function installVars(
     workerName: worker.workerName,
     workerUrl: worker.workerUrl ?? workersDevUrl(worker.workerName, worker.subdomain),
     accountId: worker.accountId,
+    wildcardHostname: worker.wildcardHostname ?? null,
   };
   const resolved = resolveVars(manifest, userVars, placeholders);
   const entry = worker.entryWorkers;

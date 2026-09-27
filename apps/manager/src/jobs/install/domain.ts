@@ -16,7 +16,10 @@ import {
   ADDRESS_KINDS,
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
+  WILDCARD_DOMAIN_KIND,
 } from "../../installs/resource-kinds";
+import { wildcardPattern } from "../../installs/wildcard-domain-input";
+import { recordWildcardDomain } from "../../installs/wildcard-domains.server";
 import { applyDomainLive, type DomainLiveResult } from "../../installs/workers-dev.server";
 import { errorMessage, type JobSteps } from "../steps";
 import {
@@ -30,7 +33,7 @@ import type { HealthCheck } from "./health";
 
 /**
  * The install job's domain step, for an install whose form asked for a
- * custom domain or an external domain. It runs once the Worker serves and
+ * custom, wildcard or external domain. It runs once the Worker serves and
  * its workers.dev check is done, and never fails the install: the app is
  * installed by then, so a domain that cannot be added is reported in the log
  * (with what to do) and can be added later from the app page.
@@ -39,6 +42,10 @@ import type { HealthCheck } from "./health";
  *   through it (in its own invocation over `SELF`) until its certificate and
  *   record are live. A hostname with DNS records of its own is not replaced
  *   here; the app page asks before replacing them.
+ * - Wildcard domain (an app that needs every name under one hostname): one
+ *   unit call creates the proxied DNS records and Workers routes for the
+ *   base and every name under it, then the base is asked like a custom
+ *   domain. Records or routes that serve something else are not replaced.
  * - External domain: one unit call registers the custom hostname and routes
  *   it through the gateway, then one more waits (in its own invocation over
  *   `SELF`) for the hostname and its certificate to go active, which happens
@@ -49,9 +56,9 @@ import type { HealthCheck } from "./health";
  * Worker's workers.dev URL is turned off (one more call), unless the Worker's
  * settings hold that URL; the app page's switch turns it back on.
  *
- * Each is recorded as the app page records it (kind `domain` or
- * `custom_hostname`); a hostname another app records is refused, and an
- * external domain's name is claimed before anything is created, so a retried
+ * Each is recorded as the app page records it (kind `domain`,
+ * `wildcard_domain` with its records and routes, or `custom_hostname`); a
+ * hostname another app records is refused, and an external domain's name is claimed before anything is created, so a retried
  * step finds its own claim and takes over only what it created.
  */
 
@@ -75,7 +82,7 @@ async function heldElsewhere(orm: Database, installId: string, hostname: string)
 async function recordedId(
   orm: Database,
   installId: string,
-  kind: typeof CUSTOM_DOMAIN_KIND | typeof CUSTOM_HOSTNAME_KIND,
+  kind: typeof CUSTOM_DOMAIN_KIND | typeof CUSTOM_HOSTNAME_KIND | typeof WILDCARD_DOMAIN_KIND,
   hostname: string,
 ): Promise<string | null> {
   const [row] = await orm
@@ -111,7 +118,12 @@ export async function installDomainPhase(
   },
 ): Promise<{ servedBy: string | null }> {
   const { domain } = request;
-  const label = domain.kind === "custom" ? "custom domain" : "external domain";
+  const label =
+    domain.kind === "custom"
+      ? "custom domain"
+      : domain.kind === "wildcard"
+        ? "wildcard domain"
+        : "external domain";
   type Pending = {
     resourceId: string;
     zoneId: string;
@@ -171,6 +183,36 @@ export async function installDomainPhase(
         log,
       );
       const at = new Date(steps.now());
+      if (result.kind === "wildcard") {
+        if (!result.ok) {
+          log.warn(
+            `The app is installed, but ${wildcardPattern(result.hostname)} could not be set up: ${result.reason} Add it on the app's Domains and email tab once that is fixed.`,
+          );
+          return none;
+        }
+        // A retried step finds what it recorded (records and routes in the same batch).
+        let resourceId = await recordedId(
+          orm,
+          request.installId,
+          WILDCARD_DOMAIN_KIND,
+          result.hostname,
+        );
+        if (resourceId === null) {
+          resourceId = await recordWildcardDomain(request.db, {
+            installId: request.installId,
+            attached: { hostname: result.hostname, zoneId: result.zoneId, parts: result.parts },
+            at,
+            newId: () => ulid(at.getTime()),
+          });
+        }
+        if (resourceId === null) {
+          throw new Error("the install is being removed, so the wildcard domain was not recorded");
+        }
+        log.info(
+          `https://${result.hostname} and every name under it (${wildcardPattern(result.hostname)}) now reach the app.`,
+        );
+        return { ...none, custom: { resourceId, hostname: result.hostname } };
+      }
       if (result.kind === "custom") {
         if (!result.ok) {
           log.warn(

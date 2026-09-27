@@ -49,6 +49,8 @@ export interface DnsRecord {
   name: string;
   content?: string;
   proxied?: boolean;
+  /** The record's note, as the dashboard shows it; null or absent when it has none. */
+  comment?: string | null;
 }
 
 /** One entry of `GET /zones/{zone_id}/workers/routes`. */

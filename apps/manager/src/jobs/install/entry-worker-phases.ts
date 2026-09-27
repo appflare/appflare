@@ -63,6 +63,8 @@ export interface EntryUploadContext {
   accountId: string;
   /** The app's address, for `{{workerUrl}}`; its workers.dev URL when unset. */
   appUrl?: string;
+  /** The install's wildcard domain, for `{{wildcardHostname}}`; null or absent without one. */
+  wildcardHostname?: string | null;
   placeholders: EntryWorkerPlaceholders | undefined;
   /** Each Worker's name within the entry to its installed name. */
   entryNames: Readonly<Record<string, string>>;
@@ -79,6 +81,7 @@ function workerMetadata(
     subdomain: ctx.subdomain,
     accountId: ctx.accountId,
     ...(ctx.appUrl === undefined ? {} : { workerUrl: ctx.appUrl }),
+    wildcardHostname: ctx.wildcardHostname ?? null,
     ...(ctx.placeholders === undefined ? {} : { entryWorkers: ctx.placeholders }),
   });
   const metadata = buildScriptMetadata({

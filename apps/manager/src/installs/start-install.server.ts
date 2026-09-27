@@ -10,6 +10,7 @@ import {
   indexAppArtifact,
   isOptionalSecret,
   isSeedOnly,
+  needsWildcardHostname,
   secretValueProblem,
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
@@ -60,6 +61,7 @@ import {
   varValueProblem,
 } from "./install-vars";
 import { ADDRESS_KINDS } from "./resource-kinds";
+import { WILDCARD_EXTERNAL_REFUSAL } from "./wildcard-domain-input";
 
 /**
  * Starting an install: validate the form against the signed catalog manifest,
@@ -248,7 +250,23 @@ export function resolveInstallInput(
     throw new StartInstallError(`${catalog.name} does not receive email; it takes no zone.`);
   }
   let domain: InstallDomainInput | undefined;
-  if (input.domain?.kind === "custom") {
+  // An app that needs every name under its hostname gets a wildcard domain
+  // or none; any other app gets one exact hostname.
+  const wildcard = needsWildcardHostname(catalog.install);
+  if (wildcard && input.domain?.kind === "external") {
+    throw new StartInstallError(WILDCARD_EXTERNAL_REFUSAL);
+  }
+  if (wildcard && input.domain?.kind === "custom") {
+    throw new StartInstallError(
+      `${catalog.name} needs every name under its hostname. Choose a wildcard domain.`,
+    );
+  }
+  if (!wildcard && input.domain?.kind === "wildcard") {
+    throw new StartInstallError(
+      `${catalog.name} answers on exact hostnames; choose a custom domain instead.`,
+    );
+  }
+  if (input.domain?.kind === "custom" || input.domain?.kind === "wildcard") {
     // Lower case and Punycode, as Cloudflare and the duplicate checks see it.
     const typed = input.domain.hostname.trim().toLowerCase().replace(/\.$/, "");
     let hostname: string;

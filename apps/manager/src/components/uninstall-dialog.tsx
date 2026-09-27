@@ -11,6 +11,7 @@ import {
 } from "../installs/resource-kinds";
 import type { ResourceUsage } from "../installs/resource-usage.server";
 import { getResourceUsage, retryUninstall, startUninstall } from "../installs/uninstall.functions";
+import { domainLabel } from "../installs/wildcard-domain-input";
 import { ConfirmDialog } from "./confirm-dialog";
 import { formatBytes, resourceKindLabel } from "./format";
 import { useJobStarted } from "./job-started";
@@ -32,7 +33,13 @@ function workerBoundSummary(install: InstallDetail): string[] {
   for (const r of byKind("worker")) {
     if (r.name !== install.workerName) out.push(`the Worker "${r.name}"`);
   }
-  for (const d of install.domains) out.push(`the custom domain ${d.hostname}`);
+  for (const d of install.domains) {
+    out.push(
+      d.wildcard
+        ? `the wildcard domain ${domainLabel(d)} with its DNS records and routes`
+        : `the custom domain ${d.hostname}`,
+    );
+  }
   for (const d of install.externalDomains) out.push(`the external domain ${d.hostname}`);
   for (const r of byKind("subdomain")) out.push(`the route ${r.name}`);
   for (const r of byKind(QUEUE_CONSUMER_KIND)) out.push(`the consumer of the queue ${r.name}`);
@@ -184,7 +191,7 @@ export function UninstallDialog({
           <ul className="grid gap-1">
             {[...install.domains, ...install.externalDomains].map((d) => (
               <li key={d.id} className="font-mono text-[0.9em]">
-                {d.hostname}
+                {domainLabel(d)}
               </li>
             ))}
           </ul>

@@ -1,5 +1,6 @@
 import { InputGroup } from "@cloudflare/kumo";
 import { type HostnameCheck, ROOT_DOMAIN_PLACEHOLDER } from "../installs/custom-domain-input";
+import { wildcardPattern } from "../installs/wildcard-domain-input";
 
 /**
  * A hostname in one of the account's zones, entered as the Cloudflare
@@ -17,6 +18,7 @@ export function ZoneHostnameField({
   error,
   disabled,
   hint,
+  wildcard,
 }: {
   /** The chosen zone; null while none is chosen (the field is then disabled). */
   zoneName: string | null;
@@ -28,12 +30,20 @@ export function ZoneHostnameField({
   disabled: boolean;
   /** A sentence after the hostname the field means. */
   hint?: string;
+  /** The app answers on every name under the hostname too (a wildcard domain). */
+  wildcard?: boolean;
 }) {
+  const answers =
+    checked?.ok === true
+      ? wildcard === true
+        ? `The app answers at https://${checked.hostname} and on every name under it (${wildcardPattern(checked.hostname)}).`
+        : `The app answers at https://${checked.hostname}.`
+      : null;
   const description =
     zoneName === null
       ? "Choose a domain first."
-      : checked?.ok === true
-        ? `The app answers at https://${checked.hostname}.${hint === undefined ? "" : ` ${hint}`}`
+      : answers !== null
+        ? `${answers}${hint === undefined ? "" : ` ${hint}`}`
         : `A name under ${zoneName}, or nothing for ${zoneName} itself.`;
   return (
     <InputGroup

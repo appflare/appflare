@@ -75,8 +75,9 @@ export function appBaseUrl(input: {
 }
 
 /**
- * The hostnames of the custom domains and external domains among recorded
- * resources: the live ones (a request through them reached the app) first,
+ * The hostnames of the custom, external and wildcard domains among recorded
+ * resources (a wildcard domain by its base hostname, which the app answers
+ * on too): the live ones (a request through them reached the app) first,
  * then the others, each oldest first. Their ids end with a ULID, so sorting
  * by id is sorting by when they were added. Rows read without `live_at`
  * all count the same.
@@ -86,7 +87,9 @@ export function domainHostnames(
 ): string[] {
   const rank = (r: { live_at?: Date | number | null }) => (r.live_at != null ? 0 : 1);
   return rows
-    .filter((r) => r.kind === "domain" || r.kind === "custom_hostname")
+    .filter(
+      (r) => r.kind === "domain" || r.kind === "custom_hostname" || r.kind === "wildcard_domain",
+    )
     .sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((r) => r.name);
 }

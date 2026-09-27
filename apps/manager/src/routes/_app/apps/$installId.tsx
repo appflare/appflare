@@ -24,6 +24,7 @@ import { CatalogSourceBadge } from "../../../components/catalog-source-badge";
 import { CustomDomainsSection } from "../../../components/custom-domains-section";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
+import { DomainName, DomainNameList } from "../../../components/domain-name";
 import { ExternalDomainsSection } from "../../../components/external-domains-section";
 import { jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { InstallHealth } from "../../../components/install-health";
@@ -280,20 +281,14 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
       {isAdmin ? (
         <CustomDomainsSection install={install} />
       ) : (
-        <Section title="Custom domains" titleAction={<DocsLink topic="customDomains" />}>
+        <Section
+          title={install.wildcard === null ? "Custom domains" : "Wildcard domain"}
+          titleAction={<DocsLink topic="customDomains" />}
+        >
           {install.domains.length === 0 ? (
             <Text variant="secondary">The app is served on its workers.dev URL only.</Text>
           ) : (
-            <ul className="grid gap-1">
-              {install.domains.map((d) => (
-                <li key={d.id}>
-                  <Link href={d.url} target="_blank" rel="noopener noreferrer">
-                    {d.hostname}
-                    <Link.ExternalIcon />
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            <DomainNameList domains={install.domains} />
           )}
         </Section>
       )}
@@ -662,10 +657,7 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
                   </Link>
                 )}
                 {install.domains.map((d) => (
-                  <Link key={d.id} href={d.url} target="_blank" rel="noopener noreferrer">
-                    {d.url}
-                    <Link.ExternalIcon />
-                  </Link>
+                  <DomainName key={d.id} domain={d} showUrl />
                 ))}
                 {!install.workersDevEnabled && (
                   <Text as="span" variant="secondary" size="sm">

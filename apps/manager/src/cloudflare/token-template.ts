@@ -46,7 +46,12 @@ export interface PermissionGroup {
 /** The settings feature that puts the manager behind Cloudflare Access. */
 export const ACCESS_FEATURE = "Protect with Cloudflare Access";
 
-/** The install page feature that serves an app on a hostname in one of the account's zones. */
+/**
+ * The install page feature that serves an app on a hostname in one of the
+ * account's zones, and an app that needs every name under one hostname on a
+ * wildcard domain there (proxied DNS records and Workers routes, since
+ * custom domains match one exact name). Both need the same three groups.
+ */
 export const CUSTOM_DOMAINS_FEATURE = "Custom domains";
 
 /**
@@ -128,9 +133,11 @@ export const TOKEN_PERMISSION_GROUPS = [
   // List the zones a custom domain's hostname can be in.
   { key: "zone", type: "read", label: "Zone", onlyFor: CUSTOM_DOMAINS_FEATURE },
   // Read the DNS records a new custom domain would replace, and replace them
-  // when the admin agrees.
+  // when the admin agrees; create and delete a wildcard domain's proxied
+  // records (its base and every name under it).
   { key: "dns", type: "edit", label: "DNS", onlyFor: CUSTOM_DOMAINS_FEATURE },
-  // What Cloudflare requires on a zone to attach a Worker to one of its hostnames.
+  // What Cloudflare requires on a zone to attach a Worker to one of its
+  // hostnames; also creates and deletes a wildcard domain's two Workers routes.
   { key: "workers_routes", type: "edit", label: "Workers Routes", onlyFor: CUSTOM_DOMAINS_FEATURE },
   // Create and remove custom hostnames and set the fallback origin on the
   // gateway zone (Cloudflare for SaaS). Key `ssl_and_certificates` is in the

@@ -6,7 +6,7 @@ import {
   type FetchLike,
   type Zone,
 } from "@appflare/cf-api";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import {
   CUSTOM_DOMAINS_FEATURE,
@@ -17,7 +17,8 @@ import { createDb } from "../db/client";
 import { type HealthStatus, installs, resources } from "../db/schema";
 import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
 import { checkHostnameInZone } from "./custom-domain-input";
-import { CUSTOM_DOMAIN_KIND } from "./resource-kinds";
+import { CUSTOM_DOMAIN_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
+import { wildcardOfManifest } from "./wildcard-domain-input";
 import {
   applyDomainLive,
   beforeDomainRemoval,
@@ -210,6 +211,13 @@ export async function addCustomDomainCore(
   if (install.status !== "installed") {
     throw new CustomDomainError(
       `A custom domain can be added only to an installed app; this one is ${install.status}.`,
+    );
+  }
+
+  // Such an app answers on every name under a base; one exact name would not do.
+  if (wildcardOfManifest(install.manifestJson) !== null) {
+    throw new CustomDomainError(
+      "This app needs every name under its hostname. Add a wildcard domain instead.",
     );
   }
 
@@ -406,7 +414,17 @@ async function readInstall(db: D1Database, installId: string): Promise<InstallRo
   return row;
 }
 
-async function readDomain(db: D1Database, request: { installId: string; resourceId: string }) {
+/**
+ * A custom domain of the install, or (with `wildcard`) its wildcard domain,
+ * which is checked the same way: through its base hostname.
+ */
+async function readDomain(
+  db: D1Database,
+  request: { installId: string; resourceId: string },
+  opts: { wildcard?: boolean } = {},
+) {
+  const kinds =
+    opts.wildcard === true ? [CUSTOM_DOMAIN_KIND, WILDCARD_DOMAIN_KIND] : [CUSTOM_DOMAIN_KIND];
   const [row] = await createDb(db)
     .select()
     .from(resources)
@@ -414,7 +432,7 @@ async function readDomain(db: D1Database, request: { installId: string; resource
       and(
         eq(resources.id, request.resourceId),
         eq(resources.install_id, request.installId),
-        eq(resources.kind, CUSTOM_DOMAIN_KIND),
+        inArray(resources.kind, kinds),
         isNull(resources.deleted_at),
       ),
     )
@@ -515,8 +533,8 @@ export interface CustomDomainCheck {
 }
 
 /**
- * "Check" next to a custom domain: one GET of `https://<hostname><health
- * path>`, the same probe as the install's "Check now". The install's health
+ * "Check" next to a custom domain (or a wildcard domain, through its base
+ * hostname): one GET of `https://<hostname><health path>`, the same probe as the install's "Check now". The install's health
  * stays the check of its main address, and a new domain may take a while
  * before its certificate and DNS record are live. When the app answers, the
  * domain is recorded as live (an address the app is opened at) and, with
@@ -538,7 +556,7 @@ export async function checkCustomDomainCore(
       `Only an installed app can be checked; this one is ${install.status}.`,
     );
   }
-  const domain = await readDomain(deps.db, request);
+  const domain = await readDomain(deps.db, request, { wildcard: true });
   const check = healthCheckOfManifest(install.manifestJson);
   const url = `https://${domain.name}${check.path}`;
   const probe = await probeHealth(deps.fetch, url);

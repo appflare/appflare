@@ -436,7 +436,15 @@ export function InstallForm({
             {/* The zone and gateway reads are admin-only calls; the installer of a
                 self-deploying app decides where its Workers answer. */}
             {installer === null && canInstall && blockedReason === null && (
-              <InstallDomainFields disabled={disabled} onChange={onDomainChange} />
+              <InstallDomainFields
+                disabled={disabled}
+                onChange={onDomainChange}
+                wildcard={
+                  catalog.install.wildcardHostname === true
+                    ? { reason: catalog.install.wildcardReason ?? "" }
+                    : null
+                }
+              />
             )}
 
             {confirmsCost !== null && (

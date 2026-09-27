@@ -60,6 +60,9 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
   ratelimit: "Rate limit",
   domain: "Custom domain",
   custom_hostname: "External domain",
+  wildcard_domain: "Wildcard domain",
+  dns_record: "DNS record",
+  worker_route: "Workers route",
   email_route: "Email route",
 };
 

@@ -726,6 +726,65 @@ describe("startInstallCore", () => {
       expect(h.created).toEqual([]);
     });
 
+    describe("for an app that needs every name under its hostname", () => {
+      const wildcardApp = {
+        catalog: {
+          install: {
+            tier: "artifact" as const,
+            packageManager: "pnpm" as const,
+            wranglerConfig: "wrangler.jsonc",
+            workerName: "cut",
+            wildcardHostname: true,
+            wildcardReason: "Each tunnel gets its own address.",
+          },
+        },
+      };
+
+      it("passes a wildcard domain to the job, lower-cased", async () => {
+        const h = harness(await buildArtifactFixture(wildcardApp));
+        await startInstallCore(
+          h.deps,
+          input({
+            domain: { kind: "wildcard", zoneId: "z1", hostname: "Tunnels.Example.com" },
+          }),
+        );
+        expect(h.created[0]?.params.domain).toEqual({
+          kind: "wildcard",
+          zoneId: "z1",
+          hostname: "tunnels.example.com",
+        });
+      });
+
+      it("refuses one exact hostname, and an external domain with the Enterprise reason", async () => {
+        const h = harness(await buildArtifactFixture(wildcardApp));
+        await expect(
+          startInstallCore(
+            h.deps,
+            input({ domain: { kind: "custom", zoneId: "z1", hostname: "t.example.com" } }),
+          ),
+        ).rejects.toThrow("Choose a wildcard domain");
+        await expect(
+          startInstallCore(
+            h.deps,
+            input({
+              domain: { kind: "external", hostname: "t.customer.test", validation: "http" },
+            }),
+          ),
+        ).rejects.toThrow("on the Enterprise plan only");
+        expect(h.created).toEqual([]);
+      });
+
+      it("refuses a wildcard domain for an app that answers on exact hostnames", async () => {
+        const h = harness(await buildArtifactFixture());
+        await expect(
+          startInstallCore(
+            h.deps,
+            input({ domain: { kind: "wildcard", zoneId: "z1", hostname: "t.example.com" } }),
+          ),
+        ).rejects.toThrow("choose a custom domain instead");
+      });
+    });
+
     it("refuses a hostname that is not one", async () => {
       const f = await buildArtifactFixture();
       const h = harness(f);

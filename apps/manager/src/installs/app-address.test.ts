@@ -78,4 +78,26 @@ describe("appAddress", () => {
       "https://first.customer.test",
     );
   });
+
+  it("opens a live wildcard domain at its base, after custom domains and before external ones", () => {
+    const wildcard: AddressDomain = {
+      id: "i1:wildcard_domain:01C",
+      kind: "wildcard_domain",
+      name: "tunnels.example.com",
+      live: true,
+    };
+    expect(
+      appAddress(
+        input({
+          workersDevEnabled: false,
+          domains: [external("01A", "go.customer.test"), wildcard],
+        }),
+      ),
+    ).toBe("https://tunnels.example.com");
+    expect(
+      appAddress(
+        input({ workersDevEnabled: false, domains: [wildcard, custom("01D", "a.example.com")] }),
+      ),
+    ).toBe("https://a.example.com");
+  });
 });

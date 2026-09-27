@@ -53,9 +53,11 @@ import {
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
   EMAIL_ROUTE_KIND,
+  WILDCARD_DOMAIN_KIND,
 } from "./resource-kinds";
 import { REPOSITORY_SLUG_PREFIX } from "./source-review";
 import { catalogOnlyManifest, StartInstallError, startInstallCore } from "./start-install.server";
+import { wildcardHostnameOf, wildcardOfManifest } from "./wildcard-domain-input";
 import { domainHostnames, primaryDomain, type WorkersDevChoice } from "./workers-dev";
 import { settingsUseWorkerUrl } from "./workers-dev.server";
 
@@ -193,8 +195,19 @@ function addressInput(
   };
 }
 
-function domainView(r: { id: string; name: string; live_at: Date | null }): CustomDomainView {
-  return { id: r.id, hostname: r.name, url: `https://${r.name}`, live: r.live_at !== null };
+function domainView(r: {
+  id: string;
+  kind: string;
+  name: string;
+  live_at: Date | null;
+}): CustomDomainView {
+  return {
+    id: r.id,
+    hostname: r.name,
+    url: `https://${r.name}`,
+    live: r.live_at !== null,
+    wildcard: r.kind === WILDCARD_DOMAIN_KIND,
+  };
 }
 
 function isAddressKind(kind: string): boolean {
@@ -309,15 +322,21 @@ export interface ResourceView {
   managedByApp: boolean;
 }
 
-/** A custom domain of the install (a `domain` resource). */
+/** A custom domain of the install (a `domain` resource), or its wildcard domain. */
 export interface CustomDomainView {
   /** The `resources` row id. */
   id: string;
+  /** The hostname; for a wildcard domain, its base. */
   hostname: string;
   /** `https://<hostname>` */
   url: string;
   /** A request through it has reached the app. */
   live: boolean;
+  /**
+   * A wildcard domain (`wildcard_domain`): the app answers on the base and on
+   * every name under it, and is shown as `*.<base>`.
+   */
+  wildcard: boolean;
 }
 
 export interface InstallDetail extends InstallRow {
@@ -347,8 +366,16 @@ export interface InstallDetail extends InstallRow {
   /** Resources an uninstall kept in the account; they remain until deleted by hand. */
   retained: ResourceView[];
   secretNames: string[];
-  /** Custom domains that serve the Worker, in the order they were added. */
+  /**
+   * Custom domains that serve the Worker, and its wildcard domain, in the
+   * order they were added.
+   */
   domains: CustomDomainView[];
+  /**
+   * The app needs every name under one hostname (its manifest's
+   * `install.wildcardHostname`), with the catalog's reason; null otherwise.
+   */
+  wildcard: { reason: string } | null;
   /** External domains (`custom_hostname` resources), served through the gateway. */
   externalDomains: CustomDomainView[];
   /** What the install set up in Email Routing, in the order it was set up. */
@@ -458,6 +485,7 @@ export const getInstall = createServerFn({ method: "GET" })
       workerUrl: primaryUrl,
       workerName: row.worker_name,
       accountId: account,
+      wildcardHostname: wildcardHostnameOf(resourceRows.filter((r) => r.retained_at === null)),
     };
     const addressDomains = resourceRows
       .filter((r) => r.retained_at === null && isAddressKind(r.kind))
@@ -568,7 +596,10 @@ export const getInstall = createServerFn({ method: "GET" })
       resources: live.filter((r) => r.kind !== "secret" && r.kind !== EMAIL_ROUTE_KIND).map(view),
       retained: resourceRows.filter((r) => r.retained_at !== null).map(view),
       secretNames: live.filter((r) => r.kind === "secret").map((r) => r.name),
-      domains: live.filter((r) => r.kind === CUSTOM_DOMAIN_KIND).map(domainView),
+      domains: live
+        .filter((r) => r.kind === CUSTOM_DOMAIN_KIND || r.kind === WILDCARD_DOMAIN_KIND)
+        .map(domainView),
+      wildcard: wildcardOfManifest(row.manifest_json),
       externalDomains: live.filter((r) => r.kind === CUSTOM_HOSTNAME_KIND).map(domainView),
       emailRoutes: emailRouteViews(
         live

@@ -29,8 +29,11 @@ import {
   HYPERDRIVE_KINDS,
   PIPELINE_KINDS,
   R2_CATALOG_KIND,
+  WILDCARD_DOMAIN_KIND,
+  WILDCARD_PARTS_KINDS,
   WORKER_BOUND_KINDS,
 } from "../installs/resource-kinds";
+import { detachWildcardParts, wildcardDetachMessage } from "../installs/wildcard-domains.server";
 import { sandboxBuildOfInput } from "../sandbox/progress";
 import { cleanupSandboxBuildsPhase } from "./install/artifact-source";
 import { type EmailRouteRecord, removeEmailRoutesPhase } from "./install/email-routing";
@@ -61,7 +64,9 @@ import { R2_PAGE_MAX_OBJECTS } from "./units/units";
  * its routing entry, then the gateway's binding to the Worker, so the
  * gateway never binds a deleted Worker), then the install's custom domains
  * (always; they hold no data, and Cloudflare does not document that deleting
- * a Worker removes them, so they get calls of their own), then its queue
+ * a Worker removes them, so they get calls of their own), then its wildcard
+ * domain (its Workers routes, then its DNS records, which are zone objects
+ * that outlive the Worker), then its queue
  * consumers (no data
  * either; each is removed before the Worker it points at and before the queue
  * it reads), then the Worker (with `?force=true`, which also removes its cron
@@ -183,6 +188,17 @@ interface DomainTarget {
   cfId: string | null;
 }
 
+/**
+ * A recorded wildcard domain (`hostname` is its base) with its records and
+ * routes; `id` is null for records and routes whose wildcard domain row is
+ * gone (removed together, so only a hand-edited database has them).
+ */
+interface WildcardTarget {
+  id: string | null;
+  hostname: string;
+  parts: Array<{ id: string; kind: string; name: string; cfId: string | null }>;
+}
+
 /** A recorded external domain: `cfId` is `<zone id>/<custom hostname id>`. */
 interface ExternalDomainTarget {
   id: string;
@@ -240,6 +256,22 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       const domains: DomainTarget[] = live
         .filter((r) => r.kind === CUSTOM_DOMAIN_KIND)
         .map((r) => ({ id: r.id, hostname: r.name, cfId: r.cf_id }));
+      // Nor are wildcard domains, with their records and routes.
+      const wildcardParts = live.filter((r) =>
+        (WILDCARD_PARTS_KINDS as readonly string[]).includes(r.kind),
+      );
+      const wildcardDomains: WildcardTarget[] = live
+        .filter((r) => r.kind === WILDCARD_DOMAIN_KIND)
+        .map((r) => ({ id: r.id, hostname: r.name, parts: [] }));
+      for (const part of wildcardParts) {
+        const base = part.binding ?? part.name;
+        let target = wildcardDomains.find((d) => d.hostname === base);
+        if (target === undefined) {
+          target = { id: null, hostname: base, parts: [] };
+          wildcardDomains.push(target);
+        }
+        target.parts.push({ id: part.id, kind: part.kind, name: part.name, cfId: part.cf_id });
+      }
       // Nor are external domains. The gateway's bindings to the Worker are
       // read from every external domain the install ever had, so a run that
       // removed the domains but not the binding removes it when retried.
@@ -349,6 +381,9 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           (externalDomains.length > 0
             ? `Removing external domains: ${externalDomains.map((d) => d.hostname).join(", ")}. `
             : "") +
+          (wildcardDomains.length > 0
+            ? `Removing wildcard domains: ${wildcardDomains.map((d) => `*.${d.hostname}`).join(", ")}. `
+            : "") +
           (hyperdrive.length > 0
             ? `Removing Hyperdrive configurations: ${hyperdrive.map((h) => h.name).join(", ")} (the databases stay as they are). `
             : "") +
@@ -370,6 +405,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         targets: dataTargets,
         pipelines,
         domains,
+        wildcardDomains,
         externalDomains,
         gatewayBindings,
         consumers,
@@ -460,6 +496,28 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           .update(resources)
           .set({ deleted_at: new Date(now()) })
           .where(eq(resources.id, domain.id));
+        return {};
+      });
+    }
+
+    // A run started before wildcard domains existed carries none.
+    for (const domain of started.wildcardDomains ?? []) {
+      await run(`remove wildcard domain ${domain.hostname}`, async ({ log, cf, orm }) => {
+        let done: Awaited<ReturnType<typeof detachWildcardParts>>;
+        try {
+          done = await detachWildcardParts(cf(), domain.parts);
+        } catch (error) {
+          if (!isPermissionError(error)) throw error;
+          throw new JobError(
+            `Cloudflare refused to remove the wildcard domain *.${domain.hostname} (${errorMessage(error)}). The token needs Workers Routes: Edit and DNS: Edit on its zone; add them to the token and retry the uninstall`,
+          );
+        }
+        log.info(wildcardDetachMessage(domain.hostname, done));
+        const ids = [...(domain.id === null ? [] : [domain.id]), ...domain.parts.map((p) => p.id)];
+        await orm
+          .update(resources)
+          .set({ deleted_at: new Date(now()) })
+          .where(inArray(resources.id, ids));
         return {};
       });
     }

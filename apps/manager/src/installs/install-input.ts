@@ -28,8 +28,10 @@ const MAX_VALUE_LENGTH = 4096;
 /**
  * The address an install gets besides workers.dev, added by the install job
  * once the Worker serves: a custom domain (a hostname in one of the
- * account's zones) or an external domain (a hostname in someone else's DNS,
- * through the gateway).
+ * account's zones), an external domain (a hostname in someone else's DNS,
+ * through the gateway), or, for an app whose manifest sets
+ * `install.wildcardHostname`, a wildcard domain (a base hostname in one of
+ * the account's zones, served with every name under it).
  */
 export const installDomainInput = z.discriminatedUnion("kind", [
   z.object({
@@ -41,6 +43,13 @@ export const installDomainInput = z.discriminatedUnion("kind", [
     kind: z.literal("external"),
     hostname: z.string().min(1).max(300),
     validation: z.enum(VALIDATION_METHODS),
+  }),
+  z.object({
+    kind: z.literal("wildcard"),
+    zoneId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Choose a domain."),
+    hostname: z.string().min(1).max(300),
+    /** The admin agreed that the base is the zone itself (every name in it). */
+    wholeDomain: z.boolean().optional(),
   }),
 ]);
 export type InstallDomainInput = z.infer<typeof installDomainInput>;

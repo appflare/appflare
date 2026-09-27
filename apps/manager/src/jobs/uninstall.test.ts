@@ -65,6 +65,8 @@ interface World {
   endless?: boolean;
   /** Worker consumers per queue id. */
   consumers: Map<string, Array<{ consumer_id: string; script_name?: string; service?: string }>>;
+  /** Zone objects of wildcard domains: `<zone>/routes/<id>` and `<zone>/dns_records/<id>`. */
+  zoneObjects: Set<string>;
 }
 
 function fakeWorld(over: Partial<World> = {}) {
@@ -84,6 +86,7 @@ function fakeWorld(over: Partial<World> = {}) {
     failOnce: new Map(),
     stuck: new Set(),
     consumers: new Map(),
+    zoneObjects: new Set(),
     ...over,
   };
   const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
@@ -131,6 +134,11 @@ function fakeWorld(over: Partial<World> = {}) {
       if (at === -1) return gone();
       list.splice(at, 1);
       return ok(null);
+    }
+    m = /^DELETE \/client\/v4\/zones\/([^/]+)\/(workers\/routes|dns_records)\/([^/]+)$/.exec(key);
+    if (m?.[1] && m[2] && m[3]) {
+      const object = `${m[1]}/${m[2] === "dns_records" ? "dns_records" : "routes"}/${m[3]}`;
+      return world.zoneObjects.delete(object) ? ok({ id: m[3] }) : gone();
     }
     m = /^DELETE \/queues\/([^/]+)$/.exec(key);
     if (m?.[1]) return world.queues.delete(m[1]) ? ok(null) : gone();
@@ -351,6 +359,73 @@ async function seedDomains(domains: Array<{ id: string; hostname: string; cfId: 
       .run();
   }
 }
+
+describe("uninstall job: wildcard domains", () => {
+  async function seedWildcard() {
+    const r = (id: string, kind: string, binding: string | null, name: string, cfId: string) =>
+      env.DB.prepare(
+        `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+         VALUES (?1, 'i1', ?2, ?3, ?4, ?5, 1)`,
+      ).bind(id, kind, binding, name, cfId);
+    const base = "tunnels.example.com";
+    await env.DB.batch([
+      r("wc", "wildcard_domain", null, base, "z1"),
+      r("wc-rec-1", "dns_record", base, base, "z1/rec-1"),
+      r("wc-rec-2", "dns_record", base, `*.${base}`, "z1/rec-2"),
+      r("wc-route-1", "worker_route", base, `${base}/*`, "z1/route-1"),
+      r("wc-route-2", "worker_route", base, `*.${base}/*`, "z1/route-2"),
+    ]);
+  }
+
+  it("removes the routes, then the records, before the Worker", async () => {
+    await seedInstall();
+    await seedWildcard();
+    const fake = fakeWorld({
+      zoneObjects: new Set([
+        "z1/dns_records/rec-1",
+        "z1/dns_records/rec-2",
+        "z1/routes/route-1",
+        "z1/routes/route-2",
+      ]),
+    });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(r.step.names.slice(0, 3)).toEqual([
+      "start",
+      "remove wildcard domain tunnels.example.com",
+      "delete Worker cut",
+    ]);
+    const calls = fake.world.calls.filter((c) => c.startsWith("DELETE /client/v4/zones/"));
+    expect(calls).toEqual([
+      "DELETE /client/v4/zones/z1/workers/routes/route-1",
+      "DELETE /client/v4/zones/z1/workers/routes/route-2",
+      "DELETE /client/v4/zones/z1/dns_records/rec-1",
+      "DELETE /client/v4/zones/z1/dns_records/rec-2",
+    ]);
+    expect(fake.world.calls.indexOf(calls[3] ?? "")).toBeLessThan(
+      fake.world.calls.indexOf("DELETE /workers/scripts/cut?force=true"),
+    );
+    expect(fake.world.zoneObjects.size).toBe(0);
+    for (const id of ["wc", "wc-rec-1", "wc-rec-2", "wc-route-1", "wc-route-2"]) {
+      expect(r.state(id), id).toBe("deleted");
+    }
+    expect(r.logs[0]?.message).toContain("Removing wildcard domains: *.tunnels.example.com.");
+  });
+
+  it("counts records and routes that are already gone as removed", async () => {
+    await seedInstall();
+    await seedWildcard();
+    const r = await uninstall({ installId: "i1", deleteResources: ALL_DATA }, fakeWorld());
+
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.state("wc")).toBe("deleted");
+    expect(r.logs.map((l) => l.message)).toContain(
+      "Removed wildcard domain *.tunnels.example.com; already gone: tunnels.example.com/*, *.tunnels.example.com/*, tunnels.example.com, *.tunnels.example.com.",
+    );
+  });
+});
 
 describe("uninstall job: custom domains", () => {
   it("removes every custom domain before the Worker, even when the admin keeps all data", async () => {
