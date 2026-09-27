@@ -8,6 +8,7 @@ import {
   type RepositoryBuildOutcome,
   repositoryBuildOutcomeSchema,
   SANDBOX_FEATURE_GITHUB_TOKENS,
+  SANDBOX_FEATURE_INSTALL_DIRS,
   SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
@@ -131,6 +132,28 @@ export function parseRepositoryBuildOutcome(value: unknown): RepositoryBuildOutc
     );
   }
   return parsed.data;
+}
+
+/**
+ * Whether the sandbox Worker builds an entry that lists `install.installDirs`
+ * by letting its packer install those directories. One without it would run
+ * the root install alone.
+ */
+export function installsListedDirs(info: Pick<SandboxInfo, "features">): boolean {
+  return info.features?.includes(SANDBOX_FEATURE_INSTALL_DIRS) === true;
+}
+
+/**
+ * Why the sandbox Worker cannot build `catalog`, or null when it can: the
+ * entry lists install directories and the sandbox Worker predates them.
+ */
+export function installDirsRefusal(
+  info: Pick<SandboxInfo, "sandboxVersion" | "features">,
+  catalog: { install: { installDirs?: readonly unknown[] | undefined } } | undefined,
+  updateHint: string,
+): string | null {
+  if (catalog?.install.installDirs === undefined || installsListedDirs(info)) return null;
+  return `the sandbox Worker ${info.sandboxVersion} cannot install the directories this app lists (install.installDirs); to update it, ${updateHint}`;
 }
 
 /** Whether the sandbox Worker holds GitHub access tokens and reads GitHub with them. */

@@ -8,9 +8,9 @@ import {
   gitShaSchema,
   MAX_BUILD_COMMANDS,
   ownerRepoSchema,
-  packageManagerSchema,
   sandboxInstanceTypeSchema,
 } from "./catalog";
+import { packageManagerSchema } from "./install-dirs";
 import {
   namesStage,
   selfDeployingCommandSchema,
@@ -190,6 +190,9 @@ export const buildCatalogManifestSchema = z.looseObject({
     // The same rules as the catalog manifest's: no shell syntax, no
     // environment assignments, at most 256 characters per command.
     buildCommand: catalogInstallSchema.shape.buildCommand,
+    // The packer installs these itself, so the sandbox Worker hands it the
+    // install instead of running the root install first.
+    installDirs: catalogInstallSchema.shape.installDirs,
   }),
 });
 export type BuildCatalogManifest = z.infer<typeof buildCatalogManifestSchema>;

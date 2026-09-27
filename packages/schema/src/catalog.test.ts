@@ -471,6 +471,13 @@ describe("install.sandbox", () => {
             { properties: { tier: { not: { const: "self-deploying" } } } },
           ],
         },
+        // No install directories on a self-deploying entry.
+        {
+          anyOf: [
+            { not: { required: ["installDirs"] } },
+            { properties: { tier: { not: { const: "self-deploying" } } } },
+          ],
+        },
         // Several Workers only on the artifact tier.
         {
           anyOf: [

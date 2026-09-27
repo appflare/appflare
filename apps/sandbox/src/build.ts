@@ -9,6 +9,7 @@ import {
   buildRequestSchema,
   buildStageSchema,
   type CatalogBuildCommand,
+  type CatalogInstallDir,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
   type PackageManager,
   SANDBOX_BUCKET_BINDING,
@@ -48,8 +49,11 @@ export function isBuildStage(step: string): step is BuildStage {
  *    pinned SHA; when the ref has moved (or is not a branch or tag), fetch the
  *    pinned commit itself. A tag can move; the SHA cannot.
  * 2. install: the package manager's frozen install with install scripts
- *    disabled, in an environment without credentials.
- * 3. pack: `appflare-pack --no-install`. The packer runs the catalog
+ *    disabled, in an environment without credentials. An entry that lists
+ *    `install.installDirs` skips it: the packer installs those directories
+ *    itself in the next step, the way catalog CI's pack does.
+ * 3. pack: `appflare-pack --no-install` (without `--no-install` for such an
+ *    entry). The packer runs the catalog
  *    manifest's `install.buildCommand`, if any, in its scrubbed environment
  *    (the manifest is the only source of the build command, and the artifact
  *    records it), then `wrangler deploy --dry-run --outdir`, and writes
@@ -106,7 +110,11 @@ export interface PackTarget {
   catalogManifest: {
     slug: string;
     source: { ref: string };
-    install: { packageManager: PackageManager; buildCommand?: CatalogBuildCommand | undefined };
+    install: {
+      packageManager: PackageManager;
+      buildCommand?: CatalogBuildCommand | undefined;
+      installDirs?: readonly CatalogInstallDir[] | undefined;
+    };
   };
 }
 
@@ -147,8 +155,22 @@ export class BuildSteps {
     return this.container.checkout();
   }
 
-  install(): Promise<void> {
-    return this.container.install();
+  /**
+   * The directories the packer installs itself, when the entry lists
+   * `install.installDirs`: the container's root install is skipped, and the
+   * packer installs each one in the pack step, as catalog CI's pack does.
+   */
+  private get packerInstalls(): readonly CatalogInstallDir[] | undefined {
+    return this.request.catalogManifest.install.installDirs;
+  }
+
+  async install(): Promise<void> {
+    const dirs = this.packerInstalls;
+    if (dirs === undefined) return this.container.install();
+    await this.log.stage("install", "Dependencies are installed by appflare-pack");
+    this.log.line(
+      `appflare-pack installs ${dirs.map((d) => d.path).join(", ")} in that order, install scripts disabled, before the build.`,
+    );
   }
 
   async pack(): Promise<Packed> {
@@ -172,12 +194,29 @@ export class BuildSteps {
       this.log.line(`appflare-pack runs install.buildCommand first: ${declared}`);
     }
     try {
-      await this.run("pack", commandLine(packArgv(this.project)), {
+      const install = this.packerInstalls !== undefined;
+      await this.run("pack", commandLine(packArgv(this.project, { install })), {
         cwd: this.project,
-        timeoutMs: STAGE_TIMEOUTS.pack,
+        // The packer's install takes the time the install step did not use.
+        timeoutMs: install ? STAGE_TIMEOUTS.install + STAGE_TIMEOUTS.pack : STAGE_TIMEOUTS.pack,
         failure: "appflare-pack failed",
       });
     } catch (error) {
+      // The packer names a failed install in its error line
+      // ("appflare-pack: installing dependencies in <dir> failed: ..."), or a
+      // listed directory it cannot install: report that as the install.
+      if (
+        error instanceof StepError &&
+        this.packerInstalls !== undefined &&
+        /appflare-pack: (installing dependencies in |install\.installDirs )/.test(error.message)
+      ) {
+        throw new StepError<BuildStage>(
+          "install",
+          error.message.replace("appflare-pack failed", "installing the dependencies failed"),
+          error.exitCode,
+          false,
+        );
+      }
       // The packer names a failed build command in its error line
       // ("appflare-pack: install.buildCommand ..."): report that as the build.
       if (

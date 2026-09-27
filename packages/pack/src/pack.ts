@@ -28,6 +28,7 @@ import {
   catalogVarProblems,
   type D1MigrationFile,
   type DoMigration,
+  installDirList,
   type WorkerModule,
   workerManifest,
   workerUploadProblem,
@@ -43,6 +44,7 @@ import {
   resolveWranglerConfig,
   type WranglerConfigTarget,
 } from "./config-redirect.ts";
+import { installDependencies } from "./install.ts";
 import { parseJsonc } from "./jsonc.ts";
 import { scrubEnv } from "./scrub-env.ts";
 import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
@@ -68,7 +70,10 @@ export interface PackOptions {
   manifestPath: string;
   /** Output directory for the artifact (zip + manifest.json + manifest.sig). */
   outDir: string;
-  /** Install the checkout's dependencies first. Default true. */
+  /**
+   * Install the checkout's dependencies first: each directory of
+   * `install.installDirs` in order, the root when it lists none. Default true.
+   */
   install?: boolean;
   /** Name of the env var holding the base64 PKCS#8 Ed25519 private key. */
   signKeyEnv?: string;
@@ -139,61 +144,6 @@ function resolveWranglerBin(): string {
     throw new Error("could not resolve the wrangler bin from the packer's dependencies");
   }
   return path.join(path.dirname(pkgPath), rel);
-}
-
-function runInstall(
-  checkoutDir: string,
-  packageManager: CatalogManifest["install"]["packageManager"],
-  childEnv: NodeJS.ProcessEnv,
-  logger: (m: string) => void,
-): void {
-  let cmd: string;
-  let args: string[];
-  const extraEnv: NodeJS.ProcessEnv = {};
-  switch (packageManager) {
-    case "pnpm":
-      cmd = "pnpm";
-      // package-manager-strict=false + COREPACK_ENABLE_STRICT=0 let the machine's
-      // pnpm build a checkout that pins a different pnpm major, without fetching a
-      // new pnpm.
-      args = [
-        "install",
-        "--frozen-lockfile",
-        "--ignore-scripts",
-        "--config.package-manager-strict=false",
-      ];
-      extraEnv.COREPACK_ENABLE_STRICT = "0";
-      break;
-    case "npm":
-      cmd = "npm";
-      args = ["ci", "--ignore-scripts"];
-      break;
-    case "yarn":
-      // Best-effort; classic-yarn flags. Berry projects are rare in v1.
-      cmd = "yarn";
-      args = ["install", "--frozen-lockfile", "--ignore-scripts"];
-      extraEnv.YARN_ENABLE_SCRIPTS = "false";
-      break;
-    case "bun":
-      cmd = "bun";
-      args = ["install", "--frozen-lockfile", "--ignore-scripts"];
-      break;
-  }
-  logger(`installing dependencies with ${cmd} (${packageManager})`);
-  const res = spawnSync(cmd, args, {
-    cwd: checkoutDir,
-    env: { ...childEnv, ...extraEnv },
-    encoding: "utf8",
-    maxBuffer: 128 * 1024 * 1024,
-  });
-  if (res.error) {
-    throw new Error(`failed to run ${cmd}: ${res.error.message}`);
-  }
-  if (res.status !== 0) {
-    throw new Error(
-      `${cmd} ${args.join(" ")} failed (exit ${res.status}):\n${res.stdout ?? ""}\n${res.stderr ?? ""}`,
-    );
-  }
 }
 
 /**
@@ -567,8 +517,15 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   }
 
   // (b) Install dependencies unless disabled.
+  // Each directory of `install.installDirs` in order, the root when it lists none.
   if (install) {
-    runInstall(checkoutDir, catalog.install.packageManager, childEnv, logger);
+    installDependencies({
+      checkoutDir,
+      installDirs: installDirList(catalog.install),
+      packageManager: catalog.install.packageManager,
+      env: childEnv,
+      logger,
+    });
   }
 
   // (b2) The catalog's build commands, in order, before the wrangler config is

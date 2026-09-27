@@ -27,7 +27,8 @@ Pack options:
   --sign-key-env <NAME>   env var holding a base64 PKCS#8 Ed25519 private key;
                           signs in the same step (requires --key-id). Without it,
                           --key-id yields an unsigned intermediate for \`sign\`.
-  --no-install            skip installing the checkout's dependencies
+  --no-install            skip installing the checkout's dependencies (every directory
+                          of install.installDirs; the root when it lists none)
 
 Sign options (signs <dir>/manifest.json as-is, writes manifest.sig, self-verifies):
   --sign-key-env <NAME>   env var holding the private key            (required)

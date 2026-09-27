@@ -4,6 +4,7 @@ export * from "./catalog-index";
 export * from "./catalog-stats";
 export * from "./github-tokens";
 export * from "./hyperdrive";
+export * from "./install-dirs";
 export * from "./jsonc";
 export * from "./keys";
 export * from "./limits";

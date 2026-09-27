@@ -21,7 +21,12 @@ export const MOUNT_DIR = "/mnt/appflare-builds";
 export const STAGE_TIMEOUTS = {
   checkout: 5 * 60_000,
   install: 15 * 60_000,
-  /** Includes the entry's build command, which the packer runs (its own limit: 15 minutes). */
+  /**
+   * Includes the entry's build command, which the packer runs (its own limit:
+   * 15 minutes). When the packer also installs the directories an entry lists
+   * (`install.installDirs`), the install step runs nothing and the pack step
+   * gets `install + pack`, so a build's total limit stays the same.
+   */
   pack: 25 * 60_000,
   upload: 5 * 60_000,
   /** Short housekeeping commands (rm, ls, stat, git rev-parse). */
@@ -184,9 +189,15 @@ export const BUILD_COMMAND_ENV: Readonly<Record<string, string>> = {
   npm_config_ignore_scripts: "true",
 };
 
-/** The packer, run on the checkout without a second install; it writes an unsigned artifact. */
-export function packArgv(project: string): string[] {
-  return ["appflare-pack", project, "--manifest", MANIFEST_INPUT, "--out", OUT_DIR, "--no-install"];
+/**
+ * The packer, run on the checkout; it writes an unsigned artifact. It runs
+ * without a second install after the build's own install step, and with its
+ * own install when the entry lists `install.installDirs`: then it installs
+ * each listed directory itself, as catalog CI's pack does.
+ */
+export function packArgv(project: string, options: { install?: boolean } = {}): string[] {
+  const argv = ["appflare-pack", project, "--manifest", MANIFEST_INPUT, "--out", OUT_DIR];
+  return options.install === true ? argv : [...argv, "--no-install"];
 }
 
 /**

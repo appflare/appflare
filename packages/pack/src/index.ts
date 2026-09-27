@@ -34,6 +34,17 @@ export {
 } from "./config-redirect.ts";
 export { deriveSecretValue } from "./derive-secret.ts";
 export { inspectWranglerConfig, wranglerFacts } from "./inspect.ts";
+export {
+  findLockfile,
+  InstallError,
+  type InstallInvocation,
+  type InstallOptions,
+  type InstallRunner,
+  type InstallRunResult,
+  installDependencies,
+  installInvocation,
+  resolveInstallDir,
+} from "./install.ts";
 export { parseJsonc } from "./jsonc.ts";
 export type { PackedWorker, PackOptions, PackResult } from "./pack.ts";
 export { describeVersionOrigin, mergeD1Migrations, pack } from "./pack.ts";

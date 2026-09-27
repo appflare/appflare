@@ -7,6 +7,7 @@ import {
   type CatalogSecret,
   type CatalogVar,
   isCommitSha,
+  lockfilePackageManager,
   type PackageManager,
   repositoryUrl,
   type SecretsSource,
@@ -22,16 +23,6 @@ import {
  * secrets. The result is a catalog manifest the packer takes like any other;
  * the artifact records it. Everything here is pure, so the tests pin it.
  */
-
-/** Lockfiles, in the order they are looked for, and the package manager each means. */
-const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
-  ["pnpm-lock.yaml", "pnpm"],
-  ["bun.lock", "bun"],
-  ["bun.lockb", "bun"],
-  ["yarn.lock", "yarn"],
-  ["package-lock.json", "npm"],
-  ["npm-shrinkwrap.json", "npm"],
-];
 
 /** Wrangler configs, in the order wrangler itself looks for them. */
 export const WRANGLER_CONFIGS = ["wrangler.json", "wrangler.jsonc", "wrangler.toml"] as const;
@@ -53,9 +44,8 @@ export class DetectionError extends Error {
 
 /** The package manager the lockfile names; throws when there is none. */
 export function detectPackageManager(files: ReadonlySet<string>): PackageManager {
-  for (const [file, manager] of LOCKFILES) {
-    if (files.has(file)) return manager;
-  }
+  const manager = lockfilePackageManager(files);
+  if (manager !== null) return manager;
   throw new DetectionError(
     "the repository has no lockfile at its root (pnpm-lock.yaml, package-lock.json, yarn.lock or bun.lock); Appflare installs exactly the locked dependencies, so it cannot build a project without one",
   );

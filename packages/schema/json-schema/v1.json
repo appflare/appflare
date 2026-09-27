@@ -164,6 +164,44 @@
           ],
           "description": "The command the packer runs at the root of the checkout after installing dependencies (with install scripts disabled) and before bundling, for example `pnpm --filter @scope/web build`, or a list of such commands run in order, for example `[\"pnpm run build:sphere\", \"pnpm run build\"]`; the build stops at the first that fails. Use it when the wrangler config has no `build.command`. Each runs as a plain command without a shell, with no credentials in its environment and the checkout's `node_modules/.bin` on its PATH, so pipes, redirects, quotes, variables, and environment assignments are not allowed. pnpm and npm run no pre or post hooks of package scripts there (`pnpm run build` skips `prebuild`), so list such a step as a command of its own. At most 8 commands of at most 256 characters each."
         },
+        "installDirs": {
+          "minItems": 1,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^(?:\\.|(?!\\.\\.?(?:/|$))[0-9A-Za-z.@+_-]+(?:/(?!\\.\\.?(?:/|$))[0-9A-Za-z.@+_-]+)*)$",
+                "description": "The directory to install, relative to the root of the checkout: `.` for the root, or a path such as `templates/blog`. No absolute paths and no `..`."
+              },
+              "packageManager": {
+                "type": "string",
+                "enum": [
+                  "pnpm",
+                  "npm",
+                  "yarn",
+                  "bun"
+                ],
+                "description": "The package manager to install this directory with. Omitted, it is `install.packageManager` when the directory holds that manager's lockfile or no lockfile at all, else the one its lockfile names."
+              },
+              "lockfile": {
+                "type": "string",
+                "enum": [
+                  "required",
+                  "none"
+                ],
+                "description": "Omitted or `\"required\"`, the install follows the directory's lockfile exactly and fails without one. `\"none\"` resolves the dependencies instead and records the hash of the lockfile it wrote in the pack log; use it only when upstream ships no lockfile for this directory."
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          },
+          "description": "The directories whose dependencies the packer installs, in order, each with install scripts disabled, before any build command. Omitted means `[{ \"path\": \".\" }]`, the root of the checkout; list `.` as well when the root still needs its install. Use it when the Worker's `package.json` sits in a directory of its own (a template repository), or for a second install beside the root one. At most 8 directories. An entry of several Workers lists them once for all its Workers."
+        },
         "version": {
           "type": "string",
           "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
@@ -414,6 +452,26 @@
               "not": {
                 "required": [
                   "emailRouting"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "installDirs"
                 ]
               }
             },

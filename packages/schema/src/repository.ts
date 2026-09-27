@@ -6,10 +6,15 @@ import {
   gitShaSchema,
   MAX_BUILD_COMMAND_LENGTH,
   MAX_BUILD_COMMANDS,
-  packageManagerSchema,
   sandboxInstanceTypeSchema,
 } from "./catalog";
 import { githubTokenSecretNameSchema } from "./github-tokens";
+import {
+  installLockfileSchema,
+  MAX_INSTALL_DIR_LENGTH,
+  MAX_INSTALL_DIRS,
+  packageManagerSchema,
+} from "./install-dirs";
 import {
   buildFailureSchema,
   buildInstallIdSchema,
@@ -253,6 +258,22 @@ export const repositoryDetectionSchema = z.object({
     .max(MAX_BUILD_COMMANDS * (MAX_BUILD_COMMAND_LENGTH + 4))
     .nullable(),
   buildCommandFrom: buildCommandSourceSchema,
+  /**
+   * The directories the packer installed, in order, when the catalog app
+   * lists them (`install.installDirs`); omitted when it installs the root
+   * alone, and from sandbox Workers that predate the field. `lockfile` is
+   * `"none"` for a directory upstream ships without a lockfile, whose
+   * dependencies the install resolved.
+   */
+  installDirs: z
+    .array(
+      z.object({
+        path: z.string().min(1).max(MAX_INSTALL_DIR_LENGTH),
+        lockfile: installLockfileSchema,
+      }),
+    )
+    .max(MAX_INSTALL_DIRS)
+    .optional(),
   secretsFrom: secretsSourceSchema,
   /**
    * Sections of the wrangler config the packer does not carry into the

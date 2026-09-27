@@ -23,6 +23,7 @@ import { readSettings, SETTING } from "../db/settings";
 import { addedJustNow, justAddedMessage, readGithubToken } from "../github/tokens.server";
 import {
   buildsFromRepository,
+  installDirsRefusal,
   parseRepositoryBuildOutcome,
   SandboxProtocolError,
   sandboxBinding,
@@ -175,6 +176,8 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
           `the sandbox Worker ${info.sandboxVersion} cannot build from a repository; to update it, ${UPDATE_SANDBOX_HINT}`,
         );
       }
+      const dirsRefused = installDirsRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
+      if (dirsRefused !== null) throw new JobError(dirsRefused);
       if (params.githubToken !== undefined && !usesGithubTokens(info)) {
         throw new JobError(
           `the sandbox Worker ${info.sandboxVersion} cannot clone with a GitHub access token; to update it, ${UPDATE_SANDBOX_HINT}`,

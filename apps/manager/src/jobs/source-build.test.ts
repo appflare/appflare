@@ -702,9 +702,16 @@ describe("installing a reviewed build", () => {
 
 describe("building a catalog app from source", () => {
   /** The catalog's Cut, and a build of it at `commit` that keeps (or changes) its manifest. */
-  async function fromSource(change?: (catalog: CatalogManifest) => CatalogManifest) {
+  async function fromSource(
+    change?: (catalog: CatalogManifest) => CatalogManifest,
+    options: {
+      catalog?: (catalog: CatalogManifest) => CatalogManifest;
+      sandbox?: FakeSandboxOptions;
+    } = {},
+  ) {
     const released = await buildArtifactFixture();
-    catalogApp = { app: released.index, catalog: released.manifest.catalog };
+    const listed = options.catalog?.(released.manifest.catalog) ?? released.manifest.catalog;
+    catalogApp = { app: released.index, catalog: listed };
     const kept = released.manifest.catalog;
     const built = change === undefined ? kept : change(kept);
     const fixture = await buildArtifactFixture({
@@ -722,8 +729,28 @@ describe("building a catalog app from source", () => {
     return build({
       fixture,
       request: { kind: "source", slug: "cut", ref: "main", costConfirmed: true },
+      ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox }),
     });
   }
+
+  it("refuses an app that lists install directories on a sandbox Worker that predates them", async () => {
+    const r = await fromSource(undefined, {
+      catalog: (c) => ({ ...c, install: { ...c.install, installDirs: [{ path: "." }] } }),
+      sandbox: {
+        info: {
+          protocol: 1,
+          sandboxVersion: "0.1.4",
+          image: "docker.io/mendylanda/appflare-sandbox:0.1.4",
+          features: ["self-deploying", "repository-builds", "github-tokens"],
+        },
+      },
+    });
+    expect(r.job).toMatchObject({ status: "failed" });
+    expect(String(r.job?.error)).toContain(
+      "the sandbox Worker 0.1.4 cannot install the directories this app lists (install.installDirs)",
+    );
+    expect(r.sandbox.requests).toEqual([]);
+  });
 
   it("builds the catalog's repository with the catalog manifest as the baseline", async () => {
     const r = await fromSource();

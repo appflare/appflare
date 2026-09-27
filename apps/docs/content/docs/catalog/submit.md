@@ -139,6 +139,17 @@ Points that need care:
   pnpm and npm run no `pre` or `post` hooks there (`pnpm run build` skips
   `prebuild`), just as dependencies install with `--ignore-scripts`, so list such a
   step as a command of its own. The build stops at the first command that fails.
+- **`install.installDirs`.** The directories whose dependencies the packer installs,
+  in order, such as `[{ "path": "templates/blog" }]` for a template repository whose
+  Worker has its own `package.json` and no root one. Omitted, only the root is
+  installed; list `"."` as well when the root still needs its install. Each entry may
+  name its `packageManager`; without one, a directory uses `install.packageManager`
+  when it holds that manager's lockfile or none, and otherwise the one its lockfile
+  names. Set `"lockfile": "none"` only when upstream ships no lockfile for that
+  directory: the packer then resolves the dependencies itself, still with
+  `--ignore-scripts`, and prints the sha256 of the lockfile it wrote. A directory
+  that holds a lockfile always installs from it, and any other directory needs one in
+  it or above it (a workspace's), or the pack fails.
 - **Worker size.** `pnpm pack-app` prints each Worker's modules, the Range requests
   the manager reads them with, and their size, for example
   `579 modules in 2 ranges, 11.44 MiB of at most 32.00 MiB`. Cloudflare accepts a

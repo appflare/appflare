@@ -342,6 +342,40 @@ describe("installing a sandbox tier app", () => {
     expect(r.sandbox?.requests).toEqual([]);
   });
 
+  it("refuses an app that lists install directories on a sandbox Worker that predates them", async () => {
+    const withDirs = (installDirs: CatalogManifest["install"]["installDirs"]) =>
+      sandboxApp({
+        catalog: { install: { ...baseCatalog().install, tier: "sandbox", installDirs } },
+      });
+    const r = await install({
+      fixture: await withDirs([{ path: "templates/blog", lockfile: "none" }]),
+      sandbox: {
+        info: {
+          protocol: 1,
+          sandboxVersion: "0.1.4",
+          image: "docker.io/mendylanda/appflare-sandbox:0.1.4",
+          features: ["self-deploying", "repository-builds", "github-tokens"],
+        },
+      },
+    });
+    expect(r.job?.error).toContain(
+      "the sandbox Worker 0.1.4 cannot install the directories this app lists (install.installDirs); to update it, choose Update sandbox in",
+    );
+    expect(r.sandbox?.requests).toEqual([]);
+    expect(r.account.state.versions).toEqual([]);
+  });
+
+  it("builds an app that lists install directories on a sandbox Worker that installs them", async () => {
+    const installDirs = [{ path: "." }];
+    const r = await install({
+      fixture: await sandboxApp({
+        catalog: { install: { ...baseCatalog().install, tier: "sandbox", installDirs } },
+      }),
+    });
+    expect(r.job?.error ?? null).toBeNull();
+    expect(r.sandbox?.requests[0]).toMatchObject({ catalogManifest: { install: { installDirs } } });
+  });
+
   it("reports a failed build with its step and exit code, without retrying it", async () => {
     const failed: BuildOutcome = {
       ok: false,

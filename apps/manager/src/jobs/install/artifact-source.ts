@@ -38,12 +38,14 @@ import {
 import type { BuildKind, InstallOrigin } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import {
+  installDirsRefusal,
   parseBuildOutcome,
   SandboxProtocolError,
   sandboxBinding,
   sandboxFetch,
   sandboxInfo,
 } from "../../sandbox/binding";
+import { UPDATE_SANDBOX_HINT } from "../../sandbox/connect-copy";
 import {
   verifyBuiltManifest,
   verifyCatalogManifest,
@@ -453,7 +455,12 @@ async function buildInSandboxPhase(
     const settings = await readSettings(orm, [SETTING.accountId]);
     if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
     log.info(`The sandbox Worker ${info.sandboxVersion} builds with ${info.image}.`);
-    return { image: info.image, accountId: settings.account_id };
+    return {
+      image: info.image,
+      accountId: settings.account_id,
+      // What the sandbox Worker can build, checked against the catalog manifest below.
+      sandbox: { sandboxVersion: info.sandboxVersion, features: info.features ?? [] },
+    };
   });
   steps.setAccountId(checked.accountId);
 
@@ -476,6 +483,11 @@ async function buildInSandboxPhase(
   );
 
   steps.current = "prepare build request";
+  // A job resumed from before this check recorded no features: nothing to refuse then.
+  if (checked.sandbox !== undefined) {
+    const refused = installDirsRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT);
+    if (refused !== null) throw new JobError(refused);
+  }
   const parsedRequest = buildRequestSchema.safeParse({
     protocol: SANDBOX_PROTOCOL_VERSION,
     installId: target.installId,

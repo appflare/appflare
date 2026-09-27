@@ -365,6 +365,48 @@ describe("runRepositoryBuild", () => {
     });
   });
 
+  it("lets the packer install a catalog app's listed directories, even without a root package.json", async () => {
+    const baseline = {
+      slug: "blog",
+      name: "Blog",
+      summary: "A blog template.",
+      homepage: "https://github.com/MendyLanda/cut",
+      repo: "MendyLanda/cut",
+      license: "MIT",
+      categories: [],
+      maintainers: [],
+      source: { ref: "main", sha: "f".repeat(40) },
+      install: {
+        tier: "artifact",
+        packageManager: "pnpm",
+        wranglerConfig: "wrangler.jsonc",
+        workerName: "blog",
+        installDirs: [{ path: "templates/blog", lockfile: "none" }],
+      },
+      plan: "free",
+      requires: [],
+      secrets: [],
+      vars: [],
+      postInstall: [],
+      tokenPermissions: [],
+    };
+    const sandbox = fake({ files: { "wrangler.jsonc": FILES["wrangler.jsonc"] ?? "" } });
+    const result = asResult(await build(sandbox, request({ ref: "main", baseline })).promise);
+    expect(result.detected).toMatchObject({
+      installDirs: [{ path: "templates/blog", lockfile: "none" }],
+    });
+    expect(sandbox.commands.some((c) => c.startsWith("pnpm install"))).toBe(false);
+    expect(
+      sandbox.commands.some((c) => c.startsWith("appflare-pack ") && !c.includes("--no-install")),
+    ).toBe(true);
+    expect(packedCatalog(sandbox)).toMatchObject({
+      install: { installDirs: [{ path: "templates/blog", lockfile: "none" }] },
+    });
+    expect(result.log).toContain(
+      "Install directories: templates/blog (no lockfile upstream) (from the catalog).",
+    );
+  });
+
   it("gives a rebuild a version of its own when the install already has that one", async () => {
     const result = asResult(
       await build(fake(), request({ avoidVersions: ["0.0.0-20260920.0123456"] })).promise,

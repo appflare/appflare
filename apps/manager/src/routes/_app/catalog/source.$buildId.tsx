@@ -406,7 +406,24 @@ function SourceCard({ build, review }: { build: SourceBuildView; review: SourceB
                 </Text>
               </DescriptionItem>
               <DescriptionItem label="Dependencies">
-                Installed with {detected.packageManager}, install scripts disabled
+                {detected.installDirs === undefined ? (
+                  <>Installed with {detected.packageManager}, install scripts disabled</>
+                ) : (
+                  <span className="grid gap-0.5">
+                    <span>Installed in this order, install scripts disabled:</span>
+                    {detected.installDirs.map((dir) => (
+                      <span key={dir.path}>
+                        <span className={mono}>{dir.path}</span>
+                        {dir.lockfile === "none" && (
+                          <Text as="span" variant="secondary">
+                            {" "}
+                            (no lockfile upstream)
+                          </Text>
+                        )}
+                      </span>
+                    ))}
+                  </span>
+                )}
               </DescriptionItem>
               <DescriptionItem label="Wrangler config">
                 <span className={mono}>{detected.wranglerConfig}</span>

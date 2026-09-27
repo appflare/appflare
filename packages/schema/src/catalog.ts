@@ -2,6 +2,7 @@ import { z } from "zod";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
 import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
+import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
 import { isVapidPrivateKey, VAPID_PRIVATE_KEY_LENGTH } from "./vapid.ts";
 
@@ -257,10 +258,6 @@ export function entryWorkersProblems(install: {
  */
 export const installTierSchema = z.enum(["artifact", "sandbox", "self-deploying"]);
 export type InstallTier = z.infer<typeof installTierSchema>;
-
-/** Package manager the packer uses to build the app from its checkout. */
-export const packageManagerSchema = z.enum(["pnpm", "npm", "yarn", "bun"]);
-export type PackageManager = z.infer<typeof packageManagerSchema>;
 
 /** Free vs paid plan requirement. */
 export const planSchema = z.enum(["free", "paid"]);
@@ -1208,6 +1205,24 @@ export const catalogInstallSchema = z
       )
       .optional(),
     /**
+     * The directories whose dependencies the packer installs, in order; see
+     * {@link catalogInstallDirsSchema}. Omitted means the root alone; read it
+     * with `installDirList`. Optional for the same reason as
+     * `fixedWorkerName`. Refused on `self-deploying` entries, whose installer
+     * runs without the packer. An entry of several Workers lists them once
+     * for all its Workers.
+     */
+    installDirs: catalogInstallDirsSchema
+      .describe(
+        "The directories whose dependencies the packer installs, in order, each with install " +
+          'scripts disabled, before any build command. Omitted means `[{ "path": "." }]`, the ' +
+          "root of the checkout; list `.` as well when the root still needs its install. Use it " +
+          "when the Worker's `package.json` sits in a directory of its own (a template " +
+          `repository), or for a second install beside the root one. At most 8 directories. ` +
+          "An entry of several Workers lists them once for all its Workers.",
+      )
+      .optional(),
+    /**
      * The version shown for this entry when the repository's tag does not
      * describe this app (monorepos); it must change whenever `source` moves.
      * Omitted means the version comes from `source.ref` when it is a semver tag,
@@ -1274,6 +1289,14 @@ export const catalogInstallSchema = z
     if (problem !== null) {
       ctx.addIssue({ code: "custom", path: [problem.path], message: problem.message });
     }
+    if (install.installDirs !== undefined && install.tier === "self-deploying") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["installDirs"],
+        message:
+          "install.installDirs is not allowed for the self-deploying tier: its installer runs at the root of the checkout, without the packer that installs these directories",
+      });
+    }
     if (install.emailRouting !== undefined && install.tier === "self-deploying") {
       ctx.addIssue({
         code: "custom",
@@ -1285,8 +1308,9 @@ export const catalogInstallSchema = z
   })
   // The refinements do not reach the JSON Schema; `allOf` states them there
   // (no `sandbox`, or a tier that runs in the sandbox Worker; `selfDeploying`
-  // exactly when the tier is `self-deploying`; no `emailRouting` on a
-  // `self-deploying` entry; `workers` only on the `artifact` tier), so editors
+  // exactly when the tier is `self-deploying`; no `emailRouting` or
+  // `installDirs` on a `self-deploying` entry; `workers` only on the
+  // `artifact` tier), so editors
   // refuse the same manifests.
   .meta({
     allOf: [
@@ -1311,6 +1335,12 @@ export const catalogInstallSchema = z
       {
         anyOf: [
           { not: { required: ["emailRouting"] } },
+          { properties: { tier: { not: { const: "self-deploying" } } } },
+        ],
+      },
+      {
+        anyOf: [
+          { not: { required: ["installDirs"] } },
           { properties: { tier: { not: { const: "self-deploying" } } } },
         ],
       },

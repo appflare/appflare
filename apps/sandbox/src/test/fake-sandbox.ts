@@ -58,6 +58,8 @@ export class FakeSandbox implements BuildSandbox {
   readonly commands: string[] = [];
   readonly written = new Map<string, string>();
   readonly envs: Readonly<Record<string, string>>[] = [];
+  /** Each command's time limit, by command line (the last run's). */
+  readonly timeouts = new Map<string, number>();
   mount: { binding: string; path: string; prefix: string } | null = null;
   destroyed = false;
   #head = "";
@@ -87,6 +89,7 @@ export class FakeSandbox implements BuildSandbox {
 
   async exec(command: string, options: ExecOptions): Promise<ExecOutcome> {
     this.commands.push(command);
+    this.timeouts.set(command, options.timeoutMs);
     if (options.env) this.envs.push(options.env);
     const index = this.#failures.findIndex((f) => f.match.test(command));
     if (index >= 0) {

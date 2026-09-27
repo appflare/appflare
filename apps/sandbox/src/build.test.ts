@@ -6,6 +6,7 @@ import {
   type BuildResult,
   buildOutcomeSchema,
   SANDBOX_FEATURE_GITHUB_TOKENS,
+  SANDBOX_FEATURE_INSTALL_DIRS,
   SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
@@ -18,6 +19,7 @@ import {
   freshSandboxId,
   MANIFEST_INPUT,
   MAX_SANDBOX_ID_LENGTH,
+  STAGE_TIMEOUTS,
   sandboxId,
 } from "./protocol";
 import { deleteInstallBuilds } from "./storage";
@@ -271,6 +273,58 @@ describe("runBuild", () => {
     expect(failure).toMatchObject({ stage: "pack", exitCode: 1 });
   });
 
+  it("lets the packer install the directories an entry lists, instead of the root install", async () => {
+    const sandbox = fake();
+    const installDirs = [{ path: "templates/blog", lockfile: "none" }, { path: "." }];
+    const manifest = { ...catalogManifest, install: { ...catalogManifest.install, installDirs } };
+    const result = asResult(await build(sandbox, request({ catalogManifest: manifest })).promise);
+    expect(sandbox.commands.some((c) => c.startsWith("pnpm install"))).toBe(false);
+    const pack =
+      "appflare-pack /workspace/appflare-build/source --manifest /workspace/appflare-build/appflare.json --out /workspace/appflare-build/out";
+    expect(sandbox.commands).toContain(pack);
+    // The pack step gets the install step's time as well.
+    expect(sandbox.timeouts.get(pack)).toBe(STAGE_TIMEOUTS.install + STAGE_TIMEOUTS.pack);
+    expect(JSON.parse(sandbox.written.get(MANIFEST_INPUT) ?? "null").install.installDirs).toEqual(
+      installDirs,
+    );
+    const progress = await readProgress(env.BUILDS, result.logKey as string);
+    expect(progress?.log).toContain(
+      "appflare-pack installs templates/blog, . in that order, install scripts disabled",
+    );
+  });
+
+  it("reports a failed install in the packer as the install step", async () => {
+    const sandbox = fake({
+      failures: [
+        {
+          match: /^appflare-pack /,
+          exitCode: 1,
+          output:
+            "appflare-pack: installing dependencies in site failed: pnpm install --no-frozen-lockfile exited with 1:\nERR_PNPM_FETCH_404\n",
+        },
+      ],
+    });
+    const manifest = {
+      ...catalogManifest,
+      install: { ...catalogManifest.install, installDirs: [{ path: "site", lockfile: "none" }] },
+    };
+    const failure = asFailure(await build(sandbox, request({ catalogManifest: manifest })).promise);
+    expect(failure).toMatchObject({ stage: "install", exitCode: 1, retryable: false });
+    expect(failure.message).toContain("installing the dependencies failed");
+    expect(failure.message).toContain("ERR_PNPM_FETCH_404");
+  });
+
+  it("refuses an install directory outside the checkout without starting a container", async () => {
+    const manifest = {
+      ...catalogManifest,
+      install: { ...catalogManifest.install, installDirs: [{ path: "../elsewhere" }] },
+    };
+    const { promise, opened } = build(fake(), request({ catalogManifest: manifest }));
+    const failure = asFailure(await promise);
+    expect(failure.stage).toBe("request");
+    expect(opened).toEqual([]);
+  });
+
   it("refuses a stored zip whose files do not match manifest.json", async () => {
     const tampered = ZIP.slice();
     tampered[6] = 0xff;
@@ -427,6 +481,7 @@ describe("cleanup and progress", () => {
         SANDBOX_FEATURE_SELF_DEPLOYING,
         SANDBOX_FEATURE_REPOSITORY,
         SANDBOX_FEATURE_GITHUB_TOKENS,
+        SANDBOX_FEATURE_INSTALL_DIRS,
       ],
       // The version metadata binding's id (vitest.config.ts).
       versionId: "version-under-test",

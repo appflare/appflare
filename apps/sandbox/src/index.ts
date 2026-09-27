@@ -7,6 +7,7 @@ import {
   buildProgressRequestSchema,
   type RepositoryBuildOutcome,
   SANDBOX_FEATURE_GITHUB_TOKENS,
+  SANDBOX_FEATURE_INSTALL_DIRS,
   SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
   SANDBOX_PROTOCOL_VERSION,
@@ -52,6 +53,7 @@ export class SandboxBuilds extends WorkerEntrypoint<Env> {
         SANDBOX_FEATURE_SELF_DEPLOYING,
         SANDBOX_FEATURE_REPOSITORY,
         SANDBOX_FEATURE_GITHUB_TOKENS,
+        SANDBOX_FEATURE_INSTALL_DIRS,
       ],
       // Which version answered: the manager waits for a secret change (a new
       // version) to reach this Worker before it starts a run.

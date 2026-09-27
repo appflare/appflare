@@ -90,7 +90,10 @@ interface Detected {
   manifest: CatalogManifest;
   version: string;
   detection: RepositoryDetection;
-  /** No `package.json`: nothing to install. */
+  /**
+   * Whether there are dependencies to install: a root `package.json`, or
+   * the directories a catalog app lists (`install.installDirs`).
+   */
   installs: boolean;
 }
 
@@ -333,18 +336,33 @@ class RepositorySteps extends CommandRunner<BuildStage> {
           `the catalog manifest worked out for it is not valid: ${z.prettifyError(parsed.error).replace(/\s+/g, " ")}`,
         );
       }
+      // A catalog app that lists its install directories: the packer installs those.
+      const installDirs = parsed.data.install.installDirs;
       const detection: RepositoryDetection = {
         packageManager,
         wranglerConfig,
         // Shown to the admin; a catalog app's list of commands on one line.
         buildCommand: build.command === null ? null : buildCommandText(build.command),
         buildCommandFrom: build.from,
+        ...(installDirs === undefined
+          ? {}
+          : {
+              installDirs: installDirs.map((d) => ({
+                path: d.path,
+                lockfile: d.lockfile ?? "required",
+              })),
+            }),
         secretsFrom: secretsSource(secretsFrom, baseline !== undefined),
         unsupported: wrangler.unsupported,
       };
       this.note(
         [
           `Package manager: ${packageManager}${baseline === undefined ? (pkg === null ? " (no package.json, nothing to install)" : " (from the lockfile)") : " (from the catalog)"}.`,
+          ...(installDirs === undefined
+            ? []
+            : [
+                `Install directories: ${installDirs.map((d) => `${d.path}${d.lockfile === "none" ? " (no lockfile upstream)" : ""}`).join(", ")} (from the catalog).`,
+              ]),
           `Wrangler config: ${wranglerConfig}.`,
           `Build command: ${build.command ?? "none"}${build.from === "none" ? "" : ` (${build.from})`}.`,
           `Secrets: ${parsed.data.secrets.map((s) => s.name).join(", ") || "none"}${detection.secretsFrom === "none" ? "" : ` (from ${detection.secretsFrom})`}.`,
@@ -356,7 +374,13 @@ class RepositorySteps extends CommandRunner<BuildStage> {
             : []),
         ].join("\n"),
       );
-      return { manifest: parsed.data, version, detection, installs: pkg !== null };
+      return {
+        manifest: parsed.data,
+        version,
+        detection,
+        // Listed directories are installed even without a root package.json.
+        installs: pkg !== null || installDirs !== undefined,
+      };
     } catch (error) {
       if (error instanceof DetectionError) {
         throw new StepError<BuildStage>("detect", error.message, null, false);
