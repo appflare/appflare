@@ -13,8 +13,9 @@ import { copyTemplateConfig, readConfigArgs, resolveWranglerConfig } from "./con
  * with wrangler's own reader (JSON, JSONC and TOML alike, as `wrangler
  * deploy` resolves them), before anything is installed or built. The
  * sandbox Worker runs it on a repository's checkout to offer the config's
- * plain vars as settings and to name the sections the packer would leave
- * out (`containers`, `dispatch_namespaces`, ...), which the manager refuses.
+ * plain vars as settings, to ask for the secrets it requires
+ * (`secrets.required`), and to name the sections the packer would leave out
+ * (`containers`, `dispatch_namespaces`, ...), which the manager refuses.
  */
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -29,12 +30,35 @@ function isEmpty(value: unknown): boolean {
   return false;
 }
 
-/** The name, plain vars and unsupported sections of `config` as wrangler resolved it. */
+/**
+ * The `unsafe` section without its rate limits, which the packer records as
+ * the `ratelimit` bindings they are: what is left is what it refuses.
+ */
+function unsafeWithoutRateLimits(unsafe: unknown): unknown {
+  if (!isRecord(unsafe) || !Array.isArray(unsafe.bindings)) return unsafe;
+  return {
+    ...unsafe,
+    bindings: unsafe.bindings.filter((b) => !(isRecord(b) && b.type === "ratelimit")),
+  };
+}
+
+/**
+ * The name, plain vars, required secrets and unsupported sections of
+ * `config` as wrangler resolved it. (wrangler's reader refuses a var of a
+ * required secret's name, so the two never share one.)
+ */
 export function wranglerFacts(config: Record<string, unknown>): WranglerFacts {
   const name = typeof config.name === "string" && config.name.length > 0 ? config.name : null;
+  const required =
+    isRecord(config.secrets) && Array.isArray(config.secrets.required)
+      ? config.secrets.required.filter((s): s is string => typeof s === "string" && s.length > 0)
+      : [];
+  const secrets = [...new Set(required)];
   const vars = isRecord(config.vars) ? Object.keys(config.vars) : [];
-  const unsupported = UNSUPPORTED_WRANGLER_SECTIONS.filter((key) => !isEmpty(config[key]));
-  return { name, vars, unsupported };
+  const unsupported = UNSUPPORTED_WRANGLER_SECTIONS.filter(
+    (key) => !isEmpty(key === "unsafe" ? unsafeWithoutRateLimits(config[key]) : config[key]),
+  );
+  return { name, vars, unsupported, secrets };
 }
 
 /** Options for {@link inspectWranglerConfig}. */

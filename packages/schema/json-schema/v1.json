@@ -498,6 +498,18 @@
           },
           "additionalProperties": false
         },
+        "toolchains": {
+          "minItems": 1,
+          "maxItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "rust"
+            ]
+          },
+          "description": "Toolchains beyond Node.js the build needs. `\"rust\"`: catalog CI installs a pinned Rust toolchain with the `wasm32-unknown-unknown` target before installing and building, for workers-rs apps (`worker-build`). Artifact tier only: the sandbox image that builds sandbox and self-deploying entries in an account has no Rust."
+        },
         "selfDeploying": {
           "type": "object",
           "properties": {
@@ -978,6 +990,24 @@
                   "not": {
                     "const": "self-deploying"
                   }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "toolchains"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "tier": {
+                  "const": "artifact"
                 }
               }
             }

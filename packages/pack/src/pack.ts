@@ -30,6 +30,7 @@ import {
   type D1MigrationFile,
   type DoMigration,
   installDirList,
+  secretTargets,
   type WorkerModule,
   workerManifest,
   workersPaidBindingProblem,
@@ -64,6 +65,7 @@ import {
   mainModuleName,
   queueProducerBindings,
   type ResolvedWranglerConfig,
+  withoutSecretVars,
 } from "./wrangler-config.ts";
 import { ZipStore } from "./zip.ts";
 
@@ -212,7 +214,7 @@ function collectModules(outdir: string, config: ResolvedWranglerConfig): Collect
   if (candidates.length === 0) {
     throw new Error(`no worker modules were emitted to ${outdir}`);
   }
-  const expected = config.main ? mainModuleName(config.main) : undefined;
+  const expected = config.main ? mainModuleName(config.main, config.no_bundle === true) : undefined;
   let mainRel: string | undefined;
   if (expected && candidates.includes(expected)) {
     mainRel = expected;
@@ -571,15 +573,43 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // Queue names are the account's: a queue one Worker sends to and another
   // consumes is one queue, known by the producer binding.
   const producers = queueProducerBindings(read.map((r) => r.config));
+  // A name is a var or a secret, never both. The schema refuses it already;
+  // this holds if that check ever moves.
+  const secretNames = new Set(catalog.secrets.map((s) => s.name));
+  const clashing = catalog.vars.filter((v) => secretNames.has(v.name)).map((v) => v.name);
+  if (clashing.length > 0) {
+    throw new Error(
+      `the catalog manifest declares ${clashing.join(", ")} both as a secret and as a var; ` +
+        "a Worker cannot have a secret and a var of one name, so keep one of them",
+    );
+  }
   // Before bundling, so a missing Vectorize declaration fails fast.
-  const collected = read.map((r) => ({
-    ...r,
-    bindings: collectBindings(r.config, catalog.resources, {
+  const collected = read.map((r) => {
+    const all = collectBindings(r.config, catalog.resources, {
       entryWorkers: r.name === null ? undefined : entryNames,
       checkUnboundVectorize: entry === undefined,
-    }),
-    queueConsumers: collectQueueConsumers(r.config, producers),
-  }));
+    });
+    // A var of the name of a secret this Worker gets is left out.
+    const secrets = catalog.secrets
+      .filter((s) => r.name === null || secretTargets(s, catalog).includes(r.name))
+      .map((s) => s.name);
+    const { bindings, dropped } = withoutSecretVars(all, secrets);
+    const of = r.name === null ? "" : ` of the Worker "${r.name}"`;
+    for (const name of dropped) {
+      logger(
+        `var ${name} is provided as a secret: the catalog manifest declares ${name} as a secret, ` +
+          `so the wrangler config's var of that name${of} is left out`,
+      );
+    }
+    for (const name of r.config.secrets?.required ?? []) {
+      if (!secrets.includes(name)) {
+        logger(
+          `the wrangler config${of} requires the secret ${name} (secrets.required), which the catalog manifest does not declare`,
+        );
+      }
+    }
+    return { ...r, bindings, queueConsumers: collectQueueConsumers(r.config, producers) };
+  });
   if (entry !== undefined) {
     checkVectorizeDeclarations(
       collected.flatMap((c) => c.bindings),

@@ -9,7 +9,9 @@ import {
   QueueConsumerError,
   type ResolvedWranglerConfig,
   ServiceBindingError,
+  UnsafeBindingError,
   VectorizeDeclarationError,
+  withoutSecretVars,
 } from "./wrangler-config.ts";
 
 describe("collectBindings", () => {
@@ -276,6 +278,77 @@ describe("collectBindings", () => {
   it("returns an empty array when there are no bindings", () => {
     expect(collectBindings({} as ResolvedWranglerConfig)).toEqual([]);
   });
+
+  it("records a rate limit from unsafe.bindings as the ratelimit binding it is", () => {
+    const config: ResolvedWranglerConfig = {
+      ratelimits: [{ name: "API", namespace_id: "1001", simple: { limit: 30, period: 60 } }],
+      unsafe: {
+        bindings: [
+          {
+            name: "LOGIN",
+            type: "ratelimit",
+            namespace_id: 1002,
+            simple: { limit: 5, period: 10 },
+          },
+        ],
+      },
+    };
+    expect(collectBindings(config)).toEqual([
+      { type: "ratelimit", name: "API", namespace_id: "1001", simple: { limit: 30, period: 60 } },
+      { type: "ratelimit", name: "LOGIN", namespace_id: "1002", simple: { limit: 5, period: 10 } },
+    ]);
+  });
+
+  it("refuses every other unsafe binding, and a rate limit it cannot record", () => {
+    for (const [binding, message] of [
+      [
+        { name: "AI_GATEWAY", type: "ai_gateway" },
+        /unsafe binding AI_GATEWAY has the type "ai_gateway"; Appflare takes only rate limits/,
+      ],
+      [
+        { name: "LOGIN", type: "ratelimit", namespace_id: "1", simple: { limit: 5, period: 30 } },
+        /unsafe rate limit LOGIN needs a name, a namespace_id and "simple"/,
+      ],
+      [
+        { name: "LOGIN", type: "ratelimit", simple: { limit: 5, period: 60 } },
+        /unsafe rate limit LOGIN needs/,
+      ],
+      [{ type: "ratelimit", namespace_id: "1" }, /unsafe rate limit \(unnamed\) needs/],
+    ] as const) {
+      const config: ResolvedWranglerConfig = { unsafe: { bindings: [binding] } };
+      expect(() => collectBindings(config)).toThrow(UnsafeBindingError);
+      expect(() => collectBindings(config)).toThrow(message);
+    }
+  });
+
+  it("refuses unsafe.metadata and unsafe.capnp, which it cannot pass through", () => {
+    for (const [unsafe, message] of [
+      [{ metadata: { tail_consumers: [] } }, /sets unsafe\.metadata; Appflare installs/],
+      [{ capnp: { base_path: ".", source_schemas: ["a.capnp"] } }, /sets unsafe\.capnp/],
+    ] as const) {
+      expect(() => collectBindings({ unsafe })).toThrow(UnsafeBindingError);
+      expect(() => collectBindings({ unsafe })).toThrow(message);
+    }
+    // Empty, as wrangler may resolve them, is nothing to refuse.
+    expect(collectBindings({ unsafe: { metadata: {}, bindings: [] } })).toEqual([]);
+  });
+});
+
+describe("withoutSecretVars", () => {
+  it("leaves out the vars a secret is named after, and nothing else of that name", () => {
+    const bindings = collectBindings({
+      vars: { PASSWORD: "change-me", LIMITS: { max: 3 }, GREETING: "hi" },
+      kv_namespaces: [{ binding: "PASSWORD_KV" }],
+    });
+    expect(withoutSecretVars(bindings, ["PASSWORD", "LIMITS", "PASSWORD_KV", "UNUSED"])).toEqual({
+      bindings: [
+        { type: "kv_namespace", name: "PASSWORD_KV" },
+        { type: "plain_text", name: "GREETING", text: "hi" },
+      ],
+      dropped: ["PASSWORD", "LIMITS"],
+    });
+    expect(withoutSecretVars(bindings, []).dropped).toEqual([]);
+  });
 });
 
 describe("collectQueueConsumers", () => {
@@ -359,6 +432,14 @@ describe("mainModuleName", () => {
     expect(mainModuleName("/abs/src/worker.tsx")).toBe("worker.js");
     expect(mainModuleName("dist/index.js")).toBe("index.js");
     expect(mainModuleName("src/main.py")).toBe("main.py");
+    // esbuild names its output .js whatever the entry's extension.
+    expect(mainModuleName("dist/entry.mjs")).toBe("entry.js");
+    expect(mainModuleName("dist/entry.cjs")).toBe("entry.js");
+  });
+
+  it("keeps the entry's own name when wrangler does not bundle it", () => {
+    expect(mainModuleName("dist/server/entry.mjs", true)).toBe("entry.mjs");
+    expect(mainModuleName("dist/index.js", true)).toBe("index.js");
   });
 });
 

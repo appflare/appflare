@@ -43,6 +43,8 @@ export {
 export { deriveSecretValue } from "./derive-secret.ts";
 export { type InspectOptions, inspectWranglerConfig, wranglerFacts } from "./inspect.ts";
 export {
+  BUNDLED_NPM_MAJOR,
+  FALLBACK_NPM_MAJOR,
   findLockfile,
   InstallError,
   type InstallInvocation,
@@ -51,6 +53,13 @@ export {
   type InstallRunResult,
   installDependencies,
   installInvocation,
+  isNewerNpmLockfileFailure,
+  lowestRangeMajor,
+  NPM_11_SPEC,
+  npmSpec,
+  type PackageManagerFlavor,
+  packageManagerFlavor,
+  packageManagerMajor,
   resolveInstallDir,
 } from "./install.ts";
 export { parseJsonc } from "./jsonc.ts";
@@ -89,8 +98,11 @@ export {
   queueProducerBindings,
   type ResolvedWranglerConfig,
   ServiceBindingError,
+  UnsafeBindingError,
+  unsafeRateLimits,
   VectorizeDeclarationError,
   type WranglerQueueConsumer,
+  withoutSecretVars,
 } from "./wrangler-config.ts";
 export type { ZipEntryPlacement } from "./zip.ts";
 export { crc32, ZipStore } from "./zip.ts";

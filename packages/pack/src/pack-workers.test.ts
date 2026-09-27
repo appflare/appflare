@@ -195,3 +195,42 @@ describe("pack refuses what an app of several Workers cannot install", () => {
     await packFails(dir, /Appflare installs each Workflow with the Worker that defines it/);
   });
 });
+
+describe("pack an app of several Workers with a secret one Worker gets", () => {
+  it("leaves out that Worker's var of the secret's name, and keeps the other Worker's", async () => {
+    const dir = editedFixture("web/wrangler.jsonc", (t) =>
+      t.replace('"vars": {', '"vars": { "SESSION_SECRET": "dev-only",'),
+    );
+    const jobs = path.join(dir, "jobs", "wrangler.jsonc");
+    writeFileSync(
+      jobs,
+      readFileSync(jobs, "utf8").replace(
+        '"triggers"',
+        '"vars": { "SESSION_SECRET": "a public label" },\n  "triggers"',
+      ),
+    );
+    const logs: string[] = [];
+    try {
+      const res = await pack({
+        checkoutDir: dir,
+        manifestPath: path.join(dir, "appflare.jsonc"),
+        outDir: path.join(dir, "out"),
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      const byName = new Map(appWorkers(res.manifest).map((w) => [w.name, w.worker.bindings]));
+      // SESSION_SECRET is a secret of web only.
+      expect(byName.get("web")?.some((b) => b.name === "SESSION_SECRET")).toBe(false);
+      expect(byName.get("jobs")).toContainEqual({
+        type: "plain_text",
+        name: "SESSION_SECRET",
+        text: "a public label",
+      });
+      expect(logs.filter((l) => l.startsWith("var SESSION_SECRET"))).toEqual([
+        'var SESSION_SECRET is provided as a secret: the catalog manifest declares SESSION_SECRET as a secret, so the wrangler config\'s var of that name of the Worker "web" is left out',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+});

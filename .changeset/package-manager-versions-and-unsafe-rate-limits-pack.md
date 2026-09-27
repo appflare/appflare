@@ -1,0 +1,11 @@
+---
+"@appflare/pack": minor
+---
+
+The install uses the package manager version the checkout asks for. yarn 2 and later, pinned with `"packageManager": "yarn@2"` or later, run as `corepack yarn install --immutable --mode=skip-build` with `YARN_ENABLE_SCRIPTS=false` (without `--immutable`, and with `YARN_ENABLE_IMMUTABLE_INSTALLS=false`, for a directory set to `lockfile: "none"`), since yarn 2 refuses classic yarn's flags; classic yarn keeps its flags. A `.yarnrc.yml` without such a pin fails the install (`InstallError`): corepack would run classic yarn, which would run install scripts. npm runs through `npx --yes`, as the exact `npm@11.20.0` (`NPM_11_SPEC`, which the sandbox image caches) for npm 11 and as `npm@<major>` for a later one, when `packageManager` or `engines.npm` asks for npm 11 or later, and a `lockfileVersion` 3 lockfile that Node 22's npm 10 refuses as out of sync ("Missing: … from lock file") is installed again with npm 11, which the log says.
+
+A rate limit in the wrangler config's `unsafe.bindings` is recorded as the `ratelimit` binding it is, and every other `unsafe` binding, and any `unsafe.metadata` or `unsafe.capnp`, fails the pack with a message naming it (`UnsafeBindingError`). `appflare-pack inspect` no longer reports `unsafe` for a config whose only unsafe bindings are rate limits, and prints the secrets the config requires (`secrets.required`) as `secrets`.
+
+A wrangler var whose name the catalog manifest declares as a secret is left out of the artifact, with the log line `var <NAME> is provided as a secret`: Cloudflare refuses to set a secret over a var of the same name, and a version upload that sends such a var over a kept secret replaces the secret. The pack names each secret the wrangler config requires that the catalog manifest does not declare.
+
+A Worker whose wrangler config sets `no_bundle` (as the Astro Cloudflare adapter's generated config does, with `main: "entry.mjs"`) is packed with its main module under its own name: wrangler copies it as it is, where the packer looked for `entry.js` and failed with "could not identify the main worker module". A bundled Worker's main module is still `<name>.js`, whatever its source extension.

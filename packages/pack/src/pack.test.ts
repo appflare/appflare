@@ -1115,3 +1115,179 @@ describe("pack of a Worker too large for one upload", () => {
     }
   }, 120_000);
 });
+
+/**
+ * A copy of the fixture whose wrangler config sets `extra` on top of its
+ * own, with its catalog manifest edited by `catalog`.
+ */
+function editedCheckout(
+  parent: string,
+  extra: Record<string, unknown>,
+  catalog: (manifest: Record<string, unknown>) => void = () => {},
+): { dir: string; manifest: string } {
+  const dir = path.join(parent, "checkout");
+  cpSync(FIXTURE, dir, { recursive: true });
+  const configPath = path.join(dir, "wrangler.jsonc");
+  const config = parseJsonc(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  writeFileSync(configPath, JSON.stringify({ ...config, ...extra }));
+  const manifestPath = path.join(dir, "appflare.jsonc");
+  const manifest = parseJsonc(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+  catalog(manifest);
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  return { dir, manifest: manifestPath };
+}
+
+describe("pack with a var the catalog declares as a secret", () => {
+  it("leaves the var out and says so, and records an unsafe rate limit", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-secret-var-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = editedCheckout(parent, {
+        vars: { GREETING: "Hello", ADMIN_PASSWORD: "change-me" },
+        unsafe: {
+          bindings: [
+            {
+              name: "LIMITER",
+              type: "ratelimit",
+              namespace_id: "1001",
+              simple: { limit: 10, period: 60 },
+            },
+          ],
+        },
+      });
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      const bindings = res.manifest.worker.bindings;
+      expect(bindings.filter((b) => b.name === "ADMIN_PASSWORD")).toEqual([]);
+      expect(bindings).toContainEqual({ type: "plain_text", name: "GREETING", text: "Hello" });
+      expect(bindings).toContainEqual({
+        type: "ratelimit",
+        name: "LIMITER",
+        namespace_id: "1001",
+        simple: { limit: 10, period: 60 },
+      });
+      expect(logs).toContain(
+        "var ADMIN_PASSWORD is provided as a secret: the catalog manifest declares ADMIN_PASSWORD as a secret, so the wrangler config's var of that name is left out",
+      );
+      await expect(verify({ dir: outDir })).resolves.toMatchObject({ ok: true });
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("fails before building when the catalog declares one name as a secret and a var", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-secret-and-var-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = editedCheckout(parent, {}, (manifest) => {
+        manifest.vars = [
+          ...(manifest.vars as unknown[]),
+          { name: "ADMIN_PASSWORD", label: "Admin password", required: false },
+        ];
+      });
+      await expect(
+        pack({
+          checkoutDir: checkout.dir,
+          manifestPath: checkout.manifest,
+          outDir,
+          install: false,
+          logger: (m) => logs.push(m),
+        }),
+      ).rejects.toThrow(
+        /ADMIN_PASSWORD is declared both as a secret and as a var; a Worker cannot have a secret and a var of one name/,
+      );
+      expect(existsSync(outDir)).toBe(false);
+      expect(logs.some((l) => l.includes("dry-run"))).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("fails before building on an unsafe binding other than a rate limit", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-unsafe-"));
+    const outDir = path.join(parent, "out");
+    try {
+      const checkout = editedCheckout(parent, {
+        unsafe: { bindings: [{ name: "GATEWAY", type: "ai_gateway" }] },
+      });
+      await expect(
+        pack({
+          checkoutDir: checkout.dir,
+          manifestPath: checkout.manifest,
+          outDir,
+          install: false,
+        }),
+      ).rejects.toThrow(/unsafe binding GATEWAY has the type "ai_gateway"/);
+      expect(existsSync(outDir)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("names a secret the wrangler config requires that the catalog does not declare", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-required-"));
+    const outDir = path.join(parent, "out");
+    const logs: string[] = [];
+    try {
+      const checkout = editedCheckout(parent, {
+        secrets: { required: ["ADMIN_PASSWORD", "API_KEY"] },
+      });
+      await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+        logger: (m) => logs.push(m),
+      });
+      expect(logs.filter((l) => l.includes("secrets.required"))).toEqual([
+        "the wrangler config requires the secret API_KEY (secrets.required), which the catalog manifest does not declare",
+      ]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+describe("pack of a Worker wrangler does not bundle", () => {
+  it("finds an .mjs main module under its own name among the others", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-no-bundle-"));
+    const outDir = path.join(parent, "out");
+    try {
+      const checkout = editedCheckout(parent, {
+        main: "dist/server/entry.mjs",
+        no_bundle: true,
+        rules: [{ type: "ESModule", globs: ["**/*.mjs"] }],
+      });
+      const server = path.join(checkout.dir, "dist", "server");
+      mkdirSync(path.join(server, "chunks"), { recursive: true });
+      writeFileSync(
+        path.join(server, "entry.mjs"),
+        'import { greet } from "./chunks/greet.mjs";\nexport default { fetch: () => new Response(greet()) };\n',
+      );
+      writeFileSync(
+        path.join(server, "chunks", "greet.mjs"),
+        'export const greet = () => "hello";\n',
+      );
+      const res = await pack({
+        checkoutDir: checkout.dir,
+        manifestPath: checkout.manifest,
+        outDir,
+        install: false,
+      });
+      expect(res.manifest.worker.mainModule).toBe("entry.mjs");
+      expect(res.manifest.worker.modules.map((m) => [m.name, m.type])).toEqual([
+        ["entry.mjs", "esm"],
+        ["chunks/greet.mjs", "esm"],
+      ]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+});

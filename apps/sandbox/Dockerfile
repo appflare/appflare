@@ -75,9 +75,17 @@ ENV JAVASCRIPT_POOL_MIN_SIZE=0 \
     TYPESCRIPT_POOL_MIN_SIZE=0 \
     PYTHON_POOL_MIN_SIZE=0
 
+# npm 11 in npx's cache, as the exact spec the packer runs (NPM_11_SPEC in
+# packages/pack/src/install.ts; a test holds the two together). The packer
+# installs with it when a checkout's
+# package.json asks for npm 11 (`packageManager`, `engines.npm`), or when
+# Node 22's npm 10 refuses a lockfile npm 11 wrote. yarn 2 and later run
+# through `corepack yarn`, which fetches the version the checkout pins.
+RUN npx --yes npm@11.20.0 --version
+
 # Fail the image build, not a user's build, when a tool is missing.
 RUN node --version | grep -q '^v22\.' \
-  && pnpm --version && yarn --version && bun --version && bunx --version \
+  && pnpm --version && yarn --version && corepack --version && bun --version && bunx --version \
   && git --version \
   && s3fs --version | head -n 1 \
   && wrangler --version && appflare-pack --help > /dev/null

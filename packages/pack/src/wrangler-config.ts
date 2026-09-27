@@ -24,6 +24,8 @@ import {
 export interface ResolvedWranglerConfig {
   configPath?: string | null;
   main?: string | null;
+  /** The Worker is uploaded as written, without wrangler's bundling. */
+  no_bundle?: boolean;
   name?: string | null;
   compatibility_date?: string | null;
   compatibility_flags?: string[];
@@ -80,6 +82,18 @@ export interface ResolvedWranglerConfig {
     simple?: { limit: number; period: number };
   }>;
   images?: { binding: string } | null;
+  /**
+   * wrangler's escape hatch for bindings its config has no field for. Only
+   * rate limits (from before wrangler had `ratelimits`) are taken; see
+   * {@link collectBindings}.
+   */
+  unsafe?: {
+    bindings?: Array<{ name?: unknown; type?: unknown; [k: string]: unknown }> | null;
+    metadata?: unknown;
+    capnp?: unknown;
+  } | null;
+  /** The secrets the Worker needs, by name (wrangler's `secrets.required`). */
+  secrets?: { required?: string[] } | null;
   assets?: {
     directory?: string;
     binding?: string | null;
@@ -135,6 +149,108 @@ export class HyperdriveDeclarationError extends Error {
  */
 export class ServiceBindingError extends Error {
   override name = "ServiceBindingError";
+}
+
+/**
+ * The wrangler config declares an `unsafe` binding the packer cannot record:
+ * any type but a rate limit, or a rate limit without a name, namespace or
+ * `simple` limit. The message names the binding and says why.
+ */
+export class UnsafeBindingError extends Error {
+  override name = "UnsafeBindingError";
+}
+
+/** A rate limit of wrangler's `ratelimits`, and of `unsafe.bindings` once checked. */
+type RateLimitConfig = NonNullable<ResolvedWranglerConfig["ratelimits"]>[number];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The rate limits among the wrangler config's `unsafe.bindings`, in the
+ * shape of wrangler's own `ratelimits`: `{ name, type: "ratelimit",
+ * namespace_id, simple: { limit, period } }` is what wrangler uploads for
+ * either (4.136.2 passes an unsafe binding through as `{ name, type,
+ * ...rest }`). Every other `unsafe` binding throws
+ * {@link UnsafeBindingError}: the manager could not tell what it needs, and
+ * dropping it would leave the Worker without a binding its code reads.
+ */
+export function unsafeRateLimits(config: ResolvedWranglerConfig): RateLimitConfig[] {
+  // wrangler merges `unsafe.metadata` into the upload and compiles
+  // `unsafe.capnp` for it; the manager does neither.
+  for (const field of ["metadata", "capnp"] as const) {
+    const value = config.unsafe?.[field];
+    if (
+      value !== undefined &&
+      value !== null &&
+      !(isRecord(value) && Object.keys(value).length === 0)
+    ) {
+      throw new UnsafeBindingError(
+        `the wrangler config sets unsafe.${field}; Appflare installs a Worker from its recorded bindings ` +
+          `and settings only, and cannot pass unsafe.${field} through to Cloudflare`,
+      );
+    }
+  }
+  const limits: RateLimitConfig[] = [];
+  for (const binding of config.unsafe?.bindings ?? []) {
+    const name = typeof binding.name === "string" ? binding.name : "(unnamed)";
+    if (binding.type !== "ratelimit") {
+      throw new UnsafeBindingError(
+        `the wrangler config's unsafe binding ${name} has the type ${JSON.stringify(binding.type)}; ` +
+          "Appflare takes only rate limits from unsafe.bindings (as the ratelimit binding they are now), " +
+          "since it cannot tell what any other unsafe binding needs to be created",
+      );
+    }
+    const { namespace_id: namespaceId, simple } = binding;
+    const period = isRecord(simple) ? simple.period : undefined;
+    const limit = isRecord(simple) ? simple.limit : undefined;
+    if (
+      typeof binding.name !== "string" ||
+      binding.name.length === 0 ||
+      (typeof namespaceId !== "string" && typeof namespaceId !== "number") ||
+      typeof limit !== "number" ||
+      (period !== 10 && period !== 60)
+    ) {
+      throw new UnsafeBindingError(
+        `the wrangler config's unsafe rate limit ${name} needs a name, a namespace_id and ` +
+          '"simple": { "limit": <number>, "period": 10 | 60 }, as wrangler\'s ratelimits binding has',
+      );
+    }
+    limits.push({
+      name: binding.name,
+      namespace_id: String(namespaceId),
+      simple: { limit, period },
+    });
+  }
+  return limits;
+}
+
+/** The wrangler config's own vars among `bindings`: `plain_text` and `json`. */
+function isVarBinding(binding: WorkerBinding): boolean {
+  return binding.type === "plain_text" || binding.type === "json";
+}
+
+/**
+ * `bindings` without the wrangler config's vars named in `secretNames`, and
+ * the names left out. A Worker cannot have a var and a secret of one name:
+ * Cloudflare refuses to set the secret (code 10053, "Binding name already in
+ * use"), and a version upload that sends the var over a kept secret replaces
+ * the secret. The catalog manifest declaring the name as a secret wins,
+ * since a secret is what the app's author wants to keep out of the config.
+ */
+export function withoutSecretVars(
+  bindings: readonly WorkerBinding[],
+  secretNames: Iterable<string>,
+): { bindings: WorkerBinding[]; dropped: string[] } {
+  const secrets = new Set(secretNames);
+  const dropped: string[] = [];
+  const kept = bindings.filter((b) => {
+    if (!isVarBinding(b) || !secrets.has(b.name)) return true;
+    dropped.push(b.name);
+    return false;
+  });
+  return { bindings: kept, dropped };
 }
 
 type WranglerService = NonNullable<ResolvedWranglerConfig["services"]>[number];
@@ -273,7 +389,9 @@ export function checkHyperdriveDeclarations(
  * Unrecognized kinds are intentionally not emitted (extend this as the catalog
  * grows); DO class references and `vars` are handled here too. A service
  * binding is recorded only when it points at the app's own Worker, and any
- * other throws {@link ServiceBindingError}.
+ * other throws {@link ServiceBindingError}. A rate limit declared in
+ * `unsafe.bindings` is recorded as the `ratelimit` binding it is, and any
+ * other `unsafe` binding throws {@link UnsafeBindingError}.
  */
 export function collectBindings(
   config: ResolvedWranglerConfig,
@@ -396,7 +514,9 @@ export function collectBindings(
       allowed_sender_addresses: mail.allowed_sender_addresses,
     });
   }
-  for (const limit of config.ratelimits ?? []) {
+  // A rate limit from `unsafe.bindings` is the same binding under wrangler's
+  // older name; any other unsafe binding throws.
+  for (const limit of [...(config.ratelimits ?? []), ...unsafeRateLimits(config)]) {
     // `namespace_id` names the limit's counters, which Cloudflare shares
     // across every Worker in the account that binds the same id. It is kept
     // only so the binding stays complete; the manager gives each install an
@@ -585,10 +705,17 @@ export function classifyModuleType(relPath: string, isMain: boolean): ModuleType
   return "data";
 }
 
-/** The expected main-module output filename for a source `main` path. */
-export function mainModuleName(mainPath: string): string {
+/**
+ * The expected main-module output filename for a source `main` path. A
+ * bundled Worker's is esbuild's output, `<name>.js` whatever the source's
+ * extension (`.ts`, `.mjs` and `.cjs` alike, checked against wrangler
+ * 4.136.2's dry run). With `no_bundle`, wrangler copies the entry as it is,
+ * so its name keeps its extension (`entry.mjs`, as the Astro Cloudflare
+ * adapter emits it).
+ */
+export function mainModuleName(mainPath: string, noBundle = false): string {
   const base = mainPath.split(/[/\\]/).pop() ?? mainPath;
-  if (base.toLowerCase().endsWith(".py")) {
+  if (noBundle || base.toLowerCase().endsWith(".py")) {
     return base;
   }
   return base.replace(/\.(tsx?|mts|cts|jsx?|mjs|cjs)$/i, ".js");

@@ -189,6 +189,12 @@ function parseJson(text: string): JsonValue | undefined {
  * var was text in the version it was entered for) never fails the job: the
  * var falls back to the catalog default, else the wrangler config's value,
  * and a warning names it.
+ *
+ * A name the catalog declares as a secret is never a var, whatever the
+ * wrangler config or the catalog vars say: Cloudflare refuses to set a
+ * secret over a var of its name (code 10053), and a version upload that
+ * sends a var over a kept secret replaces the secret. Current artifacts
+ * record no such var; older ones may.
  */
 export function resolveVars(
   manifest: VarManifest,
@@ -236,6 +242,7 @@ export function resolveVars(
       );
     }
   }
+  for (const secret of manifest.catalog.secrets) vars.delete(secret.name);
   return {
     vars: [...vars.values()].map((v) =>
       v.type === "json"

@@ -101,7 +101,7 @@ function fake(options: Partial<FakeSandboxOptions> & { failures?: FakeFailure[] 
     defaultBranch: "main",
     committedAt: "2026-09-20T10:00:00+00:00",
     files: FILES,
-    inspect: { name: "cut", vars: ["HOME_PAGE"], unsupported: [] },
+    inspect: { name: "cut", vars: ["HOME_PAGE"], unsupported: [], secrets: [] },
     packOutput: packFor,
     ...options,
   });
@@ -271,7 +271,7 @@ describe("runRepositoryBuild", () => {
     delete files["wrangler.jsonc"];
     const sandbox = fake({
       files,
-      inspect: { name: "boxes", vars: [], unsupported: ["containers"] },
+      inspect: { name: "boxes", vars: [], unsupported: ["containers"], secrets: [] },
     });
     const result = asResult(await build(sandbox).promise);
     expect(result.detected).toMatchObject({
@@ -282,6 +282,20 @@ describe("runRepositoryBuild", () => {
       "appflare-pack inspect /workspace/appflare-build/source --config wrangler.toml",
     );
     expect(packedCatalog(sandbox)).toMatchObject({ install: { workerName: "boxes" } });
+  });
+
+  it("asks for the secrets the wrangler config requires as well as the example file's", async () => {
+    const sandbox = fake({
+      inspect: { name: "cut", vars: ["HOME_PAGE"], unsupported: [], secrets: ["API_KEY"] },
+    });
+    const result = asResult(await build(sandbox).promise);
+    expect(packedCatalog(sandbox)).toMatchObject({
+      secrets: [{ name: "ADMIN_PASSWORD" }, { name: "API_KEY", label: "Api key" }],
+    });
+    const progress = await readProgress(env.BUILDS, result.logKey as string);
+    expect(progress?.log).toContain(
+      "Secrets: ADMIN_PASSWORD, API_KEY (from .dev.vars.example and the wrangler config's secrets.required).",
+    );
   });
 
   it("stops in the detect step when wrangler cannot read the config", async () => {

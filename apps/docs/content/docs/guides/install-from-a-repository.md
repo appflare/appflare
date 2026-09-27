@@ -57,7 +57,8 @@ The build runs as a job, and its log opens. In the container, the sandbox Worker
    lists, one per `NAME=` line, with the comment above each as its help. A secret whose
    comment says it is optional is optional in the install form. The wrangler config is
    read with wrangler's own reader, whatever its format: each of its plain vars becomes
-   a setting you can change, and the sections Appflare cannot deploy are noted.
+   a setting you can change, each secret it lists in `secrets.required` is asked for
+   too (never as optional), and the sections Appflare cannot deploy are noted.
 3. Installs the dependencies with install scripts disabled, then runs the build command
    and `wrangler deploy --dry-run` through the same packer the catalog uses, in an
    environment that holds no credentials.

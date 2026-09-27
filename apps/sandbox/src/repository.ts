@@ -48,8 +48,10 @@ import {
   readPackageFacts,
   repositoryManifest,
   secretsFile,
+  secretsNote,
   secretsSource,
   sourceBuildManifest,
+  withRequiredSecrets,
 } from "./repository-manifest";
 import { restartNote, restartOnRuntimeUpdate } from "./restart";
 import type { BuildSandbox } from "./sandbox";
@@ -334,10 +336,12 @@ class RepositorySteps extends CommandRunner<BuildStage> {
               wrangler,
               pkg,
               buildCommand: build.command,
-              secrets:
+              secrets: withRequiredSecrets(
                 secretsFrom === null
                   ? []
                   : parseSecretsExample(contents.get(secretsFrom) ?? "", wrangler.vars),
+                wrangler.secrets,
+              ),
             })
           : sourceBuildManifest(baseline, {
               ref: checkedOut.ref,
@@ -380,7 +384,7 @@ class RepositorySteps extends CommandRunner<BuildStage> {
               ]),
           `Wrangler config: ${wranglerConfig}.`,
           `Build command: ${build.command ?? "none"}${build.from === "none" ? "" : ` (${build.from})`}.`,
-          `Secrets: ${parsed.data.secrets.map((s) => s.name).join(", ") || "none"}${detection.secretsFrom === "none" ? "" : ` (from ${detection.secretsFrom})`}.`,
+          `Secrets: ${parsed.data.secrets.map((s) => s.name).join(", ") || "none"}${secretsNote(detection.secretsFrom, baseline === undefined ? wrangler.secrets : [])}.`,
           `Version: ${version}.`,
           ...(wrangler.unsupported.length > 0
             ? [

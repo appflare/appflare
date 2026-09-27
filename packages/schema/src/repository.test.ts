@@ -3,6 +3,8 @@ import {
   buildCommandChoiceSchema,
   githubRepositorySchema,
   gitRefSchema,
+  INSPECT_OUTPUT_PREFIX,
+  parseInspectOutput,
   parseJsonc,
   parseRepositoryInput,
   repositoryBuildRequestSchema,
@@ -129,5 +131,18 @@ describe("parseJsonc", () => {
       name: "cut",
       vars: { A: "//not a comment" },
     });
+  });
+});
+
+describe("parseInspectOutput", () => {
+  it("reads the required secrets, and none from a packer that did not print them", () => {
+    expect(
+      parseInspectOutput(
+        `${INSPECT_OUTPUT_PREFIX}{"name":"mail","vars":[],"unsupported":[],"secrets":["API_KEY"]}`,
+      ),
+    ).toEqual({ name: "mail", vars: [], unsupported: [], secrets: ["API_KEY"] });
+    expect(
+      parseInspectOutput(`${INSPECT_OUTPUT_PREFIX}{"name":"cut","vars":["A"],"unsupported":[]}`),
+    ).toEqual({ name: "cut", vars: ["A"], unsupported: [], secrets: [] });
   });
 });

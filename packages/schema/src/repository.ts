@@ -308,14 +308,19 @@ export const UNSUPPORTED_WRANGLER_SECTIONS = [
 /**
  * What `appflare-pack inspect` reads from a project's wrangler config, as
  * wrangler resolves it (JSON, JSONC or TOML): the Worker's `name`, the
- * names of its plain `vars`, and the {@link UNSUPPORTED_WRANGLER_SECTIONS} it
- * uses. The command prints it as JSON on one line after
+ * names of its plain `vars`, the {@link UNSUPPORTED_WRANGLER_SECTIONS} it
+ * uses, and the names of the secrets it requires. The command prints it as JSON on one line after
  * {@link INSPECT_OUTPUT_PREFIX}.
  */
 export const wranglerFactsSchema = z.object({
   name: z.string().min(1).max(256).nullable(),
   vars: z.array(z.string().min(1).max(256)).max(128),
   unsupported: z.array(z.string().min(1).max(64)).max(32),
+  /**
+   * The secrets the config requires (wrangler's `secrets.required`).
+   * Defaults to none, as a packer from before the field printed it.
+   */
+  secrets: z.array(z.string().min(1).max(256)).max(128).default([]),
 });
 export type WranglerFacts = z.infer<typeof wranglerFactsSchema>;
 

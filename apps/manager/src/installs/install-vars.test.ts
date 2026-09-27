@@ -1,4 +1,10 @@
-import type { ArtifactManifest, CatalogVar, WorkerBinding } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  appWorkers,
+  type CatalogVar,
+  type WorkerBinding,
+  workerManifest,
+} from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import {
   enteredDerivedVarProblems,
@@ -14,10 +20,14 @@ import {
 function manifest(
   bindings: WorkerBinding[],
   vars: CatalogVar[],
+  secrets: string[] = [],
 ): Pick<ArtifactManifest, "catalog" | "worker"> {
   return {
     worker: { bindings } as ArtifactManifest["worker"],
-    catalog: { vars } as ArtifactManifest["catalog"],
+    catalog: {
+      vars,
+      secrets: secrets.map((name) => ({ name, label: name, generate: false })),
+    } as ArtifactManifest["catalog"],
   };
 }
 
@@ -147,6 +157,21 @@ describe("varValueProblem and missingRequiredVar", () => {
 });
 
 describe("resolveVars", () => {
+  it("never sends a var of a secret's name, from the wrangler config or the catalog", () => {
+    const m = manifest(
+      [
+        { type: "plain_text", name: "PASSWORD", text: "change-me" },
+        { type: "json", name: "TOKENS", json: ["a"] },
+        { type: "plain_text", name: "GREETING", text: "hi" },
+      ],
+      [v("PASSWORD", { default: "also-me" }), v("GREETING")],
+      ["PASSWORD", "TOKENS"],
+    );
+    expect(
+      resolveVars(m, { PASSWORD: "entered" }, { workerUrl: null, workerName: "app" }).vars,
+    ).toEqual([{ type: "plain_text", name: "GREETING", text: "hi" }]);
+  });
+
   it("leaves {{workerUrl}} as written while the URL is unknown", () => {
     const m = manifest([{ type: "plain_text", name: "URL", text: "{{workerUrl}}/x" }], []);
     expect(resolveVars(m, {}, { workerUrl: null, workerName: "app" }).vars).toEqual([
@@ -246,5 +271,32 @@ describe("select vars", () => {
     expect(resolveVars(m, { OPEN: "true" }, placeholders).vars).toEqual([
       { type: "json", name: "OPEN", json: true },
     ]);
+  });
+});
+
+describe("resolveVars for an app of several Workers", () => {
+  it("drops a var only on the Worker that gets the secret of its name", () => {
+    const secretVar: WorkerBinding = { type: "plain_text", name: "SESSION", text: "dev" };
+    const app = {
+      format: 2,
+      worker: { bindings: [secretVar] },
+      assets: {},
+      workers: [{ name: "jobs", worker: { bindings: [secretVar] }, assets: {} }],
+      catalog: {
+        install: {
+          workers: [
+            { name: "web", wranglerConfig: "web/wrangler.jsonc", primary: true },
+            { name: "jobs", wranglerConfig: "jobs/wrangler.jsonc" },
+          ],
+        },
+        secrets: [{ name: "SESSION", label: "Session", generate: true, workers: ["web"] }],
+        vars: [],
+      },
+    } as unknown as ArtifactManifest;
+    const placeholders = { workerUrl: null, workerName: "duo" };
+    const [web, jobs] = appWorkers(app);
+    if (web === undefined || jobs === undefined) throw new Error("two Workers expected");
+    expect(resolveVars(workerManifest(app, web), {}, placeholders).vars).toEqual([]);
+    expect(resolveVars(workerManifest(app, jobs), {}, placeholders).vars).toEqual([secretVar]);
   });
 });

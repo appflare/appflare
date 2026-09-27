@@ -20,6 +20,12 @@ import {
   type InstallRunner,
   installDependencies,
   installInvocation,
+  isNewerNpmLockfileFailure,
+  lowestRangeMajor,
+  NPM_11_SPEC,
+  npmSpec,
+  packageManagerFlavor,
+  packageManagerMajor,
   resolveInstallDir,
 } from "./install.ts";
 
@@ -344,5 +350,214 @@ writeFileSync("yarn.lock", "# yarn lockfile v1\\n");
       path.join(root, "site", "yarn.lock"),
     );
     expect(logs.at(-1)).toMatch(/^resolved lockfile for site: site\/yarn\.lock sha256 /);
+  });
+});
+
+describe("yarn 2 and later", () => {
+  it("runs corepack's yarn with Berry's flags, frozen and not", () => {
+    const frozen = installInvocation("yarn", "required", { yarnBerry: true });
+    expect([frozen.command, ...frozen.args].join(" ")).toBe(
+      "corepack yarn install --immutable --mode=skip-build",
+    );
+    expect(frozen.env).toEqual({
+      YARN_ENABLE_SCRIPTS: "false",
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+    });
+    const resolving = installInvocation("yarn", "none", { yarnBerry: true });
+    expect([resolving.command, ...resolving.args].join(" ")).toBe(
+      "corepack yarn install --mode=skip-build",
+    );
+    expect(resolving.env).toEqual({
+      YARN_ENABLE_SCRIPTS: "false",
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+      YARN_ENABLE_IMMUTABLE_INSTALLS: "false",
+    });
+  });
+
+  it("is detected from the nearest packageManager pin", () => {
+    file("package.json", JSON.stringify({ packageManager: "yarn@4.5.1+sha512.abc" }));
+    file("web/package.json", "{}");
+    file(".yarnrc.yml", "nodeLinker: node-modules\n");
+    expect(packageManagerFlavor(root, path.join(root, "web"), "yarn")).toEqual({
+      yarnBerry: true,
+    });
+    file("web/package.json", JSON.stringify({ packageManager: "yarn@1.22.22" }));
+    expect(packageManagerFlavor(root, path.join(root, "web"), "yarn")).toEqual({});
+
+    rmSync(path.join(root, "package.json"));
+    rmSync(path.join(root, "web/package.json"));
+    rmSync(path.join(root, ".yarnrc.yml"));
+    expect(packageManagerFlavor(root, path.join(root, "web"), "yarn")).toEqual({});
+  });
+
+  it("refuses a .yarnrc.yml without a packageManager pin, running nothing", () => {
+    file("web/.yarnrc.yml", "nodeLinker: node-modules\n");
+    file("web/package.json", "{}");
+    file("web/yarn.lock", "");
+    expect(() => packageManagerFlavor(root, path.join(root, "web"), "yarn")).toThrow(InstallError);
+    const { runs, run } = recorder();
+    expect(() => install([{ path: "web" }], run, "yarn")).toThrow(
+      /^web\/\.yarnrc\.yml marks a yarn 2 or later project, but no package\.json at or above the directory pins its yarn \("packageManager": "yarn@4\.x\.y"\); without the pin corepack would run classic yarn, which would run install scripts/,
+    );
+    expect(runs).toEqual([]);
+  });
+
+  it("keeps classic yarn's flags for a checkout that pins yarn 1", () => {
+    file("package.json", JSON.stringify({ packageManager: "yarn@1.22.22+sha512.abc" }));
+    file("yarn.lock", "");
+    const { runs, run } = recorder();
+    install([{ path: "." }], run, "yarn");
+    expect(runs).toEqual([{ cwd: ".", line: "yarn install --frozen-lockfile --ignore-scripts" }]);
+  });
+
+  it("installs a Berry checkout through corepack and says so", () => {
+    file("package.json", JSON.stringify({ packageManager: "yarn@4.9.1" }));
+    file("yarn.lock", "");
+    const { runs, run } = recorder();
+    const logs = install([{ path: "." }], run, "yarn");
+    expect(runs).toEqual([
+      { cwd: ".", line: "corepack yarn install --immutable --mode=skip-build" },
+    ]);
+    expect(logs[0]).toBe(
+      "installing dependencies in . with yarn 2 or later: corepack yarn install --immutable --mode=skip-build",
+    );
+  });
+
+  it("says how to get corepack when it cannot run", () => {
+    file("package.json", JSON.stringify({ packageManager: "yarn@4.9.1" }));
+    file("yarn.lock", "");
+    const missing: InstallRunner = () => ({
+      error: new Error("spawnSync corepack ENOENT"),
+      status: null,
+      stdout: "",
+      stderr: "",
+    });
+    expect(() => install([{ path: "." }], missing, "yarn")).toThrow(
+      /could not run corepack: spawnSync corepack ENOENT; yarn 2 and later install through corepack/,
+    );
+  });
+});
+
+describe("the npm version", () => {
+  it("reads the major of a packageManager field for the named manager only", () => {
+    expect(packageManagerMajor("npm@11.6.2", "npm")).toBe(11);
+    expect(packageManagerMajor("yarn@4.5.1+sha512.abc", "yarn")).toBe(4);
+    expect(packageManagerMajor("pnpm@10.0.0", "npm")).toBeNull();
+    expect(packageManagerMajor(undefined, "npm")).toBeNull();
+  });
+
+  it("takes the lowest major a range allows", () => {
+    expect(lowestRangeMajor(">=11")).toBe(11);
+    expect(lowestRangeMajor("^11.3.0")).toBe(11);
+    expect(lowestRangeMajor("10.x || 11.x")).toBe(10);
+    expect(lowestRangeMajor("*")).toBeNull();
+    expect(lowestRangeMajor(11)).toBeNull();
+  });
+
+  it("pins a later npm from packageManager, else engines.npm, and never npm 10 or earlier", () => {
+    file("package.json", JSON.stringify({ packageManager: "npm@11.6.2" }));
+    expect(packageManagerFlavor(root, root, "npm")).toEqual({ npmMajor: 11 });
+    file("package.json", JSON.stringify({ engines: { node: ">=22", npm: ">=11.0.0" } }));
+    expect(packageManagerFlavor(root, root, "npm")).toEqual({ npmMajor: 11 });
+    file("package.json", JSON.stringify({ engines: { npm: ">=10" } }));
+    expect(packageManagerFlavor(root, root, "npm")).toEqual({});
+    file(
+      "package.json",
+      JSON.stringify({ packageManager: "npm@10.9.2", engines: { npm: ">=11" } }),
+    );
+    expect(packageManagerFlavor(root, root, "npm")).toEqual({});
+    file("package.json", "not json");
+    expect(packageManagerFlavor(root, root, "npm")).toEqual({});
+  });
+
+  it("runs a pinned npm through npx", () => {
+    const inv = installInvocation("npm", "required", { npmMajor: 11 });
+    expect([inv.command, ...inv.args].join(" ")).toBe("npx --yes npm@11.20.0 ci --ignore-scripts");
+    file("package.json", JSON.stringify({ packageManager: "npm@11.6.2" }));
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 3 }));
+    const { runs, run } = recorder();
+    const logs = install([{ path: "." }], run, "npm");
+    expect(runs).toEqual([{ cwd: ".", line: "npx --yes npm@11.20.0 ci --ignore-scripts" }]);
+    expect(logs[0]).toMatch(/^installing dependencies in \. with npm 11: npx/);
+  });
+
+  const OUT_OF_SYNC =
+    "npm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.\nnpm error\nnpm error Missing: esbuild@0.28.2 from lock file\n";
+
+  /** A runner whose npm 10 refuses the lockfile and whose later npm installs it. */
+  function npm10(stderr = OUT_OF_SYNC): { runs: string[]; run: InstallRunner } {
+    const runs: string[] = [];
+    return {
+      runs,
+      run: (invocation) => {
+        runs.push([invocation.command, ...invocation.args].join(" "));
+        return invocation.command === "npm"
+          ? { status: 1, stdout: "", stderr }
+          : { status: 0, stdout: "", stderr: "" };
+      },
+    };
+  }
+
+  it("retries with npm 11 when npm 10 refuses a lockfileVersion 3 lockfile as out of sync", () => {
+    file("package.json");
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 3 }));
+    const { runs, run } = npm10();
+    const logs = install([{ path: "." }], run, "npm");
+    expect(runs).toEqual(["npm ci --ignore-scripts", "npx --yes npm@11.20.0 ci --ignore-scripts"]);
+    expect(logs[1]).toMatch(
+      /^npm ci --ignore-scripts refused package-lock\.json \(lockfileVersion 3\) as out of sync.*installing with npm 11: npx --yes npm@11\.20\.0 ci --ignore-scripts$/,
+    );
+  });
+
+  it("does not retry another failure, an older lockfile, or a pinned npm", () => {
+    file("package.json");
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 2 }));
+    const older = npm10();
+    expect(() => install([{ path: "." }], older.run, "npm")).toThrow(/exited with 1/);
+    expect(older.runs).toEqual(["npm ci --ignore-scripts"]);
+
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 3 }));
+    const other = npm10("npm error code E404\nnpm error 404 Not Found - GET https://registry\n");
+    expect(() => install([{ path: "." }], other.run, "npm")).toThrow(/E404/);
+    expect(other.runs).toEqual(["npm ci --ignore-scripts"]);
+
+    file("package.json", JSON.stringify({ packageManager: "npm@12.0.0" }));
+    const failing: InstallRunner = () => ({ status: 1, stdout: "", stderr: OUT_OF_SYNC });
+    expect(() => install([{ path: "." }], failing, "npm")).toThrow(
+      /npx --yes npm@12 ci --ignore-scripts exited with 1/,
+    );
+  });
+
+  it("reports the npm 11 failure when the retry fails too", () => {
+    file("package.json");
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 3 }));
+    const failing: InstallRunner = () => ({ status: 1, stdout: "", stderr: OUT_OF_SYNC });
+    expect(() => install([{ path: "." }], failing, "npm")).toThrow(
+      /npx --yes npm@11.20.0 ci --ignore-scripts exited with 1/,
+    );
+  });
+
+  it("recognises the failure only for package-lock.json of lockfileVersion 3", () => {
+    file("package-lock.json", JSON.stringify({ lockfileVersion: 3 }));
+    file("npm-shrinkwrap.json", JSON.stringify({ lockfileVersion: 3 }));
+    expect(isNewerNpmLockfileFailure(path.join(root, "package-lock.json"), OUT_OF_SYNC)).toBe(true);
+    expect(isNewerNpmLockfileFailure(path.join(root, "npm-shrinkwrap.json"), OUT_OF_SYNC)).toBe(
+      false,
+    );
+    expect(isNewerNpmLockfileFailure(path.join(root, "package-lock.json"), "E404")).toBe(false);
+    expect(isNewerNpmLockfileFailure(null, OUT_OF_SYNC)).toBe(false);
+  });
+});
+
+describe("the pinned npm 11", () => {
+  it("is exact, and is what the sandbox image warms npx's cache with", () => {
+    expect(NPM_11_SPEC).toMatch(/^npm@11\.\d+\.\d+$/);
+    expect(npmSpec(11)).toBe(NPM_11_SPEC);
+    expect(npmSpec(12)).toBe("npm@12");
+    const dockerfile = readFileSync(
+      path.resolve(import.meta.dirname, "..", "..", "..", "apps", "sandbox", "Dockerfile"),
+      "utf8",
+    );
+    expect(dockerfile).toContain(`RUN npx --yes ${NPM_11_SPEC} --version`);
   });
 });

@@ -39,10 +39,13 @@ The manager creates KV namespaces, D1 databases, R2 buckets, queues, and Vectori
 indexes for an app, attaches the app's Worker to the queues it consumes (dead-letter
 queues included), and passes through Workers AI, Browser Rendering, Analytics Engine,
 email sending (with its address restrictions), rate limits, Images, version metadata,
-and plain variables. A service binding to the app's own Worker is pointed at the
-installed Worker, whatever name it is installed under; set `install.fixedWorkerName`
-only when something else in the app needs one fixed name. Other binding types cannot
-be installed yet.
+and plain variables. A rate limit declared the older way, in `unsafe.bindings` with
+`"type": "ratelimit"`, is installed like one in `ratelimits`; every other `unsafe`
+binding fails the pack, since Appflare cannot tell what it needs. Each install gets
+rate limit counters of its own. A service binding to the app's own Worker is pointed
+at the installed Worker, whatever name it is installed under; set
+`install.fixedWorkerName` only when something else in the app needs one fixed name.
+Other binding types cannot be installed yet.
 
 An app whose data lives in a PostgreSQL or MySQL database outside Cloudflare, reached
 through Hyperdrive, is installed too: its manifest declares the database (see
@@ -179,6 +182,29 @@ Points that need care:
   in `install.workers`. The patch is part of the signed manifest.
   `appflare-pack inspect <checkout> --config <config> --manifest appflare.jsonc`
   applies it and shows what changed.
+- **Package manager versions.** The packer reads which version the repository
+  expects from its `package.json` (the nearest one at or above each install
+  directory). yarn 2 or later must be pinned with `"packageManager": "yarn@4.x.y"`; it
+  installs with `corepack yarn install --immutable --mode=skip-build` and
+  `YARN_ENABLE_SCRIPTS=false`, since yarn 2 refuses classic yarn's flags, and
+  corepack fetches the pinned yarn. A repository with a `.yarnrc.yml` but no such pin
+  fails the pack: corepack would run classic yarn, which would run install scripts.
+  npm installs with the npm that ships with Node.js 22 (npm 10), unless
+  `"packageManager": "npm@11.x"` or `engines.npm` asks for a later major; npm 11 runs
+  as `npx --yes npm@11.20.0 ci --ignore-scripts`, an exact release. A
+  `package-lock.json` of `lockfileVersion` 3 that npm 10 refuses as out of sync
+  ("Missing: … from lock file"), as it does with some lockfiles npm 11 wrote, is
+  installed again with npm 11, and the log says so.
+- **What runs at install.** Install scripts are off, but that does not keep the
+  repository's own code out of the install: `npx` can resolve a binary from the
+  checkout's `node_modules`, and a `yarnPath` in `.yarnrc.yml` runs the yarn release
+  file committed to the repository. The build commands run the repository's code
+  anyway, which is why the pack runs without credentials.
+- **`install.toolchains`.** Set `["rust"]` for a workers-rs app whose build runs
+  `worker-build`: catalog CI then installs a pinned Rust toolchain with the
+  `wasm32-unknown-unknown` target before the pack. Only the `artifact` tier takes
+  it; an app that needs Rust cannot be built in an account's sandbox Worker, whose
+  image has no Rust.
 - **Worker size.** `pnpm pack-app` prints each Worker's modules, the Range requests
   the manager reads them with, and their size, for example
   `579 modules in 2 ranges, 11.44 MiB of at most 32.00 MiB`. Cloudflare accepts a
@@ -234,7 +260,13 @@ Points that need care:
   that is not in its wrangler config. Use `"generate": true` for passwords and
   signing keys the user does not need to choose. List a var from the wrangler config
   too when admins should be able to change it; without a `default`, the form starts
-  with the wrangler config's value.
+  with the wrangler config's value. The secrets the wrangler config lists in
+  `secrets.required` belong here too; the pack names any it finds missing.
+- **A secret the wrangler config sets as a var.** Some apps ship a placeholder
+  password in `vars`. Declare the name as a secret: the packer then leaves the var
+  out of the artifact and logs `var <NAME> is provided as a secret`, since a Worker
+  cannot have a var and a secret of one name. Never declare one name both as a
+  secret and as a var in `appflare.jsonc`; the pack refuses that.
 - **Derived secrets.** When the app wants a hash of a password rather than the
   password, as Counterscale's `CF_PASSWORD_HASH` is a bcrypt hash, list the password
   as a secret and the hash as a second one with

@@ -52,6 +52,7 @@ describe("inspectWranglerConfig", () => {
       name: "boxes",
       vars: ["GREETING", "LIMIT"],
       unsupported: ["containers"],
+      secrets: [],
     });
   });
 
@@ -69,6 +70,7 @@ describe("inspectWranglerConfig", () => {
       name: "tails",
       vars: [],
       unsupported: ["tail_consumers"],
+      secrets: [],
     });
     const plain = project({
       "wrangler.json": JSON.stringify({
@@ -79,6 +81,48 @@ describe("inspectWranglerConfig", () => {
       }),
     });
     expect(inspectWranglerConfig(plain, "wrangler.json")).toMatchObject({ unsupported: [] });
+  });
+
+  it("lists the secrets the config requires", () => {
+    const dir = project({
+      "wrangler.jsonc": JSON.stringify({
+        name: "mail",
+        main: "src/index.ts",
+        compatibility_date: "2026-09-01",
+        vars: { DOMAIN: "example.com" },
+        secrets: { required: ["PASSWORD", "API_KEY"] },
+      }),
+    });
+    expect(inspectWranglerConfig(dir, "wrangler.jsonc")).toEqual({
+      name: "mail",
+      vars: ["DOMAIN"],
+      unsupported: [],
+      secrets: ["PASSWORD", "API_KEY"],
+    });
+  });
+
+  it("takes rate limits in unsafe.bindings, and names unsafe only for anything else", () => {
+    const config = (bindings: unknown[]) =>
+      project({
+        "wrangler.json": JSON.stringify({
+          name: "limited",
+          main: "src/index.ts",
+          compatibility_date: "2026-09-01",
+          unsafe: { bindings },
+        }),
+      });
+    const limit = {
+      name: "LIMITER",
+      type: "ratelimit",
+      namespace_id: "1001",
+      simple: { limit: 10, period: 60 },
+    };
+    expect(inspectWranglerConfig(config([limit]), "wrangler.json")).toMatchObject({
+      unsupported: [],
+    });
+    expect(
+      inspectWranglerConfig(config([limit, { name: "X", type: "other" }]), "wrangler.json"),
+    ).toMatchObject({ unsupported: ["unsafe"] });
   });
 
   it("reads a config kept only as a template under its real name", () => {

@@ -1157,6 +1157,22 @@ export function wranglerConfigFromTemplate(configPath: string): string | null {
   return real;
 }
 
+/**
+ * Toolchains beyond Node.js a build needs. `rust`: catalog CI installs a
+ * pinned Rust toolchain (rustup, with the `wasm32-unknown-unknown` target)
+ * before the pack, for workers-rs apps built with `worker-build`.
+ */
+export const CATALOG_TOOLCHAINS = ["rust"] as const;
+export const catalogToolchainSchema = z.enum(CATALOG_TOOLCHAINS);
+export type CatalogToolchain = z.infer<typeof catalogToolchainSchema>;
+
+/** The toolchains an entry's build needs (`install.toolchains`); empty when it lists none. */
+export function installToolchains(
+  install: Pick<CatalogInstall, "toolchains">,
+): readonly CatalogToolchain[] {
+  return install.toolchains ?? [];
+}
+
 /** How the packer builds and names the app. */
 export const catalogInstallSchema = z
   .object({
@@ -1273,6 +1289,25 @@ export const catalogInstallSchema = z
      * runs without the packer.
      */
     configPatch: configPatchSchema.optional(),
+    /**
+     * Toolchains beyond Node.js the build needs; see {@link CATALOG_TOOLCHAINS}.
+     * The packer records them (the artifact carries the catalog manifest) and
+     * installs nothing itself. Optional for the same reason as
+     * `fixedWorkerName`; read it with {@link installToolchains}. Refused on
+     * the tiers that build in the sandbox Worker, whose image has none.
+     */
+    toolchains: z
+      .array(catalogToolchainSchema)
+      .min(1)
+      .max(CATALOG_TOOLCHAINS.length)
+      .refine((list) => new Set(list).size === list.length, "a toolchain is listed twice")
+      .describe(
+        'Toolchains beyond Node.js the build needs. `"rust"`: catalog CI installs a pinned ' +
+          "Rust toolchain with the `wasm32-unknown-unknown` target before installing and " +
+          "building, for workers-rs apps (`worker-build`). Artifact tier only: the sandbox " +
+          "image that builds sandbox and self-deploying entries in an account has no Rust.",
+      )
+      .optional(),
     // --- Self-deploying tier -------------------------------------------------
     /**
      * How the sandbox Worker runs the app's own installer; see
@@ -1339,6 +1374,13 @@ export const catalogInstallSchema = z
           "install.configPatch is for an app of one Worker; with install.workers, set configPatch on the Worker whose config it changes",
       });
     }
+    if (install.toolchains !== undefined && runsInSandbox(install.tier)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["toolchains"],
+        message: `install.toolchains (${install.toolchains.join(", ")}) is only for the artifact tier, which catalog CI builds with those toolchains installed; the sandbox image that builds ${install.tier} entries in an account has no ${install.toolchains.join(" or ")} toolchain`,
+      });
+    }
     if (install.emailRouting !== undefined && install.tier === "self-deploying") {
       ctx.addIssue({
         code: "custom",
@@ -1351,9 +1393,9 @@ export const catalogInstallSchema = z
   // The refinements do not reach the JSON Schema; `allOf` states them there
   // (no `sandbox`, or a tier that runs in the sandbox Worker; `selfDeploying`
   // exactly when the tier is `self-deploying`; no `emailRouting` or
-  // `installDirs` on a `self-deploying` entry; `workers` only on the
-  // `artifact` tier; `configPatch` neither beside `workers` nor on a
-  // `self-deploying` entry), so editors
+  // `installDirs` on a `self-deploying` entry; `workers` and `toolchains`
+  // only on the `artifact` tier; `configPatch` neither beside `workers` nor
+  // on a `self-deploying` entry), so editors
   // refuse the same manifests.
   .meta({
     allOf: [
@@ -1400,6 +1442,12 @@ export const catalogInstallSchema = z
             not: { required: ["workers"] },
             properties: { tier: { not: { const: "self-deploying" } } },
           },
+        ],
+      },
+      {
+        anyOf: [
+          { not: { required: ["toolchains"] } },
+          { properties: { tier: { const: "artifact" } } },
         ],
       },
     ],
@@ -1595,6 +1643,18 @@ export const catalogManifestSchema = z
     for (const problem of derivedVarProblems(manifest.secrets, manifest.vars)) {
       ctx.addIssue({ code: "custom", path: ["vars", ...problem.path], message: problem.message });
     }
+    // A Worker cannot have a var and a secret of one name: Cloudflare refuses
+    // the secret over the var, and an upload of the var replaces the secret.
+    const secretNames = new Set(manifest.secrets.map((s) => s.name));
+    manifest.vars.forEach((v, i) => {
+      if (secretNames.has(v.name)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["vars", i, "name"],
+          message: `${v.name} is declared both as a secret and as a var; a Worker cannot have a secret and a var of one name, so keep one of them`,
+        });
+      }
+    });
     // `workers` on a secret or var names Workers of `install.workers`.
     const declared = manifest.install.workers;
     const names = new Set((declared ?? []).map((w) => w.name));

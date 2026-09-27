@@ -11,7 +11,9 @@ import {
   readPackageFacts,
   repositoryManifest,
   repositorySlug,
+  secretsNote,
   sourceBuildManifest,
+  withRequiredSecrets,
   workerNameOf,
 } from "./repository-manifest";
 
@@ -154,7 +156,7 @@ describe("manifests", () => {
     version: "0.0.0-20260921.0123456",
     packageManager: "pnpm" as const,
     wranglerConfig: "wrangler.jsonc",
-    wrangler: { name: "cut", vars: ["HOME_PAGE"], unsupported: [] },
+    wrangler: { name: "cut", vars: ["HOME_PAGE"], unsupported: [], secrets: [] },
     pkg: readPackageFacts('{ "license": "MIT", "scripts": { "build": "x" } }'),
     buildCommand: "pnpm run build",
     secrets: parseSecretsExample("ADMIN_PASSWORD=\n"),
@@ -215,5 +217,40 @@ describe("manifests", () => {
       install: { tier: "sandbox", version: "0.0.0-20260921.0123456" },
     });
     expect(built.install.buildCommand).toBeUndefined();
+  });
+});
+
+describe("required secrets", () => {
+  it("adds the secrets the wrangler config requires after the example file's, never optional", () => {
+    const listed = parseSecretsExample(
+      "# Optional: signs sessions.\nSESSION_SECRET=\n# Optional: for mail.\nSMTP_PASSWORD=\n",
+    );
+    expect(withRequiredSecrets(listed, ["SESSION_SECRET", "API_KEY", "API_KEY"])).toEqual([
+      {
+        name: "SESSION_SECRET",
+        label: "Session secret",
+        help: "Optional: signs sessions.",
+        generate: false,
+      },
+      {
+        name: "SMTP_PASSWORD",
+        label: "Smtp password",
+        help: "Optional: for mail.",
+        generate: false,
+        optional: true,
+      },
+      { name: "API_KEY", label: "Api key", generate: false },
+    ]);
+    expect(withRequiredSecrets([], [])).toEqual([]);
+  });
+
+  it("says where the secrets came from", () => {
+    expect(secretsNote(".dev.vars.example", [])).toBe(" (from .dev.vars.example)");
+    expect(secretsNote("none", ["API_KEY"])).toBe(" (from the wrangler config's secrets.required)");
+    expect(secretsNote(".env.example", ["API_KEY"])).toBe(
+      " (from .env.example and the wrangler config's secrets.required)",
+    );
+    expect(secretsNote("catalog", [])).toBe(" (from catalog)");
+    expect(secretsNote("none", [])).toBe("");
   });
 });

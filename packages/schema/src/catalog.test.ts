@@ -7,6 +7,7 @@ import {
   BCRYPT_COST,
   buildCommandList,
   buildCommandText,
+  CATALOG_TOOLCHAINS,
   catalogAuthors,
   catalogManifestSchema,
   catalogVarOptions,
@@ -20,6 +21,7 @@ import {
   hasPlaceholder,
   INSTALL_PLACEHOLDERS,
   installTierSchema,
+  installToolchains,
   isDerivedSecret,
   isDerivedVar,
   isOptionalSecret,
@@ -493,6 +495,13 @@ describe("install.sandbox", () => {
               not: { required: ["workers"] },
               properties: { tier: { not: { const: "self-deploying" } } },
             },
+          ],
+        },
+        // Toolchains only on the artifact tier.
+        {
+          anyOf: [
+            { not: { required: ["toolchains"] } },
+            { properties: { tier: { const: "artifact" } } },
           ],
         },
       ],
@@ -1052,5 +1061,58 @@ describe("VAPID keys", () => {
     });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain("derived vars are not allowed");
+  });
+});
+
+describe("install.toolchains", () => {
+  const withToolchains = (tier: string, toolchains: unknown) => ({
+    ...validManifest,
+    install: { ...validManifest.install, tier, toolchains },
+    ...(tier === "sandbox" ? { plan: "paid", requires: ["containers"] } : {}),
+  });
+
+  it("records rust for an artifact entry, and none when omitted", () => {
+    const parsed = catalogManifestSchema.parse(withToolchains("artifact", ["rust"]));
+    expect(parsed.install.toolchains).toEqual(["rust"]);
+    expect(installToolchains(parsed.install)).toEqual(["rust"]);
+    expect(installToolchains(catalogManifestSchema.parse(validManifest).install)).toEqual([]);
+    expect(CATALOG_TOOLCHAINS).toEqual(["rust"]);
+  });
+
+  it("refuses an unknown, repeated or empty list", () => {
+    for (const toolchains of [["go"], ["rust", "rust"], []]) {
+      expect(catalogManifestSchema.safeParse(withToolchains("artifact", toolchains)).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it("refuses them on a tier built in the sandbox image, which has no Rust", () => {
+    const result = catalogManifestSchema.safeParse(withToolchains("sandbox", ["rust"]));
+    expect(result.success).toBe(false);
+    expect(result.error?.issues).toEqual([
+      expect.objectContaining({
+        path: ["install", "toolchains"],
+        message:
+          "install.toolchains (rust) is only for the artifact tier, which catalog CI builds with those toolchains installed; the sandbox image that builds sandbox entries in an account has no rust toolchain",
+      }),
+    ]);
+  });
+});
+
+describe("a name that is both a secret and a var", () => {
+  it("is refused, naming the var", () => {
+    const result = catalogManifestSchema.safeParse({
+      ...validManifest,
+      vars: [{ name: "ADMIN_PASSWORD", label: "Admin password", required: false }],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues).toEqual([
+      expect.objectContaining({
+        path: ["vars", 0, "name"],
+        message:
+          "ADMIN_PASSWORD is declared both as a secret and as a var; a Worker cannot have a secret and a var of one name, so keep one of them",
+      }),
+    ]);
   });
 });

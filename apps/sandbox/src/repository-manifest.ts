@@ -20,7 +20,8 @@ import {
  * checkout the way the "Deploy to Cloudflare" button does: the lockfile names
  * the package manager, the wrangler config sits at the root, `package.json`'s
  * `build` script is the build command, and `.dev.vars.example` lists the
- * secrets. The result is a catalog manifest the packer takes like any other;
+ * secrets, with any more the wrangler config requires (`secrets.required`).
+ * The result is a catalog manifest the packer takes like any other;
  * the artifact records it. Everything here is pure, so the tests pin it.
  */
 
@@ -134,6 +135,32 @@ export function parseSecretsExample(
       if (secrets.length >= MAX_SECRETS) break;
     }
     comments = [];
+  }
+  return secrets;
+}
+
+/**
+ * The secrets the install asks for: those `.dev.vars.example` lists (see
+ * {@link parseSecretsExample}), then each other secret the wrangler config
+ * requires (`secrets.required`). A required secret is never optional, even
+ * when the example file's comment calls it so: wrangler warns without it.
+ */
+export function withRequiredSecrets(
+  listed: readonly CatalogSecret[],
+  required: readonly string[],
+): CatalogSecret[] {
+  const names = new Set(required);
+  const secrets = listed.map((s) => {
+    if (!names.has(s.name) || s.optional !== true) return s;
+    const { optional: _optional, ...rest } = s;
+    return rest;
+  });
+  const seen = new Set(secrets.map((s) => s.name));
+  for (const name of required) {
+    if (secrets.length >= MAX_SECRETS) break;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    secrets.push({ name, label: labelOf(name), generate: false });
   }
   return secrets;
 }
@@ -344,6 +371,19 @@ export function secretsSource(file: string | null, baseline: boolean): SecretsSo
   if (baseline) return "catalog";
   if (file === ".dev.vars.example" || file === ".env.example") return file;
   return "none";
+}
+
+/**
+ * Where the secrets came from, as the build log says it after their names
+ * (` (from .dev.vars.example and the wrangler config's secrets.required)`);
+ * empty when from nowhere.
+ */
+export function secretsNote(source: SecretsSource, required: readonly string[]): string {
+  const from = [
+    ...(source === "none" ? [] : [source]),
+    ...(required.length > 0 ? ["the wrangler config's secrets.required"] : []),
+  ];
+  return from.length === 0 ? "" : ` (from ${from.join(" and ")})`;
 }
 
 /** The first of {@link SECRET_FILES} the checkout has, or null. */
