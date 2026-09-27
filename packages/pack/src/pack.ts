@@ -9,6 +9,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  type Stats,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -347,7 +348,60 @@ function collectAssets(
   if (assets.run_worker_first !== undefined) {
     cfg.run_worker_first = assets.run_worker_first;
   }
+  // Wrangler 4.136.2 (`getAssetsOptions`) reads `_redirects` and `_headers`
+  // from the root of the assets directory, never uploads them as assets, and
+  // sends their text in the upload's `assets.config`, with or without a
+  // Worker; the manager sends `assets.config` as recorded.
+  for (const name of ASSET_RULE_FILES) {
+    const text = readAssetRuleFile(dir, name, logger);
+    if (text !== undefined) cfg[name] = text;
+  }
   return { config: cfg, binding: assets.binding ?? null, files };
+}
+
+/** The files at the root of the assets directory that configure it rather than being served. */
+const ASSET_RULE_FILES = ["_redirects", "_headers"] as const;
+
+/**
+ * The most bytes `_redirects` or `_headers` may have. Their text goes into
+ * the signed manifest, which the manager keeps in a D1 row (at most 2 MB).
+ * Cloudflare applies at most 2,000 static and 100 dynamic redirects and 100
+ * header rules (its Workers static assets limits); real rules are well under
+ * 100 bytes a line, so a full `_redirects` is about 200 KB and a full
+ * `_headers` far less. 512 KiB each is more than twice that, and both at
+ * their cap still leave half of the row for the rest of the manifest.
+ */
+const MAX_ASSET_RULE_FILE_BYTES = 512 * 1024;
+
+/**
+ * The text of `_redirects` or `_headers` at the root of the assets
+ * directory, or undefined when there is none. A symlink is skipped like a
+ * symlinked asset, so a pack never reads a file outside the checkout.
+ */
+function readAssetRuleFile(
+  dir: string,
+  name: (typeof ASSET_RULE_FILES)[number],
+  logger: (m: string) => void,
+): string | undefined {
+  const file = path.join(dir, name);
+  let info: Stats;
+  try {
+    info = lstatSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (info.isSymbolicLink()) {
+    logger(`skipping symlinked ${name}`);
+    return undefined;
+  }
+  if (!info.isFile()) throw new Error(`the assets directory's ${name} is not a file`);
+  if (info.size > MAX_ASSET_RULE_FILE_BYTES) {
+    throw new Error(
+      `the assets directory's ${name} is ${Math.ceil(info.size / 1024)} KiB, more than the ${MAX_ASSET_RULE_FILE_BYTES / 1024} KiB Appflare takes (far beyond the rules Cloudflare applies: 2,000 static and 100 dynamic redirects, 100 header rules); shorten it`,
+    );
+  }
+  return readFileSync(file, "utf8");
 }
 
 /** A Worker's wrangler config as the packer reads it. */

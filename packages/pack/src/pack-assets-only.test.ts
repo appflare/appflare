@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -135,6 +143,56 @@ describe("pack a Worker of static assets only", () => {
   it("refuses an assets binding before wrangler does", async () => {
     setUp({ ...STATIC, assets: { ...STATIC.assets, binding: "ASSETS" } });
     await expect(run()).rejects.toThrow(/an assets binding \(ASSETS\)/);
+  }, 120_000);
+
+  it("records _redirects and _headers in the assets config, as wrangler sends them", async () => {
+    write("public/_redirects", "/old /new 301\n/blog/* https://blog.example.com/:splat 302\n");
+    write("public/_headers", "/*\n  X-Frame-Options: DENY\n");
+    // Only the root's files count, as in wrangler.
+    write("public/docs/_headers", "/docs/*\n  Cache-Control: no-store\n");
+    setUp(STATIC);
+    const res = await run();
+    expect(res.manifest.assets.config).toEqual({
+      not_found_handling: "single-page-application",
+      _redirects: "/old /new 301\n/blog/* https://blog.example.com/:splat 302\n",
+      _headers: "/*\n  X-Frame-Options: DENY\n",
+    });
+    // Neither is served as an asset.
+    expect(res.manifest.assets.files.map((f) => f.route)).toEqual([
+      "/css/site.css",
+      "/docs/_headers",
+      "/index.html",
+    ]);
+  }, 120_000);
+
+  it("records them for a Worker with code too", async () => {
+    write("src/index.js", "export default { fetch: () => new Response('hi') };\n");
+    write("public/_redirects", "/old /new 301\n");
+    setUp({ ...STATIC, main: "src/index.js" });
+    const res = await run();
+    expect(res.manifest.worker.mainModule).toBe("index.js");
+    expect(res.manifest.assets.config).toEqual({
+      not_found_handling: "single-page-application",
+      _redirects: "/old /new 301\n",
+    });
+  }, 120_000);
+
+  it("refuses a _redirects larger than any set of rules Cloudflare applies, and writes nothing", async () => {
+    write("public/_redirects", `/a /b 301\n`.repeat(Math.ceil((512 * 1024 + 1) / 10)));
+    setUp(STATIC);
+    await expect(run()).rejects.toThrow(
+      /the assets directory's _redirects is 513 KiB, more than the 512 KiB Appflare takes .*shorten it/,
+    );
+    expect(existsSync(outDir)).toBe(false);
+  }, 120_000);
+
+  it("skips a symlinked _headers, so nothing outside the checkout is read", async () => {
+    write("secret.txt", "not for the artifact\n");
+    symlinkSync(path.join(dir, "secret.txt"), path.join(dir, "public", "_headers"));
+    setUp(STATIC);
+    const res = await run();
+    expect(res.manifest.assets.config).toEqual({ not_found_handling: "single-page-application" });
+    expect(lines).toContain("skipping symlinked _headers");
   }, 120_000);
 
   it("refuses a config with neither main nor assets", async () => {

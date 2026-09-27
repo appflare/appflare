@@ -12,6 +12,7 @@ import {
   releaseExternalDomain,
 } from "../../installs/external-domains.server";
 import type { InstallDomainInput } from "../../installs/install-input";
+import { startVarsRefreshCore } from "../../installs/reconfigure.server";
 import {
   ADDRESS_KINDS,
   CUSTOM_DOMAIN_KIND,
@@ -21,6 +22,8 @@ import {
 import { wildcardPattern } from "../../installs/wildcard-domain-input";
 import { recordWildcardDomain } from "../../installs/wildcard-domains.server";
 import { applyDomainLive, type DomainLiveResult } from "../../installs/workers-dev.server";
+import { sandboxBinding } from "../../sandbox/binding";
+import type { JobEnv } from "../run-job";
 import { errorMessage, type JobSteps } from "../steps";
 import {
   CUSTOM_DOMAIN_MAX_PROBES,
@@ -354,6 +357,74 @@ export async function installDomainPhase(
     });
   }
   return { servedBy: serves ? await domainLivePhase(steps, request, waiting) : null };
+}
+
+/**
+ * After the install is recorded, for an install whose form asked for a
+ * wildcard domain: the Worker was uploaded with `{{wildcardHostname}}`
+ * filled in with the name asked for, before the domain step ran, so that a
+ * domain that is set up (the usual case) needs no second deploy. When the
+ * step did not set it up, the Worker names a hostname it does not have, so
+ * this starts the settings change the app page starts after adding or
+ * removing the domain: it deploys the settings again from what is recorded,
+ * which is no wildcard domain. It never fails the install, which is recorded
+ * by now; a refusal (another job runs, the sandbox Worker is not connected)
+ * is logged with what to do.
+ */
+export async function unservedWildcardPhase(
+  steps: JobSteps,
+  env: Pick<JobEnv, "DB" | "JOBS" | "SANDBOX">,
+  request: { installId: string; hostname: string },
+): Promise<void> {
+  const pattern = wildcardPattern(request.hostname);
+  const later = `Save the app's settings once to fill them in without ${pattern}, or add the domain on its Domains and email tab.`;
+  try {
+    await steps.run(`settings without ${pattern}`, async ({ log, orm }) => {
+      if (
+        (await recordedId(orm, request.installId, WILDCARD_DOMAIN_KIND, request.hostname)) !== null
+      ) {
+        return {};
+      }
+      const jobs = env.JOBS;
+      if (jobs === undefined) {
+        log.warn(
+          `The app's settings may still name ${request.hostname}, which it does not serve. ${later}`,
+        );
+        return {};
+      }
+      try {
+        const started = await startVarsRefreshCore(
+          {
+            db: env.DB,
+            sandboxConnected: sandboxBinding(env) !== undefined,
+            createJob: (id, params) => jobs.create({ id, params }),
+            now: () => new Date(steps.now()),
+            // Nobody clicked: the jobs list shows it as automatic.
+            startedBy: "schedule",
+          },
+          request.installId,
+        );
+        if (started !== null) {
+          log.info(
+            `The app's settings named ${request.hostname}, which it does not serve, so a settings change (job ${started.jobId}) deploys them again without it.`,
+          );
+        }
+      } catch (error) {
+        log.warn(
+          `The app's settings name ${request.hostname}, which it does not serve, and could not be deployed again (${errorMessage(error)}). ${later}`,
+        );
+      }
+      return {};
+    });
+  } catch (error) {
+    await steps
+      .run(`settings without ${pattern} not checked`, async ({ log }) => {
+        log.warn(`Could not check the app's settings (${errorMessage(error)}). ${later}`);
+        return {};
+      })
+      // Only the log line is lost; the install is recorded either way.
+      .catch(() => undefined);
+  }
 }
 
 /** The job log line for what a domain going live did to workers.dev. */

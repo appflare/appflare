@@ -12,6 +12,7 @@ import {
   type VarsRefresh,
   type WildcardDomainDeps,
   WildcardDomainError,
+  WildcardDomainTransientError,
 } from "./wildcard-domains.server";
 
 /**
@@ -42,7 +43,11 @@ async function asUserError<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
-    if (error instanceof WildcardDomainError || error instanceof CfTokenNotConfiguredError) {
+    if (
+      error instanceof WildcardDomainError ||
+      error instanceof WildcardDomainTransientError ||
+      error instanceof CfTokenNotConfiguredError
+    ) {
       throw new Error(error.message);
     }
     throw error;

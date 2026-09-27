@@ -497,6 +497,13 @@ everything that is not part of the site (`.git`, `.wrangler`, the wrangler confi
 as `wrangler deploy` would upload it too. Such an artifact is written in format 5,
 which an earlier version of Appflare refuses with a message to update it first.
 
+`_redirects` and `_headers` at the root of the asset directory work as they do with
+`wrangler deploy`, for a static site and for a Worker with code alike: the packer
+records their rules with the artifact instead of serving them as files, and the manager
+sends them with every upload. A sandbox tier entry that is a static site, sets
+`"installDirs": []`, or has a `multiline` secret needs an up-to-date sandbox Worker;
+an older one is refused with a message to update the sandbox first.
+
 ## Seeding a first admin
 
 Some apps store their users in D1 and only let an existing admin create others,

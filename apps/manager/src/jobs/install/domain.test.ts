@@ -380,4 +380,29 @@ describe("installDomainPhase", () => {
     );
     expect(r.servedBy).toBeNull();
   });
+
+  it("leaves a base whose names already serve something, and says which", async () => {
+    const saas = fakeSaas({
+      records: [
+        {
+          id: "rec-api",
+          zone: "z-own",
+          type: "CNAME",
+          name: "api.tunnels.own.example",
+          content: "backend.example.net",
+          proxied: true,
+        },
+      ],
+    });
+    const r = await run(
+      { kind: "wildcard", zoneId: "z-own", hostname: "tunnels.own.example" },
+      saas,
+    );
+    expect(r.step.names).toEqual(["add wildcard domain tunnels.own.example"]);
+    expect(saas.world.routes).toEqual([]);
+    expect(saas.world.records.map((rec) => rec.id)).toEqual(["rec-api"]);
+    expect(r.logs.at(-1)?.message).toContain(
+      "*.tunnels.own.example could not be set up: api.tunnels.own.example already serves something through Cloudflare",
+    );
+  });
 });

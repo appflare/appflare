@@ -125,8 +125,10 @@ export const JOB_STATUSES = ["queued", "running", "succeeded", "failed"] as cons
 
 /**
  * Who started a job: `admin`, a signed-in admin (every job before automatic
- * updates existed), or `schedule`, the cron, which starts updates of apps and
- * of Appflare itself when automatic updates are on.
+ * updates existed), or `schedule`, Appflare on its own: the cron, which starts
+ * updates of apps and of Appflare itself when automatic updates are on, and an
+ * install whose wildcard domain was not set up, which deploys its settings
+ * again. Job lists show it as "Automatic".
  */
 export const JOB_STARTERS = ["admin", "schedule"] as const;
 export type JobStarter = (typeof JOB_STARTERS)[number];

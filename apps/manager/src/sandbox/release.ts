@@ -256,6 +256,10 @@ export async function verifySandboxManifest(
       `the artifact is version ${manifest.version}, the release is ${expectedVersion}`,
     );
   }
+  // The sandbox Worker runs code; an artifact of static assets only cannot be one.
+  if (manifest.worker.mainModule === undefined) {
+    throw new ArtifactError("the release has no Worker code (it serves static assets only)");
+  }
   const tooBig = workerUploadProblem(manifest.worker.modules, "The release");
   const problems = [...checkSandboxBindings(manifest), ...(tooBig === null ? [] : [tooBig])];
   if (problems.length > 0) throw new ArtifactError(problems.join("; "));

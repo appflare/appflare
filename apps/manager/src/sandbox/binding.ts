@@ -7,6 +7,7 @@ import {
   GITHUB_FETCH_HEADERS,
   type RepositoryBuildOutcome,
   repositoryBuildOutcomeSchema,
+  SANDBOX_FEATURE_ASSETS_ONLY,
   SANDBOX_FEATURE_CONFIG_PATCH,
   SANDBOX_FEATURE_D1_BASELINE,
   SANDBOX_FEATURE_D1_SEED,
@@ -158,6 +159,59 @@ export function installDirsRefusal(
 ): string | null {
   if (catalog?.install.installDirs === undefined || installsListedDirs(info)) return null;
   return `the sandbox Worker ${info.sandboxVersion} cannot install the directories this app lists (install.installDirs); to update it, ${updateHint}`;
+}
+
+/**
+ * Whether the sandbox Worker builds a Worker of static assets only (a
+ * wrangler config without `main`), an entry that installs nothing
+ * (`install.installDirs: []`), and an entry with multi-line secrets.
+ */
+export function buildsAssetsOnly(info: Pick<SandboxInfo, "features">): boolean {
+  return info.features?.includes(SANDBOX_FEATURE_ASSETS_ONLY) === true;
+}
+
+/**
+ * Why the sandbox Worker cannot build `catalog`, or null when it can: the
+ * entry installs nothing (`install.installDirs: []`), which the sandbox
+ * Worker's schema refuses, or has a multi-line secret, which it drops from
+ * the build so the app's forms would flatten the value, and the sandbox
+ * Worker predates both. Whether an app is static files only shows only in
+ * its wrangler config, so that is caught after the build
+ * ({@link assetsOnlyBuildFailure}).
+ */
+export function assetsOnlyRefusal(
+  info: Pick<SandboxInfo, "sandboxVersion" | "features">,
+  catalog:
+    | {
+        install: { installDirs?: readonly unknown[] | undefined };
+        secrets: ReadonlyArray<{ multiline?: boolean | undefined }>;
+      }
+    | undefined,
+  updateHint: string,
+): string | null {
+  if (catalog === undefined || buildsAssetsOnly(info)) return null;
+  if (catalog.install.installDirs?.length === 0) {
+    return `the sandbox Worker ${info.sandboxVersion} cannot build an app that installs no packages (install.installDirs is empty); to update it, ${updateHint}`;
+  }
+  if (catalog.secrets.some((s) => s.multiline === true)) {
+    return `the sandbox Worker ${info.sandboxVersion} cannot build an app with a multi-line secret (multiline) and would build it as a one-line secret; to update it, ${updateHint}`;
+  }
+  return null;
+}
+
+/**
+ * What a failed build means in plain words when the sandbox Worker predates
+ * Workers of static assets only and its packer refused a wrangler config
+ * without `main` (its words: "has no `main` entrypoint"); null for any other
+ * failure, or when the sandbox Worker builds such Workers.
+ */
+export function assetsOnlyBuildFailure(
+  info: Pick<SandboxInfo, "sandboxVersion" | "features">,
+  failure: string,
+  updateHint: string,
+): string | null {
+  if (buildsAssetsOnly(info) || !failure.includes("has no `main` entrypoint")) return null;
+  return `the sandbox Worker ${info.sandboxVersion} cannot build an app that is static files only (its wrangler config has no main); to update it, ${updateHint}`;
 }
 
 /** Whether the sandbox Worker's packer applies a catalog entry's config patch. */

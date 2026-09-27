@@ -92,6 +92,10 @@ export async function verifyManagerManifest(
       "the release declares Durable Object migrations, which a self-update cannot apply",
     );
   }
+  // Appflare is code; an artifact of static assets only cannot be a release of it.
+  if (manifest.worker.mainModule === undefined) {
+    throw new ArtifactError("the release has no Worker code (it serves static assets only)");
+  }
   return manifest;
 }
 

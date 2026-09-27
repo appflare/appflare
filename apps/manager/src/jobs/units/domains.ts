@@ -40,7 +40,9 @@ import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result"
  *   attach: 4 requests), an external domain (zone list, custom hostname
  *   list and create, gateway bindings read, version patch and deployment,
  *   routing entry: about 7), or a wildcard domain (zone read, domain list,
- *   route list, two DNS reads, two records and two routes: 9).
+ *   route list, two DNS reads, one read of the names under the base per 100
+ *   records, two records and two routes: 10 for most zones, plus up to four
+ *   deletes when a create fails part way).
  * - `waitForExternalDomain`: reads the custom hostname every few seconds
  *   until it and its certificate are active, then asks the app through it
  *   (up to 24 reads and 3 probes).
@@ -86,7 +88,12 @@ export type AttachDomainResult =
   /** Refused before anything was created (the job gives up its claim). */
   | { kind: "external"; ok: false; hostname: string; reason: string }
   | { kind: "wildcard"; ok: true; hostname: string; zoneId: string; parts: WildcardPart[] }
-  /** Refused before anything was created. */
+  /**
+   * Not set up: refused before anything was created, or a create was refused
+   * and what was created was removed again (the reason says which, and what
+   * is left when removing it failed). A failure that may pass is not this:
+   * it is thrown once the zone is as it was, so the step retries it.
+   */
   | { kind: "wildcard"; ok: false; hostname: string; reason: string };
 
 /** A refusal becomes final: retrying would be refused the same way. */
@@ -112,7 +119,7 @@ export function runAttachDomain(
       const { domain } = input;
       if (domain.kind === "wildcard") {
         try {
-          const { zone, hostname } = await checkWildcardRequest(api, {
+          const { zone, hostname, wholeDomain } = await checkWildcardRequest(api, {
             zoneId: domain.zoneId,
             hostname: domain.hostname,
             ...(domain.wholeDomain === undefined ? {} : { wholeDomain: domain.wholeDomain }),
@@ -121,10 +128,18 @@ export function runAttachDomain(
             zone,
             hostname,
             workerName: input.workerName,
+            wholeDomain,
           });
           log.info(
-            `Set up ${hostname} and every name under it for "${input.workerName}": ${attached.parts.map((p) => `${p.created ? "created" : "found"} ${p.name}`).join(", ")}.`,
+            `Set up ${hostname} and every name under it for "${input.workerName}": ${attached.parts.map((p) => `${p.created ? "created" : p.owned ? "found" : "used the existing"} ${p.name}`).join(", ")}.`,
           );
+          const byHand = attached.parts.filter((p) => !p.owned).map((p) => p.name);
+          if (byHand.length > 0) {
+            const one = byHand.length === 1;
+            log.info(
+              `The route${one ? "" : "s"} ${byHand.join(" and ")} already sent requests to "${input.workerName}" and ${one ? "was" : "were"} not made by Appflare, so removing the domain leaves ${one ? "it" : "them"} in place.`,
+            );
+          }
           return {
             kind: "wildcard",
             ok: true,

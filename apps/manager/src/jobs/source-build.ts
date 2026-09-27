@@ -22,6 +22,8 @@ import { jobs, SOURCE_BUILD_PURPOSES, source_builds } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { addedJustNow, justAddedMessage, readGithubToken } from "../github/tokens.server";
 import {
+  assetsOnlyBuildFailure,
+  assetsOnlyRefusal,
   buildsFromRepository,
   configPatchRefusal,
   d1BaselineRefusal,
@@ -180,6 +182,8 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
           `the sandbox Worker ${info.sandboxVersion} cannot build from a repository; to update it, ${UPDATE_SANDBOX_HINT}`,
         );
       }
+      const assetsOnlyRefused = assetsOnlyRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
+      if (assetsOnlyRefused !== null) throw new JobError(assetsOnlyRefused);
       const dirsRefused = installDirsRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
       if (dirsRefused !== null) throw new JobError(dirsRefused);
       const patchRefused = configPatchRefusal(info, params.baseline, UPDATE_SANDBOX_HINT);
@@ -203,7 +207,11 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
       const settings = await readSettings(orm, [SETTING.accountId]);
       if (!settings.account_id) throw new JobError("the Cloudflare account is not known yet");
       log.info(`The sandbox Worker ${info.sandboxVersion} builds with ${info.image}.`);
-      return { accountId: settings.account_id };
+      return {
+        accountId: settings.account_id,
+        // What the sandbox Worker can build, to explain a build it refused.
+        sandbox: { sandboxVersion: info.sandboxVersion, features: info.features ?? [] },
+      };
     });
     steps.setAccountId(checked.accountId);
 
@@ -238,6 +246,14 @@ export async function runSourceBuild(ctx: JobContext): Promise<void> {
           }
         }
         if (!outcome.ok) {
+          // A sandbox Worker that predates Workers of static assets only
+          // refuses them in its packer. (A job resumed from before this
+          // check recorded no features: nothing to explain then.)
+          const outdated =
+            checked.sandbox === undefined
+              ? null
+              : assetsOnlyBuildFailure(checked.sandbox, outcome.message, UPDATE_SANDBOX_HINT);
+          if (outdated !== null) throw new JobError(outdated);
           const message = `the build failed in its ${outcome.stage} step${outcome.exitCode === null ? "" : ` (exit code ${outcome.exitCode})`}: ${outcome.message}`;
           if (outcome.retryable) throw new Error(message);
           throw new JobError(message);

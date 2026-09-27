@@ -132,6 +132,19 @@ describe("unpackArtifact", () => {
     expect(existsSync(path.join(out, "d1"))).toBe(false);
   });
 
+  it("writes the recorded _redirects and _headers into the assets directory", async () => {
+    const { dir } = await fixture({
+      mutate: (m) => {
+        m.assets.config = { ...m.assets.config, _redirects: "/old /new 301\n" };
+      },
+    });
+    const { manifest, zipPath } = await verifyArtifact({ dir, allowUnsigned: true });
+    const out = await outDir();
+    await unpackArtifact(manifest, zipPath, out);
+    expect(readFileSync(path.join(out, "assets/_redirects"), "utf8")).toBe("/old /new 301\n");
+    expect(existsSync(path.join(out, "assets/_headers"))).toBe(false);
+  });
+
   it("rejects a file whose bytes do not match its sha256, before writing anything", async () => {
     const { dir } = await fixture({ tamper: "d1/DB/0000_init.sql" });
     const { manifest, zipPath } = await verifyArtifact({ dir, allowUnsigned: true });

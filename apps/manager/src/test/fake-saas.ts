@@ -197,8 +197,11 @@ export function fakeSaas(over: Partial<SaasWorld> = {}) {
       const zone = m[2];
       if (m[1] === "GET") {
         const name = url.searchParams.get("name.exact");
+        const suffix = url.searchParams.get("name.endswith");
         return ok(
-          world.records.filter((r) => r.zone === zone && r.name === name),
+          world.records.filter(
+            (r) => r.zone === zone && (suffix === null ? r.name === name : r.name.endsWith(suffix)),
+          ),
           page,
         );
       }

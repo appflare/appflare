@@ -86,6 +86,12 @@ export interface JobEnv {
    * `sandboxBinding()`.
    */
   SANDBOX?: unknown;
+  /**
+   * The manager's job Workflow (`JOBS`), for a job that starts another one
+   * once it has finished: an install whose wildcard domain was not set up
+   * starts the settings change that fills `{{wildcardHostname}}` in again.
+   */
+  JOBS?: { create(options: { id: string; params: JobParams }): Promise<{ id: string }> };
 }
 
 /** Test seams. Production uses the global `fetch`, `signingKeys`, `Date.now`, and timers. */

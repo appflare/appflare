@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import sandboxPackage from "../../../sandbox/package.json";
+import { buildArtifactFixture } from "../test/artifact-fixture";
 import { sandboxRelease } from "../test/fake-sandbox-account";
 import {
   PINNED_SANDBOX_VERSION,
@@ -99,5 +100,20 @@ describe("verifySandboxManifest", () => {
     await expect(
       verifySandboxManifest(other.manifestBytes, r.signature, "0.1.2", other.keys),
     ).rejects.toThrow();
+  });
+
+  it("refuses a release of static assets only, which has no code to run builds", async () => {
+    const r = await buildArtifactFixture({
+      version: "0.1.2",
+      keyId: "appflare-test",
+      assetsOnly: true,
+      assets: [{ route: "/index.html", content: "<h1>hi</h1>" }],
+      tweak: (m) => {
+        m.app = "appflare-sandbox";
+      },
+    });
+    await expect(
+      verifySandboxManifest(r.manifestBytes, r.signature, "0.1.2", r.keys),
+    ).rejects.toThrow("the release has no Worker code (it serves static assets only)");
   });
 });

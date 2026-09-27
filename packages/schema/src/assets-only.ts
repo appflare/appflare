@@ -16,6 +16,17 @@ import type { CatalogSecret, CatalogVar } from "./catalog";
  * Imports only types, so `artifact.ts` can use it without a cycle at load time.
  */
 
+/**
+ * The `info().features` entry of a sandbox Worker whose packer and schema
+ * take what came with Workers of static assets only: a wrangler config
+ * without `main`, an empty `install.installDirs` (a repository without a
+ * `package.json`), and catalog secrets marked `multiline`. A sandbox Worker
+ * without it refuses the first inside its packer and the second inside its
+ * schema, and drops `multiline` from the catalog manifest it builds with, so
+ * the manager refuses those entries up front and asks for a sandbox update.
+ */
+export const SANDBOX_FEATURE_ASSETS_ONLY = "assets-only";
+
 /** Whether a Worker has no code of its own and serves its static assets only. */
 export function isAssetsOnlyWorker(worker: { modules: readonly unknown[] }): boolean {
   return worker.modules.length === 0;

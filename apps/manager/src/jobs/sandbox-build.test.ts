@@ -10,6 +10,7 @@ import { SETTING, writeSettings } from "../db/settings";
 import type { StartInstallInput } from "../installs/install-input";
 import { catalogOnlyManifest, startInstallCore } from "../installs/start-install.server";
 import { startUpdateCore } from "../installs/versions.server";
+import { UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import {
   type ArtifactFixture,
   type ArtifactFixtureOptions,
@@ -397,6 +398,60 @@ describe("installing a sandbox tier app", () => {
     );
     expect(r.sandbox?.requests).toEqual([]);
     expect(r.account.state.versions).toEqual([]);
+  });
+
+  it("refuses an app with a multi-line secret on a sandbox Worker that would drop it", async () => {
+    const r = await install({
+      fixture: await sandboxApp({
+        catalog: {
+          install: { ...baseCatalog().install, tier: "sandbox" },
+          secrets: [
+            { name: "ADMIN_PASSWORD", label: "Admin key", generate: false, multiline: true },
+          ],
+        },
+      }),
+      sandbox: {
+        info: {
+          protocol: 1,
+          sandboxVersion: "0.1.6",
+          image: "docker.io/mendylanda/appflare-sandbox:0.1.6",
+          features: ["self-deploying", "repository-builds", "github-tokens", "install-dirs"],
+        },
+      },
+    });
+    expect(r.job?.error).toContain(
+      "the sandbox Worker 0.1.6 cannot build an app with a multi-line secret (multiline) and would build it as a one-line secret; to update it, choose Update sandbox in",
+    );
+    expect(r.sandbox?.requests).toEqual([]);
+  });
+
+  it("says to update the sandbox when its packer refuses a static site", async () => {
+    const refused: BuildOutcome = {
+      ok: false,
+      protocol: 1,
+      sandboxVersion: "0.1.6",
+      minutes: 1,
+      logKey: null,
+      log: "",
+      stage: "pack",
+      message: "wrangler config wrangler.jsonc has no `main` entrypoint",
+      retryable: false,
+      exitCode: 1,
+    };
+    const r = await install({
+      sandbox: {
+        outcome: () => refused,
+        info: {
+          protocol: 1,
+          sandboxVersion: "0.1.6",
+          image: "docker.io/mendylanda/appflare-sandbox:0.1.6",
+          features: ["self-deploying", "repository-builds", "github-tokens", "install-dirs"],
+        },
+      },
+    });
+    expect(r.job?.error).toBe(
+      `build in sandbox: the sandbox Worker 0.1.6 cannot build an app that is static files only (its wrangler config has no main); to update it, ${UPDATE_SANDBOX_HINT}`,
+    );
   });
 
   it("hands the config patch to a sandbox Worker that applies it", async () => {

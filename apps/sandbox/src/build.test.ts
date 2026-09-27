@@ -5,6 +5,7 @@ import {
   type BuildFailure,
   type BuildResult,
   buildOutcomeSchema,
+  SANDBOX_FEATURE_ASSETS_ONLY,
   SANDBOX_FEATURE_CONFIG_PATCH,
   SANDBOX_FEATURE_D1_BASELINE,
   SANDBOX_FEATURE_D1_SEED,
@@ -563,6 +564,7 @@ describe("cleanup and progress", () => {
         SANDBOX_FEATURE_D1_SEED,
         SANDBOX_FEATURE_D1_BASELINE,
         SANDBOX_FEATURE_WRANGLER_CONFIG_INLINE,
+        SANDBOX_FEATURE_ASSETS_ONLY,
       ],
       // The version metadata binding's id (vitest.config.ts).
       versionId: "version-under-test",

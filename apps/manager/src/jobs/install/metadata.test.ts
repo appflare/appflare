@@ -352,6 +352,38 @@ describe("buildScriptMetadata", () => {
     ).toThrow(/cannot have bindings or vars/);
   });
 
+  it("sends the assets directory's _redirects and _headers in assets.config, as wrangler does", async () => {
+    const rules = {
+      not_found_handling: "404-page",
+      _redirects: "/old /new 301\n",
+      _headers: "/*\n  X-Frame-Options: DENY\n",
+    };
+    const withCode = await buildArtifactFixture({
+      bindings: [],
+      assets: [{ route: "/index.html", content: "<h1>hi</h1>" }],
+      tweak: (m) => {
+        m.assets.config = { ...rules };
+      },
+    });
+    const assetsOnly = await buildArtifactFixture({
+      assetsOnly: true,
+      assets: [{ route: "/index.html", content: "<h1>hi</h1>" }],
+      tweak: (m) => {
+        m.assets.config = { ...rules };
+      },
+    });
+    for (const f of [withCode, assetsOnly]) {
+      const metadata = buildScriptMetadata({
+        manifest: f.manifest,
+        workerName: "cut",
+        resources: [],
+        vars: [],
+        assetsJwt: "jwt",
+      });
+      expect(metadata.assets).toEqual({ jwt: "jwt", config: rules });
+    }
+  });
+
   it("refuses a resource binding that was not created", async () => {
     const f = await buildArtifactFixture();
     expect(() =>

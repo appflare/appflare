@@ -275,10 +275,16 @@ export async function runSelfUpdate(ctx: JobContext): Promise<void> {
 
     // 4. The new version: every module in ONE multipart request.
     const uploaded = await run("upload Worker version", async ({ log }) => {
+      // The release was checked to have code (`verifyManagerManifest`); never
+      // upload a version without its main module.
+      const mainModule = manifest.worker.mainModule;
+      if (mainModule === undefined) {
+        throw new JobError("the release has no Worker code (it serves static assets only)");
+      }
       const bindings: UploadBinding[] = [...current.bindings];
       if (manifest.assets.binding) bindings.push({ type: "assets", name: manifest.assets.binding });
       const metadata: VersionMetadata = {
-        main_module: manifest.worker.mainModule,
+        main_module: mainModule,
         compatibility_date: manifest.worker.compatibilityDate,
         compatibility_flags: manifest.worker.compatibilityFlags,
         bindings,

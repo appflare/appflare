@@ -348,6 +348,21 @@ describe("verifyManagerManifest", () => {
       /no trusted signing key/,
     );
   });
+
+  it("rejects a release of static assets only, which has no main module to upload", async () => {
+    const f = await buildArtifactFixture({
+      keyId: "appflare-test",
+      version: "0.2.0",
+      assetsOnly: true,
+      assets: [{ route: "/index.html", content: "<h1>hi</h1>" }],
+      tweak: (m) => {
+        m.app = "appflare";
+      },
+    });
+    await expect(
+      verifyManagerManifest(f.manifestBytes, f.signature, "0.2.0", f.keys),
+    ).rejects.toThrow("the release has no Worker code (it serves static assets only)");
+  });
 });
 
 describe("version history", () => {

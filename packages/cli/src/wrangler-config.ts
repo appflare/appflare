@@ -201,6 +201,9 @@ export function buildWranglerConfig(
   }
 
   const hasAssets = manifest.assets.files.length > 0 || manifest.assets.binding !== null;
+  // `_redirects` and `_headers` are files wrangler reads from the assets
+  // directory (`unpackArtifact` writes them there), not config keys.
+  const { _redirects: _r, _headers: _h, ...assetsConfig } = manifest.assets.config;
   const config: GeneratedWranglerConfig = {
     name,
     main: `${UNPACKED_WORKER_DIR}/${worker.mainModule}`,
@@ -220,7 +223,7 @@ export function buildWranglerConfig(
     ...(hasAssets
       ? {
           assets: {
-            ...manifest.assets.config,
+            ...assetsConfig,
             directory: UNPACKED_ASSETS_DIR,
             ...(manifest.assets.binding ? { binding: manifest.assets.binding } : {}),
           },

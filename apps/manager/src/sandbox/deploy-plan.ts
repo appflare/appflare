@@ -63,12 +63,17 @@ export function migrationsToUpload(
 /**
  * The upload metadata of a verified sandbox Worker release (see
  * `verifySandboxManifest` for the bindings it may have). Secrets the sandbox
- * Worker holds (self-deploying apps' tokens) are kept.
+ * Worker holds (self-deploying apps' tokens) are kept. Throws for a release
+ * without a main module, which `verifySandboxManifest` refuses already.
  */
 export function sandboxScriptMetadata(
   manifest: ArtifactManifest,
   currentMigrationTag: string | null,
 ): ScriptMetadata {
+  const mainModule = manifest.worker.mainModule;
+  if (mainModule === undefined) {
+    throw new Error("the sandbox Worker release has no Worker code (it serves static assets only)");
+  }
   const hasVersionMetadata = manifest.worker.bindings.some(
     (b) => b.type === "version_metadata" && b.name === SANDBOX_VERSION_METADATA_BINDING,
   );
@@ -85,7 +90,7 @@ export function sandboxScriptMetadata(
       : []),
   ];
   const metadata: ScriptMetadata = {
-    main_module: manifest.worker.mainModule,
+    main_module: mainModule,
     compatibility_date: manifest.worker.compatibilityDate,
     compatibility_flags: [...manifest.worker.compatibilityFlags],
     bindings,

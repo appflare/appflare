@@ -265,6 +265,7 @@ describe("readSandboxStatus", () => {
           "github-tokens",
           "install-dirs",
           "config-patch",
+          "assets-only",
         ],
       },
       problem: null,

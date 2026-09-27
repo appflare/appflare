@@ -205,6 +205,13 @@ export async function unpackArtifact(
   } finally {
     await zip.close();
   }
+  // The packer records these files' text in the assets config; wrangler reads
+  // them from the root of the assets directory.
+  for (const name of ["_redirects", "_headers"] as const) {
+    const text = manifest.assets.config[name];
+    if (text !== undefined)
+      writes.push({ target: path.join(assetsDir, name), data: Buffer.from(text) });
+  }
 
   await mkdir(workerDir, { recursive: true });
   await mkdir(assetsDir, { recursive: true });

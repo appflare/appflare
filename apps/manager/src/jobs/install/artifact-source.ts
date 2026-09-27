@@ -38,6 +38,8 @@ import {
 import type { BuildKind, InstallOrigin } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import {
+  assetsOnlyBuildFailure,
+  assetsOnlyRefusal,
   configPatchRefusal,
   d1BaselineRefusal,
   d1SeedRefusal,
@@ -490,6 +492,7 @@ async function buildInSandboxPhase(
   // A job resumed from before this check recorded no features: nothing to refuse then.
   if (checked.sandbox !== undefined) {
     const refused =
+      assetsOnlyRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
       installDirsRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
       configPatchRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
       wranglerConfigInlineRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
@@ -539,6 +542,12 @@ async function buildInSandboxPhase(
       }
       for (const line of tailLines(outcome.log, BUILD_LOG_LINES)) log.log("debug", line);
       if (!outcome.ok) {
+        // A sandbox Worker that predates Workers of static assets only refuses them in its packer.
+        const outdated =
+          checked.sandbox === undefined
+            ? null
+            : assetsOnlyBuildFailure(checked.sandbox, outcome.message, UPDATE_SANDBOX_HINT);
+        if (outdated !== null) throw new JobError(outdated);
         const message = `the build failed in its ${outcome.stage} step${outcome.exitCode === null ? "" : ` (exit code ${outcome.exitCode})`}: ${outcome.message}`;
         // Only a container that could not start or went away is worth another run.
         if (outcome.retryable) throw new Error(message);

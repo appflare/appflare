@@ -124,11 +124,17 @@ export function createZones(http: HttpApi) {
 
     /**
      * `GET /zones/{zone_id}/dns_records?name.exact=<name>`: the records at
-     * exactly this name (case-insensitive). Needs DNS: Read.
+     * exactly this name (case-insensitive). With `nameEndsWith` instead,
+     * `name.endswith=<suffix>`: every record whose name ends in the suffix
+     * (case-insensitive), every page. Needs DNS: Read.
      */
-    listDnsRecords(zoneId: string, args: { name: string }): Promise<DnsRecord[]> {
+    listDnsRecords(
+      zoneId: string,
+      args: { name: string } | { nameEndsWith: string },
+    ): Promise<DnsRecord[]> {
       return http.list<DnsRecord>("GET", `/zones/${enc(zoneId)}/dns_records`, {
-        query: { "name.exact": args.name },
+        query:
+          "name" in args ? { "name.exact": args.name } : { "name.endswith": args.nameEndsWith },
       });
     },
 

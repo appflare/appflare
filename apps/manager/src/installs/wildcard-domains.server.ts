@@ -42,12 +42,19 @@ import { beforeDomainRemoval, WorkersDevError } from "./workers-dev.server";
  * wildcard records exist on every plan. A route that names another Worker, a
  * custom domain at the base (which takes the name before any route), and
  * address records Appflare did not make are refused rather than replaced.
+ * So are proxied names that already exist under the base (such as
+ * `api.<base>`): the `*.<base>/*` route would send them to the app too. Only
+ * an admin who agreed to serve a whole zone accepts that.
  *
  * Recorded as one `wildcard_domain` resource (name = base, cf_id = zone id,
  * an address like a custom domain) plus one `dns_record` or `worker_route`
- * resource per object created (cf_id `<zone id>/<id>`, binding = base).
+ * resource per object Appflare made (cf_id `<zone id>/<id>`, binding = base).
  * Records carry a comment naming the Worker, so a retried attach finds its
- * own records and takes them over instead of refusing them.
+ * own records and takes them over instead of refusing them. Routes carry no
+ * comment: one that already sends the name to the Worker is taken as an
+ * earlier attempt's only when that attempt's records are there too;
+ * otherwise an admin made it by hand, and it is used but never recorded, so
+ * removing the domain leaves it alone.
  */
 
 export class WildcardDomainError extends Error {
@@ -74,8 +81,14 @@ export interface WildcardPart {
   name: string;
   /** The record's or route's id. */
   id: string;
-  /** Created now (false: found from an earlier attempt). */
+  /** Created now (false: found). */
   created: boolean;
+  /**
+   * Appflare made it, now or in an earlier attempt, so it is recorded and
+   * removing the domain deletes it. False for a route to the Worker that an
+   * admin made by hand, which is used as it is and left alone.
+   */
+  owned: boolean;
 }
 
 export interface AttachedWildcardDomain {
@@ -106,23 +119,91 @@ function refusedFor(permission: string, zone: Zone, hostname: string): WildcardD
   );
 }
 
+/** How many names a message lists before it says how many more there are. */
+const NAMES_SHOWN = 5;
+
+/** `a`, `a and b`, `a, b and c`, or the first few and how many more. */
+function listNames(names: readonly string[]): string {
+  const shown = names.slice(0, NAMES_SHOWN);
+  const more = names.length - shown.length;
+  if (more > 0) return `${shown.join(", ")} and ${more} more`;
+  if (shown.length <= 1) return shown.join("");
+  return `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`;
+}
+
+/**
+ * Whether a Workers route pattern takes every request for `name` before
+ * `*.<base>/*` would: its host is `name` itself, or a wildcard nearer to it
+ * (`*.<sub>.<base>`), and its path is every path. Cloudflare runs the most
+ * specific matching route, whichever Worker it names, or none.
+ */
+function routeTakesName(pattern: string, name: string, base: string): boolean {
+  const slash = pattern.indexOf("/");
+  if (slash < 0 || pattern.slice(slash) !== "/*") return false;
+  const host = pattern.slice(0, slash).toLowerCase();
+  if (host === name) return true;
+  if (!host.startsWith("*.")) return false;
+  const suffix = host.slice(2);
+  return suffix.endsWith(`.${base}`) && name.endsWith(`.${suffix}`);
+}
+
+/**
+ * The names under `hostname` whose traffic the route for every name under it
+ * would take over: proxied records other than `*.<hostname>` itself. Left
+ * out: DNS-only records, which never reach a Worker route; Workers custom
+ * domains, which answer their name before any route runs (their records are
+ * in the DNS list as proxied `AAAA` records, seen live); and names a more
+ * specific route already takes.
+ */
+async function proxiedNamesUnder(
+  api: CloudflareClient,
+  request: {
+    zone: Zone;
+    hostname: string;
+    routes: ReadonlyArray<{ pattern: string }>;
+    customDomains: ReadonlyArray<{ hostname: string }>;
+  },
+): Promise<string[]> {
+  const { zone, hostname } = request;
+  let records: DnsRecord[];
+  try {
+    records = await api.zones.listDnsRecords(zone.id, { nameEndsWith: `.${hostname}` });
+  } catch (error) {
+    if (isPermissionError(error)) throw refusedFor(PERMISSION.dns, zone, hostname);
+    throw error;
+  }
+  const wildcard = wildcardPattern(hostname);
+  const customDomains = new Set(request.customDomains.map((d) => d.hostname.toLowerCase()));
+  const names = records
+    .filter((r) => r.proxied === true)
+    .map((r) => r.name.toLowerCase())
+    .filter((name) => name !== wildcard && name.endsWith(`.${hostname}`))
+    .filter((name) => !customDomains.has(name))
+    .filter((name) => !request.routes.some((r) => routeTakesName(r.pattern, name, hostname)));
+  return [...new Set(names)].sort();
+}
+
 /**
  * Serves `hostname` and every name under it in `zone` with the Worker
  * `workerName`: creates what is missing of the two records and two routes,
  * taking over those an earlier attempt created. Everything is checked before
- * anything is created, so a refusal leaves the zone as it was.
+ * anything is created, so a refusal leaves the zone as it was; when a create
+ * fails part way, what this attempt created is removed again before the
+ * failure is reported. `wholeDomain` is the admin's agreement that every
+ * name in the zone reaches the app, which is what lets names that already
+ * exist under the base go to it as well.
  */
 export async function attachWildcardDomain(
   api: CloudflareClient,
-  request: { zone: Zone; hostname: string; workerName: string },
+  request: { zone: Zone; hostname: string; workerName: string; wholeDomain?: boolean },
 ): Promise<AttachedWildcardDomain> {
   const { zone, hostname, workerName } = request;
   const comment = wildcardRecordComment(workerName);
 
-  // A custom domain answers its name before any route runs.
-  const domain = (await api.workerDomains.listDomains({ hostname })).find(
-    (d) => d.hostname.toLowerCase() === hostname,
-  );
+  // A custom domain answers its name before any route runs. The zone's list
+  // also says which names under the base the routes would not take.
+  const customDomains = await api.workerDomains.listDomains({ zoneId: zone.id });
+  const domain = customDomains.find((d) => d.hostname.toLowerCase() === hostname);
   if (domain !== undefined && domain.service !== workerName) {
     throw new WildcardDomainError(
       `${hostname} is a custom domain of the Worker "${domain.service}". Remove it there first; Appflare does not take a hostname from another Worker.`,
@@ -172,48 +253,234 @@ export async function attachWildcardDomain(
     recordPlan.push({ name, existing: ours?.id ?? null });
   }
 
-  const parts: WildcardPart[] = [];
-  for (const record of recordPlan) {
-    if (record.existing !== null) {
-      parts.push({ kind: DNS_RECORD_KIND, name: record.name, id: record.existing, created: false });
-      continue;
-    }
-    try {
-      const created = await api.zones.createDnsRecord(zone.id, {
-        type: WILDCARD_RECORD.type,
-        name: record.name,
-        content: WILDCARD_RECORD.content,
-        proxied: true,
-        comment,
-      });
-      parts.push({ kind: DNS_RECORD_KIND, name: record.name, id: created.id, created: true });
-    } catch (error) {
-      if (isPermissionError(error)) throw refusedFor(PERMISSION.dns, zone, hostname);
-      throw error;
+  if (request.wholeDomain !== true) {
+    const captured = await proxiedNamesUnder(api, { zone, hostname, routes, customDomains });
+    if (captured.length > 0) {
+      const one = captured.length === 1;
+      throw new WildcardDomainError(
+        `${listNames(captured)} already ${one ? "serves" : "serve"} something through Cloudflare, and this app answers on every name under ${hostname}, so it would take ${one ? "that name" : "those names"} over. Choose another name, or first delete ${one ? "that DNS record" : "those DNS records"} or turn off ${one ? "its" : "their"} proxy in the Cloudflare dashboard (the domain's DNS records).`,
+      );
     }
   }
-  for (const route of routePlan) {
-    if (route.existing !== null) {
+
+  // Records carry Appflare's comment, so a record found is an earlier
+  // attempt's. That attempt made the routes after both records, so a route to
+  // the Worker found beside both is its too; found while a record is still
+  // missing, an admin made it by hand.
+  const earlierAttempt = recordPlan.every((r) => r.existing !== null);
+  const parts: WildcardPart[] = [];
+  /** The create under way, whose object may exist even when its answer was lost. */
+  let attempting: Pick<WildcardPart, "kind" | "name"> | null = null;
+  try {
+    for (const record of recordPlan) {
+      if (record.existing !== null) {
+        parts.push({
+          kind: DNS_RECORD_KIND,
+          name: record.name,
+          id: record.existing,
+          created: false,
+          owned: true,
+        });
+        continue;
+      }
+      attempting = { kind: DNS_RECORD_KIND, name: record.name };
+      const created = await creating(PERMISSION.dns, zone, hostname, () =>
+        api.zones.createDnsRecord(zone.id, {
+          type: WILDCARD_RECORD.type,
+          name: record.name,
+          content: WILDCARD_RECORD.content,
+          proxied: true,
+          comment,
+        }),
+      );
+      parts.push({
+        kind: DNS_RECORD_KIND,
+        name: record.name,
+        id: created.id,
+        created: true,
+        owned: true,
+      });
+    }
+    for (const route of routePlan) {
+      if (route.existing !== null) {
+        parts.push({
+          kind: WORKER_ROUTE_KIND,
+          name: route.pattern,
+          id: route.existing,
+          created: false,
+          owned: earlierAttempt,
+        });
+        continue;
+      }
+      attempting = { kind: WORKER_ROUTE_KIND, name: route.pattern };
+      const created = await creating(PERMISSION.routes, zone, hostname, () =>
+        api.zones.createWorkerRoute(zone.id, { pattern: route.pattern, script: workerName }),
+      );
       parts.push({
         kind: WORKER_ROUTE_KIND,
         name: route.pattern,
-        id: route.existing,
-        created: false,
+        id: created.id,
+        created: true,
+        owned: true,
       });
-      continue;
     }
-    try {
-      const created = await api.zones.createWorkerRoute(zone.id, {
-        pattern: route.pattern,
-        script: workerName,
-      });
-      parts.push({ kind: WORKER_ROUTE_KIND, name: route.pattern, id: created.id, created: true });
-    } catch (error) {
-      if (isPermissionError(error)) throw refusedFor(PERMISSION.routes, zone, hostname);
-      throw error;
-    }
+  } catch (error) {
+    throw await undoPartialAttach(api, {
+      zone,
+      hostname,
+      workerName,
+      parts,
+      attempting,
+      error,
+    });
   }
   return { hostname, zoneId: zone.id, parts };
+}
+
+/** Runs one create, reporting a missing permission in plain words. */
+async function creating<T>(
+  permission: string,
+  zone: Zone,
+  hostname: string,
+  create: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await create();
+  } catch (error) {
+    if (isPermissionError(error)) throw refusedFor(permission, zone, hostname);
+    throw error;
+  }
+}
+
+/**
+ * A wildcard domain that could not be set up for a reason that may pass (a
+ * 5xx, a rate limit, a network error), after what was created was removed
+ * again: unlike a {@link WildcardDomainError}, the install job's step retries
+ * it, and the app page shows it for the admin to try again.
+ */
+export class WildcardDomainTransientError extends Error {
+  override name = "WildcardDomainTransientError";
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Whether a failed create may still have created its object: Cloudflare
+ * refuses with a 4xx before creating anything, while after a 5xx or a lost
+ * connection the object may exist with its answer lost.
+ */
+function mayHaveCreated(error: unknown): boolean {
+  if (error instanceof WildcardDomainError) return false;
+  return !(error instanceof CloudflareApiError && error.status < 500);
+}
+
+/**
+ * The object the failed create may have made after all, found by what it
+ * would be: the route of that pattern to the Worker, or the record of that
+ * name with Appflare's comment. Null when there is none; throws when the
+ * look fails.
+ */
+async function strayOf(
+  api: CloudflareClient,
+  zone: Zone,
+  workerName: string,
+  attempting: Pick<WildcardPart, "kind" | "name">,
+): Promise<RecordedWildcardPart | null> {
+  if (attempting.kind === WORKER_ROUTE_KIND) {
+    const found = (await api.zones.listWorkerRoutes(zone.id)).find(
+      (r) => r.pattern.toLowerCase() === attempting.name && r.script === workerName,
+    );
+    return found === undefined
+      ? null
+      : {
+          kind: WORKER_ROUTE_KIND,
+          name: attempting.name,
+          cfId: wildcardPartRef(zone.id, found.id),
+        };
+  }
+  const comment = wildcardRecordComment(workerName);
+  const found = (await api.zones.listDnsRecords(zone.id, { name: attempting.name })).find(
+    (r) =>
+      r.type === WILDCARD_RECORD.type &&
+      r.content === WILDCARD_RECORD.content &&
+      r.comment === comment,
+  );
+  return found === undefined
+    ? null
+    : { kind: DNS_RECORD_KIND, name: attempting.name, cfId: wildcardPartRef(zone.id, found.id) };
+}
+
+/**
+ * After a create failed part way: removes what this attempt created, and
+ * what the failed create may have made with its answer lost (what was found
+ * stays as it was), going on past a removal that fails. Returns the error to
+ * report, which says why it failed and what was cleaned up or is left.
+ *
+ * A refusal (a missing permission, a duplicate route) is final: the zone is
+ * as it was, and the domain can be added again once it is fixed. A failure
+ * that may pass (a 5xx, a 429, a lost connection) is retried when
+ * everything was removed; when something is left it is final too, naming
+ * what to delete.
+ */
+async function undoPartialAttach(
+  api: CloudflareClient,
+  failed: {
+    zone: Zone;
+    hostname: string;
+    workerName: string;
+    parts: readonly WildcardPart[];
+    attempting: Pick<WildcardPart, "kind" | "name"> | null;
+    error: unknown;
+  },
+): Promise<Error> {
+  const { zone, hostname, error } = failed;
+  // A 4xx other than a rate limit (a duplicate pattern, a bad request) would
+  // be refused the same way again; a 5xx, a 429 or a lost connection may pass.
+  const transient =
+    !(error instanceof WildcardDomainError) &&
+    !isPermissionError(error) &&
+    !(error instanceof CloudflareApiError && error.status < 500 && error.status !== 429);
+  const reason =
+    error instanceof WildcardDomainError
+      ? error.message
+      : `Cloudflare could not set up ${wildcardPattern(hostname)} (${describe(error)}).`;
+  const toRemove: RecordedWildcardPart[] = failed.parts
+    .filter((p) => p.created)
+    .map((p) => ({ kind: p.kind, name: p.name, cfId: wildcardPartRef(zone.id, p.id) }));
+  const left: string[] = [];
+  let cleanupError: unknown = null;
+  if (failed.attempting !== null && mayHaveCreated(error)) {
+    try {
+      const stray = await strayOf(api, zone, failed.workerName, failed.attempting);
+      if (stray !== null) toRemove.push(stray);
+    } catch (lookup) {
+      // Unknown whether it exists: named as possibly left.
+      left.push(`possibly ${failed.attempting.name}`);
+      cleanupError = lookup;
+    }
+  }
+  const removed: string[] = [];
+  for (const part of routesFirst(toRemove)) {
+    try {
+      await detachWildcardPart(api, part);
+      removed.push(part.name);
+    } catch (cleanup) {
+      left.push(part.name);
+      cleanupError ??= cleanup;
+    }
+  }
+  if (left.length > 0) {
+    return new WildcardDomainError(
+      `${reason} Appflare could not remove what it had created for it (${describe(cleanupError)}): delete ${listNames(left)} in the Cloudflare dashboard (the domain's DNS records and Workers Routes), then add the domain again.`,
+    );
+  }
+  const message =
+    removed.length === 0
+      ? reason
+      : `${reason} Appflare removed what it had already created for it (${listNames(removed)}), so the domain is as it was.`;
+  return transient ? new WildcardDomainTransientError(message) : new WildcardDomainError(message);
 }
 
 /**
@@ -245,9 +512,12 @@ export async function recordWildcardDomain(
       )
       .bind(id, installId, kind, binding, name, cfId, at);
   const resourceId = `${installId}:${WILDCARD_DOMAIN_KIND}:${newId()}`;
+  // A route an admin made by hand is used but not recorded, so nothing ever
+  // deletes it. (A part from before `owned` existed has none: Appflare's.)
+  const owned = attached.parts.filter((p) => p.owned !== false);
   const results = await db.batch([
     insert(WILDCARD_DOMAIN_KIND, resourceId, null, attached.hostname, attached.zoneId),
-    ...attached.parts.map((p) =>
+    ...owned.map((p) =>
       insert(
         p.kind,
         `${installId}:${p.kind}:${newId()}`,
@@ -279,30 +549,36 @@ export async function detachWildcardParts(
   api: CloudflareClient,
   parts: readonly RecordedWildcardPart[],
 ): Promise<Array<{ part: RecordedWildcardPart; outcome: WildcardPartOutcome }>> {
-  const ordered = [
+  const done: Array<{ part: RecordedWildcardPart; outcome: WildcardPartOutcome }> = [];
+  for (const part of routesFirst(parts)) {
+    done.push({ part, outcome: await detachWildcardPart(api, part) });
+  }
+  return done;
+}
+
+/** The routes, then the records: a route never points at a name without its record. */
+function routesFirst<T extends { kind: string }>(parts: readonly T[]): T[] {
+  return [
     ...parts.filter((p) => p.kind === WORKER_ROUTE_KIND),
     ...parts.filter((p) => p.kind === DNS_RECORD_KIND),
   ];
-  const done: Array<{ part: RecordedWildcardPart; outcome: WildcardPartOutcome }> = [];
-  for (const part of ordered) {
-    const ref = parsePartRef(part.cfId);
-    if (ref === null) {
-      done.push({ part, outcome: "unrecorded" });
-      continue;
-    }
-    try {
-      if (part.kind === WORKER_ROUTE_KIND) await api.zones.deleteWorkerRoute(ref.zoneId, ref.id);
-      else await api.zones.deleteDnsRecord(ref.zoneId, ref.id);
-      done.push({ part, outcome: "removed" });
-    } catch (error) {
-      if (error instanceof CloudflareApiError && error.status === 404) {
-        done.push({ part, outcome: "gone" });
-        continue;
-      }
-      throw error;
-    }
+}
+
+/** Deletes one record or route; one already gone (404) counts as removed. */
+async function detachWildcardPart(
+  api: CloudflareClient,
+  part: RecordedWildcardPart,
+): Promise<WildcardPartOutcome> {
+  const ref = parsePartRef(part.cfId);
+  if (ref === null) return "unrecorded";
+  try {
+    if (part.kind === WORKER_ROUTE_KIND) await api.zones.deleteWorkerRoute(ref.zoneId, ref.id);
+    else await api.zones.deleteDnsRecord(ref.zoneId, ref.id);
+    return "removed";
+  } catch (error) {
+    if (error instanceof CloudflareApiError && error.status === 404) return "gone";
+    throw error;
   }
-  return done;
 }
 
 /** One log line for what `detachWildcardParts` did to a wildcard domain. */
@@ -407,12 +683,13 @@ async function asWildcardDomainError<T>(run: () => Promise<T>): Promise<T> {
  * Checks what a wildcard domain would be before anything is created: the
  * zone is this account's and active, the base is in it, and the whole zone
  * only with the admin's agreement. Shared by the app page and the install
- * job (which checks that no other app holds the name itself).
+ * job (which checks that no other app holds the name itself). `wholeDomain`
+ * in the answer is that agreement, for `attachWildcardDomain`.
  */
 export async function checkWildcardRequest(
   api: CloudflareClient,
   request: { zoneId: string; hostname: string; wholeDomain?: boolean },
-): Promise<{ zone: Zone; hostname: string }> {
+): Promise<{ zone: Zone; hostname: string; wholeDomain: boolean }> {
   const zone = await asWildcardDomainError(() => readZone(api, request.zoneId));
   const checked = checkWildcardBase(request.hostname, zone.name);
   if (!checked.ok) throw new WildcardDomainError(checked.error);
@@ -421,7 +698,7 @@ export async function checkWildcardRequest(
       `${zone.name} is a whole domain. ${wholeDomainWarning(zone.name)} Agree to serve all of it, or enter a name under it.`,
     );
   }
-  return { zone, hostname: checked.hostname };
+  return { zone, hostname: checked.hostname, wholeDomain: checked.wholeDomain };
 }
 
 /** Whether another install records `hostname` as one of its addresses. */
@@ -480,7 +757,7 @@ export async function addWildcardDomainCore(
       `This app already answers on ${wildcardPattern(current.name)}. Remove that first to use another name.`,
     );
   }
-  const { zone, hostname } = await checkWildcardRequest(deps.api, request);
+  const { zone, hostname, wholeDomain } = await checkWildcardRequest(deps.api, request);
   if (await heldElsewhere(orm, install.id, hostname)) {
     throw new WildcardDomainError(
       `${hostname} is already a domain of another app. Remove it there first.`,
@@ -490,6 +767,7 @@ export async function addWildcardDomainCore(
     zone,
     hostname,
     workerName: install.workerName,
+    wholeDomain,
   });
   const resourceId = await recordWildcardDomain(deps.db, {
     installId: install.id,

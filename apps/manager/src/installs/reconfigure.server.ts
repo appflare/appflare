@@ -13,7 +13,7 @@ import { ulid } from "ulidx";
 import { effectiveManifest } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { type BuildKind, installs, resources } from "../db/schema";
-import { parseStoredManifest } from "../jobs/entry-workers";
+import { entryWorkers, parseStoredManifest } from "../jobs/entry-workers";
 import type { ReconfigureJobParams } from "../jobs/reconfigure";
 import {
   changedVarNames,
@@ -475,11 +475,12 @@ export async function startVarsRefreshCore(
   const signed = parseManifest(install.manifest_json);
   if (ctx === null || signed === null) return null;
   const stored = parseStoredVars(install.config_json);
-  // The primary Worker's vars, with the form of the newest revision: the
-  // wildcard domain routes to the primary Worker, which is what reads it.
-  if (!varsUseWildcardHostname({ catalog: ctx.catalog, worker: signed.worker }, stored)) {
-    return null;
-  }
+  // Every Worker of the app, with the form of the newest revision: the
+  // domain routes to the primary Worker, but another Worker of the app may
+  // be the one that names it (the settings change job deploys each Worker
+  // whose vars use it).
+  const workers = entryWorkers({ ...signed, catalog: ctx.catalog }, install.worker_name);
+  if (!workers.some((w) => varsUseWildcardHostname(w.manifest, stored))) return null;
   if (ctx.problem !== null) throw new VersionActionError(ctx.problem);
   const jobId = (deps.newId ?? (() => ulid()))();
   return claim(deps, {

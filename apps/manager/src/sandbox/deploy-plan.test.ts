@@ -1,5 +1,6 @@
 import { SANDBOX_CONTAINERS } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
+import { sandboxRelease } from "../test/fake-sandbox-account";
 import {
   type ContainerWait,
   containerChange,
@@ -9,6 +10,7 @@ import {
   migrationsToUpload,
   rolloutSteps,
   runsConfiguration,
+  sandboxScriptMetadata,
   sandboxVersionOf,
 } from "./deploy-plan";
 import { sandboxPreflightProblems } from "./preflight";
@@ -33,6 +35,18 @@ describe("migrationsToUpload", () => {
     expect(migrationsToUpload(V1, "v1")).toBeUndefined();
     expect(migrationsToUpload(V1, "v0")).toMatchObject({ old_tag: "v0", new_tag: "v1" });
     expect(migrationsToUpload([], null)).toBeUndefined();
+  });
+});
+
+describe("sandboxScriptMetadata", () => {
+  it("names the release's main module, and refuses a release without one", async () => {
+    const release = await sandboxRelease("0.1.2");
+    expect(sandboxScriptMetadata(release.manifest, null).main_module).toBe("worker.js");
+    const noCode = structuredClone(release.manifest);
+    delete noCode.worker.mainModule;
+    expect(() => sandboxScriptMetadata(noCode, null)).toThrow(
+      "the sandbox Worker release has no Worker code (it serves static assets only)",
+    );
   });
 });
 

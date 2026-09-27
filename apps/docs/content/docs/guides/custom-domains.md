@@ -89,8 +89,24 @@ instead; save the app's settings once it is done.
 
 Appflare adds nothing and says why when a name already has `A`, `AAAA` or `CNAME`
 records of its own, when a route for either pattern sends requests to another
-Worker, or when the hostname is another Worker's custom domain. Delete those in the
-Cloudflare dashboard, or choose another name.
+Worker, or when the hostname is another Worker's custom domain. It also refuses a
+hostname with names under it that already go through Cloudflare's proxy, such as
+`api.tunnels.example.com`, because the app would take them over; the message names
+them. Names that are another app's custom domain, or that a more specific Workers
+route already serves, stay as they are and do not count. Delete those in the Cloudflare dashboard (or turn off their proxy), or choose
+another name. If you agreed to serve a whole domain, its existing names are part of
+that agreement.
+
+If Cloudflare stops Appflare part way through, for example because the token lacks
+**Workers Routes: Edit**, Appflare removes the records and routes it had already
+added and says so, so you can fix the reason and add the domain again. When the reason
+may pass by itself, such as a short Cloudflare outage, the install tries again on its own. A route to the
+app's Worker that you made yourself is used as it is and stays when the wildcard
+domain is removed.
+
+When the install form asked for a wildcard domain that could not be set up, the
+install still finishes, and Appflare deploys the app's settings again so that
+`{{wildcardHostname}}` does not name a hostname the app does not have.
 
 ### Certificates
 

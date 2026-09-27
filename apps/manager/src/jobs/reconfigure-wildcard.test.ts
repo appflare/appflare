@@ -15,8 +15,10 @@ import { fakeAccount, TOKEN } from "../test/fake-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import { INSTALL_ID, OLD_VERSION, type SeedResource, seedInstall } from "../test/seed-install";
+import { unservedWildcardPhase } from "./install/domain";
 import { type ReconfigureJobParams, runReconfigure } from "./reconfigure";
 import type { JobEnv } from "./run-job";
+import { createJobSteps } from "./steps";
 
 /**
  * `{{wildcardHostname}}` following the wildcard domain: assigning or removing
@@ -154,6 +156,92 @@ describe("settings that use {{wildcardHostname}}", () => {
     expect(started).toBeNull();
     expect(params).toBeNull();
     expect((await env.DB.prepare("SELECT id FROM jobs").all()).results).toEqual([]);
+  });
+
+  it("are deployed again when only another Worker of the app uses it", async () => {
+    // The other Worker's own wrangler config names the base; the primary Worker has no such var.
+    // A copy: the fixture writes the entry's Workers into the catalog it is given.
+    const app = structuredClone(TUNNEL_APP);
+    const two: ArtifactFixtureOptions = {
+      ...app,
+      catalog: { ...app.catalog, vars: [] },
+      otherWorkers: [
+        {
+          name: "jobs",
+          bindings: [{ type: "plain_text", name: "TUNNEL_DOMAIN", text: "{{wildcardHostname}}" }],
+        },
+      ],
+    };
+    const { started, params } = await refresh(two, [
+      ...RESOURCES,
+      { kind: "worker", name: "cut-jobs", cfId: "cut-jobs" },
+      { kind: "wildcard_domain", name: BASE, cfId: "z1" },
+    ]);
+    expect(started).toEqual({ jobId: "job1" });
+    expect(params).toMatchObject({ kind: "reconfigure", refreshVars: true });
+  });
+
+  it("are deployed again after an install whose wildcard domain was not set up", async () => {
+    const fixture = await buildArtifactFixture(TUNNEL_APP);
+    await seed(fixture, RESOURCES);
+    const created: Array<{ id: string; params: unknown }> = [];
+    const installJob = "job-install";
+    // The install job, finished: the settings change may start now.
+    await env.DB.prepare(
+      "INSERT INTO jobs (id, install_id, kind, status) VALUES (?1, ?2, 'install', 'succeeded')",
+    )
+      .bind(installJob, INSTALL_ID)
+      .run();
+    const steps = createJobSteps(
+      {
+        params: { kind: "install", jobId: installJob },
+        step: fakeStep(),
+        env: { DB: env.DB },
+        deps: {},
+      },
+      installJob,
+    );
+    const jobsBinding = {
+      create: async (options: { id: string; params: unknown }) => {
+        created.push(options);
+        return { id: options.id };
+      },
+    };
+    await unservedWildcardPhase(
+      steps,
+      { DB: env.DB, JOBS: jobsBinding },
+      { installId: INSTALL_ID, hostname: BASE },
+    );
+    expect(created).toEqual([
+      {
+        id: expect.any(String),
+        params: expect.objectContaining({ kind: "reconfigure", refreshVars: true }),
+      },
+    ]);
+    const logs = (
+      await env.DB.prepare("SELECT message FROM job_logs WHERE job_id = ?1").bind(installJob).all()
+    ).results.map((l) => l.message);
+    expect(logs).toContainEqual(expect.stringContaining(`named ${BASE}, which it does not serve`));
+    // Nobody clicked it: the jobs list shows it as automatic.
+    const refreshJob = await env.DB.prepare(
+      "SELECT started_by FROM jobs WHERE kind = 'reconfigure'",
+    ).first<{ started_by: string }>();
+    expect(refreshJob?.started_by).toBe("schedule");
+
+    // Once the domain is recorded, the settings already name what the app serves.
+    created.length = 0;
+    await env.DB.prepare("DELETE FROM jobs WHERE kind = 'reconfigure'").run();
+    await env.DB.prepare(
+      "INSERT INTO resources (id, install_id, kind, name, cf_id, created_at) VALUES ('w1', ?1, 'wildcard_domain', ?2, 'z1', 0)",
+    )
+      .bind(INSTALL_ID, BASE)
+      .run();
+    await unservedWildcardPhase(
+      steps,
+      { DB: env.DB, JOBS: jobsBinding },
+      { installId: INSTALL_ID, hostname: BASE },
+    );
+    expect(created).toEqual([]);
   });
 
   it("start nothing when the admin replaced the default with a fixed name", async () => {

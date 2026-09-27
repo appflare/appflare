@@ -569,11 +569,19 @@ export function workersPaidBindingProblem(
   return null;
 }
 
-/** Static-assets router config (wrangler `assets` shape). */
+/**
+ * Static-assets router config (wrangler `assets` shape), sent as the upload's
+ * `assets.config`. `_redirects` and `_headers` are the text of those files at
+ * the root of the assets directory, which wrangler 4.136.2 sends there instead
+ * of uploading them as assets. A manager that predates them keeps them too
+ * (the object is loose) and sends them on.
+ */
 export const artifactAssetsConfigSchema = z.looseObject({
   html_handling: z.string().optional(),
   not_found_handling: z.string().optional(),
   run_worker_first: z.union([z.boolean(), z.array(z.string())]).optional(),
+  _redirects: z.string().optional(),
+  _headers: z.string().optional(),
 });
 
 /** The `assets` section of the artifact manifest. */

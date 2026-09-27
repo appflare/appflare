@@ -17,6 +17,10 @@ export interface AssetsConfig {
   html_handling?: string;
   not_found_handling?: string;
   run_worker_first?: boolean | string[];
+  /** The text of the assets directory's `_redirects` file, as wrangler sends it. */
+  _redirects?: string;
+  /** The text of the assets directory's `_headers` file, as wrangler sends it. */
+  _headers?: string;
   [key: string]: unknown;
 }
 

@@ -94,6 +94,14 @@ describe("buildWranglerConfig", () => {
     });
   });
 
+  it("leaves _redirects and _headers out of the assets config (they are files wrangler reads)", () => {
+    const edited = structuredClone(manifest);
+    edited.assets.config = { ...edited.assets.config, _redirects: "/a /b 301\n", _headers: "" };
+    const assets = buildWranglerConfig(edited, { name: "appflare" }).assets;
+    expect(assets).not.toHaveProperty("_redirects");
+    expect(assets).not.toHaveProperty("_headers");
+  });
+
   it("refuses binding types it cannot provision", () => {
     const edited = structuredClone(manifest);
     edited.worker.bindings.push({ type: "r2_bucket", name: "BUCKET" });

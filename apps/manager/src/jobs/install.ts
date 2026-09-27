@@ -53,7 +53,7 @@ import {
 import { planBindings } from "./install/bindings";
 import { checkCronLimitPhase, putSchedulesChecked } from "./install/cron-limit";
 import { seedD1Phase, seedOnlyValuesSchema, seedValues } from "./install/d1-seed";
-import { installDomainPhase } from "./install/domain";
+import { installDomainPhase, unservedWildcardPhase } from "./install/domain";
 import {
   checkEmailRoutingPhase,
   emailRoutingJobInput,
@@ -577,7 +577,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const workflowNames = Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name]));
     const placeholders = entryPlaceholders(manifest, params.workerName, subdomain);
     // The wildcard domain the form asked for, set up once the Worker serves:
-    // `{{wildcardHostname}}` names it from the first upload on.
+    // `{{wildcardHostname}}` names it from the first upload on, and is
+    // deployed again without it when the domain step does not set it up.
     const wildcardHostname = params.domain?.kind === "wildcard" ? params.domain.hostname : null;
     const entryContext: EntryUploadContext = {
       installId: params.installId,
@@ -915,6 +916,14 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+    // The settings named the wildcard domain before its step ran; when the
+    // step did not set it up, they are deployed again without it. Never throws.
+    if (wildcardHostname !== null) {
+      await unservedWildcardPhase(steps, env, {
+        installId: params.installId,
+        hostname: wildcardHostname,
+      });
+    }
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;
     await step.do("mark install failed", async () => {

@@ -72,6 +72,19 @@ describe("zones", () => {
     expect(fake.last().query.get("name.exact")).toBe("app.example.com");
   });
 
+  it("listDnsRecords with nameEndsWith -> GET /zones/{id}/dns_records?name.endswith=", async () => {
+    const { fake, client } = make({
+      result: [{ id: "r1", type: "A", name: "api.tunnels.example.com", proxied: true }],
+      result_info: { page: 1, total_pages: 1 },
+    });
+    const records = await client.zones.listDnsRecords("z1", {
+      nameEndsWith: ".tunnels.example.com",
+    });
+    expect(records.map((r) => r.name)).toEqual(["api.tunnels.example.com"]);
+    expect(fake.last().query.get("name.endswith")).toBe(".tunnels.example.com");
+    expect(fake.last().query.has("name.exact")).toBe(false);
+  });
+
   it("listWorkerRoutes -> GET /zones/{id}/workers/routes", async () => {
     const { fake, client } = make({ result: [] });
     await client.zones.listWorkerRoutes("z1");
