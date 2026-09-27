@@ -1,5 +1,12 @@
 # @appflare/sandbox-worker
 
+## 0.1.8
+
+- Builds take a catalog entry's build-time constants (`install.buildEnv`), install directories with `devDependencies: false`, Vectorize metadata indexes (`resources.vectorize[binding].metadataIndexes`) and R2 lifecycle rules (`resources.r2[binding].lifecycle`), and `info().features` lists `build-env`. The manager refuses to build an entry with any of them on a sandbox Worker that lacks it, since an older one would build without them, and asks for the sandbox Worker to be updated first.
+- When a build cannot find a GitHub access token, the message sends you to Settings > Building apps > GitHub access, where the tokens now live.
+- The image keeps pnpm 9 in npx's cache, so the packer runs it for a `lockfileVersion` 6 lockfile without fetching it first.
+- The image carries the packer of this release: build-time constants set in the environment of every build command and of wrangler's bundling, and recorded in the artifact's catalog manifest; a build that succeeds without creating, changing or removing any file in the checkout refused with its output, the commands of a list judged together; `.git`, `.wrangler` and `node_modules` directories kept out of static assets at any depth, whatever `.assetsignore` says; pnpm 9 for a `lockfileVersion` 6 lockfile, which pnpm 10 refuses; npm 11 when `.nvmrc` or `engines.node` asks for Node.js 24 or later, and when Node 22's npm refuses a `lockfileVersion` 3 lockfile with ERESOLVE; installs without devDependencies (pnpm `--prod`, npm `--omit=dev`, classic yarn and bun `--production`; yarn 2 and later refuse it); R2 lifecycle rules and Vectorize metadata indexes recorded on their bindings, and `resources.r2` naming a binding the wrangler config does not have refused; and artifacts written as format 6 when they carry either, so managers that read only formats 1 to 5 refuse them.
+
 ## 0.1.7
 
 - Builds keep a catalog entry's D1 baseline (`resources.d1[binding].baseline`) and check its bytes in the stored zip, and `info().features` lists `d1-baseline`. The manager refuses to build an entry with a baseline on a sandbox Worker that lacks it, since an older one would drop it and run the migrations on an empty database.
