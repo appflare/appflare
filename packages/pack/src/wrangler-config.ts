@@ -9,9 +9,6 @@ import {
   type QueueRef,
   SELF_SERVICE,
   type SelfServiceBinding,
-  UNSUPPORTED_WRANGLER_SECTION_LABELS,
-  UNSUPPORTED_WRANGLER_SECTIONS,
-  type UnsupportedWranglerSection,
   WORKER_LOADER_BINDING_TYPE,
   type WorkerBinding,
   type WorkerCacheOptions,
@@ -176,159 +173,6 @@ export class ServiceBindingError extends Error {
  */
 export class UnsafeBindingError extends Error {
   override name = "UnsafeBindingError";
-}
-
-/**
- * The wrangler config declares a section the packer does not carry into the
- * artifact ({@link UNSUPPORTED_WRANGLER_SECTIONS}): the app would be
- * installed without it. The message names the section and how a catalog
- * entry drops it.
- */
-export class UnsupportedSectionError extends Error {
-  override name = "UnsupportedSectionError";
-}
-
-/**
- * Every top-level key of wrangler 4.136.2's config (`config-schema.json`,
- * `RawConfig`) the packer reads into the artifact, or that wrangler's own
- * bundle applies to the modules the packer collects.
- */
-export const READ_WRANGLER_KEYS = [
-  "name",
-  "main",
-  "compatibility_date",
-  "compatibility_flags",
-  "no_bundle",
-  "vars",
-  "secrets",
-  "kv_namespaces",
-  "d1_databases",
-  "r2_buckets",
-  "queues",
-  "vectorize",
-  "hyperdrive",
-  "analytics_engine_datasets",
-  "mtls_certificates",
-  "durable_objects",
-  "workflows",
-  "services",
-  "ai",
-  "browser",
-  "images",
-  "version_metadata",
-  "send_email",
-  "ratelimits",
-  "worker_loaders",
-  "assets",
-  "triggers",
-  "migrations",
-  "exports",
-  "observability",
-  "placement",
-  "limits",
-  "cache",
-  // Applied by wrangler's bundle, whose output the packer collects.
-  "build",
-  "rules",
-  "find_additional_modules",
-  "preserve_file_names",
-  "base_dir",
-  "minify",
-  "keep_names",
-  "tsconfig",
-  "jsx_factory",
-  "jsx_fragment",
-  "define",
-  "alias",
-  "python_modules",
-] as const;
-
-/**
- * The keys of wrangler's config the packer leaves out on purpose, and why:
- * they belong to the account or the install, to local development, or to
- * wrangler itself, and the app runs the same without them.
- */
-export const IGNORED_WRANGLER_KEYS: Readonly<Record<string, string>> = {
-  $schema: "it points editors at wrangler's schema",
-  env: "the packer builds the config's top level, not an environment",
-  account_id: "the app is installed in the user's account",
-  workers_dev: "the install decides where the Worker answers",
-  preview_urls: "the install decides where the Worker answers",
-  routes: "routes belong to the install",
-  route: "routes belong to the install",
-  compliance_region: "the region follows the account",
-  logpush: "a Logpush job belongs to the account, and the install has none",
-  upload_source_maps: "source maps only help debugging",
-  first_party_worker: "it is for Cloudflare's own Workers",
-  keep_vars: "the manager owns the installed Worker's vars",
-  send_metrics: "it is wrangler's own telemetry",
-  dependencies_instrumentation: "it is metadata wrangler sends about the build",
-  previews: "it configures wrangler preview deployments",
-  access: "it simulates Cloudflare Access in local development",
-  dev: "it configures local development",
-};
-
-function isEmptySection(value: unknown): boolean {
-  if (value === undefined || value === null) return true;
-  if (Array.isArray(value)) return value.length === 0;
-  if (isRecord(value)) return Object.values(value).every(isEmptySection);
-  return false;
-}
-
-/**
- * The `unsafe` section without its rate limits, which the packer records as
- * the `ratelimit` bindings they are: what is left is what it refuses.
- */
-function unsafeWithoutRateLimits(unsafe: unknown): unknown {
-  if (!isRecord(unsafe) || !Array.isArray(unsafe.bindings)) return unsafe;
-  return {
-    ...unsafe,
-    bindings: unsafe.bindings.filter((b) => !(isRecord(b) && b.type === "ratelimit")),
-  };
-}
-
-/**
- * The {@link UNSUPPORTED_WRANGLER_SECTIONS} `config` declares, as wrangler
- * resolved it (it fills in empty lists and objects, which do not count).
- * Rate limits in `unsafe.bindings` do not count either: they are recorded.
- */
-export function unsupportedWranglerSections(config: object): UnsupportedWranglerSection[] {
-  const sections = config as Record<string, unknown>;
-  return UNSUPPORTED_WRANGLER_SECTIONS.filter(
-    (key) =>
-      !isEmptySection(key === "unsafe" ? unsafeWithoutRateLimits(sections[key]) : sections[key]),
-  );
-}
-
-/**
- * The sections of {@link UNSUPPORTED_WRANGLER_SECTIONS} that
- * {@link collectBindings} reads itself, against the catalog manifest:
- * Pipelines streams it describes in `resources.pipelines`, and rate limits
- * among `unsafe.bindings` ({@link unsafeRateLimits} refuses the rest).
- */
-export const SECTIONS_READ_WITH_CATALOG: readonly UnsupportedWranglerSection[] = [
-  "pipelines",
-  "unsafe",
-];
-
-/**
- * Throws {@link UnsupportedSectionError} when `config` declares a section the
- * packer does not carry into the artifact, except those in
- * {@link SECTIONS_READ_WITH_CATALOG}, which have refusals of their own.
- */
-function refuseUnsupportedSections(config: ResolvedWranglerConfig): void {
-  const found = unsupportedWranglerSections(config).filter(
-    (key) => !SECTIONS_READ_WITH_CATALOG.includes(key),
-  );
-  if (found.length === 0) return;
-  const named = found.map((key) => `${key} (${UNSUPPORTED_WRANGLER_SECTION_LABELS[key]})`);
-  const drop = `{ ${found.map((key) => `"${key}": null`).join(", ")} }`;
-  throw new UnsupportedSectionError(
-    `the wrangler config declares ${named.join(", ")}, which Appflare cannot install, so the app ` +
-      `would run without ${found.length === 1 ? "it" : "them"}; if the app works without ` +
-      `${found.length === 1 ? "it" : "them"}, drop ${found.length === 1 ? "it" : "them"} with the ` +
-      `catalog manifest's config patch ${drop}`,
-  );
 }
 
 /** A rate limit of wrangler's `ratelimits`, and of `unsafe.bindings` once checked. */
@@ -582,9 +426,7 @@ export function checkPipelineDeclarations(
  * binding is recorded only when it points at the app's own Worker, and any
  * other throws {@link ServiceBindingError}. A rate limit declared in
  * `unsafe.bindings` is recorded as the `ratelimit` binding it is, and any
- * other `unsafe` binding throws {@link UnsafeBindingError}. A section the
- * packer does not read at all ({@link UNSUPPORTED_WRANGLER_SECTIONS}) throws
- * {@link UnsupportedSectionError} rather than vanish from the artifact.
+ * other `unsafe` binding throws {@link UnsafeBindingError}.
  */
 export function collectBindings(
   config: ResolvedWranglerConfig,
@@ -592,7 +434,6 @@ export function collectBindings(
   options: CollectBindingsOptions = {},
 ): WorkerBinding[] {
   const { entryWorkers, checkUnboundVectorize = true } = options;
-  refuseUnsupportedSections(config);
   const bindings: WorkerBinding[] = [];
   // Spread the optional extras so excess-property checks never fight the
   // schema's loose binding shape, and undefined extras drop out cleanly.
@@ -764,32 +605,6 @@ export function collectBindings(
   }
 
   return bindings;
-}
-
-/**
- * The config's `placement` as wrangler 4.136.2 uploads it
- * (`parseConfigPlacement`): `mode: "off"` without a hint is no placement at
- * all (null), a hint or `mode: "smart"` is `{ mode: "smart", hint? }`, and a
- * `region`, `host` or `hostname` is `{ mode: "targeted", <that one> }`.
- * Anything else is no placement either. Cloudflare's API knows only `smart`
- * and `targeted`, so recording `{ mode: "off" }` as written would fail the
- * upload.
- */
-export function uploadPlacement(
-  placement: Readonly<Record<string, unknown>> | null | undefined,
-): Record<string, unknown> | null {
-  if (placement === null || placement === undefined) return null;
-  const hint =
-    typeof placement.hint === "string" && placement.hint.length > 0 ? placement.hint : undefined;
-  if (hint === undefined && placement.mode === "off") return null;
-  if (hint !== undefined || placement.mode === "smart") {
-    return hint === undefined ? { mode: "smart" } : { mode: "smart", hint };
-  }
-  for (const key of ["region", "host", "hostname"] as const) {
-    const value = placement[key];
-    if (typeof value === "string" && value.length > 0) return { mode: "targeted", [key]: value };
-  }
-  return null;
 }
 
 /**

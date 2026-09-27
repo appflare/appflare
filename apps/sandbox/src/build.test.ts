@@ -12,7 +12,6 @@ import {
   SANDBOX_FEATURE_INSTALL_DIRS,
   SANDBOX_FEATURE_REPOSITORY,
   SANDBOX_FEATURE_SELF_DEPLOYING,
-  SANDBOX_FEATURE_WRANGLER_CONFIG_INLINE,
   SANDBOX_PROTOCOL_VERSION,
 } from "@appflare/schema";
 import { afterEach, describe, expect, it } from "vitest";
@@ -562,7 +561,6 @@ describe("cleanup and progress", () => {
         SANDBOX_FEATURE_CONFIG_PATCH,
         SANDBOX_FEATURE_D1_SEED,
         SANDBOX_FEATURE_D1_BASELINE,
-        SANDBOX_FEATURE_WRANGLER_CONFIG_INLINE,
       ],
       // The version metadata binding's id (vitest.config.ts).
       versionId: "version-under-test",

@@ -47,7 +47,6 @@ import {
   sandboxBinding,
   sandboxFetch,
   sandboxInfo,
-  wranglerConfigInlineRefusal,
 } from "../../sandbox/binding";
 import { UPDATE_SANDBOX_HINT } from "../../sandbox/connect-copy";
 import {
@@ -492,7 +491,6 @@ async function buildInSandboxPhase(
     const refused =
       installDirsRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
       configPatchRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
-      wranglerConfigInlineRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
       d1SeedRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT) ??
       d1BaselineRefusal(checked.sandbox, catalog, UPDATE_SANDBOX_HINT);
     if (refused !== null) throw new JobError(refused);

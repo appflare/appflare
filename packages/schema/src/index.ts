@@ -25,5 +25,3 @@ export * from "./sql-guard";
 export * from "./telemetry";
 export * from "./vapid";
 export * from "./workers";
-export * from "./wrangler-config-inline";
-export * from "./wrangler-sections";

@@ -1,13 +1,10 @@
-import { existsSync, lstatSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   type CatalogInstall,
   type ConfigPatch,
-  inlineWranglerConfig,
   PATCHED_WRANGLER_CONFIG,
   patchWranglerConfig,
-  WRANGLER_CONFIG_TEMPLATE_SUFFIXES,
-  type WranglerConfigInline,
 } from "@appflare/schema";
 import { experimental_readRawConfig } from "wrangler";
 import {
@@ -25,11 +22,6 @@ import {
  * relative path in it (`main`, `assets.directory`, migrations) resolves from
  * the same directory, and wrangler reads and bundles that file instead. A TOML
  * config is parsed with wrangler's own parser and written as JSONC.
- *
- * An entry whose repository ships no config carries one inline instead
- * (`install.wranglerConfigInline`, or a Worker's), which the packer writes
- * under the same name where the entry's `wranglerConfig` says, before the
- * install and the build, and reads like any other config.
  */
 
 /** A config patch the packer refuses, or cannot apply where the build left the config. */
@@ -45,16 +37,11 @@ export interface WorkerSpec {
   wranglerConfig: string;
   primary: boolean;
   configPatch?: ConfigPatch | undefined;
-  /** The config the packer writes at `wranglerConfig`, for a repository that ships none. */
-  wranglerConfigInline?: WranglerConfigInline | undefined;
 }
 
 /** The Workers an entry builds: `install.workers`, or the one Worker of `install.wranglerConfig`. */
 export function workerSpecs(
-  install: Pick<
-    CatalogInstall,
-    "wranglerConfig" | "workers" | "configPatch" | "wranglerConfigInline"
-  >,
+  install: Pick<CatalogInstall, "wranglerConfig" | "workers" | "configPatch">,
 ): WorkerSpec[] {
   if (install.workers === undefined) {
     return [
@@ -63,7 +50,6 @@ export function workerSpecs(
         wranglerConfig: install.wranglerConfig,
         primary: true,
         configPatch: install.configPatch,
-        wranglerConfigInline: install.wranglerConfigInline,
       },
     ];
   }
@@ -72,7 +58,6 @@ export function workerSpecs(
     wranglerConfig: w.wranglerConfig,
     primary: w.primary === true,
     configPatch: w.configPatch,
-    wranglerConfigInline: w.wranglerConfigInline,
   }));
 }
 
@@ -106,17 +91,13 @@ function patchLabel(spec: WorkerSpec): string {
     : `the configPatch of the Worker "${spec.name}"`;
 }
 
-/**
- * Writes `config` as JSONC to `file` under a one-line `header` comment,
- * replacing a file the packer wrote before; returns whether the bytes
- * changed.
- */
-function writeConfigFile(
+/** Writes `config` as JSONC to `file`, replacing a file the packer wrote before. */
+function writePatchedConfig(
   checkoutDir: string,
   file: string,
   config: Record<string, unknown>,
-  header: string,
-): boolean {
+  source: string,
+): void {
   let existing: ReturnType<typeof lstatSync> | null = null;
   try {
     existing = lstatSync(file);
@@ -126,13 +107,11 @@ function writeConfigFile(
   if (existing !== null && !existing.isFile()) {
     // A link would make the write land wherever it points.
     throw new ConfigPatchError(
-      `${checkoutRelative(checkoutDir, file)} exists and is not a regular file; the packer writes the wrangler config there`,
+      `${checkoutRelative(checkoutDir, file)} exists and is not a regular file; the packer writes the patched config there`,
     );
   }
-  const text = `// ${header}\n${JSON.stringify(config, null, 2)}\n`;
-  if (existing !== null && readFileSync(file, "utf8") === text) return false;
-  writeFileSync(file, text);
-  return true;
+  const header = `// Written by appflare-pack: ${source} with the catalog manifest's config patch applied.\n`;
+  writeFileSync(file, `${header}${JSON.stringify(config, null, 2)}\n`);
 }
 
 /** Options for {@link applyConfigPatches}. */
@@ -209,12 +188,7 @@ export function applyConfigPatches(
       );
     }
     const file = path.join(path.dirname(target.effectivePath), PATCHED_WRANGLER_CONFIG);
-    writeConfigFile(
-      root,
-      file,
-      result.config,
-      `Written by appflare-pack: ${shown} with the catalog manifest's config patch applied.`,
-    );
+    writePatchedConfig(root, file, result.config, shown);
     const written = checkoutRelative(root, file);
     if (result.diff.length === 0) {
       logger(
@@ -231,108 +205,4 @@ export function applyConfigPatches(
     });
   }
   return patched;
-}
-
-/** The wrangler config names wrangler looks for in a directory, templates included. */
-function repositoryConfigNames(): string[] {
-  const names = ["wrangler.json", "wrangler.jsonc", "wrangler.toml"];
-  return [
-    ...names,
-    ...names.flatMap((name) => WRANGLER_CONFIG_TEMPLATE_SUFFIXES.map((suffix) => name + suffix)),
-  ];
-}
-
-/** Where an inline config is refused: `install.wranglerConfigInline`, or the named Worker's. */
-function inlineLabel(spec: WorkerSpec): string {
-  return spec.name === null
-    ? "install.wranglerConfigInline"
-    : `the wranglerConfigInline of the Worker "${spec.name}"`;
-}
-
-/**
- * The name the packer gives the Worker of an inline config: the install's
- * Worker name for the primary, `<Worker name>-<name>` for another Worker of
- * the entry, as the manager installs them. A service binding between the
- * entry's Workers names the other Worker so.
- */
-export function inlineConfigWorkerName(spec: WorkerSpec, workerName: string): string {
-  return spec.primary || spec.name === null ? workerName : `${workerName}-${spec.name}`;
-}
-
-/** Options for {@link writeInlineConfigs}. */
-export interface WriteInlineConfigsOptions {
-  checkoutDir: string;
-  /** Every Worker of the entry; only those with a `wranglerConfigInline` are written. */
-  specs: readonly WorkerSpec[];
-  /** The catalog manifest's `install.workerName`. */
-  workerName: string;
-  /** Write only the config of this Worker (as the catalog manifest names it). */
-  only?: string | undefined;
-  logger?: ((message: string) => void) | undefined;
-}
-
-/**
- * Writes each Worker's inline wrangler config where the catalog manifest's
- * `wranglerConfig` names (`.appflare.wrangler.jsonc` in a directory of the
- * checkout; the schema checks the name), with the Worker's `name` added, and
- * returns the configs written, by that path. Run before the install and the
- * build, and again after the build, so a build that leaves a wrangler config
- * or a redirect is refused either way.
- *
- * Refused when the directory does not exist or lies outside the checkout,
- * when the repository has a config of its own there (`wrangler.json`,
- * `wrangler.jsonc`, `wrangler.toml`, or a template of one: change that with
- * a config patch instead), and when a build redirect
- * (`.wrangler/deploy/config.json`) sits there, which would make wrangler
- * deploy a config the build generated instead.
- */
-export function writeInlineConfigs(options: WriteInlineConfigsOptions): string[] {
-  const root = path.resolve(options.checkoutDir);
-  const logger = options.logger ?? (() => {});
-  const written: string[] = [];
-  const targets = options.specs
-    .filter((s) => s.wranglerConfigInline !== undefined)
-    .filter((s) => options.only === undefined || s.wranglerConfig === options.only);
-  for (const spec of targets) {
-    const inline = spec.wranglerConfigInline;
-    if (inline === undefined) continue;
-    const label = inlineLabel(spec);
-    const file = path.resolve(root, spec.wranglerConfig);
-    const dir = path.dirname(file);
-    const shownDir = checkoutRelative(root, dir) || ".";
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) {
-      throw new ConfigPatchError(
-        `${label} cannot be written: the directory ${shownDir} does not exist in the checkout`,
-      );
-    }
-    if (dir !== root && !isInside(root, dir)) {
-      throw new ConfigPatchError(`${label} cannot be written: ${shownDir} is outside the checkout`);
-    }
-    const own = repositoryConfigNames().filter((name) => existsSync(path.join(dir, name)));
-    if (own.length > 0) {
-      throw new ConfigPatchError(
-        `${label} cannot be written: the repository has a wrangler config of its own in ` +
-          `${shownDir} (${own.join(", ")}); set install.wranglerConfig to it and change it with a ` +
-          "config patch instead",
-      );
-    }
-    const redirect = resolveWranglerConfig(root, spec.wranglerConfig);
-    if (redirect.deployConfigPath !== null) {
-      throw new ConfigPatchError(
-        `${label} cannot be written: ${checkoutRelative(root, redirect.deployConfigPath)} ` +
-          "redirects wrangler to a config the build generated, which it would deploy instead",
-      );
-    }
-    const config = inlineWranglerConfig(inline, inlineConfigWorkerName(spec, options.workerName));
-    const shown = checkoutRelative(root, file);
-    const changed = writeConfigFile(
-      root,
-      file,
-      config,
-      "Written by appflare-pack from the catalog manifest's inline wrangler config.",
-    );
-    if (changed) logger(`${label} written to ${shown}`);
-    written.push(spec.wranglerConfig);
-  }
-  return written;
 }

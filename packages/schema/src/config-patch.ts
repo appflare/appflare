@@ -1,9 +1,4 @@
 import { z } from "zod";
-import {
-  isUnsupportedWranglerSection,
-  UNSUPPORTED_WRANGLER_SECTIONS,
-  type UnsupportedWranglerSection,
-} from "./wrangler-sections.ts";
 
 /**
  * A catalog entry's `install.configPatch` (and `install.workers[].configPatch`):
@@ -13,9 +8,7 @@ import {
  * entrypoint or assets directory its build moves, a build step the catalog
  * runs itself, a service binding to a Worker that is not part of the app,
  * storage bindings without ids so they are provisioned, or Durable Object
- * classes that must be SQLite-backed on the Free plan. It may also drop a
- * section the packer refuses (`"vpc_services": null`, see
- * {@link UNSUPPORTED_WRANGLER_SECTIONS}) from an app that works without it.
+ * classes that must be SQLite-backed on the Free plan.
  *
  * The patch is allowlisted by key, and some keys only in one direction (see
  * {@link configPatchProblems}), so a patch can never point the app at
@@ -23,9 +16,8 @@ import {
  * what the config itself asks for. It is part of the catalog manifest, so the
  * artifact's signature covers it, and the pack log prints its effect.
  *
- * This module imports nothing but zod and modules that import nothing:
- * `catalog.ts` imports it, and the JSON Schema export runs `catalog.ts`
- * directly under Node's type stripping.
+ * This module imports nothing but zod: `catalog.ts` imports it, and the JSON
+ * Schema export runs `catalog.ts` directly under Node's type stripping.
  */
 
 /**
@@ -49,7 +41,6 @@ export const CONFIG_PATCH_KEYS = [
   "d1_databases",
   "vars",
   "migrations",
-  "ratelimits",
 ] as const;
 export type ConfigPatchKey = (typeof CONFIG_PATCH_KEYS)[number];
 
@@ -82,7 +73,7 @@ const nullableString = z.string().min(1).nullable();
  * patch cannot point the build at files outside the checkout.
  */
 const RELATIVE_PATH = /^(?![/\\])(?![A-Za-z]:)(?!(?:.*[/\\])?\.\.(?:[/\\]|$)).+$/;
-export const configRelativePathSchema = z
+const relativePathSchema = z
   .string()
   .min(1)
   .regex(
@@ -93,7 +84,7 @@ export const configRelativePathSchema = z
 /** `assets` in a patch: the directory, binding and handling a build moves. */
 const assetsPatchSchema = z
   .strictObject({
-    directory: configRelativePathSchema.nullable().optional(),
+    directory: relativePathSchema.nullable().optional(),
     binding: nullableString.optional(),
     html_handling: nullableString.optional(),
     not_found_handling: nullableString.optional(),
@@ -130,7 +121,7 @@ const migrationEntrySchema = z
   .catchall(jsonValue);
 
 const configPatchShape = {
-  main: configRelativePathSchema
+  main: relativePathSchema
     .describe(
       "The Worker's entrypoint, relative to the config, for example `dist/index.js`; not " +
         "absolute and without `..`.",
@@ -161,51 +152,27 @@ const configPatchShape = {
     .array(storageEntrySchema)
     .describe(
       "The whole list: every binding of the config, plus new ones. A binding whose `id` is an " +
-        "empty string or a placeholder (`$NAME`, `${NAME}`, `{{NAME}}`, `<NAME>`) may leave it " +
-        'out, so the install provisions it; "" is refused by wrangler.',
+        'empty string may leave it out, so the install provisions it; "" is refused by wrangler.',
     )
     .optional(),
   r2_buckets: z
     .array(storageEntrySchema)
     .describe(
       "The whole list: every binding of the config, plus new ones. A binding whose " +
-        "`bucket_name` is an empty string or a placeholder may leave it out.",
+        "`bucket_name` is an empty string may leave it out.",
     )
     .optional(),
   d1_databases: z
     .array(storageEntrySchema)
     .describe(
       "The whole list: every binding of the config, plus new ones. A binding whose " +
-        "`database_id` is an empty string or a placeholder may leave it out.",
+        "`database_id` is an empty string may leave it out.",
     )
     .optional(),
   vars: z
     .record(z.string(), z.null({ error: "a config patch may only remove vars, with null" }))
     .nullable()
     .describe("Only removals: each var to remove as null, or null to remove them all.")
-    .optional(),
-  ratelimits: z
-    .array(
-      z
-        .object({
-          name: bindingNameSchema,
-          namespace_id: z
-            .string()
-            .min(1)
-            .describe("The limit's namespace; the install gives each one of its own."),
-          simple: z
-            .strictObject({
-              limit: z.int().min(1).describe("Requests allowed per period."),
-              period: z.union([z.literal(10), z.literal(60)]).describe("Seconds: 10 or 60."),
-            })
-            .describe("The limit."),
-        })
-        .describe("One rate limit binding."),
-    )
-    .describe(
-      "The whole list: every rate limit of the config, unchanged, plus new ones, for a limit " +
-        "an upstream deploy script adds.",
-    )
     .optional(),
   migrations: z
     .array(migrationEntrySchema)
@@ -215,22 +182,6 @@ const configPatchShape = {
     )
     .optional(),
 } satisfies Record<ConfigPatchKey, z.ZodType>;
-
-/**
- * `"<section>": null` for each section the packer refuses: the patch drops
- * it, for an app that works without it. Nothing else may be set there.
- */
-const droppedSectionsShape = Object.fromEntries(
-  UNSUPPORTED_WRANGLER_SECTIONS.map((key) => [
-    key,
-    z
-      .null({
-        error: `${key} may only be null, which drops it: Appflare cannot install it`,
-      })
-      .describe(`Only null: drops \`${key}\`, which Appflare cannot install, from the config.`)
-      .optional(),
-  ]),
-) as Record<UnsupportedWranglerSection, z.ZodOptional<z.ZodNull>>;
 
 /**
  * The shape of a config patch, with every key outside {@link CONFIG_PATCH_KEYS}
@@ -247,29 +198,24 @@ export const configPatchSchema = z
   .superRefine((patch, ctx) => {
     for (const key of Object.keys(patch)) {
       if ((CONFIG_PATCH_KEYS as readonly string[]).includes(key)) continue;
-      // Checked by the shape below: only null, which drops the section.
-      if (isUnsupportedWranglerSection(key)) continue;
       const reason = REFUSED_KEY_REASONS.get(key);
       ctx.addIssue({
         code: "custom",
         path: [key],
         message:
           `a config patch may not set ${key}${reason === undefined ? "" : `: ${reason}`}; ` +
-          `it may set only ${CONFIG_PATCH_KEYS.join(", ")}, or null to drop a section Appflare ` +
-          "cannot install",
+          `it may set only ${CONFIG_PATCH_KEYS.join(", ")}`,
       });
     }
     if (Object.keys(patch).length === 0) {
       ctx.addIssue({ code: "custom", message: "a config patch changes at least one key" });
     }
   })
-  .pipe(z.strictObject({ ...configPatchShape, ...droppedSectionsShape }))
+  .pipe(z.strictObject(configPatchShape))
   .meta({ minProperties: 1 })
   .describe(
     `Changes to the app's wrangler config, applied before wrangler reads it, as ${RFC_7386}. ` +
-      `Allowed keys: ${CONFIG_PATCH_KEYS.join(", ")}; a section Appflare cannot install ` +
-      "(such as `vpc_services`) may be set to null, which drops it, when the app works " +
-      "without it. Prefer a pull request upstream and link " +
+      `Allowed keys: ${CONFIG_PATCH_KEYS.join(", ")}. Prefer a pull request upstream and link ` +
       "it in a comment beside the patch; the patch is for the time until it is merged.",
   );
 export type ConfigPatch = z.infer<typeof configPatchSchema>;
@@ -324,20 +270,7 @@ export function applyMergePatch(target: unknown, patch: unknown): unknown {
   return result;
 }
 
-/**
- * A value an upstream config holds in place of a storage id for its own
- * deploy script to fill: `$NAME`, `${NAME}`, `{{NAME}}` or `<NAME>` (a name
- * of letters, digits, `_`, `-` and `.`, spaces allowed inside the braces).
- */
-const ID_PLACEHOLDER =
-  /^(?:\$[A-Za-z_][\w]*|\$\{[A-Za-z_][\w.-]*\}|\{\{\s*[A-Za-z_][\w.-]*\s*\}\}|<[A-Za-z_][\w.-]*>)$/;
-
-/** Whether a storage id is one a patch may clear: empty, or a placeholder. */
-export function isClearableStorageId(id: unknown): boolean {
-  return id === "" || (typeof id === "string" && ID_PLACEHOLDER.test(id));
-}
-
-/** The key each storage list's id lives under, which a patch may clear (see {@link isClearableStorageId}). */
+/** The key each storage list's id lives under, which a patch may clear when it is "". */
 const STORAGE_ID_KEYS = {
   kv_namespaces: "id",
   r2_buckets: "bucket_name",
@@ -388,42 +321,11 @@ function storageProblems(
     }
     if (jsonEqual(entry, next)) continue;
     const { [idKey]: id, ...rest } = entry;
-    if (isClearableStorageId(id) && !Object.hasOwn(next, idKey) && jsonEqual(rest, next)) continue;
+    if (id === "" && !Object.hasOwn(next, idKey) && jsonEqual(rest, next)) continue;
     problems.push(
       `${key} changes the binding ${name}; a patch may only add storage bindings, or leave out ` +
-        `a "${idKey}" that is empty or a placeholder so the install provisions it`,
+        `an empty "${idKey}" so the install provisions it`,
     );
-  }
-  return problems;
-}
-
-/** A rate limit's name: its binding. */
-function rateLimitName(entry: unknown): string | null {
-  return isRecord(entry) && typeof entry.name === "string" ? entry.name : null;
-}
-
-/**
- * What a patch of `ratelimits` changes that it may not: it may only add
- * rate limits, keeping every one of the config's as it is.
- */
-function rateLimitProblems(original: unknown, patched: readonly unknown[]): string[] {
-  const before = Array.isArray(original) ? original : [];
-  const names = patched.map(rateLimitName).filter((n): n is string => n !== null);
-  const problems = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))].map(
-    (name) => `ratelimits names the binding ${name} twice`,
-  );
-  for (const entry of before) {
-    const name = rateLimitName(entry) ?? "(unnamed)";
-    const next = patched.find((p) => rateLimitName(p) === rateLimitName(entry));
-    if (next === undefined) {
-      problems.push(
-        `ratelimits leaves out the binding ${name}; a patch may only add rate limits, never remove one`,
-      );
-    } else if (!jsonEqual(entry, next)) {
-      problems.push(
-        `ratelimits changes the binding ${name}; a patch may only add rate limits, keeping the config's as they are`,
-      );
-    }
   }
   return problems;
 }
@@ -496,9 +398,6 @@ export function configPatchProblems(
   for (const key of Object.keys(STORAGE_ID_KEYS) as Array<keyof typeof STORAGE_ID_KEYS>) {
     const list = patch[key];
     if (list !== undefined) problems.push(...storageProblems(key, raw[key], list));
-  }
-  if (patch.ratelimits !== undefined) {
-    problems.push(...rateLimitProblems(raw.ratelimits, patch.ratelimits));
   }
   if (patch.migrations !== undefined) {
     problems.push(...migrationsProblems(raw.migrations, patch.migrations));

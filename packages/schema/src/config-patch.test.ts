@@ -6,7 +6,6 @@ import {
   configPatchDiff,
   configPatchProblems,
   configPatchSchema,
-  isClearableStorageId,
   patchWranglerConfig,
 } from "./config-patch";
 
@@ -67,7 +66,7 @@ describe("configPatchSchema", () => {
     expect(issues({ name: "other" })).toEqual([
       "name: a config patch may not set name: the Worker's name comes from the install, not " +
         "the config; it may set only main, assets, build, services, kv_namespaces, r2_buckets, " +
-        "d1_databases, vars, migrations, ratelimits, or null to drop a section Appflare cannot install",
+        "d1_databases, vars, migrations",
     ]);
     expect(issues({ durable_objects: { bindings: [] } })[0]).toContain(
       "rename new_classes to new_sqlite_classes in migrations",
@@ -92,7 +91,7 @@ describe("configPatchSchema", () => {
     expect(issues(JSON.parse('{"main":"dist/index.js","__proto__":{"name":"x"}}'))).toEqual([
       "__proto__: a config patch may not set __proto__: it is not a wrangler config key; it " +
         "may set only main, assets, build, services, kv_namespaces, r2_buckets, d1_databases, " +
-        "vars, migrations, ratelimits, or null to drop a section Appflare cannot install",
+        "vars, migrations",
     ]);
   });
 
@@ -313,68 +312,11 @@ describe("configPatchProblems", () => {
     ).toMatch(/^d1_databases changes the binding DB;/);
   });
 
-  it("lets storage lists clear an id that is a placeholder for a deploy script", () => {
-    const raw = {
-      kv_namespaces: [
-        { binding: "A", id: "$KV_ID" },
-        { binding: "B", id: "${KV_NAMESPACE_ID}" },
-        { binding: "C", id: "{{ kv.id }}" },
-        { binding: "D", id: "<your-kv-namespace-id>" },
-      ],
-      r2_buckets: [{ binding: "FILES", bucket_name: "${BUCKET_NAME}" }],
-      d1_databases: [{ binding: "DB", database_name: "app", database_id: "{{D1_ID}}" }],
-    };
-    expect(
-      configPatchProblems(
-        raw,
-        patch({
-          kv_namespaces: [{ binding: "A" }, { binding: "B" }, { binding: "C" }, { binding: "D" }],
-          r2_buckets: [{ binding: "FILES" }],
-          d1_databases: [{ binding: "DB", database_name: "app" }],
-        }),
-        none,
-      ),
-    ).toEqual([]);
-  });
-
-  it("refuses clearing an id that is neither empty nor a placeholder", () => {
-    for (const id of ["0123abcd", "$", "${}", "{{}}", "<>", "prefix-$KV_ID", "$(cat id)"]) {
-      expect(isClearableStorageId(id)).toBe(false);
-    }
-    expect(isClearableStorageId(3)).toBe(false);
-  });
-
   it("refuses clearing an id that is not empty", () => {
     const raw = { kv_namespaces: [{ binding: "KV", id: "0123abcd" }] };
     expect(
       configPatchProblems(raw, patch({ kv_namespaces: [{ binding: "KV" }] }), none),
     ).toHaveLength(1);
-  });
-
-  it("lets ratelimits only add rate limits", () => {
-    const kept = { name: "API", namespace_id: "1001", simple: { limit: 100, period: 60 } };
-    const lookup = { name: "LOOKUP", namespace_id: "1002", simple: { limit: 10, period: 10 } };
-    const raw = { ratelimits: [kept] };
-    expect(configPatchProblems(raw, patch({ ratelimits: [kept, lookup] }), none)).toEqual([]);
-    expect(configPatchProblems({}, patch({ ratelimits: [lookup] }), none)).toEqual([]);
-    expect(configPatchProblems(raw, patch({ ratelimits: [lookup] }), none)).toEqual([
-      "ratelimits leaves out the binding API; a patch may only add rate limits, never remove one",
-    ]);
-    expect(
-      configPatchProblems(
-        raw,
-        patch({ ratelimits: [{ ...kept, simple: { limit: 5, period: 60 } }] }),
-        none,
-      ),
-    ).toEqual([
-      "ratelimits changes the binding API; a patch may only add rate limits, keeping the config's as they are",
-    ]);
-    expect(configPatchProblems({}, patch({ ratelimits: [lookup, lookup] }), none)).toEqual([
-      "ratelimits names the binding LOOKUP twice",
-    ]);
-    expect(issues({ ratelimits: [{ ...lookup, simple: { limit: 10, period: 30 } }] })).toHaveLength(
-      1,
-    );
   });
 
   it("lets migrations only rename new_classes to new_sqlite_classes", () => {
