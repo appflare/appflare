@@ -69,9 +69,14 @@ longer has stays in place until the app is uninstalled.
 
 Cloudflare gives no preview URL to a Worker that defines Durable Objects, so updates
 of such apps skip step 5. When a new version also changes its Durable Object classes
-(a migration), Cloudflare applies that only when the whole Worker is deployed at
-once. The job then deploys directly, and the change to the classes cannot be undone
-with a rollback.
+(a migration, or a change to the classes its wrangler `exports` declare), Cloudflare
+applies that only when the whole Worker is deployed at once. The job then deploys
+directly, and the change to the classes cannot be undone with a rollback.
+
+Once an app's `exports` declare a Durable Object class, Cloudflare refuses every
+later version that does not, including one that goes back to migrations. The job
+refuses such a version before anything changes; the app's config has to keep
+declaring the class in `exports`, or mark it `"state": "deleted"` there to retire it.
 
 ## Automatic updates
 

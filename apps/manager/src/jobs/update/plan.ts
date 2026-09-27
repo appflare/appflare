@@ -4,6 +4,7 @@ import {
   type CatalogHyperdrive,
   type CatalogSecret,
   type DoMigration,
+  durableObjectExports,
   hasDurableObjectExports,
   isOptionalSecret,
   sameDurableObjectExports,
@@ -384,6 +385,48 @@ export function workerExportsOf(manifestJson: string | null): WorkerExports | un
   } catch {
     return undefined;
   }
+}
+
+/**
+ * `state` values of a Durable Object export entry that keep a namespace under
+ * its class name (wrangler 4.136.2's `DurableObjectExport`): live (the
+ * default when `state` is absent), or the receiving side of a transfer. The
+ * others (`deleted`, `renamed`, `transferred`) are tombstones that take the
+ * namespace off that name.
+ */
+const LIVE_DURABLE_OBJECT_STATES = new Set<string | undefined>([
+  undefined,
+  "created",
+  "expecting-transfer",
+]);
+
+/**
+ * Why a version of a Worker cannot replace the serving one, or null: the
+ * serving version's `exports` declare a live Durable Object class that the
+ * new `exports` have no Durable Object entry for, live or tombstone.
+ * Cloudflare refuses (code 100402, `provisioned_class_missing_from_config`)
+ * every upload that leaves out a class with a namespace once `exports`
+ * declared it, including one that goes back to migrations, so the update
+ * stops before it uploads anything. `worker` names the Worker for an app of
+ * several.
+ */
+export function droppedDurableObjectExportsProblem(
+  next: WorkerExports | undefined,
+  serving: WorkerExports | undefined,
+  worker?: string,
+): string | null {
+  const kept = durableObjectExports(next);
+  const dropped = Object.entries(durableObjectExports(serving))
+    .filter(([name, entry]) => LIVE_DURABLE_OBJECT_STATES.has(stateOf(entry)) && !(name in kept))
+    .map(([name]) => `"${name}"`);
+  if (dropped.length === 0) return null;
+  const classes = dropped.length === 1 ? `class ${dropped[0]}` : `classes ${dropped.join(" and ")}`;
+  const where = worker === undefined ? "" : ` of the Worker "${worker}"`;
+  return `This version no longer declares the Durable Object ${classes}${where} in its exports. Once exports declare a Durable Object class, Cloudflare refuses any version that leaves it out, even one that goes back to migrations. The app's config must keep declaring it in exports, or mark it deleted there (state "deleted") to retire it and its data.`;
+}
+
+function stateOf(entry: WorkerExports[string]): string | undefined {
+  return typeof entry.state === "string" ? entry.state : undefined;
 }
 
 /**

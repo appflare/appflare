@@ -9,6 +9,7 @@ import {
   canarySkipReason,
   cronChanges,
   diffBindings,
+  droppedDurableObjectExportsProblem,
   durableObjectMigrationsSince,
   EXPORTS_DEPLOY_REASON,
   FULL_DEPLOY_REASON,
@@ -304,7 +305,8 @@ describe("updatePath", () => {
     expect(
       lastDurableObjectTagOf(JSON.stringify({ worker: { migrations, exports: rooms } })),
     ).toBeNull();
-    // A later version without such exports then sends every migration.
+    // A later version without such exports would send every migration
+    // (the update refuses it first when it drops a class the exports declared).
     expect(updatePath(worker({ migrations }), null, rooms).fullDeploy).toEqual({
       new_tag: "v1",
       steps: [{ new_sqlite_classes: ["Room"] }],
@@ -330,6 +332,43 @@ describe("updatePath", () => {
     expect(workerExportsOf(JSON.stringify({ worker: {} }))).toBeUndefined();
     expect(workerExportsOf("not json")).toBeUndefined();
     expect(workerExportsOf(null)).toBeUndefined();
+  });
+});
+
+describe("droppedDurableObjectExportsProblem", () => {
+  const room = { type: "durable-object", storage: "sqlite" };
+  const api = { type: "worker" };
+
+  it("refuses a version that leaves out a class the serving exports declare", () => {
+    const problem = droppedDurableObjectExportsProblem(undefined, { Room: room });
+    expect(problem).toContain('Durable Object class "Room" in its exports');
+    expect(problem).toContain("must keep declaring it");
+    // Back to migrations, or an entrypoint under the same name, is no declaration.
+    expect(droppedDurableObjectExportsProblem({ Room: api }, { Room: room })).not.toBeNull();
+    expect(
+      droppedDurableObjectExportsProblem({ Room: room }, { Room: room, Chat: room }, "api"),
+    ).toContain('class "Chat" of the Worker "api"');
+    expect(droppedDurableObjectExportsProblem({}, { Room: room, Chat: room })).toContain(
+      'classes "Room" and "Chat"',
+    );
+  });
+
+  it("allows a version that keeps each class, live or as a tombstone", () => {
+    expect(droppedDurableObjectExportsProblem({ Room: room }, { Room: room })).toBeNull();
+    const deleted = { Room: { type: "durable-object", state: "deleted" } };
+    expect(droppedDurableObjectExportsProblem(deleted, { Room: room })).toBeNull();
+    const renamed = {
+      Room: { type: "durable-object", state: "renamed", renamed_to: "Hall" },
+      Hall: room,
+    };
+    expect(droppedDurableObjectExportsProblem(renamed, { Room: room })).toBeNull();
+  });
+
+  it("does not ask to keep tombstones, entrypoints, or classes from migrations", () => {
+    const deleted = { Room: { type: "durable-object", state: "deleted" } };
+    expect(droppedDurableObjectExportsProblem(undefined, deleted)).toBeNull();
+    expect(droppedDurableObjectExportsProblem(undefined, { Api: api })).toBeNull();
+    expect(droppedDurableObjectExportsProblem({ Room: room }, undefined)).toBeNull();
   });
 });
 

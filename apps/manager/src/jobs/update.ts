@@ -84,6 +84,7 @@ import {
   appliedDurableObjectTag,
   canarySkipReason,
   diffBindings,
+  droppedDurableObjectExportsProblem,
   EXPORTS_DEPLOY_REASON,
   FULL_DEPLOY_REASON,
   lastDurableObjectTagOf,
@@ -497,6 +498,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           w.primary ? "This version" : `The Worker "${w.name}" of this version`,
         );
         if (tooBig !== null) problems.push(tooBig);
+        // A class the serving exports declare must stay declared; Cloudflare
+        // would refuse the upload, and for the primary only after the others
+        // were already uploaded.
+        const dropped = droppedDurableObjectExportsProblem(
+          w.manifest.worker.exports,
+          w.primary ? started.servingExports : previousOf(w.scriptName)?.exports,
+          w.primary ? undefined : (w.name ?? w.scriptName),
+        );
+        if (dropped !== null) problems.push(dropped);
       }
       const tooManyWorkers = workerCountProblem(
         workers.length,
