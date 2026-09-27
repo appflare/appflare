@@ -99,7 +99,7 @@ const RULES: readonly Rule[] = [
   // Email addresses.
   [/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g, REDACTED_EMAIL],
   // The account id in Cloudflare API paths and dashboard addresses.
-  [/(\/accounts\/|dash\.cloudflare\.com\/)[0-9a-f]{32}\b/gi, `$1${REDACTED_ACCOUNT}`],
+  [/(\/accounts\/|dash\.cloudflare\.com\/(?:\?to=\/)?)[0-9a-f]{32}\b/gi, `$1${REDACTED_ACCOUNT}`],
   // UUIDs: D1 databases, Workers versions, deployments.
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, REDACTED_ID],
   // Any other 32-character (or longer) hex value: zone, namespace and account ids, hex secrets.

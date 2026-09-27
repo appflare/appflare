@@ -13,7 +13,7 @@ import { enterApp } from "../server/gate.functions";
  * so the count follows finished updates.
  */
 export const Route = createFileRoute("/_app")({
-  beforeLoad: async () => ({ viewer: await enterApp() }),
+  beforeLoad: () => enterApp(),
   loader: () => getPendingUpdates(),
   component: AppLayout,
 });

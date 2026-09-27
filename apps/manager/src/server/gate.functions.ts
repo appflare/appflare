@@ -5,7 +5,7 @@ import { getCookie, getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { hasRole } from "../auth/roles";
 import { createDb } from "../db/client";
-import { isCfTokenConfigured } from "../db/settings";
+import { isCfTokenConfigured, readSettings, SETTING } from "../db/settings";
 import { markOpenedToday } from "../telemetry/state.server";
 import { authSecretBound, sessionFor } from "./auth.server";
 import { appGate, type GateState, setupGate } from "./gate";
@@ -50,14 +50,24 @@ async function loadGateState(): Promise<{ state: GateState; viewer: Viewer | nul
   };
 }
 
+/** What every signed-in page knows: who is looking, and the account Appflare runs in. */
+export interface AppEntry {
+  viewer: Viewer;
+  /** For links into the Cloudflare dashboard; null while the token step has not recorded it. */
+  accountId: string | null;
+}
+
 /**
  * The `_app` layout's gate: the signed-in viewer, or a redirect to `/login` (no
  * session) or `/setup` (setup incomplete). UX only; every server function still
  * enforces its own guard. Also records the day for the daily "manager opened"
  * usage-data event (at most one write per isolate per day; never fails the page).
  */
-export const enterApp = createServerFn({ method: "GET" }).handler(async (): Promise<Viewer> => {
-  const { state, viewer } = await loadGateState();
+export const enterApp = createServerFn({ method: "GET" }).handler(async (): Promise<AppEntry> => {
+  const [{ state, viewer }, account] = await Promise.all([
+    loadGateState(),
+    readSettings(createDb(env.DB), [SETTING.accountId]),
+  ]);
   const gate = appGate(state);
   if ("redirect" in gate) throw redirect({ to: gate.redirect });
   if (viewer === null) throw redirect({ to: "/login" });
@@ -68,7 +78,7 @@ export const enterApp = createServerFn({ method: "GET" }).handler(async (): Prom
       error: error instanceof Error ? error.message : String(error),
     });
   }
-  return viewer;
+  return { viewer, accountId: account.account_id || null };
 });
 
 /** `/setup`'s gate: which step to show, or a redirect. */

@@ -33,6 +33,7 @@ import { connectCloudflare } from "../server/setup.functions";
 import { rotateToken, saveToken, verifyToken } from "../server/token.functions";
 import { DocsLink } from "./docs-link";
 import { formatDate } from "./format";
+import { useAccountId } from "./use-account-id";
 
 const { required } = splitPermissionGroups();
 const optional = optionalGroupsByFeature();
@@ -77,6 +78,7 @@ export function CloudflareTokenForm({
   mode: "rotate";
   onSaved: (saved: SavedToken) => void;
 }) {
+  const accountId = useAccountId();
   const formRef = useRef<HTMLFormElement>(null);
   const [token, setToken] = useState("");
   const [result, setResult] = useState<VerifyTokenResult | null>(null);
@@ -158,7 +160,7 @@ export function CloudflareTokenForm({
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <LinkButton
-            href={accountTokenTemplateUrl()}
+            href={accountTokenTemplateUrl(accountId)}
             external
             variant="secondary"
             icon={<KeyIcon />}

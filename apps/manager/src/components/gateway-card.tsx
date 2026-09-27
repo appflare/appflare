@@ -35,6 +35,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
 import { Timestamp } from "./timestamp";
+import { useAccountId } from "./use-account-id";
 
 const mono = "font-mono text-[0.9em]";
 
@@ -101,6 +102,7 @@ function CheckBanner({
   onRecheck?: () => void;
   rechecking?: boolean;
 }) {
+  const accountId = useAccountId();
   const message = saasCheckMessage(check, zoneName);
   if (message === null) return null;
   const recheck =
@@ -140,7 +142,7 @@ function CheckBanner({
           )}
           {check.kind === "missing-permission" && (
             <LinkButton
-              href={accountTokenTemplateUrl()}
+              href={accountTokenTemplateUrl(accountId)}
               external
               variant="secondary"
               icon={<KeyIcon />}

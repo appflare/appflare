@@ -317,7 +317,7 @@ function InstallPanel({
                 {checks.pending.map((check) => (
                   <NeedRow
                     key={check.key}
-                    need={needOfCheck(check)}
+                    need={needOfCheck(check, detail.capabilities.accountId)}
                     explanation={
                       check.key === "plan"
                         ? "This app needs the Workers Paid plan on this account."

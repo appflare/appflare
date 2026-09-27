@@ -21,6 +21,7 @@
  */
 
 import type { TokenPermission } from "@appflare/schema";
+import { dashboardUrl } from "./dashboard-links";
 
 export type PermissionType = "read" | "edit";
 
@@ -258,13 +259,15 @@ function encodedGroups(groups: readonly PermissionGroup[]): string {
 
 /**
  * Account API token form (preferred): owned by the account, so it
- * keeps working when the person who created it leaves. `:account` makes the
- * dashboard ask which account when the user has several.
+ * keeps working when the person who created it leaves. Opens the account
+ * Appflare runs in once it is known; before the first token is saved
+ * `:account` makes the dashboard ask which account when the user has several.
  */
 export function accountTokenTemplateUrl(
+  accountId: string | null = null,
   groups: readonly PermissionGroup[] = TOKEN_PERMISSION_GROUPS,
 ): string {
-  return `https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=${encodedGroups(groups)}&name=${encodeURIComponent(TOKEN_NAME)}`;
+  return `${dashboardUrl(accountId, "api-tokens")}&permissionGroupKeys=${encodedGroups(groups)}&name=${encodeURIComponent(TOKEN_NAME)}`;
 }
 
 /**
@@ -287,7 +290,9 @@ export const USER_API_TOKENS_URL = "https://dash.cloudflare.com/profile/api-toke
  * Write carries R2 storage, R2 Data Catalog and R2 SQL; wrangler 4.136.2's
  * `pipelines setup` sends people to the same page for a sink's catalog token.
  */
-export const R2_API_TOKENS_URL = "https://dash.cloudflare.com/?to=/:account/r2/api-tokens";
+export function r2ApiTokensUrl(accountId: string | null): string {
+  return dashboardUrl(accountId, "r2/api-tokens");
+}
 
 /**
  * Permission names an app's catalog manifest may use, `<Scope>.<Group>` in the

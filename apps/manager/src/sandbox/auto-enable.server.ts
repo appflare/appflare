@@ -121,7 +121,13 @@ export async function planSandboxFirst(
 
   const client = await deps.client();
   const [r2, containers] = await Promise.all([probeR2(client), probeContainers(client)]);
-  const readiness = sandboxReadiness({ connected: false, r2, containers, plan: opts.plan });
+  const readiness = sandboxReadiness({
+    connected: false,
+    r2,
+    containers,
+    plan: opts.plan,
+    accountId: client.accountId,
+  });
   if (readiness.missing !== null) {
     throw new SandboxAutoEnableError(
       `Sandbox builds are off, and Appflare cannot turn them on: ${readiness.missing} ${SANDBOX_CHECKLIST_POINTER}`,

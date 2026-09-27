@@ -2,10 +2,10 @@ import type { ContainersCapability, R2Capability } from "@appflare/cf-api/capabi
 import type { AccountPlan } from "../account/plan";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import {
-  NEEDS_WORKERS_PAID_REASON,
   NO_CONTAINERS_PERMISSION_REASON,
   NO_R2_PERMISSION_REASON,
-  R2_NOT_ENABLED_REASON,
+  needsWorkersPaidReason,
+  r2NotEnabledReason,
 } from "./preflight";
 
 /**
@@ -100,10 +100,13 @@ export interface SandboxReadinessInput {
   containers: ContainersCapability | null;
   /** The Workers plan in force (detected, else set by an admin, else free). */
   plan: AccountPlan;
+  /** The account the dashboard links in `missing` open; null before a token is saved. */
+  accountId: string | null;
 }
 
 export function sandboxReadiness(input: SandboxReadinessInput): SandboxReadiness {
-  const { connected, r2, containers, plan } = input;
+  const { connected, r2, containers, plan, accountId } = input;
+  const needsWorkersPaid = needsWorkersPaidReason(accountId);
   if (connected) return { state: "on", missing: null, confirmed: true };
   const needs = (state: SandboxRowState, missing: string): SandboxReadiness => ({
     state,
@@ -113,7 +116,7 @@ export function sandboxReadiness(input: SandboxReadinessInput): SandboxReadiness
   // Containers answering "requires Workers Paid" settles the plan; Containers
   // available proves Workers Paid even when no plan is detected.
   if (containers?.state === "needs-workers-paid") {
-    return needs("needs-plan", NEEDS_WORKERS_PAID_REASON);
+    return needs("needs-plan", needsWorkersPaid);
   }
   const noContainersPermission =
     containers?.state === "unknown" && containers.reason === "no-permission";
@@ -122,14 +125,14 @@ export function sandboxReadiness(input: SandboxReadinessInput): SandboxReadiness
     return needs(
       "needs-plan",
       noContainersPermission
-        ? `${NEEDS_WORKERS_PAID_REASON} If it already is: ${NO_CONTAINERS_PERMISSION_REASON}`
-        : NEEDS_WORKERS_PAID_REASON,
+        ? `${needsWorkersPaid} If it already is: ${NO_CONTAINERS_PERMISSION_REASON}`
+        : needsWorkersPaid,
     );
   }
   if (noContainersPermission) {
     return needs("needs-permission", NO_CONTAINERS_PERMISSION_REASON);
   }
-  if (r2?.state === "not-enabled") return needs("needs-r2", R2_NOT_ENABLED_REASON);
+  if (r2?.state === "not-enabled") return needs("needs-r2", r2NotEnabledReason(accountId));
   if (r2?.state === "unknown" && r2.reason === "no-permission") {
     return needs("needs-permission", NO_R2_PERMISSION_REASON);
   }
@@ -149,5 +152,6 @@ export function sandboxReadinessOf(view: CapabilitiesView, connected: boolean): 
     r2: view.r2,
     containers: view.containers,
     plan: view.plan.plan,
+    accountId: view.accountId,
   });
 }

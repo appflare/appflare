@@ -205,7 +205,7 @@ describe("requirement badges", () => {
 
 describe("capabilitiesView", () => {
   it("carries the probes, the plan in force, and the admin's own choice", () => {
-    expect(capabilitiesView("free", stored({ workersPlan: { state: "paid" } }))).toEqual({
+    expect(capabilitiesView("free", stored({ workersPlan: { state: "paid" } }), "acc1")).toEqual({
       checkedAt: "2026-09-24T10:00:00.000Z",
       r2: { state: "enabled" },
       containers: NO_PERMISSION,
@@ -217,12 +217,14 @@ describe("capabilitiesView", () => {
       analyticsEngine: null,
       plan: { plan: "paid", source: "detected" },
       manualPlan: "free",
+      accountId: "acc1",
     });
     expect(capabilitiesView(undefined, null)).toMatchObject({
       checkedAt: null,
       r2: null,
       plan: { plan: "free", source: "default" },
       manualPlan: null,
+      accountId: null,
     });
   });
 });

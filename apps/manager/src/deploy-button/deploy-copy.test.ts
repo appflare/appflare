@@ -45,7 +45,7 @@ describe("the cleanup links", () => {
       "https://dash.cloudflare.com/?to=/:account/workers-and-pages",
     );
     expect(workerSettingsUrl("0123abc", null)).toBe(
-      "https://dash.cloudflare.com/?to=/:account/workers-and-pages",
+      "https://dash.cloudflare.com/?to=/0123abc/workers-and-pages",
     );
   });
 

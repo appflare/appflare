@@ -1,3 +1,4 @@
+import { dashboardUrl } from "../cloudflare/dashboard-links";
 import { COLOR_MODE_SCRIPT, COLOR_MODE_SCRIPT_SHA256 } from "../components/color-mode";
 import type { RemovalStep } from "./removal.server";
 
@@ -140,8 +141,8 @@ function accessStatus(summary: RemovalSummary): string {
 
 /** The end of the removal page: what happens next, and what stayed. */
 export function removalPageEnd(summary: RemovalSummary): string {
-  const dashboard = `https://dash.cloudflare.com/${encodeURIComponent(summary.accountId)}/workers-and-pages`;
-  const tokens = `https://dash.cloudflare.com/${encodeURIComponent(summary.accountId)}/api-tokens`;
+  const dashboard = dashboardUrl(summary.accountId, "workers-and-pages");
+  const tokens = dashboardUrl(summary.accountId, "api-tokens");
   const worker = escapeHtml(summary.workerName);
   if (summary.outcome === "failed") {
     return `</ol>

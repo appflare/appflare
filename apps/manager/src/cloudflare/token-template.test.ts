@@ -11,6 +11,7 @@ import {
   PIPELINES_FEATURE,
   PLAN_DETECTION_FEATURE,
   permissionName,
+  r2ApiTokensUrl,
   resolveAppTokenPermissions,
   SANDBOX_BUILDS_FEATURE,
   splitPermissionGroups,
@@ -25,7 +26,14 @@ function groupsOf(url: string) {
 describe("token template URLs", () => {
   it("prefill the account token form with every permission group that has a template key", () => {
     const url = accountTokenTemplateUrl();
+    // Before the first token is saved the account is not known: the dashboard asks.
     expect(url.startsWith("https://dash.cloudflare.com/?to=/:account/api-tokens&")).toBe(true);
+    expect(
+      accountTokenTemplateUrl("acc1").startsWith(
+        "https://dash.cloudflare.com/?to=/acc1/api-tokens&",
+      ),
+    ).toBe(true);
+    expect(r2ApiTokensUrl("acc1")).toBe("https://dash.cloudflare.com/?to=/acc1/r2/api-tokens");
     expect(new URL(url).searchParams.get("name")).toBe("Appflare");
     expect(groupsOf(url)).toEqual(
       TOKEN_PERMISSION_GROUPS.filter((g) => !("manual" in g)).map(({ key, type }) => ({

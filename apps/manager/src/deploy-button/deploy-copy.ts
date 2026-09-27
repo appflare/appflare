@@ -13,6 +13,8 @@
  * Worker, so the marker survives them.
  */
 
+import { dashboardUrl } from "../cloudflare/dashboard-links";
+
 /** `APPFLARE_INSTALL_SOURCE` as the deploy repository sets it. */
 export const INSTALL_SOURCE_DEPLOY_BUTTON = "deploy-button";
 
@@ -34,9 +36,10 @@ export function deployButtonInstalled(env: { APPFLARE_INSTALL_SOURCE?: string })
  */
 export function workerSettingsUrl(accountId: string | null, workerName: string | null): string {
   if (accountId === null || workerName === null) {
-    return "https://dash.cloudflare.com/?to=/:account/workers-and-pages";
+    return dashboardUrl(accountId, "workers-and-pages");
   }
-  // `#builds` scrolls the settings page to its Builds section.
+  // `#builds` scrolls the settings page to its Builds section. The direct
+  // path keeps it: a `?to=` deep link redirects and may drop the fragment.
   return `https://dash.cloudflare.com/${encodeURIComponent(accountId)}/workers/services/view/${encodeURIComponent(workerName)}/production/settings#builds`;
 }
 

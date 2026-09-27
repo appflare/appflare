@@ -24,6 +24,9 @@ describe("redactReportText", () => {
     expect(redactReportText(`https://dash.cloudflare.com/${ACCOUNT}/workers/plans`)).toBe(
       "https://dash.cloudflare.com/[account id]/workers/plans",
     );
+    expect(redactReportText(`https://dash.cloudflare.com/?to=/${ACCOUNT}/workers/plans`)).toBe(
+      "https://dash.cloudflare.com/?to=/[account id]/workers/plans",
+    );
     expect(redactReportText(`zone ${ACCOUNT.toUpperCase()}`)).toBe("zone [id]");
   });
 

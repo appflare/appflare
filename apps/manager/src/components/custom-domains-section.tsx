@@ -49,6 +49,7 @@ import { HealthBadge } from "./install-health";
 import { useJobStarted } from "./job-started";
 import { ResponsiveTable } from "./responsive-table";
 import { Section } from "./section";
+import { useAccountId } from "./use-account-id";
 import { WildcardNotes } from "./wildcard-notes";
 import { ZoneHostnameField } from "./zone-hostname-field";
 
@@ -240,6 +241,7 @@ function DomainCheck({
  * change; a new token replaces the old one under Settings.
  */
 function TokenPermissionsBanner({ options }: { options: DomainOptions }) {
+  const accountId = useAccountId();
   const permissions = options.missing.join(", ");
   const title = options.noZones
     ? "Appflare cannot see any domain in this account"
@@ -266,7 +268,7 @@ function TokenPermissionsBanner({ options }: { options: DomainOptions }) {
       }
       action={
         <LinkButton
-          href={accountTokenTemplateUrl()}
+          href={accountTokenTemplateUrl(accountId)}
           external
           variant="secondary"
           icon={<KeyIcon />}

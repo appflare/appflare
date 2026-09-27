@@ -17,14 +17,14 @@ describe("NeedRow", () => {
     state: "not turned on",
     tone: "missing",
     detail: "R2 is not turned on for this account.",
-    fix: { label: "Turn on", href: "https://dash.cloudflare.com/?to=/:account/r2/overview" },
+    fix: { label: "Turn on", href: "https://dash.cloudflare.com/?to=/acc1/r2/overview" },
   };
 
   it("ends a missing need with a link to fix it, in a new tab, and no tooltip", () => {
     const html = renderToStaticMarkup(createElement(NeedRow, { need: r2 }));
     expect(text(html)).toBe("R2 storage · not turned on · Turn on");
     const link = html.match(/<a [^>]*>/)?.[0] ?? "";
-    expect(link).toContain('href="https://dash.cloudflare.com/?to=/:account/r2/overview"');
+    expect(link).toContain('href="https://dash.cloudflare.com/?to=/acc1/r2/overview"');
     expect(link).toContain('target="_blank"');
     expect(link).toContain('rel="noopener noreferrer"');
     expect(html).not.toContain("<button");

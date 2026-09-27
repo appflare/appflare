@@ -1,7 +1,7 @@
 import type { Plan } from "@appflare/schema";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import { resourceKindLabel } from "../components/format";
-import { DASHBOARD_LINKS } from "../onboarding/checklist";
+import { dashboardLinks } from "../onboarding/checklist";
 import {
   type AppPrimitives,
   type Availability,
@@ -63,30 +63,33 @@ export interface NeedFix {
   href: string;
 }
 
-const UPGRADE: NeedFix = { label: "Upgrade", href: DASHBOARD_LINKS.workersPlans };
-const ADD_DOMAIN: NeedFix = { label: "Add a domain", href: DASHBOARD_LINKS.domains };
-
 /**
  * The fix for each need that can be missing and has a dashboard page to fix
- * it, the same deep links as the account checklist. A need that needs Workers
- * Paid is fixed by upgrading; Email Routing, by adding a domain first.
+ * it, the same deep links into the account as the account checklist. A need
+ * that needs Workers Paid is fixed by upgrading; Email Routing, by adding a
+ * domain first.
  */
-const NEED_FIXES: Partial<Record<PrimitiveId | "plan", NeedFix>> = {
-  plan: UPGRADE,
-  r2: { label: "Turn on", href: DASHBOARD_LINKS.r2 },
-  "analytics-engine": { label: "Turn on", href: DASHBOARD_LINKS.analyticsEngine },
-  zone: ADD_DOMAIN,
-  "email-routing": ADD_DOMAIN,
-  containers: UPGRADE,
-  "durable-objects": UPGRADE,
-  pipelines: UPGRADE,
-  access: { label: "Set up", href: DASHBOARD_LINKS.zeroTrust },
-};
+function needFixes(accountId: string | null): Partial<Record<PrimitiveId | "plan", NeedFix>> {
+  const links = dashboardLinks(accountId);
+  const upgrade: NeedFix = { label: "Upgrade", href: links.workersPlans };
+  const addDomain: NeedFix = { label: "Add a domain", href: links.domains };
+  return {
+    plan: upgrade,
+    r2: { label: "Turn on", href: links.r2 },
+    "analytics-engine": { label: "Turn on", href: links.analyticsEngine },
+    zone: addDomain,
+    "email-routing": addDomain,
+    containers: upgrade,
+    "durable-objects": upgrade,
+    pipelines: upgrade,
+    access: { label: "Set up", href: links.zeroTrust },
+  };
+}
 
 /** The dashboard fix for a need, only when it is missing. */
-function fixOf(key: string, tone: NeedTone): NeedFix | null {
+function fixOf(key: string, tone: NeedTone, accountId: string | null): NeedFix | null {
   if (tone !== "missing") return null;
-  return NEED_FIXES[key as PrimitiveId | "plan"] ?? null;
+  return needFixes(accountId)[key as PrimitiveId | "plan"] ?? null;
 }
 
 export interface AccountNeed {
@@ -124,7 +127,7 @@ function stateOf(id: string, availability: Availability, reason: string): string
   }
 }
 
-function needOf(status: PrimitiveStatus): AccountNeed {
+function needOf(status: PrimitiveStatus, accountId: string | null): AccountNeed {
   const tone = TONES[status.availability];
   return {
     key: status.id,
@@ -132,14 +135,18 @@ function needOf(status: PrimitiveStatus): AccountNeed {
     state: stateOf(status.id, status.availability, status.reason),
     tone,
     detail: status.reason,
-    fix: fixOf(status.id, tone),
+    fix: fixOf(status.id, tone, accountId),
   };
 }
 
 /** Problems first, then what is not confirmed, then what is ready. */
 const ORDER: Record<NeedTone, number> = { missing: 0, unknown: 1, yours: 2, ready: 3 };
 
-function planNeed(availability: Availability, reason: string): AccountNeed {
+function planNeed(
+  availability: Availability,
+  reason: string,
+  accountId: string | null,
+): AccountNeed {
   const tone = TONES[availability];
   return {
     key: "plan",
@@ -152,20 +159,24 @@ function planNeed(availability: Availability, reason: string): AccountNeed {
           : "not confirmed",
     tone,
     detail: reason,
-    fix: fixOf("plan", tone),
+    fix: fixOf("plan", tone, accountId),
   };
 }
 
 /**
  * One requirement check (`requirementChecks`) in the same words as the
  * rows: the Workers Paid plan, a primitive, or a requirement this manager
- * does not know.
+ * does not know. `accountId` is the account the fix links open (null: the
+ * dashboard asks).
  */
-export function needOfCheck(check: RequirementCheck): AccountNeed {
-  if (check.key === "plan") return planNeed(check.availability, check.reason);
+export function needOfCheck(check: RequirementCheck, accountId: string | null): AccountNeed {
+  if (check.key === "plan") return planNeed(check.availability, check.reason, accountId);
   const primitive = requirementPrimitive(check.key);
   if (primitive !== null) {
-    return needOf({ id: primitive, availability: check.availability, reason: check.reason });
+    return needOf(
+      { id: primitive, availability: check.availability, reason: check.reason },
+      accountId,
+    );
   }
   return {
     key: check.key,
@@ -188,11 +199,12 @@ export function accountNeeds(
   view: CapabilitiesView | null,
 ): AccountNeed[] {
   const needs: AccountNeed[] = [];
+  const accountId = view?.accountId ?? null;
   if (app.plan === "paid") {
     const status = workersPaidStatus(view);
-    needs.push(planNeed(status.availability, status.reason));
+    needs.push(planNeed(status.availability, status.reason, accountId));
   }
-  needs.push(...primitiveStatuses(primitives, view).map(needOf));
+  needs.push(...primitiveStatuses(primitives, view).map((status) => needOf(status, accountId)));
   for (const requirement of app.requires) {
     if (requirementPrimitive(requirement) !== null) continue;
     needs.push({

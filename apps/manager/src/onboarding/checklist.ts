@@ -1,5 +1,6 @@
 import { type IndexApp, isServiceId, requirementService, type ServiceId } from "@appflare/schema";
 import { type CapabilitiesView, PLAN_LABELS, unknownSentence } from "../capabilities/capabilities";
+import { dashboardUrl, zeroTrustDashboardUrl } from "../cloudflare/dashboard-links";
 import {
   NO_SANDBOX_JOBS,
   SANDBOX_CHECKLIST_ROW_ID,
@@ -81,27 +82,27 @@ export interface CatalogNeeds {
   sandbox: number;
 }
 
-const DASH = "https://dash.cloudflare.com";
-
 /**
- * Dashboard deep links. `?to=/:account/...` routes are the ones Cloudflare's
- * own docs link to (cloudflare-docs `src/content/dash-routes/*.json`, read
- * 2026-09-24); the dashboard asks which account when there are several. The
- * workers.dev registration page is where wrangler sends people
- * (`/<account id>/workers/onboarding`, wrangler 4.136.2).
+ * Dashboard deep links into the account Appflare runs in (`:account`, so the
+ * dashboard asks, while the id is not known). The routes are the ones
+ * Cloudflare's own docs link to (cloudflare-docs `src/content/dash-routes/*.json`,
+ * read 2026-09-24). The workers.dev registration page is where wrangler sends
+ * people (`/<account id>/workers/onboarding`, wrangler 4.136.2).
  */
-export const DASHBOARD_LINKS = {
-  workersAndPages: `${DASH}/?to=/:account/workers-and-pages`,
-  workersOnboarding: (accountId: string) => `${DASH}/${accountId}/workers/onboarding`,
-  workersPlans: `${DASH}/?to=/:account/workers/plans`,
-  r2: `${DASH}/?to=/:account/r2/overview`,
-  analyticsEngine: `${DASH}/?to=/:account/workers/analytics-engine`,
-  domains: `${DASH}/?to=/:account/domains/overview`,
-  emailRouting: `${DASH}/?to=/:account/email-service/routing`,
-  zeroTrust: "https://one.dash.cloudflare.com/?to=/:account/home",
-  /** Account-owned tokens; a user token is edited from the profile's API Tokens page. */
-  accountApiTokens: `${DASH}/?to=/:account/api-tokens`,
-} as const;
+export function dashboardLinks(accountId: string | null) {
+  return {
+    workersAndPages: dashboardUrl(accountId, "workers-and-pages"),
+    workersOnboarding: dashboardUrl(accountId, "workers/onboarding"),
+    workersPlans: dashboardUrl(accountId, "workers/plans"),
+    r2: dashboardUrl(accountId, "r2/overview"),
+    analyticsEngine: dashboardUrl(accountId, "workers/analytics-engine"),
+    domains: dashboardUrl(accountId, "domains/overview"),
+    emailRouting: dashboardUrl(accountId, "email-service/routing"),
+    zeroTrust: zeroTrustDashboardUrl(accountId, "home"),
+    /** Account-owned tokens; a user token is edited from the profile's API Tokens page. */
+    accountApiTokens: dashboardUrl(accountId, "api-tokens"),
+  };
+}
 
 /** The services an index row names, falling back to its `requires` for older rows. */
 function servicesOf(app: Pick<IndexApp, "services" | "requires">): Set<ServiceId> {
@@ -165,6 +166,7 @@ const NOT_CHECKED = "Not checked yet";
 const RECHECK_NOTE = "Choose Re-check to read it with the Cloudflare token.";
 
 function workersDevRow({ view, needs, accountId }: ChecklistInput): LinkRow {
+  const links = dashboardLinks(accountId);
   const probe = view.workersDev;
   const base = "Every app answers on its own workers.dev address unless you give it a domain.";
   const row = {
@@ -178,14 +180,12 @@ function workersDevRow({ view, needs, accountId }: ChecklistInput): LinkRow {
       status: "done",
       value: `${probe.subdomain}.workers.dev`,
       note: null,
-      link: { href: DASHBOARD_LINKS.workersAndPages, label: "Workers & Pages", external: true },
+      link: { href: links.workersAndPages, label: "Workers & Pages", external: true },
     };
   }
   const register: ChecklistLink = {
-    href:
-      accountId === null
-        ? DASHBOARD_LINKS.workersAndPages
-        : DASHBOARD_LINKS.workersOnboarding(accountId),
+    // Without the account id the registration page cannot be reached directly.
+    href: accountId === null ? links.workersAndPages : links.workersOnboarding,
     label: "Register",
     external: true,
   };
@@ -204,10 +204,10 @@ function workersDevRow({ view, needs, accountId }: ChecklistInput): LinkRow {
   };
 }
 
-function planRow({ view, needs }: ChecklistInput): LinkRow {
+function planRow({ view, needs, accountId }: ChecklistInput): LinkRow {
   const { plan, source } = view.plan;
   const link: ChecklistLink = {
-    href: DASHBOARD_LINKS.workersPlans,
+    href: dashboardLinks(accountId).workersPlans,
     label: "Upgrade",
     external: true,
   };
@@ -241,9 +241,13 @@ function planRow({ view, needs }: ChecklistInput): LinkRow {
   };
 }
 
-function r2Row({ view, needs }: ChecklistInput): LinkRow {
+function r2Row({ view, needs, accountId }: ChecklistInput): LinkRow {
   const probe = view.r2;
-  const link: ChecklistLink = { href: DASHBOARD_LINKS.r2, label: "Open R2", external: true };
+  const link: ChecklistLink = {
+    href: dashboardLinks(accountId).r2,
+    label: "Open R2",
+    external: true,
+  };
   const row = {
     id: "r2" as const,
     label: "R2",
@@ -270,7 +274,7 @@ function r2Row({ view, needs }: ChecklistInput): LinkRow {
  * page once, and Cloudflare refuses to deploy an app that writes to it until
  * then. Optional: only the apps that use it need it.
  */
-function analyticsEngineRow({ view, needs }: ChecklistInput): LinkRow {
+function analyticsEngineRow({ view, needs, accountId }: ChecklistInput): LinkRow {
   const probe = view.analyticsEngine;
   const row = {
     id: "analytics-engine" as const,
@@ -279,7 +283,11 @@ function analyticsEngineRow({ view, needs }: ChecklistInput): LinkRow {
       "Stores the events apps count and chart, such as page views and link clicks. Turning it on is free.",
       needs === null ? null : counted(needs.analyticsEngine, "writes to it", "write to it"),
     ),
-    link: { href: DASHBOARD_LINKS.analyticsEngine, label: "Analytics Engine", external: true },
+    link: {
+      href: dashboardLinks(accountId).analyticsEngine,
+      label: "Analytics Engine",
+      external: true,
+    },
   };
   if (probe?.state === "enabled") {
     return { ...row, status: "done", value: "Turned on", note: null };
@@ -304,7 +312,7 @@ function analyticsEngineRow({ view, needs }: ChecklistInput): LinkRow {
   };
 }
 
-function zoneRow({ view, needs }: ChecklistInput): LinkRow {
+function zoneRow({ view, needs, accountId }: ChecklistInput): LinkRow {
   const probe = view.zone;
   const row = {
     id: "zone" as const,
@@ -313,7 +321,7 @@ function zoneRow({ view, needs }: ChecklistInput): LinkRow {
       "A domain on Cloudflare lets apps answer on your own hostnames and receive email.",
       needs === null ? null : counted(needs.zone, "needs one", "need one"),
     ),
-    link: { href: DASHBOARD_LINKS.domains, label: "Domains", external: true },
+    link: { href: dashboardLinks(accountId).domains, label: "Domains", external: true },
   };
   if (probe?.state === "available") {
     return { ...row, status: "done", value: "Active zone found", note: null };
@@ -327,7 +335,7 @@ function zoneRow({ view, needs }: ChecklistInput): LinkRow {
   return { ...row, status: "optional", value: "Unknown", note: unknownSentence(probe, "zone") };
 }
 
-function emailRoutingRow({ view, needs }: ChecklistInput): LinkRow {
+function emailRoutingRow({ view, needs, accountId }: ChecklistInput): LinkRow {
   const probe = view.emailRouting;
   const row = {
     id: "email-routing" as const,
@@ -336,7 +344,7 @@ function emailRoutingRow({ view, needs }: ChecklistInput): LinkRow {
       "Routes a domain's mail to an app; installing such an app turns it on.",
       needs === null ? null : counted(needs.emailRouting, "uses it", "use it"),
     ),
-    link: { href: DASHBOARD_LINKS.emailRouting, label: "Email Routing", external: true },
+    link: { href: dashboardLinks(accountId).emailRouting, label: "Email Routing", external: true },
   };
   if (probe?.state === "available") {
     return { ...row, status: "done", value: "Available", note: null };
@@ -354,7 +362,7 @@ function emailRoutingRow({ view, needs }: ChecklistInput): LinkRow {
   return { ...row, status: "optional", value: "Unknown", note };
 }
 
-function zeroTrustRow({ view, needs }: ChecklistInput): LinkRow {
+function zeroTrustRow({ view, needs, accountId }: ChecklistInput): LinkRow {
   const probe = view.zeroTrust;
   const row = {
     id: "zero-trust" as const,
@@ -363,7 +371,7 @@ function zeroTrustRow({ view, needs }: ChecklistInput): LinkRow {
       "Cloudflare Access needs one to put a sign-in in front of Appflare or an app.",
       needs === null ? null : counted(needs.access, "uses Access", "use Access"),
     ),
-    link: { href: DASHBOARD_LINKS.zeroTrust, label: "Zero Trust", external: true },
+    link: { href: dashboardLinks(accountId).zeroTrust, label: "Zero Trust", external: true },
   };
   if (probe?.state === "exists") {
     // The team domain goes to the tooltip: the row links to Zero Trust already.
@@ -393,21 +401,27 @@ function zeroTrustRow({ view, needs }: ChecklistInput): LinkRow {
  * The sandbox row's short value, what the tooltip adds, and where to fix it,
  * per readiness state. The tooltip words carry no address: the link is there.
  */
-const SANDBOX_NEEDS: Record<
-  Exclude<SandboxRowState, "on" | "ready-auto" | "needs-permission" | "enabling">,
-  { value: string; detail: string; link: ChecklistLink }
-> = {
-  "needs-plan": {
-    value: "Needs Workers Paid",
-    detail: "Builds run in Cloudflare Containers, which only Workers Paid includes.",
-    link: { href: DASHBOARD_LINKS.workersPlans, label: "Upgrade", external: true },
-  },
-  "needs-r2": {
-    value: "Needs R2 turned on",
-    detail: "The sandbox keeps build outputs in R2. Open R2 in the dashboard once to turn it on.",
-    link: { href: DASHBOARD_LINKS.r2, label: "Open R2", external: true },
-  },
-};
+function sandboxNeeds(
+  state: Exclude<SandboxRowState, "on" | "ready-auto" | "needs-permission" | "enabling">,
+  accountId: string | null,
+): { value: string; detail: string; link: ChecklistLink } {
+  const links = dashboardLinks(accountId);
+  switch (state) {
+    case "needs-plan":
+      return {
+        value: "Needs Workers Paid",
+        detail: "Builds run in Cloudflare Containers, which only Workers Paid includes.",
+        link: { href: links.workersPlans, label: "Upgrade", external: true },
+      };
+    case "needs-r2":
+      return {
+        value: "Needs R2 turned on",
+        detail:
+          "The sandbox keeps build outputs in R2. Open R2 in the dashboard once to turn it on.",
+        link: { href: links.r2, label: "Open R2", external: true },
+      };
+  }
+}
 
 /**
  * Sandbox builds are turned on by the first install that needs them, so the
@@ -416,7 +430,13 @@ const SANDBOX_NEEDS: Record<
  * "Enable now" for a faster first build once the probes confirmed Workers
  * Paid, Containers and R2); or what is missing, with where to fix it.
  */
-function sandboxRow({ view, needs, sandbox, sandboxJobs }: ChecklistInput): ChecklistRow {
+function sandboxRow({
+  view,
+  needs,
+  sandbox,
+  sandboxJobs,
+  accountId,
+}: ChecklistInput): ChecklistRow {
   const row = {
     id: "sandbox" as const,
     label: "Sandbox builds",
@@ -476,10 +496,14 @@ function sandboxRow({ view, needs, sandbox, sandboxJobs }: ChecklistInput): Chec
         value: "Needs a token permission",
         detail: readiness.missing,
         note: null,
-        link: { href: DASHBOARD_LINKS.accountApiTokens, label: "Edit token", external: true },
+        link: {
+          href: dashboardLinks(accountId).accountApiTokens,
+          label: "Edit token",
+          external: true,
+        },
       };
     default: {
-      const { value, detail, link } = SANDBOX_NEEDS[readiness.state];
+      const { value, detail, link } = sandboxNeeds(readiness.state, accountId);
       return { ...row, status: "optional", value, detail, note: null, link };
     }
   }

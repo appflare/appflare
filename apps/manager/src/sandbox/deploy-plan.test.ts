@@ -224,23 +224,29 @@ describe("sandboxPreflightProblems", () => {
       sandboxPreflightProblems({
         r2: { state: "not-enabled" },
         containers: { state: "unknown", reason: "no-permission", detail: "HTTP 403" },
+        accountId: "acc1",
       }),
     ).toEqual([
       expect.stringMatching(/lacks Containers: Edit/),
-      expect.stringMatching(/R2 is not enabled/),
+      expect.stringMatching(/R2 is not enabled.*\?to=\/acc1\/r2\/overview/),
     ]);
     expect(
-      sandboxPreflightProblems({ r2: null, containers: { state: "needs-workers-paid" } }),
-    ).toEqual([expect.stringMatching(/need Workers Paid/)]);
+      sandboxPreflightProblems({
+        r2: null,
+        containers: { state: "needs-workers-paid" },
+        accountId: "acc1",
+      }),
+    ).toEqual([expect.stringMatching(/need Workers Paid.*\?to=\/acc1\/workers\/plans/)]);
     expect(
       sandboxPreflightProblems({
         r2: { state: "unknown", reason: "error", detail: "HTTP 500" },
         containers: { state: "available" },
+        accountId: null,
       }),
     ).toEqual([]);
     expect(
       sandboxPreflightProblems(
-        { r2: { state: "not-enabled" }, containers: { state: "available" } },
+        { r2: { state: "not-enabled" }, containers: { state: "available" }, accountId: null },
         { containersOnly: true },
       ),
     ).toEqual([]);

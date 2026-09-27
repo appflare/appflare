@@ -9,6 +9,7 @@ import {
   accountPlanSchema,
 } from "../account/plan";
 import { setAccountPlan } from "../account/plan.functions";
+import { dashboardUrl } from "../cloudflare/dashboard-links";
 import { DescriptionItem, DescriptionList } from "../components/description-list";
 import { DocsLink } from "../components/docs-link";
 import { Timestamp } from "../components/timestamp";
@@ -22,9 +23,9 @@ import {
 import { recheckAccountCapabilities } from "./capabilities.functions";
 
 /** Where an admin turns R2 on (the dashboard asks for a payment method once). */
-const R2_DASHBOARD_URL = "https://dash.cloudflare.com/?to=/:account/r2/overview";
+const R2_DASHBOARD_PATH = "r2/overview";
 /** Where an admin changes the Workers plan. */
-const PLANS_URL = "https://dash.cloudflare.com/?to=/:account/workers/plans";
+const PLANS_PATH = "workers/plans";
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -136,7 +137,11 @@ function R2Row({ view }: { view: CapabilitiesView }) {
       {r2.state === "not-enabled" && (
         <Note>
           Apps that store files in R2 cannot be installed until it is on.{" "}
-          <Link href={R2_DASHBOARD_URL} target="_blank" rel="noopener noreferrer">
+          <Link
+            href={dashboardUrl(view.accountId, R2_DASHBOARD_PATH)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Enable R2 in the dashboard
             <Link.ExternalIcon />
           </Link>
@@ -172,7 +177,11 @@ function ContainersRow({ view }: { view: CapabilitiesView }) {
       {containers.state === "needs-workers-paid" && (
         <Note>
           Sandbox builds and self-deploying apps run in containers.{" "}
-          <Link href={PLANS_URL} target="_blank" rel="noopener noreferrer">
+          <Link
+            href={dashboardUrl(view.accountId, PLANS_PATH)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Workers plans
             <Link.ExternalIcon />
           </Link>

@@ -346,6 +346,7 @@ function NotConnected({
   const problems = sandboxPreflightProblems({
     r2: capabilities.r2,
     containers: capabilities.containers,
+    accountId: capabilities.accountId,
   });
   if (!paidDetected) {
     return (

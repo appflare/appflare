@@ -5,6 +5,7 @@ import type { AppPrimitives } from "./primitives";
 import { requirementChecks } from "./requirement-checks";
 
 const CHECKED_AT = "2026-09-27T00:00:00.000Z";
+const ACC = "acc0000000000000000000000000000a";
 
 function view(overrides: Partial<CapabilitiesView> = {}): CapabilitiesView {
   return { ...capabilitiesView(null, null), ...overrides };
@@ -65,6 +66,7 @@ describe("what an app needs on the account", () => {
       zone: { state: "none" },
       emailRouting: { state: "no-zone" },
       checkedAt: CHECKED_AT,
+      accountId: ACC,
     });
     const fixes = accountNeeds(
       { plan: "paid", requires: [] },
@@ -72,14 +74,10 @@ describe("what an app needs on the account", () => {
       lacking,
     ).map((n) => [n.key, n.fix?.label ?? null, n.fix?.href ?? null]);
     expect(fixes).toEqual([
-      ["plan", "Upgrade", "https://dash.cloudflare.com/?to=/:account/workers/plans"],
-      ["r2", "Turn on", "https://dash.cloudflare.com/?to=/:account/r2/overview"],
-      ["zone", "Add a domain", "https://dash.cloudflare.com/?to=/:account/domains/overview"],
-      [
-        "email-routing",
-        "Add a domain",
-        "https://dash.cloudflare.com/?to=/:account/domains/overview",
-      ],
+      ["plan", "Upgrade", `https://dash.cloudflare.com/?to=/${ACC}/workers/plans`],
+      ["r2", "Turn on", `https://dash.cloudflare.com/?to=/${ACC}/r2/overview`],
+      ["zone", "Add a domain", `https://dash.cloudflare.com/?to=/${ACC}/domains/overview`],
+      ["email-routing", "Add a domain", `https://dash.cloudflare.com/?to=/${ACC}/domains/overview`],
       ["kv", null, null],
     ]);
     // Not confirmed is not missing: no fix to offer.
@@ -116,10 +114,9 @@ describe("what an app needs on the account", () => {
       { plan: "paid", requires: ["r2"] },
       view({ r2: { state: "not-enabled" } }),
     );
-    expect(checks.pending.map((c) => needOfCheck(c)).map((n) => `${n.name} · ${n.state}`)).toEqual([
-      "Workers Paid plan · not confirmed",
-      "R2 storage · not turned on",
-    ]);
+    expect(
+      checks.pending.map((c) => needOfCheck(c, ACC)).map((n) => `${n.name} · ${n.state}`),
+    ).toEqual(["Workers Paid plan · not confirmed", "R2 storage · not turned on"]);
   });
 });
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { zoneDashboardUrl } from "../cloudflare/dashboard-links";
 
 /**
  * External domains: hostnames in someone else's DNS that serve an installed
@@ -83,7 +84,7 @@ export const EXTERNAL_DOMAIN_COST =
  * even though the first 100 hostnames cost nothing.
  */
 export function saasDashboardUrl(accountId: string | null, zoneName: string): string {
-  return `https://dash.cloudflare.com/${accountId ?? ":account"}/${encodeURIComponent(zoneName)}/ssl-tls/custom-hostnames`;
+  return zoneDashboardUrl(accountId, zoneName, "ssl-tls/custom-hostnames");
 }
 
 export type ZoneSaasCheck =

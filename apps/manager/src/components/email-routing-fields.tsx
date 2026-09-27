@@ -12,6 +12,7 @@ import { EMAIL_ROUTING_PERMISSIONS } from "../installs/email-routing";
 import { getEmailZoneOptions, previewEmailRouting } from "../installs/email-routing.functions";
 import type { EmailRoutingPreview, EmailZoneOptions } from "../installs/email-routing.server";
 import { WORKER_NAME_PATTERN } from "../installs/install-input";
+import { useAccountId } from "./use-account-id";
 
 /** The records Cloudflare adds when it turns Email Routing on for a zone. */
 const ROUTING_RECORDS =
@@ -167,6 +168,7 @@ function PermissionsBanner({
   missing: readonly string[];
   why: string;
 }) {
+  const accountId = useAccountId();
   return (
     <Banner
       variant="alert"
@@ -186,7 +188,7 @@ function PermissionsBanner({
       }
       action={
         <LinkButton
-          href={accountTokenTemplateUrl()}
+          href={accountTokenTemplateUrl(accountId)}
           external
           variant="secondary"
           icon={<KeyIcon />}

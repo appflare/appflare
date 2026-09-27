@@ -9,7 +9,7 @@ import {
   type ChecklistRowId,
   catalogNeeds,
   checklistProgress,
-  DASHBOARD_LINKS,
+  dashboardLinks,
   groupChecklist,
   MAX_ROW_VALUE_LENGTH,
   needsYouCount,
@@ -17,6 +17,7 @@ import {
 } from "./checklist";
 
 const ACC = "acc0000000000000000000000000000a";
+const DASH = `https://dash.cloudflare.com/?to=/${ACC}`;
 const NO_PERMISSION = { state: "unknown", reason: "no-permission", detail: "HTTP 403" } as const;
 
 /**
@@ -102,14 +103,16 @@ describe("buildChecklist", () => {
     expect(r["workers-dev"]).toMatchObject({
       status: "needs-you",
       value: "None registered",
-      link: { href: DASHBOARD_LINKS.workersOnboarding(ACC), external: true },
+      link: { href: `${DASH}/workers/onboarding`, external: true },
     });
     // Without the account id the link falls back to Workers & Pages.
     const unknownAccount = rows({
       view: view({ workersDev: { state: "not-registered" } }),
       accountId: null,
     });
-    expect(unknownAccount["workers-dev"].link?.href).toBe(DASHBOARD_LINKS.workersAndPages);
+    expect(unknownAccount["workers-dev"].link?.href).toBe(
+      "https://dash.cloudflare.com/?to=/:account/workers-and-pages",
+    );
   });
 
   it("needs the admin for R2 only while catalog apps use it", () => {
@@ -126,7 +129,7 @@ describe("buildChecklist", () => {
       status: "optional",
       value: "Not turned on",
       link: {
-        href: "https://dash.cloudflare.com/?to=/:account/workers/analytics-engine",
+        href: `${DASH}/workers/analytics-engine`,
         label: "Analytics Engine",
         external: true,
       },
@@ -171,19 +174,19 @@ describe("buildChecklist", () => {
     expect(rows().sandbox).toMatchObject({
       status: "optional",
       value: "Needs Workers Paid",
-      link: { href: DASHBOARD_LINKS.workersPlans, label: "Upgrade" },
+      link: { href: `${DASH}/workers/plans`, label: "Upgrade" },
       action: null,
     });
     // Paid, but the token cannot read Containers: the reason goes to the tooltip.
     expect(rows({ view: { ...paidView(), containers: NO_PERMISSION } }).sandbox).toMatchObject({
       value: "Needs a token permission",
       detail: NO_CONTAINERS_PERMISSION_REASON,
-      link: { href: DASHBOARD_LINKS.accountApiTokens, external: true },
+      link: { href: `${DASH}/api-tokens`, external: true },
       action: null,
     });
     expect(rows({ view: { ...paidView(), r2: { state: "not-enabled" } } }).sandbox).toMatchObject({
       value: "Needs R2 turned on",
-      link: { href: DASHBOARD_LINKS.r2 },
+      link: { href: `${DASH}/r2/overview` },
     });
     // Never asks the admin to act now: it is turned on at first need.
     for (const v of [view(), paidView(), { ...paidView(), containers: NO_PERMISSION }]) {
@@ -270,6 +273,18 @@ describe("buildChecklist", () => {
         expect(row.link?.href).toMatch(/^https:\/\/(one\.)?dash\.cloudflare\.com\//);
         expect(row.link?.external).toBe(true);
       }
+    }
+  });
+
+  it("opens the account Appflare runs in from every dashboard link", () => {
+    for (const row of Object.values(rows())) {
+      if (row.link?.external) expect(row.link.href).toContain(`/?to=/${ACC}/`);
+    }
+    for (const href of Object.values(dashboardLinks(ACC))) {
+      expect(href).toContain(`/?to=/${ACC}/`);
+    }
+    for (const href of Object.values(dashboardLinks(null))) {
+      expect(href).toContain("/?to=/:account/");
     }
   });
 });

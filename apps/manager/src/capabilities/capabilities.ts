@@ -128,11 +128,14 @@ export interface CapabilitiesView {
   plan: ResolvedAccountPlan;
   /** The plan an admin set in Settings, used when none is detected. */
   manualPlan: AccountPlan | null;
+  /** The account Appflare runs in, for dashboard links; null before a token is saved. */
+  accountId: string | null;
 }
 
 export function capabilitiesView(
   manual: string | null | undefined,
   stored: StoredCapabilities | null,
+  accountId: string | null | undefined = null,
 ): CapabilitiesView {
   return {
     checkedAt: stored?.checkedAt ?? null,
@@ -146,6 +149,7 @@ export function capabilitiesView(
     analyticsEngine: stored?.analyticsEngine ?? null,
     plan: resolveAccountPlan(manual, stored),
     manualPlan: manual === "free" || manual === "paid" ? manual : null,
+    accountId: accountId || null,
   };
 }
 

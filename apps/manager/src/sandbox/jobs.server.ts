@@ -83,7 +83,10 @@ export async function startSandboxJobCore(
     disable ? Promise.resolve(null) : probeR2(client),
     probeContainers(client),
   ]);
-  const problems = sandboxPreflightProblems({ r2, containers }, { containersOnly: disable });
+  const problems = sandboxPreflightProblems(
+    { r2, containers, accountId: settings.account_id },
+    { containersOnly: disable },
+  );
   if (problems.length > 0) throw fail(problems.join(" "));
 
   const active = await orm

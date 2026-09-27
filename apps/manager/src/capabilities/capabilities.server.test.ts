@@ -177,7 +177,10 @@ describe("a failed check", () => {
       detail: "HTTP 403, Cloudflare code 10000",
     });
     expect(view.plan).toEqual({ plan: "paid", source: "detected" });
-    expect(JSON.stringify(view)).not.toContain(ACC);
+    // The account id is there for dashboard links only; no probe answer carries it.
+    const { accountId, ...answers } = view;
+    expect(accountId).toBe(ACC);
+    expect(JSON.stringify(answers)).not.toContain(ACC);
   });
 });
 

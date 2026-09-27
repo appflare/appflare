@@ -172,7 +172,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
     await run("check account", async ({ log, cf }) => {
       const api = cf();
       const [r2, containers] = await Promise.all([probeR2(api), probeContainers(api)]);
-      const problems = sandboxPreflightProblems({ r2, containers });
+      const problems = sandboxPreflightProblems({ r2, containers, accountId: api.accountId });
       if (problems.length > 0) throw new JobError(problems.join(" "));
       for (const probe of [r2, containers]) {
         // Could not tell (a network error, an answer the probe does not know): ask again.

@@ -63,7 +63,7 @@ describe("gateway names", () => {
 
   it("links the dashboard page that turns Cloudflare for SaaS on", () => {
     expect(saasDashboardUrl("acc1", "gateway.example")).toBe(
-      "https://dash.cloudflare.com/acc1/gateway.example/ssl-tls/custom-hostnames",
+      "https://dash.cloudflare.com/?to=/acc1/gateway.example/ssl-tls/custom-hostnames",
     );
   });
 

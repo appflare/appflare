@@ -3,11 +3,12 @@ import { Badge, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
 import { KeyIcon } from "@phosphor-icons/react";
 import {
   appTokenTemplateUrl,
-  R2_API_TOKENS_URL,
+  r2ApiTokensUrl,
   resolveAppTokenPermissions,
   USER_API_TOKENS_URL,
 } from "../cloudflare/token-template";
 import { ResponsiveTable } from "./responsive-table";
+import { useAccountId } from "./use-account-id";
 
 const SCOPE_LABELS: Record<NonNullable<TokenPermission["scope"]>, string> = {
   account: "Account",
@@ -35,6 +36,7 @@ export function AppTokenPermissions({
    */
   custody?: "app" | "sandbox";
 }) {
+  const accountId = useAccountId();
   if (permissions.length === 0) return null;
   const resolved = resolveAppTokenPermissions(permissions);
   const templateUrl = appTokenTemplateUrl(appName, resolved);
@@ -89,7 +91,12 @@ export function AppTokenPermissions({
       </ResponsiveTable>
       {r2Token && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <LinkButton href={R2_API_TOKENS_URL} external variant="secondary" icon={<KeyIcon />}>
+          <LinkButton
+            href={r2ApiTokensUrl(accountId)}
+            external
+            variant="secondary"
+            icon={<KeyIcon />}
+          >
             Create R2 API token
           </LinkButton>
           <Text variant="secondary" size="sm">

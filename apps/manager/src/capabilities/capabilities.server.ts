@@ -36,8 +36,16 @@ import {
  */
 
 export async function readCapabilitiesView(db: Database): Promise<CapabilitiesView> {
-  const row = await readSettings(db, [SETTING.accountPlan, SETTING.accountCapabilities]);
-  return capabilitiesView(row.account_plan, parseStoredCapabilities(row.account_capabilities));
+  const row = await readSettings(db, [
+    SETTING.accountPlan,
+    SETTING.accountCapabilities,
+    SETTING.accountId,
+  ]);
+  return capabilitiesView(
+    row.account_plan,
+    parseStoredCapabilities(row.account_capabilities),
+    row.account_id,
+  );
 }
 
 /** A probe that failed outright says nothing new: the previous answer stands. */

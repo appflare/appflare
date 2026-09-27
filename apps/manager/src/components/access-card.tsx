@@ -21,6 +21,7 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { ACCESS_RECOVERY_COMMAND, accessRecoverySteps } from "../access/recovery";
+import { zeroTrustDashboardUrl } from "../cloudflare/dashboard-links";
 import {
   type AccessCheck,
   type AccessStatus,
@@ -32,9 +33,10 @@ import {
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { Timestamp } from "./timestamp";
+import { useAccountId } from "./use-account-id";
 
 /** Where the dashboard creates a Zero Trust organization. */
-const ZERO_TRUST_DASHBOARD_URL = "https://one.dash.cloudflare.com/";
+const ZERO_TRUST_DASHBOARD_PATH = "home";
 
 /**
  * Settings → Cloudflare Access: whether the manager sits behind Cloudflare
@@ -326,6 +328,7 @@ function LockoutWarning({ hostname }: { hostname: string }) {
 }
 
 function ProblemView({ check }: { check: Extract<AccessCheck, { ok: false }> }) {
+  const accountId = useAccountId();
   return (
     <div className="grid gap-4">
       <Banner
@@ -346,7 +349,11 @@ function ProblemView({ check }: { check: Extract<AccessCheck, { ok: false }> }) 
       />
       {check.problem === "no-organization" && (
         <div>
-          <LinkButton href={ZERO_TRUST_DASHBOARD_URL} external variant="secondary">
+          <LinkButton
+            href={zeroTrustDashboardUrl(accountId, ZERO_TRUST_DASHBOARD_PATH)}
+            external
+            variant="secondary"
+          >
             Open Zero Trust
           </LinkButton>
         </div>
