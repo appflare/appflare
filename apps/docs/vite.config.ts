@@ -7,7 +7,7 @@ import { fumadocsMdx } from "fumadocs-mdx/vite";
 import { defaultClientConditions, defaultServerConditions, defineConfig } from "vite";
 import { ogImages } from "./src/build/og-images.ts";
 import { catalogData, loadCatalog, snapshotMode } from "./src/catalog/plugin.ts";
-import { catalogPagePaths, isInstallPath } from "./src/catalog/urls.ts";
+import { catalogPagePaths, handoffPagePaths } from "./src/catalog/urls.ts";
 import { markdownUrl, pageUrl, searchIndexPath, siteUrl } from "./src/lib/shared.ts";
 import { manifestReference, referencePage } from "./src/reference/integration.ts";
 
@@ -34,7 +34,9 @@ const SOURCE_CONDITION = "@appflare/source";
  * The site is prerendered in full and served as static assets: `vite build`
  * writes every page as `<path>/index.html` plus its `.md` Markdown, `llms.txt`,
  * `llms-full.txt`, the search index at `/api/search.json`, `sitemap.xml`, `404.html`,
- * the catalog's pages (`/apps/`, one per app, one per category), and one
+ * the catalog's pages (`/apps/`, one per app, one per category), the pages
+ * that pass a visitor on to their own Appflare (`/install/<slug>/`,
+ * `/install/`, `/my/`), and one
  * OpenGraph image per page, all into `dist/client`. The server bundle in
  * `dist/server` exists only to prerender; nothing is deployed from it.
  *
@@ -59,9 +61,9 @@ export default defineConfig(async () => {
           // Also follows every link the pages contain, so a page reachable only
           // through a link is still written.
           crawlLinks: true,
-          // A link to a heading is the same page. The install pages that
-          // "Install" links to are not part of this site's build yet.
-          filter: ({ path }) => !path.includes("#") && !isInstallPath(path),
+          // A link to a heading is the same page, and a query (an install link
+          // for a repository, `/install/?repo=`) is read by the page in the browser.
+          filter: ({ path }) => !path.includes("#") && !path.includes("?"),
           failOnError: true,
         },
         pages: [
@@ -75,6 +77,7 @@ export default defineConfig(async () => {
             { path: markdownUrl(slugs) },
           ]),
           ...catalogPagePaths(catalog.site).map((path) => ({ path })),
+          ...handoffPagePaths(catalog.site).map((path) => ({ path })),
         ],
         // TanStack Start's own sitemap lists every prerendered file, the Markdown
         // and text files included; `sitemap.xml` is a route instead, listing pages.

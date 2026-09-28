@@ -15,6 +15,7 @@ const staticFiles = [
   "/sitemap.xml",
   searchIndexPath,
   "/favicon.svg",
+  "/badge.svg",
 ];
 
 /**

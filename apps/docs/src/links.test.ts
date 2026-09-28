@@ -1,7 +1,7 @@
 import type { FileObject } from "next-validate-link";
 import { beforeAll, describe, expect, it } from "vitest";
 import { siteCatalog } from "./catalog/data.ts";
-import { catalogPagePaths } from "./catalog/urls.ts";
+import { catalogPagePaths, handoffPagePaths } from "./catalog/urls.ts";
 import {
   type BrokenLink,
   findBrokenLinks,
@@ -38,8 +38,8 @@ async function contentFiles(): Promise<FileObject[]> {
  */
 const scanTimeout = 120_000;
 
-/** The catalog's pages, which content may link to. */
-const catalogPages = catalogPagePaths(siteCatalog);
+/** The catalog's pages and the install pages, which content may link to. */
+const catalogPages = [...catalogPagePaths(siteCatalog), ...handoffPagePaths(siteCatalog)];
 
 describe("internal links", () => {
   let files: FileObject[];

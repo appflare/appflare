@@ -31,6 +31,7 @@
     "catalog/submit",
     "catalog/submit-with-an-agent",
     "catalog/bumps",
+    "catalog/install-badge",
     "catalog/manifest-reference",
     "---More---",
     "security",

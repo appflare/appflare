@@ -39,9 +39,20 @@ export function installPath(slug: string): string {
   return `/install/${slug}/`;
 }
 
-/** Whether a path is one of the install pages. */
-export function isInstallPath(path: string): boolean {
-  return path === "/install" || path.startsWith("/install/");
+/** The install page for a GitHub repository, which takes it as `?repo=<owner>/<repo>`. */
+export const installRepoPath = "/install/";
+
+/** Where an Appflare tells this site its address; Appflare links here. */
+export const myPath = "/my/";
+
+/**
+ * The pages that pass a visitor on to their own Appflare: one install page
+ * per app, the repository install page, and `/my/`. They are built and
+ * linked like any page, but search engines and the site's indexes leave
+ * them out.
+ */
+export function handoffPagePaths(catalog: { apps: ReadonlyArray<{ slug: string }> }): string[] {
+  return [installRepoPath, ...catalog.apps.map((app) => installPath(app.slug)), myPath];
 }
 
 /** Every catalog page of the site: the apps page, one page per app, one per category. */

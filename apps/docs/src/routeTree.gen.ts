@@ -19,6 +19,9 @@ import { Route as ApiSearchDotjsonRouteImport } from './routes/api/search[.]json
 import { Route as AppsIndexRouteImport } from './routes/apps/index'
 import { Route as AppsSlugRouteImport } from './routes/apps/$slug'
 import { Route as CategoriesIdRouteImport } from './routes/categories/$id'
+import { Route as InstallIndexRouteImport } from './routes/install/index'
+import { Route as InstallSlugRouteImport } from './routes/install/$slug'
+import { Route as MyIndexRouteImport } from './routes/my/index'
 import { Route as OgSplatRouteImport } from './routes/og/$'
 
 const SplatRoute = SplatRouteImport.update({
@@ -71,6 +74,21 @@ const CategoriesIdRoute = CategoriesIdRouteImport.update({
   path: '/categories/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InstallIndexRoute = InstallIndexRouteImport.update({
+  id: '/install/',
+  path: '/install/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InstallSlugRoute = InstallSlugRouteImport.update({
+  id: '/install/$slug',
+  path: '/install/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MyIndexRoute = MyIndexRouteImport.update({
+  id: '/my/',
+  path: '/my/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OgSplatRoute = OgSplatRouteImport.update({
   id: '/og/$',
   path: '/og/$',
@@ -87,8 +105,11 @@ export interface FileRoutesByFullPath {
   '/api/search.json': typeof ApiSearchDotjsonRoute
   '/apps/$slug': typeof AppsSlugRoute
   '/categories/$id': typeof CategoriesIdRoute
+  '/install/$slug': typeof InstallSlugRoute
   '/og/$': typeof OgSplatRoute
   '/apps/': typeof AppsIndexRoute
+  '/install/': typeof InstallIndexRoute
+  '/my/': typeof MyIndexRoute
 }
 export interface FileRoutesByTo {
   '/$': typeof SplatRoute
@@ -100,8 +121,11 @@ export interface FileRoutesByTo {
   '/api/search.json': typeof ApiSearchDotjsonRoute
   '/apps/$slug': typeof AppsSlugRoute
   '/categories/$id': typeof CategoriesIdRoute
+  '/install/$slug': typeof InstallSlugRoute
   '/og/$': typeof OgSplatRoute
   '/apps': typeof AppsIndexRoute
+  '/install': typeof InstallIndexRoute
+  '/my': typeof MyIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -114,8 +138,11 @@ export interface FileRoutesById {
   '/api/search.json': typeof ApiSearchDotjsonRoute
   '/apps/$slug': typeof AppsSlugRoute
   '/categories/$id': typeof CategoriesIdRoute
+  '/install/$slug': typeof InstallSlugRoute
   '/og/$': typeof OgSplatRoute
   '/apps/': typeof AppsIndexRoute
+  '/install/': typeof InstallIndexRoute
+  '/my/': typeof MyIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -129,8 +156,11 @@ export interface FileRouteTypes {
     | '/api/search.json'
     | '/apps/$slug'
     | '/categories/$id'
+    | '/install/$slug'
     | '/og/$'
     | '/apps/'
+    | '/install/'
+    | '/my/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/$'
@@ -142,8 +172,11 @@ export interface FileRouteTypes {
     | '/api/search.json'
     | '/apps/$slug'
     | '/categories/$id'
+    | '/install/$slug'
     | '/og/$'
     | '/apps'
+    | '/install'
+    | '/my'
   id:
     | '__root__'
     | '/$'
@@ -155,8 +188,11 @@ export interface FileRouteTypes {
     | '/api/search.json'
     | '/apps/$slug'
     | '/categories/$id'
+    | '/install/$slug'
     | '/og/$'
     | '/apps/'
+    | '/install/'
+    | '/my/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -169,8 +205,11 @@ export interface RootRouteChildren {
   ApiSearchDotjsonRoute: typeof ApiSearchDotjsonRoute
   AppsSlugRoute: typeof AppsSlugRoute
   CategoriesIdRoute: typeof CategoriesIdRoute
+  InstallSlugRoute: typeof InstallSlugRoute
   OgSplatRoute: typeof OgSplatRoute
   AppsIndexRoute: typeof AppsIndexRoute
+  InstallIndexRoute: typeof InstallIndexRoute
+  MyIndexRoute: typeof MyIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -245,6 +284,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CategoriesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/install/': {
+      id: '/install/'
+      path: '/install'
+      fullPath: '/install/'
+      preLoaderRoute: typeof InstallIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/install/$slug': {
+      id: '/install/$slug'
+      path: '/install/$slug'
+      fullPath: '/install/$slug'
+      preLoaderRoute: typeof InstallSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/my/': {
+      id: '/my/'
+      path: '/my'
+      fullPath: '/my/'
+      preLoaderRoute: typeof MyIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/og/$': {
       id: '/og/$'
       path: '/og/$'
@@ -265,8 +325,11 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSearchDotjsonRoute: ApiSearchDotjsonRoute,
   AppsSlugRoute: AppsSlugRoute,
   CategoriesIdRoute: CategoriesIdRoute,
+  InstallSlugRoute: InstallSlugRoute,
   OgSplatRoute: OgSplatRoute,
   AppsIndexRoute: AppsIndexRoute,
+  InstallIndexRoute: InstallIndexRoute,
+  MyIndexRoute: MyIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

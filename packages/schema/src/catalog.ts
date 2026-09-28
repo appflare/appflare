@@ -7,6 +7,7 @@ import { catalogD1Schema } from "./d1.ts";
 import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
 import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
 import { licenseNoteSchema, licenseSchema } from "./license.ts";
+import { CATALOG_SLUG_PATTERN } from "./links.ts";
 import { catalogPipelinesSchema, pipelineManifestProblems } from "./pipelines.ts";
 import { catalogR2Schema } from "./r2-lifecycle.ts";
 import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
@@ -28,13 +29,7 @@ export const gitShaSchema = z
   .string()
   .regex(/^[0-9a-f]{40}$/, "must be a 40-character lowercase hex git SHA");
 
-/**
- * The strict form of a catalog slug: lowercase letters, digits and dashes,
- * starting with a letter or digit, at most 63 characters. Slugs become Worker
- * names, sandbox ids and page addresses, so every place that builds one of
- * those from a slug checks it against this.
- */
-export const CATALOG_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+export { CATALOG_SLUG_PATTERN };
 
 /** `owner/repo` GitHub slug. */
 export const ownerRepoSchema = z.string().regex(/^[^/\s]+\/[^/\s]+$/, 'must be "owner/repo"');
