@@ -25,16 +25,10 @@ Appflare shows installed apps and work that needs your attention on Home.
 
 ## How it works
 
-You select the Deploy to Cloudflare button, or run `npx create-appflare`. Either one
+You select the Deploy to Cloudflare button, or run the installer
+[from a checkout](/start/install/#from-a-checkout) of this repository. Either one
 deploys one Worker, the manager, into your Cloudflare account. The manager has a web
 UI where you browse a catalog of apps that run on Workers.
-
-<Callout title="Installer not on npm yet">
-
-The installer is not published to npm yet. Until it is, use the button or run the
-installer [from a checkout](/start/install/#from-a-checkout) of this repository.
-
-</Callout>
 
 When you install an app, the manager creates what the app needs (KV namespaces, D1
 databases, R2 buckets, queues, Vectorize indexes, secrets, cron triggers) and

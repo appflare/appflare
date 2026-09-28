@@ -511,8 +511,11 @@ Points that need care:
   as `tunnels.example.com`) for an entry with `install.wildcardHostname`, and is
   empty until the admin assigns one; assigning or removing it deploys the settings
   again, so the var follows the domain. Vars are filled in again on every update and
-  settings change. `{{workerUrl}}` is always the
-  workers.dev address, even when a custom domain is attached to the install. An
+  settings change. `{{workerUrl}}` is the address the app is served at: its
+  workers.dev URL, or its domain once Appflare or the admin has
+  [turned workers.dev off](/guides/custom-domains/#turn-off-the-workersdev-url).
+  Appflare does not turn workers.dev off by itself while the app's settings use
+  `{{workerUrl}}`. An
   [app of several Workers](#apps-of-several-workers) can also name each of its
   Workers.
 - **JSON vars.** A wrangler config var whose value is not a string (an array, object,

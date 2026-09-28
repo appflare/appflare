@@ -21,7 +21,9 @@ describe("Markdown for agents", () => {
 
   it("writes a Callout as a blockquote led by its title", async () => {
     const text = await docsLlms.page(page("start", "install"));
-    expect(text).toContain("> **Not on npm yet**\n>\n> The installer is not published to npm yet");
+    expect(text).toContain(
+      "> **The easiest way: the Deploy to Cloudflare button**\n>\n> Everything happens in your browser.",
+    );
   });
 
   it("writes Cards as a list of links", async () => {

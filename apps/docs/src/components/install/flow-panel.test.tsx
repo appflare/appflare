@@ -67,9 +67,10 @@ describe("FlowPanel", () => {
   it("offers the Deploy button first, then the installer, then the way back", () => {
     const html = render({ step: "get", intentSaved: true });
     const deploy = html.indexOf(DEPLOY_URL);
-    const installer = html.indexOf("npx create-appflare");
+    const installer = html.indexOf("build the installer from a checkout");
     expect(deploy).toBeGreaterThan(-1);
     expect(installer).toBeGreaterThan(deploy);
+    expect(html).not.toContain("npx create-appflare");
     expect(html).toContain(`src="${DEPLOY_BUTTON_IMAGE}"`);
     expect(html).toContain("Your account › Use this Appflare on appflare.dev");
     expect(html).toContain("keeps 2FA for 7 days");

@@ -241,10 +241,9 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
               </span>
             </li>
             <li className="grid gap-2">
-              <span className="text-sm">Or, from a terminal:</span>
-              <code className="justify-self-start rounded-md border border-fd-border bg-fd-secondary px-3 py-1.5 font-mono text-sm">
-                npx create-appflare
-              </code>
+              <span className="text-sm">
+                Or, from a terminal, build the installer from a checkout of the Appflare repository.
+              </span>
               <span className="text-fd-muted-foreground text-sm">
                 <a href="/start/install/" className={textLink}>
                   Other ways to install
