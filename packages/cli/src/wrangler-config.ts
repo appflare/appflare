@@ -75,9 +75,13 @@ export function moduleRules(
 /**
  * The first manager release whose setup starts with the Cloudflare API token
  * (it declares a `version_metadata` binding). Older releases need a
- * `SETUP_TOKEN` secret, which this installer no longer sets.
+ * `SETUP_TOKEN` secret, which this installer no longer sets. The manager's
+ * version numbers restarted at 0.1.0 (its pre-releases included), and the
+ * releases published before the restart carry higher numbers yet lack the
+ * binding, so the installer checks for the binding, never compares versions;
+ * this constant only names the cut-off in the refusal message.
  */
-export const FIRST_TOKEN_SETUP_RELEASE = "0.5.0";
+export const FIRST_TOKEN_SETUP_RELEASE = "0.1.0";
 
 /** The manager's service binding to itself, through which its jobs call their units. */
 export const SELF_BINDING = "SELF";
