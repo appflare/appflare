@@ -4,9 +4,9 @@
   "pages": [
     "---Getting started---",
     "start/overview",
+    "start/deploy-button",
     "start/install",
     "start/install-with-an-agent",
-    "start/deploy-button",
     "---Using Appflare---",
     "guides/catalog",
     "guides/custom-catalogs",

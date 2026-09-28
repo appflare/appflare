@@ -10,6 +10,9 @@ refresh button at the top right to fetch it now. The line under the search field
 says how many apps there are and when the list was last updated; hover over the
 time for the exact date.
 
+Appflare does not use an app's Deploy button: it installs a signed build of the
+pinned commit and keeps it updated.
+
 ## Search and filters
 
 Type in the search field to find apps by name, by what they do, by author, or by a

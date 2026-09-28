@@ -8,6 +8,9 @@ The catalog is a public GitHub repository,
 `apps/<slug>/`, holding a hand-written manifest, `appflare.jsonc`, and an optional
 `README.md`. Everything else is produced by the catalog's CI.
 
+Appflare does not use an app's Deploy button: it installs a signed build of the
+pinned commit and keeps it updated.
+
 ## An entry pins one commit
 
 The manifest names the upstream repository and one exact commit:

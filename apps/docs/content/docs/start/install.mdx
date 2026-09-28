@@ -8,11 +8,22 @@ description: The three ways to install, the installer, and the setup wizard.
 All three deploy the same signed release into your own account and end in the same
 [setup wizard](#the-setup-wizard).
 
-| | The installer | An AI agent | The Deploy to Cloudflare button |
+<Callout title="The easiest way: the Deploy to Cloudflare button">
+
+Everything happens in your browser. The button copies a prebuilt Appflare into your
+GitHub or GitLab account, deploys it to your Cloudflare account, and then you open the
+setup wizard. Afterwards Appflare updates itself, and you can remove the copy.
+[Deploy with the button](/start/deploy-button/) walks through each step.
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy)
+
+</Callout>
+
+| | The Deploy to Cloudflare button | The installer | An AI agent |
 | --- | --- | --- | --- |
-| How | Run `npx create-appflare` in a terminal | Paste [a prompt](/start/install-with-an-agent/) into a coding agent; it runs the installer | Select the button in your browser: [Deploy with the button](/start/deploy-button/) |
-| You need | Node.js 22 | Node.js 22 and a coding agent | A GitHub or GitLab account |
-| Leaves behind | Nothing | Nothing | A copy of the deploy repository in your Git account and a Workers Builds connection, which you remove afterwards |
+| How | Select the button in your browser: [Deploy with the button](/start/deploy-button/) | Run `npx create-appflare` in a terminal | Paste [a prompt](/start/install-with-an-agent/) into a coding agent; it runs the installer |
+| You need | A GitHub or GitLab account | Node.js 22 | Node.js 22 and a coding agent |
+| Leaves behind | A copy of Appflare in your Git account and a Workers Builds connection, which you remove afterwards | Nothing | Nothing |
 
 The rest of this page covers the installer.
 

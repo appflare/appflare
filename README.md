@@ -11,11 +11,21 @@
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
-Coolify for Cloudflare. A single Worker you install into your own Cloudflare account
-that lets you browse a catalog of Cloudflare-native apps, install them, and keep them
-updated.
+Appflare is one Worker in your own Cloudflare account that installs apps from a
+catalog and keeps them updated.
 
-Status: pre-alpha, under active construction. Not usable yet.
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy)
+
+The button copies a prebuilt Appflare into your Git account, deploys it to your
+Cloudflare account, and opens the setup wizard; afterwards Appflare updates itself
+and you can remove the copy. See [Deploy with the button](https://appflare-docs.appflare-dev.workers.dev/start/deploy-button/).
+
+Two other ways to install:
+
+- **The installer:** run `npx create-appflare` in a terminal. See [Install Appflare](https://appflare-docs.appflare-dev.workers.dev/start/install/).
+- **An AI agent:** paste a prompt into a coding agent, and it runs the installer for you. See [Install with an AI agent](https://appflare-docs.appflare-dev.workers.dev/start/install-with-an-agent/).
+
+Status: early. Expect rough edges and breaking changes before the first stable release.
 
 ## Documentation
 

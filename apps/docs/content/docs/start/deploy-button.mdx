@@ -3,27 +3,31 @@ title: Deploy with the button
 description: Deploy Appflare from your browser with the Deploy to Cloudflare button, then remove what the button leaves behind.
 ---
 
-The Deploy to Cloudflare button deploys Appflare without a terminal. It works through
-Cloudflare's Workers Builds: the button copies a repository into your GitHub or GitLab
-account and deploys that copy. Appflare does not need the copy afterwards, and it
-updates itself without it, so the last step is to remove it.
+The Deploy to Cloudflare button is the easiest way to install Appflare. Everything
+happens in your browser, and there is nothing to install on your computer. The button
+copies a prebuilt Appflare into your GitHub or GitLab account, deploys it to your
+Cloudflare account, and then you open the setup wizard. Appflare does not need the
+copy afterwards, because it updates itself, so the last step is to remove the copy.
 
-**[Deploy to Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy)**
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy)
 
 The button deploys from [github.com/appflare/deploy](https://github.com/appflare/deploy),
-which holds the latest Appflare release, prebuilt. Nothing is built during the deploy.
+which holds the latest Appflare release, prebuilt. Nothing is built during the deploy;
+Cloudflare's Workers Builds only copies it and deploys it.
 
 ## Before you start
 
 - **A Cloudflare account.** The free Workers plan works.
-- **A GitHub or GitLab account.** The button always copies the repository into one;
-  there is no way to deploy without it.
+- **A GitHub or GitLab account.** The button always copies Appflare into one; there
+  is no way to deploy without it. Make the copy private, as step 3 shows.
 - **A `workers.dev` subdomain** on the account. If it has none, register one in the
   dashboard under Workers & Pages first.
-- **A free cron trigger.** Appflare uses one. A free account has five in total, and the
-  deploy fails if all five are in use.
-- **No Appflare in the account yet.** Appflare's Workflow has a fixed name,
-  `appflare-jobs`, and a second deploy would take it over from the first.
+- **A free cron trigger.** Appflare checks for updates on a schedule, which uses one
+  cron trigger. A free account has five in total, and the deploy fails if all five
+  are in use.
+- **No Appflare in the account yet.** A second Appflare in the same account would take
+  over the first one's background jobs (`appflare-jobs`), so the account can hold only
+  one.
 - **Permission to create an API token** for the account, for the setup wizard.
 
 ## Deploy

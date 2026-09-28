@@ -27,7 +27,7 @@ describe("Markdown for agents", () => {
   it("writes Cards as a list of links", async () => {
     const text = await docsLlms.page(page());
     expect(text).toContain(
-      "- [Install Appflare](/start/install/): Requirements, the installer, and the setup wizard.",
+      "- [Install Appflare](/start/install/): The three ways to install, the installer, and the setup wizard.",
     );
   });
 

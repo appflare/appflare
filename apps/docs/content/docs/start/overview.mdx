@@ -13,6 +13,31 @@ Appflare is pre-release software. Expect rough edges and breaking changes.
 
 </Callout>
 
+## Install it
+
+The easiest way is the Deploy to Cloudflare button. It copies a prebuilt Appflare
+into your GitHub or GitLab account, deploys it to your Cloudflare account, and then
+you open the setup wizard. Afterwards Appflare updates itself, and you can remove the
+copy.
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy)
+
+<Cards>
+  <Card title="Deploy with the button" href="/start/deploy-button/">
+    Everything happens in your browser. The page walks through the form and the clean-up.
+  </Card>
+  <Card title="Run the installer" href="/start/install/">
+    Run `npx create-appflare` in a terminal on your computer.
+  </Card>
+  <Card title="Ask an AI agent" href="/start/install-with-an-agent/">
+    Paste a prompt into a coding agent. It runs the installer and tells you the few
+    steps only you can do.
+  </Card>
+</Cards>
+
+All three install the same signed release and end in the same
+[setup wizard](/start/install/#the-setup-wizard).
+
 ## Why it exists
 
 Cloudflare's "Deploy to Cloudflare" button copies an app's repository into your
@@ -20,7 +45,8 @@ GitHub account. The copy has no link back to the original, so you never hear abo
 new versions and have no way to update.
 
 Appflare owns the install instead. It records every resource it creates for an app,
-so it can update the app, roll it back, and uninstall it.
+so it can update the app, roll it back, and uninstall it. Appflare itself can use the
+button because it updates itself afterwards and does not need the copy.
 
 ## What it is not
 
@@ -38,14 +64,13 @@ so it can update the app, roll it back, and uninstall it.
 
 ## What gets installed
 
-`npx create-appflare` creates these in your account. (The installer is not on npm
-yet; until it is, run it [from a checkout](/start/install/#from-a-checkout).)
+Whichever way you install, these are created in your account:
 
 | Resource | Name |
 | --- | --- |
 | Worker | `appflare`, served at `https://appflare.<your-subdomain>.workers.dev` |
 | D1 database | `appflare` |
-| KV namespace | `appflare-kv` |
+| KV namespace | `appflare-kv` (with the button, named after the project) |
 | Workflow | `appflare-jobs` |
 | Cron trigger | every 30 minutes |
 
@@ -58,12 +83,14 @@ releases. It starts update jobs on its own only when you turn on
 ## The parts
 
 - **The manager** is the Worker above, with its web UI.
-- **The installer**, `create-appflare`, puts the manager into your account. Everything
-  after that, updates and removal included, happens in the manager's settings pages.
+- **The Deploy to Cloudflare button** or **the installer**, `create-appflare`, puts
+  the manager into your account. Everything after that, updates and removal included,
+  happens in the manager's settings pages.
 - **The catalog** is a public GitHub repository, `appflare/catalog`. Its CI builds
   each app from a pinned commit, signs it, and publishes it. See
   [How the catalog works](/catalog/how-it-works/).
 
 ## Next
 
-[Install Appflare](/start/install/).
+[Deploy with the button](/start/deploy-button/), or compare
+[the three ways to install](/start/install/).
