@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { githubRepositorySchema, gitRefSchema } from "./index";
-import { CATALOG_SLUG_PATTERN, isGithubRepository, isGitRef, parseRepositoryInput } from "./links";
+import {
+  CATALOG_SLUG_PATTERN,
+  isGithubRepository,
+  isGitRef,
+  parseRepositoryInput,
+  SITE_URL,
+} from "./links";
 
 describe("links", () => {
+  it("names the public site as a bare https origin, so paths can be appended", () => {
+    expect(SITE_URL).toBe("https://appflare.dev");
+    expect(new URL(SITE_URL).origin).toBe(SITE_URL);
+  });
+
   it("refuses a repository address with a malformed escape instead of throwing", () => {
     for (const text of [
       "https://github.com/a/%E0",

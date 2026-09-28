@@ -2,7 +2,7 @@ import { llms, loader } from "fumadocs-core/source";
 import { defineDocs } from "fumadocs-mdx/macro";
 import { formatPageMarkdown } from "./llms-format.ts";
 import { filterForAgents, stringifyForAgents } from "./llms-stringify.ts";
-import { pageUrl, siteUrl } from "./shared.ts";
+import { pageUrl, SITE_URL } from "./shared.ts";
 
 /**
  * Every page under `content/docs`, compiled by Fumadocs MDX at build time.
@@ -42,7 +42,7 @@ export const docsLlms = llms(source, {
     formatPageMarkdown({
       title: page.data.title,
       description: page.data.description,
-      url: `${siteUrl}${pageUrl(page.slugs)}`,
+      url: `${SITE_URL}${pageUrl(page.slugs)}`,
       content: await page.data.getText("processed"),
     }),
 });

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { llmsIndex } from "../lib/llms.ts";
-import { siteUrl } from "../lib/shared.ts";
+import { SITE_URL } from "../lib/shared.ts";
 import { accountNeeds, appLinks, appPageTitle, appStats, shortDate } from "./app-page.ts";
 import { findApp, findCategory, siteCatalog } from "./data.ts";
 import { catalogPageEntries } from "./pages.ts";
@@ -70,12 +70,12 @@ describe("the catalog pages", () => {
 
   it("are listed in llms.txt, with the categories", () => {
     const index = llmsIndex();
-    expect(index).toContain(`## Apps\n\n- [Apps](${siteUrl}/apps/)`);
+    expect(index).toContain(`## Apps\n\n- [Apps](${SITE_URL}/apps/)`);
     for (const entry of catalogPageEntries(siteCatalog).appPages) {
-      expect(index).toContain(`](${siteUrl}${entry.url}): ${entry.description}`);
+      expect(index).toContain(`](${SITE_URL}${entry.url}): ${entry.description}`);
     }
     for (const { id } of siteCatalog.categories) {
-      expect(index).toContain(`](${siteUrl}/categories/${id}/)`);
+      expect(index).toContain(`](${SITE_URL}/categories/${id}/)`);
     }
   });
 

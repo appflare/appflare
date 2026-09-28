@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { FileObject } from "next-validate-link";
 import { beforeAll, describe, expect, it } from "vitest";
 import { siteCatalog } from "./catalog/data.ts";
@@ -8,7 +11,7 @@ import {
   findBrokenSiteUrls,
   type LinkTarget,
 } from "./lib/links.ts";
-import { pageUrl, siteUrl } from "./lib/shared.ts";
+import { pageUrl, SITE_URL } from "./lib/shared.ts";
 import { source } from "./lib/source.ts";
 
 async function contentTargets(): Promise<LinkTarget[]> {
@@ -59,7 +62,7 @@ describe("internal links", () => {
   });
 
   it("written as absolute URLs of this site, as in the agent prompts, exist", () => {
-    const broken = findBrokenSiteUrls(files, targets, siteUrl, catalogPages);
+    const broken = findBrokenSiteUrls(files, targets, SITE_URL, catalogPages);
     expect(broken.map(({ file, line, url }) => `${file}:${line} ${url}`)).toEqual([]);
   });
 
@@ -69,6 +72,43 @@ describe("internal links", () => {
     expect(urls).toContain("/catalog/manifest-reference/");
     expect(urls).toContain("/start/install-with-an-agent/");
     expect(urls).toContain("/catalog/submit-with-an-agent/");
+  });
+});
+
+/**
+ * The preview deploy's address, assembled so this file does not contain it.
+ * Only the files that describe the preview may name it.
+ */
+const PREVIEW_ADDRESS = ["appflare-docs", "appflare-dev", "workers", "dev"].join(".");
+const DESCRIBES_THE_PREVIEW = new Set([
+  ".github/workflows/docs.yml",
+  "apps/docs/README.md",
+  "docs/RELEASING.md",
+]);
+/** Files that are not text a person or a build reads as links. */
+const NOT_TEXT =
+  /(^|\/)pnpm-lock\.yaml$|\.(png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|zip|gz|tgz|pdf|wasm)$/i;
+
+describe("the preview deploy's address", () => {
+  it("appears in no tracked file but those that describe the preview", () => {
+    const run = (args: string[], cwd: string) =>
+      execFileSync("git", args, { cwd, encoding: "utf8" });
+    const root = run(["rev-parse", "--show-toplevel"], import.meta.dirname).trim();
+    const tracked = run(["ls-files", "-z"], root)
+      .split("\0")
+      .filter((file) => file !== "" && !DESCRIBES_THE_PREVIEW.has(file) && !NOT_TEXT.test(file));
+    const naming = tracked.filter((file) => {
+      let text: string;
+      try {
+        text = readFileSync(path.join(root, file), "utf8");
+      } catch {
+        // Listed but deleted from the working tree and not yet staged.
+        return false;
+      }
+      return !text.includes("\0") && text.includes(PREVIEW_ADDRESS);
+    });
+    expect(naming).toEqual([]);
+    expect(tracked.length).toBeGreaterThan(100);
   });
 });
 
@@ -121,11 +161,13 @@ describe("findBrokenLinks", () => {
       "```text",
       "read https://docs.example/start/install.md and https://docs.example/llms.txt",
       "then https://docs.example/start/gone.md, https://docs.example/ and https://docs.example",
+      "https://docs.example/start/install/?repo=owner/repo https://docs.example/gone/?x=1",
       "```",
     ].join("\n");
     const broken = findBrokenSiteUrls([file(content)], targets, "https://docs.example");
     expect(broken.map(({ url, line }) => ({ url, line }))).toEqual([
       { url: "https://docs.example/start/gone.md", line: 3 },
+      { url: "https://docs.example/gone/?x=1", line: 4 },
     ]);
   });
 

@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MANAGER_APP, unpackArtifact, type VerifiedArtifact, verifyArtifact } from "@appflare/cli";
 import { parseJsonc } from "@appflare/pack";
-import { pageUrl, siteUrl } from "../apps/docs/src/lib/shared.ts";
+import { pageUrl, SITE_URL } from "../apps/docs/src/lib/shared.ts";
 import { findSecrets, repoSecrets, type Secret } from "./deploy-repo-guard.ts";
 
 /**
@@ -287,12 +287,11 @@ export function deployRepoPackageJson(options: {
 }
 
 /**
- * A documentation page's absolute URL. The site's address comes from the docs
- * app's own `siteUrl` (apps/docs/src/lib/shared.ts), the one place it is set,
- * which must be the public docs domain by the first public release.
+ * A documentation page's absolute URL, on the site's public address
+ * (`SITE_URL`, set once in `@appflare/schema/links`).
  */
 export function docsPage(...slugs: string[]): string {
-  return `${siteUrl}${pageUrl(slugs)}`;
+  return `${SITE_URL}${pageUrl(slugs)}`;
 }
 
 /** A GitHub repository as `owner/name`, with the characters GitHub allows in each part. */

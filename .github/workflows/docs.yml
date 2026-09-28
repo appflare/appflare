@@ -2,14 +2,24 @@ name: docs
 
 # Builds the documentation site (apps/docs, Fumadocs on TanStack Start, fully
 # prerendered) and deploys dist/client as the Worker `appflare-docs`, static
-# assets only. The manifest reference page is generated from @appflare/schema
-# during the build, so schema changes redeploy the site.
+# assets only. The manifest reference page is generated from @appflare/schema during the
+# build, so schema changes redeploy the site.
 #
 # The site also carries the whole catalog (/apps/, one page per app, one per
 # category), taken from the published catalog when the build starts. So it is
 # rebuilt when the catalog publishes (the catalog's publish workflow dispatches
 # this workflow; see docs/RELEASING.md) and once a day, which keeps star counts
 # current. A failed fetch fails the build and leaves the deployed site as it was.
+#
+# Two deploys of the same build, in order:
+#   dev          the preview, in the development account on its workers.dev
+#                address. Every run.
+#   production   appflare.dev, in the account that owns the zone, with the
+#                DOCS_CLOUDFLARE_API_TOKEN and DOCS_CLOUDFLARE_ACCOUNT_ID
+#                secrets. Only after the preview deployed and answered, so a
+#                broken build never reaches appflare.dev. Skipped (with a
+#                notice) when either secret is missing, and on a manual run
+#                with target=dev. apps/docs/README.md has the setup.
 
 on:
   push:
@@ -23,7 +33,18 @@ on:
       - "package.json"
       - "turbo.json"
       - ".github/workflows/docs.yml"
+  # The catalog's publish workflow dispatches with no inputs, so the default
+  # target is production.
   workflow_dispatch:
+    inputs:
+      target:
+        description: "production: the preview, then appflare.dev. dev: the preview only."
+        required: false
+        default: production
+        type: choice
+        options:
+          - production
+          - dev
   schedule:
     # Daily, at an odd minute to stay clear of the top-of-hour rush.
     - cron: "17 5 * * *"
@@ -42,10 +63,14 @@ defaults:
     shell: bash
 
 jobs:
-  deploy:
-    name: build and deploy docs
+  dev:
+    name: build and deploy the preview (development account)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      # The preview's address: the Worker's name on the development account's
+      # workers.dev subdomain.
+      PREVIEW_URL: https://appflare-docs.appflare-dev.workers.dev
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,6 +98,15 @@ jobs:
             og/image.png og/start/install/image.png apps/index.html og/apps/image.png; do
             test -s "${file}" || { echo "::error::apps/docs/dist/client/${file} is missing"; exit 1; }
           done
+      # `pnpm wrangler` loads .env over the environment, which would replace
+      # the secrets below. .env is gitignored, so a checkout never has one;
+      # this makes sure of it.
+      - name: Check there is no .env
+        run: |
+          if [[ -e .env ]]; then
+            echo "::error::.env exists in the checkout; pnpm wrangler would load it over the deploy secrets"
+            exit 1
+          fi
       # wrangler deploys to the account_id pinned in apps/docs/wrangler.jsonc and
       # ignores CLOUDFLARE_ACCOUNT_ID when the config has one. Both must name the
       # same account, or the token in the secret cannot deploy there.
@@ -88,9 +122,146 @@ jobs:
             echo "::error::apps/docs/wrangler.jsonc account_id does not match the CLOUDFLARE_ACCOUNT_ID secret"
             exit 1
           fi
-      - name: Deploy
+      # `--env=""` is the top level of the config: workers.dev, no routes.
+      - name: Deploy the preview
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER_SEND_METRICS: "false"
-        run: pnpm wrangler -c apps/docs/wrangler.jsonc deploy
+        run: pnpm wrangler -c apps/docs/wrangler.jsonc deploy --env=""
+      - name: Check the preview answers
+        run: |
+          for path in / /start/install/ /apps/ /no-such-page/ /badge.svg; do
+            expected=200
+            [[ "${path}" == /no-such-page/ ]] && expected=404
+            status=$(curl -sS -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 3 \
+              --retry-all-errors "${PREVIEW_URL}${path}" || true)
+            if [[ "${status}" != "${expected}" ]]; then
+              echo "::error::${PREVIEW_URL}${path} answered ${status}, expected ${expected}"
+              exit 1
+            fi
+          done
+      # The exact files the preview serves go to production.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-site
+          path: apps/docs/dist/client
+          if-no-files-found: error
+          retention-days: 1
+
+  production:
+    name: deploy appflare.dev
+    needs: dev
+    # Only main reaches appflare.dev. A manual run from another branch still
+    # starts this job, so its first step can say why nothing was deployed.
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.target != 'dev')
+      && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Only whether each secret is set leaves this step, never a value.
+      - name: Check this run may deploy appflare.dev
+        id: secrets
+        env:
+          HAS_TOKEN: ${{ secrets.DOCS_CLOUDFLARE_API_TOKEN != '' }}
+          HAS_ACCOUNT: ${{ secrets.DOCS_CLOUDFLARE_ACCOUNT_ID != '' }}
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "${REF}" != refs/heads/main ]]; then
+            echo "::notice title=appflare.dev was not deployed::Only main deploys appflare.dev; this run is for ${REF}. The preview was deployed."
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+          elif [[ "${HAS_TOKEN}" == "true" && "${HAS_ACCOUNT}" == "true" ]]; then
+            echo "ready=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::notice title=appflare.dev was not deployed::Set the DOCS_CLOUDFLARE_API_TOKEN and DOCS_CLOUDFLARE_ACCOUNT_ID Actions secrets for the account that owns the appflare.dev zone (apps/docs/README.md), then re-run this workflow. The preview was deployed."
+            echo "ready=false" >> "${GITHUB_OUTPUT}"
+          fi
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - if: steps.secrets.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: docs-site
+          path: apps/docs/dist/client
+      - name: Check there is no .env
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          if [[ -e .env ]]; then
+            echo "::error::.env exists in the checkout; pnpm wrangler would load it over the deploy secrets"
+            exit 1
+          fi
+      # wrangler takes the account from the config's account_id before
+      # CLOUDFLARE_ACCOUNT_ID, and the checked-in config pins the development
+      # account (the production environment inherits it). So this deploys from
+      # a copy without account_id, written next to the original so its paths
+      # (main, assets) still resolve, and never kept in the repository.
+      - name: Write the production config
+        id: config
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DOCS_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            import { experimental_readRawConfig, unstable_readConfig } from "wrangler";
+            const source = "apps/docs/wrangler.jsonc";
+            const { rawConfig } = experimental_readRawConfig({ config: source });
+            // Only the top-level account_id is removed below; one in an
+            // environment would win over CLOUDFLARE_ACCOUNT_ID again.
+            for (const [name, env] of Object.entries(rawConfig.env ?? {})) {
+              if (env && "account_id" in env) {
+                console.log("::error::" + source + " sets account_id in env." + name + "; only the top level may pin an account");
+                process.exit(1);
+              }
+            }
+            if (rawConfig.account_id === process.env.CLOUDFLARE_ACCOUNT_ID) {
+              console.log("::error::DOCS_CLOUDFLARE_ACCOUNT_ID names the development account; it must be the account that owns appflare.dev");
+              process.exit(1);
+            }
+            delete rawConfig.account_id;
+            writeFileSync("apps/docs/wrangler.production.json", JSON.stringify(rawConfig, null, 2) + "\n");
+            const [domain] = unstable_readConfig({ config: source, env: "production" }).routes ?? [];
+            const host = typeof domain === "string" ? domain : domain?.pattern;
+            if (!host) {
+              console.log("::error::the production environment in apps/docs/wrangler.jsonc has no route");
+              process.exit(1);
+            }
+            writeFileSync(process.env.GITHUB_OUTPUT, "site=https://" + host + "\n", { flag: "a" });
+          '
+      - name: Deploy appflare.dev
+        if: steps.secrets.outputs.ready == 'true' && github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.DOCS_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DOCS_CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: "false"
+        run: pnpm wrangler -c apps/docs/wrangler.production.json deploy --env production
+      # A new custom domain can take a few minutes to get its certificate, so
+      # a first deploy that does not answer yet is a warning, not a failure.
+      # www. is a Redirect Rule on the zone, set up once by hand
+      # (apps/docs/README.md); this only reports whether it is in place.
+      - name: Check appflare.dev answers
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          SITE: ${{ steps.config.outputs.site }}
+        run: |
+          status=$(curl -sS -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 10 \
+            --retry-all-errors "${SITE}/start/install/" || true)
+          [[ "${status}" == 200 ]] ||
+            echo "::warning::${SITE}/start/install/ answered ${status}, expected 200"
+          www="${SITE/https:\/\//https://www.}"
+          redirect=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --retry 5 \
+            --retry-delay 10 --retry-all-errors "${www}/start/install/?from=ci" || true)
+          [[ "${redirect}" == "301 ${SITE}/start/install/?from=ci" ]] ||
+            echo "::warning::${www}/start/install/?from=ci answered \"${redirect}\", not a 301 to ${SITE}: the zone's www Redirect Rule is not set up yet (apps/docs/README.md)"

@@ -2,7 +2,7 @@ import type * as PageTree from "fumadocs-core/page-tree";
 import { siteCatalog } from "../catalog/data.ts";
 import { type CatalogPageEntry, catalogPageEntries } from "../catalog/pages.ts";
 import { formatLlmsIndex, type LlmsLink, type LlmsSection } from "./llms-format.ts";
-import { markdownUrl, siteDescription, siteName, siteUrl } from "./shared.ts";
+import { markdownUrl, SITE_URL, siteDescription, siteName } from "./shared.ts";
 import { type DocsPage, source } from "./source.ts";
 
 function pageLink(node: PageTree.Item): LlmsLink | undefined {
@@ -14,7 +14,7 @@ function linkTo(page: DocsPage): LlmsLink {
   return {
     title: page.data.title,
     description: page.data.description,
-    url: `${siteUrl}${markdownUrl(page.slugs)}`,
+    url: `${SITE_URL}${markdownUrl(page.slugs)}`,
   };
 }
 
@@ -45,7 +45,7 @@ function sections(tree: PageTree.Root): LlmsSection[] {
 }
 
 function catalogLink({ title, description, url }: CatalogPageEntry): LlmsLink {
-  return { title, description, url: `${siteUrl}${url}` };
+  return { title, description, url: `${SITE_URL}${url}` };
 }
 
 /** The catalog's pages: the apps page and each app, then each category. */
@@ -70,7 +70,7 @@ export function llmsIndex(): string {
       {
         title: "Full text",
         description: "every page of these docs in one Markdown file.",
-        url: `${siteUrl}/llms-full.txt`,
+        url: `${SITE_URL}/llms-full.txt`,
       },
     ],
   });

@@ -8,7 +8,7 @@ import { defaultClientConditions, defaultServerConditions, defineConfig } from "
 import { ogImages } from "./src/build/og-images.ts";
 import { catalogData, loadCatalog, snapshotMode } from "./src/catalog/plugin.ts";
 import { catalogPagePaths, handoffPagePaths } from "./src/catalog/urls.ts";
-import { markdownUrl, pageUrl, searchIndexPath, siteUrl } from "./src/lib/shared.ts";
+import { markdownUrl, pageUrl, SITE_URL, searchIndexPath } from "./src/lib/shared.ts";
 import { manifestReference, referencePage } from "./src/reference/integration.ts";
 
 /**
@@ -84,7 +84,7 @@ export default defineConfig(async () => {
         sitemap: { enabled: false },
       }),
       react(),
-      ogImages({ siteUrl }),
+      ogImages({ siteUrl: SITE_URL }),
     ],
   };
 });

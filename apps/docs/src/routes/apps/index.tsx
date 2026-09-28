@@ -14,7 +14,7 @@ import {
   FeaturedCard,
 } from "../../components/catalog/tiles.tsx";
 import { pageHead } from "../../lib/meta.ts";
-import { ogImagePath, siteName, siteUrl } from "../../lib/shared.ts";
+import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
 
 /** The longest search kept in the address. */
 const MAX_QUERY_LENGTH = 200;
@@ -50,8 +50,8 @@ export const Route = createFileRoute("/apps/")({
     pageHead({
       title: `${appsPageTitle} | ${siteName}`,
       description: appsPageDescription,
-      url: `${siteUrl}${appsPath}`,
-      image: `${siteUrl}${ogImagePath(["apps"])}`,
+      url: `${SITE_URL}${appsPath}`,
+      image: `${SITE_URL}${ogImagePath(["apps"])}`,
     }),
   component: AppsPage,
 });

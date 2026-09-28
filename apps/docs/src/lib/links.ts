@@ -64,7 +64,8 @@ export function findBrokenSiteUrls(
       for (const match of line.matchAll(pattern)) {
         // Punctuation that ends the sentence is not part of the URL.
         const url = match[0].replace(/[.,;:]+$/, "");
-        const path = (url.slice(siteUrl.length) || "/").split("#")[0] || "/";
+        // The query (`/install/?repo=owner/repo`) is read by the page, not the server.
+        const path = (url.slice(siteUrl.length) || "/").split(/[?#]/)[0] || "/";
         if (!urls.has(path)) {
           broken.push({ file: file.path, url, line: index + 1, reason: "not-found" });
         }

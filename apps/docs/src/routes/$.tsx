@@ -16,8 +16,8 @@ import {
   markdownUrl,
   ogImagePath,
   pageUrl,
+  SITE_URL,
   siteName,
-  siteUrl,
   slugsFromSplat,
   sourceFileUrl,
 } from "../lib/shared.ts";
@@ -42,8 +42,8 @@ export const Route = createFileRoute("/$")({
       ? pageHead({
           title: loaderData.url === "/" ? siteName : `${loaderData.title} | ${siteName}`,
           description: loaderData.description,
-          url: `${siteUrl}${loaderData.url}`,
-          image: `${siteUrl}${loaderData.ogImage}`,
+          url: `${SITE_URL}${loaderData.url}`,
+          image: `${SITE_URL}${loaderData.ogImage}`,
         })
       : {},
   component: Page,

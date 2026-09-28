@@ -1,3 +1,4 @@
+import { SITE_URL } from "@appflare/schema/links";
 import { Banner, cn, LayerCard, Link, Meter, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
@@ -5,7 +6,7 @@ import { Logo } from "./logo";
 import { MessageText } from "./message-text";
 
 /** Where the footer's version line leads. */
-export const DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/";
+export const DOCS_URL = `${SITE_URL}/`;
 
 /**
  * Setup runs in three steps on one page, `/setup`: connect Cloudflare (paste

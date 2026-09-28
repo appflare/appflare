@@ -7,7 +7,7 @@ import { useFlow } from "../../components/install/use-flow.ts";
 import { type FlowPage, startInstall } from "../../install/flow.ts";
 import type { InstallRequest } from "../../install/request.ts";
 import { noindexPageHead } from "../../lib/meta.ts";
-import { ogImagePath, siteName, siteUrl } from "../../lib/shared.ts";
+import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
 
 /**
  * `/install/<slug>/`: an app's Install button, as other sites and READMEs
@@ -27,9 +27,9 @@ export const Route = createFileRoute("/install/$slug")({
       ? noindexPageHead({
           title: `Install ${loaderData.app.name} | ${siteName}`,
           description: loaderData.app.pitch,
-          url: `${siteUrl}${installPath(loaderData.app.slug)}`,
+          url: `${SITE_URL}${installPath(loaderData.app.slug)}`,
           // The app page's card, so a shared install link previews the app.
-          image: loaderData.cover ?? `${siteUrl}${ogImagePath(["apps", loaderData.app.slug])}`,
+          image: loaderData.cover ?? `${SITE_URL}${ogImagePath(["apps", loaderData.app.slug])}`,
         })
       : {},
   component: InstallAppPage,
