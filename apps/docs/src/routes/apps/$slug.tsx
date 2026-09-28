@@ -43,8 +43,7 @@ export const Route = createFileRoute("/apps/$slug")({
           title: appPageTitle(loaderData.app, siteName),
           description: loaderData.app.summary,
           url: `${SITE_URL}${appPath(loaderData.app.slug)}`,
-          // A cover is made to the OpenGraph size; without one the build draws a card.
-          image: loaderData.app.cover ?? `${SITE_URL}${ogImagePath(["apps", loaderData.app.slug])}`,
+          image: `${SITE_URL}${ogImagePath(["apps", loaderData.app.slug])}`,
         })
       : {},
   component: AppPage,

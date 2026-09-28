@@ -43,8 +43,8 @@ export interface FetchSnapshotOptions {
 export interface FetchedCatalog {
   snapshot: CatalogSnapshot;
   /**
-   * The icon of each app without a cover, as a data URI, for its OpenGraph
-   * card: the card is drawn during the build, which reads no network.
+   * The icon of each app, as a data URI, for the OpenGraph cards that show
+   * it: the cards are drawn during the build, which reads no network.
    */
   ogIcons: Record<string, string>;
 }
@@ -190,11 +190,7 @@ export async function fetchCatalogSnapshot(
   // Only icons on the catalog's own site, as the pages show them.
   const origin = new URL(baseUrl).origin;
   const iconApps = withIcons
-    ? index.apps.filter(
-        (app) =>
-          catalogMediaUrl(app.media?.icon?.url, origin) !== null &&
-          catalogMediaUrl(app.media?.cover?.url, origin) === null,
-      )
+    ? index.apps.filter((app) => catalogMediaUrl(app.media?.icon?.url, origin) !== null)
     : [];
   const icons = await mapLimit(iconApps, concurrency, async (app) => {
     const icon = app.media?.icon;

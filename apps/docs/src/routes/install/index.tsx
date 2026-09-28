@@ -29,7 +29,8 @@ export const Route = createFileRoute("/install/")({
       title: `Install from GitHub | ${siteName}`,
       description: "Open a GitHub repository in your own Appflare, ready to build and install.",
       url: `${SITE_URL}${installRepoPath}`,
-      image: `${SITE_URL}${ogImagePath(["apps"])}`,
+      // No card of its own: the site's card.
+      image: `${SITE_URL}${ogImagePath([])}`,
     }),
   component: InstallRepositoryPage,
 });
