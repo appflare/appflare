@@ -1,5 +1,6 @@
 import type { ArtifactWorker } from "./artifact";
 import type { CatalogManifest } from "./catalog";
+import { appTokenPermissionGroup } from "./token-permissions";
 
 /**
  * The Cloudflare services an app uses, worked out from its manifests. The
@@ -73,29 +74,6 @@ export function requirementService(requirement: string): ServiceId | null {
   return REQUIREMENT_SERVICES[requirement] ?? null;
 }
 
-/**
- * Words in a token permission group's name and the service the group
- * reaches. Names are free text in the catalog manifest ("Workers KV Storage",
- * "Zone.DNS", "Access: Apps and Policies"), so this matches words, not ids.
- */
-const PERMISSION_SERVICES: ReadonlyArray<readonly [RegExp, ServiceId]> = [
-  [/\bkv\b/i, "kv"],
-  [/\bd1\b/i, "d1"],
-  [/\br2\b/i, "r2"],
-  [/\bdurable objects?\b/i, "durable-objects"],
-  [/\bhyperdrive\b/i, "hyperdrive"],
-  [/\bvectorize\b/i, "vectorize"],
-  [/\bqueues?\b/i, "queues"],
-  [/\bpipelines?\b/i, "pipelines"],
-  [/\bworkflows?\b/i, "workflows"],
-  [/\bworkers ai\b/i, "workers-ai"],
-  [/\bbrowser rendering\b/i, "browser-rendering"],
-  [/\bcontainers?\b/i, "containers"],
-  [/\bemail routing\b/i, "email-routing"],
-  [/\bdns\b/i, "zone"],
-  [/\baccess\b/i, "access"],
-];
-
 /** The parts of an artifact and catalog manifest the services come from; every field optional. */
 export interface ServiceSources {
   bindings?: ReadonlyArray<{ type: string }>;
@@ -105,7 +83,7 @@ export interface ServiceSources {
   /** Queue consumers: the Worker receives messages from a queue. */
   queueConsumers?: readonly unknown[];
   requires?: readonly string[];
-  tokenPermissions?: ReadonlyArray<{ name: string; scope?: string | undefined }>;
+  tokenPermissions?: ReadonlyArray<{ scope: string; group: string }>;
   /** The manifest sets `install.emailRouting`: the install routes a domain's mail to the app. */
   emailRouting?: boolean;
   /** Vectorize indexes the catalog manifest sizes (`resources.vectorize`), by binding name. */
@@ -160,9 +138,8 @@ export function deriveServices(sources: ServiceSources): AppServices {
   }
   for (const permission of sources.tokenPermissions ?? []) {
     if (permission.scope === "zone") found.add("zone");
-    for (const [pattern, id] of PERMISSION_SERVICES) {
-      if (pattern.test(permission.name)) found.add(id);
-    }
+    const service = appTokenPermissionGroup(permission.scope, permission.group)?.service;
+    if (service !== undefined) found.add(service);
   }
   const keyValueDurableObjects = (sources.migrations ?? []).some(declaresKeyValueClasses);
   if (keyValueDurableObjects) found.add("durable-objects");
@@ -206,7 +183,7 @@ export function appServices(
     tokenPermissions: catalog.tokenPermissions,
     emailRouting: catalog.install.emailRouting !== undefined,
     vectorizeIndexes: Object.keys(catalog.resources?.vectorize ?? {}),
-    hyperdriveBindings: (catalog.resources?.hyperdrive ?? []).map((h) => h.binding),
+    hyperdriveBindings: Object.keys(catalog.resources?.hyperdrive ?? {}),
     pipelineBindings: Object.keys(catalog.resources?.pipelines ?? {}),
   });
 }

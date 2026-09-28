@@ -32,11 +32,12 @@
           "pattern": "[^.]$"
         }
       ],
-      "description": "What the app does, as one plain sentence of at most 80 characters, without a trailing period, such as \"Short links on your own domain\". Shown under the app's name on catalog tiles; when omitted, the catalog shortens `summary` instead."
+      "description": "What the app does, as one plain sentence of at most 80 characters, without a trailing period, such as \"Short links on your own domain\". Shown under the app's name on catalog tiles."
     },
     "homepage": {
       "type": "string",
-      "pattern": "^https:\\/\\/"
+      "pattern": "^https:\\/\\/",
+      "description": "The app's website, as an https:// URL. Defaults to its repository on GitHub."
     },
     "repo": {
       "type": "string",
@@ -45,7 +46,7 @@
     "license": {
       "type": "string",
       "minLength": 1,
-      "description": "The license the app's own repository declares, as an SPDX license expression: `MIT`, `Apache-2.0`, `MIT OR Apache-2.0`, or a source-available license such as `BUSL-1.1`, `FSL-1.1-MIT` or `Elastic-2.0`. Use `NONE` when the repository publishes no license, and `SEE LICENSE IN <file>` (a path in the repository) for a license with no SPDX id. The catalog shows the license on the app's card and page; it never decides whether an app is listed."
+      "description": "The license the app's own repository declares, as an SPDX license expression of current SPDX ids: `MIT`, `Apache-2.0`, `GPL-3.0-only`, `MIT OR Apache-2.0`, or a source-available license such as `BUSL-1.1`, `FSL-1.1-MIT` or `Elastic-2.0`. Deprecated ids such as `GPL-3.0` are refused: write `-only` or `-or-later`, as the project's license notice says. For a license without an SPDX id, write `LicenseRef-<name>` and describe it in `licenseNote`; write `NONE` when the repository publishes no license. The catalog shows the license on the app's card and page; it never decides whether an app is listed."
     },
     "licenseNote": {
       "type": "string",
@@ -55,11 +56,46 @@
       "description": "One short line shown next to the license, for what its id does not say, such as \"Source-available: production use restricted; see the license\". An app with a note is shown as source-available."
     },
     "categories": {
+      "minItems": 1,
+      "maxItems": 3,
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1
-      }
+        "enum": [
+          "ai",
+          "analytics",
+          "bots",
+          "business",
+          "chat",
+          "cms",
+          "community",
+          "developer-tools",
+          "ecommerce",
+          "education",
+          "email",
+          "family",
+          "files",
+          "finance",
+          "games",
+          "marketing",
+          "media",
+          "monitoring",
+          "networking",
+          "notes",
+          "notifications",
+          "passwords",
+          "privacy",
+          "productivity",
+          "remote-access",
+          "scheduling",
+          "security",
+          "sharing",
+          "sync",
+          "utilities"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "One to 3 categories the catalog lists the app under, each once: `ai` (AI), `analytics` (Analytics), `bots` (Bots), `business` (Business), `chat` (Chat), `cms` (Websites and blogs), `community` (Community), `developer-tools` (Developer tools), `ecommerce` (E-commerce), `education` (Education), `email` (Email), `family` (Family), `files` (Files), `finance` (Finance), `games` (Games), `marketing` (Marketing), `media` (Media), `monitoring` (Monitoring), `networking` (Networking), `notes` (Notes), `notifications` (Notifications), `passwords` (Passwords), `privacy` (Privacy), `productivity` (Productivity), `remote-access` (Remote access), `scheduling` (Scheduling), `security` (Security), `sharing` (Sharing), `sync` (Sync), `utilities` (Utilities)."
     },
     "authors": {
       "minItems": 1,
@@ -114,6 +150,11 @@
         "sha": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "description": "The version shown for this entry when the repository's tag does not describe this app (monorepos); it must change whenever `sha` moves. Omitted, the version comes from `ref` when it is a semver tag, else from the pinned commit's date and SHA."
         }
       },
       "required": [
@@ -126,6 +167,8 @@
       "type": "object",
       "properties": {
         "tier": {
+          "default": "artifact",
+          "description": "How the app is built: `\"artifact\"` (the default: a signed release catalog CI builds), `\"sandbox\"` (built from the pinned commit in the account's sandbox Worker) or `\"self-deploying\"` (the app's own installer, run in the sandbox Worker).",
           "type": "string",
           "enum": [
             "artifact",
@@ -149,22 +192,39 @@
         },
         "workerName": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "The Worker name the install form suggests; the admin may change it unless `fixedWorkerName` is set. Defaults to the entry's `slug`."
         },
         "fixedWorkerName": {
+          "default": false,
+          "description": "The app only works under `workerName` (for example, it hard-codes its own hostname), so it installs at most once per account.",
           "type": "boolean"
         },
-        "healthPath": {
-          "type": "string",
-          "pattern": "^\\/[^\\s?#]*$"
-        },
-        "healthMode": {
-          "type": "string",
-          "enum": [
-            "default",
-            "status-only"
-          ],
-          "description": "How the health check reads the Worker's answer. `\"default\"` counts redirects and 4xx answers as verified and server errors (5xx) as unhealthy. `\"status-only\"` counts any answer from the Worker itself as verified, server errors included: use it for apps whose health path sits behind Cloudflare Access or the app's own sign-in. Either way, connection failures and Cloudflare's error pages (such as `error code: 1042` while the route goes live) are retried. Defaults to `\"default\"`."
+        "health": {
+          "default": {
+            "path": "/",
+            "mode": "default"
+          },
+          "type": "object",
+          "properties": {
+            "path": {
+              "default": "/",
+              "description": "The path the manager probes, for example `/api/health`. When it answers JSON with a string `version`, an update's check of the new version requires that version. Defaults to `\"/\"`.",
+              "type": "string",
+              "pattern": "^\\/[^\\s?#]*$"
+            },
+            "mode": {
+              "default": "default",
+              "type": "string",
+              "enum": [
+                "default",
+                "status-only"
+              ],
+              "description": "How the health check reads the Worker's answer. `\"default\"` counts redirects and 4xx answers as verified and server errors (5xx) as unhealthy. `\"status-only\"` counts any answer from the Worker itself as verified, server errors included: use it for apps whose health path sits behind Cloudflare Access or the app's own sign-in. Either way, connection failures and Cloudflare's error pages (such as `error code: 1042` while the route goes live) are retried. Defaults to `\"default\"`."
+            }
+          },
+          "additionalProperties": false,
+          "description": "How the manager checks that the app serves after an install, update or rollback."
         },
         "buildCommand": {
           "anyOf": [
@@ -223,6 +283,7 @@
                 "description": "The package manager to install this directory with. Omitted, it is `install.packageManager` when the directory holds that manager's lockfile or no lockfile at all, else the one its lockfile names."
               },
               "lockfile": {
+                "default": "required",
                 "type": "string",
                 "enum": [
                   "required",
@@ -231,8 +292,9 @@
                 "description": "Omitted or `\"required\"`, the install follows the directory's lockfile exactly and fails without one. `\"none\"` resolves the dependencies instead and records the hash of the lockfile it wrote in the pack log; use it only when upstream ships no lockfile for this directory."
               },
               "devDependencies": {
-                "type": "boolean",
-                "description": "`false` installs this directory's dependencies without its devDependencies (pnpm `--prod`, npm `--omit=dev`, classic yarn and bun `--production`), for a project whose devDependencies cannot be installed (one from a private registry, say) and are not needed to bundle the Worker. Omitted or `true` installs them all. yarn 2 and later have no such frozen install, so they refuse it."
+                "default": true,
+                "description": "`false` installs this directory's dependencies without its devDependencies (pnpm `--prod`, npm `--omit=dev`, classic yarn and bun `--production`), for a project whose devDependencies cannot be installed (one from a private registry, say) and are not needed to bundle the Worker. Omitted or `true` installs them all. yarn 2 and later have no such frozen install, so they refuse it.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -242,19 +304,16 @@
           },
           "description": "The directories whose dependencies the packer installs, in order, each with install scripts disabled, before any build command. Omitted means `[{ \"path\": \".\" }]`, the root of the checkout; list `.` as well when the root still needs its install. Use it when the Worker's `package.json` sits in a directory of its own (a template repository), or for a second install beside the root one. At most 8 directories. An empty list installs nothing, for a repository without a `package.json`: wrangler bundles the entry and its relative imports, and any build command runs with no dependencies installed. An entry of several Workers lists them once for all its Workers."
         },
-        "version": {
-          "type": "string",
-          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
-          "description": "The version shown for this entry when the repository's tag does not describe this app (monorepos); it must change whenever `source` moves."
-        },
         "emailRouting": {
           "type": "object",
           "properties": {
             "catchAll": {
-              "type": "boolean",
-              "description": "Send every address of the zone that no other rule matches to the app (the zone's catch-all rule). The install refuses when the catch-all already sends mail somewhere else."
+              "default": false,
+              "description": "Send every address of the zone that no other rule matches to the app (the zone's catch-all rule). The install refuses when the catch-all already sends mail somewhere else.",
+              "type": "boolean"
             },
             "rules": {
+              "default": [],
               "maxItems": 10,
               "type": "array",
               "items": {
@@ -291,25 +350,33 @@
           ]
         },
         "wildcardHostname": {
-          "type": "boolean",
-          "description": "`true` when the app needs every name under one hostname (`*.<base>`) rather than one exact hostname, for example a tunnel that gives each session a name of its own. The admin assigns the base (`tunnels.example.com`) in one of the account's domains; the manager then serves the primary Worker on the base and every name under it (a proxied wildcard DNS record and Workers routes). Needs `wildcardReason`. Not for the self-deploying tier."
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "One short sentence, shown where the admin assigns the hostname, on why the app needs every name under it, for example \"Each tunnel gets its own address under this hostname.\" At most 200 characters."
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "additionalProperties": false,
+          "description": "The app needs every name under one hostname (`*.<base>`) rather than one exact hostname, for example a tunnel that gives each session a name of its own. The admin assigns the base (`tunnels.example.com`) in one of the account's domains; the manager then serves the primary Worker on the base and every name under it (a proxied wildcard DNS record and Workers routes). Not for the self-deploying tier."
         },
-        "wildcardReason": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200,
-          "description": "One short sentence, shown where the admin assigns the hostname, on why the app needs every name under it, for example \"Each tunnel gets its own address under this hostname.\" Required with `wildcardHostname: true`, not allowed otherwise. At most 200 characters."
-        },
-        "sandbox": {
+        "container": {
           "type": "object",
           "properties": {
             "expectedMinutes": {
+              "default": 10,
               "type": "integer",
               "minimum": 1,
               "maximum": 120,
               "description": "About how many minutes one run of this app in the sandbox Worker takes (its build, or for a self-deploying entry its installer's deploy), measured on a `standard-1` container (or `instanceType`, when set). The manager multiplies it by the container's rates to show what each install or update costs before the admin confirms it. Whole minutes, 1 to 120; defaults to 10."
             },
             "instanceType": {
+              "default": "standard-1",
               "type": "string",
               "enum": [
                 "standard-1",
@@ -1304,7 +1371,7 @@
                 "minLength": 1,
                 "pattern": "^[A-Za-z0-9@%+,./:=_-]+$"
               },
-              "description": "The command that deploys (or updates) the app, as argv, run at the root of the checkout after the dependency install and `install.buildCommand`, for example `[\"pnpm\", \"alchemy\", \"deploy\", \"--yes\"]`. The sandbox Worker appends the stage option. It must not prompt: it runs without a terminal."
+              "description": "The command that deploys (or updates) the app, as argv, run at the root of the checkout after the dependency install and `install.buildCommand`, for example `[\"pnpm\", \"alchemy\", \"deploy\", \"--yes\"]`. The sandbox Worker appends the stage option and the stage (`--stage <stage>` for Alchemy). It must not prompt: it runs without a terminal. A list of words rather than one string, so the words run exactly as listed."
             },
             "destroyCommand": {
               "minItems": 1,
@@ -1317,17 +1384,7 @@
               },
               "description": "The command that deletes everything the deploy command created, as argv, for example `[\"pnpm\", \"alchemy\", \"destroy\", \"--yes\"]`. Uninstalling runs it; Appflare never deletes the app's resources itself."
             },
-            "stageArg": {
-              "type": "string",
-              "pattern": "^--?[a-z][a-z0-9-]*$",
-              "description": "The option the sandbox Worker appends to both commands, followed by the install's stage. Defaults to the tool's own (`\"--stage\"` for Alchemy)."
-            },
-            "stateStore": {
-              "type": "string",
-              "const": "cloudflare",
-              "description": "Where the installer keeps its state. `\"cloudflare\"`: in the account itself (for Alchemy, its `alchemy-state-store` Worker, which the first deploy creates), so every run in a fresh container sees what earlier runs deployed."
-            },
-            "workers": {
+            "workerNames": {
               "minItems": 1,
               "maxItems": 8,
               "type": "array",
@@ -1342,11 +1399,10 @@
             "tool",
             "deployCommand",
             "destroyCommand",
-            "stateStore",
-            "workers"
+            "workerNames"
           ],
           "additionalProperties": false,
-          "description": "How the sandbox Worker runs the app's own installer (self-deploying tier only). The admin creates a Cloudflare API token from `tokenPermissions` for it."
+          "description": "How the sandbox Worker runs the app's own installer (self-deploying tier only). The admin creates a Cloudflare API token from `tokenPermissions` for it. The installer keeps its state in the account (for Alchemy, its `alchemy-state-store` Worker), so every run sees what earlier runs deployed."
         },
         "workers": {
           "minItems": 2,
@@ -1360,7 +1416,7 @@
                 "minLength": 1,
                 "maxLength": 24,
                 "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
-                "description": "The Worker's name within the entry, for example `api`. The primary Worker installs under the install's Worker name; every other one as `<install Worker name>-<name>`. Placeholders name it too: `{{workerUrl:<name>}}` and `{{workerName:<name>}}`."
+                "description": "The Worker's name within the entry, for example `api`. The primary Worker installs under the install's Worker name; every other one as `<install Worker name>-<name>`. Placeholders name it too: `{{appUrl:<name>}}`, `{{workerUrl:<name>}}`, `{{workerName:<name>}}` and the hostname forms."
               },
               "wranglerConfig": {
                 "type": "string",
@@ -2340,13 +2396,14 @@
                 "additionalProperties": false
               },
               "primary": {
-                "type": "boolean",
-                "const": true,
-                "description": "The Worker that answers the app's address and its health check. Exactly one Worker is primary, and its `wranglerConfig` is `install.wranglerConfig`."
+                "default": false,
+                "description": "The Worker that answers the app's address and its health check. Exactly one Worker is primary, and its `wranglerConfig` is `install.wranglerConfig`.",
+                "type": "boolean"
               },
               "workersDev": {
-                "type": "boolean",
-                "description": "Whether this Worker answers on its workers.dev URL (on unless set to `false`). Set `false` for a Worker only the entry's other Workers call, through a service binding or a Durable Object binding, and that must not be reachable from the internet (for example one that trusts identity headers set by the primary Worker). It then has no public URL and no version previews, and updates skip its preview check. The primary Worker always keeps its workers.dev URL: it is the app's address and health check until a custom domain takes over."
+                "default": true,
+                "description": "Whether this Worker answers on its workers.dev URL (on unless set to `false`). Set `false` for a Worker only the entry's other Workers call, through a service binding or a Durable Object binding, and that must not be reachable from the internet (for example one that trusts identity headers set by the primary Worker). It then has no public URL and no version previews, and updates skip its preview check. The primary Worker always keeps its workers.dev URL: it is the app's address and health check until a custom domain takes over.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -2360,10 +2417,8 @@
         }
       },
       "required": [
-        "tier",
         "packageManager",
-        "wranglerConfig",
-        "workerName"
+        "wranglerConfig"
       ],
       "additionalProperties": false,
       "allOf": [
@@ -2372,11 +2427,14 @@
             {
               "not": {
                 "required": [
-                  "sandbox"
+                  "container"
                 ]
               }
             },
             {
+              "required": [
+                "tier"
+              ],
               "properties": {
                 "tier": {
                   "enum": [
@@ -2392,6 +2450,7 @@
           "anyOf": [
             {
               "required": [
+                "tier",
                 "selfDeploying"
               ],
               "properties": {
@@ -2554,30 +2613,18 @@
         {
           "anyOf": [
             {
-              "required": [
-                "wildcardHostname",
-                "wildcardReason"
-              ],
+              "not": {
+                "required": [
+                  "wildcardHostname"
+                ]
+              }
+            },
+            {
               "properties": {
-                "wildcardHostname": {
-                  "const": true
-                },
                 "tier": {
                   "not": {
                     "const": "self-deploying"
                   }
-                }
-              }
-            },
-            {
-              "not": {
-                "required": [
-                  "wildcardReason"
-                ]
-              },
-              "properties": {
-                "wildcardHostname": {
-                  "const": false
                 }
               }
             }
@@ -2613,6 +2660,8 @@
       ]
     },
     "requires": {
+      "default": [],
+      "description": "Account capabilities the app needs beyond the free Workers baseline.",
       "type": "array",
       "items": {
         "type": "string",
@@ -2628,6 +2677,7 @@
       }
     },
     "secrets": {
+      "default": [],
       "type": "array",
       "items": {
         "type": "object",
@@ -2644,24 +2694,18 @@
             "type": "string"
           },
           "generate": {
-            "default": false,
-            "description": "`true`: the install form fills in a random value the admin can copy, regenerate, or replace. `\"vapid-private-key\"`: it fills in a new Web Push (VAPID) private key, a P-256 private key as the unpadded base64url of its raw 32 bytes (the form web-push libraries take), and the manager refuses a value that is not one. Pair it with a `derive: { method: \"vapid-public-key\" }` var for the public key. `\"base64-key-32\"`: 32 random bytes as padded base64 (44 characters), for an app that reads a raw 256-bit key; the manager refuses a value that does not decode to 32 bytes.",
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "string",
-                "enum": [
-                  "vapid-private-key",
-                  "base64-key-32"
-                ]
-              }
-            ]
+            "type": "string",
+            "enum": [
+              "password",
+              "vapid-private-key",
+              "base64-key-32"
+            ],
+            "description": "The install form fills in a value instead of asking for one. `\"password\"`: a random value the admin can copy, regenerate, or replace. `\"vapid-private-key\"`: a new Web Push (VAPID) private key, a P-256 private key as the unpadded base64url of its raw 32 bytes (the form web-push libraries take), and the manager refuses a value that is not one. Pair it with a `derive: { method: \"vapid-public-key\" }` var for the public key. `\"base64-key-32\"`: 32 random bytes as padded base64 (44 characters), for an app that reads a raw 256-bit key; the manager refuses a value that does not decode to 32 bytes."
           },
           "optional": {
-            "type": "boolean",
-            "description": "The app works without this secret. The install form leaves it unset unless the admin chooses \"Set now\", updates never ask for it, and the app's settings can remove it. Not allowed on self-deploying entries."
+            "default": false,
+            "description": "The app works without this secret. The install form leaves it unset unless the admin chooses \"Set now\", updates never ask for it, and the app's settings can remove it. Not allowed on self-deploying entries.",
+            "type": "boolean"
           },
           "derive": {
             "type": "object",
@@ -2699,18 +2743,24 @@
             "description": "For an entry that installs several Workers (`install.workers`): the names of the Workers that get this value. Omitted means every Worker for a secret, and for a var the Workers whose wrangler config declares it (every Worker when none does)."
           },
           "seedOnly": {
-            "type": "boolean",
-            "description": "The secret exists only for `resources.d1[binding].seed`: the install form asks for it once, the seed uses it (as a param or the source of a hash), and it is never set on the Worker, stored, or asked for again by updates or settings. For a first admin's password, so the plaintext never sits in the app's environment. Not allowed with `optional`, `derive` or `workers`, nor on self-deploying entries."
+            "default": false,
+            "description": "The secret exists only for `resources.d1[binding].seed`: the install form asks for it once, the seed uses it (as a param or the source of a hash), and it is never set on the Worker, stored, or asked for again by updates or settings. For a first admin's password, so the plaintext never sits in the app's environment. Not allowed with `optional`, `derive` or `workers`, nor on self-deploying entries.",
+            "type": "boolean"
           },
           "multiline": {
-            "type": "boolean",
-            "description": "The value spans several lines, such as a PEM private key: the install, update and settings forms ask for it in a multi-line field that keeps every line break, and the Worker gets the value as entered (Windows line endings become `\\n`, and spaces or tabs at the end of the last line are dropped). Not allowed with `generate` or `derive`."
+            "default": false,
+            "description": "The value spans several lines, such as a PEM private key: the install, update and settings forms ask for it in a multi-line field that keeps every line break, and the Worker gets the value as entered (Windows line endings become `\\n`, and spaces or tabs at the end of the last line are dropped). Not allowed with `generate` or `derive`.",
+            "type": "boolean"
+          },
+          "cloudflareToken": {
+            "default": false,
+            "description": "This secret takes the Cloudflare API token the admin creates for the app from `tokenPermissions`: the install and settings forms show how to create that token next to its field. At most one secret per entry. Not allowed with `generate`, `derive` or `seedOnly`, and only when the entry lists `tokenPermissions` (or a Pipelines sink, whose token permissions Appflare adds).",
+            "type": "boolean"
           }
         },
         "required": [
           "name",
-          "label",
-          "generate"
+          "label"
         ],
         "additionalProperties": false,
         "allOf": [
@@ -2730,14 +2780,18 @@
               },
               {
                 "not": {
-                  "required": [
-                    "derive"
+                  "anyOf": [
+                    {
+                      "required": [
+                        "derive"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "generate"
+                      ]
+                    }
                   ]
-                },
-                "properties": {
-                  "generate": {
-                    "const": false
-                  }
                 }
               }
             ]
@@ -2752,10 +2806,12 @@
                 }
               },
               {
+                "not": {
+                  "required": [
+                    "generate"
+                  ]
+                },
                 "properties": {
-                  "generate": {
-                    "const": false
-                  },
                   "optional": {
                     "not": {
                       "const": true
@@ -2803,11 +2859,51 @@
                 }
               }
             ]
+          },
+          {
+            "anyOf": [
+              {
+                "not": {
+                  "required": [
+                    "cloudflareToken"
+                  ],
+                  "properties": {
+                    "cloudflareToken": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "derive"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "generate"
+                      ]
+                    }
+                  ]
+                },
+                "properties": {
+                  "seedOnly": {
+                    "not": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            ]
           }
         ]
       }
     },
     "vars": {
+      "default": [],
       "type": "array",
       "items": {
         "type": "object",
@@ -2825,19 +2921,21 @@
           },
           "default": {
             "type": "string",
-            "description": "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL (`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and `{{workerName}}` its Worker name, and `{{accountId}}` the id of the Cloudflare account it is installed in, filled in on every install, update and settings change. `{{workerUrl}}` is always the workers.dev address, even when a custom domain is attached. `{{wildcardHostname}}` becomes the hostname of the app's wildcard domain (for an entry with `install.wildcardHostname`), empty until one is assigned, and follows it when it is assigned or removed. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{workerUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
+            "description": "Value the form starts with, filled in on every install, update and settings change. `{{appUrl}}` becomes the address the app is served at (its custom domain while workers.dev is off for it, else its workers.dev URL; no trailing slash) and `{{appHostname}}` that address's hostname; `{{workerUrl}}` and `{{workerHostname}}` are always the workers.dev address (`https://<worker name>.<account subdomain>.workers.dev`); `{{workerName}}` is the installed Worker's name and `{{accountId}}` the id of the Cloudflare account. `{{wildcardHostname}}` becomes the hostname of the app's wildcard domain (for an entry with `install.wildcardHostname`), empty until one is assigned. An entry of several Workers names one with `{{appUrl:<name>}}` and the like. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{appUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
           },
-          "required": {
+          "optional": {
             "default": false,
+            "description": "The admin may leave this var empty. Every other var needs a value, typed or from `default`, before the install runs.",
             "type": "boolean"
           },
           "type": {
+            "default": "text",
+            "description": "`\"text\"` (the default) takes any value; `\"select\"` takes one of `options`, shown as choices (cards for up to 4, a dropdown beyond).",
             "type": "string",
             "enum": [
               "text",
               "select"
-            ],
-            "description": "`\"text\"` (the default) takes any value; `\"select\"` takes one of `options`, shown as choices (cards for up to 4, a dropdown beyond)."
+            ]
           },
           "options": {
             "minItems": 2,
@@ -2888,7 +2986,7 @@
               "method"
             ],
             "additionalProperties": false,
-            "description": "Computes this var from a secret instead of asking for it: the install and settings forms show it read-only, and the manager sets it at install, and again whenever the source secret gets a new value in the app's settings or an update. Not allowed with `default`, `required: true`, `type` or `options`, nor on self-deploying entries."
+            "description": "Computes this var from a secret instead of asking for it: the install and settings forms show it read-only, and the manager sets it at install, and again whenever the source secret gets a new value in the app's settings or an update. Not allowed with `default`, `optional: true`, `type: \"select\"` or `options`, nor on self-deploying entries."
           },
           "workers": {
             "minItems": 1,
@@ -2902,14 +3000,14 @@
             "description": "For an entry that installs several Workers (`install.workers`): the names of the Workers that get this value. Omitted means every Worker for a secret, and for a var the Workers whose wrangler config declares it (every Worker when none does)."
           },
           "seedOnly": {
-            "type": "boolean",
-            "description": "The var exists only for `resources.d1[binding].seed`, such as a first admin's user name: the install form asks for it once, a seed statement binds it, and it is never set on the Worker, stored, or shown in settings. Must be required or have a default. Not allowed with `derive` or `workers`, nor on self-deploying entries."
+            "default": false,
+            "description": "The var exists only for `resources.d1[binding].seed`, such as a first admin's user name: the install form asks for it once, a seed statement binds it, and it is never set on the Worker, stored, or shown in settings. Must not be optional, or must have a default. Not allowed with `derive` or `workers`, nor on self-deploying entries.",
+            "type": "boolean"
           }
         },
         "required": [
           "name",
-          "label",
-          "required"
+          "label"
         ],
         "additionalProperties": false,
         "allOf": [
@@ -2961,14 +3059,21 @@
                     },
                     {
                       "required": [
-                        "type"
+                        "options"
                       ]
                     }
                   ]
                 },
                 "properties": {
-                  "required": {
-                    "const": false
+                  "type": {
+                    "not": {
+                      "const": "select"
+                    }
+                  },
+                  "optional": {
+                    "not": {
+                      "const": true
+                    }
                   }
                 }
               }
@@ -3001,30 +3106,138 @@
       }
     },
     "tokenPermissions": {
+      "default": [],
+      "description": "The permissions of the Cloudflare API token the admin creates for the app itself (never Appflare's own). The secret that takes the token sets `cloudflareToken: true`.",
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "name": {
+          "group": {
             "type": "string",
-            "minLength": 1
-          },
-          "description": {
-            "type": "string"
+            "enum": [
+              "DNS",
+              "Zone",
+              "Zone Settings",
+              "Analytics",
+              "Page Rules",
+              "SSL and Certificates",
+              "Firewall Services",
+              "Load Balancers",
+              "Logs",
+              "Workers Routes",
+              "Email Routing Rules",
+              "Account Settings",
+              "Account Analytics",
+              "Billing",
+              "Magic Transit",
+              "Workers Scripts",
+              "Workers KV Storage",
+              "Workers R2 Storage",
+              "Workers R2 Data Catalog",
+              "Workers R2 SQL",
+              "Workers Tail",
+              "Workers Containers",
+              "D1",
+              "Queues",
+              "Vectorize",
+              "Hyperdrive",
+              "Pipelines",
+              "Secrets Store",
+              "Email Sending",
+              "Email Routing Addresses",
+              "Access: Apps and Policies",
+              "Access: Organizations, Identity Providers, and Groups"
+            ],
+            "description": "The permission group, as the Cloudflare dashboard's token form names it, for example `\"DNS\"` or `\"Workers Scripts\"`. Zone groups: DNS, Zone, Zone Settings, Analytics, Page Rules, SSL and Certificates, Firewall Services, Load Balancers, Logs, Workers Routes, Email Routing Rules. Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit, Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog, Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize, Hyperdrive, Pipelines, Secrets Store, Email Sending, Email Routing Addresses, Access: Apps and Policies, Access: Organizations, Identity Providers, and Groups."
           },
           "scope": {
             "type": "string",
             "enum": [
               "account",
-              "zone",
-              "user"
-            ]
+              "zone"
+            ],
+            "description": "`\"account\"` or `\"zone\"`: where the group applies, as the token form groups it."
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "read",
+              "edit"
+            ],
+            "description": "`\"read\"` or `\"edit\"`: the access level the app needs."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "description": "Why the app needs the permission, in one plain sentence shown next to it, for example \"Lists your zones.\" Say \"Optional:\" first when the app works without it."
           }
         },
         "required": [
-          "name"
+          "group",
+          "scope",
+          "access",
+          "reason"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "A permission the app's own Cloudflare API token needs (never Appflare's). The manager links to the dashboard's token form with these prefilled.",
+        "anyOf": [
+          {
+            "properties": {
+              "scope": {
+                "const": "account"
+              },
+              "group": {
+                "enum": [
+                  "Account Settings",
+                  "Account Analytics",
+                  "Billing",
+                  "Logs",
+                  "Magic Transit",
+                  "Workers Scripts",
+                  "Workers KV Storage",
+                  "Workers R2 Storage",
+                  "Workers R2 Data Catalog",
+                  "Workers R2 SQL",
+                  "Workers Tail",
+                  "Workers Containers",
+                  "D1",
+                  "Queues",
+                  "Vectorize",
+                  "Hyperdrive",
+                  "Pipelines",
+                  "Secrets Store",
+                  "Email Sending",
+                  "Email Routing Addresses",
+                  "Access: Apps and Policies",
+                  "Access: Organizations, Identity Providers, and Groups"
+                ]
+              }
+            }
+          },
+          {
+            "properties": {
+              "scope": {
+                "const": "zone"
+              },
+              "group": {
+                "enum": [
+                  "DNS",
+                  "Zone",
+                  "Zone Settings",
+                  "Analytics",
+                  "Page Rules",
+                  "SSL and Certificates",
+                  "Firewall Services",
+                  "Load Balancers",
+                  "Logs",
+                  "Workers Routes",
+                  "Email Routing Rules"
+                ]
+              }
+            }
+          }
+        ]
       }
     },
     "resources": {
@@ -3174,17 +3387,14 @@
           "description": "Settings of the R2 bucket Appflare creates for an R2 binding, keyed by the binding's name: lifecycle rules that delete objects, move them to Infrequent Access storage, or abort unfinished multipart uploads after some days. Every key must be an R2 binding of the wrangler config. Not allowed on self-deploying entries."
         },
         "hyperdrive": {
-          "minItems": 1,
-          "maxItems": 8,
-          "type": "array",
-          "items": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
             "type": "object",
             "properties": {
-              "binding": {
-                "type": "string",
-                "minLength": 1,
-                "description": "The Hyperdrive binding's name in the wrangler config, for example `HYPERDRIVE`."
-              },
               "protocol": {
                 "type": "string",
                 "enum": [
@@ -3205,12 +3415,13 @@
               }
             },
             "required": [
-              "binding",
               "protocol"
             ],
             "additionalProperties": false
           },
-          "description": "The Hyperdrive bindings of the wrangler config, each with the database it connects to (`postgres` or `mysql`). The database runs outside Cloudflare: the install form asks for its connection string, and Appflare creates a Hyperdrive configuration of the install's own from it. Every Hyperdrive binding must be listed, each once. Not allowed on self-deploying entries."
+          "minProperties": 1,
+          "maxProperties": 8,
+          "description": "The Hyperdrive bindings of the wrangler config, keyed by the binding's name, each with the database it connects to (`postgres` or `mysql`). The database runs outside Cloudflare: the install form asks for its connection string, and Appflare creates a Hyperdrive configuration of the install's own from it. Every Hyperdrive binding must be listed. Not allowed on self-deploying entries."
         },
         "pipelines": {
           "type": "object",
@@ -3388,7 +3599,7 @@
                 "pattern": "^(?!(?:.*\\/)?\\.{1,2}(?:\\/|$))[0-9A-Za-z.@+_-]+(?:\\/[0-9A-Za-z.@+_-]+)*$",
                 "description": "The folder of the binding's migrations, relative to the checkout's root. Replaces the wrangler config's `migrations_dir`: its `.sql` files run and are recorded in `d1_migrations` as `wrangler d1 migrations apply` does."
               },
-              "migrations": {
+              "migrationsGlob": {
                 "type": "string",
                 "pattern": "^[0-9A-Za-z.@+_*/-]+$",
                 "description": "A glob of the binding's migration files, relative to the checkout's root, for tools that write one folder per migration: `prisma/migrations/*/migration.sql`. The folder before the first `*` segment works as wrangler's `migrations_dir` and the glob as its `migrations_pattern`: each file is recorded by its path from that folder (`20240101_init/migration.sql`), as wrangler records it. Prefer `migrations_pattern` in the wrangler config when upstream sets it."
@@ -3630,7 +3841,7 @@
                 "not": {
                   "required": [
                     "migrationsDir",
-                    "migrations"
+                    "migrationsGlob"
                   ]
                 }
               },
@@ -3651,20 +3862,22 @@
       "additionalProperties": false
     },
     "bump": {
+      "default": {
+        "autoMerge": false
+      },
       "type": "object",
       "properties": {
         "autoMerge": {
-          "type": "boolean",
-          "description": "Let the bump bot's pull request merge itself once the required checks, including the install check, pass. For entries whose maintainers trust upstream's tags to be releasable as they are."
+          "default": false,
+          "description": "Let the bump bot's pull request merge itself once the required checks, including the install check, pass. For entries whose maintainers trust upstream's tags to be releasable as they are.",
+          "type": "boolean"
         }
       },
-      "required": [
-        "autoMerge"
-      ],
       "additionalProperties": false,
       "description": "How the catalog's bump bot treats this entry when its upstream moves."
     },
     "revision": {
+      "default": 1,
       "type": "integer",
       "minimum": 1,
       "maximum": 1000000,
@@ -3675,7 +3888,7 @@
     "slug",
     "name",
     "summary",
-    "homepage",
+    "tagline",
     "repo",
     "license",
     "categories",
@@ -3683,11 +3896,7 @@
     "source",
     "install",
     "plan",
-    "requires",
-    "secrets",
-    "vars",
-    "postInstall",
-    "tokenPermissions"
+    "postInstall"
   ],
   "additionalProperties": false,
   "allOf": [

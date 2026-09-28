@@ -1,25 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  appHealthMode,
-  appHealthPath,
   authorsFromRepo,
   BCRYPT_COST,
   buildCommandList,
   buildCommandText,
   CATALOG_TOOLCHAINS,
   catalogAuthors,
+  catalogHomepage,
   catalogManifestSchema,
   catalogVarOptions,
+  catalogWorkerName,
+  cloudflareTokenProblems,
+  cloudflareTokenSecret,
   DEFAULT_EXPECTED_BUILD_MINUTES,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
   derivedSecretProblems,
   derivedVarProblems,
   EMAIL_ROUTING_MAX_RULES,
   enteredSecrets,
-  hasFixedWorkerName,
-  hasPlaceholder,
-  INSTALL_PLACEHOLDERS,
   installTierSchema,
   installToolchains,
   isDerivedSecret,
@@ -30,62 +29,113 @@ import {
   MAX_VAR_OPTIONS,
   multilineSecretProblems,
   needsWildcardHostname,
-  renderJsonPlaceholders,
-  renderPlaceholders,
   runsInSandbox,
   SANDBOX_RUN_TIERS,
+  SECRET_GENERATE_KINDS,
   sandboxBuildSettings,
   secretValueProblem,
   semverSchema,
+  strictCatalogManifestSchema,
   WILDCARD_REASON_MAX_LENGTH,
 } from "./catalog";
 import { generateVapidPrivateKey } from "./vapid";
 
+/** A manifest that states only what has no default. */
 const validManifest = {
   $schema: "https://appflare.github.io/catalog/schema/v1.json",
   slug: "cut",
   name: "Cut",
   summary: "Self-hosted link shortener on Workers + KV.",
-  homepage: "https://github.com/MendyLanda/cut",
+  tagline: "Short links on your own domain",
   repo: "MendyLanda/cut",
   license: "MIT",
   categories: ["utilities"],
   maintainers: ["MendyLanda"],
   source: { ref: "v0.1.0", sha: "0".repeat(40) },
   install: {
-    tier: "artifact",
     packageManager: "pnpm",
     wranglerConfig: "wrangler.jsonc",
-    workerName: "cut",
   },
   plan: "free",
-  requires: [],
   secrets: [
     {
       name: "ADMIN_PASSWORD",
       label: "Admin password",
       help: "Sign in to the admin UI.",
-      generate: true,
+      generate: "password",
     },
   ],
-  vars: [],
-  postInstall: [{ type: "markdown", content: "Open {{workerUrl}} and sign in." }],
-  tokenPermissions: [],
+  postInstall: [{ type: "markdown", content: "Open {{appUrl}} and sign in." }],
+};
+
+const selfDeployingInstall = {
+  tier: "self-deploying",
+  selfDeploying: {
+    tool: "alchemy",
+    deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
+    destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
+    workerNames: ["app-{{stage}}"],
+  },
 };
 
 describe("catalogManifestSchema", () => {
-  it("accepts a valid manifest", () => {
+  it("accepts a manifest that states only what has no default, and fills in the defaults", () => {
     const parsed = catalogManifestSchema.parse(validManifest);
     expect(parsed.slug).toBe("cut");
-    expect(parsed.install.tier).toBe("artifact");
-    // `generate` defaults to false when omitted.
-    expect(parsed.secrets[0]?.generate).toBe(true);
+    expect(parsed.install).toEqual({
+      tier: "artifact",
+      packageManager: "pnpm",
+      wranglerConfig: "wrangler.jsonc",
+      fixedWorkerName: false,
+      health: { path: "/", mode: "default" },
+    });
+    expect(parsed.requires).toEqual([]);
+    expect(parsed.vars).toEqual([]);
+    expect(parsed.tokenPermissions).toEqual([]);
+    expect(parsed.bump).toEqual({ autoMerge: false });
+    expect(parsed.revision).toBe(1);
+    expect(parsed.secrets[0]).toEqual({
+      name: "ADMIN_PASSWORD",
+      label: "Admin password",
+      help: "Sign in to the admin UI.",
+      generate: "password",
+      optional: false,
+      seedOnly: false,
+      multiline: false,
+      cloudflareToken: false,
+    });
+    expect(catalogManifestSchema.parse({ ...validManifest, secrets: undefined }).secrets).toEqual(
+      [],
+    );
   });
 
-  it("requires an https homepage", () => {
+  it("requires a tagline", () => {
+    const { tagline: _, ...rest } = validManifest;
+    const result = catalogManifestSchema.safeParse(rest);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["tagline"]);
+  });
+
+  it("defaults the homepage to the repository, and requires https when set", () => {
+    const parsed = catalogManifestSchema.parse(validManifest);
+    expect(parsed.homepage).toBeUndefined();
+    expect(catalogHomepage(parsed)).toBe("https://github.com/MendyLanda/cut");
+    const set = catalogManifestSchema.parse({ ...validManifest, homepage: "https://cut.dev" });
+    expect(catalogHomepage(set)).toBe("https://cut.dev");
     for (const homepage of ["http://example.com", "javascript:alert(1)", "ftp://example.com"]) {
       expect(catalogManifestSchema.safeParse({ ...validManifest, homepage }).success).toBe(false);
     }
+  });
+
+  it("defaults the Worker name to the slug", () => {
+    const parsed = catalogManifestSchema.parse(validManifest);
+    expect(parsed.install.workerName).toBeUndefined();
+    expect(catalogWorkerName(parsed)).toBe("cut");
+    const named = catalogManifestSchema.parse({
+      ...validManifest,
+      install: { ...validManifest.install, workerName: "cut-links" },
+    });
+    expect(catalogWorkerName(named)).toBe("cut-links");
   });
 
   it("rejects an invalid manifest (bad plan enum and short sha)", () => {
@@ -94,61 +144,81 @@ describe("catalogManifestSchema", () => {
       plan: "enterprise",
       source: { ref: "v0.1.0", sha: "abc" },
     };
-    const result = catalogManifestSchema.safeParse(invalid);
-    expect(result.success).toBe(false);
+    expect(catalogManifestSchema.safeParse(invalid).success).toBe(false);
   });
 
-  it("treats fixedWorkerName as optional and false when omitted", () => {
-    const omitted = catalogManifestSchema.parse(validManifest);
-    expect(omitted.install.fixedWorkerName).toBeUndefined();
-    expect(hasFixedWorkerName(omitted.install)).toBe(false);
-
+  it("takes fixedWorkerName, false by default", () => {
     const fixed = catalogManifestSchema.parse({
       ...validManifest,
       install: { ...validManifest.install, fixedWorkerName: true },
     });
-    expect(hasFixedWorkerName(fixed.install)).toBe(true);
-
-    const notFixed = catalogManifestSchema.parse({
-      ...validManifest,
-      install: { ...validManifest.install, fixedWorkerName: false },
-    });
-    expect(hasFixedWorkerName(notFixed.install)).toBe(false);
-  });
-
-  it("takes an optional healthPath, defaulting to /", () => {
-    const omitted = catalogManifestSchema.parse(validManifest);
-    expect(omitted.install.healthPath).toBeUndefined();
-    expect(appHealthPath(omitted.install)).toBe("/");
-    const set = catalogManifestSchema.parse({
-      ...validManifest,
-      install: { ...validManifest.install, healthPath: "/api/health" },
-    });
-    expect(appHealthPath(set.install)).toBe("/api/health");
-    for (const healthPath of ["api/health", "/a b", "/x?y=1", ""]) {
+    expect(fixed.install.fixedWorkerName).toBe(true);
+    for (const fixedWorkerName of ["yes", 1, null]) {
       const result = catalogManifestSchema.safeParse({
         ...validManifest,
-        install: { ...validManifest.install, healthPath },
+        install: { ...validManifest.install, fixedWorkerName },
       });
       expect(result.success).toBe(false);
     }
   });
 
-  it("takes an optional semver install.version without a leading v", () => {
-    expect(catalogManifestSchema.parse(validManifest).install.version).toBeUndefined();
+  it("takes install.health with a path and a mode, each defaulted", () => {
+    const withHealth = (health: unknown) =>
+      catalogManifestSchema.safeParse({
+        ...validManifest,
+        install: { ...validManifest.install, health },
+      });
+    expect(withHealth({ path: "/api/health" }).data?.install.health).toEqual({
+      path: "/api/health",
+      mode: "default",
+    });
+    expect(withHealth({ mode: "status-only" }).data?.install.health).toEqual({
+      path: "/",
+      mode: "status-only",
+    });
+    for (const health of [
+      { path: "api/health" },
+      { path: "/a b" },
+      { path: "/x?y=1" },
+      { path: "" },
+      { mode: "status" },
+      { mode: null },
+      "/health",
+    ]) {
+      expect(withHealth(health).success, JSON.stringify(health)).toBe(false);
+    }
+  });
+
+  it("takes an optional semver source.version without a leading v", () => {
+    expect(catalogManifestSchema.parse(validManifest).source.version).toBeUndefined();
     for (const version of ["1.1.10", "0.0.1", "2.0.0-rc.1", "1.0.0+build.5"]) {
       const parsed = catalogManifestSchema.parse({
         ...validManifest,
-        install: { ...validManifest.install, version },
+        source: { ...validManifest.source, version },
       });
-      expect(parsed.install.version).toBe(version);
+      expect(parsed.source.version).toBe(version);
     }
     for (const version of ["v1.1.10", "1.1", "01.2.3", "1.2.3-", "latest", "", 1]) {
       const result = catalogManifestSchema.safeParse({
         ...validManifest,
-        install: { ...validManifest.install, version },
+        source: { ...validManifest.source, version },
       });
       expect(result.success).toBe(false);
+    }
+  });
+
+  it("takes categories from the fixed list: one to three, each once", () => {
+    const withCategories = (categories: unknown) =>
+      catalogManifestSchema.safeParse({ ...validManifest, categories });
+    expect(withCategories(["cms", "ai", "notes"]).success).toBe(true);
+    for (const categories of [
+      [],
+      ["blogging"],
+      ["utilities", "utilities"],
+      ["ai", "chat", "notes", "sync"],
+      "utilities",
+    ]) {
+      expect(withCategories(categories).success, JSON.stringify(categories)).toBe(false);
     }
   });
 
@@ -182,34 +252,16 @@ describe("catalogManifestSchema", () => {
     }
   });
 
-  it("takes optional bump settings with a boolean autoMerge", () => {
-    expect(catalogManifestSchema.parse(validManifest).bump).toBeUndefined();
+  it("takes bump settings with a boolean autoMerge, false by default", () => {
     for (const autoMerge of [true, false]) {
       const parsed = catalogManifestSchema.parse({ ...validManifest, bump: { autoMerge } });
       expect(parsed.bump).toEqual({ autoMerge });
     }
-    for (const bump of [{}, { autoMerge: "yes" }, { autoMerge: 1 }, { autoMerge: null }, true]) {
+    expect(catalogManifestSchema.parse({ ...validManifest, bump: {} }).bump).toEqual({
+      autoMerge: false,
+    });
+    for (const bump of [{ autoMerge: "yes" }, { autoMerge: 1 }, { autoMerge: null }, true]) {
       expect(catalogManifestSchema.safeParse({ ...validManifest, bump }).success).toBe(false);
-    }
-  });
-
-  it("takes an optional healthMode, defaulting to default", () => {
-    const omitted = catalogManifestSchema.parse(validManifest);
-    expect(omitted.install.healthMode).toBeUndefined();
-    expect(appHealthMode(omitted.install)).toBe("default");
-    for (const healthMode of ["default", "status-only"] as const) {
-      const parsed = catalogManifestSchema.parse({
-        ...validManifest,
-        install: { ...validManifest.install, healthMode },
-      });
-      expect(appHealthMode(parsed.install)).toBe(healthMode);
-    }
-    for (const healthMode of ["status", "any", "", null, true]) {
-      const result = catalogManifestSchema.safeParse({
-        ...validManifest,
-        install: { ...validManifest.install, healthMode },
-      });
-      expect(result.success).toBe(false);
     }
   });
 
@@ -281,14 +333,10 @@ describe("catalogManifestSchema", () => {
     }
   });
 
-  it("rejects a non-boolean fixedWorkerName", () => {
-    for (const fixedWorkerName of ["yes", 1, null]) {
-      const result = catalogManifestSchema.safeParse({
-        ...validManifest,
-        install: { ...validManifest.install, fixedWorkerName },
-      });
-      expect(result.success).toBe(false);
-    }
+  it("does not require a field that has a default in the JSON Schema", () => {
+    const schema = z.toJSONSchema(catalogManifestSchema);
+    expect(schema.required).toContain("tagline");
+    expect(schema.required).not.toContain("homepage");
   });
 });
 
@@ -300,44 +348,37 @@ describe("install.wildcardHostname", () => {
       install: { ...validManifest.install, ...install },
     });
 
-  it("is optional, so manifests without it keep their parsed shape", () => {
+  it("is off when omitted", () => {
     const parsed = catalogManifestSchema.parse(validManifest);
     expect("wildcardHostname" in parsed.install).toBe(false);
-    expect("wildcardReason" in parsed.install).toBe(false);
     expect(needsWildcardHostname(parsed.install)).toBe(false);
   });
 
-  it("accepts the flag with a reason, trimmed", () => {
-    const parsed = withWildcard({ wildcardHostname: true, wildcardReason: ` ${reason} ` });
+  it("takes a reason, trimmed", () => {
+    const parsed = withWildcard({ wildcardHostname: { reason: ` ${reason} ` } });
     expect(parsed.success).toBe(true);
-    expect(parsed.data?.install.wildcardReason).toBe(reason);
+    expect(parsed.data?.install.wildcardHostname).toEqual({ reason });
     expect(parsed.data !== undefined && needsWildcardHostname(parsed.data.install)).toBe(true);
-    expect(withWildcard({ wildcardHostname: false }).success).toBe(true);
   });
 
-  it("needs the reason with the flag, and only with it", () => {
-    for (const install of [
-      { wildcardHostname: true },
-      { wildcardHostname: true, wildcardReason: "  " },
-      { wildcardReason: reason },
-      { wildcardHostname: false, wildcardReason: reason },
-      { wildcardHostname: true, wildcardReason: "x".repeat(WILDCARD_REASON_MAX_LENGTH + 1) },
+  it("needs a reason of at most the maximum length", () => {
+    for (const wildcardHostname of [
+      true,
+      {},
+      { reason: "  " },
+      { reason: "x".repeat(WILDCARD_REASON_MAX_LENGTH + 1) },
     ]) {
-      expect(withWildcard(install).success, JSON.stringify(install)).toBe(false);
+      expect(withWildcard({ wildcardHostname }).success, JSON.stringify(wildcardHostname)).toBe(
+        false,
+      );
     }
-    const missing = withWildcard({ wildcardHostname: true });
-    expect(missing.error?.issues.map((i) => i.path.join("."))).toContain("install.wildcardReason");
   });
 
   it("is refused on a self-deploying entry, whose installer decides where it answers", () => {
     const result = catalogManifestSchema.safeParse({
       ...validManifest,
-      install: {
-        ...validManifest.install,
-        tier: "self-deploying",
-        wildcardHostname: true,
-        wildcardReason: reason,
-      },
+      plan: "paid",
+      install: { ...validManifest.install, ...selfDeployingInstall, wildcardHostname: { reason } },
     });
     expect(result.success).toBe(false);
     expect(result.error?.issues.map((i) => i.message).join("\n")).toContain(
@@ -345,29 +386,20 @@ describe("install.wildcardHostname", () => {
     );
   });
 
-  it("states the rules in the JSON Schema, so editors refuse the same manifests", () => {
+  it("states the rule in the JSON Schema, so editors refuse the same manifests", () => {
     const install = z.toJSONSchema(catalogManifestSchema).properties?.install;
     const allOf = typeof install === "object" ? (install.allOf ?? []) : [];
     expect(allOf).toContainEqual({
       anyOf: [
-        {
-          required: ["wildcardHostname", "wildcardReason"],
-          properties: {
-            wildcardHostname: { const: true },
-            tier: { not: { const: "self-deploying" } },
-          },
-        },
-        {
-          not: { required: ["wildcardReason"] },
-          properties: { wildcardHostname: { const: false } },
-        },
+        { not: { required: ["wildcardHostname"] } },
+        { properties: { tier: { not: { const: "self-deploying" } } } },
       ],
     });
     const properties = typeof install === "object" ? install.properties : undefined;
-    expect(properties?.wildcardHostname).toMatchObject({ type: "boolean" });
-    expect(properties?.wildcardReason).toMatchObject({
-      type: "string",
-      maxLength: WILDCARD_REASON_MAX_LENGTH,
+    expect(properties?.wildcardHostname).toMatchObject({
+      type: "object",
+      required: ["reason"],
+      properties: { reason: { type: "string", maxLength: WILDCARD_REASON_MAX_LENGTH } },
     });
   });
 });
@@ -379,14 +411,20 @@ describe("install.emailRouting", () => {
       install: { ...validManifest.install, emailRouting },
     });
 
-  it("is optional, so manifests without it keep their parsed shape", () => {
+  it("is optional", () => {
     const parsed = catalogManifestSchema.parse(validManifest);
-    expect(parsed.install.emailRouting).toBeUndefined();
     expect("emailRouting" in parsed.install).toBe(false);
   });
 
-  it("accepts a catch-all, local parts, and full addresses", () => {
-    expect(withRouting({ catchAll: true }).success).toBe(true);
+  it("accepts a catch-all, local parts, and full addresses, with defaults for the other", () => {
+    expect(withRouting({ catchAll: true }).data?.install.emailRouting).toEqual({
+      catchAll: true,
+      rules: [],
+    });
+    expect(withRouting({ rules: ["inbox"] }).data?.install.emailRouting).toEqual({
+      catchAll: false,
+      rules: ["inbox"],
+    });
     expect(withRouting({ rules: ["inbox", "bills+2026", "a.b_c-d"] }).success).toBe(true);
     expect(withRouting({ rules: ["inbox@example.com", "x@mail.example.co.uk"] }).success).toBe(
       true,
@@ -444,47 +482,42 @@ describe("install.emailRouting", () => {
   });
 });
 
-describe("install.sandbox", () => {
-  const withSandbox = (sandbox: unknown, tier = "sandbox") =>
+describe("install.container", () => {
+  const withContainer = (container: unknown, tier = "sandbox") =>
     catalogManifestSchema.safeParse({
       ...validManifest,
       plan: "paid",
-      install: { ...validManifest.install, tier, sandbox },
+      install: { ...validManifest.install, tier, container },
     });
 
-  it("is optional, so manifests without it keep their parsed shape", () => {
+  it("is optional, and the defaults apply when it is omitted", () => {
     const parsed = catalogManifestSchema.parse({
       ...validManifest,
       install: { ...validManifest.install, tier: "sandbox" },
     });
-    expect("sandbox" in parsed.install).toBe(false);
+    expect("container" in parsed.install).toBe(false);
     expect(sandboxBuildSettings(parsed.install)).toEqual({
       expectedMinutes: DEFAULT_EXPECTED_BUILD_MINUTES,
       instanceType: DEFAULT_SANDBOX_INSTANCE_TYPE,
     });
   });
 
-  it("takes expected minutes and a container size, each optional", () => {
-    for (const sandbox of [
-      {},
-      { expectedMinutes: 1 },
-      { expectedMinutes: 120 },
-      { instanceType: "standard-1" },
-      { expectedMinutes: 25, instanceType: "standard-2" },
-    ]) {
-      const result = withSandbox(sandbox);
-      expect(result.success, JSON.stringify(sandbox)).toBe(true);
-      expect(result.data?.install.sandbox).toEqual(sandbox);
+  it("takes expected minutes and a container size, each defaulted", () => {
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+      [{}, { expectedMinutes: 10, instanceType: "standard-1" }],
+      [{ expectedMinutes: 1 }, { expectedMinutes: 1, instanceType: "standard-1" }],
+      [{ expectedMinutes: 120 }, { expectedMinutes: 120, instanceType: "standard-1" }],
+      [{ instanceType: "standard-2" }, { expectedMinutes: 10, instanceType: "standard-2" }],
+    ];
+    for (const [container, parsed] of cases) {
+      const result = withContainer(container);
+      expect(result.success, JSON.stringify(container)).toBe(true);
+      expect(result.data?.install.container).toEqual(parsed);
     }
-    const parsed = withSandbox({ expectedMinutes: 25 });
-    expect(parsed.data && sandboxBuildSettings(parsed.data.install)).toEqual({
-      expectedMinutes: 25,
-      instanceType: "standard-1",
-    });
   });
 
   it("refuses minutes that are not a whole number from 1 to 120, and unknown sizes", () => {
-    for (const sandbox of [
+    for (const container of [
       { expectedMinutes: 0 },
       { expectedMinutes: -5 },
       { expectedMinutes: 2.5 },
@@ -493,7 +526,7 @@ describe("install.sandbox", () => {
       { instanceType: "basic" },
       { instanceType: "standard-4" },
     ]) {
-      expect(withSandbox(sandbox).success, JSON.stringify(sandbox)).toBe(false);
+      expect(withContainer(container).success, JSON.stringify(container)).toBe(false);
     }
   });
 
@@ -503,15 +536,8 @@ describe("install.sandbox", () => {
       plan: "paid",
       install: {
         ...validManifest.install,
-        tier: "self-deploying",
-        sandbox: { expectedMinutes: 15, instanceType: "standard-2" },
-        selfDeploying: {
-          tool: "alchemy",
-          deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
-          destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-          stateStore: "cloudflare",
-          workers: ["app-{{stage}}"],
-        },
+        ...selfDeployingInstall,
+        container: { expectedMinutes: 15, instanceType: "standard-2" },
       },
     });
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
@@ -522,15 +548,21 @@ describe("install.sandbox", () => {
   });
 
   it("is refused on artifact entries, which never run in the user's account", () => {
-    const result = withSandbox({ expectedMinutes: 10 }, "artifact");
+    const result = withContainer({ expectedMinutes: 10 }, "artifact");
     expect(result.success).toBe(false);
     expect(result.error?.issues).toEqual([
       expect.objectContaining({
-        path: ["install", "sandbox"],
+        path: ["install", "container"],
         message:
-          "install.sandbox is only for the sandbox and self-deploying tiers, which run in the sandbox Worker; this entry's tier is artifact",
+          "install.container is only for the sandbox and self-deploying tiers, which run in the sandbox Worker; this entry's tier is artifact",
       }),
     ]);
+    // The tier defaults to artifact.
+    const defaulted = catalogManifestSchema.safeParse({
+      ...validManifest,
+      install: { ...validManifest.install, container: {} },
+    });
+    expect(defaulted.success).toBe(false);
   });
 
   it("names the tiers that run in the sandbox Worker", () => {
@@ -538,14 +570,14 @@ describe("install.sandbox", () => {
     expect(installTierSchema.options.filter(runsInSandbox)).toEqual(["sandbox", "self-deploying"]);
   });
 
-  it("states the tier rule in the JSON Schema, so editors refuse it on artifact entries", () => {
+  it("states the tier rules in the JSON Schema, so editors refuse the same manifests", () => {
     const install = z.toJSONSchema(catalogManifestSchema).properties?.install;
     expect(install).toMatchObject({
       allOf: [
         {
           anyOf: [
-            { not: { required: ["sandbox"] } },
-            { properties: { tier: { enum: ["sandbox", "self-deploying"] } } },
+            { not: { required: ["container"] } },
+            { required: ["tier"], properties: { tier: { enum: ["sandbox", "self-deploying"] } } },
           ],
         },
         // The self-deploying tier's rule (see self-deploying.test.ts).
@@ -610,7 +642,7 @@ describe("install.sandbox", () => {
         },
       ],
       properties: {
-        sandbox: {
+        container: {
           additionalProperties: false,
           properties: {
             expectedMinutes: { type: "integer", minimum: 1, maximum: 120 },
@@ -619,8 +651,8 @@ describe("install.sandbox", () => {
         },
       },
     });
-    const sandbox = typeof install === "object" ? install.properties?.sandbox : undefined;
-    expect(typeof sandbox === "object" && sandbox.description).toContain("cost");
+    const container = typeof install === "object" ? install.properties?.container : undefined;
+    expect(typeof container === "object" && container.description).toContain("cost");
   });
 });
 
@@ -633,78 +665,38 @@ describe("semverSchema", () => {
   });
 });
 
-describe("install placeholders", () => {
-  const values = { workerUrl: "https://inbox.acme.workers.dev", workerName: "inbox" };
-
-  it("list the account id and the wildcard hostname", () => {
-    expect(INSTALL_PLACEHOLDERS).toEqual([
-      "workerUrl",
-      "workerName",
-      "accountId",
-      "wildcardHostname",
-    ]);
-  });
-
-  it("fill in the wildcard hostname, empty while none is assigned, kept while unknown", () => {
-    expect(
-      renderPlaceholders("{{wildcardHostname}}", { ...values, wildcardHostname: "t.example.com" }),
-    ).toBe("t.example.com");
-    expect(
-      renderPlaceholders("[{{ wildcardHostname }}]", { ...values, wildcardHostname: null }),
-    ).toBe("[]");
-    expect(renderPlaceholders("{{wildcardHostname}}", values)).toBe("{{wildcardHostname}}");
-    expect(hasPlaceholder("{{wildcardHostname}}")).toBe(true);
-  });
-
-  it("fill in the account id, and keep {{accountId}} while it is unknown", () => {
-    const account = "0123456789abcdef0123456789abcdef";
-    expect(
-      renderPlaceholders("id={{accountId}} {{ accountId }}", { ...values, accountId: account }),
-    ).toBe(`id=${account} ${account}`);
-    expect(renderPlaceholders("{{accountId}}", values)).toBe("{{accountId}}");
-    expect(renderPlaceholders("{{accountId}}", { ...values, accountId: null })).toBe(
-      "{{accountId}}",
-    );
-    expect(hasPlaceholder("{{ accountId }}")).toBe(true);
-    expect(
-      renderJsonPlaceholders({ a: ["{{accountId}}"] }, { ...values, accountId: account }),
-    ).toEqual({
-      a: [account],
+describe("placeholders in a manifest", () => {
+  const withTexts = (content: string, varDefault: string, install: Record<string, unknown> = {}) =>
+    catalogManifestSchema.safeParse({
+      ...validManifest,
+      install: { ...validManifest.install, ...install },
+      postInstall: [{ type: "markdown", content }],
+      vars: [{ name: "BASE_URL", label: "Address", default: varDefault }],
     });
-  });
 
-  it("fill in the Worker URL and name, with or without spaces inside the braces", () => {
-    expect(renderPlaceholders("{{workerUrl}}/api and {{ workerName }}", values)).toBe(
-      "https://inbox.acme.workers.dev/api and inbox",
+  it("accept every address form in post-install notes and var defaults", () => {
+    const result = withTexts(
+      "Open {{appUrl}} ({{ appHostname }}) or {{workerUrl}} on {{workerHostname}}.",
+      "{{appUrl}}/api?account={{accountId}}&host={{wildcardHostname}}&w={{workerName}}",
     );
-    expect(renderPlaceholders("{{other}} stays", values)).toBe("{{other}} stays");
-    expect(hasPlaceholder("x {{ workerUrl }}")).toBe(true);
-    expect(hasPlaceholder("{{other}}")).toBe(false);
+    expect(result.success, JSON.stringify(result.error?.issues)).toBe(true);
   });
 
-  it("keep {{workerUrl}} while the URL is unknown", () => {
-    expect(renderPlaceholders("{{workerUrl}} {{workerName}}", { ...values, workerUrl: null })).toBe(
-      "{{workerUrl}} inbox",
-    );
+  it("refuse {{stage}}, a known name in the wrong case, and per-Worker forms on one Worker", () => {
+    const cases: Array<[string, string, string]> = [
+      ["{{stage}}", "x", "is not filled in here"],
+      ["x", "{{appURL}}", "write {{appUrl}}"],
+      ["{{workerUrl:api}}", "x", "installs one Worker"],
+    ];
+    for (const [content, varDefault, why] of cases) {
+      const result = withTexts(content, varDefault);
+      expect(result.success, why).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain(why);
+    }
   });
 
-  it("fill in strings inside JSON values, never keys", () => {
-    expect(
-      renderJsonPlaceholders(
-        { "{{workerName}}": ["{{workerUrl}}", 1, true, null, { u: "{{workerName}}" }] },
-        values,
-      ),
-    ).toEqual({
-      "{{workerName}}": ["https://inbox.acme.workers.dev", 1, true, null, { u: "inbox" }],
-    });
-    expect(renderJsonPlaceholders(3, values)).toBe(3);
-  });
-
-  it("keep a __proto__ key as an own property", () => {
-    const parsed = JSON.parse('{"__proto__":{"u":"{{workerName}}"},"a":1}');
-    const rendered = renderJsonPlaceholders(parsed, values);
-    expect(JSON.stringify(rendered)).toBe('{"__proto__":{"u":"inbox"},"a":1}');
-    expect(Object.getPrototypeOf(rendered)).toBe(Object.prototype);
+  it("leave other double-brace text alone, for apps that use the syntax themselves", () => {
+    expect(withTexts("Hello {{name}}", "{{ user.name }}").success).toBe(true);
   });
 });
 
@@ -768,17 +760,28 @@ describe("authors", () => {
   });
 });
 
+describe("secrets[].generate", () => {
+  const withGenerate = (generate: unknown) =>
+    catalogManifestSchema.safeParse({
+      ...validManifest,
+      secrets: [{ name: "KEY", label: "Key", generate }],
+    });
+
+  it("names the kind of value to generate", () => {
+    expect(SECRET_GENERATE_KINDS).toEqual(["password", "vapid-private-key", "base64-key-32"]);
+    for (const generate of SECRET_GENERATE_KINDS) {
+      expect(withGenerate(generate).data?.secrets[0]?.generate).toBe(generate);
+    }
+  });
+
+  it("refuses a boolean", () => {
+    for (const generate of [true, false, "rsa-key"]) {
+      expect(withGenerate(generate).success, String(generate)).toBe(false);
+    }
+  });
+});
+
 describe("secrets[].optional", () => {
-  const selfDeploying = {
-    tier: "self-deploying",
-    selfDeploying: {
-      tool: "alchemy",
-      deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
-      destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-      stateStore: "cloudflare",
-      workers: ["app-{{stage}}"],
-    },
-  };
   const withSecret = (secret: Record<string, unknown>, install: Record<string, unknown> = {}) =>
     catalogManifestSchema.safeParse({
       ...validManifest,
@@ -787,9 +790,9 @@ describe("secrets[].optional", () => {
       secrets: [{ name: "SMTP_PASSWORD", label: "SMTP password", ...secret }],
     });
 
-  it("is optional, so manifests without it keep their parsed shape", () => {
+  it("is false by default", () => {
     const parsed = catalogManifestSchema.parse(validManifest);
-    expect("optional" in (parsed.secrets[0] ?? {})).toBe(false);
+    expect(parsed.secrets[0]?.optional).toBe(false);
     expect(isOptionalSecret(parsed.secrets[0] ?? {})).toBe(false);
   });
 
@@ -801,11 +804,11 @@ describe("secrets[].optional", () => {
   });
 
   it("is refused on self-deploying entries, whose installer expects every secret", () => {
-    const refused = withSecret({ optional: true }, selfDeploying);
+    const refused = withSecret({ optional: true }, selfDeployingInstall);
     expect(refused.success).toBe(false);
     expect(refused.error?.issues[0]?.path).toEqual(["secrets", 0, "optional"]);
-    expect(withSecret({ optional: false }, selfDeploying).success).toBe(true);
-    expect(withSecret({}, selfDeploying).success).toBe(true);
+    expect(withSecret({ optional: false }, selfDeployingInstall).success).toBe(true);
+    expect(withSecret({}, selfDeployingInstall).success).toBe(true);
   });
 
   it("states the self-deploying rule in the JSON Schema", () => {
@@ -814,6 +817,102 @@ describe("secrets[].optional", () => {
     const secrets = schema.properties?.secrets;
     const items = typeof secrets === "object" ? secrets.items : undefined;
     expect(items).toMatchObject({ properties: { optional: { type: "boolean" } } });
+  });
+});
+
+describe("secrets[].cloudflareToken", () => {
+  const permission = {
+    group: "Account Analytics",
+    scope: "account",
+    access: "read",
+    reason: "Reads visits through the Analytics Engine SQL API.",
+  };
+  const withToken = (secrets: Array<Record<string, unknown>>, tokenPermissions = [permission]) =>
+    catalogManifestSchema.safeParse({ ...validManifest, secrets, tokenPermissions });
+
+  it("marks the secret that takes the app's own token", () => {
+    const result = withToken([
+      { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+      { name: "CF_API_TOKEN", label: "Cloudflare API token", cloudflareToken: true },
+    ]);
+    expect(result.success, JSON.stringify(result.error?.issues)).toBe(true);
+    expect(result.data && cloudflareTokenSecret(result.data.secrets)?.name).toBe("CF_API_TOKEN");
+    expect(cloudflareTokenSecret(catalogManifestSchema.parse(validManifest).secrets)).toBeNull();
+  });
+
+  it("allows one per entry, entered by the admin, with permissions listed", () => {
+    const cases: Array<[Array<Record<string, unknown>>, unknown[], string]> = [
+      [
+        [
+          { name: "A", label: "A", cloudflareToken: true },
+          { name: "B", label: "B", cloudflareToken: true },
+        ],
+        [permission],
+        "only one secret takes",
+      ],
+      [
+        [{ name: "A", label: "A", cloudflareToken: true, generate: "password" }],
+        [permission],
+        "cannot be generated, derived or seed-only",
+      ],
+      [[{ name: "A", label: "A", cloudflareToken: true }], [], "lists no permission"],
+    ];
+    for (const [secrets, tokenPermissions, why] of cases) {
+      const result = withToken(secrets, tokenPermissions as (typeof permission)[]);
+      expect(result.success, why).toBe(false);
+      expect(JSON.stringify(result.error?.issues), why).toContain(why);
+    }
+  });
+
+  it("counts a Pipelines sink's token permissions as listed", () => {
+    expect(
+      cloudflareTokenProblems({
+        secrets: [{ name: "R2_TOKEN", cloudflareToken: true }],
+        tokenPermissions: [],
+        resources: {
+          pipelines: {
+            EVENTS: {
+              stream: { fields: [{ name: "at", type: "timestamp" }] },
+              sink: {
+                type: "r2-data-catalog",
+                bucket: "events",
+                namespace: "default",
+                table: "events",
+                tokenSecret: "R2_TOKEN",
+              },
+            },
+          },
+        },
+      } as unknown as Parameters<typeof cloudflareTokenProblems>[0]),
+    ).toEqual([]);
+  });
+});
+
+describe("vars[].optional", () => {
+  it("is false by default and replaces required", () => {
+    const parsed = catalogManifestSchema.parse({
+      ...validManifest,
+      vars: [
+        { name: "A", label: "A" },
+        { name: "B", label: "B", optional: true },
+      ],
+    });
+    expect(parsed.vars.map((v) => v.optional)).toEqual([false, true]);
+    expect(parsed.vars[0]).toEqual({
+      name: "A",
+      label: "A",
+      optional: false,
+      type: "text",
+      seedOnly: false,
+    });
+  });
+
+  it("ignores the removed required field outside the strict schema, and the strict one refuses it", () => {
+    const manifest = { ...validManifest, vars: [{ name: "A", label: "A", required: true }] };
+    expect(catalogManifestSchema.safeParse(manifest).success).toBe(true);
+    const strict = strictCatalogManifestSchema.safeParse(manifest);
+    expect(strict.success).toBe(false);
+    expect(strict.error?.issues[0]?.path).toEqual(["vars", 0, "required"]);
   });
 });
 
@@ -829,18 +928,17 @@ describe("vars[].type select", () => {
     { value: "admin", label: "Admin sign-in" },
   ];
 
-  it("is optional, so vars without it keep their parsed shape", () => {
+  it("is text by default", () => {
     const parsed = withVar({});
     expect(parsed.success).toBe(true);
-    const v = parsed.data?.vars[0] ?? {};
-    expect("type" in v || "options" in v).toBe(false);
-    expect(catalogVarOptions(parsed.data?.vars[0] ?? {})).toBeNull();
+    expect(parsed.data?.vars[0]?.type).toBe("text");
+    expect(catalogVarOptions(parsed.data?.vars[0] ?? { type: "text" })).toBeNull();
   });
 
   it("takes options and a default that is one of them", () => {
     const parsed = withVar({ type: "select", options, default: "404" });
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
-    expect(catalogVarOptions(parsed.data?.vars[0] ?? {})).toEqual(options);
+    expect(catalogVarOptions(parsed.data?.vars[0] ?? { type: "text" })).toEqual(options);
     expect(withVar({ type: "text", default: "anything" }).success).toBe(true);
   });
 
@@ -880,11 +978,16 @@ describe("vars[].type select", () => {
             { not: { required: ["options"] } },
           ],
         },
-        // A derived var has no default, type or options, and is not required.
+        // A derived var has no default or options, is not a select, and is not optional.
         {
           anyOf: [
             { not: { required: ["derive"] } },
-            { properties: { required: { const: false } } },
+            {
+              properties: {
+                type: { not: { const: "select" } },
+                optional: { not: { const: true } },
+              },
+            },
           ],
         },
       ],
@@ -906,7 +1009,7 @@ describe("derived secrets", () => {
         label: "Admin password hash",
         derive: { from: "CF_PASSWORD", method: "bcrypt" },
       },
-      { name: "CF_JWT_SECRET", label: "Session key", generate: true },
+      { name: "CF_JWT_SECRET", label: "Session key", generate: "password" },
     ],
   };
 
@@ -920,12 +1023,6 @@ describe("derived secrets", () => {
       "CF_JWT_SECRET",
     ]);
     expect(BCRYPT_COST).toBe(10);
-    // Secrets without `derive` keep their parsed shape.
-    expect(parsed.secrets[0]).toEqual({
-      name: "CF_PASSWORD",
-      label: "Admin password",
-      generate: false,
-    });
   });
 
   it("refuse a source that is missing, derived, optional or the secret itself", () => {
@@ -953,7 +1050,7 @@ describe("derived secrets", () => {
       [
         [
           { name: "P", label: "P" },
-          { name: "H", label: "H", generate: true, derive: { from: "P", method: "bcrypt" } },
+          { name: "H", label: "H", generate: "password", derive: { from: "P", method: "bcrypt" } },
         ],
         "generated",
       ],
@@ -982,8 +1079,8 @@ describe("derived secrets", () => {
   it("name the secret each problem is about", () => {
     expect(
       derivedSecretProblems([
-        { name: "P", generate: false },
-        { name: "H", generate: false, derive: { from: "Q", method: "bcrypt" } },
+        { name: "P" },
+        { name: "H", derive: { from: "Q", method: "bcrypt" } },
       ]),
     ).toEqual([
       {
@@ -1003,17 +1100,7 @@ describe("derived secrets", () => {
     const result = catalogManifestSchema.safeParse({
       ...counterscale,
       plan: "paid",
-      install: {
-        ...validManifest.install,
-        tier: "self-deploying",
-        selfDeploying: {
-          tool: "alchemy",
-          deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
-          destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-          stateStore: "cloudflare",
-          workers: ["cut-{{stage}}"],
-        },
-      },
+      install: { ...validManifest.install, ...selfDeployingInstall },
     });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain("derived secrets are not allowed");
@@ -1041,12 +1128,6 @@ describe("VAPID keys", () => {
     const publicKey = parsed.vars[0];
     expect(publicKey?.derive).toEqual({ from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" });
     expect(publicKey !== undefined && isDerivedVar(publicKey)).toBe(true);
-    // A var without `derive` keeps its parsed shape.
-    const plain = catalogManifestSchema.parse({
-      ...push,
-      vars: [{ name: "HOME", label: "Home" }],
-    });
-    expect(plain.vars[0]).toEqual({ name: "HOME", label: "Home", required: false });
   });
 
   it("derive a public key secret too", () => {
@@ -1076,7 +1157,7 @@ describe("VAPID keys", () => {
       [{ vars: [derived("NOPE")] }, "not a secret of this manifest"],
       [{ vars: [{ name: "K", label: "K" }, derived("K")] }, "not a secret of this manifest"],
       [
-        { secrets: [{ name: "K", label: "K", generate: true }], vars: [derived("K")] },
+        { secrets: [{ name: "K", label: "K", generate: "password" }], vars: [derived("K")] },
         'must then be generate: \\"vapid-private-key\\"',
       ],
       [
@@ -1087,7 +1168,7 @@ describe("VAPID keys", () => {
         "optional",
       ],
       [{ vars: [derived("VAPID_PRIVATE_KEY", { default: "x" })] }, "cannot also have default"],
-      [{ vars: [derived("VAPID_PRIVATE_KEY", { required: true })] }, "cannot be required"],
+      [{ vars: [derived("VAPID_PRIVATE_KEY", { optional: true })] }, "cannot be optional"],
       [
         {
           vars: [
@@ -1100,7 +1181,7 @@ describe("VAPID keys", () => {
             }),
           ],
         },
-        "cannot also have type",
+        "cannot also be a select",
       ],
       [
         {
@@ -1135,7 +1216,7 @@ describe("VAPID keys", () => {
   it("name the var each problem is about", () => {
     expect(
       derivedVarProblems(
-        [{ name: "K", generate: true }],
+        [{ name: "K", generate: "password" }],
         [{ name: "PUB", derive: { from: "K", method: "vapid-public-key" } }],
       ),
     ).toEqual([
@@ -1153,7 +1234,7 @@ describe("VAPID keys", () => {
     const problem = secretValueProblem(secret, "hunter2");
     expect(problem).toContain("Key (K) must be a VAPID private key");
     expect(problem).not.toContain("hunter2");
-    expect(secretValueProblem({ name: "P", label: "P", generate: true }, "x")).toBeNull();
+    expect(secretValueProblem({ name: "P", label: "P", generate: "password" }, "x")).toBeNull();
   });
 
   it("state the derived var rules in the JSON Schema", () => {
@@ -1167,17 +1248,7 @@ describe("VAPID keys", () => {
     const result = catalogManifestSchema.safeParse({
       ...push,
       plan: "paid",
-      install: {
-        ...validManifest.install,
-        tier: "self-deploying",
-        selfDeploying: {
-          tool: "alchemy",
-          deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
-          destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-          stateStore: "cloudflare",
-          workers: ["cut-{{stage}}"],
-        },
-      },
+      install: { ...validManifest.install, ...selfDeployingInstall },
     });
     expect(result.success).toBe(false);
     expect(JSON.stringify(result.error?.issues)).toContain("derived vars are not allowed");
@@ -1224,7 +1295,7 @@ describe("a name that is both a secret and a var", () => {
   it("is refused, naming the var", () => {
     const result = catalogManifestSchema.safeParse({
       ...validManifest,
-      vars: [{ name: "ADMIN_PASSWORD", label: "Admin password", required: false }],
+      vars: [{ name: "ADMIN_PASSWORD", label: "Admin password", optional: true }],
     });
     expect(result.success).toBe(false);
     expect(result.error?.issues).toEqual([
@@ -1240,14 +1311,13 @@ describe("a name that is both a secret and a var", () => {
 describe("multiline secrets", () => {
   const pem = { name: "GITHUB_APP_PRIVATE_KEY", label: "GitHub App private key", multiline: true };
 
-  it("parse, and leave the shape of other secrets as it was", () => {
+  it("parse, false by default", () => {
     const parsed = catalogManifestSchema.parse({
       ...validManifest,
       secrets: [...validManifest.secrets, pem, { ...pem, name: "SPARE_KEY", optional: true }],
     });
     const [first, key, spare] = parsed.secrets;
-    expect(first !== undefined && "multiline" in first).toBe(false);
-    expect(key).toEqual({ ...pem, generate: false });
+    expect(first?.multiline).toBe(false);
     expect(key !== undefined && isMultilineSecret(key)).toBe(true);
     expect(spare !== undefined && isOptionalSecret(spare) && isMultilineSecret(spare)).toBe(true);
     expect(isMultilineSecret({})).toBe(false);
@@ -1255,7 +1325,7 @@ describe("multiline secrets", () => {
 
   it("refuse generate and derive", () => {
     const cases: Array<[Record<string, unknown>, string]> = [
-      [{ ...pem, generate: true }, "cannot also be generated"],
+      [{ ...pem, generate: "password" }, "cannot also be generated"],
       [{ ...pem, generate: "base64-key-32" }, "cannot also be generated"],
       [{ ...pem, derive: { from: "ADMIN_PASSWORD", method: "bcrypt" } }, "cannot be multiline"],
     ];
@@ -1271,10 +1341,7 @@ describe("multiline secrets", () => {
       expect(JSON.stringify(result.error?.issues)).toContain(why);
     }
     expect(
-      multilineSecretProblems([
-        { name: "K", generate: true, multiline: true },
-        { ...pem, generate: false },
-      ]),
+      multilineSecretProblems([{ name: "K", generate: "password", multiline: true }, { ...pem }]),
     ).toEqual([
       {
         path: [0, "multiline"],
@@ -1286,7 +1353,75 @@ describe("multiline secrets", () => {
   it("state the same rule in the JSON Schema", () => {
     const text = JSON.stringify(z.toJSONSchema(catalogManifestSchema));
     expect(text).toContain(
-      '{"anyOf":[{"not":{"required":["multiline"],"properties":{"multiline":{"const":true}}}},{"not":{"required":["derive"]},"properties":{"generate":{"const":false}}}]}',
+      '{"anyOf":[{"not":{"required":["multiline"],"properties":{"multiline":{"const":true}}}},{"not":{"anyOf":[{"required":["derive"]},{"required":["generate"]}]}}]}',
     );
+  });
+});
+
+describe("strictCatalogManifestSchema", () => {
+  it("parses what the lenient schema parses, to the same value", () => {
+    expect(strictCatalogManifestSchema.parse(validManifest)).toEqual(
+      catalogManifestSchema.parse(validManifest),
+    );
+  });
+
+  it("refuses a misspelled field anywhere, naming its path", () => {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ ...validManifest, instal: {} }, "instal"],
+      [
+        { ...validManifest, install: { ...validManifest.install, healthpath: "/" } },
+        "install.healthpath",
+      ],
+      [
+        { ...validManifest, secrets: [{ name: "A", label: "A", optinal: true }] },
+        "secrets[0].optinal",
+      ],
+      [
+        {
+          ...validManifest,
+          resources: { vectorize: { V: { dimensions: 3, metric: "cosine", metadata: [] } } },
+        },
+        "resources.vectorize.V.metadata",
+      ],
+    ];
+    for (const [manifest, path] of cases) {
+      expect(catalogManifestSchema.safeParse(manifest).success, path).toBe(true);
+      const result = strictCatalogManifestSchema.safeParse(manifest);
+      expect(result.success, path).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toContain(
+        `${path} is not a field here; check its spelling`,
+      );
+    }
+  });
+
+  it("reports an unknown key beside the other problems", () => {
+    const result = strictCatalogManifestSchema.safeParse({
+      ...validManifest,
+      plan: "enterprise",
+      tagliné: "x",
+    });
+    expect(result.error?.issues.map((i) => i.path.join("."))).toEqual(
+      expect.arrayContaining(["tagliné", "plan"]),
+    );
+  });
+
+  it("holds the license to the SPDX list, where the lenient schema checks only its shape", () => {
+    const cases: Array<[string, boolean, string]> = [
+      ["AGPL-3.0", false, "AGPL-3.0-only or AGPL-3.0-or-later"],
+      ["NOASSERTION", false, "only an app built from a repository"],
+      ["SEE LICENSE IN LICENSE.md", false, "only an app built from a repository"],
+      ["Made-Up-1.0", false, "not an id of the SPDX License List"],
+      ["LicenseRef-Acme-Source-Available", true, ""],
+      ["NONE", true, ""],
+      ["MIT OR Apache-2.0", true, ""],
+    ];
+    for (const [license, ok, why] of cases) {
+      expect(catalogManifestSchema.safeParse({ ...validManifest, license }).success, license).toBe(
+        true,
+      );
+      const strict = strictCatalogManifestSchema.safeParse({ ...validManifest, license });
+      expect(strict.success, license).toBe(ok);
+      if (!ok) expect(JSON.stringify(strict.error?.issues), license).toContain(why);
+    }
   });
 });

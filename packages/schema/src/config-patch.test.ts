@@ -23,6 +23,7 @@ const manifest = {
   slug: "mdpage",
   name: "md.page",
   summary: "Publish markdown as a page.",
+  tagline: "An app on Workers",
   homepage: "https://example.com",
   repo: "example/mdpage",
   license: "MIT",

@@ -1,19 +1,28 @@
 import { z } from "zod";
+import {
+  SPDX_DEPRECATED_LICENSE_IDS_TEXT,
+  SPDX_EXCEPTION_IDS_TEXT,
+  SPDX_LICENSE_IDS_TEXT,
+  SPDX_LICENSE_LIST_VERSION,
+} from "./spdx-ids.ts";
 
 /**
  * An app's license, as its own repository declares it. The catalog lists any
  * app the platform can run and shows the license, whatever it is; it never
- * decides whether an app is listed. The forms a catalog entry should use:
+ * decides whether an app is listed. The forms a manifest may hold:
  *
  * - an SPDX license expression (`MIT`, `Apache-2.0`, `MIT OR Apache-2.0`,
  *   `GPL-2.0-or-later WITH Classpath-exception-2.0`, `LicenseRef-Acme`),
- *   source-available licenses such as `BUSL-1.1` included. Ids are checked for
- *   their shape, not against the SPDX list, so a license added to the list
- *   later needs no release here;
+ *   source-available licenses such as `BUSL-1.1` included;
  * - `NONE`, for a repository that publishes no license;
- * - `NOASSERTION`, SPDX's "not stated", which builds from a repository without
- *   a catalog entry use when its `package.json` names no license;
- * - `SEE LICENSE IN <file>`, as npm writes it, for a license with no SPDX id.
+ * - `NOASSERTION`, SPDX's "not stated", and `SEE LICENSE IN <file>`, as npm
+ *   writes it: only in the manifest Appflare writes for an app built from a
+ *   repository without a catalog entry, from its `package.json`.
+ *
+ * Reading a manifest checks only the shape ({@link licenseProblem}), so a
+ * manager reads a license SPDX adds later. Writing a catalog entry checks
+ * the ids against the SPDX list and refuses the repository-build forms
+ * ({@link catalogLicenseProblem}, in the strict catalog manifest schema).
  */
 
 /** The manifest value for a repository that publishes no license. */
@@ -147,32 +156,96 @@ export function licenseIds(value: string): string[] {
 }
 
 /**
- * The packer's warning for a `license` that is not one of the forms above,
- * or null. A warning, not an error: manifests stored before the check
- * existed (installs, added catalogs, repository builds) carry free text, and
- * must keep parsing.
+ * How a catalog entry must write its license, beyond the shape
+ * {@link licenseProblem} checks; null when it may. Enforced where manifests
+ * are written (the strict catalog manifest schema that the packer, the
+ * catalog checks and the CLI use), not where they are read:
+ *
+ * - every license id is a current id of the SPDX License List (the version
+ *   in {@link SPDX_LICENSE_LIST_VERSION}), in its exact case, or a
+ *   `LicenseRef-<name>`; a deprecated id is refused with its replacement
+ *   (`GPL-3.0` must say `GPL-3.0-only` or `GPL-3.0-or-later`, as the
+ *   project's license notice does: "or any later version" means
+ *   `-or-later`);
+ * - every exception after `WITH` is a current SPDX exception id or an
+ *   `AdditionRef-<name>`;
+ * - `NONE` is allowed; `NOASSERTION` and `SEE LICENSE IN <file>` only with
+ *   `repositoryBuild`, for the manifest Appflare writes for an app built
+ *   from a repository without a catalog entry.
  */
-export function licenseWarning(value: string): string | null {
-  const problem = licenseProblem(value);
-  return problem === null ? null : `license is not an SPDX expression: it ${problem}`;
+export function catalogLicenseProblem(
+  value: string,
+  options: { repositoryBuild?: boolean } = {},
+): string | null {
+  const shape = licenseProblem(value);
+  if (shape !== null) return shape;
+  if (value === LICENSE_NOT_STATED || licenseFile(value) !== null) {
+    return options.repositoryBuild === true
+      ? null
+      : `is "${value}", which only an app built from a repository without a catalog entry may have; a catalog entry names its license with an SPDX id, a LicenseRef-<name>, or NONE`;
+  }
+  if (value === NO_LICENSE) return null;
+  for (const token of value.split(/[\s()]+/)) {
+    if (token === "" || OPERATORS.has(token)) continue;
+    const problem = idProblem(token);
+    if (problem !== null) return problem;
+  }
+  return null;
+}
+
+const CURRENT_IDS: ReadonlySet<string> = new Set(SPDX_LICENSE_IDS_TEXT.split(" "));
+const DEPRECATED_IDS: ReadonlySet<string> = new Set(SPDX_DEPRECATED_LICENSE_IDS_TEXT.split(" "));
+const EXCEPTION_IDS: ReadonlySet<string> = new Set(SPDX_EXCEPTION_IDS_TEXT.split(" "));
+const BY_LOWER_CASE: ReadonlyMap<string, string> = new Map(
+  [...CURRENT_IDS, ...EXCEPTION_IDS].map((id) => [id.toLowerCase(), id]),
+);
+
+/** Whether `id` is a current SPDX license id, in its exact case. */
+export function isSpdxLicenseId(id: string): boolean {
+  return CURRENT_IDS.has(id);
+}
+
+/** Why one id of an expression (a license or an exception) is not one a catalog entry may use. */
+function idProblem(token: string): string | null {
+  if (/^(?:DocumentRef-[A-Za-z0-9.-]+:)?(?:LicenseRef|AdditionRef)-[A-Za-z0-9.-]+$/.test(token)) {
+    return null;
+  }
+  if (CURRENT_IDS.has(token) || EXCEPTION_IDS.has(token)) return null;
+  const bare = token.endsWith("+") ? token.slice(0, -1) : token;
+  if (CURRENT_IDS.has(`${bare}-or-later`)) {
+    return token.endsWith("+")
+      ? `has "${token}", a deprecated SPDX form; write ${bare}-or-later`
+      : `has "${token}", a deprecated SPDX id; write ${bare}-only or ${bare}-or-later, as the project's license notice says ("or any later version" means -or-later)`;
+  }
+  if (token.endsWith("+") && CURRENT_IDS.has(bare)) return null;
+  if (DEPRECATED_IDS.has(token)) {
+    return `has "${token}", a deprecated SPDX id; use its current id from https://spdx.org/licenses/`;
+  }
+  const cased = BY_LOWER_CASE.get(token.toLowerCase());
+  if (cased !== undefined) return `has "${token}", which SPDX writes "${cased}"`;
+  return `has "${token}", which is not an id of the SPDX License List ${SPDX_LICENSE_LIST_VERSION}; for a license without one, write LicenseRef-<name> and describe it in licenseNote`;
 }
 
 /**
- * The catalog manifest's `license`: any non-empty text, so every manifest
- * already stored keeps parsing. {@link licenseProblem} says whether it is
- * one of the forms above; the packer warns when it is not, and the manager
- * shows a value it cannot place as it is.
+ * The catalog manifest's `license` as a manager reads it: any of the forms
+ * above, checked for their shape ({@link licenseProblem}). The strict
+ * catalog manifest schema adds {@link catalogLicenseProblem}.
  */
 export const licenseSchema = z
   .string()
   .min(1)
+  .superRefine((value, ctx) => {
+    const problem = licenseProblem(value);
+    if (problem !== null) ctx.addIssue({ code: "custom", message: `license ${problem}` });
+  })
   .describe(
-    "The license the app's own repository declares, as an SPDX license expression: `MIT`, " +
-      "`Apache-2.0`, `MIT OR Apache-2.0`, or a source-available license such as `BUSL-1.1`, " +
-      "`FSL-1.1-MIT` or `Elastic-2.0`. Use `NONE` when the repository publishes no license, " +
-      "and `SEE LICENSE IN <file>` (a path in the repository) for a license with no SPDX id. " +
-      "The catalog shows the license on the app's card and page; it never decides whether an " +
-      "app is listed.",
+    "The license the app's own repository declares, as an SPDX license expression of current " +
+      "SPDX ids: `MIT`, `Apache-2.0`, `GPL-3.0-only`, `MIT OR Apache-2.0`, or a source-available " +
+      "license such as `BUSL-1.1`, `FSL-1.1-MIT` or `Elastic-2.0`. Deprecated ids such as " +
+      "`GPL-3.0` are refused: write `-only` or `-or-later`, as the project's license notice says. " +
+      "For a license without an SPDX id, write `LicenseRef-<name>` and describe it in " +
+      "`licenseNote`; write `NONE` when the repository publishes no license. The catalog shows " +
+      "the license on the app's card and page; it never decides whether an app is listed.",
   );
 
 /** The catalog manifest's `licenseNote`: one short line shown next to the license. */

@@ -1,11 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   featuredItemSchema,
+  INDEX_ONLY_CATALOG_FIELDS,
   indexAppArtifact,
   indexAppSchema,
   indexJsonSchema,
   isFeaturedItemActive,
 } from "./catalog-index";
+import { MAX_SCREENSHOTS } from "./media";
+
+/** What every row carries, whatever its tier. */
+const rowFacts = {
+  addedAt: "2026-09-21T10:00:00Z",
+  license: "MIT",
+  revision: 1,
+  services: ["kv"],
+  authors: [{ name: "Mendy Landa", github: "MendyLanda" }],
+  categories: ["utilities"],
+};
 
 const base = "https://github.com/appflare/catalog/releases/download/cut@0.1.0";
 
@@ -16,18 +28,20 @@ const validIndex = {
       slug: "cut",
       name: "Cut",
       summary: "Self-hosted link shortener on Workers + KV.",
+      tagline: "An app on Workers",
       version: "0.1.0",
       artifacts: {
         zip: `${base}/cut-0.1.0.zip`,
         manifest: `${base}/manifest.json`,
         sig: `${base}/manifest.sig`,
+        digest: "c".repeat(64),
       },
-      digest: "c".repeat(64),
       tier: "artifact",
       plan: "free",
       requires: [],
       lastVerified: null,
       maintainers: ["MendyLanda"],
+      ...rowFacts,
     },
   ],
 };
@@ -54,11 +68,22 @@ describe("indexJsonSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts rows with authors, and rows written before they existed", () => {
+  it("requires the facts every catalog writes on every row", () => {
+    const row = validIndex.apps[0] ?? {};
+    for (const field of [...Object.keys(rowFacts), "tagline"]) {
+      const { [field as keyof typeof row]: _, ...without } = row;
+      expect(indexAppSchema.safeParse(without).success, field).toBe(false);
+    }
+  });
+
+  it("names the catalog fields only the index shows", () => {
+    expect(INDEX_ONLY_CATALOG_FIELDS).toEqual(["authors", "tagline", "licenseNote"]);
+  });
+
+  it("accepts rows with authors, at least one", () => {
     const row = validIndex.apps[0];
     const authors = [{ name: "Mendy Landa", github: "MendyLanda" }];
     expect(indexAppSchema.parse({ ...row, authors }).authors).toEqual(authors);
-    expect(indexAppSchema.parse(row).authors).toBeUndefined();
     expect(indexAppSchema.safeParse({ ...row, authors: [] }).success).toBe(false);
     expect(
       indexAppSchema.safeParse({ ...row, authors: [{ name: "A", url: "http://a.example" }] })
@@ -66,7 +91,7 @@ describe("indexJsonSchema", () => {
     ).toBe(false);
   });
 
-  it("accepts rows with services and categories, and rows written before they existed", () => {
+  it("accepts rows with services and categories as plain strings", () => {
     const row = validIndex.apps[0];
     const facts = {
       services: ["kv", "a-service-added-later"],
@@ -74,9 +99,9 @@ describe("indexJsonSchema", () => {
       categories: ["utilities"],
     };
     expect(indexAppSchema.parse({ ...row, ...facts })).toMatchObject(facts);
-    const before = indexAppSchema.parse(row);
-    expect(before.services).toBeUndefined();
-    expect(before.categories).toBeUndefined();
+    // A custom catalog may name a category this version does not know.
+    expect(indexAppSchema.safeParse({ ...row, categories: ["gardening"] }).success).toBe(true);
+    expect(indexAppSchema.safeParse({ ...row, categories: [] }).success).toBe(false);
     expect(indexAppSchema.safeParse({ ...row, services: [""] }).success).toBe(false);
     expect(indexAppSchema.safeParse({ ...row, categories: "utilities" }).success).toBe(false);
   });
@@ -96,7 +121,7 @@ describe("indexJsonSchema", () => {
     // A revised manifest is never listed unsigned.
     const { signature: _s, ...unsigned } = catalogManifest;
     expect(indexAppSchema.safeParse({ ...row, catalogManifest: unsigned }).success).toBe(false);
-    expect(indexAppSchema.parse(row).revision).toBeUndefined();
+    expect(indexAppSchema.parse(row).revision).toBe(1);
     expect(indexAppSchema.safeParse({ ...row, revision: 0 }).success).toBe(false);
     expect(indexAppSchema.safeParse({ ...row, revision: 1.5 }).success).toBe(false);
     expect(
@@ -106,7 +131,7 @@ describe("indexJsonSchema", () => {
       }).success,
     ).toBe(false);
     // Only a release has a signed catalog manifest to revise.
-    const { artifacts: _a, digest: _d, ...noRelease } = row ?? {};
+    const { artifacts: _a, ...noRelease } = row ?? {};
     expect(
       indexAppSchema.safeParse({
         ...noRelease,
@@ -129,12 +154,14 @@ describe("indexAppSchema for sandbox tier entries", () => {
     slug: "flaremo",
     name: "FlareMo",
     summary: "Memos on Workers.",
+    tagline: "An app on Workers",
     version: "0.20.1",
     tier: "sandbox",
     plan: "paid",
     requires: [],
     lastVerified: null,
     maintainers: ["someone"],
+    ...rowFacts,
     build: {
       pin: "a".repeat(40),
       manifest: "https://appflare.github.io/catalog/apps/flaremo/appflare.json",
@@ -158,17 +185,15 @@ describe("indexAppSchema for sandbox tier entries", () => {
   });
 
   it("refuses an artifact entry without artifacts, and a sandbox entry without build", () => {
-    const { artifacts: _a, digest: _d, ...bare } = artifactApp;
+    const { artifacts: _a, ...bare } = artifactApp;
     expect(indexAppSchema.safeParse(bare).success).toBe(false);
     const { build: _b, ...unbuilt } = sandboxApp;
     expect(indexAppSchema.safeParse(unbuilt).success).toBe(false);
   });
 
   it("refuses artifacts without a digest", () => {
-    const { digest: _d, ...half } = artifactApp;
-    expect(
-      indexAppSchema.safeParse({ ...half, tier: "sandbox", build: sandboxApp.build }).success,
-    ).toBe(false);
+    const { digest: _d, ...half } = artifactApp.artifacts;
+    expect(indexAppSchema.safeParse({ ...artifactApp, artifacts: half }).success).toBe(false);
   });
 
   it("refuses a build with a short pin or an unknown instance type", () => {
@@ -211,6 +236,15 @@ describe("index media", () => {
     for (const media of bad) {
       expect(indexAppSchema.safeParse({ ...row, media }).success).toBe(false);
     }
+  });
+
+  it("takes at most the screenshots the media limits allow", () => {
+    const shot = (i: number) => ({ url: `${site}/s${i}.png`, sha256: "a".repeat(64), alt: "S" });
+    const screenshots = Array.from({ length: MAX_SCREENSHOTS + 1 }, (_, i) => shot(i));
+    expect(indexAppSchema.safeParse({ ...row, media: { screenshots } }).success).toBe(false);
+    expect(
+      indexAppSchema.safeParse({ ...row, media: { screenshots: screenshots.slice(1) } }).success,
+    ).toBe(true);
   });
 });
 

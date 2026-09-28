@@ -43,6 +43,11 @@ const row = {
   requires: [],
   lastVerified: null,
   maintainers: ["MendyLanda"],
+  license: "MIT",
+  revision: 1,
+  services: [],
+  authors: [{ name: "MendyLanda", github: "MendyLanda" }],
+  categories: ["utilities"],
 };
 
 describe("taglineSchema", () => {
@@ -69,8 +74,8 @@ describe("taglineSchema", () => {
 });
 
 describe("tagline and addedAt on entries", () => {
-  it("are optional in the catalog manifest, and a tagline is revisable copy", () => {
-    expect(catalogManifestSchema.parse(manifest).tagline).toBeUndefined();
+  it("are required in the catalog manifest, and a tagline is revisable copy", () => {
+    expect(catalogManifestSchema.safeParse(manifest).success).toBe(false);
     const parsed = catalogManifestSchema.parse({ ...manifest, tagline: "Short links" });
     expect(parsed.tagline).toBe("Short links");
     expect(catalogManifestSchema.safeParse({ ...manifest, tagline: "Short links." }).success).toBe(
@@ -79,20 +84,20 @@ describe("tagline and addedAt on entries", () => {
     expect(REVISABLE_CATALOG_FIELDS).toContain("tagline");
   });
 
-  it("are optional on an index row, which checks both", () => {
-    const before = indexAppSchema.parse(row);
-    expect(before.tagline).toBeUndefined();
-    expect(before.addedAt).toBeUndefined();
+  it("are required on an index row, which checks both", () => {
+    expect(indexAppSchema.safeParse(row).success).toBe(false);
+    expect(indexAppSchema.safeParse({ ...row, tagline: "Short links" }).success).toBe(false);
     const after = indexAppSchema.parse({
       ...row,
       tagline: "Short links",
       addedAt: "2026-09-21T10:00:00Z",
     });
     expect(after).toMatchObject({ tagline: "Short links", addedAt: "2026-09-21T10:00:00Z" });
-    expect(indexAppSchema.safeParse({ ...row, addedAt: "2026-09-21T10:00:00+03:00" }).success).toBe(
-      true,
-    );
-    expect(indexAppSchema.safeParse({ ...row, addedAt: "last week" }).success).toBe(false);
-    expect(indexAppSchema.safeParse({ ...row, tagline: "x".repeat(81) }).success).toBe(false);
+    const full = { ...row, tagline: "Short links", addedAt: "2026-09-21T10:00:00Z" };
+    expect(
+      indexAppSchema.safeParse({ ...full, addedAt: "2026-09-21T10:00:00+03:00" }).success,
+    ).toBe(true);
+    expect(indexAppSchema.safeParse({ ...full, addedAt: "last week" }).success).toBe(false);
+    expect(indexAppSchema.safeParse({ ...full, tagline: "x".repeat(81) }).success).toBe(false);
   });
 });

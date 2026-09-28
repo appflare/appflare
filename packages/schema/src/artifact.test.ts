@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  artifactFormatFor,
   artifactManifestSchema,
   catalogVarProblems,
   hasDurableObjectExports,
@@ -11,6 +10,8 @@ import {
   sameDurableObjectExports,
   sameWorkerExports,
   serviceBindingProblem,
+  strictArtifactManifestSchema,
+  unknownArtifactFormatProblem,
   workersPaidBindingProblem,
 } from "./artifact";
 
@@ -22,12 +23,12 @@ const validArtifact = {
   format: 1,
   app: "cut",
   version: "0.1.0",
-  source: { repo: "MendyLanda/cut", sha: gitSha, ref: "v0.1.0" },
   builtAt: "2026-09-22T12:00:00Z",
   builder: "@appflare/pack@0.1.0",
   keyId: "catalog-2026-09",
   worker: {
     name: "cut",
+    wranglerConfig: { declared: "wrangler.jsonc", effective: "wrangler.jsonc" },
     mainModule: "index.js",
     compatibilityDate: "2024-12-30",
     compatibilityFlags: ["nodejs_compat"],
@@ -59,14 +60,18 @@ const validArtifact = {
       },
     ],
   },
-  d1Migrations: {
-    DB: [{ name: "0001_init.sql", path: "d1/DB/0001_init.sql", size: 1, sha256, offset: 456 }],
+  d1: {
+    DB: {
+      migrations: [
+        { name: "0001_init.sql", path: "d1/DB/0001_init.sql", size: 1, sha256, offset: 456 },
+      ],
+    },
   },
   catalog: {
     slug: "cut",
     name: "Cut",
     summary: "Self-hosted link shortener on Workers + KV.",
-    homepage: "https://github.com/MendyLanda/cut",
+    tagline: "Short links on your own domain",
     repo: "MendyLanda/cut",
     license: "MIT",
     categories: ["utilities"],
@@ -93,6 +98,59 @@ describe("artifactManifestSchema", () => {
     expect(parsed.format).toBe(1);
     expect(parsed.worker.modules[0]?.offset).toBe(0);
     expect(parsed.catalog.slug).toBe("cut");
+    expect(parsed.catalog.source).toEqual({ ref: "v0.1.0", sha: gitSha });
+    expect(parsed.d1.DB).toEqual({
+      migrations: validArtifact.d1.DB.migrations,
+      schema: [],
+      postDeploy: [],
+    });
+  });
+
+  it("reads format 1 only, and says to update Appflare for a newer one", () => {
+    expect(artifactManifestSchema.safeParse({ ...validArtifact, format: 2 }).success).toBe(false);
+    expect(unknownArtifactFormatProblem(validArtifact)).toBeNull();
+    expect(unknownArtifactFormatProblem({ format: 2 })).toBe(
+      "the artifact is format 2, and this version of Appflare reads format 1; update Appflare in Settings > Updates, then try again",
+    );
+    expect(unknownArtifactFormatProblem({ format: 0 })).toBe(
+      "the artifact is format 0, which no version of Appflare reads",
+    );
+    expect(unknownArtifactFormatProblem({ format: "1" })).toBeNull();
+  });
+
+  it("carries a multiline secret in format 1", () => {
+    const key = { name: "PRIVATE_KEY", label: "Private key", multiline: true };
+    const catalog = { ...validArtifact.catalog, secrets: [key] };
+    const parsed = artifactManifestSchema.parse({ ...validArtifact, catalog });
+    expect(parsed.catalog.secrets[0]?.multiline).toBe(true);
+  });
+
+  it("refuses, in its strict form, fields a packer must not write", () => {
+    expect(strictArtifactManifestSchema.parse(validArtifact)).toEqual(
+      artifactManifestSchema.parse(validArtifact),
+    );
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ ...validArtifact, source: { repo: "a/b", sha: gitSha, ref: "v1" } }, "source"],
+      [{ ...validArtifact, d1Migrations: {} }, "d1Migrations"],
+      [{ ...validArtifact, worker: { ...validArtifact.worker, cron: [] } }, "worker.cron"],
+      [{ ...validArtifact, catalog: { ...validArtifact.catalog, instal: {} } }, "catalog.instal"],
+    ];
+    for (const [artifact, path] of cases) {
+      expect(artifactManifestSchema.safeParse(artifact).success, path).toBe(true);
+      const result = strictArtifactManifestSchema.safeParse(artifact);
+      expect(
+        result.error?.issues.map((i) => i.message),
+        path,
+      ).toEqual([`${path} is not a field here; check its spelling`]);
+    }
+    // Bindings are loose: the packer records whatever wrangler resolved.
+    const binding = { type: "kv_namespace", name: "CUT_KV", preview: true };
+    expect(
+      strictArtifactManifestSchema.safeParse({
+        ...validArtifact,
+        worker: { ...validArtifact.worker, bindings: [binding] },
+      }).success,
+    ).toBe(true);
   });
 
   it("keeps an observability section that turns on only logs, as wrangler uploads it", () => {
@@ -111,10 +169,9 @@ describe("artifactManifestSchema", () => {
     expect(withObservability({ enabled: "yes" }).success).toBe(false);
   });
 
-  it("rejects a manifest with a wrong format literal and a non-hex sha256", () => {
+  it("rejects a manifest with a non-hex sha256", () => {
     const invalid = {
       ...validArtifact,
-      format: 2,
       worker: {
         ...validArtifact.worker,
         modules: [{ ...validArtifact.worker.modules[0], sha256: "nothex" }],
@@ -145,7 +202,7 @@ describe("artifactManifestSchema", () => {
   });
 
   it("takes optional queue consumers that name queues by binding or by name", () => {
-    expect(artifactManifestSchema.parse(validArtifact).worker.queueConsumers).toBeUndefined();
+    expect(artifactManifestSchema.parse(validArtifact).worker.queueConsumers).toEqual([]);
     const queueConsumers = [
       {
         queue: { binding: "JOBS" },
@@ -193,7 +250,7 @@ describe("artifactManifestSchema", () => {
         ],
       }),
     ).toEqual([]);
-    expect(queueConsumerProblems({ bindings })).toEqual([]);
+    expect(queueConsumerProblems({ bindings, queueConsumers: [] })).toEqual([]);
     expect(
       queueConsumerProblems({
         bindings,
@@ -274,7 +331,9 @@ describe("json var bindings", () => {
       name,
       label: name,
       default: value,
-      required: false,
+      optional: false,
+      type: "text" as const,
+      seedOnly: false,
     });
     expect(
       catalogVarProblems(bindings, [
@@ -295,7 +354,8 @@ describe("json var bindings", () => {
     const select = (name: string, values: string[]) => ({
       name,
       label: name,
-      required: false,
+      optional: false,
+      seedOnly: false,
       type: "select" as const,
       options: values.map((value) => ({ value, label: value })),
     });
@@ -354,8 +414,9 @@ describe("service bindings", () => {
 });
 
 describe("worker.wranglerConfig", () => {
-  it("is optional and records the declared and effective config", () => {
-    expect(artifactManifestSchema.parse(validArtifact).worker.wranglerConfig).toBeUndefined();
+  it("is required and records the declared and effective config", () => {
+    const { wranglerConfig: _, ...worker } = validArtifact.worker;
+    expect(artifactManifestSchema.safeParse({ ...validArtifact, worker }).success).toBe(false);
     const wranglerConfig = { declared: "wrangler.jsonc", effective: "build/server/wrangler.json" };
     const parsed = artifactManifestSchema.parse({
       ...validArtifact,
@@ -377,45 +438,12 @@ describe("worker.exports and worker.cacheOptions", () => {
     const cacheOptions = { enabled: true, cross_version_cache: false };
     const parsed = artifactManifestSchema.parse({
       ...validArtifact,
-      format: 3,
       worker: { ...validArtifact.worker, exports, cacheOptions },
     });
     expect(parsed.worker.exports).toEqual(exports);
     expect(parsed.worker.cacheOptions).toEqual(cacheOptions);
     expect(hasDurableObjectExports(parsed.worker.exports)).toBe(true);
     expect(hasDurableObjectExports({ Api: { type: "worker" } })).toBe(false);
-  });
-
-  it("need format 3, so a manager that reads only formats 1 and 2 refuses the artifact", () => {
-    const room = { Room: { type: "durable-object", storage: "sqlite" } };
-    expect(artifactFormatFor({ worker: { exports: room } })).toBe(3);
-    expect(artifactFormatFor({ worker: { cacheOptions: { enabled: true } } })).toBe(3);
-    expect(artifactFormatFor({ worker: { exports: {} } })).toBe(1);
-    expect(artifactFormatFor({ worker: {}, workers: [{ worker: { exports: room } }] })).toBe(3);
-    expect(artifactFormatFor({ worker: {}, workers: [{ worker: {} }] })).toBe(2);
-    for (const extra of [{ exports: room }, { cacheOptions: { enabled: true } }]) {
-      const result = artifactManifestSchema.safeParse({
-        ...validArtifact,
-        worker: { ...validArtifact.worker, ...extra },
-      });
-      expect(result.success).toBe(false);
-      expect(result.error?.issues.map((i) => i.message)).toEqual([
-        expect.stringMatching(/^the artifact needs format 3 for what it carries/),
-      ]);
-    }
-  });
-
-  it("need format 5 for a multiline secret, so an older manager never asks for it on one line", () => {
-    const key = { name: "PRIVATE_KEY", label: "Private key", multiline: true };
-    expect(artifactFormatFor({ catalog: { secrets: [key] } })).toBe(5);
-    expect(artifactFormatFor({ catalog: { secrets: [{ ...key, multiline: false }] } })).toBe(1);
-    const catalog = { ...validArtifact.catalog, secrets: [key] };
-    const refused = artifactManifestSchema.safeParse({ ...validArtifact, catalog });
-    expect(refused.error?.issues.map((i) => i.message)).toEqual([
-      expect.stringMatching(/^the artifact needs format 5 for what it carries/),
-    ]);
-    const parsed = artifactManifestSchema.parse({ ...validArtifact, format: 5, catalog });
-    expect(parsed.catalog.secrets[0]?.multiline).toBe(true);
   });
 
   it("compares exports whatever the key order, with none the same as an empty block", () => {

@@ -9,7 +9,7 @@ import { catalogD1SeedSchema } from "./seed.ts";
  *
  * - `migrationsDir` replaces the wrangler config's `migrations_dir`: its
  *   `.sql` files are the tracked migrations.
- * - `migrations` is a glob instead of a folder, for tools that write one
+ * - `migrationsGlob` is a glob instead of a folder, for tools that write one
  *   folder per migration (Prisma: `prisma/migrations/*\/migration.sql`), as
  *   wrangler's `migrations_dir` plus `migrations_pattern` would say it: the
  *   folder is the glob's segments before its first `*`
@@ -139,7 +139,7 @@ export const catalogD1Schema = z
           "`d1_migrations` as `wrangler d1 migrations apply` does.",
       )
       .optional(),
-    migrations: migrationsGlobSchema
+    migrationsGlob: migrationsGlobSchema
       .describe(
         "A glob of the binding's migration files, relative to the checkout's root, for tools that " +
           "write one folder per migration: `prisma/migrations/*/migration.sql`. The folder before " +
@@ -180,11 +180,11 @@ export const catalogD1Schema = z
       .optional(),
   })
   .superRefine((d1, ctx) => {
-    if (d1.migrationsDir !== undefined && d1.migrations !== undefined) {
+    if (d1.migrationsDir !== undefined && d1.migrationsGlob !== undefined) {
       ctx.addIssue({
         code: "custom",
-        path: ["migrations"],
-        message: "give the migrations as migrationsDir or as a migrations glob, not both",
+        path: ["migrationsGlob"],
+        message: "give the migrations as migrationsDir or as migrationsGlob, not both",
       });
     }
     if (d1.baseline !== undefined && d1.schema !== undefined) {
@@ -210,13 +210,13 @@ export const catalogD1Schema = z
       ctx.addIssue({
         code: "custom",
         message:
-          "say at least one of migrationsDir, migrations, schema, postDeployMigrationsDir, seed, baseline",
+          "say at least one of migrationsDir, migrationsGlob, schema, postDeployMigrationsDir, seed, baseline",
       });
     }
   })
   .meta({
     allOf: [
-      { not: { required: ["migrationsDir", "migrations"] } },
+      { not: { required: ["migrationsDir", "migrationsGlob"] } },
       { not: { required: ["baseline", "schema"] } },
     ],
     minProperties: 1,

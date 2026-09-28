@@ -7,10 +7,11 @@ const manifest = {
   slug: "folia",
   name: "Folia",
   summary: "A music player.",
+  tagline: "An app on Workers",
   homepage: "https://github.com/example/folia",
   repo: "example/folia",
   license: "MIT",
-  categories: [],
+  categories: ["utilities"],
   maintainers: [],
   source: { ref: "main", sha: "0".repeat(40) },
   install: {
@@ -111,8 +112,7 @@ describe("install.buildEnv", () => {
           tool: "alchemy",
           deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
           destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-          stateStore: "cloudflare",
-          workers: ["app-{{stage}}"],
+          workerNames: ["app-{{stage}}"],
         },
       },
     });

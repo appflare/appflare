@@ -17,10 +17,11 @@ const manifest = {
   slug: "blog",
   name: "Blog",
   summary: "A blog.",
+  tagline: "An app on Workers",
   homepage: "https://github.com/example/templates",
   repo: "example/templates",
   license: "MIT",
-  categories: [],
+  categories: ["utilities"],
   maintainers: [],
   source: { ref: "main", sha: "0".repeat(40) },
   install: {
@@ -49,8 +50,9 @@ describe("install.installDirs", () => {
     const parsed = withInstall({});
     expect(parsed.success).toBe(true);
     expect(parsed.data?.install.installDirs).toBeUndefined();
-    expect(parsed.data && installDirList(parsed.data.install)).toEqual([{ path: "." }]);
-    expect(DEFAULT_INSTALL_DIRS).toEqual([{ path: "." }]);
+    const root = { path: ".", lockfile: "required", devDependencies: true };
+    expect(parsed.data && installDirList(parsed.data.install)).toEqual([root]);
+    expect(DEFAULT_INSTALL_DIRS).toEqual([root]);
   });
 
   it("keeps several directories in their order, with their settings", () => {
@@ -61,8 +63,14 @@ describe("install.installDirs", () => {
     ];
     const parsed = withInstall({ installDirs });
     expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
-    expect(parsed.data?.install.installDirs).toEqual(installDirs);
-    expect(parsed.data && installDirList(parsed.data.install)).toEqual(installDirs);
+    // A directory installs with its lockfile and its devDependencies unless it says otherwise.
+    const withDefaults = [
+      { path: "templates/blog", lockfile: "none", devDependencies: true },
+      { path: ".", lockfile: "required", devDependencies: true },
+      { path: "packages/api", packageManager: "npm", lockfile: "required", devDependencies: true },
+    ];
+    expect(parsed.data?.install.installDirs).toEqual(withDefaults);
+    expect(parsed.data && installDirList(parsed.data.install)).toEqual(withDefaults);
   });
 
   it("is shared by every Worker of an entry of several Workers", () => {
@@ -142,8 +150,7 @@ describe("install.installDirs", () => {
         tool: "alchemy",
         deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
         destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-        stateStore: "cloudflare",
-        workers: ["app-{{stage}}"],
+        workerNames: ["app-{{stage}}"],
       },
     });
     expect(parsed.error?.issues).toEqual([

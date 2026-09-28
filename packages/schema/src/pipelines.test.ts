@@ -13,6 +13,7 @@ const validManifest = {
   slug: "traks",
   name: "Traks",
   summary: "Privacy-friendly web analytics on Cloudflare.",
+  tagline: "An app on Workers",
   homepage: "https://github.com/shivamanupadi/traks",
   repo: "shivamanupadi/traks",
   license: "MIT",
@@ -119,7 +120,7 @@ describe("resources.pipelines", () => {
       }),
     );
     for (const secret of [
-      { generate: true },
+      { generate: "password" },
       { optional: true },
       { seedOnly: true },
       { derive: { from: "OTHER", method: "bcrypt" } },
@@ -146,8 +147,7 @@ describe("resources.pipelines", () => {
           tool: "alchemy",
           deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
           destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-          stateStore: "cloudflare",
-          workers: ["app-{{stage}}"],
+          workerNames: ["app-{{stage}}"],
         },
       },
     });
@@ -184,18 +184,32 @@ describe("resources.pipelines", () => {
 
   it("lists each sink token's permissions with the app's own, once per secret", () => {
     const pipelines = parse({}, { EVENTS: events, CLICKS: events }).data?.resources?.pipelines;
-    const own = { name: "Zone.DNS:Edit", description: "Its own DNS records." };
+    const own = {
+      group: "DNS",
+      scope: "zone",
+      access: "edit",
+      reason: "Its own DNS records.",
+    } as const;
+    const storageRead = {
+      group: "Workers R2 Storage",
+      scope: "account",
+      access: "read",
+      reason: "Reads its bucket.",
+    } as const;
     const listed = appTokenPermissions({
-      tokenPermissions: [own, { name: "Account.Workers R2 Storage:Edit" }],
+      tokenPermissions: [own, storageRead],
       resources: { pipelines },
     });
-    expect(listed.map((p) => p.name)).toEqual([
-      "Zone.DNS:Edit",
-      "Account.Workers R2 Storage:Edit",
-      "Account.Workers R2 Data Catalog:Edit",
-      "Account.Workers R2 SQL:Read",
+    expect(listed.map((p) => `${p.scope}: ${p.group}: ${p.access}`)).toEqual([
+      "zone: DNS: edit",
+      // The sink needs edit, which covers the app's own read.
+      "account: Workers R2 Storage: edit",
+      "account: Workers R2 Data Catalog: edit",
+      "account: Workers R2 SQL: read",
     ]);
-    expect(pipelineTokenPermissions(pipelines)[1]?.description).toMatch(/^In CATALOG_TOKEN: /);
+    expect(listed[1]?.reason).toBe("Reads its bucket.");
+    expect(pipelineTokenPermissions(pipelines)).toHaveLength(3);
+    expect(pipelineTokenPermissions(pipelines)[1]?.reason).toMatch(/^In CATALOG_TOKEN: /);
     expect(appTokenPermissions({ tokenPermissions: [own] })).toEqual([own]);
   });
 

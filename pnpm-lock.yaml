@@ -289,6 +289,10 @@ importers:
       zod:
         specifier: 4.6.5
         version: 4.6.5
+    devDependencies:
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
 
 packages:
 

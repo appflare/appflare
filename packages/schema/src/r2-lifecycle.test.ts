@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { artifactFormatFor, workerBindingSchema } from "./artifact";
+import { workerBindingSchema } from "./artifact";
 import { catalogManifestSchema } from "./catalog";
 import {
   mergeR2LifecycleRules,
@@ -11,10 +11,11 @@ const manifest = {
   slug: "uploads",
   name: "Uploads",
   summary: "Share files.",
+  tagline: "An app on Workers",
   homepage: "https://github.com/example/uploads",
   repo: "example/uploads",
   license: "MIT",
-  categories: [],
+  categories: ["utilities"],
   maintainers: [],
   source: { ref: "main", sha: "0".repeat(40) },
   install: {
@@ -168,8 +169,7 @@ describe("resources.r2 lifecycle rules", () => {
           tool: "alchemy",
           deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
           destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-          stateStore: "cloudflare",
-          workers: ["app-{{stage}}"],
+          workerNames: ["app-{{stage}}"],
         },
       },
       resources: { r2: { FILES: { lifecycle: [{ id: "a", deleteAfterDays: 1 }] } } },
@@ -237,23 +237,5 @@ describe("artifact bindings and format", () => {
       workerBindingSchema.safeParse({ type: "r2_bucket", name: "FILES", lifecycle: [{ id: "a" }] })
         .success,
     ).toBe(false);
-  });
-
-  it("need format 6, so a manager that would strip them refuses the artifact", () => {
-    expect(
-      artifactFormatFor({
-        catalog: { resources: { r2: { FILES: { lifecycle: [] } } } },
-      }),
-    ).toBe(6);
-    expect(
-      artifactFormatFor({
-        catalog: {
-          resources: {
-            vectorize: { V: { metadataIndexes: [{ propertyName: "url", type: "string" }] } },
-          },
-        },
-      }),
-    ).toBe(6);
-    expect(artifactFormatFor({ catalog: { resources: { vectorize: { V: {} } } } })).toBe(1);
   });
 });

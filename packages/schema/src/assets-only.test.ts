@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { artifactFormatFor, artifactManifestSchema } from "./artifact";
+import { artifactManifestSchema } from "./artifact";
 import { assetsOnlyWorkerProblems, isAssetsOnlyWorker } from "./assets-only";
 
 const sha256 = "a".repeat(64);
@@ -12,15 +12,15 @@ function staticArtifact(
   catalog: Record<string, unknown> = {},
 ) {
   return {
-    format: 5,
+    format: 1,
     app: "site",
     version: "1.0.0",
-    source: { repo: "acme/site", sha: gitSha, ref: "v1.0.0" },
     builtAt: "2026-09-27T12:00:00Z",
     builder: "@appflare/pack@0.3.0",
     keyId: "catalog-2026-09",
     worker: {
       name: "site",
+      wranglerConfig: { declared: "wrangler.jsonc", effective: "wrangler.jsonc" },
       compatibilityDate: "2025-06-01",
       compatibilityFlags: [],
       modules: [],
@@ -46,11 +46,12 @@ function staticArtifact(
         },
       ],
     },
-    d1Migrations: {},
+    d1: {},
     catalog: {
       slug: "site",
       name: "Site",
       summary: "A static site.",
+      tagline: "An app on Workers",
       homepage: "https://github.com/acme/site",
       repo: "acme/site",
       license: "MIT",
@@ -82,25 +83,10 @@ function messages(json: unknown): string[] {
 }
 
 describe("artifacts with a Worker of static assets only", () => {
-  it("parse as format 5 without a main module or modules", () => {
+  it("parse without a main module or modules", () => {
     const parsed = artifactManifestSchema.parse(staticArtifact());
-    expect(parsed.format).toBe(5);
     expect(parsed.worker.mainModule).toBeUndefined();
     expect(isAssetsOnlyWorker(parsed.worker)).toBe(true);
-  });
-
-  it("need format 5, so a manager that reads only formats 1 to 4 refuses the artifact", () => {
-    expect(artifactFormatFor({ worker: { modules: [] } })).toBe(5);
-    expect(artifactFormatFor({ worker: { modules: [{}] } })).toBe(1);
-    expect(artifactFormatFor({ worker: {} })).toBe(1);
-    expect(
-      artifactFormatFor({ worker: { modules: [{}] }, workers: [{ worker: { modules: [] } }] }),
-    ).toBe(5);
-    for (const format of [1, 3, 4]) {
-      expect(messages(staticArtifact({}, { format }))).toEqual([
-        expect.stringMatching(/^the artifact needs format 5 for what it carries/),
-      ]);
-    }
   });
 
   it("refuse bindings, secrets, vars and everything else only code could use", () => {
@@ -114,8 +100,8 @@ describe("artifacts with a Worker of static assets only", () => {
           },
           {},
           {
-            secrets: [{ name: "TOKEN", label: "Token", generate: true }],
-            vars: [{ name: "MODE", label: "Mode", required: false }],
+            secrets: [{ name: "TOKEN", label: "Token", generate: "password" }],
+            vars: [{ name: "MODE", label: "Mode", optional: true }],
           },
         ),
       ),

@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ArtifactManifest } from "./artifact";
-import { type CatalogManifest, catalogManifestSchema } from "./catalog";
+import { type CatalogManifest, catalogManifestSchema, catalogSecretSchema } from "./catalog";
 import {
   catalogFieldChanges,
-  catalogRevision,
   catalogRevisionProblem,
   REVISABLE_CATALOG_FIELDS,
   revisedArtifactProblem,
@@ -14,6 +13,7 @@ const released: CatalogManifest = catalogManifestSchema.parse({
   slug: "cut",
   name: "Cut",
   summary: "Self-hosted link shortener on Workers + KV.",
+  tagline: "An app on Workers",
   homepage: "https://github.com/MendyLanda/cut",
   repo: "MendyLanda/cut",
   license: "MIT",
@@ -28,7 +28,7 @@ const released: CatalogManifest = catalogManifestSchema.parse({
   },
   plan: "free",
   requires: [],
-  secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password", generate: true }],
+  secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" }],
   vars: [{ name: "HOME_PAGE", label: "Home page", help: "default, 404, or admin" }],
   postInstall: [],
   tokenPermissions: [],
@@ -37,7 +37,8 @@ const released: CatalogManifest = catalogManifestSchema.parse({
 const selectVar = {
   name: "HOME_PAGE",
   label: "Home page",
-  required: false,
+  optional: false,
+  seedOnly: false,
   type: "select" as const,
   options: [
     { value: "default", label: "Show the landing page" },
@@ -47,9 +48,8 @@ const selectVar = {
 };
 
 describe("catalog manifest revision", () => {
-  it("parses as an optional whole number from 1, and reads as 1 when omitted", () => {
-    expect(released.revision).toBeUndefined();
-    expect(catalogRevision(released)).toBe(1);
+  it("parses as a whole number from 1, and is 1 when omitted", () => {
+    expect(released.revision).toBe(1);
     expect(catalogManifestSchema.parse({ ...released, revision: 3 }).revision).toBe(3);
     for (const bad of [0, -1, 1.5, "2"]) {
       expect(catalogManifestSchema.safeParse({ ...released, revision: bad }).success).toBe(false);
@@ -72,9 +72,13 @@ describe("catalog manifest revision", () => {
         ...released,
         revision: 2,
         vars: [selectVar],
-        secrets: [...released.secrets, { name: "API_KEY", label: "API key", generate: false }],
-        postInstall: [{ type: "markdown", content: "Open {{workerUrl}}." }],
+        secrets: [
+          ...released.secrets,
+          catalogSecretSchema.parse({ name: "API_KEY", label: "API key" }),
+        ],
+        postInstall: [{ type: "markdown", content: "Open {{appUrl}}." }],
         summary: "A link shortener.",
+        tagline: "An app on Workers",
       }),
     ).toBeNull();
   });
