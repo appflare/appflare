@@ -1177,7 +1177,7 @@ describe("install job", () => {
     expect(r.fake.state.lifecycle["cut-files"]).toEqual([
       DEFAULT_MULTIPART_RULE,
       {
-        id: "tmp",
+        id: "appflare:tmp",
         enabled: true,
         conditions: { prefix: "tmp/" },
         deleteObjectsTransition: { condition: { type: "Age", maxAge: 86_400 } },

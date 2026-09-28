@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { artifactFormatFor, workerBindingSchema } from "./artifact";
 import { catalogManifestSchema } from "./catalog";
-import { mergeR2LifecycleRules, r2LifecycleApiRule } from "./r2-lifecycle";
+import {
+  mergeR2LifecycleRules,
+  r2LifecycleApiRule,
+  undeclaredR2LifecycleRuleIds,
+} from "./r2-lifecycle";
 
 const manifest = {
   slug: "uploads",
@@ -54,6 +58,14 @@ describe("resources.r2 lifecycle rules", () => {
     expect(refused({ id: "forever", deleteAfterDays: 36_501 })).toBe(false);
     expect(refused({ id: "half", deleteAfterDays: 1.5 })).toBe(false);
     expect(refused({ id: "-starts-badly", deleteAfterDays: 1 })).toBe(false);
+    // With "appflare:" before it, the id on the bucket stays within 64 characters.
+    expect(refused({ id: "a".repeat(55), deleteAfterDays: 1 })).toBe(true);
+    const long = withResources({
+      r2: { FILES: { lifecycle: [{ id: "a".repeat(56), deleteAfterDays: 1 }] } },
+    });
+    expect(long.error?.issues[0]?.message).toBe(
+      'a rule id is 1 to 55 letters, digits, spaces and . _ -, starting with a letter or digit (Appflare puts "appflare:" before it on the bucket)',
+    );
     const twice = withResources({
       r2: {
         FILES: {
@@ -84,7 +96,7 @@ describe("resources.r2 lifecycle rules", () => {
         abortMultipartUploadsAfterDays: 3,
       }),
     ).toEqual({
-      id: "all",
+      id: "appflare:all",
       enabled: true,
       conditions: { prefix: "" },
       deleteObjectsTransition: { condition: { type: "Age", maxAge: 172_800 } },
@@ -94,24 +106,55 @@ describe("resources.r2 lifecycle rules", () => {
       ],
     });
     expect(r2LifecycleApiRule({ id: "tmp", prefix: "tmp/", deleteAfterDays: 1 })).toEqual({
-      id: "tmp",
+      id: "appflare:tmp",
       enabled: true,
       conditions: { prefix: "tmp/" },
       deleteObjectsTransition: { condition: { type: "Age", maxAge: 86_400 } },
     });
   });
 
+  const defaultRule = {
+    id: "Default Multipart Abort Rule",
+    enabled: true,
+    conditions: { prefix: "" },
+    abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 604_800 } },
+  };
+
   it("keeps the bucket's own rules and replaces one of a declared id, so setting twice changes nothing", () => {
-    const defaultRule = {
-      id: "Default Multipart Abort Rule",
-      enabled: true,
-      conditions: { prefix: "" },
-      abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 604_800 } },
-    };
     const declared = [{ id: "tmp", prefix: "tmp/", deleteAfterDays: 1 }];
     const once = mergeR2LifecycleRules([defaultRule], declared);
     expect(once).toEqual([defaultRule, r2LifecycleApiRule(declared[0] ?? { id: "x" })]);
     expect(mergeR2LifecycleRules(once, declared)).toEqual(once);
+  });
+
+  it("replaces only Appflare's own rules, where they stand, and never one added by hand", () => {
+    // Someone added a rule by hand named like a declared one, and one of their own.
+    const byHand = {
+      id: "tmp",
+      enabled: true,
+      conditions: { prefix: "tmp/" },
+      deleteObjectsTransition: { condition: { type: "Age", maxAge: 3_600 } },
+    };
+    const theirs = { ...byHand, id: "logs", conditions: { prefix: "logs/" } };
+    const earlier = r2LifecycleApiRule({ id: "tmp", prefix: "tmp/", deleteAfterDays: 1 });
+    const dropped = r2LifecycleApiRule({ id: "old", deleteAfterDays: 9 });
+    const declared = [
+      { id: "tmp", prefix: "tmp/", deleteAfterDays: 3 },
+      { id: "new", abortMultipartUploadsAfterDays: 2 },
+    ];
+    const merged = mergeR2LifecycleRules([defaultRule, earlier, byHand, dropped, theirs], declared);
+    expect(merged).toEqual([
+      defaultRule,
+      r2LifecycleApiRule({ id: "tmp", prefix: "tmp/", deleteAfterDays: 3 }),
+      byHand,
+      dropped,
+      theirs,
+      r2LifecycleApiRule({ id: "new", abortMultipartUploadsAfterDays: 2 }),
+    ]);
+    expect(mergeR2LifecycleRules(merged, declared)).toEqual(merged);
+    expect(undeclaredR2LifecycleRuleIds(merged, declared)).toEqual(["old"]);
+    expect(undeclaredR2LifecycleRuleIds(merged, [])).toEqual(["tmp", "old", "new"]);
+    expect(undeclaredR2LifecycleRuleIds([defaultRule, byHand, theirs], [])).toEqual([]);
   });
 
   it("is refused on a self-deploying entry", () => {

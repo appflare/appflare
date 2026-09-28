@@ -42,14 +42,19 @@ import {
 import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
-import { hyperdriveRollbackRefusal } from "./update/plan";
+import {
+  declaredLifecycleOf,
+  hyperdriveRollbackRefusal,
+  rollbackLifecycleWarnings,
+} from "./update/plan";
 
 /**
  * The `rollback` job: redeploys the Worker version a snapshot recorded, at
  * 100% of traffic, and puts the install's catalog state (version, manifest,
  * artifact) back to what it was when the snapshot was taken. D1 databases are
  * not touched: restoring data is a separate, explicit action on the install
- * page. The install is `updating` while the job runs and returns to
+ * page. Neither are the lifecycle rules an update put on an R2 bucket; the
+ * log names those the version it returns to does not declare. The install is `updating` while the job runs and returns to
  * `installed` whatever happens.
  */
 
@@ -322,6 +327,30 @@ export async function runRollback(ctx: JobContext): Promise<void> {
         snapshot.catalog_version ?? "the snapshot's version",
       );
       if (emailChange !== null) log.warn(emailChange);
+      // Lifecycle rules an update merged into a bucket stay: a rollback
+      // removes no rule, and the log names those the old version lacks.
+      const leaving = declaredLifecycleOf(install.manifest_json);
+      if (Object.keys(leaving.rules).length > 0) {
+        const bucketRows = await orm
+          .select({ binding: resources.binding, name: resources.name })
+          .from(resources)
+          .where(
+            and(
+              eq(resources.install_id, params.installId),
+              eq(resources.kind, "r2"),
+              isNull(resources.deleted_at),
+            ),
+          );
+        const warnings = rollbackLifecycleWarnings({
+          from: leaving,
+          to: declaredLifecycleOf(snapshot.manifest_json),
+          buckets: Object.fromEntries(
+            bucketRows.flatMap((r) => (r.binding === null ? [] : [[r.binding, r.name]])),
+          ),
+          toVersion: snapshot.catalog_version ?? "the snapshot's version",
+        });
+        for (const warning of warnings) log.warn(warning);
+      }
       const sameCode = snapshotHasSameCode(
         { catalogVersion: snapshot.catalog_version, artifactDigest: snapshot.artifact_digest },
         { catalogVersion: install.catalog_version, artifactDigest: install.artifact_digest },

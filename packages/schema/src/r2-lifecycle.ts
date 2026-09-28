@@ -2,8 +2,9 @@ import { z } from "zod";
 
 /**
  * Lifecycle rules for the R2 buckets an app binds (`resources.r2[binding]`),
- * which the manager sets when it creates the bucket: an app that keeps
- * uploads for a while, or temporary files, says how long, and the bucket
+ * which the manager sets when it creates the bucket, and on an update to a
+ * version that declares them for a bucket the app already has: an app that
+ * keeps uploads for a while, or temporary files, says how long, and the bucket
  * deletes them on its own. Wrangler's config has no place for them
  * (`wrangler r2 bucket lifecycle add` sets them on a bucket that exists).
  *
@@ -21,13 +22,43 @@ export const MAX_R2_LIFECYCLE_RULES = 20;
 /** The longest age a rule may give, in days (100 years). */
 export const MAX_R2_LIFECYCLE_DAYS = 36_500;
 
-/** A rule id: what the bucket's settings show for it. */
-export const R2_LIFECYCLE_RULE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
+/**
+ * What the id of every rule Appflare puts on a bucket starts with: the
+ * declared rule `tmp` is the bucket's rule `appflare:tmp`. Appflare replaces
+ * only rules of its own ids, so a rule someone added to the bucket by hand is
+ * never replaced, even one named like a declared rule. A declared id cannot
+ * contain `:`, so no declared id looks like a prefixed one.
+ */
+export const R2_MANAGED_LIFECYCLE_RULE_PREFIX = "appflare:";
+
+/**
+ * The longest id of a rule on the bucket, prefix included. Cloudflare's API
+ * schema gives rule ids no limit, and none is documented; 64 characters is a
+ * conservative bound, well inside S3's 255 for the same field.
+ */
+export const MAX_R2_LIFECYCLE_BUCKET_RULE_ID_LENGTH = 64;
+
+/** The longest declared rule id: what is left of the bound after the prefix. */
+export const MAX_R2_LIFECYCLE_RULE_ID_LENGTH =
+  MAX_R2_LIFECYCLE_BUCKET_RULE_ID_LENGTH - R2_MANAGED_LIFECYCLE_RULE_PREFIX.length;
+
+/**
+ * A declared rule id. The bucket's settings show it after
+ * {@link R2_MANAGED_LIFECYCLE_RULE_PREFIX}.
+ */
+export const R2_LIFECYCLE_RULE_ID_PATTERN = new RegExp(
+  `^[A-Za-z0-9][A-Za-z0-9 ._-]{0,${MAX_R2_LIFECYCLE_RULE_ID_LENGTH - 1}}$`,
+);
+
+/** The id a declared rule has on the bucket. */
+export function managedR2LifecycleRuleId(declaredId: string): string {
+  return `${R2_MANAGED_LIFECYCLE_RULE_PREFIX}${declaredId}`;
+}
 
 /**
  * The id of the rule Cloudflare gives every new bucket (abort multipart
  * uploads after seven days). The manager keeps it; a declared rule of that
- * id would replace it without a word, so the schema refuses the id.
+ * name would read as a change to it, so the schema refuses the id.
  */
 export const R2_DEFAULT_LIFECYCLE_RULE_ID = "Default Multipart Abort Rule";
 
@@ -45,7 +76,7 @@ export const r2LifecycleRuleSchema = z
       .string()
       .regex(
         R2_LIFECYCLE_RULE_ID_PATTERN,
-        "a rule id is 1 to 64 letters, digits, spaces and . _ -, starting with a letter or digit",
+        `a rule id is 1 to ${MAX_R2_LIFECYCLE_RULE_ID_LENGTH} letters, digits, spaces and . _ -, starting with a letter or digit (Appflare puts "${R2_MANAGED_LIFECYCLE_RULE_PREFIX}" before it on the bucket)`,
       )
       .refine(
         (id) => id !== R2_DEFAULT_LIFECYCLE_RULE_ID,
@@ -107,8 +138,10 @@ export const catalogR2BucketSchema = z.object({
       });
     })
     .describe(
-      "Lifecycle rules Appflare sets on the bucket when it creates it, beside Cloudflare's default " +
-        `rule for unfinished multipart uploads. At most ${MAX_R2_LIFECYCLE_RULES}, each with a unique id.`,
+      "Lifecycle rules Appflare sets on the bucket when it creates it, and when an update declares " +
+        "them for a bucket the app already has, beside Cloudflare's default rule for unfinished " +
+        "multipart uploads and any rule added by hand. On the bucket each id starts with `appflare:`. " +
+        `At most ${MAX_R2_LIFECYCLE_RULES}, each with a unique id.`,
     ),
 });
 export type CatalogR2Bucket = z.infer<typeof catalogR2BucketSchema>;
@@ -135,12 +168,13 @@ const DAY_SECONDS = 86_400;
 /**
  * A declared rule in the API's shape, as `wrangler r2 bucket lifecycle add`
  * (wrangler 4.136.2) builds one: ages in seconds, `type: "Age"`, and an
- * empty prefix for a rule over every object, which the API documents.
+ * empty prefix for a rule over every object, which the API documents. Its id
+ * starts with {@link R2_MANAGED_LIFECYCLE_RULE_PREFIX}.
  */
 export function r2LifecycleApiRule(rule: R2LifecycleRule): R2LifecycleApiRule {
   const age = (d: number) => ({ condition: { type: "Age" as const, maxAge: d * DAY_SECONDS } });
   return {
-    id: rule.id,
+    id: managedR2LifecycleRuleId(rule.id),
     enabled: true,
     conditions: { prefix: rule.prefix ?? "" },
     ...(rule.deleteAfterDays === undefined
@@ -159,21 +193,63 @@ export function r2LifecycleApiRule(rule: R2LifecycleRule): R2LifecycleApiRule {
   };
 }
 
+/** A rule's id, or undefined for a rule without a string id. */
+function ruleId(rule: unknown): string | undefined {
+  const id = typeof rule === "object" && rule !== null ? (rule as { id?: unknown }).id : undefined;
+  return typeof id === "string" ? id : undefined;
+}
+
 /**
- * The rules to put on a bucket: the ones it has (Cloudflare gives a new
- * bucket a rule that aborts multipart uploads after seven days), then the
- * declared ones. A rule it has under a declared rule's id is replaced, so
- * setting them again changes nothing.
+ * The rules to put on a bucket: the ones it has, in their order, with the
+ * rule of each declared rule's id replaced where it stands, then the declared
+ * rules it does not have yet. Only Appflare's own ids are replaced
+ * ({@link R2_MANAGED_LIFECYCLE_RULE_PREFIX}), so Cloudflare's default rule
+ * for unfinished multipart uploads (a new bucket has it) and every rule added
+ * by hand stay as they are, and so does a rule Appflare set that the
+ * declaration no longer has. Merging the result again changes nothing.
  */
 export function mergeR2LifecycleRules(
   existing: readonly unknown[],
   declared: readonly R2LifecycleRule[],
 ): unknown[] {
-  const ids = new Set(declared.map((r) => r.id));
-  const kept = existing.filter((rule) => {
-    const id =
-      typeof rule === "object" && rule !== null ? (rule as { id?: unknown }).id : undefined;
-    return typeof id !== "string" || !ids.has(id);
-  });
-  return [...kept, ...declared.map(r2LifecycleApiRule)];
+  const wanted = new Map(
+    declared.map((rule) => [managedR2LifecycleRuleId(rule.id), r2LifecycleApiRule(rule)]),
+  );
+  const placed = new Set<string>();
+  const merged: unknown[] = [];
+  for (const rule of existing) {
+    const id = ruleId(rule);
+    const replacement = id === undefined ? undefined : wanted.get(id);
+    if (id === undefined || replacement === undefined) {
+      merged.push(rule);
+    } else if (!placed.has(id)) {
+      // A second rule of one id, which a bucket should never hold, is dropped.
+      placed.add(id);
+      merged.push(replacement);
+    }
+  }
+  for (const [id, rule] of wanted) if (!placed.has(id)) merged.push(rule);
+  return merged;
+}
+
+/**
+ * The declared ids of the rules Appflare set on a bucket that `declared` no
+ * longer has (a later version dropped them), in the bucket's order. Nothing
+ * removes them from the bucket.
+ */
+export function undeclaredR2LifecycleRuleIds(
+  existing: readonly unknown[],
+  declared: readonly R2LifecycleRule[],
+): string[] {
+  const wanted = new Set(declared.map((rule) => managedR2LifecycleRuleId(rule.id)));
+  const found: string[] = [];
+  for (const rule of existing) {
+    const id = ruleId(rule);
+    if (id === undefined || !id.startsWith(R2_MANAGED_LIFECYCLE_RULE_PREFIX) || wanted.has(id)) {
+      continue;
+    }
+    const declaredId = id.slice(R2_MANAGED_LIFECYCLE_RULE_PREFIX.length);
+    if (!found.includes(declaredId)) found.push(declaredId);
+  }
+  return found;
 }

@@ -345,9 +345,23 @@ Points that need care:
   object when it has no `prefix`. The manager sets the rules when it creates the
   bucket and keeps Cloudflare's default rule (`Default Multipart Abort Rule`, which
   aborts unfinished multipart uploads after seven days), so that id is refused for a
-  rule of the app's own. Buckets
-  and indexes an earlier version already created keep the settings they have. An
-  artifact with either setting needs a manager that reads format 6.
+  rule of the app's own. On the bucket, each rule's id starts with `appflare:`
+  (`appflare:Delete temporary files`), which keeps it apart from rules added by hand;
+  a declared id is at most 55 characters, so that the id on the bucket stays within
+  64. A later version's settings also reach an index or bucket an earlier version
+  created. An update creates the metadata indexes the index lacks before the new
+  version runs, and warns that vectors written before then are found by a filter on
+  that property only once the app writes them again. It merges the declared rules
+  into the bucket's by id, replacing only its own `appflare:` rules, and only once
+  the new version serves: an update that fails before then leaves the bucket's rules
+  as they were, so a rule that deletes objects never reaches a bucket the previous
+  version still uses. An update never deletes a metadata index or removes a rule,
+  not even one a later version no longer declares; its log names such a rule, which
+  the admin can delete in the bucket's settings. A rollback does not change a
+  bucket's rules either: the rules of the version it leaves stay and keep deleting
+  or moving objects, and the rollback's log names each rule the version it returns
+  to does not declare. An artifact with either setting needs a manager that reads
+  format 6.
 - **Databases elsewhere.** An app that keeps its data in PostgreSQL or MySQL outside
   Cloudflare binds it through Hyperdrive. Declare each Hyperdrive binding of the
   wrangler config under `resources.hyperdrive`, for example

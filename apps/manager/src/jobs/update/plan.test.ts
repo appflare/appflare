@@ -8,6 +8,7 @@ import {
   boundHyperdriveIds,
   canarySkipReason,
   cronChanges,
+  declaredLifecycleOf,
   diffBindings,
   droppedDurableObjectExportsProblem,
   durableObjectMigrationsSince,
@@ -23,6 +24,7 @@ import {
   pipelineShapesOf,
   previewUrl,
   type RecordedResource,
+  rollbackLifecycleWarnings,
   snapshotRow,
   updatePath,
   updateRefusal,
@@ -175,6 +177,86 @@ describe("diffBindings", () => {
     const diff = diffBindings("cut", [{ type: "mtls_certificate", name: "CERT" }], []);
     expect(diff.problems).toEqual([
       'Binding CERT has type "mtls_certificate", which Appflare cannot install yet.',
+    ]);
+  });
+
+  it("lists kept indexes and buckets whose settings this version or the installed one declares", () => {
+    const metadataIndexes = [{ propertyName: "url", type: "string" as const }];
+    const lifecycle = [{ id: "tmp", deleteAfterDays: 1 }];
+    const kept = [
+      row({ kind: "vectorize", binding: "V", name: "old-v", cfId: "old-v" }),
+      row({ kind: "vectorize", binding: "PLAIN_V", name: "old-plain-v", cfId: "old-plain-v" }),
+      row({ kind: "r2", binding: "FILES", name: "old-files", cfId: "old-files" }),
+      row({ kind: "r2", binding: "DROPPED", name: "old-dropped", cfId: "old-dropped" }),
+      row({ kind: "r2", binding: "PLAIN", name: "old-plain", cfId: "old-plain" }),
+    ];
+    const diff = diffBindings(
+      "cut",
+      [
+        { type: "vectorize", name: "V", dimensions: 3, metric: "cosine", metadataIndexes },
+        { type: "vectorize", name: "PLAIN_V", dimensions: 3, metric: "cosine" },
+        { type: "vectorize", name: "NEW_V", dimensions: 3, metric: "cosine", metadataIndexes },
+        { type: "r2_bucket", name: "FILES", lifecycle },
+        { type: "r2_bucket", name: "DROPPED" },
+        { type: "r2_bucket", name: "PLAIN" },
+      ],
+      kept,
+      {},
+      [],
+      {},
+      {},
+      ["DROPPED", "GONE"],
+    );
+    expect(diff.problems).toEqual([]);
+    // Under the recorded names; a new index gets its settings when it is created.
+    expect(
+      diff.toConfigure.map(({ res, previouslyDeclared }) => [
+        res.binding,
+        res.name,
+        previouslyDeclared,
+      ]),
+    ).toEqual([
+      ["V", "old-v", false],
+      ["FILES", "old-files", false],
+      ["DROPPED", "old-dropped", true],
+    ]);
+    expect(diff.toCreate.map((r) => r.binding)).toEqual(["NEW_V"]);
+  });
+
+  it("reads the lifecycle rules a stored manifest declares, each bucket on its own", () => {
+    const manifest = (r2: unknown) => JSON.stringify({ catalog: { resources: { r2 } } });
+    const tmp = { id: "tmp", deleteAfterDays: 1 };
+    // A bucket that does not parse hides only itself, and is named.
+    expect(declaredLifecycleOf(manifest({ FILES: { lifecycle: [tmp] }, OTHER: {} }))).toEqual({
+      rules: { FILES: [tmp] },
+      unreadable: ["OTHER"],
+    });
+    const none = { rules: {}, unreadable: [] };
+    expect(declaredLifecycleOf(JSON.stringify({ catalog: {} }))).toEqual(none);
+    expect(declaredLifecycleOf(manifest([]))).toEqual(none);
+    expect(declaredLifecycleOf("{not json")).toEqual(none);
+    expect(declaredLifecycleOf(null)).toEqual(none);
+  });
+
+  it("tells a rollback which rules stay on which bucket", () => {
+    const keep = { id: "keep", deleteAfterDays: 7 };
+    const warnings = rollbackLifecycleWarnings({
+      from: {
+        rules: {
+          FILES: [keep, { id: "a", deleteAfterDays: 1 }, { id: "b", deleteAfterDays: 2 }],
+          CHANGED: [{ id: "keep", deleteAfterDays: 9 }],
+          SAME: [keep],
+          UNRECORDED: [keep],
+        },
+        unreadable: [],
+      },
+      to: { rules: { FILES: [keep], CHANGED: [keep], SAME: [keep] }, unreadable: [] },
+      buckets: { FILES: "cut-files", CHANGED: "cut-changed", SAME: "cut-same" },
+      toVersion: "1.0.0",
+    });
+    expect(warnings).toEqual([
+      'The lifecycle rules "appflare:a", "appflare:b" on R2 bucket "cut-files" stay: a rollback does not change a bucket\'s rules, and version 1.0.0 does not declare them this way. They go on deleting or moving objects as they say; delete them in the bucket\'s settings if the app should not have them.',
+      'The lifecycle rule "appflare:keep" on R2 bucket "cut-changed" stays: a rollback does not change a bucket\'s rules, and version 1.0.0 does not declare it this way. It goes on deleting or moving objects as it says; delete it in the bucket\'s settings if the app should not have it.',
     ]);
   });
 

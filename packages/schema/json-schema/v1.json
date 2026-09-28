@@ -3110,7 +3110,7 @@
                   "properties": {
                     "id": {
                       "type": "string",
-                      "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,54}$",
                       "not": {
                         "const": "Default Multipart Abort Rule"
                       },
@@ -3163,7 +3163,7 @@
                     }
                   ]
                 },
-                "description": "Lifecycle rules Appflare sets on the bucket when it creates it, beside Cloudflare's default rule for unfinished multipart uploads. At most 20, each with a unique id."
+                "description": "Lifecycle rules Appflare sets on the bucket when it creates it, and when an update declares them for a bucket the app already has, beside Cloudflare's default rule for unfinished multipart uploads and any rule added by hand. On the bucket each id starts with `appflare:`. At most 20, each with a unique id."
               }
             },
             "required": [

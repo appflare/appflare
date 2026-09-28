@@ -318,6 +318,46 @@ describe("rollback job", () => {
     expect(exportConsumer?.deleted_at).not.toBeNull();
   });
 
+  it("leaves the lifecycle rules an update set on a bucket, and names them in its log", async () => {
+    const withRules = (version: string, lifecycle: unknown[]) =>
+      JSON.stringify({
+        version,
+        worker: { migrations: [] },
+        catalog: { resources: { r2: { FILES: { lifecycle } } } },
+      });
+    const keep = { id: "keep", prefix: "logs/", deleteAfterDays: 7 };
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?1 WHERE id = ?2")
+      .bind(
+        withRules("1.1.0", [keep, { id: "uploads", prefix: "uploads/", deleteAfterDays: 30 }]),
+        INSTALL_ID,
+      )
+      .run();
+    await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+      .bind(withRules("1.0.0", [keep]))
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at) VALUES
+       ('i1:r2:FILES', ?1, 'r2', 'FILES', 'cut-files', 'cut-files', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    const r = await rollback();
+    expect(r.job).toMatchObject({ status: "succeeded", error: null });
+    // Nothing reads or writes the bucket's rules.
+    expect(r.fake.state.calls.filter((c) => c.includes("/lifecycle"))).toEqual([]);
+    const logs = (
+      await env.DB.prepare(
+        "SELECT level, message FROM job_logs WHERE job_id = 'rb1' ORDER BY id",
+      ).all<{ level: string; message: string }>()
+    ).results;
+    expect(logs).toContainEqual({
+      level: "warn",
+      message:
+        'The lifecycle rule "appflare:uploads" on R2 bucket "cut-files" stays: a rollback does not change a bucket\'s rules, and version 1.0.0 does not declare it this way. It goes on deleting or moving objects as it says; delete it in the bucket\'s settings if the app should not have it.',
+    });
+    expect(logs.filter((l) => l.message.includes("appflare:keep"))).toEqual([]);
+  });
+
   it("records a Worker it cannot reach after the rollback without failing", async () => {
     const r = await rollback({ health: [{ status: 404, body: "error code: 1042" }] });
     expect(r.error).toBeNull();

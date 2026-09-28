@@ -19,7 +19,14 @@ import {
   buildArtifactFixture,
   ZIP_URL,
 } from "../test/artifact-fixture";
-import { type FakeAccount, fakeAccount, NEW_VERSION, SUBDOMAIN, TOKEN } from "../test/fake-account";
+import {
+  DEFAULT_MULTIPART_RULE,
+  type FakeAccount,
+  fakeAccount,
+  NEW_VERSION,
+  SUBDOMAIN,
+  TOKEN,
+} from "../test/fake-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
 import {
@@ -1191,6 +1198,324 @@ describe("update job", () => {
     expect(r.step.names).not.toContain("read current deployment");
     expect(r.fake.state.calls).toEqual([]);
     expect(r.snapshot).toBeNull();
+  });
+
+  describe("settings of a kept Vectorize index and R2 bucket", () => {
+    const INDEX = {
+      kind: "vectorize",
+      binding: "VECTORIZE",
+      name: "cut-vectorize",
+      cfId: "cut-vectorize",
+    };
+    const BUCKET = { kind: "r2", binding: "FILES", name: "cut-files", cfId: "cut-files" };
+    const indexBinding = (metadataIndexes?: Array<{ propertyName: string; type: "string" }>) => ({
+      type: "vectorize" as const,
+      name: "VECTORIZE",
+      dimensions: 3,
+      metric: "cosine" as const,
+      ...(metadataIndexes === undefined ? {} : { metadataIndexes }),
+    });
+    const withIndex = (
+      metadataIndexes: Array<{ propertyName: string; type: "string" }>,
+    ): ArtifactFixtureOptions => ({
+      ...NEW_APP,
+      bindings: [...(NEW_APP.bindings ?? []), indexBinding(metadataIndexes)],
+      catalog: {
+        resources: {
+          vectorize: { VECTORIZE: { dimensions: 3, metric: "cosine", metadataIndexes } },
+        },
+      },
+    });
+    const indexSeed = {
+      resources: [...RESOURCES, INDEX],
+      manifestJson: JSON.stringify({
+        version: "1.0.0",
+        worker: { migrations: [], bindings: [indexBinding()] },
+      }),
+    };
+    type Rule = { id: string; prefix?: string; deleteAfterDays: number };
+    const withBucket = (lifecycle: Rule[] | undefined): ArtifactFixtureOptions => ({
+      ...NEW_APP,
+      bindings: [
+        ...(NEW_APP.bindings ?? []),
+        { type: "r2_bucket", name: "FILES", ...(lifecycle === undefined ? {} : { lifecycle }) },
+      ],
+      catalog: lifecycle === undefined ? {} : { resources: { r2: { FILES: { lifecycle } } } },
+    });
+    const bucketSeed = (installed: Rule[] | undefined) => ({
+      resources: [...RESOURCES, BUCKET],
+      manifestJson: JSON.stringify({
+        version: "1.0.0",
+        worker: { migrations: [], bindings: [{ type: "r2_bucket", name: "FILES" }] },
+        catalog:
+          installed === undefined ? {} : { resources: { r2: { FILES: { lifecycle: installed } } } },
+      }),
+    });
+    const apiRule = (id: string, prefix: string, days: number) => ({
+      id,
+      enabled: true,
+      conditions: { prefix },
+      deleteObjectsTransition: { condition: { type: "Age", maxAge: days * 86_400 } },
+    });
+    const CREATE_URL = "POST /vectorize/v2/indexes/cut-vectorize/metadata_index/create";
+    const PUT_RULES = "PUT /r2/buckets/cut-files/lifecycle";
+
+    it("creates only the metadata indexes a kept index lacks, before the upload, and deletes none", async () => {
+      const r = await update(
+        withIndex([
+          { propertyName: "url", type: "string" },
+          { propertyName: "lang", type: "string" },
+        ]),
+        // The index has "url" from an earlier version and "author", made by hand.
+        {
+          metadataIndexes: {
+            "cut-vectorize": [
+              { propertyName: "url", indexType: "string" },
+              { propertyName: "author", indexType: "string" },
+            ],
+          },
+        },
+        indexSeed,
+      );
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.calls.filter((c) => c === CREATE_URL)).toHaveLength(1);
+      expect(r.fake.state.metadataIndexes["cut-vectorize"]).toEqual([
+        { propertyName: "url", indexType: "string" },
+        { propertyName: "author", indexType: "string" },
+        { propertyName: "lang", indexType: "string" },
+      ]);
+      const at = (name: string) => r.step.names.indexOf(name);
+      expect(at("record snapshot")).toBeLessThan(
+        at("list metadata indexes of Vectorize index cut-vectorize"),
+      );
+      expect(at("list metadata indexes of Vectorize index cut-vectorize")).toBeLessThan(
+        at("create metadata index lang on Vectorize index cut-vectorize"),
+      );
+      expect(at("create metadata index lang on Vectorize index cut-vectorize")).toBeLessThan(
+        at("upload Worker version"),
+      );
+      expect(r.step.names).not.toContain(
+        "create metadata index url on Vectorize index cut-vectorize",
+      );
+      expect(r.logs).toContainEqual(
+        expect.objectContaining({
+          level: "warn",
+          message:
+            'Vectors written to "cut-vectorize" before a metadata index exists are not indexed by it, so a query that filters on "lang" finds only vectors written from now on. The app has to write the older vectors again (an upsert of the same ids) for such queries to find them.',
+        }),
+      );
+      expect(r.logs.map((l) => l.message)).toContain(
+        'Created a string metadata index on "lang" for Vectorize index "cut-vectorize".',
+      );
+    });
+
+    it("creates nothing and warns of nothing when the index has every declared metadata index", async () => {
+      const r = await update(
+        withIndex([{ propertyName: "url", type: "string" }]),
+        { metadataIndexes: { "cut-vectorize": [{ propertyName: "url", indexType: "string" }] } },
+        indexSeed,
+      );
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.calls).not.toContain(CREATE_URL);
+      expect(r.logs.map((l) => l.message)).toContain(
+        'Vectorize index "cut-vectorize" already has the metadata indexes this version declares.',
+      );
+      expect(r.logs.some((l) => l.message.startsWith("Vectors written"))).toBe(false);
+    });
+
+    it("retries a metadata index whose answer was lost without creating it twice", async () => {
+      const r = await update(
+        withIndex([{ propertyName: "url", type: "string" }]),
+        { failAfter: new Set([CREATE_URL]) },
+        indexSeed,
+      );
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.step.retried["create metadata index url on Vectorize index cut-vectorize"]).toBe(2);
+      expect(r.fake.state.metadataIndexes["cut-vectorize"]).toEqual([
+        { propertyName: "url", indexType: "string" },
+      ]);
+      expect(r.logs.map((l) => l.message)).toContain(
+        'The metadata index on "url" an earlier attempt created is there.',
+      );
+    });
+
+    it("refuses before creating any when the index would pass Cloudflare's ten", async () => {
+      const handMade = Array.from({ length: 10 }, (_, i) => ({
+        propertyName: `p${i}`,
+        indexType: "string",
+      }));
+      const r = await update(
+        withIndex([{ propertyName: "url", type: "string" }]),
+        { metadataIndexes: { "cut-vectorize": handMade } },
+        indexSeed,
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.job?.error).toBe(
+        'list metadata indexes of Vectorize index cut-vectorize: Vectorize index "cut-vectorize" has 10 metadata indexes and this version needs 1 more ("url"), but Cloudflare allows 10 on an index. Delete the ones the app no longer filters on (wrangler vectorize delete-metadata-index), then update again',
+      );
+      expect(r.fake.state.calls).not.toContain(CREATE_URL);
+      expect(r.step.names).not.toContain("upload Worker version");
+    });
+
+    it("merges lifecycle rules into a kept bucket, keeping Cloudflare's rule, rules made by hand, and dropped ones", async () => {
+      const byHand = apiRule("tmp", "tmp/", 30);
+      const r = await update(
+        withBucket([
+          { id: "tmp", prefix: "tmp/", deleteAfterDays: 2 },
+          { id: "exports", prefix: "exports/", deleteAfterDays: 7 },
+        ]),
+        {
+          lifecycle: {
+            "cut-files": [
+              DEFAULT_MULTIPART_RULE,
+              byHand,
+              apiRule("appflare:tmp", "tmp/", 1),
+              apiRule("appflare:old", "old/", 5),
+            ],
+          },
+        },
+        bucketSeed([
+          { id: "tmp", prefix: "tmp/", deleteAfterDays: 1 },
+          { id: "old", prefix: "old/", deleteAfterDays: 5 },
+        ]),
+      );
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.lifecycle["cut-files"]).toEqual([
+        DEFAULT_MULTIPART_RULE,
+        byHand,
+        apiRule("appflare:tmp", "tmp/", 2),
+        apiRule("appflare:old", "old/", 5),
+        apiRule("appflare:exports", "exports/", 7),
+      ]);
+      const at = (name: string) => r.step.names.indexOf(name);
+      // Only once the new version serves.
+      expect(at("promote version")).toBeGreaterThan(-1);
+      expect(at("promote version")).toBeLessThan(at("read lifecycle rules of R2 bucket cut-files"));
+      expect(r.logs).toContainEqual(
+        expect.objectContaining({
+          level: "warn",
+          message:
+            'This version no longer declares the lifecycle rule "old" that Appflare set on R2 bucket "cut-files" for an earlier version. Appflare never removes a rule, so it stays (as "appflare:old"); delete it in the bucket\'s settings if the app no longer needs it.',
+        }),
+      );
+      expect(r.logs.map((l) => l.message)).toContain(
+        'Set the lifecycle rules "tmp" and "exports" on R2 bucket "cut-files" (shown there as "appflare:tmp" and "appflare:exports"), keeping its 3 other rules.',
+      );
+    });
+
+    it("puts the same rules again when the answer to the write was lost", async () => {
+      const r = await update(
+        withBucket([{ id: "tmp", prefix: "tmp/", deleteAfterDays: 1 }]),
+        { failAfter: new Set([PUT_RULES]) },
+        bucketSeed(undefined),
+      );
+      expect(r.error).toBeNull();
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.step.retried["set lifecycle rules of R2 bucket cut-files"]).toBe(2);
+      expect(r.fake.state.lifecycle["cut-files"]).toEqual([
+        DEFAULT_MULTIPART_RULE,
+        apiRule("appflare:tmp", "tmp/", 1),
+      ]);
+    });
+
+    it("leaves the bucket's rules alone when the update fails before the new version serves", async () => {
+      const rules = [DEFAULT_MULTIPART_RULE];
+      const r = await update(
+        withBucket([{ id: "uploads", prefix: "uploads/", deleteAfterDays: 30 }]),
+        { previews: [{ status: 500, body: "boom" }], lifecycle: { "cut-files": [...rules] } },
+        bucketSeed(undefined),
+      );
+      expect(r.job?.status).toBe("failed");
+      expect(r.fake.state.calls.filter((c) => c.includes("/lifecycle"))).toEqual([]);
+      expect(r.fake.state.lifecycle["cut-files"]).toEqual(rules);
+    });
+
+    it("writes nothing when Cloudflare answers the same rules in its own spelling", async () => {
+      // Keys in another order, no empty prefix, an empty list, and the rules in another order.
+      const r = await update(
+        withBucket([
+          { id: "all", deleteAfterDays: 3 },
+          { id: "tmp", prefix: "tmp/", deleteAfterDays: 1 },
+        ]),
+        {
+          lifecycle: {
+            "cut-files": [
+              {
+                deleteObjectsTransition: { condition: { maxAge: 86_400, type: "Age" } },
+                conditions: { prefix: "tmp/" },
+                enabled: true,
+                id: "appflare:tmp",
+                storageClassTransitions: [],
+              },
+              {
+                id: "appflare:all",
+                enabled: true,
+                conditions: {},
+                deleteObjectsTransition: { condition: { type: "Age", maxAge: 259_200 } },
+              },
+              {
+                abortMultipartUploadsTransition: { condition: { maxAge: 604_800, type: "Age" } },
+                enabled: true,
+                id: "Default Multipart Abort Rule",
+              },
+            ],
+          },
+        },
+        bucketSeed([{ id: "tmp", prefix: "tmp/", deleteAfterDays: 1 }]),
+      );
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.calls).toContain("GET /r2/buckets/cut-files/lifecycle");
+      expect(r.fake.state.calls).not.toContain(PUT_RULES);
+      expect(r.logs.map((l) => l.message)).toContain(
+        'R2 bucket "cut-files" already has the lifecycle rules "all" and "tmp" as this version declares them.',
+      );
+    });
+
+    it("writes nothing when the bucket already has the declared rules", async () => {
+      const r = await update(
+        withBucket([{ id: "tmp", prefix: "tmp/", deleteAfterDays: 1 }]),
+        {
+          lifecycle: {
+            "cut-files": [DEFAULT_MULTIPART_RULE, apiRule("appflare:tmp", "tmp/", 1)],
+          },
+        },
+        bucketSeed([{ id: "tmp", prefix: "tmp/", deleteAfterDays: 1 }]),
+      );
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.calls).not.toContain(PUT_RULES);
+      expect(r.step.names).not.toContain("set lifecycle rules of R2 bucket cut-files");
+      expect(r.logs.map((l) => l.message)).toContain(
+        'R2 bucket "cut-files" already has the lifecycle rule "tmp" as this version declares it.',
+      );
+    });
+
+    it("leaves the rules of an earlier version when this one declares none, and says so", async () => {
+      const rules = [DEFAULT_MULTIPART_RULE, apiRule("appflare:tmp", "tmp/", 1)];
+      const r = await update(
+        withBucket(undefined),
+        { lifecycle: { "cut-files": [...rules] } },
+        bucketSeed([{ id: "tmp", prefix: "tmp/", deleteAfterDays: 1 }]),
+      );
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.calls).not.toContain(PUT_RULES);
+      expect(r.fake.state.lifecycle["cut-files"]).toEqual(rules);
+      expect(r.logs).toContainEqual(
+        expect.objectContaining({
+          level: "warn",
+          message:
+            'This version no longer declares the lifecycle rule "tmp" that Appflare set on R2 bucket "cut-files" for an earlier version. Appflare never removes a rule, so it stays (as "appflare:tmp"); delete it in the bucket\'s settings if the app no longer needs it.',
+        }),
+      );
+    });
+
+    it("does not read a kept bucket's rules when neither version declares any", async () => {
+      const r = await update(withBucket(undefined), {}, bucketSeed(undefined));
+      expect(r.job?.status).toBe("succeeded");
+      expect(r.fake.state.calls).not.toContain("GET /r2/buckets/cut-files/lifecycle");
+    });
   });
 
   describe("Pipelines streams", () => {

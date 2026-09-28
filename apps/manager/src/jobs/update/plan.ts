@@ -6,11 +6,15 @@ import {
   type CatalogPipelines,
   type CatalogSecret,
   catalogPipelinesSchema,
+  catalogR2BucketSchema,
   type DoMigration,
   durableObjectExports,
   hasDurableObjectExports,
   isOptionalSecret,
   isSeedOnly,
+  managedR2LifecycleRuleId,
+  type R2LifecycleRule,
+  r2LifecycleApiRule,
   sameDurableObjectExports,
   type VectorizeIndexConfig,
   vectorizeBindingSchema,
@@ -77,6 +81,13 @@ export interface BindingDiff {
   existing: CreatedResource[];
   /** Bindings new in this version: their resources are created before the upload. */
   toCreate: ResourceBindingPlan[];
+  /**
+   * Kept Vectorize indexes and R2 buckets whose settings the job brings up to
+   * this version before the upload, under their recorded names: indexes this
+   * version declares metadata indexes for, and buckets it declares lifecycle
+   * rules for or the installed version did (`previouslyDeclared`).
+   */
+  toConfigure: Array<{ res: ResourceBindingPlan; previouslyDeclared: boolean }>;
   /** Workflow binding -> the account-wide Workflow name (recorded, or planned for new ones). */
   workflowNames: Record<string, string>;
   /** Workflows new in this version: their names must be free. */
@@ -126,6 +137,77 @@ export function vectorizeShapesOf(
     }
   }
   return shapes;
+}
+
+/** The lifecycle rules a stored manifest's catalog manifest declares, by R2 binding. */
+export interface DeclaredLifecycle {
+  rules: Record<string, R2LifecycleRule[]>;
+  /** Bindings whose `resources.r2` entry does not parse: their rules are not known. */
+  unreadable: string[];
+}
+
+/**
+ * The lifecycle rules the catalog manifest of a stored artifact manifest
+ * declares, by R2 binding. Each bucket is read on its own, so one that does
+ * not parse hides only itself and is named in `unreadable`. A manifest that
+ * does not parse, or declares none, contributes nothing.
+ */
+export function declaredLifecycleOf(manifestJson: string | null): DeclaredLifecycle {
+  const out: DeclaredLifecycle = { rules: {}, unreadable: [] };
+  if (manifestJson === null) return out;
+  let declared: unknown;
+  try {
+    declared = (JSON.parse(manifestJson) as { catalog?: { resources?: { r2?: unknown } } }).catalog
+      ?.resources?.r2;
+  } catch {
+    return out;
+  }
+  if (typeof declared !== "object" || declared === null || Array.isArray(declared)) return out;
+  for (const [binding, bucket] of Object.entries(declared)) {
+    const parsed = catalogR2BucketSchema.safeParse(bucket);
+    if (!parsed.success) out.unreadable.push(binding);
+    else if (parsed.data.lifecycle.length > 0) out.rules[binding] = parsed.data.lifecycle;
+  }
+  return out;
+}
+
+/**
+ * What a rollback's log says about lifecycle rules. A rollback never changes
+ * a bucket's rules, so each rule the version it leaves declares, and the
+ * version it returns to does not (or declares otherwise), stays on the
+ * bucket and goes on deleting or moving objects. One message per bucket;
+ * none when both versions declare the same rules. `buckets` maps R2
+ * bindings to the install's bucket names.
+ */
+export function rollbackLifecycleWarnings(input: {
+  from: DeclaredLifecycle;
+  to: DeclaredLifecycle;
+  buckets: Readonly<Record<string, string>>;
+  toVersion: string;
+}): string[] {
+  const same = (a: R2LifecycleRule, b: R2LifecycleRule | undefined) =>
+    b !== undefined &&
+    JSON.stringify(r2LifecycleApiRule(a)) === JSON.stringify(r2LifecycleApiRule(b));
+  const warnings: string[] = [];
+  for (const [binding, rules] of Object.entries(input.from.rules)) {
+    const bucket = Object.hasOwn(input.buckets, binding) ? input.buckets[binding] : undefined;
+    if (bucket === undefined) continue;
+    const then = Object.hasOwn(input.to.rules, binding) ? (input.to.rules[binding] ?? []) : [];
+    const staying = rules.filter(
+      (rule) =>
+        !same(
+          rule,
+          then.find((r) => r.id === rule.id),
+        ),
+    );
+    if (staying.length === 0) continue;
+    const ids = staying.map((rule) => `"${managedR2LifecycleRuleId(rule.id)}"`).join(", ");
+    const one = staying.length === 1;
+    warnings.push(
+      `The lifecycle ${one ? "rule" : "rules"} ${ids} on R2 bucket "${bucket}" ${one ? "stays" : "stay"}: a rollback does not change a bucket's rules, and version ${input.toVersion} does not declare ${one ? "it" : "them"} this way. ${one ? "It goes" : "They go"} on deleting or moving objects as ${one ? "it says" : "they say"}; delete ${one ? "it" : "them"} in the bucket's settings if the app should not have ${one ? "it" : "them"}.`,
+    );
+  }
+  return warnings;
 }
 
 /** What of a stream the install created cannot change: its schema and where its sink writes. */
@@ -195,7 +277,9 @@ export function pipelineShapeChange(was: PipelineShape, now: CatalogPipeline): s
  * refused: replacing it would mean deleting or orphaning data. So is a kept
  * Vectorize binding whose dimensions or metric differ from `installedShapes`
  * (the installed version's): an index cannot be reshaped in place, and every
- * write the new version makes to the old index would fail.
+ * write the new version makes to the old index would fail. A kept index or
+ * bucket whose settings the job may have to bring up to this version is
+ * listed in `toConfigure`.
  */
 export function diffBindings(
   workerName: string,
@@ -208,6 +292,8 @@ export function diffBindings(
   streams: CatalogPipelines = {},
   /** The installed version's `resources.pipelines` ({@link pipelineShapesOf}). */
   installedStreams: PipelineShapes = {},
+  /** R2 bindings the installed version declares lifecycle rules for ({@link declaredLifecycleOf}). */
+  installedLifecycle: readonly string[] = [],
 ): BindingDiff {
   const plan = planBindings(workerName, bindings, databases, streams);
   const byBinding = new Map<string, RecordedResource[]>();
@@ -219,6 +305,7 @@ export function diffBindings(
     plan,
     existing: [],
     toCreate: [],
+    toConfigure: [],
     workflowNames: {},
     newWorkflows: [],
     newDurableObjects: [],
@@ -268,6 +355,14 @@ export function diffBindings(
         name: same.name,
         cfId: same.cfId,
       });
+      if (res.type === "vectorize" && (res.metadataIndexes?.length ?? 0) > 0) {
+        diff.toConfigure.push({ res: { ...res, name: same.name }, previouslyDeclared: false });
+      } else if (res.type === "r2_bucket") {
+        const previouslyDeclared = installedLifecycle.includes(res.binding);
+        if ((res.lifecycle?.length ?? 0) > 0 || previouslyDeclared) {
+          diff.toConfigure.push({ res: { ...res, name: same.name }, previouslyDeclared });
+        }
+      }
       continue;
     }
     const other = rows.find((r) => PROVISIONED_KINDS.has(r.kind));

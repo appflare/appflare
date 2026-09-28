@@ -76,6 +76,7 @@ import {
   syncQueueConsumersPhase,
 } from "./install/queue-consumers";
 import { assignRateLimitsPhase } from "./install/rate-limits";
+import { applyLifecycleRulesPhase, applyMetadataIndexesPhase } from "./install/resource-settings";
 import { RESOURCE_LABEL } from "./install/resources";
 import { deleteSupersededPhase, supersededConfigs } from "./reconfigure/hyperdrive";
 import { secretSlots, storedVarsJson } from "./reconfigure/plan";
@@ -88,6 +89,7 @@ import { settleUnit } from "./units/result";
 import {
   appliedDurableObjectTag,
   canarySkipReason,
+  declaredLifecycleOf,
   diffBindings,
   droppedDurableObjectExportsProblem,
   EXPORTS_DEPLOY_REASON,
@@ -119,6 +121,8 @@ import { takeSnapshotPhase } from "./update/snapshot";
  * 2. Snapshot: the version serving traffic and a D1 Time Travel bookmark per
  *    database, recorded with the install's catalog state.
  * 3. Create resources for bindings new in this version (never delete any).
+ *    A kept Vectorize index gets the metadata indexes this version declares
+ *    that it lacks (./install/resource-settings.ts); none is deleted.
  * 4. Upload static assets.
  * 5. Upload the new Worker version (one multipart request) with every
  *    non-secret binding sent explicitly, secrets the version introduces, and
@@ -133,7 +137,10 @@ import { takeSnapshotPhase } from "./update/snapshot";
  *    or by an earlier attempt), as a new install's would; a database an
  *    earlier version set up never gets it.
  * 8. Promote the version to 100% of traffic, then set its queue consumers
- *    and cron triggers.
+ *    and cron triggers, and merge the lifecycle rules this version declares
+ *    into its kept R2 buckets' own. Only now, so a rule that deletes objects
+ *    never reaches a bucket the previous version goes on serving from after
+ *    a failed update; no rule is ever removed, a rollback's included.
  * 9. Health check on the app's address (its workers.dev URL, or its first custom
  *    domain while workers.dev is off). The version already serves, so
  *    the result is recorded on the install and never fails the job.
@@ -364,6 +371,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       log.info(
         `Updating ${appSlugLabel(install.app_slug)} from ${install.catalog_version} to ${params.version} on Worker "${install.worker_name}".`,
       );
+      const installedLifecycle = declaredLifecycleOf(install.manifest_json);
       const recorded: RecordedResource[] = rows.map((r) => ({
         id: r.id,
         kind: r.kind,
@@ -393,6 +401,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         vectorizeShapes: vectorizeShapesOf(install.manifest_json),
         // The installed version's streams: a kept stream and its sink cannot change.
         pipelineShapes: pipelineShapesOf(install.manifest_json),
+        // The installed version's bucket rules, to name those a later version drops.
+        lifecycleBindings: Object.keys(installedLifecycle.rules),
+        unreadableLifecycle: installedLifecycle.unreadable,
         // The installed version's queue consumers, to tell which ones change.
         previousConsumers: consumerPlansOf(install.manifest_json),
         // An app of several Workers: what the installed version's other Workers have.
@@ -462,6 +473,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       manifest.catalog.resources?.pipelines,
       // A step output recorded before streams were compared has none.
       started.pipelineShapes ?? {},
+      // A step output recorded before bucket rules were compared has none.
+      started.lifecycleBindings ?? [],
     );
     const queuePlan = planEntryQueueConsumers(workerName, manifest, workers);
     const queueDiff = diffConsumerQueues(queuePlan.queues, started.resources);
@@ -561,6 +574,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       for (const res of queueDiff.toCreate) {
         log.info(`New queue for a consumer: creating ${RESOURCE_LABEL[res.kind]} "${res.name}".`);
       }
+      for (const binding of started.unreadableLifecycle ?? []) {
+        log.warn(
+          `The installed version's lifecycle rules for binding ${binding} cannot be read, so if this version drops any of them, this update cannot name them. Rules on the bucket stay as they are either way.`,
+        );
+      }
       for (const row of diff.leftInPlace) {
         log.info(
           `Binding ${row.binding} is not in this version; its ${row.kind} "${row.name}" is left in place.`,
@@ -636,6 +654,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     const bound = [...diff.existing, ...queueDiff.existing];
     for (const res of [...diff.toCreate, ...queueDiff.toCreate]) {
       bound.push(await provisionResourcePhase(steps, params.installId, res));
+    }
+    // Kept indexes get the metadata indexes this version declares, before its
+    // code writes a vector; kept buckets get their rules once it serves.
+    for (const { res } of diff.toConfigure) {
+      await applyMetadataIndexesPhase(steps, res);
     }
 
     // Rate limits keep the install's namespaces; a new one gets its own.
@@ -1035,6 +1058,13 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       if (w.workersDev && previousOf(w.scriptName)?.workersDev === false) {
         await otherWorkerRoutePhase(steps, params.installId, w, subdomain);
       }
+    }
+
+    // Lifecycle rules of kept buckets only now: a rule that deletes objects
+    // must not reach a bucket the previous version still serves from, as it
+    // would after an update that failed before this point.
+    for (const { res, previouslyDeclared } of diff.toConfigure) {
+      await applyLifecycleRulesPhase(steps, res, previouslyDeclared);
     }
 
     // Hyperdrive configurations a settings change superseded are bound only

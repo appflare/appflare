@@ -90,7 +90,21 @@ export interface FakeAccount {
    * a test starts), as `GET .../versions/<id>` lists them.
    */
   versionBindings: Record<string, unknown[]>;
+  /** Metadata indexes by Vectorize index, as listed (created ones are added). */
+  metadataIndexes: Record<string, Array<{ propertyName: string; indexType: string }>>;
+  /** Lifecycle rules by R2 bucket, as last put (a bucket never put has Cloudflare's default). */
+  lifecycle: Record<string, unknown[]>;
+  /** Keys (`METHOD /path`) whose next call does its work and then answers 500 (a lost answer). */
+  failAfter: Set<string>;
 }
+
+/** The rule Cloudflare gives every new R2 bucket. */
+export const DEFAULT_MULTIPART_RULE = {
+  id: "Default Multipart Abort Rule",
+  enabled: true,
+  conditions: { prefix: "" },
+  abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 604_800 } },
+};
 
 /** The sandbox Worker's deployed version, unless a test sets another. */
 export const SANDBOX_DEPLOYED_VERSION = "5a5d0000-0000-4000-8000-00000000d001";
@@ -138,6 +152,9 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     domainHealth: {},
     domainProbes: [],
     uploadWithoutId: false,
+    metadataIndexes: {},
+    lifecycle: {},
+    failAfter: new Set(),
     ...over,
   };
   const script = `/workers/scripts/${state.worker}`;
@@ -151,6 +168,14 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
   };
 
   async function cloudflare(request: Request): Promise<Response> {
+    const answer = await cloudflareAnswer(request);
+    const url = new URL(request.url);
+    const key = `${request.method} ${url.pathname.replace(`/client/v4/accounts/${ACC}`, "")}`;
+    if (answer.ok && state.failAfter.delete(key)) return fail(500, "answer lost after the work");
+    return answer;
+  }
+
+  async function cloudflareAnswer(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.replace(`/client/v4/accounts/${ACC}`, "");
     const key = `${request.method} ${path}`;
@@ -330,6 +355,28 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
         for (const hash of form.keys()) state.uploadedAssets.add(hash);
         return ok({ jwt: "completion-jwt" });
       }
+    }
+    const metadataIndex =
+      /^(GET|POST) \/vectorize\/v2\/indexes\/([^/]+)\/metadata_index\/(list|create)$/.exec(key);
+    if (metadataIndex?.[2] !== undefined) {
+      state.metadataIndexes[metadataIndex[2]] ??= [];
+      const list = state.metadataIndexes[metadataIndex[2]] ?? [];
+      if (metadataIndex[3] === "list") return ok({ metadataIndexes: list });
+      const body = (await request.json()) as { propertyName: string; indexType: string };
+      if (list.some((m) => m.propertyName === body.propertyName)) {
+        return fail(409, "a metadata index on this property already exists");
+      }
+      list.push(body);
+      return ok({ mutationId: `m${list.length}` });
+    }
+    const lifecycle = /^(GET|PUT) \/r2\/buckets\/([^/]+)\/lifecycle$/.exec(key);
+    if (lifecycle?.[2] !== undefined) {
+      const bucket = lifecycle[2];
+      if (lifecycle[1] === "GET") {
+        return ok({ rules: state.lifecycle[bucket] ?? [DEFAULT_MULTIPART_RULE] });
+      }
+      state.lifecycle[bucket] = ((await request.json()) as { rules: unknown[] }).rules;
+      return ok({});
     }
     const consumers = /^(GET|POST) \/queues\/([^/]+)\/consumers$/.exec(key);
     if (consumers?.[2] !== undefined) {
