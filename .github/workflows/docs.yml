@@ -90,11 +90,12 @@ jobs:
           CATALOG_SNAPSHOT: live
       # The build fails on its own when a page cannot be prerendered or an
       # OpenGraph image cannot be drawn; this catches a file that went missing.
-      - name: Check the site has its search index, agent files, and images
+      - name: Check the site has its search index, agent files, redirects, and images
         working-directory: apps/docs/dist/client
         run: |
           for file in index.html 404.html api/search.json llms.txt llms-full.txt \
-            sitemap.xml index.md start/install/index.html start/install.md \
+            sitemap.xml start/overview.md start/install/index.html start/install.md \
+            agent/install.md agent/submit.md _redirects \
             og/image.png og/start/install/image.png apps/index.html og/apps/image.png; do
             test -s "${file}" || { echo "::error::apps/docs/dist/client/${file} is missing"; exit 1; }
           done
@@ -141,6 +142,20 @@ jobs:
               exit 1
             fi
           done
+          # `/` is the front page, not the documentation's index.
+          if ! curl -sS --retry 5 --retry-delay 3 --retry-all-errors "${PREVIEW_URL}/" |
+            grep -q "Deploy to Cloudflare"; then
+            echo "::error::${PREVIEW_URL}/ does not say \"Deploy to Cloudflare\"; it is not the front page"
+            exit 1
+          fi
+          # The index's Markdown moved to the overview; public/_redirects sends
+          # the old address there.
+          redirect=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --retry 5 \
+            --retry-delay 3 --retry-all-errors "${PREVIEW_URL}/index.md" || true)
+          if [[ "${redirect}" != "301 ${PREVIEW_URL}/start/overview.md" ]]; then
+            echo "::error::${PREVIEW_URL}/index.md answered \"${redirect}\", expected a 301 to /start/overview.md"
+            exit 1
+          fi
       # The exact files the preview serves go to production.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
