@@ -1,0 +1,48 @@
+{
+  "catalog": {
+    "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+    "slug": "cut",
+    "name": "Cut",
+    "summary": "Self-hosted link shortener on Workers + KV.",
+    "homepage": "https://github.com/MendyLanda/cut",
+    "repo": "MendyLanda/cut",
+    "license": "MIT",
+    "categories": ["utilities"],
+    "maintainers": ["MendyLanda"],
+    "source": {
+      "ref": "v0.1.0",
+      "sha": "6056400d47530aa87e4ae5764b37ffca9d00e87f"
+    },
+    "install": {
+      "tier": "artifact",
+      "packageManager": "pnpm",
+      "wranglerConfig": "wrangler.jsonc",
+      "workerName": "cut"
+    },
+    "plan": "free",
+    "requires": [],
+    "secrets": [
+      {
+        "name": "ADMIN_PASSWORD",
+        "label": "Admin password",
+        "help": "Used to sign in to /admin.",
+        "generate": true
+      }
+    ],
+    "vars": [
+      {
+        "name": "HOME_PAGE",
+        "label": "Home page",
+        "help": "default, 404, or admin",
+        "required": false
+      }
+    ],
+    "postInstall": [
+      {
+        "type": "markdown",
+        "content": "Open {{workerUrl}}/admin and sign in with the admin password to create your first link."
+      }
+    ],
+    "tokenPermissions": []
+  }
+}

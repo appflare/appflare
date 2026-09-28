@@ -1,0 +1,9 @@
+@import "../src/styles.css";
+
+* {
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}

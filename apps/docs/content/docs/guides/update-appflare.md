@@ -14,6 +14,8 @@ Open **Settings > Updates** and find **Appflare version**. It shows the running 
 latest release, and when it last checked. Admins can select **Check now** to look
 for a release right away.
 
+![Updates settings with the running Appflare version and recent versions](/screenshots/settings-appflare-updates.png)
+
 When a newer release exists, select **Update Appflare to &lt;version&gt;** and confirm. Only
 newer versions are offered.
 

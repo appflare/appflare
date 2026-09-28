@@ -13,6 +13,8 @@ Messages name the app, its version and its Worker, and link to the manager. They
 never contain secrets or tokens. A failed job links to its log instead of quoting
 its error, since error text can name secrets and request paths.
 
+![Notifications settings with a webhook channel and recent delivery](/screenshots/notifications-channel.png)
+
 ## Channel kinds
 
 | Kind | What you enter | Where messages go |

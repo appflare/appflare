@@ -5,6 +5,8 @@ description: The install form, secrets, what the install job does, and post-inst
 
 Open the app's page in **Catalog**. Only admins can install apps.
 
+![Install form with plain setting names and an App address chip](/screenshots/install-app-settings.png)
+
 ## The install form
 
 **Worker name.** The app is served at
@@ -258,3 +260,5 @@ With no app installed, opening Appflare takes you to the catalog.
 health, resources, secret names, jobs, and the actions for
 [updates and rollbacks](/guides/updates/), [changing settings and
 secrets](/guides/settings/), and [uninstalling](/guides/uninstall/).
+
+![Installed Short links app with its version, health and Open button](/screenshots/apps-installed-overview.png)

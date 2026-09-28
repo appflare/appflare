@@ -30,6 +30,8 @@ On the app's **Domains and email** tab, admins find **Custom domains** and selec
 **Add a domain**. The install form offers the same under **Address**, and the install
 adds the domain once the app runs.
 
+![Form for adding a custom domain to Short links](/screenshots/domains-custom-form.png)
+
 1. Choose the domain. Only active domains are listed.
 2. Enter the hostname: the domain itself or a name under it. Wildcards are not
    allowed; a custom domain matches one exact hostname.

@@ -1,0 +1,260 @@
+{
+  "generatedAt": "2026-09-28T10:21:08.403Z",
+  "apps": [
+    {
+      "slug": "cloudmark",
+      "name": "Cloudmark",
+      "summary": "Bookmarks without an account: create a collection with a write token, save pages with a bookmarklet or the Chrome extension, and open them from any device. On D1.",
+      "tagline": "Save bookmarks and open them from any device",
+      "addedAt": "2026-09-27T04:19:23+03:00",
+      "version": "0.0.0-20260810.7a3ee47",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/cloudmark@0.0.0-20260810.7a3ee47/cloudmark-0.0.0-20260810.7a3ee47.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/cloudmark@0.0.0-20260810.7a3ee47/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/cloudmark@0.0.0-20260810.7a3ee47/manifest.sig"
+      },
+      "digest": "56a8b857077fd4873279469dc92856dee299aaff60454947a138b0e68f97b86f",
+      "tier": "artifact",
+      "plan": "free",
+      "requires": [],
+      "lastVerified": "2026-09-28T10:13:25.000Z",
+      "authors": [
+        {
+          "name": "Wesley Yang",
+          "url": "https://wesleyel.github.io",
+          "github": "wesleyel"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/cloudmark/icon.png",
+          "sha256": "541b6dcc527bff65ea33b4f6f45452b8b74c3efc0f4122eff8e99a5b2c573d1e"
+        },
+        "screenshots": []
+      },
+      "services": ["d1"],
+      "categories": ["productivity", "utilities"],
+      "license": "AGPL-3.0-only",
+      "revision": 1
+    },
+    {
+      "slug": "cut",
+      "name": "Cut",
+      "summary": "Self-hosted link shortener on Workers + KV.",
+      "tagline": "Short links on your own domain",
+      "addedAt": "2026-09-22T21:32:42+03:00",
+      "version": "0.1.0",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/cut@0.1.0/cut-0.1.0.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/cut@0.1.0/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/cut@0.1.0/manifest.sig"
+      },
+      "digest": "86bbb3cbe1afbcff52c18a91a659b8f7876043a78f434a6a9c7eb274edb4a6c1",
+      "tier": "artifact",
+      "plan": "free",
+      "requires": [],
+      "lastVerified": "2026-09-28T10:13:31.000Z",
+      "authors": [
+        {
+          "name": "Mendy Landa",
+          "github": "MendyLanda"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/cut/icon.svg",
+          "sha256": "9aeb8bd7cee3770df6d9fc17f9a55537400d678ec9c95d911ab95182a98f6970"
+        },
+        "screenshots": []
+      },
+      "services": ["kv"],
+      "categories": ["utilities"],
+      "license": "MIT",
+      "revision": 3,
+      "catalogManifest": {
+        "url": "https://appflare.github.io/catalog/apps/cut/manifest.json",
+        "sha256": "de7842381e1d59f9b4c61fc1635d28ece2e1fc7cac385af9063403c45ad26169",
+        "keyId": "catalog-2026-09",
+        "signature": "+T6pk8oqs2yKAxtEuC30D/zww5KAcpa7WWXGr1xZnSWsnuqA3t//X8TnSISr+XBPcG/xNjb+aJKlh3dZfwsUCQ=="
+      }
+    },
+    {
+      "slug": "emdash",
+      "name": "EmDash",
+      "summary": "A full-stack TypeScript CMS built on Astro, the spiritual successor to WordPress: this is its blog template, with posts, pages, categories and tags, search, RSS and an admin editor, on D1 and R2.",
+      "tagline": "Create a blog with built-in search and an editor",
+      "addedAt": "2026-09-27T06:14:13+03:00",
+      "version": "0.0.0-20260926.e3b39ac",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/emdash-0.0.0-20260926.e3b39ac.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/manifest.sig"
+      },
+      "digest": "ca924df42cbd11cecca9de7fb26a2cdd4fa16034cca69101f828a5dea9838a6e",
+      "tier": "artifact",
+      "plan": "free",
+      "requires": ["r2"],
+      "lastVerified": "2026-09-28T10:12:05.000Z",
+      "authors": [
+        {
+          "name": "EmDash",
+          "url": "https://emdashcms.com",
+          "github": "emdash-cms"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/emdash/icon.svg",
+          "sha256": "323512d1d707c4a7e07a1a8a9234a740a14c9aa5f479672cdf66188d0109da77"
+        },
+        "screenshots": [
+          {
+            "url": "https://appflare.github.io/catalog/apps/emdash/screenshots/01-home-page.png",
+            "sha256": "88653dc93f80f8a20113422dc5e7de8f3cab5fe6aed8b0d1f65ea8a55bd738eb",
+            "alt": "EmDash: Home page"
+          },
+          {
+            "url": "https://appflare.github.io/catalog/apps/emdash/screenshots/02-a-post.png",
+            "sha256": "ea9814577576e524c5fe33db508a77da3caf28275aefd879b90eac012d15c762",
+            "alt": "EmDash: A post"
+          }
+        ]
+      },
+      "services": ["d1", "r2"],
+      "categories": ["cms"],
+      "license": "MIT",
+      "revision": 2,
+      "catalogManifest": {
+        "url": "https://appflare.github.io/catalog/apps/emdash/manifest.json",
+        "sha256": "a8f31f67a27d79db612c98116a899636e131dd7d3b9197803822dd7fa96a019f",
+        "keyId": "catalog-2026-09",
+        "signature": "DApwLC5X+wpLrGUkz+FLKYHuHJX4zF3j3Qw/YJKEB8UhmH6ObVWcCCQuiOOKLWhJnlIdMy411bMPmgm+AibeAQ=="
+      }
+    },
+    {
+      "slug": "formzero",
+      "name": "FormZero",
+      "summary": "A form backend for static sites: send HTML forms or JSON to your own endpoint and browse, chart and export the submissions from a dashboard.",
+      "tagline": "Collect form submissions and see them in your own dashboard",
+      "addedAt": "2026-09-27T06:02:01+03:00",
+      "version": "0.0.0-20260426.a4ddde2",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/formzero@0.0.0-20260426.a4ddde2/formzero-0.0.0-20260426.a4ddde2.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/formzero@0.0.0-20260426.a4ddde2/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/formzero@0.0.0-20260426.a4ddde2/manifest.sig"
+      },
+      "digest": "dbe643804779df8d1f78833e9162b6908fc06511c153020db7cbb2c3dd13a8df",
+      "tier": "artifact",
+      "plan": "free",
+      "requires": [],
+      "lastVerified": "2026-09-28T10:13:34.000Z",
+      "authors": [
+        {
+          "name": "Bohdan Petryshyn",
+          "github": "BohdanPetryshyn"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/formzero/icon.png",
+          "sha256": "ac3d329d506ec7fe9e7027a02785f6a8bdb805c719c0718bc542f95b1729429b"
+        },
+        "screenshots": []
+      },
+      "services": ["d1"],
+      "categories": ["business", "utilities"],
+      "license": "MIT",
+      "revision": 1
+    },
+    {
+      "slug": "r2-explorer",
+      "name": "R2 Explorer",
+      "summary": "A Google Drive-like file browser for an R2 bucket, on Workers + R2.",
+      "tagline": "Browse and preview files in your Cloudflare storage",
+      "addedAt": "2026-09-23T15:41:37+03:00",
+      "version": "1.1.10",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/r2-explorer@1.1.10/r2-explorer-1.1.10.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/r2-explorer@1.1.10/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/r2-explorer@1.1.10/manifest.sig"
+      },
+      "digest": "c699b308a4f8a80f2a9d40a06bac0aef5f2f4ff13b953a55f1e845421c7ba71b",
+      "tier": "artifact",
+      "plan": "free",
+      "requires": ["r2"],
+      "lastVerified": "2026-09-28T10:16:04.000Z",
+      "authors": [
+        {
+          "name": "Gabriel Massadas",
+          "url": "https://massadas.com",
+          "github": "G4brym",
+          "x": "G4brym"
+        },
+        {
+          "name": "Cloudflare",
+          "url": "https://www.cloudflare.com",
+          "github": "cloudflare"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/r2-explorer/icon.png",
+          "sha256": "9f9482b8f370e9fb891adc609d4c158cbbe0c73f455922a9bed46c52308cceca"
+        },
+        "screenshots": []
+      },
+      "services": ["r2"],
+      "categories": ["files"],
+      "license": "MIT",
+      "revision": 2,
+      "catalogManifest": {
+        "url": "https://appflare.github.io/catalog/apps/r2-explorer/manifest.json",
+        "sha256": "f5199ec04849d84bc2489d0ebdbd6a9a0e9b8b1ccdd5892a6d488fa04a40d050",
+        "keyId": "catalog-2026-09",
+        "signature": "dfrp7Ui+X2IG6JRlxLzgB8uYEr4Vc4+Qvco5bfALq/MAXTtigayrluKHBMue+ku2ip6twL2AvjzHRzMgTJYeCQ=="
+      }
+    },
+    {
+      "slug": "statusbeam",
+      "name": "StatusBeam",
+      "summary": "A status page served from Cloudflare's edge cache, with a checker that probes your sites, Statuspage and incident.io pages, and Sentry monitors every five minutes.",
+      "tagline": "Monitor your services and share a public status page",
+      "addedAt": "2026-09-27T06:14:13+03:00",
+      "version": "0.1.1",
+      "artifacts": {
+        "zip": "https://github.com/appflare/catalog/releases/download/statusbeam@0.1.1/statusbeam-0.1.1.zip",
+        "manifest": "https://github.com/appflare/catalog/releases/download/statusbeam@0.1.1/manifest.json",
+        "sig": "https://github.com/appflare/catalog/releases/download/statusbeam@0.1.1/manifest.sig"
+      },
+      "digest": "035609fe8e3e266d8de0b1d79e8f66a1112962b935a5f44a57eb9ad30afec49b",
+      "tier": "artifact",
+      "plan": "free",
+      "requires": [],
+      "lastVerified": "2026-09-28T10:16:39.000Z",
+      "authors": [
+        {
+          "name": "pleaseai",
+          "url": "https://pleaseai.dev",
+          "github": "pleaseai"
+        }
+      ],
+      "maintainers": ["MendyLanda"],
+      "media": {
+        "icon": {
+          "url": "https://appflare.github.io/catalog/apps/statusbeam/icon.svg",
+          "sha256": "bb9bc1ee944bdf197ff939110b020de630a8314a52210e7e86ba7f37627c0ec0"
+        },
+        "screenshots": []
+      },
+      "services": ["kv", "d1", "cron", "images"],
+      "categories": ["monitoring", "utilities"],
+      "license": "MIT",
+      "revision": 1
+    }
+  ]
+}
