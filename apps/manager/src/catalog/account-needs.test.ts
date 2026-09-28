@@ -1,122 +1,349 @@
 import { describe, expect, it } from "vitest";
 import { type CapabilitiesView, capabilitiesView } from "../capabilities/capabilities";
-import { accountNeeds, installAdds, needOfCheck } from "./account-needs";
+import {
+  CAPABILITY_STATE_LABELS,
+  type CapabilityRow,
+  capabilityRows,
+} from "../capabilities/capability-rows";
+import {
+  type AccountNeed,
+  type AppNeedsOf,
+  accountNeeds,
+  installAdds,
+  needOfCheck,
+} from "./account-needs";
 import type { AppPrimitives } from "./primitives";
 import { requirementChecks } from "./requirement-checks";
 
 const CHECKED_AT = "2026-09-27T00:00:00.000Z";
 const ACC = "acc0000000000000000000000000000a";
+const DASH = `https://dash.cloudflare.com/?to=/${ACC}`;
 
 function view(overrides: Partial<CapabilitiesView> = {}): CapabilitiesView {
-  return { ...capabilitiesView(null, null), ...overrides };
+  return { ...capabilitiesView(null, null, ACC), ...overrides };
 }
+
+/** Every probe ran and found everything missing, on a detected Workers Free account. */
+const LACKING = view({
+  checkedAt: CHECKED_AT,
+  workersPlan: { state: "free" },
+  plan: { plan: "free", source: "detected" },
+  r2: { state: "not-enabled" },
+  zone: { state: "none" },
+  emailRouting: { state: "no-zone" },
+  analyticsEngine: { state: "not-enabled" },
+  zeroTrust: { state: "none" },
+  containers: { state: "needs-workers-paid" },
+});
 
 function uses(...ids: AppPrimitives["ids"]): AppPrimitives {
   return { ids, complete: true, keyValueDurableObjects: false };
 }
 
-function wording(
-  app: { plan: "free" | "paid"; requires: string[] },
-  p: AppPrimitives,
-  v: CapabilitiesView,
-) {
-  return accountNeeds(app, p, v).map((n) => `${n.name} · ${n.state}`);
+function app(plan: "free" | "paid" = "free", requires: string[] = []): AppNeedsOf {
+  return { plan, requires, tier: "artifact" };
 }
 
+function wording(a: AppNeedsOf, p: AppPrimitives, v: CapabilitiesView) {
+  return accountNeeds(a, p, v).map((n) => `${n.name} · ${n.state}`);
+}
+
+function byKey(needs: readonly AccountNeed[], key: string): AccountNeed {
+  const need = needs.find((n) => n.key === key);
+  if (need === undefined) throw new Error(`no need ${key}`);
+  return need;
+}
+
+/** The rows of Your account when nothing in the account needs anything yet. */
+function accountRows(v: CapabilitiesView): Map<string, CapabilityRow> {
+  const rows = capabilityRows({ view: v, sandbox: "off", needs: null, inUse: null });
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
+const SEE = (id: string) => ({
+  label: "See in Your account",
+  href: `/settings/account#capability-${id}`,
+});
+
 describe("what an app needs on the account", () => {
-  it("says ready, not turned on, or not confirmed in plain words", () => {
-    const probed = view({
-      checkedAt: CHECKED_AT,
-      emailRouting: { state: "available" },
-      r2: { state: "not-enabled" },
-    });
-    expect(
-      wording({ plan: "free", requires: [] }, uses("email-routing", "r2", "kv"), probed),
-    ).toEqual(["R2 storage · not turned on", "Email Routing · ready", "KV storage · included"]);
-    expect(wording({ plan: "free", requires: [] }, uses("email-routing", "r2"), view())).toEqual([
-      "Email Routing · not confirmed",
-      "R2 storage · not confirmed",
-    ]);
-  });
-
-  it("says what a missing domain or plan means", () => {
-    const noZone = view({
-      zone: { state: "none" },
-      emailRouting: { state: "no-zone" },
-    });
-    expect(wording({ plan: "free", requires: [] }, uses("zone", "email-routing"), noZone)).toEqual([
-      "A domain · no domain on this account",
-      "Email Routing · needs a domain on this account",
-    ]);
-    const free = view({ plan: { plan: "free", source: "detected" } });
-    expect(wording({ plan: "paid", requires: [] }, uses("containers"), free)).toEqual([
-      "Workers Paid plan · this account is on Free",
-      "Containers · needs Workers Paid",
-    ]);
-    const paid = view({ plan: { plan: "paid", source: "detected" } });
-    expect(wording({ plan: "paid", requires: [] }, uses(), paid)).toEqual([
-      "Workers Paid plan · ready",
-    ]);
-  });
-
-  it("links a missing need to the dashboard page that fixes it, and nothing else", () => {
-    const lacking = view({
-      plan: { plan: "free", source: "detected" },
-      r2: { state: "not-enabled" },
-      zone: { state: "none" },
-      emailRouting: { state: "no-zone" },
-      checkedAt: CHECKED_AT,
-      accountId: ACC,
-    });
-    const fixes = accountNeeds(
-      { plan: "paid", requires: [] },
-      uses("r2", "zone", "email-routing", "kv"),
-      lacking,
-    ).map((n) => [n.key, n.fix?.label ?? null, n.fix?.href ?? null]);
-    expect(fixes).toEqual([
-      ["plan", "Upgrade", `https://dash.cloudflare.com/?to=/${ACC}/workers/plans`],
-      ["r2", "Turn on", `https://dash.cloudflare.com/?to=/${ACC}/r2/overview`],
-      ["zone", "Add a domain", `https://dash.cloudflare.com/?to=/${ACC}/domains/overview`],
-      ["email-routing", "Add a domain", `https://dash.cloudflare.com/?to=/${ACC}/domains/overview`],
-      ["kv", null, null],
-    ]);
-    // Not confirmed is not missing: no fix to offer.
-    const unknown = accountNeeds({ plan: "paid", requires: [] }, uses("r2"), view());
-    expect(unknown.map((n) => n.fix)).toEqual([null, null]);
-  });
-
-  it("marks what the admin brings, and keeps the probe's sentence for the tooltip", () => {
-    const [database] = accountNeeds({ plan: "free", requires: [] }, uses("hyperdrive"), view());
-    expect(database).toMatchObject({
-      name: "Your own database",
-      state: "you provide it",
-      tone: "yours",
-    });
-    const [r2] = accountNeeds(
-      { plan: "free", requires: [] },
-      uses("r2"),
-      view({ r2: { state: "not-enabled" } }),
-    );
-    expect(r2?.detail).toContain("payment method");
-  });
-
-  it("puts problems first, then what is not confirmed, then what is ready", () => {
+  it("names each need and says why apps need it as its row on Your account does", () => {
     const needs = accountNeeds(
-      { plan: "free", requires: [] },
-      uses("kv", "access", "r2"),
-      view({ r2: { state: "not-enabled" } }),
+      app("free", ["r2", "zone", "email-routing", "analytics-engine"]),
+      uses("r2", "zone", "email-routing", "analytics-engine", "access"),
+      LACKING,
     );
-    expect(needs.map((n) => n.tone)).toEqual(["missing", "unknown", "ready"]);
+    const rows = accountRows(LACKING);
+    const pairs = [
+      ["r2", "r2"],
+      ["zone", "zone"],
+      ["email-routing", "email-routing"],
+      ["analytics-engine", "analytics-engine"],
+      ["access", "zero-trust"],
+    ] as const;
+    for (const [key, id] of pairs) {
+      const need = byKey(needs, key);
+      const row = rows.get(id);
+      expect(need.name).toBe(row?.name);
+      // Access is worked out from the app's bindings; the rest its `requires` names.
+      const lead = key === "access" ? "This app uses it." : "This app needs it.";
+      expect(need.reason).toBe(`${lead} ${row?.why}`);
+    }
   });
 
-  it("words a requirement check the same way as its row", () => {
-    const checks = requirementChecks(
-      { plan: "paid", requires: ["r2"] },
+  it("says the app uses what was worked out from its bindings, with the same state and actions", () => {
+    const declared = byKey(accountNeeds(app("free", ["r2"]), uses("r2"), LACKING), "r2");
+    const inferred = byKey(accountNeeds(app(), uses("r2"), LACKING), "r2");
+    expect(declared.reason).toBe(
+      "This app needs it. Apps keep files and uploads in R2. Turning it on is free.",
+    );
+    expect(inferred.reason).toBe(
+      "This app uses it. Apps keep files and uploads in R2. Turning it on is free.",
+    );
+    expect({ ...inferred, reason: null }).toEqual({ ...declared, reason: null });
+  });
+
+  it("gives a row to a requirement the app's services leave out", () => {
+    // An index row from before its services named the domain.
+    const needs = accountNeeds(app("free", ["zone"]), uses("kv"), LACKING);
+    expect(needs.map((n) => [n.key, n.state])).toEqual([
+      ["zone", "Needs action"],
+      ["kv", "Included"],
+    ]);
+    // The banner counts it too, as the same row.
+    const [check, ...rest] = requirementChecks(app("free", ["zone"]), LACKING).pending;
+    expect(rest).toEqual([]);
+    if (check === undefined) throw new Error("no pending check");
+    expect(needOfCheck(check, app("free", ["zone"]), uses("kv"), LACKING)).toEqual(
+      byKey(needs, "zone"),
+    );
+  });
+
+  it("reads a capability nothing else uses as needed, because this app needs it", () => {
+    const rows = accountRows(LACKING);
+    // Your account: nothing installed needs R2, so it is only not set up there.
+    expect(rows.get("r2")?.state).toBe("not-set-up");
+    const r2 = byKey(accountNeeds(app("free", ["r2"]), uses("r2"), LACKING), "r2");
+    expect(r2).toMatchObject({ state: "Needs action", tone: "missing" });
+    expect(r2.reason).toMatch(/^This app needs it\. /);
+  });
+
+  it("maps each state of a capability row to the need's words and actions", () => {
+    const readyView = view({
+      checkedAt: CHECKED_AT,
+      r2: { state: "enabled" },
+      zone: { state: "available" },
+      emailRouting: { state: "available" },
+      analyticsEngine: { state: "enabled" },
+      zeroTrust: { state: "exists", teamDomain: "acme" },
+    });
+    for (const need of accountNeeds(
+      app(),
+      uses("r2", "zone", "email-routing", "analytics-engine", "access"),
+      readyView,
+    )) {
+      expect(need).toMatchObject({
+        state: "Ready",
+        tone: "ready",
+        reason: null,
+        fix: null,
+        more: null,
+      });
+    }
+
+    const couldNotCheck = view({
+      checkedAt: CHECKED_AT,
+      r2: { state: "unknown", reason: "no-permission", detail: "GET /r2/buckets 403" },
+    });
+    expect(byKey(accountNeeds(app("free", ["r2"]), uses("r2"), couldNotCheck), "r2")).toEqual({
+      key: "r2",
+      name: "R2 storage",
+      state: "Could not check",
+      tone: "unknown",
+      reason: "This app needs it. Apps keep files and uploads in R2. Turning it on is free.",
+      fix: null,
+      more: SEE("r2"),
+    });
+    // Before the probes ever ran, the same.
+    expect(byKey(accountNeeds(app(), uses("zone"), view()), "zone")).toMatchObject({
+      state: "Could not check",
+      fix: null,
+      more: SEE("zone"),
+    });
+  });
+
+  it("keeps the row's dashboard action and adds the row on Your account", () => {
+    const needs = accountNeeds(
+      app("paid"),
+      uses("r2", "zone", "email-routing", "analytics-engine", "access", "kv"),
+      LACKING,
+    );
+    expect(needs.map((n) => [n.key, n.state, n.fix, n.more])).toEqual([
+      [
+        "plan",
+        "Paid plan only",
+        { label: "Upgrade", href: `${DASH}/workers/plans` },
+        SEE("workers-plan"),
+      ],
+      [
+        "r2",
+        "Needs action",
+        { label: "Turn on in Cloudflare", href: `${DASH}/r2/overview` },
+        SEE("r2"),
+      ],
+      [
+        "zone",
+        "Needs action",
+        { label: "Add a domain in Cloudflare", href: `${DASH}/domains/overview` },
+        SEE("zone"),
+      ],
+      [
+        "email-routing",
+        "Needs action",
+        // With no domain yet, adding one comes first.
+        { label: "Add a domain in Cloudflare", href: `${DASH}/domains/overview` },
+        SEE("email-routing"),
+      ],
+      [
+        "analytics-engine",
+        "Needs action",
+        { label: "Turn on in Cloudflare", href: `${DASH}/workers/analytics-engine` },
+        SEE("analytics-engine"),
+      ],
+      [
+        "access",
+        "Needs action",
+        {
+          label: "Turn on in Cloudflare",
+          href: `https://one.dash.cloudflare.com/?to=/${ACC}/home`,
+        },
+        SEE("zero-trust"),
+      ],
+      ["kv", "Included", null, null],
+    ]);
+    // Each action's words and target are the row's own.
+    const rows = accountRows(LACKING);
+    for (const [key, id] of [
+      ["r2", "r2"],
+      ["analytics-engine", "analytics-engine"],
+      ["access", "zero-trust"],
+    ] as const) {
+      const action = rows.get(id)?.action;
+      expect(byKey(needs, key).fix).toEqual(
+        action !== undefined && action !== null && "href" in action
+          ? { label: action.label, href: action.href }
+          : null,
+      );
+    }
+  });
+
+  it("says what the plan means for an app that needs Workers Paid", () => {
+    const needsPaid = (v: CapabilitiesView) => byKey(accountNeeds(app("paid"), uses(), v), "plan");
+    expect(needsPaid(view({ plan: { plan: "paid", source: "detected" } }))).toMatchObject({
+      name: "Workers plan",
+      state: "Ready",
+      more: null,
+    });
+    expect(needsPaid(view({ plan: { plan: "paid", source: "set-by-you" } })).state).toBe("Ready");
+    expect(needsPaid(LACKING)).toMatchObject({
+      state: CAPABILITY_STATE_LABELS["paid-only"],
+      tone: "missing",
+      reason: "This app needs Workers Paid, and this account is on Workers Free.",
+    });
+    // Not known: the Workers plan row's own state, and "Choose plan" there.
+    const refused = view({
+      checkedAt: CHECKED_AT,
+      workersPlan: { state: "unknown", reason: "no-permission", detail: "403" },
+    });
+    expect(needsPaid(refused)).toEqual({
+      key: "plan",
+      name: "Workers plan",
+      state: "Needs action",
+      tone: "missing",
+      reason: "This app needs Workers Paid, and Appflare cannot tell this account's plan.",
+      fix: null,
+      more: { label: "Choose plan", href: "/settings/account#capability-workers-plan" },
+    });
+    expect(needsPaid(view())).toMatchObject({ state: "Could not check", tone: "unknown" });
+  });
+
+  it("puts what only Workers Paid includes under the plan", () => {
+    const [containers] = accountNeeds(app(), uses("containers"), LACKING);
+    expect(containers).toMatchObject({
+      name: "Containers",
+      state: "Paid plan only",
+      reason: "It needs Workers Paid, and this account is on Workers Free.",
+      fix: { label: "Upgrade", href: `${DASH}/workers/plans` },
+      more: SEE("workers-plan"),
+    });
+    const paid = view({ plan: { plan: "paid", source: "detected" } });
+    expect(wording(app(), uses("pipelines"), paid)).toEqual(["Pipelines · Ready"]);
+    expect(wording(app(), uses("durable-objects"), LACKING)).toEqual([
+      "Durable Objects · Included",
+    ]);
+  });
+
+  it("trusts a probe that found Workers Paid missing over a plan an admin stated", () => {
+    const stated = view({
+      plan: { plan: "paid", source: "set-by-you" },
+      containers: { state: "needs-workers-paid" },
+    });
+    const a = app("free", ["containers"]);
+    const [containers] = accountNeeds(a, uses("containers"), stated);
+    expect(containers).toMatchObject({
+      state: "Paid plan only",
+      tone: "missing",
+      reason: "It needs Workers Paid, and Cloudflare says this account does not have it.",
+      fix: { label: "Upgrade", href: `${DASH}/workers/plans` },
+    });
+    // The banner lists it, and its row there says the same.
+    const [check] = requirementChecks(a, stated).pending;
+    if (check === undefined) throw new Error("no pending check");
+    expect(needOfCheck(check, a, uses("containers"), stated)).toEqual(containers);
+  });
+
+  it("marks what the admin brings, and what Appflare cannot check", () => {
+    expect(accountNeeds(app(), uses("hyperdrive"), view())).toEqual([
+      {
+        key: "hyperdrive",
+        name: "Your own database",
+        state: "You provide it",
+        tone: "yours",
+        reason: null,
+        fix: null,
+        more: null,
+      },
+    ]);
+    const [unknown] = accountNeeds(app("free", ["teleport"]), uses(), view());
+    expect(unknown).toMatchObject({ state: "Could not check", tone: "unknown", more: null });
+  });
+
+  it("puts problems first, then what could not be checked, then what is ready", () => {
+    const needs = accountNeeds(
+      app(),
+      uses("kv", "zone", "r2"),
       view({ r2: { state: "not-enabled" } }),
     );
-    expect(
-      checks.pending.map((c) => needOfCheck(c, ACC)).map((n) => `${n.name} · ${n.state}`),
-    ).toEqual(["Workers Paid plan · not confirmed", "R2 storage · not turned on"]);
+    expect(needs.map((n) => [n.key, n.tone])).toEqual([
+      ["r2", "missing"],
+      ["zone", "unknown"],
+      ["kv", "ready"],
+    ]);
+  });
+
+  it("gives the banner the same rows as the page", () => {
+    const a = app("paid", ["r2", "analytics-engine", "teleport"]);
+    const p = uses("r2", "analytics-engine");
+    const checks = requirementChecks(a, LACKING);
+    const page = accountNeeds(a, p, LACKING);
+    for (const check of checks.pending) {
+      expect(needOfCheck(check, a, p, LACKING)).toEqual(byKey(page, check.key));
+    }
+    expect(checks.pending.map((c) => c.key)).toEqual([
+      "plan",
+      "r2",
+      "analytics-engine",
+      "teleport",
+    ]);
   });
 });
 

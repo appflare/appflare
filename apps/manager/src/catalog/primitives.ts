@@ -95,6 +95,8 @@ export interface PrimitiveStatus {
   id: PrimitiveId;
   availability: Availability;
   reason: string;
+  /** Included on every plan, so there is nothing on the account to turn on. */
+  included?: boolean;
 }
 
 const INCLUDED: Partial<Record<PrimitiveId, string>> = {
@@ -241,7 +243,9 @@ export function primitiveStatus(
   app: Pick<AppPrimitives, "keyValueDurableObjects">,
 ): PrimitiveStatus {
   const included = INCLUDED[id];
-  if (included !== undefined) return { id, availability: "available", reason: included };
+  if (included !== undefined) {
+    return { id, availability: "available", reason: included, included: true };
+  }
   const provided = PROVIDED[id];
   if (provided !== undefined) return { id, availability: "provided", reason: provided };
   const notChecked = NOT_CHECKED[id];
@@ -257,6 +261,7 @@ export function primitiveStatus(
         id,
         availability: "available",
         reason: "SQLite-backed Durable Objects are included on every Workers plan.",
+        included: true,
       };
     }
     return paidPlanStatus(id, view);

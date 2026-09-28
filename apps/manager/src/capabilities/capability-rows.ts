@@ -56,12 +56,13 @@ export const CAPABILITY_STATE_LABELS: Record<CapabilityState, string> = {
 
 /**
  * The row's one action: a page of the Cloudflare dashboard where it is
- * turned on (or where the token is edited), the Workers plan an admin
- * states while Appflare cannot detect it, or the Building apps settings
- * for sandbox builds.
+ * turned on, where a domain is added, or where the token is edited; the
+ * Workers plan an admin states while Appflare cannot detect it; or the
+ * Building apps settings for sandbox builds.
  */
 export type CapabilityAction =
   | { kind: "turn-on"; label: "Turn on in Cloudflare"; href: string }
+  | { kind: "add-domain"; label: "Add a domain in Cloudflare"; href: string }
   | { kind: "edit-token"; label: "Edit token in Cloudflare"; href: string }
   | { kind: "choose-plan"; label: "Choose plan" }
   | { kind: "set-up"; label: "Set up"; href: string };
@@ -235,6 +236,11 @@ function inUse(input: CapabilityRowsInput, pick: (n: CatalogNeeds) => number): b
 
 function turnOn(href: string): CapabilityAction {
   return { kind: "turn-on", label: "Turn on in Cloudflare", href };
+}
+
+/** A domain is added, not turned on: the dashboard page where one is added. */
+function addDomain(href: string): CapabilityAction {
+  return { kind: "add-domain", label: "Add a domain in Cloudflare", href };
 }
 
 const CHOOSE_PLAN: CapabilityAction = { kind: "choose-plan", label: "Choose plan" };
@@ -422,7 +428,7 @@ function zoneRow(input: CapabilityRowsInput): CapabilityRow {
             found: "No active domain",
             note: "If the account has one, Appflare's token may lack the optional Zone: Read permission.",
           },
-    turnOn(dashboardLinks(input.view.accountId).domains),
+    addDomain(dashboardLinks(input.view.accountId).domains),
     (probe) => unknownSentence(probe, "zone"),
   );
 }
@@ -446,7 +452,7 @@ function emailRoutingRow(input: CapabilityRowsInput): CapabilityRow {
         ? { ready: true, found: "Available on a domain of the account" }
         : { ready: false, found: "Needs a domain first" },
     // With no domain yet, adding one comes first.
-    turnOn(noDomain ? links.domains : links.emailRouting),
+    noDomain ? addDomain(links.domains) : turnOn(links.emailRouting),
     (probe) =>
       view.zone?.state === "unknown"
         ? "Appflare checks Email Routing on a domain of the account, and could not list the domains."

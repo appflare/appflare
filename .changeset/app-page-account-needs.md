@@ -1,0 +1,5 @@
+---
+"@appflare/manager": patch
+---
+
+An app's page now describes what it needs from your account in the same words as "What this account can run" on Your account: the same name, the same state and the same button for the Workers plan, R2, a domain, Email Routing, Analytics Engine and Zero Trust. Something no other app uses yet reads as "Needs action" on the app's page, with a line saying this app needs it, or uses it when Appflare worked that out from the app's code rather than from what the app asks for. Each unmet need keeps its link to the Cloudflare dashboard ("Turn on in Cloudflare", "Add a domain in Cloudflare", "Upgrade") and adds "See in Your account", which opens its row there; while Appflare cannot tell the Workers plan, "Choose plan" opens that row instead. The domain row, and the Email Routing row while the account has no domain, now say "Add a domain in Cloudflare" on Your account too. The "Before you install" notice shows the same rows, and its "Learn more" link sits in its text so the notice keeps its width on a phone.

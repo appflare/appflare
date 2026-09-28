@@ -1,4 +1,4 @@
-import { Button, Link, Popover, Text } from "@cloudflare/kumo";
+import { Banner, Button, Checkbox, Link, Popover, Text } from "@cloudflare/kumo";
 import {
   CheckCircleIcon,
   GithubLogoIcon,
@@ -8,12 +8,14 @@ import {
   ScalesIcon,
   UserCircleIcon,
   WarningCircleIcon,
+  WarningIcon,
 } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import type { AccountNeed, NeedTone } from "../catalog/account-needs";
 import type { AppLink, SettingItem } from "../catalog/app-page";
 import { maintainerProfile } from "../catalog/authors";
 import type { InstalledRef } from "../catalog/catalog.functions";
+import { DocsLink } from "./docs-link";
 import { PageSection } from "./page-section";
 import { StatusBadge } from "./status-badge";
 import { Tooltip } from "./tooltip";
@@ -68,11 +70,12 @@ const NEED_ICONS: Record<NeedTone, { icon: Icon; className: string }> = {
 };
 
 /**
- * "Email Routing · ready": the need's name and its state, which say it all,
- * so no tooltip. A need the account lacks ends in a quiet link to the
- * dashboard page that fixes it ("R2 storage · not turned on · Turn on"),
- * in a new tab. `explanation`, when given, is a line under it saying what
- * the need means for this app.
+ * "R2 storage · Needs action": the need's name and its state, in the words
+ * of its row on Your account. A need that is not met says why this app
+ * counts it (or `explanation`, when given, says what the need means for
+ * this app), then its actions: the Cloudflare dashboard page that fixes it,
+ * in a new tab ("Turn on in Cloudflare", "Upgrade"), and a quieter link to
+ * its row on Your account ("See in Your account", "Choose plan").
  */
 export function NeedRow({
   need,
@@ -82,30 +85,99 @@ export function NeedRow({
   explanation?: string | null;
 }) {
   const { icon: NeedIcon, className } = NEED_ICONS[need.tone];
+  const line = explanation ?? need.reason;
   return (
-    <li className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5">
+    <li className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] content-start items-center gap-x-2 gap-y-0.5">
       <NeedIcon aria-hidden weight="fill" size={18} className={`shrink-0 ${className}`} />
       <span className="min-w-0">
         <span className="font-medium text-kumo-default">{need.name}</span>
         <span className="text-kumo-subtle"> · {need.state}</span>
-        {need.fix !== null && (
-          <span className="text-kumo-subtle">
-            {" · "}
-            <Link href={need.fix.href} target="_blank" rel="noopener noreferrer" variant="current">
-              {need.fix.label}
-              <Link.ExternalIcon />
-            </Link>
-          </span>
-        )}
       </span>
-      {explanation !== null && (
-        <span className="col-start-2">
+      {line !== null && (
+        <span className="col-start-2 text-sm">
           <Text as="span" variant="secondary" size="sm">
-            {explanation}
+            {line}
           </Text>
         </span>
       )}
+      {(need.fix !== null || need.more !== null) && (
+        // On a phone the two links stack, in the banner and on the page alike;
+        // side by side, the banner's narrower column would break them unevenly.
+        <span className="col-start-2 flex flex-col items-start gap-y-1 pt-0.5 text-sm sm:flex-row sm:flex-wrap sm:gap-x-4">
+          {need.fix !== null && (
+            <Link href={need.fix.href} target="_blank" rel="noopener noreferrer">
+              {need.fix.label}
+              <Link.ExternalIcon />
+            </Link>
+          )}
+          {need.more !== null &&
+            (need.fix === null ? (
+              // The only way forward, so a plain link rather than a quiet one.
+              <Link href={need.more.href}>{need.more.label}</Link>
+            ) : (
+              <span className="text-kumo-subtle">
+                <Link href={need.more.href} variant="current">
+                  {need.more.label}
+                </Link>
+              </span>
+            ))}
+        </span>
+      )}
     </li>
+  );
+}
+
+/**
+ * "Before you install", above the install form while the account is not
+ * known to have everything the app needs: the same rows as "What it needs
+ * on your account" for what is left, and the box the admin ticks to say the
+ * account has them.
+ */
+export function BeforeYouInstall({
+  rows,
+  confirmed,
+  onConfirmedChange,
+  disabledReason,
+}: {
+  /** Each need left to confirm, with what it means for this app when there is more to say. */
+  rows: ReadonlyArray<{ need: AccountNeed; explanation: string | null }>;
+  confirmed: boolean;
+  onConfirmedChange: (confirmed: boolean) => void;
+  /** Why the box cannot be ticked: the viewer cannot install, or the install is blocked. */
+  disabledReason: string | null;
+}) {
+  return (
+    <Banner
+      variant="alert"
+      icon={<WarningIcon weight="fill" />}
+      title="Before you install"
+      description={
+        <div className="grid gap-2">
+          <span>
+            Check that your account has what the app needs.{" "}
+            <DocsLink topic="requirements" variant="inline" />
+          </span>
+          <ul className="m-0 grid list-none gap-3 p-0">
+            {rows.map(({ need, explanation }) => (
+              <NeedRow key={need.key} need={need} explanation={explanation} />
+            ))}
+          </ul>
+          <span className="grid gap-1">
+            <Checkbox
+              label="My account has these"
+              checked={confirmed}
+              disabled={disabledReason !== null}
+              onCheckedChange={(checked: boolean) => onConfirmedChange(checked)}
+            />
+            {disabledReason !== null && (
+              <Text as="span" variant="secondary" size="sm">
+                {disabledReason}
+              </Text>
+            )}
+          </span>
+        </div>
+      }
+    />
   );
 }
 
@@ -128,7 +200,7 @@ export function NeedsList({
           Nothing beyond what every Cloudflare account has.
         </Text>
       ) : (
-        <ul className="m-0 grid list-none gap-x-6 gap-y-2 p-0 sm:grid-cols-2">
+        <ul className="m-0 grid list-none gap-x-6 gap-y-3 p-0 sm:grid-cols-2">
           {needs.map((need) => (
             <NeedRow key={need.key} need={need} />
           ))}

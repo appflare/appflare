@@ -162,6 +162,7 @@ function RowAction({ row, options }: { row: CapabilityRow; options: RowOptions }
   if (action === null) return null;
   switch (action.kind) {
     case "turn-on":
+    case "add-domain":
     case "edit-token":
       return (
         <LinkButton href={action.href} external variant="secondary" size="sm">

@@ -14,27 +14,70 @@ describe("NeedRow", () => {
   const r2: AccountNeed = {
     key: "r2",
     name: "R2 storage",
-    state: "not turned on",
+    state: "Needs action",
     tone: "missing",
-    detail: "R2 is not turned on for this account.",
-    fix: { label: "Turn on", href: "https://dash.cloudflare.com/?to=/acc1/r2/overview" },
+    reason: "This app needs it. Apps keep files and uploads in R2. Turning it on is free.",
+    fix: {
+      label: "Turn on in Cloudflare",
+      href: "https://dash.cloudflare.com/?to=/acc1/r2/overview",
+    },
+    more: { label: "See in Your account", href: "/settings/account#capability-r2" },
   };
 
-  it("ends a missing need with a link to fix it, in a new tab, and no tooltip", () => {
+  function links(html: string): string[] {
+    return html.match(/<a [^>]*>/g) ?? [];
+  }
+
+  it("says why, then links to the fix in a new tab and to the row on Your account", () => {
     const html = renderToStaticMarkup(createElement(NeedRow, { need: r2 }));
-    expect(text(html)).toBe("R2 storage · not turned on · Turn on");
-    const link = html.match(/<a [^>]*>/)?.[0] ?? "";
-    expect(link).toContain('href="https://dash.cloudflare.com/?to=/acc1/r2/overview"');
-    expect(link).toContain('target="_blank"');
-    expect(link).toContain('rel="noopener noreferrer"');
+    expect(text(html)).toBe(
+      "R2 storage · Needs actionThis app needs it. Apps keep files and uploads in R2. Turning it on is free.Turn on in CloudflareSee in Your account",
+    );
+    const [fix, more] = links(html);
+    expect(fix).toContain('href="https://dash.cloudflare.com/?to=/acc1/r2/overview"');
+    expect(fix).toContain('target="_blank"');
+    expect(fix).toContain('rel="noopener noreferrer"');
+    // The row on Your account opens in place.
+    expect(more).toContain('href="/settings/account#capability-r2"');
+    expect(more).not.toContain("target=");
     expect(html).not.toContain("<button");
-    expect(html).not.toContain(r2.detail);
+  });
+
+  it("puts the banner's explanation in place of the reason", () => {
+    const html = renderToStaticMarkup(
+      createElement(NeedRow, { need: r2, explanation: "R2 must be enabled on the account." }),
+    );
+    expect(text(html)).toContain("R2 must be enabled on the account.");
+    expect(text(html)).not.toContain("This app needs it.");
+  });
+
+  it("offers only the row on Your account when there is no dashboard page", () => {
+    const plan: AccountNeed = {
+      ...r2,
+      key: "plan",
+      name: "Workers plan",
+      reason: "This app needs Workers Paid, and Appflare cannot tell this account's plan.",
+      fix: null,
+      more: { label: "Choose plan", href: "/settings/account#capability-workers-plan" },
+    };
+    const html = renderToStaticMarkup(createElement(NeedRow, { need: plan }));
+    const [only, ...rest] = links(html);
+    expect(rest).toEqual([]);
+    expect(only).toContain('href="/settings/account#capability-workers-plan"');
+    expect(text(html)).toMatch(/Choose plan$/);
   });
 
   it("leaves a ready need as its name and state", () => {
-    const ready: AccountNeed = { ...r2, state: "ready", tone: "ready", fix: null };
+    const ready: AccountNeed = {
+      ...r2,
+      state: "Ready",
+      tone: "ready",
+      reason: null,
+      fix: null,
+      more: null,
+    };
     const html = renderToStaticMarkup(createElement(NeedRow, { need: ready }));
-    expect(text(html)).toBe("R2 storage · ready");
+    expect(text(html)).toBe("R2 storage · Ready");
     expect(html).not.toContain("<a ");
     expect(html).not.toContain("<button");
   });

@@ -1,9 +1,14 @@
-import { Banner, Button, Checkbox, Empty, Text } from "@cloudflare/kumo";
-import { PlusIcon, StorefrontIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
+import { Banner, Button, Empty } from "@cloudflare/kumo";
+import { PlusIcon, StorefrontIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capability-rows";
-import { accountNeeds, installAdds, needOfCheck } from "../../../catalog/account-needs";
+import {
+  type AppNeedsOf,
+  accountNeeds,
+  installAdds,
+  needOfCheck,
+} from "../../../catalog/account-needs";
 import {
   appLinks,
   appStats,
@@ -24,10 +29,10 @@ import { requirementSentence } from "../../../catalog/requirements";
 import { AppPageHeader } from "../../../components/app-page-header";
 import {
   AppSection,
+  BeforeYouInstall,
   Description,
   InstallsList,
   LinksList,
-  NeedRow,
   NeedsList,
   SettingsList,
 } from "../../../components/app-page-sections";
@@ -132,7 +137,8 @@ function AppPage({
   }, [revealRequest]);
 
   const requires = [...new Set([...app.requires, ...(catalog?.requires ?? [])])];
-  const checks = requirementChecks({ plan: app.plan, requires }, detail.capabilities);
+  const needsOf: AppNeedsOf = { plan: app.plan, requires, tier: app.tier };
+  const checks = requirementChecks(needsOf, detail.capabilities);
   const images = detail.images.screenshots;
   const paragraphs = descriptionParagraphs(app.summary);
   const settings = catalog === null ? [] : settingsToChoose(catalog.secrets, detail.varFields);
@@ -188,7 +194,13 @@ function AppPage({
           aria-label={`Install ${app.name}`}
           className="grid scroll-mt-6 gap-4 outline-none"
         >
-          <InstallPanel detail={detail} app={app} checks={checks} canInstall={canInstall} />
+          <InstallPanel
+            detail={detail}
+            app={app}
+            checks={checks}
+            needsOf={needsOf}
+            canInstall={canInstall}
+          />
         </section>
       )}
 
@@ -201,7 +213,7 @@ function AppPage({
         titleAction={<DocsLink topic="requirements" />}
       >
         <NeedsList
-          needs={accountNeeds({ plan: app.plan, requires }, detail.primitives, detail.capabilities)}
+          needs={accountNeeds(needsOf, detail.primitives, detail.capabilities)}
           adds={
             app.tier === "artifact" && detail.createsKnown
               ? installAdds(detail.creates, detail.durableObjects)
@@ -261,11 +273,13 @@ function InstallPanel({
   detail,
   app,
   checks,
+  needsOf,
   canInstall,
 }: {
   detail: CatalogDetail;
   app: NonNullable<CatalogDetail["app"]>;
   checks: RequirementChecks;
+  needsOf: AppNeedsOf;
   canInstall: boolean;
 }) {
   const { catalog } = detail;
@@ -307,45 +321,21 @@ function InstallPanel({
   return (
     <>
       {checks.pending.length > 0 && (
-        <Banner
-          variant="alert"
-          icon={<WarningIcon weight="fill" />}
-          title="Before you install"
-          action={<DocsLink topic="requirements" variant="inline" />}
-          description={
-            <div className="grid gap-2">
-              <span>Check that your account has what the app needs:</span>
-              <ul className="m-0 grid list-none gap-2 p-0">
-                {checks.pending.map((check) => (
-                  <NeedRow
-                    key={check.key}
-                    need={needOfCheck(check, detail.capabilities.accountId)}
-                    explanation={
-                      check.key === "plan"
-                        ? "This app needs the Workers Paid plan on this account."
-                        : requirementSentence(check.key, {
-                            tier: app.tier,
-                            provisionsEmailRouting: catalog.install.emailRouting !== undefined,
-                          })
-                    }
-                  />
-                ))}
-              </ul>
-              <span className="grid gap-1">
-                <Checkbox
-                  label="My account has these"
-                  checked={requirementsConfirmed}
-                  disabled={disabledReason !== null}
-                  onCheckedChange={(checked: boolean) => setRequirementsConfirmed(checked)}
-                />
-                {disabledReason !== null && (
-                  <Text as="span" variant="secondary" size="sm">
-                    {disabledReason}
-                  </Text>
-                )}
-              </span>
-            </div>
-          }
+        <BeforeYouInstall
+          rows={checks.pending.map((check) => ({
+            need: needOfCheck(check, needsOf, detail.primitives, detail.capabilities),
+            // The plan's row already says why; a requirement says what it means for this app.
+            explanation:
+              check.key === "plan"
+                ? null
+                : requirementSentence(check.key, {
+                    tier: app.tier,
+                    provisionsEmailRouting: catalog.install.emailRouting !== undefined,
+                  }),
+          }))}
+          confirmed={requirementsConfirmed}
+          onConfirmedChange={setRequirementsConfirmed}
+          disabledReason={disabledReason}
         />
       )}
       <InstallForm

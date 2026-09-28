@@ -337,12 +337,20 @@ describe("capabilityRows", () => {
       });
       expect(byId.zone).toMatchObject({
         state: "needs-action",
-        action: { href: `${DASH}/domains/overview` },
+        action: {
+          kind: "add-domain",
+          label: "Add a domain in Cloudflare",
+          href: `${DASH}/domains/overview`,
+        },
       });
       // Without a domain, adding one comes first.
       expect(byId["email-routing"]).toMatchObject({
         state: "needs-action",
-        action: { href: `${DASH}/domains/overview` },
+        action: {
+          kind: "add-domain",
+          label: "Add a domain in Cloudflare",
+          href: `${DASH}/domains/overview`,
+        },
         details: { found: "Needs a domain first" },
       });
       expect(byId["analytics-engine"]).toMatchObject({
@@ -360,7 +368,9 @@ describe("capabilityRows", () => {
       const byId = rows(lacking, { inUse: NOTHING_IN_USE });
       for (const id of ["r2", "zone", "email-routing", "analytics-engine", "zero-trust"] as const) {
         expect(byId[id].state).toBe("not-set-up");
-        expect(byId[id].action?.kind).toBe("turn-on");
+        // A domain is added rather than turned on, and Email Routing needs one first.
+        const kind = id === "zone" || id === "email-routing" ? "add-domain" : "turn-on";
+        expect(byId[id].action?.kind).toBe(kind);
       }
     });
 
@@ -541,16 +551,22 @@ describe("capabilityRows", () => {
       expect(href).toContain("/?to=/:account/");
   });
 
-  it("offers only the four actions, and none on a ready row but a stated plan", () => {
+  it("offers only the five actions, and none on a ready row but a stated plan", () => {
     const labels = new Set<string>();
     const refused = { ...FREE, workersDev: NO_PERMISSION };
-    for (const stored of [EVERYTHING, FREE, refused, null]) {
+    const noDomain = {
+      ...FREE,
+      zone: { state: "none" as const },
+      emailRouting: { state: "no-zone" as const },
+    };
+    for (const stored of [EVERYTHING, FREE, refused, noDomain, null]) {
       for (const row of Object.values(rows(stored))) {
         if (row.action !== null) labels.add(row.action.label);
         if (row.state === "ready" && row.id !== "sandbox") expect(row.action).toBeNull();
       }
     }
     expect([...labels].sort()).toEqual([
+      "Add a domain in Cloudflare",
       "Choose plan",
       "Edit token in Cloudflare",
       "Set up",
