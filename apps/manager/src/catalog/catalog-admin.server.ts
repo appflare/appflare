@@ -18,7 +18,7 @@ import {
   fetchWhole,
   verifyArtifactManifest,
 } from "../jobs/install/artifact";
-import { listCatalogRecords, readCatalogRecord } from "./catalogs.server";
+import { ensureOfficialCatalogRow, listCatalogRecords, readCatalogRecord } from "./catalogs.server";
 import { fetchCatalogJson } from "./conditional-fetch";
 import {
   CatalogError,
@@ -35,6 +35,7 @@ import {
   catalogIndexUrlSchema,
   catalogLabelSchema,
   MAX_CUSTOM_CATALOGS,
+  OFFICIAL_CATALOG_ID,
 } from "./sources";
 
 /**
@@ -348,7 +349,11 @@ export async function setCatalogEnabledCore(
   deps: CatalogAdminDeps,
   input: { id: string; enabled: boolean },
 ): Promise<void> {
-  const result = await createDb(deps.db)
+  const db = createDb(deps.db);
+  if (input.id === OFFICIAL_CATALOG_ID) {
+    await ensureOfficialCatalogRow(db, (deps.now ?? (() => new Date()))());
+  }
+  const result = await db
     .update(catalogs)
     .set({ enabled: input.enabled })
     .where(eq(catalogs.id, input.id))

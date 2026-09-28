@@ -253,8 +253,8 @@ export const CATALOG_KINDS = ["official", "custom"] as const;
 export type CatalogKind = (typeof CATALOG_KINDS)[number];
 
 /**
- * The catalogs this manager browses and installs from. The official one is
- * seeded by its migration, can be turned off but never removed, and is always
+ * The catalogs this manager browses and installs from. The official one has
+ * a row once something about it is stored, can be turned off but never removed, and is always
  * verified with the signing keys built into Appflare (its `keys_json` and
  * `index_url` only describe them). A custom catalog is added by an admin with
  * its index URL and the public keys its releases are signed with, pinned

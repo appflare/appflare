@@ -20,7 +20,7 @@ import { installs } from "../db/schema";
 
 /**
  * Apps that install as several Workers (a catalog entry's `install.workers`,
- * an artifact manifest of format 2), as the jobs see them. The primary Worker
+ * an artifact manifest's `workers`), as the jobs see them. The primary Worker
  * is the install's own: its Worker name is the install's, and the install,
  * update, rollback and uninstall jobs handle it exactly as the only Worker of
  * a one-Worker app. Every other Worker runs as `<install Worker name>-<name>`

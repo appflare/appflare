@@ -1,5 +1,0 @@
----
-"@appflare/manager": minor
----
-
-Turn sandbox builds on at first need. Installing an app that is built in the account or deployed by its own installer, or building from a repository or from source, no longer requires enabling sandbox builds in Settings first: when they are off and the account has what they need (Workers Paid, R2 enabled, the token's Containers: Edit, and a readable sandbox Worker release, all checked live when the install or build starts), the start also queues the same "Enable sandbox builds" job Settings runs, and the install or build job waits for it, copying its progress into its own log. The app page, "From a repository" and "Build from source" show the build's cost with "Sandbox builds will be turned on first (about two minutes)", or refuse naming exactly what is missing with a link to the sandbox builds row of the account checklist. The checklist and Settings can read the row's state (`on`, `ready-auto`, `needs-plan`, `needs-permission`, `needs-r2`) from `getSandboxReadiness`. Usage data counts such an enable as `sandbox_enable` with trigger `auto`. Settings keeps Enable, Update and Disable.

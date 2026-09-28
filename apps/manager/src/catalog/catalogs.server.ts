@@ -12,9 +12,11 @@ import {
 } from "./sources";
 
 /**
- * The catalogs this manager knows (`catalogs` table): the official one,
- * seeded by its migration, and the custom ones admins added, each with the
- * public keys it was added with.
+ * The catalogs this manager knows (`catalogs` table): the official one and
+ * the custom ones admins added, each with the public keys it was added with.
+ * The official catalog is always there: its row is written the first time
+ * something about it is stored (turned off, refreshed), and reads use the
+ * built-in record until then.
  *
  * Trust is per catalog. The official catalog's releases verify with the keys
  * built into Appflare (`signingKeys`), never with a stored row, so a key an
@@ -87,9 +89,8 @@ function recordOf(row: typeof catalogs.$inferSelect): CatalogRecord {
 }
 
 /**
- * The official catalog as its migration seeds it, for a database where the
- * row is missing (it never is after migrating; this keeps browsing working
- * if someone deleted it by hand).
+ * The official catalog as Appflare ships it, for a database without its row:
+ * a fresh one, before anything about the catalog was stored.
  */
 function seededOfficial(): CatalogRecord {
   return {
@@ -166,12 +167,35 @@ export async function catalogTrust(
   return trustOf(record);
 }
 
-/** Records how a catalog's last refresh went. One D1 write. */
+/**
+ * Writes the official catalog's row as Appflare ships it unless it is
+ * already there, so a change to the catalog (turning it off, a refresh) has
+ * a row to land on. An existing row is left as it is.
+ */
+export async function ensureOfficialCatalogRow(db: Database, now: Date): Promise<void> {
+  const official = seededOfficial();
+  await db
+    .insert(catalogs)
+    .values({
+      id: official.id,
+      kind: official.kind,
+      label: official.label,
+      colour: official.colour,
+      index_url: official.indexUrl,
+      keys_json: JSON.stringify(official.keys),
+      enabled: official.enabled,
+      added_at: now,
+    })
+    .onConflictDoNothing({ target: catalogs.id });
+}
+
+/** Records how a catalog's last refresh went. */
 export async function recordCatalogRefresh(
   db: Database,
   id: string,
   outcome: { at: Date; error: string | null },
 ): Promise<void> {
+  if (id === OFFICIAL_CATALOG_ID) await ensureOfficialCatalogRow(db, outcome.at);
   await db
     .update(catalogs)
     .set({

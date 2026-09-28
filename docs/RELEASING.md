@@ -43,7 +43,7 @@ release), run the `release` workflow manually on `main` with the `version` input
 set to it (`0.2.0`, no leading `v`). It builds from the commit that set
 `apps/manager/package.json` to that version. Only the current version is marked
 as the repository's latest release. Versions with a pre-release suffix are
-     marked as pre-releases.
+marked as pre-releases.
 
 To pack locally (unsigned unless you pass `--key-id`):
 

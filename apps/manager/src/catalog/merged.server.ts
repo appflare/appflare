@@ -224,7 +224,7 @@ export function listedApps(reads: readonly CatalogIndexRead[]): ListedApp[] {
 /** A lookup of listed apps by app key. */
 export type AppLookup = ReadonlyMap<string, ListedApp>;
 
-/** The official catalog's badge, as its migration seeds it. */
+/** The official catalog's badge, as Appflare ships it. */
 export const OFFICIAL_SOURCE: CatalogSource = {
   id: OFFICIAL_CATALOG_ID,
   label: "Official",

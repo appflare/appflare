@@ -52,27 +52,3 @@ describe("renameInstallCore", () => {
     await expect(renameInstallCore(env.DB, "nope", "x")).rejects.toThrow(RenameInstallError);
   });
 });
-
-describe("the display name migration", () => {
-  it("keeps a label an admin chose and drops the ones that only repeated the Worker name", async () => {
-    await reset();
-    const at = migrations.findIndex((m) => m.tag === "0015_install_display_name");
-    expect(at).toBeGreaterThan(0);
-    await createMigrator(migrations.slice(0, at)).ensure(env.DB);
-    await install("a", "cut", "cut");
-    await install("b", "cut-2", " Team links ");
-    await install("c", "cut-3", null);
-    await install("d", "cut-4", "  ");
-    await createMigrator(migrations).ensure(env.DB);
-    const rows = await env.DB.prepare("SELECT id, display_name FROM installs ORDER BY id").all<{
-      id: string;
-      display_name: string | null;
-    }>();
-    expect(rows.results).toEqual([
-      { id: "a", display_name: null },
-      { id: "b", display_name: "Team links" },
-      { id: "c", display_name: null },
-      { id: "d", display_name: null },
-    ]);
-  });
-});

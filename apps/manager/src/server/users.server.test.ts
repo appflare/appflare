@@ -356,23 +356,6 @@ describe("the single owner", () => {
       db().update(user).set({ isOwner: true }).where(eq(user.id, "admin")),
     ).rejects.toThrow();
   });
-
-  it("the migration makes the earliest admin the owner of an existing manager", async () => {
-    await reset();
-    const before = migrations.findIndex((m) => m.tag === "0014_owner");
-    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
-    const insert = env.DB.prepare(
-      "INSERT INTO user (id, name, email, email_verified, role, created_at, updated_at) VALUES (?1, ?1, ?2, 0, ?3, ?4, ?4)",
-    );
-    await env.DB.batch([
-      insert.bind("m-early", "m@example.com", "member", 1_000),
-      insert.bind("a-late", "late@example.com", "admin", 3_000),
-      insert.bind("a-first", "first@example.com", "admin", 2_000),
-    ]);
-    await createMigrator(migrations).ensure(env.DB);
-    const owners = (await listManagedUsers(db())).filter((u) => u.isOwner).map((u) => u.id);
-    expect(owners).toEqual(["a-first"]);
-  });
 });
 
 describe("Better Auth's admin endpoints", () => {

@@ -1,9 +1,0 @@
----
-"@appflare/schema": minor
----
-
-Catalog manifests can seed a D1 database once, at install: `resources.d1[binding].seed` takes named `hashes` derived from secrets (`pbkdf2-sha256` with explicit `iterations` up to 100,000, `saltBytes`, `keyBytes` and `encoding`, or `bcrypt` at an optional `cost` of 4 to 10), up to 10 `statements` of one `INSERT OR IGNORE` or `INSERT ... ON CONFLICT DO NOTHING` each, with anonymous `?` placeholders bound to object params (`{ var }`, `{ secret }`, `{ hash }`, `{ salt }`, `{ value }`), and `beforeSchema` to run them before the binding's schema files. A statement with more than one statement, `WITH`, `DO UPDATE`, another statement kind, numbered or named parameters, a placeholder count that differs from its params, or a `d1_migrations`, `sqlite_` or `_cf_` table is refused, and so are params naming undeclared vars, secrets or hashes, the salt of a bcrypt hash, unused hashes, and seeds on self-deploying entries.
-
-Secrets and vars take `seedOnly: true` for values that exist only for a seed: they must be used by one, cannot be optional, derived or limited to some Workers, and nothing may derive from them. Secrets take `generate: "base64-key-32"` (32 random bytes as padded base64), and `secretValueProblem` refuses a value that does not decode to 32 bytes.
-
-The SQL checks move here from the packer (`splitSqlStatements`, `schemaFileProblems`, and the new `seedStatementProblems`) so the schema, the packer, catalog CI and the manager share them. `pbkdf2SeedHash`, `seedStatementParams`, `bcryptInputProblem` and `boundToWorker` help run seeds and keep seed-only values off the Worker. Artifact format 4 carries seeds: `artifactFormatFor` gives 4 for an artifact whose catalog manifest has one, so a manager that reads only formats 1 to 3 refuses it instead of installing the app without its first admin. The JSON Schema is regenerated.

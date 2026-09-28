@@ -1,5 +1,0 @@
----
-"@appflare/manager": minor
----
-
-Setup is now one page: the same frame, width and step indicator for every step, with each step's content swapped in place instead of loading a new screen. Connecting Cloudflare comes in three short parts: create the token (the button first, then one sentence on what to click in the dashboard, with the permissions behind a "What the token can do" disclosure), paste it, and one Continue that verifies and saves in a single call, shows the account it connected to, and moves on; the separate Verify button is gone, so each try counts once against the rate limit. The account checklist shows progress as rows done, lists what needs you first with its one action, folds done rows to a single line with a tick and keeps optional rows last and quieter, on both the last setup step and Settings › Account and capabilities. Its sandbox builds row reads "Ready, enabled automatically when an app needs it" once Workers Paid and the Containers permission are confirmed, with an optional "Enable now", and otherwise says what is missing.

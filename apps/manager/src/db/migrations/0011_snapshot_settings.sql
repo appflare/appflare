@@ -1,1 +1,0 @@
-ALTER TABLE `snapshots` ADD `config_json` text;
