@@ -11,7 +11,7 @@ import {
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { effectiveManifest } from "../catalog/revisions.server";
-import { createDb } from "../db/client";
+import { createDb, type Database } from "../db/client";
 import { type BuildKind, installs, resources } from "../db/schema";
 import { entryWorkers, parseStoredManifest } from "../jobs/entry-workers";
 import type { ReconfigureJobParams } from "../jobs/reconfigure";
@@ -155,25 +155,31 @@ async function settingsContext(
   install: InstallRow,
   sandboxConnected: boolean,
 ): Promise<SettingsContext | null> {
-  const rows = await createDb(db)
-    .select({
-      kind: resources.kind,
-      binding: resources.binding,
-      name: resources.name,
-      cfId: resources.cf_id,
-      createdAt: resources.created_at,
-    })
-    .from(resources)
-    .where(
-      and(
-        eq(resources.install_id, install.id),
-        inArray(resources.kind, ["secret", EMAIL_ROUTE_KIND, HYPERDRIVE_KIND]),
-        isNull(resources.deleted_at),
-        isNull(resources.retained_at),
-      ),
-    )
-    // Insertion order (created_at can tie within a millisecond).
-    .orderBy(sql`rowid`);
+  const signed =
+    install.build_kind === "self-deploying" ? null : parseManifest(install.manifest_json);
+  const [rows, effective] = await Promise.all([
+    createDb(db)
+      .select({
+        kind: resources.kind,
+        binding: resources.binding,
+        name: resources.name,
+        cfId: resources.cf_id,
+        createdAt: resources.created_at,
+      })
+      .from(resources)
+      .where(
+        and(
+          eq(resources.install_id, install.id),
+          inArray(resources.kind, ["secret", EMAIL_ROUTE_KIND, HYPERDRIVE_KIND]),
+          isNull(resources.deleted_at),
+          isNull(resources.retained_at),
+        ),
+      )
+      // Insertion order (created_at can tie within a millisecond).
+      .orderBy(sql`rowid`),
+    // The form of the newest revision recorded for the release, if any.
+    signed === null ? null : effectiveManifest(createDb(db), signed, install.artifact_digest),
+  ]);
   const secretNames = rows.filter((r) => r.kind === "secret").map((r) => r.name);
   if (install.build_kind === "self-deploying") {
     const catalog = recordedCatalog(install.manifest_json);
@@ -199,10 +205,8 @@ async function settingsContext(
         : `This app is deployed by its own installer in the account's sandbox Worker, and Appflare is not connected to one. Connect sandbox builds in ${ENABLE_SANDBOX_PLACE} to change its settings.`,
     };
   }
-  const signed = parseManifest(install.manifest_json);
-  if (signed === null) return null;
-  // The form of the newest revision recorded for the release, if any.
-  const manifest = await effectiveManifest(createDb(db), signed, install.artifact_digest);
+  const manifest = effective;
+  if (manifest === null) return null;
   const path = updatePath(
     manifest,
     install.do_migration_tag ?? lastDurableObjectTagOf(install.manifest_json),
@@ -245,6 +249,40 @@ async function settingsContext(
   };
 }
 
+/** What the settings' placeholders fill in: where the app is reached, and its names. */
+async function settingsPlaceholders(
+  orm: Database,
+  install: InstallRow,
+  subdomain: string | null,
+): Promise<InstallSettings["placeholders"]> {
+  const [workerUrl, wildcard] = await Promise.all([
+    // Where the app is reached: its custom domain while workers.dev is off.
+    readAppBaseUrl(orm, install, subdomain),
+    orm
+      .select({ kind: resources.kind, name: resources.name })
+      .from(resources)
+      .where(
+        and(
+          eq(resources.install_id, install.id),
+          eq(resources.kind, WILDCARD_DOMAIN_KIND),
+          isNull(resources.deleted_at),
+          isNull(resources.retained_at),
+        ),
+      ),
+  ]);
+  const catalog = parseStoredManifest(install.manifest_json)?.catalog;
+  const entryWorkers =
+    catalog === undefined
+      ? undefined
+      : entryPlaceholderValues(catalog, install.worker_name, subdomain, workerUrl);
+  return {
+    workerName: install.worker_name,
+    workerUrl,
+    wildcardHostname: wildcardHostnameOf(wildcard),
+    ...(entryWorkers === undefined ? {} : { entryWorkers }),
+  };
+}
+
 /**
  * The Settings section of an install; null when the install is gone, or
  * never got far enough to have settings to change.
@@ -252,11 +290,19 @@ async function settingsContext(
 export async function readInstallSettingsCore(
   deps: { db: D1Database; sandboxConnected: boolean; subdomain: string | null },
   installId: string,
+  /** The install's row, when the caller read it already (undefined: there is none). */
+  known?: { install: InstallRow | undefined },
 ): Promise<InstallSettings | null> {
   const orm = createDb(deps.db);
-  const [install] = await orm.select().from(installs).where(eq(installs.id, installId)).limit(1);
+  const install =
+    known === undefined
+      ? (await orm.select().from(installs).where(eq(installs.id, installId)).limit(1))[0]
+      : known.install;
   if (install === undefined || install.status === "uninstalled") return null;
-  const ctx = await settingsContext(deps.db, install, deps.sandboxConnected);
+  const [ctx, placeholders] = await Promise.all([
+    settingsContext(deps.db, install, deps.sandboxConnected),
+    settingsPlaceholders(orm, install, deps.subdomain),
+  ]);
   if (ctx === null) return null;
   const stored = parseStoredVars(install.config_json);
   return {
@@ -264,32 +310,7 @@ export async function readInstallSettingsCore(
     kind: install.build_kind,
     unavailable: ctx.problem ?? statusRefusal(install.status),
     fields: ctx.fields.map((f) => ({ ...f, stored: stored[f.name] ?? null })),
-    placeholders: await (async () => {
-      // Where the app is reached: its custom domain while workers.dev is off.
-      const workerUrl = await readAppBaseUrl(orm, install, deps.subdomain);
-      const catalog = parseStoredManifest(install.manifest_json)?.catalog;
-      const entryWorkers =
-        catalog === undefined
-          ? undefined
-          : entryPlaceholderValues(catalog, install.worker_name, deps.subdomain, workerUrl);
-      const wildcard = await orm
-        .select({ kind: resources.kind, name: resources.name })
-        .from(resources)
-        .where(
-          and(
-            eq(resources.install_id, install.id),
-            eq(resources.kind, WILDCARD_DOMAIN_KIND),
-            isNull(resources.deleted_at),
-            isNull(resources.retained_at),
-          ),
-        );
-      return {
-        workerName: install.worker_name,
-        workerUrl,
-        wildcardHostname: wildcardHostnameOf(wildcard),
-        ...(entryWorkers === undefined ? {} : { entryWorkers }),
-      };
-    })(),
+    placeholders,
     // Derived secrets are never entered; their source's row says they follow it.
     secrets: ctx.slots.filter((slot) => slot.derivedFrom === undefined),
     databases: ctx.databases,

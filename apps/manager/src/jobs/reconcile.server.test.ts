@@ -6,6 +6,7 @@ import { migrations } from "../db/migrations/index";
 import { startUninstallCore } from "../installs/start-uninstall.server";
 import {
   type ActiveJobRow,
+  RECONCILE_CONCURRENCY,
   RESTORE_STALE_MS,
   reconcileJobs,
   type WorkflowLookup,
@@ -60,6 +61,61 @@ async function job(id: string) {
 beforeEach(async () => {
   await reset();
   await createMigrator(migrations).ensure(env.DB);
+});
+
+describe("reconcileJobs, many at once", () => {
+  it("asks the engine about up to ten jobs at a time, and settles every one", async () => {
+    const ids = Array.from({ length: 23 }, (_, i) => `j${String(i).padStart(2, "0")}`);
+    await seed(
+      "installed",
+      ids.map((id) => [id, "uninstall", "running", id] as [string, string, string, string]),
+    );
+    let inFlight = 0;
+    let most = 0;
+    const binding: WorkflowLookup = {
+      async get() {
+        inFlight += 1;
+        most = Math.max(most, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        inFlight -= 1;
+        return { status: async () => ({ status: "complete" }) };
+      },
+    };
+    expect(await reconcileJobs(env.DB, binding, await rows(), () => NOW)).toBe(true);
+    expect(most).toBe(RECONCILE_CONCURRENCY);
+    for (const id of ids) expect((await job(id))?.status).toBe("succeeded");
+  });
+
+  it("settles every other job, later batches too, before reporting a failure", async () => {
+    const ids = Array.from({ length: 12 }, (_, i) => `j${String(i).padStart(2, "0")}`);
+    await seed(
+      "installed",
+      ids.map((id) => [id, "uninstall", "running", id] as [string, string, string, string]),
+    );
+    const wf = fakeWorkflows(Object.fromEntries(ids.map((id) => [id, { status: "complete" }])));
+    let calls = 0;
+    const now = () => {
+      calls += 1;
+      if (calls === 1) throw new Error("clock broke for one job");
+      return NOW;
+    };
+    await expect(reconcileJobs(env.DB, wf.binding, await rows(), now)).rejects.toThrow(
+      "clock broke for one job",
+    );
+    const statuses = await Promise.all(ids.map(async (id) => (await job(id))?.status));
+    expect(statuses.filter((s) => s === "succeeded")).toHaveLength(11);
+    expect(await job("j11")).toMatchObject({ status: "succeeded" });
+  });
+
+  it("reports no change when no job changed", async () => {
+    await seed("installed", [
+      ["j1", "uninstall", "running", "j1"],
+      ["j2", "uninstall", "running", "j2"],
+    ]);
+    const wf = fakeWorkflows({ j1: { status: "running" }, j2: { status: "queued" } });
+    expect(await reconcileJobs(env.DB, wf.binding, await rows(), () => NOW)).toBe(false);
+    expect(wf.asked.sort()).toEqual(["j1", "j2"]);
+  });
 });
 
 describe("reconcileJobs", () => {

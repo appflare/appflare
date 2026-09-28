@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
-import { asc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { invalidateScriptsCache, SCRIPTS_CACHE_MS } from "../cloudflare/scripts-cache.server";
 import { createDb } from "../db/client";
-import { installs, type JobStarter, job_logs, jobs } from "../db/schema";
+import { installs, type JobStarter, jobs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { appAddress } from "../installs/app-address";
 import { readAddressDomains } from "../installs/app-address.server";
@@ -18,6 +19,7 @@ import {
 } from "../sandbox/progress";
 import { requireSession } from "../server/auth.server";
 import { type JobListRow, listRecentJobs } from "./job-list.server";
+import { readJobLogs } from "./job-logs.server";
 import { isRestoreJob, reconcileJobs } from "./reconcile.server";
 
 export type { BuildProgressView } from "../sandbox/progress";
@@ -76,7 +78,13 @@ export interface JobView {
     /** Where "Open" takes the app (`appAddress`); null until installed, or with no address. */
     address: string | null;
   } | null;
+  /** The job's log lines, oldest first: all of them, or those after `logsAfter`. */
   logs: JobLogRow[];
+  /**
+   * The log line id `logs` follows when the request asked only for newer
+   * lines (`afterLogId`); null when `logs` is the whole log.
+   */
+  logsAfter: number | null;
   /**
    * A build from a repository or from source: what it is for (its review
    * is at `/catalog/source/<job id>`). Null for other jobs.
@@ -129,9 +137,17 @@ function sourceBuildOfInput(inputJson: string | null): { purpose: string; origin
   }
 }
 
-/** Any signed-in user. Null when there is no such job. */
+/**
+ * Any signed-in user. Null when there is no such job. With `afterLogId` (the
+ * last log line the page holds) only newer lines are read and sent.
+ */
 export const getJob = createServerFn({ method: "GET" })
-  .validator(z.object({ jobId: z.string().min(1).max(64) }))
+  .validator(
+    z.object({
+      jobId: z.string().min(1).max(64),
+      afterLogId: z.number().int().nonnegative().optional(),
+    }),
+  )
   .handler(async ({ data }): Promise<JobView | null> => {
     await requireSession();
     const db = createDb(env.DB);
@@ -142,6 +158,11 @@ export const getJob = createServerFn({ method: "GET" })
         [job] = await db.select().from(jobs).where(eq(jobs.id, data.jobId)).limit(1);
         if (job === undefined) return null;
       }
+    }
+    // The job may have added, removed or renamed Workers, and it may have
+    // run in another isolate: the account's Worker names kept here go.
+    if (job.finished_at !== null && Date.now() - job.finished_at.getTime() < SCRIPTS_CACHE_MS) {
+      invalidateScriptsCache();
     }
     const [installRows, logs] = await Promise.all([
       job.install_id === null
@@ -160,7 +181,7 @@ export const getJob = createServerFn({ method: "GET" })
             .from(installs)
             .where(eq(installs.id, job.install_id))
             .limit(1),
-      db.select().from(job_logs).where(eq(job_logs.job_id, job.id)).orderBy(asc(job_logs.id)),
+      readJobLogs(db, job.id, data.afterLogId),
     ]);
     const installRow = installRows[0];
     let install: JobView["install"] = null;
@@ -220,6 +241,7 @@ export const getJob = createServerFn({ method: "GET" })
       finishedAt: job.finished_at?.toISOString() ?? null,
       reportedAt: job.reported_at?.toISOString() ?? null,
       install,
+      logsAfter: data.afterLogId ?? null,
       logs: logs.map((l) => ({
         id: l.id,
         ts: l.ts.toISOString(),

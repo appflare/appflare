@@ -32,6 +32,7 @@ import {
   transferOwnership,
   type UserRow,
 } from "../server/users.functions";
+import { appEntryMemo } from "./app-entry-memo";
 import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { ResetPasswordDialog } from "./reset-password-dialog";
@@ -327,6 +328,8 @@ function UserConfirmDialog({
           confirmText: u.email,
           onConfirm: async () => {
             await transferOwnership({ data: { userId: u.id } });
+            // The signed-in layout reads who the viewer is again: no longer the owner.
+            appEntryMemo.forget();
             toasts.add({
               title: "Ownership transferred",
               description: `${u.email} is now the owner.`,

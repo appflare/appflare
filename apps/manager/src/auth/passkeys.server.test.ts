@@ -201,9 +201,18 @@ describe("passkey routes", () => {
       .update(session)
       .set({ createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) })
       .where(eq(session.userId, userId));
+    // A day on, the cookie's one-minute copy of the session is long gone.
+    const aDayOn = new Headers(headers);
+    aDayOn.set(
+      "cookie",
+      (headers.get("cookie") ?? "")
+        .split("; ")
+        .filter((c) => !c.includes("session_data"))
+        .join("; "),
+    );
 
     const res = await call(a, "GET", "/passkey/generate-register-options?name=Laptop", {
-      headers,
+      headers: aDayOn,
     });
     expect(res.status).toBe(403);
     expect(((await res.json()) as { code: string }).code).toBe("SESSION_NOT_FRESH");

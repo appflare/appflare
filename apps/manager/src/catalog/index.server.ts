@@ -186,7 +186,7 @@ async function fetchAndStore(
 ): Promise<ParsedCatalogIndex> {
   const fetchImpl: FetchLike = opts.fetch ?? ((input, init) => fetch(input, init));
   const cached = await kv.getWithMetadata(key);
-  const cachedIndex = parseCached(cached.value);
+  const cachedIndex = parseCached(key, cached.value);
   const etag = cachedIndex === null ? null : validatorFor(cached.metadata, url, CACHE_FORMAT);
   const result = await fetchCatalogJson(fetchImpl, url, etag, "catalog");
   if (result.status === "not-modified" && cachedIndex !== null) return cachedIndex;
@@ -221,13 +221,33 @@ async function storeFetchedIndex(
   if (stored !== "stored") console.log(`catalog index unchanged (${stored})`);
 }
 
-function parseCached(text: string | null): ParsedCatalogIndex | null {
+/**
+ * The last parse of each cached index in this isolate, by KV key, with the
+ * exact text it was parsed from. An index is only rewritten when it changed,
+ * so most reads find the same text again and skip parsing and validating
+ * every entry. Callers share the parsed index: it is read, never changed.
+ */
+const parsedByKey = new Map<string, { text: string; parsed: ParsedCatalogIndex }>();
+
+/** Test-only: forget every parse. */
+export function forgetParsedIndexes(): void {
+  parsedByKey.clear();
+}
+
+/** The cached text under `key`, parsed; once per version of the text in an isolate. */
+function parseCached(key: string, text: string | null): ParsedCatalogIndex | null {
   if (text === null) return null;
+  const held = parsedByKey.get(key);
+  if (held !== undefined && held.text === text) return held.parsed;
+  let parsed: ParsedCatalogIndex | null;
   try {
-    return parseCatalogIndex(JSON.parse(text));
+    parsed = parseCatalogIndex(JSON.parse(text));
   } catch {
-    return null;
+    parsed = null;
   }
+  if (parsed === null) parsedByKey.delete(key);
+  else parsedByKey.set(key, { text, parsed });
+  return parsed;
 }
 
 /**
@@ -301,7 +321,8 @@ export async function readCachedCustomCatalogIndex(
   kv: KVNamespace,
   catalogId: string,
 ): Promise<CustomCatalogIndex | null> {
-  const parsed = parseCached(await kv.get(customCatalogIndexKey(catalogId)));
+  const key = customCatalogIndexKey(catalogId);
+  const parsed = parseCached(key, await kv.get(key));
   return parsed === null ? null : customView(parsed);
 }
 
@@ -327,19 +348,41 @@ export type CatalogRead =
   | ({ ok: true } & CatalogSnapshot)
   | { ok: false; error: string; updatedAt: string | null };
 
-/** The cached index; on a miss (or an unreadable entry) refreshes once. Never throws `CatalogError`. */
+/** What KV holds of the official catalog's index, without refreshing it. */
+export interface CachedCatalogIndex {
+  /** Null when nothing readable is cached. */
+  snapshot: CatalogSnapshot | null;
+  /** The time of the last successful refresh, cached or not. */
+  updatedAt: string | null;
+}
+
+/** The official catalog's cached index and refresh time (two KV reads, together). */
+export async function readCachedCatalogSnapshot(kv: KVNamespace): Promise<CachedCatalogIndex> {
+  const [text, updatedAt] = await Promise.all([
+    kv.get(CATALOG_INDEX_KEY),
+    kv.get(CATALOG_UPDATED_AT_KEY),
+  ]);
+  const cached = parseCached(CATALOG_INDEX_KEY, text);
+  return {
+    snapshot:
+      cached === null
+        ? null
+        : { index: cached.index, updatedAt, unreadable: cached.unreadable.length },
+    updatedAt,
+  };
+}
+
+/**
+ * The cached index; on a miss (or an unreadable entry) refreshes once. Never
+ * throws `CatalogError`. `cached` is what the caller already read from KV.
+ */
 export async function getCatalogIndex(
   env: CatalogEnv,
   opts: CatalogOptions = {},
+  cached?: CachedCatalogIndex,
 ): Promise<CatalogRead> {
-  const [text, updatedAt] = await Promise.all([
-    env.KV.get(CATALOG_INDEX_KEY),
-    env.KV.get(CATALOG_UPDATED_AT_KEY),
-  ]);
-  const cached = parseCached(text);
-  if (cached !== null) {
-    return { ok: true, index: cached.index, updatedAt, unreadable: cached.unreadable.length };
-  }
+  const { snapshot, updatedAt } = cached ?? (await readCachedCatalogSnapshot(env.KV));
+  if (snapshot !== null) return { ok: true, ...snapshot };
   try {
     return { ok: true, ...(await refreshCatalogIndex(env, opts)) };
   } catch (error) {
@@ -350,5 +393,5 @@ export async function getCatalogIndex(
 
 /** The cached index without refreshing it; null when nothing readable is cached. */
 export async function readCachedCatalogIndex(kv: KVNamespace): Promise<IndexJson | null> {
-  return parseCached(await kv.get(CATALOG_INDEX_KEY))?.index ?? null;
+  return parseCached(CATALOG_INDEX_KEY, await kv.get(CATALOG_INDEX_KEY))?.index ?? null;
 }

@@ -22,6 +22,7 @@ import { createDb } from "../db/client";
 import { type InstallOrigin, installs, jobs, type SourceBuildStatus } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { readRepositoryRefs, repositoryReader } from "../github/access.server";
+import { jobCreator } from "../jobs/create-job.server";
 import { reconcileJobs } from "../jobs/reconcile.server";
 import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
 import { sandboxBinding, sandboxInfo } from "../sandbox/binding";
@@ -101,7 +102,7 @@ export const startSourceBuild = createServerFn({ method: "POST" })
         {
           db: env.DB,
           workflows: env.JOBS,
-          createJob: (id, params) => env.JOBS.create({ id, params }),
+          createJob: jobCreator(env.JOBS),
           sandbox: sandboxState,
           autoEnable: sandboxAutoEnableDeps(env),
           listRefs,
@@ -318,7 +319,7 @@ export const installSourceBuild = createServerFn({ method: "POST" })
         {
           db: env.DB,
           workflows: env.JOBS,
-          createJob: (id, params) => env.JOBS.create({ id, params }),
+          createJob: jobCreator(env.JOBS),
           async listAccountWorkers() {
             return (await (await getCfClient(env)).workers.listScripts()).map((s) => s.id);
           },
@@ -340,7 +341,7 @@ export const updateFromSourceBuild = createServerFn({ method: "POST" })
         {
           db: env.DB,
           workflows: env.JOBS,
-          createJob: (id, params) => env.JOBS.create({ id, params }),
+          createJob: jobCreator(env.JOBS),
         },
         data,
       );

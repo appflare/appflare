@@ -4,6 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
 import { resources } from "../db/schema";
+import { jobCreator } from "../jobs/create-job.server";
 import { requireRole } from "../server/auth.server";
 import { isDataResourceKind } from "./resource-kinds";
 import { type ResourceUsage, readResourceUsage } from "./resource-usage.server";
@@ -22,7 +23,7 @@ async function start(request: StartUninstallRequest): Promise<{ jobId: string }>
       {
         db: env.DB,
         workflows: env.JOBS,
-        createJob: (id, params) => env.JOBS.create({ id, params }),
+        createJob: jobCreator(env.JOBS),
       },
       request,
     );

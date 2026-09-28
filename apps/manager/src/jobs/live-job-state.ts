@@ -23,12 +23,34 @@ export function followJob(
 
 /**
  * A poll's answer for `jobId`. Dropped when the state follows another job by
- * now; an answer without the job replaces only a job not read yet.
+ * now; an answer without the job replaces only a job not read yet. An answer
+ * with only the newer log lines keeps the lines already shown.
  */
 export function acceptPoll(state: LiveJobState, jobId: string, next: JobView | null): LiveJobState {
   if (state.jobId !== jobId) return state;
-  if (next === null && state.job !== undefined) return state;
-  return { jobId, job: next };
+  if (next === null) return state.job !== undefined ? state : { jobId, job: null };
+  return { jobId, job: withEarlierLogs(state.job, next) };
+}
+
+/**
+ * What a poll asks for beyond the job: the id of the last log line shown,
+ * so only newer lines are sent; nothing before the job was first read.
+ */
+export function lastLogIdOf(job: JobView | null | undefined): number | undefined {
+  if (job == null) return undefined;
+  return job.logs.at(-1)?.id ?? 0;
+}
+
+/**
+ * `next` with its whole log: an answer that sent only the lines after
+ * `logsAfter` gets the lines up to there from the job already shown.
+ */
+export function withEarlierLogs(shown: JobView | null | undefined, next: JobView): JobView {
+  const after = next.logsAfter;
+  // Also an answer from a version of Appflare that always sent the whole log.
+  if (typeof after !== "number") return next;
+  const earlier = shown?.logs.filter((line) => line.id <= after) ?? [];
+  return { ...next, logs: [...earlier, ...next.logs], logsAfter: null };
 }
 
 /** The parts of a job that following its version switch reads. */

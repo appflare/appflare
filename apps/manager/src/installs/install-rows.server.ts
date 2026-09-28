@@ -129,23 +129,34 @@ export function readInstallRecords(db: Database): Promise<InstallRecord[]> {
     .orderBy(desc(installs.installed_at));
 }
 
+/** Where installs are reached: the account's workers.dev subdomain and every install's domains. */
+export interface InstallAddresses {
+  sub: string | null;
+  domains: Map<string, AddressDomain[]>;
+}
+
+/**
+ * The account's workers.dev subdomain and the installs' domains, read
+ * together. Needs nothing else, so it goes alongside the installs' own read.
+ */
+export async function readInstallAddresses(db: Database): Promise<InstallAddresses> {
+  const [sub, domains] = await Promise.all([subdomain(), readAddressDomains(db)]);
+  return { sub, domains };
+}
+
 /**
  * The installs as lists show them, from their stored records (see
- * `readInstallRecords`), the enabled catalogs' apps and every catalog's
- * record, all read by the caller. Reads the account's workers.dev
- * subdomain and the installs' domains, together.
+ * `readInstallRecords`), the enabled catalogs' apps, every catalog's record
+ * and the installs' addresses (`readInstallAddresses`), all read by the
+ * caller.
  */
-export async function listInstallRows(
+export function installRowsOf(
   rows: readonly InstallRecord[],
   lookup: AppLookup,
   records: readonly CatalogRecord[],
-): Promise<InstallRow[]> {
-  const db = createDb(env.DB);
-  const [sub, domains] = await Promise.all([
-    subdomain(),
-    rows.length === 0 ? new Map<string, AddressDomain[]>() : readAddressDomains(db),
-  ]);
-  const sources = await catalogSources(records);
+  { sub, domains }: InstallAddresses,
+): InstallRow[] {
+  const sources = new Map(records.map((r) => [r.id, sourceOf(r)]));
   const addressOf = (row: InstallRecord): string | null =>
     appAddress(addressInput(row, domains.get(row.id) ?? [], sub));
   const listedRows = rows.map((row): Omit<InstallRow, "label"> => {

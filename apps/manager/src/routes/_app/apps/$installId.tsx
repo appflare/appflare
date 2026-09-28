@@ -57,15 +57,14 @@ import { UpdateBanner } from "../../../components/update-banner";
 import { VersionsSection } from "../../../components/versions-section";
 import { WorkersDevSwitch } from "../../../components/workers-dev-switch";
 import {
-  getInstall,
+  getInstallPage,
   type InstallDetail,
   type ResourceView,
 } from "../../../installs/installs.functions";
 import { NOT_REACHABLE_NOTE, type OtherWorkerView } from "../../../installs/other-workers";
-import { getInstallSettings } from "../../../installs/reconfigure.functions";
 import type { InstallSettings } from "../../../installs/reconfigure.server";
-import { listSnapshots } from "../../../installs/versions.functions";
 import type { SnapshotView } from "../../../installs/versions.server";
+import { INSTALL_PAGE_STALE_MS } from "../../../router-timing";
 
 const TABS = APP_TABS;
 type Tab = AppTab;
@@ -87,14 +86,9 @@ type Tab = AppTab;
  */
 export const Route = createFileRoute("/_app/apps/$installId")({
   validateSearch: z.object({ tab: z.enum(TABS).optional() }),
-  loader: async ({ params }) => {
-    const [install, snapshots, settings] = await Promise.all([
-      getInstall({ data: { installId: params.installId } }),
-      listSnapshots({ data: { installId: params.installId } }),
-      getInstallSettings({ data: { installId: params.installId } }),
-    ]);
-    return { install, snapshots, settings };
-  },
+  // One request with one session check: the install, its snapshots and its settings.
+  loader: ({ params }) => getInstallPage({ data: { installId: params.installId } }),
+  staleTime: INSTALL_PAGE_STALE_MS,
   // The deepest route's title wins over the root's "<page> · Appflare".
   head: ({ loaderData }) => ({
     meta: [

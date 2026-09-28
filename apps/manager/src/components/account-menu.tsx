@@ -29,6 +29,7 @@ import {
   accountName,
   accountRoleLabel,
 } from "./account";
+import { appEntryMemo } from "./app-entry-memo";
 import { DOCS_URL } from "./auth-layout";
 import { type ColorModeChoice, parseColorModeChoice } from "./color-mode";
 import { RouterAnchor } from "./router-anchor";
@@ -76,6 +77,7 @@ export function AccountMenu({
 
   async function signOut() {
     await authClient.signOut();
+    appEntryMemo.forget();
     await router.navigate({ to: "/login" });
   }
 

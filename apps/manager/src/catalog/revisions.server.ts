@@ -195,7 +195,7 @@ export async function recordCatalogRevision(
 }
 
 /** The recorded revision applies to `manifest`: its release's key, and only form and copy changed. */
-function appliesTo(manifest: ArtifactManifest, recorded: RecordedRevision): boolean {
+export function revisionApplies(manifest: ArtifactManifest, recorded: RecordedRevision): boolean {
   return (
     recorded.keyId === manifest.keyId && revisedArtifactProblem(manifest, recorded.catalog) === null
   );
@@ -213,7 +213,7 @@ export async function recordedRevisionFor(
 ): Promise<RecordedRevision | null> {
   if (artifactDigest === null) return null;
   const recorded = await readCatalogRevision(orm, artifactDigest);
-  return recorded !== null && appliesTo(manifest, recorded) ? recorded : null;
+  return recorded !== null && revisionApplies(manifest, recorded) ? recorded : null;
 }
 
 /**
@@ -229,4 +229,18 @@ export async function effectiveManifest(
 ): Promise<ArtifactManifest> {
   const recorded = await recordedRevisionFor(orm, manifest, artifactDigest);
   return recorded === null ? manifest : withRevisedCatalog(manifest, recorded.catalog);
+}
+
+/**
+ * `manifest` as {@link effectiveManifest} gives it, from a recorded revision
+ * the caller already read (`readCatalogRevision`); the signed manifest when
+ * it is null or does not apply.
+ */
+export function manifestWithRevision(
+  manifest: ArtifactManifest,
+  recorded: RecordedRevision | null,
+): ArtifactManifest {
+  return recorded !== null && revisionApplies(manifest, recorded)
+    ? withRevisedCatalog(manifest, recorded.catalog)
+    : manifest;
 }

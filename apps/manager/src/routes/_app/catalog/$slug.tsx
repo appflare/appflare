@@ -45,6 +45,7 @@ import { MessageLinkButtons, MessageText } from "../../../components/message-tex
 import { PageHeader } from "../../../components/page-header";
 import { SANDBOX_CAPABILITY_LINK_LABEL } from "../../../components/sandbox-first";
 import { ScreenshotGallery } from "../../../components/screenshot-gallery";
+import { CATALOG_STALE_MS } from "../../../router-timing";
 import { SANDBOX_CAPABILITY_HREF } from "../../../sandbox/readiness";
 
 /**
@@ -66,6 +67,7 @@ const INSTALL_HASH = "install";
 
 export const Route = createFileRoute("/_app/catalog/$slug")({
   loader: ({ params }) => getCatalogEntry({ data: { slug: params.slug } }),
+  staleTime: CATALOG_STALE_MS,
   // The deepest route's title wins over the root's "<page> · Appflare".
   head: ({ loaderData }) => ({
     meta: [{ title: `${loaderData?.app?.name ?? "Catalog"} · Appflare` }],

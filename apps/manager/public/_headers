@@ -1,0 +1,5 @@
+# The build names every file under /assets/ by a hash of its content, so a
+# browser may keep them for good. Everything else (the page itself, icons)
+# keeps the default: revalidated on every load.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

@@ -122,7 +122,13 @@ async function settleUpdating(orm: Database, row: ActiveJobRow, at: Date): Promi
     .where(and(eq(installs.id, row.install_id), eq(installs.status, "updating")));
 }
 
-/** Returns true when a row changed (callers then re-read). */
+/** How many jobs are checked against their Workflow instances at once. */
+export const RECONCILE_CONCURRENCY = 10;
+
+/**
+ * Returns true when a row changed (callers then re-read). The jobs are
+ * independent, so up to {@link RECONCILE_CONCURRENCY} are checked at once.
+ */
 export async function reconcileJobs(
   db: D1Database,
   workflows: WorkflowLookup,
@@ -130,88 +136,110 @@ export async function reconcileJobs(
   now: () => Date = () => new Date(),
 ): Promise<boolean> {
   let changed = false;
-  for (const row of rows) {
-    if (row.status !== "queued" && row.status !== "running") continue;
-    const requestJob = isRestoreJob(row)
-      ? "restore"
-      : row.kind === "self_rollback"
-        ? "self_rollback"
-        : null;
-    if (requestJob !== null) {
-      if (await reconcileRequestJob(db, row, now(), requestJob)) changed = true;
-      continue;
-    }
-    let status: string;
-    let message: string | undefined;
-    try {
-      const instance = await workflows.get(row.workflow_instance_id ?? row.id);
-      const reported = await instance.status();
-      status = reported.status;
-      message = reported.error?.message;
-    } catch (error) {
-      // Only an instance the engine reports as missing is gone. Without a
-      // recorded instance id it may still be being created; any other error
-      // (a transient binding failure) says nothing, so the job is left as is.
-      const reason = error instanceof Error ? error.message : String(error);
-      if (/not[_ ]found/i.test(reason) && isStrandedEnable(row, now())) {
-        const removed = await createDb(db)
-          .delete(jobs)
-          .where(
-            and(eq(jobs.id, row.id), eq(jobs.status, "queued"), isNull(jobs.workflow_instance_id)),
-          )
-          .returning({ id: jobs.id });
-        if (removed.length > 0) {
-          console.warn("removed an enable job whose start never created it", { jobId: row.id });
-          changed = true;
-        }
-        continue;
+  let failure: { error: unknown } | null = null;
+  for (let i = 0; i < rows.length; i += RECONCILE_CONCURRENCY) {
+    const batch = rows.slice(i, i + RECONCILE_CONCURRENCY);
+    // Every job of the batch is settled before the next; one that fails
+    // (a D1 error) does not stop the others, and the first failure is
+    // thrown once all have run.
+    const outcomes = await Promise.allSettled(
+      batch.map((row) => reconcileJob(db, workflows, row, now)),
+    );
+    for (const outcome of outcomes) {
+      if (outcome.status === "fulfilled") {
+        if (outcome.value) changed = true;
+      } else {
+        failure ??= { error: outcome.reason };
       }
-      if (row.workflow_instance_id === null || !/not[_ ]found/i.test(reason)) {
-        console.debug("job reconciliation skipped", { jobId: row.id, reason });
-        continue;
-      }
-      status = "unknown";
     }
-    const orm = createDb(db);
-    const at = now();
-    const log = new StepLog(() => at.getTime());
-    if (status === "complete") {
-      const updated = await orm
-        .update(jobs)
-        .set({ status: "succeeded", finished_at: at })
-        .where(and(eq(jobs.id, row.id), inArray(jobs.status, ["queued", "running"])))
-        .returning({ id: jobs.id });
-      if (updated.length === 0) continue;
-      await settleUpdating(orm, row, at);
-      // A self-update that completed was promoted; its history entry is written
-      // the same way its last step writes it (and never twice).
-      if (row.kind === "self_update") await appendSelfUpdateHistory(db, row.id, at);
-      log.warn("The Workflow instance completed without recording the end of the job.");
-    } else if (DEAD.has(status)) {
-      const error =
-        status === "unknown"
-          ? "the job's Workflow instance no longer exists"
-          : `the job's Workflow instance ${status === "errored" ? "failed" : "was terminated"}${message ? `: ${message}` : ""}`;
-      const updated = await orm
-        .update(jobs)
-        .set({ status: "failed", error, finished_at: at })
-        .where(and(eq(jobs.id, row.id), inArray(jobs.status, ["queued", "running"])))
-        .returning({ id: jobs.id });
-      if (updated.length === 0) continue;
-      if (row.kind === "install" && row.install_id !== null) {
-        await orm
-          .update(installs)
-          .set({ status: "failed", updated_at: at })
-          .where(and(eq(installs.id, row.install_id), eq(installs.status, "installing")));
-      }
-      await settleUpdating(orm, row, at);
-      // An uninstall leaves its install `uninstalling`; the install page offers a retry.
-      log.error(`Stopped: ${error}.`);
-    } else {
-      continue;
-    }
-    await log.flush(db, row.id);
-    changed = true;
   }
+  if (failure !== null) throw failure.error;
   return changed;
+}
+
+/** Brings one job row in line with its Workflow instance; true when the row changed. */
+async function reconcileJob(
+  db: D1Database,
+  workflows: WorkflowLookup,
+  row: ActiveJobRow,
+  now: () => Date,
+): Promise<boolean> {
+  if (row.status !== "queued" && row.status !== "running") return false;
+  const requestJob = isRestoreJob(row)
+    ? "restore"
+    : row.kind === "self_rollback"
+      ? "self_rollback"
+      : null;
+  if (requestJob !== null) return reconcileRequestJob(db, row, now(), requestJob);
+  let status: string;
+  let message: string | undefined;
+  try {
+    const instance = await workflows.get(row.workflow_instance_id ?? row.id);
+    const reported = await instance.status();
+    status = reported.status;
+    message = reported.error?.message;
+  } catch (error) {
+    // Only an instance the engine reports as missing is gone. Without a
+    // recorded instance id it may still be being created; any other error
+    // (a transient binding failure) says nothing, so the job is left as is.
+    const reason = error instanceof Error ? error.message : String(error);
+    if (/not[_ ]found/i.test(reason) && isStrandedEnable(row, now())) {
+      const removed = await createDb(db)
+        .delete(jobs)
+        .where(
+          and(eq(jobs.id, row.id), eq(jobs.status, "queued"), isNull(jobs.workflow_instance_id)),
+        )
+        .returning({ id: jobs.id });
+      if (removed.length > 0) {
+        console.warn("removed an enable job whose start never created it", { jobId: row.id });
+        return true;
+      }
+      return false;
+    }
+    if (row.workflow_instance_id === null || !/not[_ ]found/i.test(reason)) {
+      console.debug("job reconciliation skipped", { jobId: row.id, reason });
+      return false;
+    }
+    status = "unknown";
+  }
+  const orm = createDb(db);
+  const at = now();
+  const log = new StepLog(() => at.getTime());
+  if (status === "complete") {
+    const updated = await orm
+      .update(jobs)
+      .set({ status: "succeeded", finished_at: at })
+      .where(and(eq(jobs.id, row.id), inArray(jobs.status, ["queued", "running"])))
+      .returning({ id: jobs.id });
+    if (updated.length === 0) return false;
+    await settleUpdating(orm, row, at);
+    // A self-update that completed was promoted; its history entry is written
+    // the same way its last step writes it (and never twice).
+    if (row.kind === "self_update") await appendSelfUpdateHistory(db, row.id, at);
+    log.warn("The Workflow instance completed without recording the end of the job.");
+  } else if (DEAD.has(status)) {
+    const error =
+      status === "unknown"
+        ? "the job's Workflow instance no longer exists"
+        : `the job's Workflow instance ${status === "errored" ? "failed" : "was terminated"}${message ? `: ${message}` : ""}`;
+    const updated = await orm
+      .update(jobs)
+      .set({ status: "failed", error, finished_at: at })
+      .where(and(eq(jobs.id, row.id), inArray(jobs.status, ["queued", "running"])))
+      .returning({ id: jobs.id });
+    if (updated.length === 0) return false;
+    if (row.kind === "install" && row.install_id !== null) {
+      await orm
+        .update(installs)
+        .set({ status: "failed", updated_at: at })
+        .where(and(eq(installs.id, row.install_id), eq(installs.status, "installing")));
+    }
+    await settleUpdating(orm, row, at);
+    // An uninstall leaves its install `uninstalling`; the install page offers a retry.
+    log.error(`Stopped: ${error}.`);
+  } else {
+    return false;
+  }
+  await log.flush(db, row.id);
+  return true;
 }

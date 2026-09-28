@@ -47,7 +47,6 @@ vi.mock("../auto-update/auto-update.functions", () => ({
 }));
 vi.mock("../installs/app-credentials.functions", () => ({ replaceAppCredentials: vi.fn() }));
 vi.mock("../installs/reconfigure.functions", () => ({
-  getInstallSettings: vi.fn(),
   startReconfigure: vi.fn(),
 }));
 vi.mock("../installs/email-routing.functions", () => ({
@@ -80,7 +79,7 @@ vi.mock("../installs/removed-apps.functions", () => ({
 vi.mock("../installs/installs.functions", () => ({
   startInstall: vi.fn(),
   renameInstall: vi.fn(),
-  getInstall: vi.fn(),
+  getInstallPage: vi.fn(),
 }));
 vi.mock("../installs/source-builds.functions", () => ({
   startSourceBuild: vi.fn(),
@@ -99,7 +98,6 @@ vi.mock("../installs/versions.functions", () => ({
   startUpdate: vi.fn(),
   startRollback: vi.fn(),
   restoreDatabase: vi.fn(),
-  listSnapshots: vi.fn(),
 }));
 vi.mock("../installs/workers-dev.functions", () => ({ setWorkersDev: vi.fn() }));
 

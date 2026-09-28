@@ -5,6 +5,7 @@ import { z } from "zod";
 import { hasRole } from "../auth/roles";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { createDb } from "../db/client";
+import { jobCreator } from "../jobs/create-job.server";
 import { sandboxBinding } from "../sandbox/binding";
 import { installsNeedingSandbox } from "../sandbox/blockers";
 import {
@@ -145,7 +146,7 @@ export const startSandboxJob = createServerFn({ method: "POST" })
           db: env.DB,
           client: () => getCfClient(env),
           workflows: env.JOBS,
-          createJob: (id, params) => env.JOBS.create({ id, params }),
+          createJob: jobCreator(env.JOBS),
           currentVersion: env.APPFLARE_VERSION,
           deployedSandboxVersion: await deployedSandboxVersion(),
         },

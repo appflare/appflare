@@ -1,28 +1,21 @@
 import { env } from "cloudflare:workers";
 import type { IndexApp } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
-import { hasRole } from "../auth/roles";
 import { getAppManifest, getCatalogManifest } from "../catalog/app-manifest.server";
 import { findCatalogApp, type ListedApp } from "../catalog/merged.server";
 import { getCfClient } from "../cloudflare/client.server";
+import { jobCreator } from "../jobs/create-job.server";
 import { sandboxBinding } from "../sandbox/binding";
-import { requireRole, requireSession } from "../server/auth.server";
+import { requireRole } from "../server/auth.server";
 import {
-  listSnapshotsCore,
   type RestoreDatabaseResult,
   restoreDatabaseCore,
-  type SnapshotView,
   type StartUpdateResult,
   startRollbackCore,
   startUpdateCore,
   VersionActionError,
 } from "./versions.server";
-import {
-  installIdInput,
-  restoreDatabaseInput,
-  startRollbackInput,
-  startUpdateInput,
-} from "./versions-input";
+import { restoreDatabaseInput, startRollbackInput, startUpdateInput } from "./versions-input";
 
 /** Updates, rollbacks, snapshots, and database restores of an install. */
 
@@ -76,7 +69,7 @@ export const startUpdate = createServerFn({ method: "POST" })
             return read.catalog;
           },
           sandboxConnected: sandboxBinding(env) !== undefined,
-          createJob: (id, params) => env.JOBS.create({ id, params }),
+          createJob: jobCreator(env.JOBS),
         },
         data,
       ),
@@ -93,7 +86,7 @@ export const startRollback = createServerFn({ method: "POST" })
         {
           db: env.DB,
           workflows: env.JOBS,
-          createJob: (id, params) => env.JOBS.create({ id, params }),
+          createJob: jobCreator(env.JOBS),
         },
         data,
       ),
@@ -121,17 +114,4 @@ export const restoreDatabase = createServerFn({ method: "POST" })
         data,
       ),
     );
-  });
-
-/**
- * Any signed-in user: the install's snapshots, newest first. Only admins get
- * the Time Travel bookmarks; members see the history read-only.
- */
-export const listSnapshots = createServerFn({ method: "GET" })
-  .validator(installIdInput)
-  .handler(async ({ data }): Promise<SnapshotView[]> => {
-    const session = await requireSession();
-    return listSnapshotsCore(env.DB, data.installId, {
-      withBookmarks: hasRole(session.user.role, "admin"),
-    });
   });

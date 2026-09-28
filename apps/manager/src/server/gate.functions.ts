@@ -1,54 +1,27 @@
-import { env } from "cloudflare:workers";
+import { env, waitUntil } from "cloudflare:workers";
 import { redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { getCookie, getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
-import { hasRole } from "../auth/roles";
 import { MAX_RETURN_PATH_LENGTH } from "../components/internal-path";
-import { createDb } from "../db/client";
-import { isCfTokenConfigured, readSettings, SETTING } from "../db/settings";
-import { markOpenedToday } from "../telemetry/state.server";
 import { authSecretBound, sessionFor } from "./auth.server";
-import { appGate, type GateState, redirectHref, setupGate } from "./gate";
+import { appGate, redirectHref, setupGate } from "./gate";
+import { type GateRead, readGate, recordOpened } from "./gate.server";
 import type { Viewer } from "./session.functions";
 import { SETUP_CLAIM_COOKIE, setupClaimMatches } from "./setup.server";
-import { hasAnyUser } from "./users.server";
 
-async function loadGateState(): Promise<{ state: GateState; viewer: Viewer | null }> {
+/**
+ * The gates' state for this request; the session as `sessionFor` reads it
+ * (from the session cookie while it is fresh).
+ */
+function loadGateState(): Promise<GateRead> {
   const request = getRequest();
-  const db = createDb(env.DB);
-  const [hasUser, session, tokenConfigured] = await Promise.all([
-    hasAnyUser(db),
-    sessionFor(request),
-    isCfTokenConfigured(db),
-  ]);
-  // The claim only matters before the owner exists.
-  const setupClaimed =
-    !hasUser && tokenConfigured
-      ? await setupClaimMatches(env.DB, getCookie(SETUP_CLAIM_COOKIE), new Date())
-      : false;
-  const isAdmin = session !== null && hasRole(session.user.role, "admin");
-  const viewer: Viewer | null =
-    session === null
-      ? null
-      : {
-          id: session.user.id,
-          email: session.user.email,
-          name: session.user.name,
-          role: isAdmin ? "admin" : "member",
-          isOwner: isAdmin && session.user.isOwner === true,
-        };
-  return {
-    state: {
-      hasUser,
-      signedIn: session !== null,
-      isAdmin,
-      tokenConfigured,
-      setupClaimed,
-      authReady: authSecretBound(),
-    },
-    viewer,
-  };
+  return readGate({
+    db: env.DB,
+    loadSession: () => sessionFor(request),
+    setupClaimed: () => setupClaimMatches(env.DB, getCookie(SETUP_CLAIM_COOKIE), new Date()),
+    authReady: authSecretBound(),
+  });
 }
 
 /**
@@ -72,27 +45,19 @@ export interface AppEntry {
  * session) or `/setup` (setup incomplete), carrying the page asked for
  * (`returnTo`: the browser's own address, section included, checked again
  * before use). UX only; every server function still enforces its own guard.
- * Also records the day for the daily "manager opened" usage-data event (at
- * most one write per isolate per day; never fails the page).
+ * Also records the day for the daily "manager opened" usage-data event, after
+ * the answer is sent (at most one write per isolate per day; never fails the
+ * page).
  */
 export const enterApp = createServerFn({ method: "GET" })
   .validator(returnToInput)
   .handler(async ({ data }): Promise<AppEntry> => {
-    const [{ state, viewer }, account] = await Promise.all([
-      loadGateState(),
-      readSettings(createDb(env.DB), [SETTING.accountId]),
-    ]);
+    const { state, viewer, accountId } = await loadGateState();
     const gate = appGate(state);
     if ("redirect" in gate) throw redirect({ href: redirectHref(gate.redirect, data.returnTo) });
     if (viewer === null) throw redirect({ href: redirectHref("/login", data.returnTo) });
-    try {
-      await markOpenedToday(env, viewer.role);
-    } catch (error) {
-      console.warn("could not record the day the manager was opened", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    return { viewer, accountId: account.account_id || null };
+    waitUntil(recordOpened(env, viewer));
+    return { viewer, accountId };
   });
 
 /**

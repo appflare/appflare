@@ -1,10 +1,11 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
 import type { Role } from "../auth/roles";
 import { generateTemporaryPassword } from "../auth/temporary-password";
 import { createDb } from "../db/client";
 import { syncAccessAfterAdminChange } from "./access.server";
-import { currentAuth, requireRole } from "./auth.server";
+import { currentAuth, requireRole, sessionFor } from "./auth.server";
 import { addUserInput, changeUserRoleInput, userIdInput } from "./schemas";
 import {
   authErrorMessage,
@@ -76,7 +77,9 @@ export const addUser = createServerFn({ method: "POST" })
 
 /**
  * Owner only: makes another user an admin or a member. The change applies
- * on their next request. With Cloudflare Access on, the allow policy follows.
+ * to their next change at once, and to what their pages show within a
+ * minute (the session cookie's copy). With Cloudflare Access on, the allow
+ * policy follows.
  */
 export const changeUserRole = createServerFn({ method: "POST" })
   .validator(changeUserRoleInput)
@@ -90,8 +93,9 @@ export const changeUserRole = createServerFn({ method: "POST" })
 
 /**
  * Owner only: deletes another user, their sessions and passkeys included, so
- * they are signed out at once. With Cloudflare Access on, a deleted admin
- * leaves the allow policy.
+ * they can change nothing from then on and their pages stop loading within a
+ * minute (the session cookie's copy). With Cloudflare Access on, a deleted
+ * admin leaves the allow policy.
  */
 export const deleteUser = createServerFn({ method: "POST" })
   .validator(userIdInput)
@@ -113,5 +117,8 @@ export const transferOwnership = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const session = await requireRole("admin");
     await transferOwner(createDb(env.DB), session.user.id, data);
+    // Reads the caller's session again so the cookie's copy no longer says
+    // they are the owner, and their pages show it at once.
+    await sessionFor(getRequest(), { fresh: true });
     return { ok: true as const };
   });

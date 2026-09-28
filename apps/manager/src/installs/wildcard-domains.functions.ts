@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
+import { jobCreator } from "../jobs/create-job.server";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole } from "../server/auth.server";
 import { customDomainInput } from "./custom-domain-input";
@@ -32,7 +33,7 @@ async function deps(): Promise<WildcardDomainDeps> {
           db: env.DB,
           workflows: env.JOBS,
           sandboxConnected: sandboxBinding(env) !== undefined,
-          createJob: (id, params) => env.JOBS.create({ id, params }),
+          createJob: jobCreator(env.JOBS),
         },
         installId,
       ),

@@ -39,6 +39,7 @@ import { MessageLinkButtons, MessageText } from "../../../components/message-tex
 import { PageHeader } from "../../../components/page-header";
 import { settingsLink } from "../../../components/settings-links";
 import { Tooltip } from "../../../components/tooltip";
+import { CATALOG_STALE_MS } from "../../../router-timing";
 
 /**
  * `/catalog`: the apps of every enabled catalog, as a storefront. A search
@@ -58,6 +59,7 @@ export const Route = createFileRoute("/_app/catalog/")({
     repository: z.string().max(200).optional().catch(undefined),
   }),
   loader: () => listCatalog(),
+  staleTime: CATALOG_STALE_MS,
   component: CatalogPage,
 });
 

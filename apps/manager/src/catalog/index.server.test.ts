@@ -5,10 +5,14 @@ import {
   CATALOG_INDEX_KEY,
   CATALOG_UPDATED_AT_KEY,
   catalogIndexUrl,
+  customCatalogIndexKey,
   DEFAULT_CATALOG_INDEX_URL,
+  forgetParsedIndexes,
   getCatalogIndex,
   parseCatalogIndex,
   readCachedCatalogIndex,
+  readCachedCatalogSnapshot,
+  readCachedCustomCatalogIndex,
   refreshCatalogIndex,
 } from "./index.server";
 import { CATALOG_STATS_KEY, readCatalogStats } from "./stats.server";
@@ -49,6 +53,40 @@ function serving(body: unknown, status = 200): { fetch: FetchLike; urls: string[
 }
 
 const NOW = () => new Date("2026-09-22T20:00:00.000Z");
+
+describe("parsing the cached index once per version", () => {
+  it("parses the same cached text once in an isolate, and a changed text again", async () => {
+    forgetParsedIndexes();
+    const { kv, store } = fakeKv();
+    store.set(CATALOG_INDEX_KEY, JSON.stringify(INDEX));
+    const first = await readCachedCatalogIndex(kv);
+    const again = await readCachedCatalogIndex(kv);
+    expect(first?.apps[0]?.slug).toBe("cut");
+    // The very same parse: nothing was parsed or validated again.
+    expect(again).toBe(first);
+    expect((await readCachedCatalogSnapshot(kv)).snapshot?.index).toBe(first);
+    const changed = { ...INDEX, generatedAt: "2026-09-23T00:00:00.000Z" };
+    store.set(CATALOG_INDEX_KEY, JSON.stringify(changed));
+    const next = await readCachedCatalogIndex(kv);
+    expect(next).not.toBe(first);
+    expect(next?.generatedAt).toBe("2026-09-23T00:00:00.000Z");
+  });
+
+  it("keeps each catalog's parse apart, and none of an unreadable text", async () => {
+    forgetParsedIndexes();
+    const { kv, store } = fakeKv();
+    store.set(CATALOG_INDEX_KEY, JSON.stringify(INDEX));
+    store.set(customCatalogIndexKey("mine"), JSON.stringify(INDEX));
+    const official = await readCachedCatalogIndex(kv);
+    const custom = await readCachedCustomCatalogIndex(kv, "mine");
+    expect(custom?.index.apps[0]?.slug).toBe("cut");
+    expect(await readCachedCatalogIndex(kv)).toBe(official);
+    store.set(CATALOG_INDEX_KEY, "{not json");
+    expect(await readCachedCatalogIndex(kv)).toBeNull();
+    store.set(CATALOG_INDEX_KEY, JSON.stringify(INDEX));
+    expect(await readCachedCatalogIndex(kv)).not.toBe(official);
+  });
+});
 
 describe("catalog index cache", () => {
   it("uses CATALOG_INDEX_URL when set, else the production default", () => {
