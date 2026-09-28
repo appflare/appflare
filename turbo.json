@@ -4,7 +4,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "env": ["APPFLARE_VERSION"],
+      "env": ["APPFLARE_VERSION", "CATALOG_SNAPSHOT"],
       "outputs": ["dist/**", ".output/**"]
     },
     "typecheck": {},
@@ -13,6 +13,9 @@
       "cache": false
     },
     "test": {},
+    "@appflare/docs#test": {
+      "dependsOn": ["^build"]
+    },
     "test:dist": {
       "dependsOn": ["build"],
       "cache": false

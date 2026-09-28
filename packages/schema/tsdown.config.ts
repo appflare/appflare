@@ -1,8 +1,10 @@
 import { defineConfig } from "tsdown";
 
-// ESM + .d.ts into dist/. `dependencies` (zod) stay external.
+// ESM + .d.ts into dist/. `dependencies` (zod) stay external. Two entries:
+// the package itself, and `catalog-display` (the client-safe helpers the
+// manager and the docs site share), which package.json exports as a subpath.
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: { index: "src/index.ts", "catalog-display": "src/catalog-display/index.ts" },
   format: "esm",
   platform: "node",
   tsconfig: "tsconfig.build.json",

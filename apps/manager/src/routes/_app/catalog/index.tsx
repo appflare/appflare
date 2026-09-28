@@ -1,3 +1,4 @@
+import { canonicalCategory } from "@appflare/schema/catalog-display";
 import { Banner, Button, Empty, Link, Text, useKumoToastManager } from "@cloudflare/kumo";
 import {
   ArrowsClockwiseIcon,
@@ -13,7 +14,6 @@ import {
   browseApps,
   browseNavigation,
   browseSearchSchema,
-  canonicalCategory,
   categoryCounts,
   showsResults,
 } from "../../../catalog/browse";

@@ -5,13 +5,20 @@ import {
   licenseFile,
   type Plan,
 } from "@appflare/schema";
+import {
+  type AppLicense,
+  type AppPopularity,
+  canonicalCategory,
+  categoryLabel,
+  dateBuildDay,
+  formatCount,
+  licenseBadgeCopy,
+  PLAN_STATS,
+} from "@appflare/schema/catalog-display";
 import { formatBytes, formatExactDateTime } from "../components/format";
 import type { InstallVarField } from "../installs/install-vars";
-import { canonicalCategory, categoryLabel } from "./browse";
-import { type AppLicense, licenseBadgeCopy, licenseFileHref, licenseHref } from "./license";
-import { type AppPopularity, formatCount } from "./popularity";
+import { licenseFileHref, licenseHref } from "./license";
 import type { CatalogSource } from "./sources";
-import { dateBuildDay } from "./versions";
 
 /**
  * What an app's catalog page says, worked out from the catalog data so the
@@ -174,14 +181,6 @@ export function shortVersion(
   // The day is a calendar date, not an instant: read it in UTC so no time zone moves it.
   return { kind: "build", text: shortDate(`${day}T00:00:00Z`, { ...options, timeZone: "UTC" }) };
 }
-
-const PLAN_STATS: Record<Plan, { value: string; tooltip: string }> = {
-  free: { value: "Free", tooltip: "Runs on Cloudflare's free Workers plan." },
-  paid: {
-    value: "Workers Paid",
-    tooltip: "Needs Cloudflare's Workers Paid plan on your account.",
-  },
-};
 
 function licenseStat(license: AppLicense): AppStat {
   const copy = licenseBadgeCopy(license);

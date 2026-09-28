@@ -1,3 +1,4 @@
+import { appPitch } from "@appflare/schema/catalog-display";
 import { Banner, Button, Empty } from "@cloudflare/kumo";
 import { PlusIcon, StorefrontIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
@@ -18,7 +19,6 @@ import {
   settingsToChoose,
 } from "../../../catalog/app-page";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
-import { appPitch } from "../../../catalog/pitch";
 import { primitivesNote } from "../../../catalog/primitives";
 import {
   analyticsEngineRefusal,

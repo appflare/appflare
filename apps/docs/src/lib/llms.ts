@@ -1,4 +1,6 @@
 import type * as PageTree from "fumadocs-core/page-tree";
+import { siteCatalog } from "../catalog/data.ts";
+import { type CatalogPageEntry, catalogPageEntries } from "../catalog/pages.ts";
 import { formatLlmsIndex, type LlmsLink, type LlmsSection } from "./llms-format.ts";
 import { markdownUrl, siteDescription, siteName, siteUrl } from "./shared.ts";
 import { type DocsPage, source } from "./source.ts";
@@ -42,15 +44,28 @@ function sections(tree: PageTree.Root): LlmsSection[] {
   return out;
 }
 
+function catalogLink({ title, description, url }: CatalogPageEntry): LlmsLink {
+  return { title, description, url: `${siteUrl}${url}` };
+}
+
+/** The catalog's pages: the apps page and each app, then each category. */
+function catalogSections(): LlmsSection[] {
+  const { apps, appPages, categoryPages } = catalogPageEntries(siteCatalog);
+  return [
+    { title: "Apps", links: [apps, ...appPages].map(catalogLink) },
+    { title: "App categories", links: categoryPages.map(catalogLink) },
+  ];
+}
+
 /**
- * `llms.txt`: every page in sidebar order, linked to its Markdown file, and a
- * pointer to `llms-full.txt`.
+ * `llms.txt`: every page in sidebar order, linked to its Markdown file, then
+ * the catalog's pages, and a pointer to `llms-full.txt`.
  */
 export function llmsIndex(): string {
   return formatLlmsIndex({
     title: siteName,
     summary: siteDescription,
-    sections: sections(source.getPageTree()),
+    sections: [...sections(source.getPageTree()), ...catalogSections()],
     optional: [
       {
         title: "Full text",

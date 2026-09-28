@@ -9,6 +9,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./catalog-display": {
+      "@appflare/source": "./src/catalog-display/index.ts",
+      "types": "./dist/catalog-display.d.ts",
+      "import": "./dist/catalog-display.js"
+    },
     "./json-schema/v1.json": "./json-schema/v1.json"
   },
   "types": "./dist/index.d.ts",
@@ -21,6 +26,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
+      },
+      "./catalog-display": {
+        "types": "./dist/catalog-display.d.ts",
+        "import": "./dist/catalog-display.js"
       },
       "./json-schema/v1.json": "./json-schema/v1.json"
     }

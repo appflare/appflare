@@ -1,7 +1,7 @@
+import type { AppPopularity } from "@appflare/schema/catalog-display";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { AppPopularity } from "../catalog/popularity";
 import { AppGrid, AppRow, RowHeader } from "./catalog-row";
 import { CatalogSearch } from "./catalog-search";
 import { AppTile, type TileApp, TileMeta } from "./catalog-tile";

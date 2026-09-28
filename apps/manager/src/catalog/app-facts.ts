@@ -5,7 +5,7 @@ import {
   combinedWorkerFacts,
   type IndexApp,
 } from "@appflare/schema";
-import type { AppLicense } from "./license";
+import type { AppLicense } from "@appflare/schema/catalog-display";
 import { type AppPrimitives, derivePrimitives, indexPrimitives } from "./primitives";
 
 /**

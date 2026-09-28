@@ -13,6 +13,9 @@ time for the exact date.
 Appflare does not use an app's Deploy button: it installs a signed build of the
 pinned commit and keeps it updated.
 
+You can look through every app before you install Appflare, too: the
+[apps page](/apps/) of this site lists the whole catalog.
+
 ## Search and filters
 
 Type in the search field to find apps by name, by what they do, by author, or by a

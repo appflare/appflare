@@ -1,12 +1,11 @@
+import { categoryLabel } from "@appflare/schema/catalog-display";
 import { describe, expect, it } from "vitest";
 import {
   type BrowsableApp,
   browseApps,
   browseNavigation,
   browseSearchSchema,
-  canonicalCategory,
   categoryCounts,
-  categoryLabel,
   compareNewest,
   isFiltered,
   MAX_QUERY_LENGTH,
@@ -287,21 +286,5 @@ describe("categories", () => {
     expect(slugs(browseApps(all, { category: "gaming" }))).toEqual(["chess", "snake"]);
     expect(slugs(all.filter((a) => matchesSearch(a, "games")))).toEqual(["chess", "snake"]);
     expect(slugs(all.filter((a) => matchesSearch(a, "gaming")))).toEqual(["snake"]);
-  });
-
-  it("maps each folded category to the one it became", () => {
-    expect(canonicalCategory("blogging")).toBe("cms");
-    expect(canonicalCategory("gaming")).toBe("games");
-    expect(canonicalCategory("social")).toBe("community");
-    expect(canonicalCategory("storage")).toBe("files");
-    expect(canonicalCategory("games")).toBe("games");
-    expect(canonicalCategory("something-new")).toBe("something-new");
-  });
-
-  it("labels slugs in sentence case, keeping acronyms", () => {
-    expect(categoryLabel("ai")).toBe("AI");
-    expect(categoryLabel("email")).toBe("Email");
-    expect(categoryLabel("link-shortener")).toBe("Link shortener");
-    expect(categoryLabel("dns-tools")).toBe("DNS tools");
   });
 });

@@ -6,6 +6,13 @@ import {
   hasFixedWorkerName,
   type IndexApp,
 } from "@appflare/schema";
+import {
+  type AppLicense,
+  type AppPopularity,
+  appPitch,
+  appPopularity,
+  freshStats,
+} from "@appflare/schema/catalog-display";
 import { createServerFn } from "@tanstack/react-start";
 import { asc, ne } from "drizzle-orm";
 import { z } from "zod";
@@ -37,7 +44,6 @@ import { cronTriggerCount } from "./cron-triggers";
 import { type FeaturedCard, featuredCard, pickFeatured } from "./featured";
 import { dismissedFeaturedIds, dismissFeaturedItem } from "./featured.server";
 import { CatalogError, catalogIndexUrl } from "./index.server";
-import type { AppLicense } from "./license";
 import { type AppMediaView, appMediaView } from "./media";
 import {
   type CatalogIndexRead,
@@ -47,8 +53,6 @@ import {
   refreshCustomCatalog,
   refreshOfficialCatalog,
 } from "./merged.server";
-import { appPitch } from "./pitch";
-import { type AppPopularity, appPopularity, freshStats } from "./popularity";
 import type { AppPrimitives } from "./primitives";
 import { appKey, type CatalogSource, installAppKey, unsignedTierRefusal } from "./sources";
 import { readCatalogStats } from "./stats.server";

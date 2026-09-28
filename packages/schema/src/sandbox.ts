@@ -3,6 +3,7 @@ import { sha256Schema } from "./artifact";
 import {
   buildCommandArgv,
   buildCommandList,
+  CATALOG_SLUG_PATTERN,
   type CatalogBuildCommand,
   catalogInstallSchema,
   gitShaSchema,
@@ -180,7 +181,7 @@ export function buildCommandArgvList(value: string[] | string[][]): string[][] {
  * image's version.
  */
 export const buildCatalogManifestSchema = z.looseObject({
-  slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, "must be a catalog slug"),
+  slug: z.string().regex(CATALOG_SLUG_PATTERN, "must be a catalog slug"),
   repo: ownerRepoSchema,
   source: z.looseObject({ ref: z.string().min(1), sha: gitShaSchema }),
   install: z.looseObject({

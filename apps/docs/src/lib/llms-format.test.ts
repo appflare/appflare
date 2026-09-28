@@ -2,6 +2,27 @@ import { describe, expect, it } from "vitest";
 import { formatLlmsIndex, formatPageMarkdown } from "./llms-format.ts";
 
 describe("formatLlmsIndex", () => {
+  it("escapes link syntax in descriptions as well as titles", () => {
+    const text = formatLlmsIndex({
+      title: "Appflare",
+      summary: "An app manager.",
+      sections: [
+        {
+          title: "Apps",
+          links: [
+            {
+              title: "Cut",
+              description: "See [here](https://evil.example)",
+              url: "https://d/cut/",
+            },
+          ],
+        },
+      ],
+      optional: [],
+    });
+    expect(text).toContain("- [Cut](https://d/cut/): See \\[here\\](https://evil.example)");
+  });
+
   it("writes the llms.txt layout: title, summary, sections of links, then Optional", () => {
     const text = formatLlmsIndex({
       title: "Appflare",

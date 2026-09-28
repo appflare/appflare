@@ -1,7 +1,14 @@
 import { type CatalogAuthor, type Plan, planSchema } from "@appflare/schema";
+import {
+  type AppLicense,
+  type AppPopularity,
+  canonicalCategory,
+  categoryLabel,
+  comparePopularity,
+  type LicenseFilter,
+  licenseKind,
+} from "@appflare/schema/catalog-display";
 import { z } from "zod";
-import { type AppLicense, type LicenseFilter, licenseKind } from "./license";
-import { type AppPopularity, comparePopularity } from "./popularity";
 import { type AppPrimitives, PRIMITIVE_LABELS } from "./primitives";
 
 /**
@@ -208,88 +215,8 @@ export function categoryCounts(
     );
 }
 
-/** The label of every category the catalog uses, written as a person would write it. */
-const CATEGORY_LABELS: Readonly<Record<string, string>> = {
-  ai: "AI",
-  analytics: "Analytics",
-  bots: "Bots",
-  business: "Business",
-  chat: "Chat",
-  cms: "Websites and blogs",
-  community: "Community",
-  "developer-tools": "Developer tools",
-  dns: "DNS",
-  ecommerce: "E-commerce",
-  education: "Education",
-  email: "Email",
-  family: "Family",
-  files: "Files",
-  finance: "Finance",
-  games: "Games",
-  "link-shortener": "Link shortener",
-  marketing: "Marketing",
-  media: "Media",
-  monitoring: "Monitoring",
-  networking: "Networking",
-  notes: "Notes",
-  notifications: "Notifications",
-  passwords: "Passwords",
-  privacy: "Privacy",
-  productivity: "Productivity",
-  "remote-access": "Remote access",
-  scheduling: "Scheduling",
-  security: "Security",
-  sharing: "Sharing",
-  sync: "Sync",
-  utilities: "Utilities",
-};
-
-/**
- * Categories the catalog folded into another, each with the one it became. An
- * older index or another catalog may still list the old slug; it counts, filters
- * and reads as its target, so the page never shows two cards for one category.
- */
-const FOLDED_CATEGORIES: Readonly<Record<string, string>> = {
-  blogging: "cms",
-  gaming: "games",
-  social: "community",
-  storage: "files",
-};
-
-/** The category a slug stands for: the target of a folded category, any other slug itself. */
-export function canonicalCategory(category: string): string {
-  return FOLDED_CATEGORIES[category] ?? category;
-}
-
 /** Whether `app` is listed under `category`, counting the categories folded into it. */
 export function inCategory(app: Pick<BrowsableApp, "categories">, category: string): boolean {
   const target = canonicalCategory(category);
   return app.categories.some((c) => canonicalCategory(c) === target);
-}
-
-/** Words kept in capitals when a category without a label is spelled out from its slug. */
-const CATEGORY_WORDS: Readonly<Record<string, string>> = {
-  ai: "AI",
-  cms: "CMS",
-  dns: "DNS",
-  seo: "SEO",
-};
-
-/**
- * A category slug as a label: `ecommerce` → "E-commerce", `developer-tools` →
- * "Developer tools", a folded category as the one it became. A category
- * without a label of its own is spelled out from its slug in sentence case,
- * keeping known acronyms: `dns-tools` → "DNS tools".
- */
-export function categoryLabel(category: string): string {
-  const label = CATEGORY_LABELS[canonicalCategory(category)];
-  if (label !== undefined) return label;
-  const words = category.split(/[-_\s]+/).filter((w) => w.length > 0);
-  return words
-    .map((word, i) => {
-      const known = CATEGORY_WORDS[word.toLowerCase()];
-      if (known !== undefined) return known;
-      return i === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word;
-    })
-    .join(" ");
 }

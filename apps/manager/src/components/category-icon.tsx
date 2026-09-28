@@ -1,3 +1,4 @@
+import { canonicalCategory } from "@appflare/schema/catalog-display";
 import {
   ArrowsClockwiseIcon,
   BellIcon,
@@ -34,7 +35,6 @@ import {
   UsersThreeIcon,
   WrenchIcon,
 } from "@phosphor-icons/react";
-import { canonicalCategory } from "../catalog/browse";
 
 /**
  * An icon per catalog category, chosen to be recognised at a glance. Websites

@@ -1,5 +1,5 @@
+import { categoryLabel } from "@appflare/schema/catalog-display";
 import { describe, expect, it } from "vitest";
-import { categoryLabel } from "../catalog/browse";
 import { categoryIcon, FALLBACK_CATEGORY_ICON } from "./category-icon";
 
 // Mirrors the categories of the live catalog index on 2026-09-27, each with the

@@ -1,15 +1,17 @@
-import type { Plan } from "@appflare/schema";
+import {
+  categoryLabel,
+  comparePopularity,
+  LICENSE_FILTERS,
+  PLAN_WORDS,
+} from "@appflare/schema/catalog-display";
 import {
   type BrowsableApp,
   type BrowseQuery,
   type CatalogSort,
   categoryCounts,
-  categoryLabel,
   compareNewest,
   inCategory,
 } from "./browse";
-import { LICENSE_FILTERS } from "./license";
-import { comparePopularity } from "./popularity";
 
 /**
  * What the catalog page shows before anyone searches: rows of apps picked
@@ -151,12 +153,6 @@ export function storefrontRows<T extends BrowsableApp>(
     (row): row is StorefrontRow<T> => row !== null,
   );
 }
-
-/** A plan as one short word for tiles and pills; its full name for tooltips and screen readers. */
-export const PLAN_WORDS: Record<Plan, { word: string; name: string; tooltip: string }> = {
-  free: { word: "Free", name: "Workers Free", tooltip: "Works on the Workers Free plan" },
-  paid: { word: "Paid", name: "Workers Paid", tooltip: "Needs the Workers Paid plan" },
-};
 
 const SORT_WORDS: Record<CatalogSort, string> = {
   popular: "Most popular first",
