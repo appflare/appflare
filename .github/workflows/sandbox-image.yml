@@ -65,7 +65,7 @@ env:
 jobs:
   plan:
     name: plan
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read
@@ -73,7 +73,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       sha: ${{ steps.plan.outputs.sha }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           # Tags and history, to resolve sandbox@<version> to its commit.
           fetch-depth: 0
@@ -120,7 +120,7 @@ jobs:
   image:
     name: build and push the image
     needs: plan
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     permissions:
       contents: read
@@ -139,7 +139,7 @@ jobs:
             echo "::error title=Docker Hub secrets are not set::${missing[*]} missing. The sandbox Worker image is pushed to docker.io/mendylanda/appflare-sandbox. Add DOCKERHUB_USERNAME (an account with push access to the mendylanda namespace on Docker Hub) and DOCKERHUB_TOKEN (a Docker Hub access token with Read & Write scope) as Actions secrets of the appflare organization or this repository, then re-run this workflow (docs/RELEASING.md)."
             exit 1
           fi
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.sha }}
           persist-credentials: false

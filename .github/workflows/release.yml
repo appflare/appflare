@@ -86,7 +86,7 @@ jobs:
   version:
     name: version PR
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: write
@@ -94,7 +94,7 @@ jobs:
     outputs:
       has-changesets: ${{ steps.changesets.outputs.has-changesets }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           # Full history: `changeset version` finds the commit that added each
           # changeset (for the changelog) and would otherwise try to deepen a
@@ -128,7 +128,7 @@ jobs:
     needs: version
     # A requested version is released even while other changesets are pending.
     if: needs.version.outputs.has-changesets == 'false' || inputs.version != ''
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read
@@ -138,7 +138,7 @@ jobs:
       sha: ${{ steps.plan.outputs.sha }}
       latest: ${{ steps.plan.outputs.latest }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           # Full history, to find the commit that set the version.
           fetch-depth: 0
@@ -231,12 +231,12 @@ jobs:
     name: build packer
     needs: plan
     if: needs.plan.outputs.release == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -267,14 +267,14 @@ jobs:
     name: build and pack the manager
     needs: plan
     if: needs.plan.outputs.release == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     # Runs the manager's build and its dependencies' code: no secrets, read-only
     # token, no persisted credentials.
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           # The version commit; release:pack records it as source.sha.
           ref: ${{ needs.plan.outputs.sha }}
@@ -303,7 +303,7 @@ jobs:
   sign:
     name: sign
     needs: [plan, build-packer, build]
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     # Holds the signing key. No checkout, no dependency install, no build: only
     # the packer bundle, on an artifact that must match the plan before signing.
@@ -374,14 +374,14 @@ jobs:
   release:
     name: GitHub Release
     needs: [plan, build-packer, sign]
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Includes up to 15 minutes waiting for the assets to become visible.
     timeout-minutes: 25
     permissions:
       contents: write
     steps:
       # For the changelog only, as of the version commit.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.sha }}
           persist-credentials: false
@@ -569,14 +569,14 @@ jobs:
         || (needs.release.result == 'skipped' && needs.plan.outputs.release == 'false'))
       && needs.plan.outputs.latest == 'true'
       && !contains(needs.plan.outputs.version, '-')
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     # Builds workspace code and resolves the npm lockfile: no secrets, read-only
     # token, no persisted credentials.
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.sha }}
           persist-credentials: false
@@ -619,7 +619,7 @@ jobs:
     # always(): the build job may run after a skipped release job, which would
     # otherwise skip this one too.
     if: always() && needs.deploy-repo-build.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     # Holds DEPLOY_REPO_PUSH_KEY, a deploy key with write access to
     # appflare/deploy only. No checkout of this repository, no dependency
@@ -823,7 +823,7 @@ jobs:
     needs: version
     # A requested version is released even while other changesets are pending.
     if: needs.version.outputs.has-changesets == 'false' || inputs.sandbox_version != ''
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read
@@ -832,7 +832,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       sha: ${{ steps.plan.outputs.sha }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           # Full history, to find the commit that set the version.
           fetch-depth: 0
@@ -914,12 +914,12 @@ jobs:
     name: sandbox build packer
     needs: sandbox-plan
     if: needs.sandbox-plan.outputs.release == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -947,14 +947,14 @@ jobs:
     name: build and pack the sandbox Worker
     needs: sandbox-plan
     if: needs.sandbox-plan.outputs.release == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     # Runs the sandbox Worker's build and its dependencies' code: no secrets,
     # read-only token, no persisted credentials.
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           ref: ${{ needs.sandbox-plan.outputs.sha }}
           persist-credentials: false
@@ -983,7 +983,7 @@ jobs:
   sandbox-sign:
     name: sandbox sign
     needs: [sandbox-plan, sandbox-build-packer, sandbox-build]
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     # Holds the signing key. No checkout, no dependency install, no build: only
     # the packer bundle, on an artifact that must match the plan before signing.
@@ -1070,14 +1070,14 @@ jobs:
   sandbox-release:
     name: sandbox GitHub Release
     needs: [sandbox-plan, sandbox-build-packer, sandbox-sign, sandbox-image]
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Includes up to 15 minutes waiting for the assets to become visible.
     timeout-minutes: 25
     permissions:
       contents: write
     steps:
       # For the changelog only, as of the version commit.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           ref: ${{ needs.sandbox-plan.outputs.sha }}
           persist-credentials: false

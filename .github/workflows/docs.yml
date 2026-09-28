@@ -65,14 +65,14 @@ defaults:
 jobs:
   dev:
     name: build and deploy the preview (development account)
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     env:
       # The preview's address: the Worker's name on the development account's
       # workers.dev subdomain.
       PREVIEW_URL: https://appflare-docs.appflare-dev.workers.dev
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       # pnpm 10, the exact version from package.json's packageManager field.
@@ -157,7 +157,7 @@ jobs:
     if: >-
       (github.event_name != 'workflow_dispatch' || inputs.target != 'dev')
       && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       # Only whether each secret is set leaves this step, never a value.
@@ -178,7 +178,7 @@ jobs:
             echo "ready=false" >> "${GITHUB_OUTPUT}"
           fi
       - if: steps.secrets.outputs.ready == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       - if: steps.secrets.outputs.ready == 'true'
