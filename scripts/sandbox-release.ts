@@ -115,8 +115,12 @@ export function sandboxArtifactProblems(
     `keyId is "${manifest.keyId}", expected "${expected.keyId}"`,
   );
   expect(
-    same(manifest.source, { repo: "appflare/appflare", sha: expected.sha, ref: expected.version }),
-    `source is ${JSON.stringify(manifest.source)}`,
+    manifest.catalog.repo === "appflare/appflare",
+    `catalog.repo is "${manifest.catalog.repo}", expected "appflare/appflare"`,
+  );
+  expect(
+    same(manifest.catalog.source, { ref: expected.version, sha: expected.sha }),
+    `catalog.source is ${JSON.stringify(manifest.catalog.source)}`,
   );
 
   const worker = manifest.worker;
@@ -169,7 +173,7 @@ export function sandboxArtifactProblems(
 
   expect(manifest.assets.files.length === 0, "the sandbox Worker artifact carries static assets");
   expect(
-    Object.keys(manifest.d1Migrations).length === 0,
+    Object.keys(manifest.d1).length === 0,
     "the sandbox Worker artifact carries D1 migrations",
   );
   for (const id of forbiddenIds) {

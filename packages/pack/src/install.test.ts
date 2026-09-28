@@ -11,8 +11,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { CatalogInstallDir } from "@appflare/schema";
+import { type CatalogInstallDir, catalogInstallDirSchema } from "@appflare/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { z } from "zod";
 import {
   findLockfile,
   InstallError,
@@ -74,14 +75,17 @@ function recorder(write?: (invocation: InstallInvocation, cwd: string) => void):
 }
 
 function install(
-  installDirs: CatalogInstallDir[],
+  installDirs: z.input<typeof catalogInstallDirSchema>[],
   run: InstallRunner,
   packageManager: "pnpm" | "npm" | "yarn" | "bun" = "pnpm",
 ): string[] {
   const logs: string[] = [];
   installDependencies({
     checkoutDir: root,
-    installDirs,
+    // The defaults the schema fills in, without its path check: installDependencies checks paths itself.
+    installDirs: installDirs.map(
+      (dir): CatalogInstallDir => ({ lockfile: "required", devDependencies: true, ...dir }),
+    ),
     packageManager,
     env: {},
     logger: (m) => logs.push(m),
@@ -339,7 +343,9 @@ writeFileSync("yarn.lock", "# yarn lockfile v1\\n");
     const logs: string[] = [];
     installDependencies({
       checkoutDir: root,
-      installDirs: [{ path: "site", packageManager: "yarn", lockfile: "none" }],
+      installDirs: [
+        catalogInstallDirSchema.parse({ path: "site", packageManager: "yarn", lockfile: "none" }),
+      ],
       packageManager: "pnpm",
       env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
       logger: (m) => logs.push(m),

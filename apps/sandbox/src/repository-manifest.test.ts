@@ -1,4 +1,4 @@
-import { catalogManifestSchema } from "@appflare/schema";
+import { catalogManifestSchema, strictCatalogManifestSchema } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import {
   artifactVersion,
@@ -8,9 +8,12 @@ import {
   detectWranglerConfig,
   labelOf,
   parseSecretsExample,
+  REPOSITORY_CATEGORY,
   readPackageFacts,
+  repositoryLicense,
   repositoryManifest,
   repositorySlug,
+  repositoryTagline,
   secretsNote,
   sourceBuildManifest,
   withRequiredSecrets,
@@ -72,14 +75,12 @@ describe("detection", () => {
         name: "ADMIN_PASSWORD",
         label: "Admin password",
         help: "Password required to add links.",
-        generate: false,
       },
-      { name: "API_KEY", label: "Api key", generate: false },
+      { name: "API_KEY", label: "Api key" },
       {
         name: "LANDING",
         label: "Landing",
         help: "Optional: where GET / goes.",
-        generate: false,
         optional: true,
       },
     ]);
@@ -163,27 +164,57 @@ describe("manifests", () => {
   };
 
   it("works out a valid sandbox tier manifest for a repository", () => {
-    const manifest = repositoryManifest(facts);
-    expect(catalogManifestSchema.parse(manifest)).toEqual(manifest);
+    const manifest = strictCatalogManifestSchema.parse(repositoryManifest(facts));
     expect(manifest).toMatchObject({
       slug: "cut",
       name: "MendyLanda/cut",
+      tagline: "Built from MendyLanda/cut",
       homepage: "https://github.com/MendyLanda/cut",
       license: "MIT",
-      source: { ref: "main", sha: SHA },
+      categories: [REPOSITORY_CATEGORY],
+      source: { ref: "main", sha: SHA, version: "0.0.0-20260921.0123456" },
       install: {
         tier: "sandbox",
         packageManager: "pnpm",
         wranglerConfig: "wrangler.jsonc",
         workerName: "cut",
         buildCommand: "pnpm run build",
-        version: "0.0.0-20260921.0123456",
       },
       plan: "paid",
       requires: ["containers"],
-      secrets: [{ name: "ADMIN_PASSWORD" }],
-      vars: [{ name: "HOME_PAGE", label: "Home page", required: false }],
+      secrets: [{ name: "ADMIN_PASSWORD", optional: false }],
+      vars: [{ name: "HOME_PAGE", label: "Home page", optional: true }],
     });
+  });
+
+  it("records a license a catalog entry could not have, and NOASSERTION for none", () => {
+    const withLicense = (license: string | null) =>
+      catalogManifestSchema.parse(
+        repositoryManifest({
+          ...facts,
+          pkg: readPackageFacts(JSON.stringify(license === null ? {} : { license })),
+        }),
+      ).license;
+    expect(withLicense("SEE LICENSE IN LICENSE.md")).toBe("SEE LICENSE IN LICENSE.md");
+    expect(withLicense("GPL-3.0-or-later")).toBe("GPL-3.0-or-later");
+    expect(withLicense(null)).toBe("NOASSERTION");
+    // Neither says which license: npm's UNLICENSED, free text, a deprecated id.
+    expect(withLicense("UNLICENSED")).toBe("NOASSERTION");
+    expect(withLicense("MIT License")).toBe("NOASSERTION");
+    expect(withLicense("GPL-3.0")).toBe("NOASSERTION");
+    expect(repositoryLicense(null)).toBe("NOASSERTION");
+  });
+
+  it("makes a tagline of the description's first line, else of the repository", () => {
+    expect(repositoryTagline("acme/cut", "Self-hosted link shortener.")).toBe(
+      "Self-hosted link shortener",
+    );
+    expect(repositoryTagline("acme/cut", "Short links.\nMore text")).toBe("Short links");
+    expect(repositoryTagline("acme/cut", "x".repeat(81))).toBe("Built from acme/cut");
+    expect(repositoryTagline("acme/cut", null)).toBe("Built from acme/cut");
+    expect(repositoryTagline(`acme/${"y".repeat(90)}`, "...")).toBe(
+      "Built from a GitHub repository",
+    );
   });
 
   it("keeps a catalog app's manifest for a build from source, with the new commit", () => {
@@ -191,14 +222,13 @@ describe("manifests", () => {
       ...repositoryManifest(facts),
       slug: "cut",
       name: "Cut",
-      source: { ref: "v0.1.0", sha: "f".repeat(40) },
+      source: { ref: "v0.1.0", sha: "f".repeat(40), version: "0.1.0" },
       install: {
         tier: "artifact",
         packageManager: "pnpm",
         wranglerConfig: "wrangler.jsonc",
         workerName: "cut",
         buildCommand: "pnpm build:css",
-        version: "0.1.0",
       },
       plan: "free",
       requires: [],
@@ -213,8 +243,8 @@ describe("manifests", () => {
     expect(built).toMatchObject({
       name: "Cut",
       plan: "free",
-      source: { ref: "main", sha: SHA },
-      install: { tier: "sandbox", version: "0.0.0-20260921.0123456" },
+      source: { ref: "main", sha: SHA, version: "0.0.0-20260921.0123456" },
+      install: { tier: "sandbox" },
     });
     expect(built.install.buildCommand).toBeUndefined();
   });
@@ -230,16 +260,14 @@ describe("required secrets", () => {
         name: "SESSION_SECRET",
         label: "Session secret",
         help: "Optional: signs sessions.",
-        generate: false,
       },
       {
         name: "SMTP_PASSWORD",
         label: "Smtp password",
         help: "Optional: for mail.",
-        generate: false,
         optional: true,
       },
-      { name: "API_KEY", label: "Api key", generate: false },
+      { name: "API_KEY", label: "Api key" },
     ]);
     expect(withRequiredSecrets([], [])).toEqual([]);
   });

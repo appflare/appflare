@@ -69,8 +69,6 @@ describe("pack with exports, cache and a Worker Loader", () => {
         outDir,
         install: false,
       });
-      // Managers that read only formats 1 and 2 refuse it rather than drop the exports.
-      expect(res.manifest.format).toBe(3);
       expect(res.manifest.worker.exports).toEqual({
         Room: { type: "durable-object", storage: "sqlite" },
         Api: { type: "worker", cache: { enabled: true } },

@@ -5,6 +5,7 @@ import {
   collectBindings,
   pack,
   type ResolvedWranglerConfig,
+  readCatalogManifest,
   UnsupportedSectionError,
   unsupportedWranglerSections,
   verify,
@@ -49,11 +50,15 @@ describe("sandboxReleaseWranglerConfig", () => {
       version: VERSION,
       sha: FAKE_SHA,
     });
-    expect(stamped).toMatchObject({
+    // As the packer reads it: strictly, defaults filled in.
+    const manifest = readCatalogManifest(JSON.stringify(stamped));
+    expect(manifest).toMatchObject({
       slug: "appflare-sandbox",
       source: { ref: VERSION, sha: FAKE_SHA },
-      install: { wranglerConfig: "dist/wrangler.release.json", workerName: "appflare-sandbox" },
+      install: { wranglerConfig: "dist/wrangler.release.json", fixedWorkerName: true },
     });
+    // The Worker name defaults to the slug.
+    expect(manifest.install.workerName ?? manifest.slug).toBe("appflare-sandbox");
   });
 
   it("allows exactly the refused sections the release config declares", () => {

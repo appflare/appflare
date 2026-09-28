@@ -478,6 +478,7 @@ export async function runRepositoryBuild(
       repo: request.repo,
       sha: checkedOut.sha,
       version: detected.version,
+      repositoryBuild: request.baseline === undefined,
       catalogManifest: detected.manifest,
     };
     const keys = buildKeys(request.installId, detected.version, detected.manifest.slug);

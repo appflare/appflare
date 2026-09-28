@@ -100,11 +100,24 @@ describe("verifyArtifact", () => {
     const { dir } = await fixture({
       sign: key,
       mutate: (m) => {
-        (m as { format: number }).format = 2;
+        (m as { d1?: unknown }).d1 = undefined;
       },
     });
     await expect(verifyArtifact({ dir, keys: [key.key] })).rejects.toThrow(
       "not a valid artifact manifest",
+    );
+  });
+
+  it("says to run the latest installer for a release of a later format", async () => {
+    const key = await makeTestKey();
+    const { dir } = await fixture({
+      sign: key,
+      mutate: (m) => {
+        (m as { format: number }).format = 2;
+      },
+    });
+    await expect(verifyArtifact({ dir, keys: [key.key] })).rejects.toThrow(
+      "the release is artifact format 2, and this installer reads format 1; run the latest installer (npx create-appflare@latest)",
     );
   });
 });

@@ -6,6 +6,8 @@ import {
   type JsonValue,
   type ModuleType,
   PIPELINES_BINDING_TYPE,
+  type PlaceholderWorkers,
+  placeholderProblems,
   type QueueConsumer,
   type QueueRef,
   SELF_SERVICE,
@@ -464,6 +466,35 @@ export function withoutSecretVars(
   return { bindings: kept, dropped };
 }
 
+/** Every string inside a JSON value, keys excepted. */
+function jsonStrings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(jsonStrings);
+  if (value !== null && typeof value === "object") return Object.values(value).flatMap(jsonStrings);
+  return [];
+}
+
+/**
+ * What is wrong with the placeholders in the wrangler config's vars, one
+ * sentence each; empty when nothing is. The manager fills them into a var's
+ * value (a `plain_text` var's text, every string of a `json` var) as it
+ * fills a catalog var's `default`, so they are held to the same list
+ * (`placeholderProblems` for `varDefault`): a placeholder written in the
+ * wrong case, or naming a Worker the entry does not have, would reach the
+ * Worker as written.
+ */
+export function varPlaceholderProblems(
+  bindings: readonly WorkerBinding[],
+  entry: PlaceholderWorkers,
+): string[] {
+  return bindings.filter(isVarBinding).flatMap((b) => {
+    const texts = b.type === "json" ? jsonStrings(b.json) : jsonStrings(b.text);
+    return [
+      ...new Set(texts.flatMap((text) => placeholderProblems(text, "varDefault", entry))),
+    ].map((problem) => `The wrangler config's var ${b.name}: ${problem}.`);
+  });
+}
+
 type WranglerService = NonNullable<ResolvedWranglerConfig["services"]>[number];
 
 /**
@@ -591,9 +622,9 @@ export function checkHyperdriveDeclarations(
   resources?: CatalogResources,
 ): void {
   const connected = new Set(bindings.filter((b) => b.type === "hyperdrive").map((b) => b.name));
-  const unconnected = (resources?.hyperdrive ?? [])
-    .map((h) => h.binding)
-    .filter((binding) => !connected.has(binding));
+  const unconnected = Object.keys(resources?.hyperdrive ?? {}).filter(
+    (binding) => !connected.has(binding),
+  );
   if (unconnected.length > 0) {
     throw new HyperdriveDeclarationError(
       `the catalog manifest declares the Hyperdrive binding ${unconnected.join(", ")} in resources.hyperdrive, ` +
@@ -720,12 +751,12 @@ export function collectBindings(
   if (checkUnboundVectorize) {
     checkVectorizeDeclarations(bindings, resources);
   }
-  const databases = new Set((resources?.hyperdrive ?? []).map((h) => h.binding));
+  const databases = new Set(Object.keys(resources?.hyperdrive ?? {}));
   for (const h of config.hyperdrive ?? []) {
     if (!databases.has(h.binding)) {
       throw new HyperdriveDeclarationError(
         `the wrangler config binds Hyperdrive as ${h.binding}, but the catalog manifest does not say which database it connects to; ` +
-          `add { "binding": "${h.binding}", "protocol": "postgres" | "mysql" } to resources.hyperdrive in appflare.jsonc`,
+          `add "${h.binding}": { "protocol": "postgres" | "mysql" } to resources.hyperdrive in appflare.jsonc`,
       );
     }
     push("hyperdrive", h.binding);

@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { CatalogManifest, WranglerFacts } from "@appflare/schema";
+import { type CatalogManifest, catalogWorkerName, type WranglerFacts } from "@appflare/schema";
 import { unstable_readConfig } from "wrangler";
 import { applyConfigPatches, workerSpecs, writeInlineConfigs } from "./config-patch.ts";
 import { copyTemplateConfig, readConfigArgs, resolveWranglerConfig } from "./config-redirect.ts";
@@ -73,7 +73,7 @@ export function inspectWranglerConfig(
     writeInlineConfigs({
       checkoutDir: root,
       specs,
-      workerName: options.catalog.install.workerName,
+      workerName: catalogWorkerName(options.catalog),
       only: configPath,
       logger: options.logger,
     });

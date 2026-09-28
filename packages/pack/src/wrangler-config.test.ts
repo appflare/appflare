@@ -12,6 +12,7 @@ import {
   ServiceBindingError,
   UnsafeBindingError,
   VectorizeDeclarationError,
+  varPlaceholderProblems,
   withoutSecretVars,
 } from "./wrangler-config.ts";
 
@@ -34,7 +35,7 @@ describe("collectBindings", () => {
 
     const bindings = collectBindings(config, {
       vectorize: { VEC: { dimensions: 768, metric: "euclidean" } },
-      hyperdrive: [{ binding: "HD", protocol: "postgres" }],
+      hyperdrive: { HD: { protocol: "postgres" } },
     });
     const serialized = JSON.stringify(bindings);
 
@@ -163,7 +164,7 @@ describe("collectBindings", () => {
       ],
     } as unknown as ResolvedWranglerConfig;
     const bindings = collectBindings(config, {
-      hyperdrive: [{ binding: "HYPERDRIVE", protocol: "postgres" }],
+      hyperdrive: { HYPERDRIVE: { protocol: "postgres" } },
     });
     expect(bindings).toEqual([{ type: "hyperdrive", name: "HYPERDRIVE" }]);
     expect(JSON.stringify(bindings)).not.toMatch(/0123abcd|postgres:/);
@@ -173,14 +174,14 @@ describe("collectBindings", () => {
     const config = { hyperdrive: [{ binding: "HYPERDRIVE" }] } as unknown as ResolvedWranglerConfig;
     expect(() => collectBindings(config)).toThrow(HyperdriveDeclarationError);
     expect(() => collectBindings(config)).toThrow(
-      /binds Hyperdrive as HYPERDRIVE.*add \{ "binding": "HYPERDRIVE", "protocol"/,
+      /binds Hyperdrive as HYPERDRIVE.*add "HYPERDRIVE": \{ "protocol"/,
+    );
+    expect(() => collectBindings(config, { hyperdrive: { DB: { protocol: "mysql" } } })).toThrow(
+      /binds Hyperdrive as HYPERDRIVE/,
     );
     expect(() =>
-      collectBindings(config, { hyperdrive: [{ binding: "DB", protocol: "mysql" }] }),
-    ).toThrow(/binds Hyperdrive as HYPERDRIVE/);
-    expect(() =>
       collectBindings({} as ResolvedWranglerConfig, {
-        hyperdrive: [{ binding: "DB", protocol: "mysql" }],
+        hyperdrive: { DB: { protocol: "mysql" } },
       }),
     ).toThrow(
       /declares the Hyperdrive binding DB in resources\.hyperdrive, but the wrangler config/,
@@ -394,6 +395,47 @@ describe("withoutSecretVars", () => {
       dropped: ["PASSWORD", "LIMITS"],
     });
     expect(withoutSecretVars(bindings, []).dropped).toEqual([]);
+  });
+});
+
+describe("varPlaceholderProblems", () => {
+  it("takes the placeholders a var's default takes, in plain and JSON vars", () => {
+    const bindings = collectBindings({
+      vars: {
+        ORIGIN: "{{appUrl}}",
+        HOSTS: ["{{appHostname}}", "{{workerHostname}}"],
+        TEMPLATE: "Hello {{ name }}",
+      },
+    });
+    expect(varPlaceholderProblems(bindings, {})).toEqual([]);
+  });
+
+  it("refuses a placeholder in the wrong case, one the field does not take, or a per-Worker form without Workers", () => {
+    const bindings = collectBindings({
+      vars: {
+        ORIGIN: "{{appURL}}",
+        LIST: { stage: ["{{stage}}"] },
+        API: "{{appUrl:api}}",
+      },
+    });
+    expect(varPlaceholderProblems(bindings, {})).toEqual([
+      "The wrangler config's var ORIGIN: {{appURL}} is not a placeholder; placeholder names are case-sensitive, so write {{appUrl}}.",
+      expect.stringMatching(/^The wrangler config's var LIST: \{\{stage\}\} is not filled in here/),
+      expect.stringMatching(
+        /^The wrangler config's var API: \{\{appUrl:api\}\} names one of an entry's Workers, but this entry installs one Worker/,
+      ),
+    ]);
+  });
+
+  it("refuses a per-Worker placeholder naming a Worker without an address", () => {
+    const bindings = collectBindings({ vars: { JOBS: "{{appUrl:jobs}}", WEB: "{{appUrl:web}}" } });
+    const workers = [
+      { name: "web", workersDev: true },
+      { name: "jobs", workersDev: false },
+    ];
+    expect(varPlaceholderProblems(bindings, { workers })).toEqual([
+      `The wrangler config's var JOBS: {{appUrl:jobs}} names the Worker "jobs", which sets workersDev to false and so has no address.`,
+    ]);
   });
 });
 

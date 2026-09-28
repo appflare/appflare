@@ -59,19 +59,18 @@ function packFor(catalog: unknown): Record<string, Uint8Array> {
   const c = catalog as {
     slug: string;
     repo: string;
-    source: { ref: string; sha: string };
-    install: { version: string };
+    source: { ref: string; sha: string; version: string };
   };
   const manifest = {
     format: 1,
     app: c.slug,
-    version: c.install.version,
-    source: { repo: c.repo, sha: c.source.sha, ref: c.source.ref },
+    version: c.source.version,
     builtAt: "2026-09-25T12:00:00.000Z",
     builder: "@appflare/pack@0.2.0",
     keyId: "unsigned",
     worker: {
       name: c.slug,
+      wranglerConfig: { declared: "wrangler.jsonc", effective: "wrangler.jsonc" },
       mainModule: "index.js",
       compatibilityDate: "2026-09-01",
       compatibilityFlags: [],
@@ -84,11 +83,11 @@ function packFor(catalog: unknown): Record<string, Uint8Array> {
       limits: null,
     },
     assets: { config: {}, binding: null, files: [] },
-    d1Migrations: {},
+    d1: {},
     catalog,
   };
   return {
-    [`${c.slug}-${c.install.version}.zip`]: ZIP,
+    [`${c.slug}-${c.source.version}.zip`]: ZIP,
     "manifest.json": new TextEncoder().encode(`${JSON.stringify(manifest)}\n`),
   };
 }
@@ -197,6 +196,12 @@ describe("runRepositoryBuild", () => {
     );
     // The build command goes to the packer through the manifest; never run on its own.
     expect(sandbox.commands.some((c) => c === "pnpm run build")).toBe(false);
+    // Its license comes from package.json, which may say NOASSERTION or SEE LICENSE IN.
+    expect(
+      sandbox.commands.some(
+        (c) => c.startsWith("appflare-pack /") && c.endsWith(" --repository-build"),
+      ),
+    ).toBe(true);
     for (const used of sandbox.envs) expect(used).toEqual(BUILD_ENV);
 
     const catalog = packedCatalog(sandbox);
@@ -205,7 +210,10 @@ describe("runRepositoryBuild", () => {
       name: "MendyLanda/cut",
       repo: "MendyLanda/cut",
       summary: "Self-hosted link shortener.",
-      source: { ref: "main", sha: MAIN },
+      tagline: "Self-hosted link shortener",
+      license: "MIT",
+      categories: ["utilities"],
+      source: { ref: "main", sha: MAIN, version: "0.0.0-20260920.0123456" },
       install: { tier: "sandbox", buildCommand: "pnpm run build", workerName: "cut" },
       secrets: [{ name: "ADMIN_PASSWORD", help: "Password required to add links." }],
       vars: [{ name: "HOME_PAGE" }],
@@ -343,25 +351,19 @@ describe("runRepositoryBuild", () => {
       slug: "cut",
       name: "Cut",
       summary: "Link shortener.",
-      homepage: "https://github.com/MendyLanda/cut",
+      tagline: "Short links on your own domain",
       repo: "MendyLanda/cut",
       license: "MIT",
       categories: ["utilities"],
       maintainers: ["MendyLanda"],
-      source: { ref: "v0.1.0", sha: "f".repeat(40) },
+      source: { ref: "v0.1.0", sha: "f".repeat(40), version: "0.1.0" },
       install: {
-        tier: "artifact",
         packageManager: "pnpm",
         wranglerConfig: "wrangler.jsonc",
-        workerName: "cut",
-        version: "0.1.0",
       },
       plan: "free",
-      requires: [],
-      secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password", generate: true }],
-      vars: [],
+      secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" }],
       postInstall: [],
-      tokenPermissions: [],
     };
     const sandbox = fake();
     const result = asResult(await build(sandbox, request({ ref: "main", baseline })).promise);
@@ -370,12 +372,14 @@ describe("runRepositoryBuild", () => {
       buildCommandFrom: "package.json",
       secretsFrom: "catalog",
     });
+    // A catalog app keeps its catalog license, held to the catalog's rules.
+    expect(sandbox.commands.some((c) => c.includes("--repository-build"))).toBe(false);
     expect(packedCatalog(sandbox)).toMatchObject({
       name: "Cut",
       plan: "free",
-      source: { ref: "main", sha: MAIN },
-      install: { tier: "sandbox", version: "0.0.0-20260920.0123456" },
-      secrets: [{ name: "ADMIN_PASSWORD", generate: true }],
+      source: { ref: "main", sha: MAIN, version: "0.0.0-20260920.0123456" },
+      install: { tier: "sandbox" },
+      secrets: [{ name: "ADMIN_PASSWORD", generate: "password" }],
     });
   });
 
@@ -384,10 +388,10 @@ describe("runRepositoryBuild", () => {
       slug: "blog",
       name: "Blog",
       summary: "A blog template.",
-      homepage: "https://github.com/MendyLanda/cut",
+      tagline: "A blog template",
       repo: "MendyLanda/cut",
       license: "MIT",
-      categories: [],
+      categories: ["notes"],
       maintainers: [],
       source: { ref: "main", sha: "f".repeat(40) },
       install: {
@@ -426,10 +430,10 @@ describe("runRepositoryBuild", () => {
       slug: "mdpage",
       name: "md.page",
       summary: "Markdown pages.",
-      homepage: "https://github.com/MendyLanda/cut",
+      tagline: "Markdown pages",
       repo: "MendyLanda/cut",
       license: "MIT",
-      categories: [],
+      categories: ["notes"],
       maintainers: [],
       source: { ref: "main", sha: "f".repeat(40) },
       install: {

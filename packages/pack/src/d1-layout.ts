@@ -198,7 +198,7 @@ export function wranglerMigrationsLayout(d1: {
 
 /**
  * The migrations of one Worker's D1 bindings, by binding, in wrangler's
- * order. A binding the catalog manifest gives a `migrations` glob or a
+ * order. A binding the catalog manifest gives a `migrationsGlob` or a
  * `migrationsDir` takes its files from there (the folder must exist);
  * any other reads the wrangler config's `migrations_dir` and
  * `migrations_pattern`, and has none when the folder is missing.
@@ -222,8 +222,8 @@ export function collectD1Migrations(
   for (const d1 of config.d1_databases ?? []) {
     const layout = layoutOf(declared, d1.binding);
     let files: Array<{ name: string; abs: string }>;
-    if (layout?.migrations !== undefined) {
-      files = expandMigrationsGlob(checkoutDir, layout.migrations);
+    if (layout?.migrationsGlob !== undefined) {
+      files = expandMigrationsGlob(checkoutDir, layout.migrationsGlob);
     } else if (layout?.migrationsDir !== undefined) {
       const dir = insideCheckout(checkoutDir, layout.migrationsDir, "resources.d1 migrationsDir");
       if (!statSync(dir).isDirectory()) {

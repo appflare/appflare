@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ZipStore } from "@appflare/pack";
-import type { ArtifactManifest, SigningKey } from "@appflare/schema";
+import { type ArtifactManifest, artifactManifestSchema, type SigningKey } from "@appflare/schema";
 
 type CryptoKey = webcrypto.CryptoKey;
 type CryptoKeyPair = webcrypto.CryptoKeyPair;
@@ -78,16 +78,20 @@ export async function buildFixtureArtifact(options: FixtureOptions = {}): Promis
     path: p,
     ...(placed.get(p) as { offset: number; size: number; sha256: string }),
   });
-  const manifest: ArtifactManifest = {
+  // Parsed, so the manifest carries every default a packed one does.
+  const manifest: ArtifactManifest = artifactManifestSchema.parse({
     format: 1,
     app: "appflare",
     version,
-    source: { repo: "appflare/appflare", sha: "a".repeat(40), ref: version },
     builtAt: "2026-09-22T12:00:00.000Z",
     builder: "@appflare/pack@0.0.0",
     keyId: options.keyId ?? options.sign?.key.keyId ?? "unsigned",
     worker: {
       name: "appflare",
+      wranglerConfig: {
+        declared: "dist/server/wrangler.json",
+        effective: "dist/server/wrangler.json",
+      },
       mainModule: "index.js",
       compatibilityDate: "2026-09-21",
       compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
@@ -121,31 +125,25 @@ export async function buildFixtureArtifact(options: FixtureOptions = {}): Promis
         { route: "/assets/app.js", hash: "1".repeat(32), ...at("assets/assets/app.js") },
       ],
     },
-    d1Migrations: { DB: [{ name: "0000_init.sql", ...at("d1/DB/0000_init.sql") }] },
+    d1: { DB: { migrations: [{ name: "0000_init.sql", ...at("d1/DB/0000_init.sql") }] } },
     catalog: {
       slug: "appflare",
       name: "Appflare",
       summary: "The manager.",
-      homepage: "https://github.com/appflare/appflare",
+      tagline: "Installs and updates apps in your Cloudflare account",
       repo: "appflare/appflare",
       license: "Apache-2.0",
-      categories: ["platform"],
+      categories: ["developer-tools"],
       maintainers: ["MendyLanda"],
       source: { ref: version, sha: "a".repeat(40) },
       install: {
-        tier: "artifact",
         packageManager: "pnpm",
         wranglerConfig: "dist/server/wrangler.json",
-        workerName: "appflare",
       },
       plan: "free",
-      requires: [],
-      secrets: [],
-      vars: [],
       postInstall: [],
-      tokenPermissions: [],
     },
-  };
+  });
   options.mutate?.(manifest);
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
   zip.addFile("manifest.json", manifestBytes);

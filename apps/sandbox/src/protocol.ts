@@ -198,11 +198,24 @@ export const BUILD_COMMAND_ENV: Readonly<Record<string, string>> = {
  * The packer, run on the checkout; it writes an unsigned artifact. It runs
  * without a second install after the build's own install step, and with its
  * own install when the entry lists `install.installDirs`: then it installs
- * each listed directory itself, as catalog CI's pack does.
+ * each listed directory itself, as catalog CI's pack does. A build from a
+ * repository without a catalog entry is packed with `--repository-build`,
+ * so its manifest may say `NOASSERTION` or `SEE LICENSE IN <file>`.
  */
-export function packArgv(project: string, options: { install?: boolean } = {}): string[] {
-  const argv = ["appflare-pack", project, "--manifest", MANIFEST_INPUT, "--out", OUT_DIR];
-  return options.install === true ? argv : [...argv, "--no-install"];
+export function packArgv(
+  project: string,
+  options: { install?: boolean; repositoryBuild?: boolean } = {},
+): string[] {
+  return [
+    "appflare-pack",
+    project,
+    "--manifest",
+    MANIFEST_INPUT,
+    "--out",
+    OUT_DIR,
+    ...(options.install === true ? [] : ["--no-install"]),
+    ...(options.repositoryBuild === true ? ["--repository-build"] : []),
+  ];
 }
 
 /**

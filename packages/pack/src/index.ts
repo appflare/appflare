@@ -74,6 +74,7 @@ export {
   resolveInstallDir,
 } from "./install.ts";
 export { parseJsonc } from "./jsonc.ts";
+export { type ReadCatalogManifestOptions, readCatalogManifest } from "./manifest.ts";
 export type { PackedWorker, PackOptions, PackResult } from "./pack.ts";
 export { describeVersionOrigin, mergeD1Migrations, pack } from "./pack.ts";
 export type { SignOptions, SignResult } from "./sign.ts";
@@ -124,6 +125,7 @@ export {
   unsupportedWranglerSections,
   uploadPlacement,
   VectorizeDeclarationError,
+  varPlaceholderProblems,
   type WranglerQueueConsumer,
   withoutSecretVars,
 } from "./wrangler-config.ts";

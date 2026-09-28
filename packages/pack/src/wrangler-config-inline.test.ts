@@ -43,6 +43,7 @@ function catalog(slug: string, fields: Record<string, unknown>): CatalogManifest
     slug,
     name: slug,
     summary: "An inline wrangler config fixture.",
+    tagline: "An inline wrangler config fixture",
     homepage: "https://example.com",
     repo: `example/${slug}`,
     license: "MIT",
@@ -111,7 +112,7 @@ function rinManifest(extra: Record<string, unknown> = {}): CatalogManifest {
     install: {
       wranglerConfig: PATCHED_WRANGLER_CONFIG,
       wranglerConfigInline: RIN_CONFIG,
-      healthPath: "/api/auth/status",
+      health: { path: "/api/auth/status" },
       ...extra,
     },
     requires: ["r2", "workers-ai"],
@@ -146,7 +147,7 @@ describe("Rin: the catalog carries the config the repository does not", () => {
     ]);
     expect(result.manifest.assets.binding).toBe("ASSETS");
     expect(result.manifest.assets.files.map((f) => f.route)).toEqual(["/index.html"]);
-    expect(Object.keys(result.manifest.d1Migrations)).toEqual(["DB"]);
+    expect(Object.keys(result.manifest.d1)).toEqual(["DB"]);
     expect(logs).toContain(`install.wranglerConfigInline written to ${PATCHED_WRANGLER_CONFIG}`);
 
     const written = parseJsonc(

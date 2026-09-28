@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { assetHash } from "@appflare/cf-api";
-import { type ArtifactManifest, MAX_WORKER_UPLOAD_BYTES } from "@appflare/schema";
+import { type ArtifactManifest, artifactD1Files, MAX_WORKER_UPLOAD_BYTES } from "@appflare/schema";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { MAX_MODULES_DEPRECATION, main } from "./cli-main.ts";
 import { parseJsonc } from "./jsonc.ts";
@@ -143,7 +143,7 @@ describe("pack + verify (integration)", () => {
     const entries = [
       ...manifest.worker.modules,
       ...manifest.assets.files,
-      ...Object.values(manifest.d1Migrations).flat(),
+      ...artifactD1Files(manifest),
     ];
     for (const entry of entries) {
       const bytes = readRange(result.zipPath, entry.offset, entry.size);
@@ -164,7 +164,7 @@ describe("pack + verify (integration)", () => {
       const entries = [
         ...manifest.worker.modules,
         ...manifest.assets.files,
-        ...Object.values(manifest.d1Migrations).flat(),
+        ...artifactD1Files(manifest),
       ];
       for (const entry of entries) {
         const extracted = readFileSync(path.join(extractDir, entry.path));
@@ -337,44 +337,114 @@ describe("pack leaves nothing behind on failure", () => {
   });
 });
 
-describe("pack with a license that is not an SPDX expression", () => {
-  it("packs it and warns", async () => {
-    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-license-"));
-    const catalog = parseJsonc(readFileSync(FIXTURE_MANIFEST, "utf8")) as Record<string, unknown>;
-    catalog.license = "MIT License";
-    const manifestPath = path.join(parent, "appflare.jsonc");
-    writeFileSync(manifestPath, JSON.stringify(catalog));
-    const logs: string[] = [];
-    try {
-      const res = await pack({
-        checkoutDir: FIXTURE,
-        manifestPath,
-        outDir: path.join(parent, "out"),
-        install: false,
-        logger: (m) => logs.push(m),
-      });
-      expect(res.manifest.catalog.license).toBe("MIT License");
-      expect(logs).toContain(
-        'warning: license is not an SPDX expression: it has "License" where AND, OR or WITH belongs',
-      );
-    } finally {
-      rmSync(parent, { recursive: true, force: true });
-    }
-  }, 120_000);
-});
-
-/** Writes the fixture's catalog manifest with `install.version` set into `dir`. */
-function manifestWithInstallVersion(dir: string, version: unknown): string {
-  const catalog = parseJsonc(readFileSync(FIXTURE_MANIFEST, "utf8")) as {
-    install: Record<string, unknown>;
-  };
-  catalog.install.version = version;
+/** Writes the fixture's catalog manifest, changed by `edit`, into `dir`. */
+function editedManifest(dir: string, edit: (catalog: Record<string, unknown>) => void): string {
+  const catalog = parseJsonc(readFileSync(FIXTURE_MANIFEST, "utf8")) as Record<string, unknown>;
+  edit(catalog);
   const file = path.join(dir, "appflare.jsonc");
   writeFileSync(file, JSON.stringify(catalog));
   return file;
 }
 
-describe("pack with install.version", () => {
+describe("pack reads the catalog manifest strictly", () => {
+  /** Packs the fixture with an edited manifest; expects the pack to fail and write nothing. */
+  async function refused(
+    edit: (catalog: Record<string, unknown>) => void,
+    message: RegExp,
+    options: { repositoryBuild?: boolean } = {},
+  ): Promise<void> {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-strict-"));
+    const outDir = path.join(parent, "out");
+    try {
+      const manifestPath = editedManifest(parent, edit);
+      await expect(
+        pack({ checkoutDir: FIXTURE, manifestPath, outDir, install: false, ...options }),
+      ).rejects.toThrow(message);
+      expect(existsSync(outDir)).toBe(false);
+      expect(readdirSync(parent)).toEqual(["appflare.jsonc"]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }
+
+  it("refuses a key the schema does not know, naming its path", async () => {
+    await refused((catalog) => {
+      (catalog.install as Record<string, unknown>).healthpath = "/health";
+      (catalog.secrets as Array<Record<string, unknown>>)[0] = {
+        ...(catalog.secrets as Array<Record<string, unknown>>)[0],
+        optinal: true,
+      };
+    }, /- install\.healthpath: install\.healthpath is not a field here[\s\S]*- secrets\[0\]\.optinal: /);
+  });
+
+  it("refuses a license that is not an SPDX expression", async () => {
+    await refused((catalog) => {
+      catalog.license = "MIT License";
+    }, /- license: license has "License" where AND, OR or WITH belongs/);
+  });
+
+  it("refuses a deprecated SPDX id and names the current ones", async () => {
+    await refused((catalog) => {
+      catalog.license = "GPL-3.0";
+    }, /- license: license has "GPL-3\.0", a deprecated SPDX id; write GPL-3\.0-only or GPL-3\.0-or-later/);
+  });
+
+  it("refuses NOASSERTION for a catalog entry", async () => {
+    await refused((catalog) => {
+      catalog.license = "NOASSERTION";
+    }, /only an app built from a repository without a catalog entry may have/);
+  });
+
+  it("refuses a category that is not on the list", async () => {
+    await refused((catalog) => {
+      catalog.categories = ["platform"];
+    }, /- categories\[0\]: /);
+  });
+
+  it("refuses a placeholder a field does not take", async () => {
+    await refused((catalog) => {
+      catalog.postInstall = [{ type: "markdown", content: "Open {{appURL}} to see it." }];
+    }, /- postInstall\[0\]\.content: /);
+  });
+
+  it("packs a repository build whose license is NOASSERTION", async () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-repository-"));
+    try {
+      const res = await pack({
+        checkoutDir: FIXTURE,
+        manifestPath: editedManifest(parent, (catalog) => {
+          catalog.license = "NOASSERTION";
+        }),
+        outDir: path.join(parent, "out"),
+        install: false,
+        repositoryBuild: true,
+      });
+      expect(res.manifest.catalog.license).toBe("NOASSERTION");
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("still refuses an unknown key in a repository build", async () => {
+    await refused(
+      (catalog) => {
+        catalog.license = "NOASSERTION";
+        catalog.instal = {};
+      },
+      /- instal: instal is not a field here/,
+      { repositoryBuild: true },
+    );
+  });
+});
+
+/** Writes the fixture's catalog manifest with `source.version` set into `dir`. */
+function manifestWithSourceVersion(dir: string, version: unknown): string {
+  return editedManifest(dir, (catalog) => {
+    (catalog.source as Record<string, unknown>).version = version;
+  });
+}
+
+describe("pack with source.version", () => {
   it("takes the version from the catalog manifest over the source.ref tag", async () => {
     const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-installversion-"));
     const outDir = path.join(parent, "out");
@@ -382,29 +452,28 @@ describe("pack with install.version", () => {
     try {
       const res = await pack({
         checkoutDir: FIXTURE,
-        manifestPath: manifestWithInstallVersion(parent, "4.5.6"),
+        manifestPath: manifestWithSourceVersion(parent, "4.5.6"),
         outDir,
         install: false,
         logger: (m) => logs.push(m),
       });
       expect(res.version).toBe("4.5.6");
-      expect(res.versionOrigin).toBe("install.version");
+      expect(res.versionOrigin).toBe("source.version");
       expect(res.manifest.version).toBe("4.5.6");
-      expect(res.manifest.source.ref).toBe("v1.2.3");
-      expect(res.manifest.catalog.install.version).toBe("4.5.6");
+      expect(res.manifest.catalog.source).toMatchObject({ ref: "v1.2.3", version: "4.5.6" });
       expect(path.basename(res.zipPath)).toBe("hello-4.5.6.zip");
       expect(logs.find((l) => l.startsWith("packed hello@4.5.6"))).toMatch(
-        /\(version from install\.version in the catalog manifest\)/,
+        /\(version from source\.version in the catalog manifest\)/,
       );
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
   }, 120_000);
 
-  it("fails before writing anything when install.version is not semver", async () => {
+  it("fails before writing anything when source.version is not semver", async () => {
     for (const bad of ["v4.5.6", "4.5", "latest"]) {
       const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-badversion-"));
-      const manifestPath = manifestWithInstallVersion(parent, bad);
+      const manifestPath = manifestWithSourceVersion(parent, bad);
       const outDir = path.join(parent, "out");
       try {
         await expect(
@@ -553,7 +622,7 @@ describe("pack with a Hyperdrive binding and a template config", () => {
     const logs: string[] = [];
     try {
       const checkout = hyperdriveTemplateCheckout(parent, {
-        hyperdrive: [{ binding: "HYPERDRIVE", protocol: "postgres" }],
+        hyperdrive: { HYPERDRIVE: { protocol: "postgres" } },
       });
       const res = await pack({
         checkoutDir: checkout.dir,
@@ -639,7 +708,7 @@ function d1LayoutCheckout(parent: string, schemaSql: string): { dir: string; man
   catalog.resources = {
     d1: {
       DB: {
-        migrations: "prisma/migrations/*/migration.sql",
+        migrationsGlob: "prisma/migrations/*/migration.sql",
         schema: ["src/db/schema.sql"],
         postDeployMigrationsDir: "after-deploy",
       },
@@ -668,21 +737,20 @@ describe("pack with resources.d1", () => {
         logger: (m) => logs.push(m),
       });
       // The glob replaces the config's migrations folder; files keep wrangler's names.
-      expect(res.manifest.d1Migrations.DB?.map((f) => [f.name, f.path])).toEqual([
+      expect(res.manifest.d1.DB?.migrations.map((f) => [f.name, f.path])).toEqual([
         ["20240101000000_init/migration.sql", "d1/DB/20240101000000_init/migration.sql"],
         ["20240201000000_clicks/migration.sql", "d1/DB/20240201000000_clicks/migration.sql"],
       ]);
-      expect(res.manifest.d1Schema?.DB?.map((f) => [f.name, f.path])).toEqual([
+      expect(res.manifest.d1.DB?.schema.map((f) => [f.name, f.path])).toEqual([
         ["src/db/schema.sql", "d1-schema/DB/src/db/schema.sql"],
       ]);
-      expect(res.manifest.d1PostDeploy?.DB?.map((f) => [f.name, f.path])).toEqual([
+      expect(res.manifest.d1.DB?.postDeploy.map((f) => [f.name, f.path])).toEqual([
         ["0001_drop_legacy.sql", "d1-post-deploy/DB/0001_drop_legacy.sql"],
       ]);
       expect([res.d1MigrationCount, res.d1SchemaCount, res.d1PostDeployCount]).toEqual([2, 1, 1]);
       // Managers that know only formats 1 and 2 must refuse it, not skip the new files.
-      expect(res.manifest.format).toBe(3);
       expect(logs.at(-1)).toMatch(/2 migrations, 1 schema files, 1 post-deploy migrations/);
-      const schemaFile = res.manifest.d1Schema?.DB?.[0];
+      const schemaFile = res.manifest.d1.DB?.schema[0];
       expect(
         readRange(res.zipPath, schemaFile?.offset ?? 0, schemaFile?.size ?? 0).toString(),
       ).toBe(SCHEMA);
@@ -691,7 +759,7 @@ describe("pack with resources.d1", () => {
       // verify holds the schema file to the packer's rule even when its hashes match.
       const manifestPath = path.join(outDir, "manifest.json");
       const edited = JSON.parse(readFileSync(manifestPath, "utf8")) as ArtifactManifest;
-      const entry = edited.d1Schema?.DB?.[0];
+      const entry = edited.d1.DB?.schema[0];
       if (entry === undefined) throw new Error("no schema file recorded");
       const unsafe = Buffer.from(SCHEMA.replace("IF NOT EXISTS", " ".repeat(13)));
       expect(unsafe.length).toBe(entry.size);
@@ -708,7 +776,7 @@ describe("pack with resources.d1", () => {
     }
   }, 120_000);
 
-  it("records a baseline beside the migrations and writes format 5", async () => {
+  it("records a baseline beside the migrations", async () => {
     const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-d1-baseline-"));
     const outDir = path.join(parent, "out");
     const logs: string[] = [];
@@ -720,7 +788,7 @@ describe("pack with resources.d1", () => {
         resources: { d1: { DB: Record<string, unknown> } };
       };
       catalog.resources.d1.DB = {
-        migrations: "prisma/migrations/*/migration.sql",
+        migrationsGlob: "prisma/migrations/*/migration.sql",
         baseline: "db-schema.sql",
       };
       writeFileSync(checkout.manifest, JSON.stringify(catalog));
@@ -731,16 +799,15 @@ describe("pack with resources.d1", () => {
         install: false,
         logger: (m) => logs.push(m),
       });
-      expect(res.manifest.d1Baseline?.DB?.map((f) => [f.name, f.path])).toEqual([
+      expect([res.manifest.d1.DB?.baseline].map((f) => [f?.name, f?.path])).toEqual([
         ["db-schema.sql", "d1-baseline/DB/db-schema.sql"],
       ]);
-      expect(res.manifest.d1Migrations.DB).toHaveLength(2);
-      expect(res.manifest.d1Schema).toBeUndefined();
+      expect(res.manifest.d1.DB?.migrations).toHaveLength(2);
+      expect(res.manifest.d1.DB?.schema).toEqual([]);
       expect(res.d1BaselineCount).toBe(1);
       // Managers that know only formats 1 to 4 must refuse it, not run the migrations alone.
-      expect(res.manifest.format).toBe(5);
       expect(logs.at(-1)).toMatch(/2 migrations, 1 baselines \(run once at install\)/);
-      const entry = res.manifest.d1Baseline?.DB?.[0];
+      const entry = res.manifest.d1.DB?.baseline;
       expect(readRange(res.zipPath, entry?.offset ?? 0, entry?.size ?? 0).toString()).toBe(
         BASELINE,
       );
@@ -792,11 +859,11 @@ function seedCheckout(
   >;
   catalog.secrets = [
     ...(catalog.secrets as unknown[]),
-    { name: "FIRST_ADMIN_PASSWORD", label: "Admin password", generate: true, seedOnly: true },
+    { name: "FIRST_ADMIN_PASSWORD", label: "Admin password", generate: "password", seedOnly: true },
   ];
   catalog.vars = [
     ...(catalog.vars as unknown[]),
-    { name: "FIRST_ADMIN_NAME", label: "Admin user name", required: true, seedOnly: true },
+    { name: "FIRST_ADMIN_NAME", label: "Admin user name", seedOnly: true },
   ];
   catalog.resources = {
     d1: {
@@ -820,7 +887,7 @@ function seedCheckout(
 }
 
 describe("pack with D1 seed statements", () => {
-  it("carries the seed in the signed catalog manifest and writes format 4", async () => {
+  it("carries the seed in the signed catalog manifest", async () => {
     const parent = mkdtempSync(path.join(tmpdir(), "appflare-pack-seed-"));
     const outDir = path.join(parent, "out");
     const logs: string[] = [];
@@ -834,7 +901,6 @@ describe("pack with D1 seed statements", () => {
         logger: (m) => logs.push(m),
       });
       // Managers that read only formats 1 to 3 would strip the seed; they must refuse it.
-      expect(res.manifest.format).toBe(4);
       expect(res.d1SeedCount).toBe(1);
       expect(res.manifest.catalog.resources?.d1?.DB?.seed?.statements[0]?.params).toEqual([
         { var: "FIRST_ADMIN_NAME" },
@@ -903,7 +969,6 @@ describe("pack with D1 seed statements", () => {
         vars.splice(0, vars.length, {
           name: "GREETING",
           label: "Greeting",
-          required: true,
           seedOnly: true,
         });
         const seed = (
@@ -1291,7 +1356,7 @@ describe("pack with a redirected wrangler config", () => {
         install: false,
       });
       expect(res.manifest.worker.wranglerConfig?.effective).toBe("dist/hello/wrangler.json");
-      expect(res.manifest.d1Migrations.DB?.map((f) => f.name)).toEqual([
+      expect(res.manifest.d1.DB?.migrations.map((f) => f.name)).toEqual([
         "0001_init.sql",
         "0002_add_clicks.sql",
       ]);
@@ -1430,7 +1495,7 @@ describe("pack with a var the catalog declares as a secret", () => {
       const checkout = editedCheckout(parent, {}, (manifest) => {
         manifest.vars = [
           ...(manifest.vars as unknown[]),
-          { name: "ADMIN_PASSWORD", label: "Admin password", required: false },
+          { name: "ADMIN_PASSWORD", label: "Admin password", optional: true },
         ];
       });
       await expect(

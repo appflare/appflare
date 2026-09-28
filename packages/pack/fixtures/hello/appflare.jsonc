@@ -4,7 +4,7 @@
   "slug": "hello",
   "name": "Hello",
   "summary": "Minimal hello Worker fixture used to exercise the packer.",
-  "homepage": "https://github.com/appflare/appflare",
+  "tagline": "A greeting on your own Worker",
   "repo": "appflare/appflare",
   "license": "Apache-2.0",
   "categories": ["utilities"],
@@ -14,19 +14,16 @@
     "sha": "0123456789abcdef0123456789abcdef01234567"
   },
   "install": {
-    "tier": "artifact",
     "packageManager": "pnpm",
-    "wranglerConfig": "wrangler.jsonc",
-    "workerName": "hello"
+    "wranglerConfig": "wrangler.jsonc"
   },
   "plan": "free",
-  "requires": [],
   "secrets": [
     {
       "name": "ADMIN_PASSWORD",
       "label": "Admin password",
       "help": "Used to sign in to the admin UI.",
-      "generate": true
+      "generate": "password"
     }
   ],
   "vars": [
@@ -35,7 +32,7 @@
       "label": "Greeting",
       "help": "Shown on the home page.",
       "default": "Hello",
-      "required": false
+      "optional": true
     }
   ],
   "postInstall": [
@@ -43,6 +40,5 @@
       "type": "markdown",
       "content": "Open {{workerUrl}} to see the greeting."
     }
-  ],
-  "tokenPermissions": []
+  ]
 }

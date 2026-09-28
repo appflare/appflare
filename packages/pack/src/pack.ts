@@ -19,22 +19,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assetHash } from "@appflare/cf-api";
 import {
+  type ArtifactD1,
   type ArtifactManifest,
   type AssetFile,
   appWorkers,
-  artifactFormatFor,
-  artifactManifestSchema,
   assetsOnlyWorkerProblems,
   boundToWorker,
   buildCommandList,
   type CatalogManifest,
-  catalogManifestSchema,
   catalogVarProblems,
+  catalogWorkerName,
   type D1MigrationFile,
   type DoMigration,
   installDirList,
-  licenseWarning,
+  LATEST_ARTIFACT_FORMAT,
   secretTargets,
+  strictArtifactManifestSchema,
   type WorkerModule,
   workerManifest,
   workersPaidBindingProblem,
@@ -54,7 +54,7 @@ import {
 } from "./config-redirect.ts";
 import { collectD1Extras, collectD1Migrations, type D1Files } from "./d1-layout.ts";
 import { installDependencies } from "./install.ts";
-import { parseJsonc } from "./jsonc.ts";
+import { issueLines, readCatalogManifest } from "./manifest.ts";
 import { scrubEnv } from "./scrub-env.ts";
 import { seedOnlyConfigProblems, seedStatementCount } from "./seed.ts";
 import { signBytes, UNSIGNED_KEY_ID } from "./signing.ts";
@@ -75,6 +75,7 @@ import {
   type ResolvedWranglerConfig,
   unsupportedWranglerSections,
   uploadPlacement,
+  varPlaceholderProblems,
   withoutSecretVars,
 } from "./wrangler-config.ts";
 import { ZipStore } from "./zip.ts";
@@ -111,6 +112,13 @@ export interface PackOptions {
    * definition). Catalog entries are never packed with it. Default none.
    */
   allowSections?: readonly string[];
+  /**
+   * The catalog manifest is the one Appflare works out for an app built from
+   * a repository without a catalog entry, whose `license` may be
+   * `NOASSERTION` or `SEE LICENSE IN <file>` (from its `package.json`). A
+   * catalog entry names an SPDX license. Default false.
+   */
+  repositoryBuild?: boolean;
 }
 
 /** Result of a successful {@link pack}. */
@@ -122,7 +130,7 @@ export interface PackResult {
   slug: string;
   version: string;
   /**
-   * Which rule produced `version`: the catalog manifest's `install.version`,
+   * Which rule produced `version`: the catalog manifest's `source.version`,
    * the `source.ref` semver tag, or the pinned commit's date and SHA.
    */
   versionOrigin: VersionOrigin;
@@ -133,15 +141,11 @@ export interface PackResult {
   d1SchemaCount: number;
   /** Post-deploy migrations (`resources.d1[binding].postDeployMigrationsDir`), every binding together. */
   d1PostDeployCount: number;
-  /**
-   * Baselines (`resources.d1[binding].baseline`), one per binding at most;
-   * any makes the artifact format 5.
-   */
+  /** Baselines (`resources.d1[binding].baseline`), one per binding at most. */
   d1BaselineCount: number;
   /**
    * Seed statements (`resources.d1[binding].seed`), every binding together.
-   * The artifact carries them in its embedded catalog manifest, and any
-   * makes it format 4.
+   * The artifact carries them in its embedded catalog manifest.
    */
   d1SeedCount: number;
   zipSize: number;
@@ -626,14 +630,12 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // build.command, git) may see it or any other credential.
   const childEnv = scrubEnv(env, options.signKeyEnv ? [options.signKeyEnv] : []);
 
-  // (a) Parse + validate the catalog manifest.
-  const catalog: CatalogManifest = catalogManifestSchema.parse(
-    parseJsonc(readFileSync(path.resolve(options.manifestPath), "utf8")),
+  // (a) Parse + validate the catalog manifest, strictly: a key the schema
+  // does not know (a misspelling) refuses the pack, naming its path.
+  const catalog: CatalogManifest = readCatalogManifest(
+    readFileSync(path.resolve(options.manifestPath), "utf8"),
+    { repositoryBuild: options.repositoryBuild === true },
   );
-  // Any text parses, so manifests already stored keep working; a new entry
-  // should still name its license the way the catalog shows it best.
-  const licenseNotice = licenseWarning(catalog.license);
-  if (licenseNotice !== null) logger(`warning: ${licenseNotice}`);
 
   // (a2) A config kept as a template (`wrangler.toml.example`) gets its real
   // name first, so the build and wrangler's reader both find it: the
@@ -654,7 +656,7 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   // now, so the install and the build see it as they would a config of the
   // repository's, and again after the build (b4).
   const specs = workerSpecs(catalog.install);
-  const inlineOptions = { checkoutDir, specs, workerName: catalog.install.workerName, logger };
+  const inlineOptions = { checkoutDir, specs, workerName: catalogWorkerName(catalog), logger };
   writeInlineConfigs(inlineOptions);
 
   // (b) Install dependencies unless disabled.
@@ -795,6 +797,12 @@ export async function pack(options: PackOptions): Promise<PackResult> {
         );
       }
     }
+    const placeholders = varPlaceholderProblems(bindings, { workers: entry });
+    if (placeholders.length > 0) {
+      throw new Error(
+        `${r.name === null ? "" : `The Worker "${r.name}": `}${placeholders.join(" ")}`,
+      );
+    }
     return { ...r, bindings, queueConsumers: collectQueueConsumers(r.config, producers) };
   });
   if (entry !== undefined) {
@@ -901,8 +909,9 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   });
 
   // Lay the zip out so byte offsets are recorded as each file is added. Order:
-  // worker/, assets/, each other Worker's workers/<name>/, d1/, d1-schema/,
-  // d1-post-deploy/, d1-baseline/, then manifest.json LAST.
+  // worker/, assets/, each other Worker's workers/<name>/, the D1
+  // migrations (d1/), schema files (d1-schema/), post-deploy migrations
+  // (d1-post-deploy/) and baselines (d1-baseline/), then manifest.json LAST.
   const zip = new ZipStore();
   const ordered = [...built.filter((b) => b.primary), ...built.filter((b) => !b.primary)];
   const sections = ordered.map((b) => {
@@ -990,56 +999,54 @@ export async function pack(options: PackOptions): Promise<PackResult> {
         }),
       ]),
     );
-  const d1Manifest = placeD1(d1);
-  const d1SchemaManifest = placeD1(d1Extras.schema);
-  const d1PostDeployManifest = placeD1(d1Extras.postDeploy);
-  const d1BaselineManifest = placeD1(d1Extras.baseline);
+  const d1Migrations = placeD1(d1);
+  const d1Schema = placeD1(d1Extras.schema);
+  const d1PostDeploy = placeD1(d1Extras.postDeploy);
+  const d1Baseline = placeD1(d1Extras.baseline);
 
   const { version, origin: versionOrigin } = deriveVersionWithOrigin({
-    installVersion: catalog.install.version,
+    sourceVersion: catalog.source.version,
     ref: catalog.source.ref,
     sha: catalog.source.sha,
     commitDate: gitCommitDate(checkoutDir, childEnv),
     buildDate: formatBuildDate(new Date()),
   });
 
-  // (i) Assemble + validate the manifest in the oldest format that carries it
-  // (`artifactFormatFor`): 1 for one Worker, 2 for several (the primary
-  // Worker as `worker`, the others in `workers`), 3 once it has D1 files
-  // older managers would skip, 4 once the entry keeps a Worker off workers.dev
-  // or has seed statements, 5 once it has a D1 baseline or a Worker that
-  // serves static assets only.
+  // (i) Assemble + validate the manifest: the primary Worker as `worker`
+  // and, for an app of several, the others in `workers`. Checked strictly,
+  // so a field the schema does not know never reaches a signed artifact.
   const primarySection = sections[0];
   if (primarySection === undefined) {
     throw new Error("internal error: no Worker was packed");
   }
-  const common = {
-    app: catalog.slug,
-    version,
-    source: { repo: catalog.repo, sha: catalog.source.sha, ref: catalog.source.ref },
-    builtAt: new Date().toISOString(),
-    builder: `@appflare/pack@${packerVersion()}`,
-    keyId: options.keyId ?? UNSIGNED_KEY_ID,
-    worker: primarySection.worker,
-    assets: primarySection.assets,
-    d1Migrations: d1Manifest,
-    // Omitted when empty, so artifacts of apps without them keep their shape.
-    ...(Object.keys(d1SchemaManifest).length > 0 ? { d1Schema: d1SchemaManifest } : {}),
-    ...(Object.keys(d1PostDeployManifest).length > 0 ? { d1PostDeploy: d1PostDeployManifest } : {}),
-    ...(Object.keys(d1BaselineManifest).length > 0 ? { d1Baseline: d1BaselineManifest } : {}),
-    catalog,
-  };
   const others =
     entry === undefined
       ? undefined
       : sections
           .filter((s) => !s.primary)
           .map((s) => ({ name: s.name, worker: s.worker, assets: s.assets }));
-  const withWorkers = others === undefined ? common : { ...common, workers: others };
-  const manifest = artifactManifestSchema.parse({
-    format: artifactFormatFor(withWorkers),
-    ...withWorkers,
+  const assembled = strictArtifactManifestSchema.safeParse({
+    format: LATEST_ARTIFACT_FORMAT,
+    app: catalog.slug,
+    version,
+    builtAt: new Date().toISOString(),
+    builder: `@appflare/pack@${packerVersion()}`,
+    keyId: options.keyId ?? UNSIGNED_KEY_ID,
+    worker: primarySection.worker,
+    assets: primarySection.assets,
+    ...(others === undefined ? {} : { workers: others }),
+    d1: artifactD1({
+      migrations: d1Migrations,
+      schema: d1Schema,
+      postDeploy: d1PostDeploy,
+      baseline: d1Baseline,
+    }),
+    catalog,
   });
+  if (!assembled.success) {
+    throw new Error(`the artifact manifest is not valid:\n${issueLines(assembled.error.issues)}`);
+  }
+  const manifest = assembled.data;
   if (entry !== undefined) {
     // Each Worker against the catalog vars it gets.
     const varProblems = appWorkers(manifest).flatMap((w) =>
@@ -1106,10 +1113,10 @@ export async function pack(options: PackOptions): Promise<PackResult> {
 
   const count = (files: Record<string, D1MigrationFile[]>) =>
     Object.values(files).reduce((n, f) => n + f.length, 0);
-  const d1MigrationCount = count(d1Manifest);
-  const d1SchemaCount = count(d1SchemaManifest);
-  const d1PostDeployCount = count(d1PostDeployManifest);
-  const d1BaselineCount = count(d1BaselineManifest);
+  const d1MigrationCount = count(d1Migrations);
+  const d1SchemaCount = count(d1Schema);
+  const d1PostDeployCount = count(d1PostDeploy);
+  const d1BaselineCount = count(d1Baseline);
   const d1SeedCount = seedStatementCount(catalog);
   const size = primarySection.size;
   const workers: PackedWorker[] = sections.map((s) => ({
@@ -1153,11 +1160,40 @@ export async function pack(options: PackOptions): Promise<PackResult> {
   };
 }
 
+/**
+ * The artifact's `d1`: for every binding with SQL, its migrations, schema
+ * files, post-deploy migrations and baseline. A binding the wrangler config
+ * binds without migrations keeps its empty list.
+ */
+export function artifactD1(files: {
+  migrations: Record<string, D1MigrationFile[]>;
+  schema: Record<string, D1MigrationFile[]>;
+  postDeploy: Record<string, D1MigrationFile[]>;
+  baseline: Record<string, D1MigrationFile[]>;
+}): ArtifactD1 {
+  const of = (record: Record<string, D1MigrationFile[]>, binding: string) =>
+    (Object.hasOwn(record, binding) ? record[binding] : undefined) ?? [];
+  const bindings = new Set(
+    [files.migrations, files.schema, files.postDeploy, files.baseline].flatMap(Object.keys),
+  );
+  const d1: ArtifactD1 = {};
+  for (const binding of bindings) {
+    const baseline = of(files.baseline, binding)[0];
+    d1[binding] = {
+      migrations: of(files.migrations, binding),
+      schema: of(files.schema, binding),
+      postDeploy: of(files.postDeploy, binding),
+      ...(baseline === undefined ? {} : { baseline }),
+    };
+  }
+  return d1;
+}
+
 /** How the pack summary names where the version came from. */
 export function describeVersionOrigin(origin: VersionOrigin): string {
   switch (origin) {
-    case "install.version":
-      return "version from install.version in the catalog manifest";
+    case "source.version":
+      return "version from source.version in the catalog manifest";
     case "tag":
       return "version from the source.ref tag";
     case "commit":

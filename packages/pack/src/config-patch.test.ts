@@ -63,6 +63,7 @@ function catalog(slug: string, install: Record<string, unknown>): CatalogManifes
     slug,
     name: slug,
     summary: "A config patch fixture.",
+    tagline: "A config patch fixture",
     homepage: "https://example.com",
     repo: `example/${slug}`,
     license: "MIT",
@@ -150,7 +151,7 @@ describe("md.page: storage bindings with empty ids, in a subdirectory", () => {
     // main, assets.directory and migrations_dir all resolved beside the original.
     expect(worker.mainModule).toBe("index.js");
     expect(result.manifest.assets.files.map((f) => f.route)).toEqual(["/index.html"]);
-    expect(result.manifest.d1Migrations.DB?.map((f) => f.name)).toEqual(["0001_init.sql"]);
+    expect(result.manifest.d1.DB?.migrations.map((f) => f.name)).toEqual(["0001_init.sql"]);
     // The signed catalog manifest carries the patch.
     expect(result.manifest.catalog.install.configPatch).toEqual(configPatch);
     expect(logs).toContain(

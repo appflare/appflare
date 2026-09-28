@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pack, verify } from "@appflare/pack";
+import { pack, readCatalogManifest, verify } from "@appflare/pack";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   accountSpecificIds,
@@ -28,12 +28,15 @@ describe("stampCatalogManifest", () => {
   it("replaces the placeholder source with the release version and commit", () => {
     const stamped = stampCatalogManifest(text, { version: "1.2.3", sha: FAKE_SHA });
     expect(stamped.source).toEqual({ ref: "1.2.3", sha: FAKE_SHA });
-    expect(stamped.slug).toBe("appflare");
-    expect(stamped.install).toMatchObject({
+    // As the packer reads it: strictly, defaults filled in.
+    const manifest = readCatalogManifest(JSON.stringify(stamped));
+    expect(manifest.slug).toBe("appflare");
+    expect(manifest.install).toMatchObject({
       tier: "artifact",
       wranglerConfig: "dist/server/wrangler.release.json",
-      workerName: "appflare",
     });
+    // The Worker name defaults to the slug.
+    expect(manifest.install.workerName ?? manifest.slug).toBe("appflare");
   });
 
   it("rejects a v-prefixed or non-semver version and a short sha", () => {

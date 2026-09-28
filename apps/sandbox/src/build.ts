@@ -108,6 +108,12 @@ export interface PackTarget {
   sha: string;
   version: string;
   subdirectory?: string | undefined;
+  /**
+   * The manifest is one worked out from a repository without a catalog
+   * entry, whose license may be `NOASSERTION` or `SEE LICENSE IN <file>`
+   * (`appflare-pack --repository-build`).
+   */
+  repositoryBuild?: boolean | undefined;
   catalogManifest: {
     slug: string;
     source: { ref: string };
@@ -198,7 +204,8 @@ export class BuildSteps {
     }
     try {
       const install = this.packerInstalls !== undefined;
-      await this.run("pack", commandLine(packArgv(this.project, { install })), {
+      const repositoryBuild = this.request.repositoryBuild === true;
+      await this.run("pack", commandLine(packArgv(this.project, { install, repositoryBuild })), {
         cwd: this.project,
         // The packer's install takes the time the install step did not use.
         timeoutMs: install ? STAGE_TIMEOUTS.install + STAGE_TIMEOUTS.pack : STAGE_TIMEOUTS.pack,
@@ -253,7 +260,7 @@ export class BuildSteps {
       throw new StepError<BuildStage>(
         "pack",
         `the packer wrote ${found.join(", ") || "nothing"}, expected ${expected.join(", ")}. ` +
-          `The artifact version comes from install.version or the pin's ref (${catalogManifest.source.ref}) and must be ${version}.`,
+          `The artifact version comes from source.version or the pin's ref (${catalogManifest.source.ref}) and must be ${version}.`,
         null,
         false,
       );
@@ -356,8 +363,10 @@ export class BuildSteps {
       manifest.app === catalogManifest.slug ? null : `app is ${manifest.app}`,
       manifest.version === version ? null : `version is ${manifest.version}`,
       manifest.keyId === "unsigned" ? null : `keyId is ${manifest.keyId}`,
-      manifest.source.sha === sha ? null : `source.sha is ${manifest.source.sha}`,
-      manifest.source.repo === repo ? null : `source.repo is ${manifest.source.repo}`,
+      manifest.catalog.source.sha === sha
+        ? null
+        : `catalog.source.sha is ${manifest.catalog.source.sha}`,
+      manifest.catalog.repo === repo ? null : `catalog.repo is ${manifest.catalog.repo}`,
     ].filter((p): p is string => p !== null);
     if (problems.length > 0) {
       throw new StepError<BuildStage>(

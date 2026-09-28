@@ -3,17 +3,29 @@ import {
   type BuildCommandSource,
   buildCommandProblem,
   type CatalogBuildCommand,
+  type CatalogCategory,
   type CatalogManifest,
-  type CatalogSecret,
-  type CatalogVar,
+  catalogLicenseProblem,
+  type catalogManifestSchema,
+  type catalogSecretSchema,
   isCommitSha,
+  LICENSE_NOT_STATED,
   lockfilePackageManager,
+  MAX_TAGLINE_LENGTH,
   type PackageManager,
   repositoryUrl,
   type SecretsSource,
+  taglineSchema,
   WRANGLER_CONFIG_TEMPLATE_SUFFIXES,
   type WranglerFacts,
 } from "@appflare/schema";
+import type { z } from "zod";
+
+/** A catalog manifest as written, before the schema fills in its defaults. */
+export type CatalogManifestDraft = z.input<typeof catalogManifestSchema>;
+
+/** A catalog secret as written, before the schema fills in its defaults. */
+export type CatalogSecretDraft = z.input<typeof catalogSecretSchema>;
 
 /**
  * How a repository without a catalog entry is built, worked out from its
@@ -108,8 +120,8 @@ const OPTIONAL_NOTE = /\boptional\b/i;
 export function parseSecretsExample(
   text: string,
   plainVars: readonly string[] = [],
-): CatalogSecret[] {
-  const secrets: CatalogSecret[] = [];
+): CatalogSecretDraft[] {
+  const secrets: CatalogSecretDraft[] = [];
   const seen = new Set(plainVars);
   let comments: string[] = [];
   for (const raw of text.replace(/\r\n?/g, "\n").split("\n")) {
@@ -129,7 +141,6 @@ export function parseSecretsExample(
         name: match[1],
         label: labelOf(match[1]),
         ...(help.length > 0 ? { help } : {}),
-        generate: false,
         ...(OPTIONAL_NOTE.test(help) ? { optional: true } : {}),
       });
       if (secrets.length >= MAX_SECRETS) break;
@@ -146,9 +157,9 @@ export function parseSecretsExample(
  * when the example file's comment calls it so: wrangler warns without it.
  */
 export function withRequiredSecrets(
-  listed: readonly CatalogSecret[],
+  listed: readonly CatalogSecretDraft[],
   required: readonly string[],
-): CatalogSecret[] {
+): CatalogSecretDraft[] {
   const names = new Set(required);
   const secrets = listed.map((s) => {
     if (!names.has(s.name) || s.optional !== true) return s;
@@ -160,7 +171,7 @@ export function withRequiredSecrets(
     if (secrets.length >= MAX_SECRETS) break;
     if (seen.has(name)) continue;
     seen.add(name);
-    secrets.push({ name, label: labelOf(name), generate: false });
+    secrets.push({ name, label: labelOf(name) });
   }
   return secrets;
 }
@@ -291,7 +302,7 @@ export interface RepositoryFacts {
   wrangler: WranglerFacts;
   pkg: PackageFacts | null;
   buildCommand: CatalogBuildCommand | null;
-  secrets: CatalogSecret[];
+  secrets: CatalogSecretDraft[];
 }
 
 function httpsUrl(value: string | null): string | null {
@@ -304,42 +315,74 @@ function httpsUrl(value: string | null): string | null {
 }
 
 /**
+ * The license a repository build records: `package.json`'s `license` when it
+ * is one a repository build may carry (an SPDX expression of current ids, a
+ * `LicenseRef-<name>`, `NONE`, `NOASSERTION` or `SEE LICENSE IN <file>`),
+ * else `NOASSERTION`, SPDX's "not stated". npm's `UNLICENSED` and free text
+ * such as `MIT License` say nothing the catalog can show as a license.
+ */
+export function repositoryLicense(pkg: PackageFacts | null): string {
+  const license = pkg?.license ?? null;
+  if (license === null) return LICENSE_NOT_STATED;
+  return catalogLicenseProblem(license, { repositoryBuild: true }) === null
+    ? license
+    : LICENSE_NOT_STATED;
+}
+
+/**
+ * The tagline of a repository build: the first line of `package.json`'s
+ * description when it makes one (at most {@link MAX_TAGLINE_LENGTH}
+ * characters, its trailing period dropped), else where it was built from.
+ */
+export function repositoryTagline(repo: string, description: string | null): string {
+  const line = (description ?? "")
+    .split(/\r?\n/)[0]
+    ?.trim()
+    .replace(/[.\s]+$/, "");
+  if (line !== undefined && taglineSchema.safeParse(line).success) return line;
+  const built = `Built from ${repo}`;
+  return taglineSchema.safeParse(built).success ? built : "Built from a GitHub repository";
+}
+
+/**
+ * The one category a repository build is listed under. It has no catalog
+ * entry to say what the app does, and every catalog manifest names at least
+ * one category.
+ */
+export const REPOSITORY_CATEGORY: CatalogCategory = "utilities";
+
+/**
  * The catalog manifest of a repository without a catalog entry: a `sandbox`
  * tier entry on Workers Paid (it is built in a container), named
- * `owner/repo`, with the secrets it lists and one setting per wrangler var.
+ * `owner/repo`, with the secrets it lists and one optional setting per
+ * wrangler var. Returned as written; the schema fills in the defaults.
  */
-export function repositoryManifest(facts: RepositoryFacts): CatalogManifest {
+export function repositoryManifest(facts: RepositoryFacts): CatalogManifestDraft {
   const slug = repositorySlug(facts.repo);
-  const vars: CatalogVar[] = facts.wrangler.vars.map((name) => ({
-    name,
-    label: labelOf(name),
-    required: false,
-  }));
   return {
     slug,
     // The owner too: two repositories of the same name stay apart in lists and messages.
     name: facts.repo,
     summary: facts.pkg?.description ?? `Built from ${repositoryUrl(facts.repo)}.`,
+    tagline: repositoryTagline(facts.repo, facts.pkg?.description ?? null),
     homepage: httpsUrl(facts.pkg?.homepage ?? null) ?? repositoryUrl(facts.repo),
     repo: facts.repo,
-    license: facts.pkg?.license ?? "NOASSERTION",
-    categories: [],
+    license: repositoryLicense(facts.pkg),
+    categories: [REPOSITORY_CATEGORY],
     maintainers: [],
-    source: { ref: facts.ref, sha: facts.sha },
+    source: { ref: facts.ref, sha: facts.sha, version: facts.version },
     install: {
       tier: "sandbox",
       packageManager: facts.packageManager,
       wranglerConfig: facts.wranglerConfig,
       workerName: workerNameOf(facts.wrangler.name, slug),
       ...(facts.buildCommand === null ? {} : { buildCommand: facts.buildCommand }),
-      version: facts.version,
     },
     plan: "paid",
     requires: ["containers"],
     secrets: facts.secrets,
-    vars,
+    vars: facts.wrangler.vars.map((name) => ({ name, label: labelOf(name), optional: true })),
     postInstall: [],
-    tokenPermissions: [],
   };
 }
 
@@ -353,15 +396,14 @@ export function sourceBuildManifest(
   baseline: CatalogManifest,
   facts: { ref: string; sha: string; version: string; buildCommand: CatalogBuildCommand | null },
 ): CatalogManifest {
-  const { buildCommand: _catalogCommand, version: _catalogVersion, ...install } = baseline.install;
+  const { buildCommand: _catalogCommand, ...install } = baseline.install;
   return {
     ...baseline,
-    source: { ref: facts.ref, sha: facts.sha },
+    source: { ref: facts.ref, sha: facts.sha, version: facts.version },
     install: {
       ...install,
       tier: "sandbox",
       ...(facts.buildCommand === null ? {} : { buildCommand: facts.buildCommand }),
-      version: facts.version,
     },
   };
 }

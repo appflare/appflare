@@ -200,7 +200,7 @@ describe("collectD1Migrations", () => {
   it("takes a glob's files under wrangler's names", () => {
     files({ "prisma/migrations/20240101_init/migration.sql": "CREATE TABLE p (id);" });
     const d1 = collectD1Migrations(config(), [checkout], checkout, {
-      DB: { migrations: "prisma/migrations/*/migration.sql" },
+      DB: { migrationsGlob: "prisma/migrations/*/migration.sql" },
     });
     expect(d1.DB?.map((f) => [f.name, f.path, f.bytes.toString()])).toEqual([
       ["20240101_init/migration.sql", "d1/DB/20240101_init/migration.sql", "CREATE TABLE p (id);"],

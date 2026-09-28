@@ -17,7 +17,7 @@ import { formatBytes, workerSizeLine } from "./worker-size.ts";
 const USAGE = `appflare-pack — build, sign, and verify Appflare artifacts, and make signing keys
 
 Usage:
-  appflare-pack <checkoutDir> --manifest <appflare.jsonc> --out <dir> [--key-id ID [--sign-key-env NAME]] [--no-install] [--allow-section KEY]...
+  appflare-pack <checkoutDir> --manifest <appflare.jsonc> --out <dir> [--key-id ID [--sign-key-env NAME]] [--no-install] [--allow-section KEY]... [--repository-build]
   appflare-pack sign <dir> --sign-key-env NAME [--key-id ID] [--force]
   appflare-pack verify <dir> [--public-key <base64>] [--require-signed | --hashes-only] [--check-upload]
   appflare-pack inspect <checkoutDir> --config <wrangler config> [--manifest <appflare.jsonc>]
@@ -37,6 +37,10 @@ Pack options:
                           the artifact goes without it. Repeatable. Only for an
                           artifact whose deployer supplies the section itself,
                           never for a catalog entry.
+  --repository-build      the manifest is the one Appflare works out for an app built
+                          from a repository without a catalog entry: its license may
+                          also be NOASSERTION or SEE LICENSE IN <file>. Every other
+                          manifest names an SPDX license, a LicenseRef-<name>, or NONE.
 
 Sign options (signs <dir>/manifest.json as-is, writes manifest.sig, self-verifies):
   --sign-key-env <NAME>   env var holding the private key            (required)
@@ -87,6 +91,7 @@ async function runPack(argv: string[]): Promise<number> {
       "key-id": { type: "string" },
       "no-install": { type: "boolean" },
       "allow-section": { type: "string", multiple: true },
+      "repository-build": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -120,6 +125,7 @@ async function runPack(argv: string[]): Promise<number> {
     signKeyEnv: values["sign-key-env"],
     keyId: values["key-id"],
     allowSections: values["allow-section"] ?? [],
+    repositoryBuild: values["repository-build"] === true,
     logger: logToStderr,
   });
 
