@@ -36,6 +36,7 @@ import {
 } from "../github/tokens.functions";
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { AppflareLoader } from "./appflare-loader";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { FieldHelp } from "./field-label";
@@ -381,7 +382,8 @@ function AddTokenDialog({
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">
-          <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+          <LayerDialog.Actions.Primary type="submit" form={formId} {...busyActionProps(pending)}>
+            <BusyMark pending={pending} />
             Add token
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

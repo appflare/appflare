@@ -27,6 +27,7 @@ import {
   sinceDay,
   storefrontRows,
 } from "../../../catalog/storefront";
+import { BusyButton } from "../../../components/busy-button";
 import { CatalogAddMenu } from "../../../components/catalog-add-menu";
 import { AppGrid, AppRow, CatalogSection } from "../../../components/catalog-row";
 import { CatalogSearch, useSearchText } from "../../../components/catalog-search";
@@ -348,11 +349,11 @@ function RefreshButton() {
     <Tooltip
       content="Refresh the list of apps"
       render={
-        <Button
+        <BusyButton
+          pending={pending}
           variant="ghost"
           shape="square"
           icon={ArrowsClockwiseIcon}
-          loading={pending}
           aria-label="Refresh the list of apps"
           onClick={onRefresh}
         />

@@ -52,16 +52,20 @@ export function MorphMark({ ink }: { ink: string }) {
  * props as Kumo's `Loader` (`size` "sm" 16 px, "base" 24 px, "lg" 32 px,
  * or pixels); the quadrants take the text colour and the cloud stays
  * orange. When the system asks for reduced motion the still mark pulses
- * in opacity instead.
+ * in opacity instead. With `aria-hidden` it is decoration only (no status
+ * role or label), for when something else, such as a button's `aria-busy`,
+ * already says that work is under way.
  */
 export function AppflareLoader({
   size = "base",
   className,
   "aria-label": ariaLabel = "Loading",
+  "aria-hidden": ariaHidden = false,
 }: {
   size?: AppflareLoaderSize;
   className?: string;
   "aria-label"?: string;
+  "aria-hidden"?: boolean;
 }) {
   const pixels = loaderPixels(size);
   return (
@@ -71,8 +75,9 @@ export function AppflareLoader({
       width={pixels}
       height={pixels}
       className={cn("appflare-loader shrink-0", className)}
-      role="status"
-      aria-label={ariaLabel}
+      role={ariaHidden ? undefined : "status"}
+      aria-label={ariaHidden ? undefined : ariaLabel}
+      aria-hidden={ariaHidden || undefined}
     >
       <MorphMark ink="currentColor" />
     </svg>

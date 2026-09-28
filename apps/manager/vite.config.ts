@@ -3,6 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defaultClientConditions, defineConfig, type Plugin } from "vite";
+import { kumoLoaderAsAppflareLoader } from "./scripts/kumo-loader.ts";
 
 /**
  * Workspace packages list a custom `@appflare/source` export condition first,
@@ -60,6 +61,9 @@ export default defineConfig({
   resolve: {
     conditions: [SOURCE_CONDITION, ...defaultClientConditions],
   },
+  // Dev serves Kumo from Vite's pre-bundled dependencies, which skip the
+  // plugins below, so the pre-bundler gets the Kumo loader swap as well.
+  optimizeDeps: { rolldownOptions: { plugins: [kumoLoaderAsAppflareLoader()] } },
   environments: {
     ssr: {
       resolve: {
@@ -109,5 +113,6 @@ export default defineConfig({
     react(),
     tailwindcss(),
     relativeRouteFilePaths(),
+    kumoLoaderAsAppflareLoader(),
   ],
 });

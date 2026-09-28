@@ -1,4 +1,4 @@
-import { Banner, Button, Collapsible, Input, Link, LinkButton, Text } from "@cloudflare/kumo";
+import { Banner, Collapsible, Input, Link, LinkButton, Text } from "@cloudflare/kumo";
 import {
   CheckCircleIcon,
   KeyIcon,
@@ -31,6 +31,7 @@ import {
 } from "../onboarding/wizard";
 import { connectCloudflare } from "../server/setup.functions";
 import { rotateToken, saveToken, verifyToken } from "../server/token.functions";
+import { BusyButton } from "./busy-button";
 import { DocsLink } from "./docs-link";
 import { formatDate } from "./format";
 import { ErrorMessageBanner, MessageText } from "./message-text";
@@ -194,24 +195,24 @@ export function CloudflareTokenForm({
           description="Stored as an encrypted secret on this Worker. Appflare never shows it again."
         />
         <div className="flex flex-wrap justify-end gap-2">
-          <Button
+          <BusyButton
+            pending={verifying}
             type="submit"
             variant="secondary"
             icon={<ShieldCheckIcon />}
-            loading={verifying}
             disabled={token.trim().length === 0}
           >
             Verify
-          </Button>
-          <Button
+          </BusyButton>
+          <BusyButton
+            pending={saving}
             type="button"
             variant="primary"
-            loading={saving}
             disabled={!canSave}
             onClick={onSave}
           >
             Save new token
-          </Button>
+          </BusyButton>
         </div>
       </form>
 
@@ -457,15 +458,15 @@ export function SetupTokenForm({
           title="Connect"
           extra={connected === null ? undefined : <ConnectedHeadline outcome={connected.outcome} />}
         >
-          <Button
+          <BusyButton
+            pending={saving}
             type="submit"
             variant="primary"
             className="w-full justify-center"
-            loading={saving}
             disabled={connected === null && token.trim().length === 0}
           >
             Continue
-          </Button>
+          </BusyButton>
           <div className="grid gap-2 empty:hidden">
             {connected !== null && connected.outcome.missing.length > 0 && (
               <MissingPermissions missing={connected.outcome.missing} />

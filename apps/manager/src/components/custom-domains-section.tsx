@@ -41,6 +41,7 @@ import {
 } from "../installs/wildcard-domain-input";
 import { addWildcardDomain, removeWildcardDomain } from "../installs/wildcard-domains.functions";
 import { AppflareLoader } from "./appflare-loader";
+import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { DomainName } from "./domain-name";
@@ -227,15 +228,15 @@ function DomainCheck({
         </Text>
       )}
       {enabled && (
-        <Button
+        <BusyButton
+          pending={pending}
           size="sm"
           variant="secondary"
           icon={<ArrowsClockwiseIcon />}
-          loading={pending}
           onClick={onCheck}
         >
           Check now
-        </Button>
+        </BusyButton>
       )}
     </span>
   );
@@ -488,9 +489,9 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
             <LayerDialog.Actions.Primary
               type="submit"
               form={formId}
-              loading={pending}
-              disabled={zone === null || (conflict !== null && !replace)}
+              {...busyActionProps(pending, zone === null || (conflict !== null && !replace))}
             >
+              <BusyMark pending={pending} />
               {conflict !== null ? "Replace records and add" : "Add domain"}
             </LayerDialog.Actions.Primary>
           </LayerDialog.Actions>
@@ -741,9 +742,9 @@ function AddWildcardDomainDialog({ install, reason }: { install: InstallDetail; 
             <LayerDialog.Actions.Primary
               type="submit"
               form={formId}
-              loading={pending}
-              disabled={zone === null || (needsConsent && !wholeDomain)}
+              {...busyActionProps(pending, zone === null || (needsConsent && !wholeDomain))}
             >
+              <BusyMark pending={pending} />
               Add wildcard domain
             </LayerDialog.Actions.Primary>
           </LayerDialog.Actions>

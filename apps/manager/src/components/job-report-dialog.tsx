@@ -4,6 +4,7 @@ import { useState } from "react";
 import { FAILURE_REPORT_COPY, type FailureReportPreview } from "../telemetry/failure-report";
 import { previewJobReport, sendJobReport } from "../telemetry/telemetry.functions";
 import { AppflareLoader } from "./appflare-loader";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { FailureReportBody, ReportSent } from "./job-report-parts";
 
 /**
@@ -95,10 +96,10 @@ export function SendReportButton({
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">
           <LayerDialog.Actions.Primary
-            loading={pending}
-            disabled={blocked}
             onClick={() => void onSend()}
+            {...busyActionProps(pending, blocked)}
           >
+            <BusyMark pending={pending} />
             {FAILURE_REPORT_COPY.send}
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

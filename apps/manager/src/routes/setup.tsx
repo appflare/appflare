@@ -10,6 +10,7 @@ import type { CapabilityRowsData } from "../capabilities/capability-rows.server"
 import { SetupCapabilities } from "../capabilities/capability-section";
 import { AppflareLoader } from "../components/appflare-loader";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
+import { BusyButton } from "../components/busy-button";
 import { SetupTokenForm, type SetupTokenSaved } from "../components/cloudflare-token-form";
 import { MessageText } from "../components/message-text";
 import { PasswordInput } from "../components/password-input";
@@ -260,9 +261,9 @@ function CreateOwnerStep({
         maxLength={128}
         description={`At least ${MIN_PASSWORD_LENGTH} characters.`}
       />
-      <Button type="submit" variant="primary" className={FULL_WIDTH_ACTION} loading={pending}>
+      <BusyButton pending={pending} type="submit" variant="primary" className={FULL_WIDTH_ACTION}>
         Create owner account
-      </Button>
+      </BusyButton>
     </form>
   );
 }
@@ -310,15 +311,15 @@ function WaitForAdminStep() {
         title="An admin needs to finish setup"
         description="Appflare needs a Cloudflare API token before anyone can use it. Ask an admin to sign in and add one."
       />
-      <Button
+      <BusyButton
+        pending={signingOut}
         variant="secondary"
         icon={<SignOutIcon />}
         className={FULL_WIDTH_ACTION}
-        loading={signingOut}
         onClick={signOut}
       >
         Sign out
-      </Button>
+      </BusyButton>
     </>
   );
 }
@@ -416,14 +417,14 @@ function TokenSavedStep({
           />
         )}
       </div>
-      <Button
+      <BusyButton
+        pending={continuing}
         variant="primary"
         className={FULL_WIDTH_ACTION}
-        loading={continuing}
         onClick={() => void onContinue()}
       >
         Continue
-      </Button>
+      </BusyButton>
     </>
   );
 }

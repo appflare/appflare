@@ -41,6 +41,14 @@ describe("AppflareLoader", () => {
     expect(loaders()[0]?.getAttribute("aria-label")).toBe("Checking the domain");
   });
 
+  it("drops its status role and label when hidden from assistive technology", () => {
+    act(() => root.render(<AppflareLoader aria-hidden />));
+    const [svg] = loaders();
+    expect(svg?.getAttribute("aria-hidden")).toBe("true");
+    expect(svg?.hasAttribute("role")).toBe(false);
+    expect(svg?.hasAttribute("aria-label")).toBe(false);
+  });
+
   it("sizes like Kumo's Loader: sm 16, base 24, lg 32, or pixels", () => {
     expect(loaderPixels("sm")).toBe(16);
     expect(loaderPixels("base")).toBe(24);

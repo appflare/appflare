@@ -1,5 +1,6 @@
 import { Input, LayerDialog } from "@cloudflare/kumo";
 import { type ComponentProps, type FormEvent, type ReactNode, useId, useState } from "react";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { ErrorMessageBanner } from "./message-text";
 
 type TriggerRender = ComponentProps<typeof LayerDialog.Trigger>["render"];
@@ -139,9 +140,9 @@ export function ConfirmDialog({
             type="submit"
             form={formId}
             variant={destructive ? "destructive" : "primary"}
-            loading={pending}
-            disabled={!confirmed || disabled}
+            {...busyActionProps(pending, !confirmed || disabled)}
           >
+            <BusyMark pending={pending} />
             {actionLabel}
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

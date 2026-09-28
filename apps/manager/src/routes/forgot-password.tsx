@@ -11,6 +11,7 @@ import {
   recoveryErrorMessage,
 } from "../auth/recovery-messages";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION, OrDivider } from "../components/auth-layout";
+import { BusyButton } from "../components/busy-button";
 import { PasswordInput } from "../components/password-input";
 import { returnToSearchSchema, withReturnTo } from "../components/return-to";
 import { getPasswordRecoveryOptions } from "../server/recovery.functions";
@@ -115,15 +116,15 @@ function EmailForm({ onUseCode }: { onUseCode: () => void }) {
       ) : (
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Input label="Email" name="email" type="email" autoComplete="username" required />
-          <Button
+          <BusyButton
+            pending={pending}
             type="submit"
             variant="primary"
             icon={<EnvelopeSimpleIcon />}
             className={FULL_WIDTH_ACTION}
-            loading={pending}
           >
             Email me a reset link
-          </Button>
+          </BusyButton>
         </form>
       )}
       <OrDivider />
@@ -207,9 +208,9 @@ function CodeForm({ onUseEmail }: { onUseEmail: (() => void) | undefined }) {
           maxLength={PASSWORD_LIMITS.max}
           description={`At least ${PASSWORD_LIMITS.min} characters.`}
         />
-        <Button type="submit" variant="primary" className={FULL_WIDTH_ACTION} loading={pending}>
+        <BusyButton pending={pending} type="submit" variant="primary" className={FULL_WIDTH_ACTION}>
           Set new password
-        </Button>
+        </BusyButton>
       </form>
       {onUseEmail !== undefined && (
         <>

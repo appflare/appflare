@@ -48,6 +48,7 @@ import {
   sendTestNotification,
   updateNotificationChannel,
 } from "../notifications/channels.functions";
+import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ChannelKindLogo } from "./channel-logos";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
@@ -204,14 +205,14 @@ function ChannelRow({ channel }: { channel: ChannelView }) {
           />
         )}
         <div className="flex flex-wrap gap-2">
-          <Button
+          <BusyButton
+            pending={testing}
             variant="secondary"
             icon={<PaperPlaneTiltIcon />}
-            loading={testing}
             onClick={() => void onTest()}
           >
             Send test
-          </Button>
+          </BusyButton>
           <ChannelDialog mode={{ kind: "edit", channel }} />
           {channel.kind === "webhook" && channel.readable && (
             <SigningSecretDialog channel={channel} />
@@ -519,7 +520,8 @@ function ChannelDialog({ mode }: { mode: Mode }) {
               Done
             </LayerDialog.Actions.Primary>
           ) : (
-            <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+            <LayerDialog.Actions.Primary type="submit" form={formId} {...busyActionProps(pending)}>
+              <BusyMark pending={pending} />
               {editing === null ? "Add channel" : "Save"}
             </LayerDialog.Actions.Primary>
           )}
@@ -593,7 +595,11 @@ function SigningSecretDialog({ channel }: { channel: ChannelView }) {
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel={secret === null ? "Cancel" : "Close"}>
           {secret === null ? (
-            <LayerDialog.Actions.Primary loading={pending} onClick={() => void onReplace()}>
+            <LayerDialog.Actions.Primary
+              onClick={() => void onReplace()}
+              {...busyActionProps(pending)}
+            >
+              <BusyMark pending={pending} />
               Replace
             </LayerDialog.Actions.Primary>
           ) : (

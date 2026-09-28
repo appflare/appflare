@@ -1,9 +1,10 @@
-import { Badge, Button, Text } from "@cloudflare/kumo";
+import { Badge, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import type { HealthStatus } from "../db/schema";
 import { checkInstallHealth } from "../installs/health.functions";
+import { BusyButton } from "./busy-button";
 import { Timestamp } from "./timestamp";
 
 /**
@@ -86,15 +87,15 @@ export function InstallHealth({
           </Text>
         )}
         {canCheck && (
-          <Button
+          <BusyButton
+            pending={pending}
             size="sm"
             variant="secondary"
             icon={<ArrowsClockwiseIcon />}
-            loading={pending}
             onClick={onCheck}
           >
             Check now
-          </Button>
+          </BusyButton>
         )}
       </span>
       {status !== null && status !== "verified" && (

@@ -23,6 +23,7 @@ import {
 import { checkGatewayZone, setUpGateway, turnOffGateway } from "../gateway/gateway.functions";
 import type { GatewayView } from "../gateway/gateway.server";
 import { AppflareLoader } from "./appflare-loader";
+import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
@@ -114,14 +115,14 @@ function CheckBanner({
   if (message === null) return null;
   const recheck =
     onRecheck === undefined ? null : (
-      <Button
+      <BusyButton
+        pending={rechecking}
         variant="secondary"
         icon={<ArrowsClockwiseIcon />}
-        loading={rechecking}
         onClick={onRecheck}
       >
         Check again
-      </Button>
+      </BusyButton>
     );
   return (
     <Banner
@@ -274,15 +275,15 @@ function ChooseZone({
         <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
       )}
       <div className="flex justify-end">
-        <Button
+        <BusyButton
+          pending={settingUp}
           variant="primary"
           icon={<GlobeIcon />}
-          loading={settingUp}
           disabled={check?.kind !== "ready" || checking}
           onClick={onSetUp}
         >
           Set up gateway
-        </Button>
+        </BusyButton>
       </div>
     </div>
   );
@@ -355,9 +356,9 @@ function GatewayDetails({
           description="Finishing continues where it stopped; nothing is created twice."
           action={
             isAdmin ? (
-              <Button variant="secondary" loading={finishing} onClick={onFinish}>
+              <BusyButton pending={finishing} variant="secondary" onClick={onFinish}>
                 Finish setup
-              </Button>
+              </BusyButton>
             ) : undefined
           }
         />
@@ -375,14 +376,14 @@ function GatewayDetails({
           title={`https://${gateway.hostname} did not answer as the gateway`}
           description="A new route or DNS record can take a minute. If it stays like this, check the Worker's routes on the domain in the Cloudflare dashboard."
           action={
-            <Button
+            <BusyButton
+              pending={rechecking}
               variant="secondary"
               icon={<ArrowsClockwiseIcon />}
-              loading={rechecking}
               onClick={onRecheck}
             >
               Check again
-            </Button>
+            </BusyButton>
           }
         />
       )}

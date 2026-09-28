@@ -20,6 +20,7 @@ import {
   UPDATED_TO_KEY,
 } from "./appflare-card-state";
 import { AppflareLoader } from "./appflare-loader";
+import { BusyButton } from "./busy-button";
 import { SendReportButton } from "./job-report-dialog";
 import { MessageText } from "./message-text";
 
@@ -264,16 +265,16 @@ function CardBody({
               {/* No "running" line: the footer right below shows the current version. */}
               <Text bold>Appflare {state.latest} is available</Text>
               {state.canUpdate && (
-                <Button
+                <BusyButton
+                  pending={starting}
                   className="justify-self-start"
                   size="sm"
                   variant="primary"
                   icon={<ArrowCircleUpIcon />}
-                  loading={starting}
                   onClick={() => onUpdate(state.latest)}
                 >
                   Update
-                </Button>
+                </BusyButton>
               )}
             </>
           )}
@@ -334,16 +335,16 @@ function CardBody({
               </div>
               {logLink}
               {state.retry !== null && (
-                <Button
+                <BusyButton
+                  pending={starting}
                   className="justify-self-start"
                   size="sm"
                   variant="secondary"
                   icon={<ArrowCircleUpIcon />}
-                  loading={starting}
                   onClick={() => state.retry !== null && onUpdate(state.retry)}
                 >
                   Try again
-                </Button>
+                </BusyButton>
               )}
               {isAdmin && jobId !== null && (
                 <div className="justify-self-start">

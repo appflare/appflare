@@ -9,6 +9,7 @@ import {
   renameStartValue,
 } from "../installs/display-name";
 import { renameInstall } from "../installs/installs.functions";
+import { BusyMark, busyActionProps } from "./busy-button";
 
 /**
  * "Rename" on the app page (admins): a pencil button beside the title that
@@ -114,9 +115,9 @@ export function RenameInstallDialog({
           <LayerDialog.Actions.Primary
             type="submit"
             form={formId}
-            loading={pending}
-            disabled={problem !== null}
+            {...busyActionProps(pending, problem !== null)}
           >
+            <BusyMark pending={pending} />
             Save
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

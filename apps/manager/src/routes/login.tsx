@@ -1,4 +1,4 @@
-import { Button, Input, Link, Text } from "@cloudflare/kumo";
+import { Input, Link, Text } from "@cloudflare/kumo";
 import { FingerprintIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
@@ -10,6 +10,7 @@ import {
 } from "../auth/passkey-errors";
 import { passwordSignInErrorMessage } from "../auth/sign-in-errors";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION, OrDivider } from "../components/auth-layout";
+import { BusyButton } from "../components/busy-button";
 import { PasswordInput } from "../components/password-input";
 import { afterSignIn, returnToSearchSchema, withReturnTo } from "../components/return-to";
 import { getSetupStatus } from "../server/setup.functions";
@@ -88,27 +89,27 @@ function LoginPage() {
           <Text variant="secondary" size="sm" as="p">
             <Link href={withReturnTo("/forgot-password", returnTo)}>Forgot your password?</Link>
           </Text>
-          <Button
+          <BusyButton
+            pending={pending === "password"}
             type="submit"
             variant="primary"
             className={FULL_WIDTH_ACTION}
-            loading={pending === "password"}
             disabled={pending === "passkey"}
           >
             Sign in
-          </Button>
+          </BusyButton>
         </form>
         <OrDivider />
-        <Button
+        <BusyButton
+          pending={pending === "passkey"}
           variant="secondary"
           icon={<FingerprintIcon />}
           className={FULL_WIDTH_ACTION}
-          loading={pending === "passkey"}
           disabled={pending === "password"}
           onClick={onPasskey}
         >
           Sign in with a passkey
-        </Button>
+        </BusyButton>
       </div>
     </AuthLayout>
   );

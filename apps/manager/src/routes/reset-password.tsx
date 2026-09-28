@@ -1,4 +1,4 @@
-import { Banner, Button, Link, Text } from "@cloudflare/kumo";
+import { Banner, Link, Text } from "@cloudflare/kumo";
 import { CheckCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
@@ -10,6 +10,7 @@ import {
   recoveryErrorMessage,
 } from "../auth/recovery-messages";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
+import { BusyButton } from "../components/busy-button";
 import { PasswordInput } from "../components/password-input";
 import { returnToSearchSchema, withReturnTo } from "../components/return-to";
 import { getSetupStatus } from "../server/setup.functions";
@@ -95,14 +96,14 @@ function ResetPasswordPage() {
                 maxLength={PASSWORD_LIMITS.max}
                 description={`At least ${PASSWORD_LIMITS.min} characters.`}
               />
-              <Button
+              <BusyButton
+                pending={pending}
                 type="submit"
                 variant="primary"
                 className={FULL_WIDTH_ACTION}
-                loading={pending}
               >
                 Set new password
-              </Button>
+              </BusyButton>
             </form>
             <Text variant="secondary" size="sm" as="p">
               <Link href={signInHref}>Back to sign in</Link>

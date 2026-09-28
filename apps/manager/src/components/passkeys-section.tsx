@@ -10,6 +10,7 @@ import {
 } from "../auth/passkey-errors";
 import { type PasskeyRow, removePasskey } from "../server/passkeys.functions";
 import { passkeyNameInput } from "../server/schemas";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Section, SectionBody, SectionEmpty, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
@@ -169,7 +170,8 @@ function AddPasskeyDialog() {
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">
-          <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+          <LayerDialog.Actions.Primary type="submit" form={formId} {...busyActionProps(pending)}>
+            <BusyMark pending={pending} />
             Create passkey
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

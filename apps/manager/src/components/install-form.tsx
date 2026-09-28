@@ -6,7 +6,7 @@ import {
   type IndexBuild,
   isSeedOnly,
 } from "@appflare/schema";
-import { Banner, Button, Input, Link, Text } from "@cloudflare/kumo";
+import { Banner, Input, Link, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useState } from "react";
 import type { AccountPlan } from "../account/plan";
@@ -24,6 +24,7 @@ import { workersDevUrl } from "../installs/post-install";
 import { installSourceBuild } from "../installs/source-builds.functions";
 import { workerNameAllowsInstall, workerNameFormatProblem } from "../installs/worker-name-check";
 import { AppTokenHelp } from "./app-token-permissions";
+import { BusyButton } from "./busy-button";
 import { CronTriggersField } from "./cron-triggers-field";
 import { connectionsComplete, DatabaseFields } from "./database-fields";
 import { EmailRoutingFields } from "./email-routing-fields";
@@ -518,15 +519,15 @@ export function InstallForm({
 
           {error !== null && <ErrorMessageBanner message={error} newTab />}
           <div className="flex justify-end">
-            <Button
+            <BusyButton
+              pending={pending}
               type="submit"
               variant="primary"
               icon={<DownloadSimpleIcon />}
-              loading={pending}
               disabled={disabled || !ready}
             >
               Install
-            </Button>
+            </BusyButton>
           </div>
         </form>
       </SectionBody>

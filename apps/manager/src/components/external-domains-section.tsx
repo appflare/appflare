@@ -41,6 +41,7 @@ import {
 import type { CustomDomainView, InstallDetail } from "../installs/installs.functions";
 import { WILDCARD_EXTERNAL_REFUSAL } from "../installs/wildcard-domain-input";
 import { AppflareLoader } from "./appflare-loader";
+import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
@@ -221,15 +222,15 @@ function ExternalDomainRow({
       }
       action={
         <>
-          <Button
+          <BusyButton
+            pending={checking}
             size="sm"
             variant="secondary"
             icon={<ArrowsClockwiseIcon />}
-            loading={checking}
             onClick={() => void refresh(true)}
           >
             Check now
-          </Button>
+          </BusyButton>
           {canRemove && <RemoveExternalDomainDialog installId={installId} domain={domain} />}
         </>
       }
@@ -495,9 +496,9 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
             <LayerDialog.Actions.Primary
               type="submit"
               form={formId}
-              loading={pending}
-              disabled={checked === null || !checked.ok}
+              {...busyActionProps(pending, checked === null || !checked.ok)}
             >
+              <BusyMark pending={pending} />
               Add domain
             </LayerDialog.Actions.Primary>
           </LayerDialog.Actions>
