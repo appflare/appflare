@@ -54,6 +54,17 @@ export function createAccess(http: HttpApi) {
       return http.result("POST", http.acct("/access/apps"), { json: app });
     },
 
+    /**
+     * `PUT /access/apps/{id}`: replaces the application's settings with `app`
+     * (to move it to another hostname, for one). Settings left out take their
+     * defaults, so send every one the application was created with. Without
+     * `policies` in the body the application keeps its policies, its id and
+     * its audience tag; the answer lists its policies.
+     */
+    updateApp(appId: string, app: CreateAccessAppArgs): Promise<AccessApp> {
+      return http.result("PUT", http.acct(`/access/apps/${enc(appId)}`), { json: app });
+    },
+
     /** `DELETE /access/apps/{id}`. Also removes the application's own policies. */
     deleteApp(appId: string): Promise<{ id: string }> {
       return http.result("DELETE", http.acct(`/access/apps/${enc(appId)}`));

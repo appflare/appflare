@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DOCS_URL } from "./components/auth-layout";
 import { JOB_KINDS } from "./db/schema";
 import { DOCS_TOPICS, type DocsTopic, docsUrl, jobFailureTopic } from "./docs-topics";
 
@@ -60,8 +61,14 @@ const topics = Object.keys(DOCS_TOPICS) as DocsTopic[];
 
 describe("docs topics", () => {
   it("found the docs content", () => {
-    expect(pages.has("")).toBe(true);
+    expect(pages.has("start/overview")).toBe(true);
     expect(pages.has("guides/custom-domains")).toBe(true);
+  });
+
+  it("leads the Documentation links to a page of the docs, not the site's front page", () => {
+    const path = new URL(DOCS_URL).pathname.replace(/^\/|\/$/g, "");
+    expect(path).not.toBe("");
+    expect([...pages.keys()]).toContain(path);
   });
 
   it.each(topics)("%s points at a page of the docs", (topic) => {

@@ -59,13 +59,16 @@ export async function readInstallNames(db: D1Database): Promise<NamedInstall[]> 
 /**
  * The labels of `named` (see `distinctLabels`), each told apart from every
  * install that is not uninstalled as well as from the others named with it.
- * An install in `named` keeps the app name given there. One D1 query.
+ * An install in `named` keeps the app name given there. One D1 query, none
+ * with `all`.
  */
 export async function readInstallLabels(
   db: D1Database,
   named: readonly NamedInstall[],
+  /** Every install's names (`readInstallNames`), when the caller read them already. */
+  all?: readonly NamedInstall[],
 ): Promise<Map<string, string>> {
   const given = new Set(named.map((n) => n.id));
-  const others = (await readInstallNames(db)).filter((n) => !given.has(n.id));
+  const others = (all ?? (await readInstallNames(db))).filter((n) => !given.has(n.id));
   return distinctLabels([...named, ...others]);
 }

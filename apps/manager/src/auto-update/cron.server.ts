@@ -13,6 +13,7 @@ import {
   type UpdateNeeds,
   VersionActionError,
 } from "../installs/versions.server";
+import { jobCreator } from "../jobs/create-job.server";
 import type { WorkflowLookup } from "../jobs/reconcile.server";
 import type { SelfUpdateJobParams } from "../jobs/self-update";
 import { SelfUpdateError, startSelfUpdateCore } from "../jobs/self-update/start.server";
@@ -249,7 +250,7 @@ export async function startUnattendedUpdate(
     {
       db: env.DB,
       workflows: env.JOBS,
-      createJob: (id, params) => env.JOBS.create({ id, params }),
+      createJob: jobCreator(env.JOBS),
       startedBy,
       ...(deps.now === undefined ? {} : { now: deps.now }),
       ...(deps.newId === undefined ? {} : { newId: deps.newId }),
@@ -311,7 +312,7 @@ export async function runScheduledUpdates(
             currentVersion: env.APPFLARE_VERSION,
             hasToken: true,
             workflows: env.JOBS,
-            createJob: (id, params) => env.JOBS.create({ id, params }),
+            createJob: jobCreator(env.JOBS),
             startedBy: "schedule",
             ...(deps.now === undefined ? {} : { now: deps.now }),
             ...(deps.newId === undefined ? {} : { newId: deps.newId }),

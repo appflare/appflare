@@ -18,6 +18,7 @@ import {
   sendTestPasswordEmail,
   setPasswordResetEmails,
 } from "../server/recovery.functions";
+import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { ErrorMessageBanner } from "./message-text";
@@ -147,9 +148,9 @@ function PasswordEmailCard({
           </Text>
           {viewerIsOwner && (
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" loading={pending === "test"} onClick={test}>
+              <BusyButton pending={pending === "test"} variant="secondary" onClick={test}>
                 Send me a test email
-              </Button>
+              </BusyButton>
               <ConfirmDialog
                 trigger={(p) => (
                   <Button {...p} variant="secondary" disabled={pending !== null}>
@@ -184,9 +185,9 @@ function PasswordEmailCard({
             defaultValue={status.sender ?? undefined}
           />
           <SectionFormActions>
-            <Button type="submit" variant="primary" loading={pending === "on"}>
+            <BusyButton pending={pending === "on"} type="submit" variant="primary">
               Turn on
-            </Button>
+            </BusyButton>
           </SectionFormActions>
         </form>
       ) : (

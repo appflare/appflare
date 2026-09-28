@@ -40,7 +40,7 @@ export const Route = createFileRoute("/$")({
   head: ({ loaderData }) =>
     loaderData
       ? pageHead({
-          title: loaderData.url === "/" ? siteName : `${loaderData.title} | ${siteName}`,
+          title: `${loaderData.title} | ${siteName}`,
           description: loaderData.description,
           url: `${SITE_URL}${loaderData.url}`,
           image: `${SITE_URL}${loaderData.ogImage}`,

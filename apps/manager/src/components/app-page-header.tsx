@@ -55,7 +55,7 @@ export function AppPageHeader({
       </Breadcrumbs>
       <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-x-6">
         <div className="row-span-2 sm:row-span-1">
-          <AppIcon src={iconSrc} name={name} size={112} />
+          <AppIcon src={iconSrc} name={name} size={112} eager />
         </div>
         <div className="grid min-w-0 content-start gap-1.5">
           <Text variant="heading" size="lg" as="h1">

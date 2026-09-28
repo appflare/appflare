@@ -5,19 +5,24 @@ import type { ReactNode } from "react";
 import { Logo } from "./logo";
 import { MessageText } from "./message-text";
 
-/** Where the footer's version line leads. */
-export const DOCS_URL = `${SITE_URL}/`;
+/**
+ * Where the documentation starts, which the footer's version line and the
+ * account menu's Documentation link lead to. The site's own `/` is its front
+ * page.
+ */
+export const DOCS_URL = `${SITE_URL}/start/overview/`;
 
 /**
  * Setup runs in three steps on one page, `/setup`: connect Cloudflare (paste
  * an API token for this account), create the owner account, then check
- * what the account can run.
+ * what the account can run. A fourth, where Appflare should live, comes
+ * before the last when the account has a domain.
  */
 export const SETUP_STEP_COUNT = 3;
-export type SetupStep = 1 | 2 | 3;
+export type SetupStep = 1 | 2 | 3 | 4;
 
-export function setupStepLabel(step: SetupStep): string {
-  return `Step ${step} of ${SETUP_STEP_COUNT}`;
+export function setupStepLabel(step: SetupStep, count: number = SETUP_STEP_COUNT): string {
+  return `Step ${step} of ${count}`;
 }
 
 /** Makes a Kumo Button span the card, its content centred. */
@@ -39,6 +44,7 @@ export function AuthLayout({
   title,
   description,
   step,
+  stepCount = SETUP_STEP_COUNT,
   width = "narrow",
   placement = "center",
   version,
@@ -48,6 +54,8 @@ export function AuthLayout({
   description?: ReactNode;
   /** The setup step this screen is, shown above the title. */
   step?: SetupStep;
+  /** How many steps setup has on this run. */
+  stepCount?: number;
   width?: "narrow" | "wide";
   placement?: "center" | "top";
   /** The running Appflare version; null when it could not be read. */
@@ -73,10 +81,10 @@ export function AuthLayout({
             {step !== undefined && (
               <Meter
                 label="Set up Appflare"
-                customValue={setupStepLabel(step)}
+                customValue={setupStepLabel(step, stepCount)}
                 value={step}
-                max={SETUP_STEP_COUNT}
-                getAriaValueText={() => setupStepLabel(step)}
+                max={stepCount}
+                getAriaValueText={() => setupStepLabel(step, stepCount)}
                 trackClassName="h-1"
               />
             )}

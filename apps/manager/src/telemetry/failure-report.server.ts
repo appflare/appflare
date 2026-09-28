@@ -72,7 +72,11 @@ interface FailedJob {
   row: JobRow;
   reportedAt: number | null;
   logs: ReportLogLine[];
-  /** Hostnames and Worker names recorded anywhere in this manager. */
+  /**
+   * Hostnames and Worker names recorded anywhere in this manager: the apps'
+   * domains, and Appflare's own custom domain with the ones it had before
+   * (its workers.dev addresses are covered by the subdomain and Worker name).
+   */
   hostnames: string[];
   workers: string[];
 }
@@ -111,7 +115,11 @@ async function readFailedJob(db: D1Database, jobId: string): Promise<FailedJob |
       .bind(jobId),
     db.prepare(
       `SELECT name FROM resources WHERE kind IN (${HOSTNAME_KINDS.map((k) => `'${k}'`).join(", ")})
-       UNION SELECT served_domain FROM installs WHERE served_domain IS NOT NULL`,
+       UNION SELECT served_domain FROM installs WHERE served_domain IS NOT NULL
+       UNION SELECT value FROM settings
+         WHERE key IN ('manager_hostname', 'manager_previous_hostname')
+           AND value NOT LIKE '%.workers.dev'
+       UNION SELECT hostname FROM passkey_host WHERE hostname NOT LIKE '%.workers.dev'`,
     ),
     db.prepare(
       `SELECT worker_name AS name FROM installs

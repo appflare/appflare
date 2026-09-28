@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as R404RouteImport } from './routes/404'
 import { Route as LlmsFullDottxtRouteImport } from './routes/llms-full[.]txt'
@@ -24,6 +25,11 @@ import { Route as InstallSlugRouteImport } from './routes/install/$slug'
 import { Route as MyIndexRouteImport } from './routes/my/index'
 import { Route as OgSplatRouteImport } from './routes/og/$'
 
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SplatRoute = SplatRouteImport.update({
   id: '/$',
   path: '/$',
@@ -96,6 +102,7 @@ const OgSplatRoute = OgSplatRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
+  '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/404': typeof R404Route
   '/llms-full.txt': typeof LlmsFullDottxtRoute
@@ -112,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/my/': typeof MyIndexRoute
 }
 export interface FileRoutesByTo {
+  '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/404': typeof R404Route
   '/llms-full.txt': typeof LlmsFullDottxtRoute
@@ -129,6 +137,7 @@ export interface FileRoutesByTo {
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/404': typeof R404Route
   '/llms-full.txt': typeof LlmsFullDottxtRoute
@@ -147,6 +156,7 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
+    | '/'
     | '/$'
     | '/404'
     | '/llms-full.txt'
@@ -163,6 +173,7 @@ export interface FileRouteTypes {
     | '/my/'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/'
     | '/$'
     | '/404'
     | '/llms-full.txt'
@@ -179,6 +190,7 @@ export interface FileRouteTypes {
     | '/my'
   id:
     | '__root__'
+    | '/'
     | '/$'
     | '/404'
     | '/llms-full.txt'
@@ -196,6 +208,7 @@ export interface FileRouteTypes {
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
+  IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
   R404Route: typeof R404Route
   LlmsFullDottxtRoute: typeof LlmsFullDottxtRoute
@@ -214,6 +227,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/$': {
       id: '/$'
       path: '/$'
@@ -316,6 +336,7 @@ declare module '@tanstack/react-router' {
 }
 
 const rootRouteChildren: RootRouteChildren = {
+  IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   R404Route: R404Route,
   LlmsFullDottxtRoute: LlmsFullDottxtRoute,

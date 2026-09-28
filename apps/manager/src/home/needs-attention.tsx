@@ -7,6 +7,7 @@ import {
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { BusyButton } from "../components/busy-button";
 import { Section, SectionRows } from "../components/section";
 import type { StartUpdateHandle } from "../components/update-banner";
 import { useOptimisticDismiss } from "../components/use-optimistic-dismiss";
@@ -101,14 +102,14 @@ export function NeedsAttention({
       description="The most urgent first."
       action={
         isAdmin && targets.length >= UPDATE_ALL_MIN ? (
-          <Button
+          <BusyButton
+            pending={updatingAll}
             variant="primary"
             icon={<ArrowsClockwiseIcon />}
-            loading={updatingAll}
             onClick={() => void onUpdateAll()}
           >
             Update all
-          </Button>
+          </BusyButton>
         ) : null
       }
       error={bannerError}
@@ -165,14 +166,14 @@ function AttentionRow({
           Review
         </LinkButton>
       ) : (
-        <Button
+        <BusyButton
+          pending={update.pendingId === item.installId}
           variant="secondary"
           icon={<ArrowCircleUpIcon />}
-          loading={update.pendingId === item.installId}
           onClick={() => update.start({ id: item.installId, label: item.label })}
         >
           Update
-        </Button>
+        </BusyButton>
       );
       break;
     case "account":
@@ -263,14 +264,14 @@ function CheckAgainButton({ installId }: { installId: string }) {
   }
 
   return (
-    <Button
+    <BusyButton
+      pending={pending}
       variant="secondary"
       icon={<ArrowsClockwiseIcon />}
-      loading={pending}
       onClick={() => void onCheck()}
     >
       Check again
-    </Button>
+    </BusyButton>
   );
 }
 

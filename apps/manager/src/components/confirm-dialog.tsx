@@ -1,5 +1,6 @@
 import { Input, LayerDialog } from "@cloudflare/kumo";
 import { type ComponentProps, type FormEvent, type ReactNode, useId, useState } from "react";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { ErrorMessageBanner } from "./message-text";
 
 type TriggerRender = ComponentProps<typeof LayerDialog.Trigger>["render"];
@@ -33,6 +34,7 @@ export function ConfirmDialog({
   size = "base",
   open: openProp,
   onOpenChange: onOpenChangeProp,
+  onOpenChangeComplete,
 }: {
   /** The button that opens the dialog; receives the trigger props to spread. */
   trigger?: TriggerRender;
@@ -54,6 +56,8 @@ export function ConfirmDialog({
   open?: boolean;
   /** Controlled mode: asked to close (Cancel, Escape, or after `onConfirm`). */
   onOpenChange?: (open: boolean) => void;
+  /** The dialog finished opening or closing, its animation included. */
+  onOpenChangeComplete?: (open: boolean) => void;
 }) {
   const formId = useId();
   const [ownOpen, setOwnOpen] = useState(false);
@@ -103,7 +107,12 @@ export function ConfirmDialog({
   }
 
   return (
-    <LayerDialog.Alert open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
+    <LayerDialog.Alert
+      open={open}
+      onOpenChange={onOpenChange}
+      dismissDisabled={pending}
+      {...(onOpenChangeComplete === undefined ? {} : { onOpenChangeComplete })}
+    >
       {trigger !== undefined && <LayerDialog.Trigger render={trigger} />}
       <LayerDialog.Content size={size}>
         <LayerDialog.Title>{title}</LayerDialog.Title>
@@ -139,9 +148,9 @@ export function ConfirmDialog({
             type="submit"
             form={formId}
             variant={destructive ? "destructive" : "primary"}
-            loading={pending}
-            disabled={!confirmed || disabled}
+            {...busyActionProps(pending, !confirmed || disabled)}
           >
+            <BusyMark pending={pending} />
             {actionLabel}
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

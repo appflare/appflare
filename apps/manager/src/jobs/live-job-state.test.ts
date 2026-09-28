@@ -6,8 +6,10 @@ import {
   clientReplaced,
   followJob,
   type LiveJobState,
+  lastLogIdOf,
   switchAnswer,
   switchTargetOf,
+  withEarlierLogs,
 } from "./live-job-state";
 
 const view = (id: string, status: JobView["status"]): JobView =>
@@ -39,6 +41,52 @@ describe("following a job", () => {
       jobId: "job1",
       job: null,
     });
+  });
+});
+
+describe("following a job's log", () => {
+  const line = (id: number) => ({
+    id,
+    ts: "2026-09-28T00:00:00.000Z",
+    level: "info",
+    message: `line ${id}`,
+    requests: [],
+    detail: null,
+  });
+  const withLogs = (ids: number[], logsAfter: number | null = null): JobView =>
+    ({ id: "job1", status: "running", logs: ids.map(line), logsAfter }) as unknown as JobView;
+
+  it("asks for the whole log first, then only for lines after the last one shown", () => {
+    expect(lastLogIdOf(undefined)).toBeUndefined();
+    expect(lastLogIdOf(null)).toBeUndefined();
+    expect(lastLogIdOf(withLogs([]))).toBe(0);
+    expect(lastLogIdOf(withLogs([3, 4, 9]))).toBe(9);
+  });
+
+  it("adds the newer lines of a poll to the lines already shown", () => {
+    const shown: LiveJobState = { jobId: "job1", job: withLogs([1, 2, 3]) };
+    const next = acceptPoll(shown, "job1", withLogs([4, 5], 3));
+    expect(next.job?.logs.map((l) => l.id)).toEqual([1, 2, 3, 4, 5]);
+    expect(next.job?.logsAfter).toBeNull();
+    // Nothing new: the lines shown stay.
+    expect(acceptPoll(shown, "job1", withLogs([], 3)).job?.logs.map((l) => l.id)).toEqual([
+      1, 2, 3,
+    ]);
+  });
+
+  it("never repeats a line when two polls asked from the same point", () => {
+    const shown: LiveJobState = { jobId: "job1", job: withLogs([1, 2, 3, 4]) };
+    // An earlier poll asked for lines after 2 and answers late with 3 and 4 again.
+    const next = acceptPoll(shown, "job1", withLogs([3, 4, 5], 2));
+    expect(next.job?.logs.map((l) => l.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("takes a whole log as it is (the first read, or an older version's answer)", () => {
+    const shown: LiveJobState = { jobId: "job1", job: withLogs([1, 2, 3]) };
+    const whole = withLogs([1, 2, 3, 4]);
+    expect(acceptPoll(shown, "job1", whole).job).toBe(whole);
+    const older = { id: "job1", status: "running", logs: [line(1)] } as unknown as JobView;
+    expect(withEarlierLogs(withLogs([1, 2]), older)).toBe(older);
   });
 });
 

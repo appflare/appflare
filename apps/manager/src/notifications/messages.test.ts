@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { docsUrl } from "../docs-topics";
 import {
+  ACCESS_LOCKED_OUT_URL,
   discordText,
   type NotificationFacts,
   notificationFactsSchema,
@@ -78,6 +80,12 @@ describe("renderMessage", () => {
       "go.customer.test, an external domain of Links for Ada, does not serve the app. Cloudflare reports the hostname as blocked.",
       `${M}/apps/i1#external-domains`,
     ],
+    [
+      { type: "manager_address_lost", hostname: "appflare.example.com" },
+      "Appflare's address stopped working",
+      "appflare.example.com no longer serves Appflare, so Appflare is back at its workers.dev address. Sign in there with your password; passkeys added at appflare.example.com do not work there.",
+      `${M}/settings/domains#address`,
+    ],
   ];
 
   it.each(cases)("renders %j", (facts, title, line, url) => {
@@ -96,6 +104,17 @@ describe("renderMessage", () => {
       title: "Uninstalled Cut (my-links)",
       lines: ["Cut (my-links) was uninstalled."],
     });
+  });
+
+  it("points to the Access recovery steps when Access stayed on the lost address", () => {
+    const message = renderMessage(
+      { type: "manager_address_lost", hostname: "appflare.example.com", accessLeftBehind: true },
+      M,
+    );
+    expect(message.lines[1]).toBe(
+      `Cloudflare Access could not be moved back to workers.dev, so Appflare refuses sign-in there until you follow the Access recovery steps: ${docsUrl("accessLockedOut")}`,
+    );
+    expect(ACCESS_LOCKED_OUT_URL).toBe(docsUrl("accessLockedOut"));
   });
 
   it("leaves the link out when the manager URL is not known", () => {

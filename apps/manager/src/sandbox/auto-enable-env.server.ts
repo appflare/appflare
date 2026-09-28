@@ -1,5 +1,6 @@
 import { releaseFetch } from "../catalog/release-fetch";
 import { type CfClientEnv, getCfClient } from "../cloudflare/client.server";
+import { jobCreator } from "../jobs/create-job.server";
 import type { SandboxAutoEnableDeps } from "./auto-enable.server";
 import type { SandboxEnableJobParams } from "./enable-job";
 import { sandboxReleaseProblem } from "./release";
@@ -26,7 +27,7 @@ export function sandboxAutoEnableDeps(
         version,
         { viaApi },
       ),
-    createJob: (id, params) => env.JOBS.create({ id, params }),
+    createJob: jobCreator(env.JOBS),
     currentVersion: env.APPFLARE_VERSION,
   };
 }

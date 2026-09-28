@@ -1,7 +1,8 @@
-import { Banner, Button, Collapsible, Link, Loader, Text } from "@cloudflare/kumo";
+import { Banner, Button, Collapsible, Link, Text } from "@cloudflare/kumo";
 import { KeyIcon, TrashIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { type ReactNode, useState } from "react";
 import { appLink } from "../components/app-links";
+import { AppflareLoader } from "../components/appflare-loader";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { Section, SectionRow, SectionRows } from "../components/section";
 import { settingsSection } from "../components/settings-links";
@@ -150,7 +151,7 @@ function RemoveAppflareDialog() {
     >
       {state.kind === "loading" && (
         <div className="flex items-center gap-2">
-          <Loader size="sm" />
+          <AppflareLoader size="sm" />
           <Text variant="secondary">Reading the account…</Text>
         </div>
       )}

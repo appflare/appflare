@@ -11,7 +11,7 @@ depends on how your Appflare is set up.
 | --- | --- |
 | Password reset emails turned on | Enter your email and select **Email me a reset link**. |
 | Someone who can still sign in | The owner can give any user a recovery code; an admin can give one to a member. |
-| Access to the Cloudflare account Appflare runs in | Get a recovery code yourself with `npx create-appflare recover`. |
+| Access to the Cloudflare account Appflare runs in | Get a recovery code yourself with the installer's `recover` command. |
 
 Whichever way you use, you choose the new password yourself, and you are signed out
 on every other device once it is set. Your passkeys keep working.
@@ -58,10 +58,12 @@ working if its user's role changes or they become the owner before using it.
 ### Get a code from your Cloudflare account
 
 This works for any admin, the owner included, and needs nothing but access to the
-Cloudflare account Appflare runs in. On a computer with Node.js 22 or newer, run:
+Cloudflare account Appflare runs in. On a computer with Node.js 22 or newer and
+pnpm, build the installer [from a checkout](/start/install/#from-a-checkout) (it is
+not on npm yet), then run this in the checkout:
 
 ```sh
-npx create-appflare recover
+node packages/cli/bin/appflare.js recover
 ```
 
 If you installed Appflare under another Worker name, add `--name <name>`. To make the

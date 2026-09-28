@@ -34,7 +34,8 @@ export function FeaturedCard({ item }: { item: FeaturedCardData }) {
     >
       {item.image !== null && (
         <div className="w-20 shrink-0 max-sm:hidden">
-          <AppCover src={item.image.src} alt={item.image.alt} />
+          {/* Lazy: the card sits under the catalog's first row, never at the top. */}
+          <AppCover src={item.image.src} alt={item.image.alt} eager={false} />
         </div>
       )}
       <div className="grid min-w-0 flex-1 basis-64 gap-0.5">

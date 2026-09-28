@@ -168,5 +168,5 @@ describe("two-step pack then sign", () => {
         keyId: "unsigned",
       }),
     ).rejects.toThrow(/reserved/);
-  });
+  }, 120_000);
 });

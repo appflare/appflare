@@ -19,6 +19,7 @@ import type { PasswordRecoverySettings } from "../server/recovery.functions";
 import type { SandboxCardState } from "../server/sandbox.functions";
 import type { TokenStatus } from "../server/token.functions";
 import type { UserRow } from "../server/users.functions";
+import type { AddressView } from "./manager-address-section";
 import { visibleSettingsPages } from "./navigation";
 import { SettingsNavigationContext } from "./settings-menu";
 import {
@@ -337,6 +338,51 @@ describe("DomainsSettingsView", () => {
       }),
     );
     expectPattern(failed, ["external-domains"], ["Cloudflare did not answer."]);
+  });
+
+  it("puts Appflare's address first for admins, and leaves it out for members", () => {
+    const view: GatewayView = { gateway: null, zones: [], accountId: "0123456789abcdef" };
+    const address: AddressView = {
+      address: {
+        hostname: "appflare.example.com",
+        zoneId: "z1",
+        previousHostname: "appflare.acme.workers.dev",
+        movedAt: ISO,
+        workersDevHostname: "appflare.acme.workers.dev",
+        serving: true,
+        attachedByHand: [],
+      },
+      options: {
+        zones: [{ id: "z1", name: "example.com", suggestedHostname: "appflare.example.com" }],
+        inactiveZones: [],
+        missing: [],
+        noZones: false,
+      },
+      accountId: "0123456789abcdef",
+    };
+    const html = render(createElement(DomainsSettingsView, { view, address, isAdmin: true }));
+    expectPattern(
+      html,
+      ["address", "external-domains"],
+      [
+        "Where you and your users open Appflare",
+        "appflare.example.com",
+        "Change",
+        "Go back to workers.dev",
+      ],
+    );
+
+    const failed = render(
+      createElement(DomainsSettingsView, {
+        view,
+        address: { ...address, address: { error: "Cloudflare did not answer." } },
+        isAdmin: true,
+      }),
+    );
+    expectPattern(failed, ["address", "external-domains"], ["Cloudflare did not answer."]);
+
+    const member = render(createElement(DomainsSettingsView, { view, address, isAdmin: false }));
+    expectPattern(member, ["external-domains"], []);
   });
 });
 

@@ -19,6 +19,7 @@ import {
   accountPlanSchema,
 } from "../account/plan";
 import { setAccountPlan } from "../account/plan.functions";
+import { BusyButton } from "../components/busy-button";
 import { ConfirmDialog } from "../components/confirm-dialog";
 import { DocsLink } from "../components/docs-link";
 import { ErrorMessageBanner, MessageText } from "../components/message-text";
@@ -310,15 +311,15 @@ export function CheckAgainButton({
   size?: "sm" | "base";
 }) {
   return (
-    <Button
+    <BusyButton
+      pending={checking}
       variant="secondary"
       size={size}
       icon={<ArrowClockwiseIcon />}
-      loading={checking}
       onClick={onClick}
     >
       Check again
-    </Button>
+    </BusyButton>
   );
 }
 

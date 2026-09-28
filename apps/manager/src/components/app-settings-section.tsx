@@ -30,6 +30,7 @@ import type { InstallSettings, SettingField } from "../installs/reconfigure.serv
 import type { DatabaseSlot, SecretSlot } from "../jobs/reconfigure/plan";
 import { appPlace } from "./app-links";
 import { AppTokenHelp } from "./app-token-permissions";
+import { BusyButton } from "./busy-button";
 import { connectionsComplete, DatabaseField } from "./database-fields";
 import { DocsLink } from "./docs-link";
 import { EmailRoutingFields } from "./email-routing-fields";
@@ -406,16 +407,16 @@ export function AppSettingsSection({
                       description={`Routing rules the app no longer needs are still set up on ${leftover.join(", ")}. Finishing the move checks ${settings.email.zoneName ?? "the new domain"} again and removes them; the Worker is not deployed again.`}
                       action={
                         canEdit ? (
-                          <Button
+                          <BusyButton
+                            pending={pending}
                             type="button"
                             variant="secondary"
                             icon={<ArrowsClockwiseIcon />}
-                            loading={pending}
                             disabled={dirty}
                             onClick={finishMove}
                           >
                             Finish moving email
-                          </Button>
+                          </BusyButton>
                         ) : undefined
                       }
                     />
@@ -513,15 +514,15 @@ export function AppSettingsSection({
               >
                 Discard changes
               </Button>
-              <Button
+              <BusyButton
+                pending={pending}
                 type="submit"
                 variant="primary"
                 icon={<ArrowsClockwiseIcon />}
-                loading={pending}
                 disabled={!ready}
               >
                 Save and redeploy
-              </Button>
+              </BusyButton>
             </div>
           )}
         </form>

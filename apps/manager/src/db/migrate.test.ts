@@ -25,6 +25,7 @@ const EXPECTED_TABLES = [
   "notification_deliveries",
   "notification_events",
   "passkey",
+  "passkey_host",
   "rate_limit",
   "resources",
   "session",
@@ -40,6 +41,14 @@ async function tableNames(db: D1Database): Promise<string[]> {
     .prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name",
     )
+    .all<{ name: string }>();
+  return results.map((r) => r.name);
+}
+
+async function columnNames(db: D1Database, table: string): Promise<string[]> {
+  const { results } = await db
+    .prepare("SELECT name FROM pragma_table_info(?1)")
+    .bind(table)
     .all<{ name: string }>();
   return results.map((r) => r.name);
 }
@@ -109,6 +118,31 @@ describe("ensure", () => {
       "SELECT repositories, for_builds, for_releases FROM github_tokens WHERE id = 'T1'",
     ).first();
     expect(added).toEqual({ repositories: null, for_builds: 1, for_releases: 0 });
+  });
+
+  it("records passkey hosts, and drops a passkey's host with the passkey", async () => {
+    await createMigrator(migrations).ensure(env.DB);
+    expect(await columnNames(env.DB, "passkey_host")).toEqual([
+      "passkey_id",
+      "hostname",
+      "recorded_at",
+    ]);
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO user (id, name, email, email_verified, created_at, updated_at)
+         VALUES ('u1', 'Ada', 'ada@example.com', 0, 1, 1)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO passkey (id, public_key, user_id, credential_id, counter, device_type, backed_up)
+         VALUES ('pk1', 'k', 'u1', 'c1', 0, 'singleDevice', 0)`,
+      ),
+      env.DB.prepare(
+        "INSERT INTO passkey_host (passkey_id, hostname, recorded_at) VALUES ('pk1', 'a.example.com', 1)",
+      ),
+    ]);
+    await env.DB.prepare("DELETE FROM passkey WHERE id = 'pk1'").run();
+    const left = await env.DB.prepare("SELECT count(*) AS n FROM passkey_host").first();
+    expect(left).toEqual({ n: 0 });
   });
 
   it("is a no-op on the second call (no D1 access at all)", async () => {

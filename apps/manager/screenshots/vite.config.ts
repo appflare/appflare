@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defaultClientConditions, defineConfig, type Plugin } from "vite";
+import { kumoLoaderAsAppflareLoader } from "../scripts/kumo-loader.ts";
 import catalog from "./fixtures/catalog.json" with { type: "json" };
 
 const fixturePath = resolve(import.meta.dirname, "fixtures/data.ts");
@@ -69,6 +70,7 @@ export default defineConfig({
     alias: { "#manager-router": resolve(import.meta.dirname, "../src/router.tsx") },
     conditions: ["@appflare/source", ...defaultClientConditions],
   },
-  plugins: [fixtureServerCalls(), react(), tailwindcss()],
+  optimizeDeps: { rolldownOptions: { plugins: [kumoLoaderAsAppflareLoader()] } },
+  plugins: [fixtureServerCalls(), react(), tailwindcss(), kumoLoaderAsAppflareLoader()],
   server: { port: 5388, strictPort: true },
 });

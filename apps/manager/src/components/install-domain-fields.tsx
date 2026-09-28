@@ -1,4 +1,4 @@
-import { Banner, Input, Link, Loader, Radio, Select, Text } from "@cloudflare/kumo";
+import { Banner, Input, Link, Radio, Select, Text } from "@cloudflare/kumo";
 import { InfoIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import {
@@ -18,6 +18,7 @@ import {
   WILDCARD_EXTERNAL_REFUSAL,
 } from "../installs/wildcard-domain-input";
 import { WORKERS_DEV_COPY } from "../installs/workers-dev";
+import { AppflareLoader } from "./appflare-loader";
 import { ValidationChoice } from "./external-domains-section";
 import { settingsLink } from "./settings-links";
 import { WildcardNotes } from "./wildcard-notes";
@@ -193,7 +194,7 @@ export function InstallDomainFields({
 
       {loading && loadError === null && (
         <div className="flex items-center gap-2">
-          <Loader size="sm" />
+          <AppflareLoader size="sm" />
           <Text variant="secondary">Reading the account's domains…</Text>
         </div>
       )}

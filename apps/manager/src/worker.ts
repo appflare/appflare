@@ -10,6 +10,8 @@ import { refreshEnabledCatalogs } from "./catalog/refresh.server";
 import { getCfClient } from "./cloudflare/client.server";
 import { createDb } from "./db/client";
 import { ensureMigrated } from "./db/migrate";
+import { addressRedirect, serveRequest } from "./domains/address-redirect";
+import { reconcileManagerAddress } from "./domains/manager-address.server";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
 import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
 import { reportTelemetry } from "./telemetry/report.server";
@@ -17,7 +19,9 @@ import { reportTelemetry } from "./telemetry/report.server";
 /**
  * The manager's Worker entry (custom entry so it can export more than
  * `fetch`). TanStack Start serves the SPA's server functions and server routes;
- * static assets never reach this code (wrangler.jsonc `assets`).
+ * files under /assets/ never reach this code (wrangler.jsonc `assets`). Page
+ * requests do, so the workers.dev address can redirect them to Appflare's
+ * custom domain; the rest are served from the static assets.
  */
 
 export { JobWorkflow } from "./jobs/job-workflow";
@@ -91,9 +95,12 @@ export default {
     await authStorage(ctx);
     return (
       (await migrated(env, request)) ??
+      // Appflare's address: page requests at workers.dev go to its custom domain.
+      (await addressRedirect.check(request, env.DB)) ??
       // Cloudflare Access protection, when on: checked before any routing.
       (await accessGate.check(request, env.DB, env.APPFLARE_VERSION)) ??
-      handler.fetch(request)
+      // Pages and public files from the static assets (the SPA shell for any page).
+      serveRequest(request, env.ASSETS, (r) => handler.fetch(r))
     );
   },
 
@@ -153,6 +160,18 @@ export default {
     // External domains: record their state and emit "Domain active" or
     // "Domain failed" for the delivery below; never fails the run.
     await scheduledExternalDomainCheck(env);
+    // Appflare's address: when its custom domain no longer serves it, back to
+    // workers.dev, with a notification delivered just below; never fails the run.
+    try {
+      const address = await reconcileManagerAddress({ db: env.DB, api: () => getCfClient(env) });
+      if (address.status === "lost") {
+        console.warn(`address: ${address.hostname} no longer serves Appflare; back at workers.dev`);
+      }
+    } catch (error) {
+      console.error("address check failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     // Notification channels: conditions, missed job ends, deliveries; never fails the run.
     await scheduledNotifications(env);
     // A recovery code secret that can no longer be used is deleted; never fails the run.

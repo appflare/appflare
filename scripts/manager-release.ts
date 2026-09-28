@@ -136,7 +136,8 @@ export interface ManagerArtifactExpectations {
 export const MANAGER_MAX_MODULES = 8;
 
 const REQUIRED_FLAGS = ["nodejs_compat", "global_fetch_strictly_public"];
-const REQUIRED_RUN_WORKER_FIRST = ["/api/*", "/_serverFn/*"];
+/** Everything but the hashed bundles reaches the Worker, so workers.dev can redirect pages. */
+const REQUIRED_RUN_WORKER_FIRST = ["/*", "!/assets/*"];
 /** Binding fields that would carry an account-specific id. */
 const ID_FIELDS = ["id", "account_id", "database_id", "namespace_id", "preview_id", "bucket_name"];
 

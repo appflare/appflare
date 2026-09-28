@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { mayUseSessionCopy, withoutSessionCopy } from "../../../auth/session-cookie";
 import { authFor, authSecretBound } from "../../../server/auth.server";
 
 /**
@@ -13,7 +14,11 @@ function handle(request: Request): Response | Promise<Response> {
       { status: 503, headers: { "retry-after": "5" } },
     );
   }
-  return authFor(request).handler(request);
+  // Every endpoint but the session read acts on the signed-in user, so it
+  // reads the session from D1, never the cookie's one-minute copy.
+  return authFor(request).handler(
+    mayUseSessionCopy(request) ? request : withoutSessionCopy(request),
+  );
 }
 
 export const Route = createFileRoute("/api/auth/$")({

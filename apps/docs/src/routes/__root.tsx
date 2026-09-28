@@ -1,5 +1,7 @@
 import { RootProvider } from "@fumadocs/base-ui/provider/tanstack";
-import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { createRootRoute, HeadContent, Outlet, Scripts, useRouter } from "@tanstack/react-router";
+import { useEffect } from "react";
+import { startAnalytics } from "../analytics/analytics.ts";
 import { DocsLink } from "../components/link.tsx";
 import StaticSearchDialog from "../components/search.tsx";
 import { faviconLinks, faviconMeta } from "../lib/favicons.ts";
@@ -38,8 +40,18 @@ function RootComponent() {
         >
           <Outlet />
         </RootProvider>
+        <Analytics />
         <Scripts />
       </body>
     </html>
   );
+}
+
+/** Starts the site's analytics once the page runs in a browser (never while prerendering). */
+function Analytics() {
+  const router = useRouter();
+  useEffect(() => {
+    startAnalytics(router);
+  }, [router]);
+  return null;
 }

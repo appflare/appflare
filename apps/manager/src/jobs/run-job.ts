@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { FetchLike } from "@appflare/cf-api";
 import type { SigningKey } from "@appflare/schema";
 import { z } from "zod";
+import { invalidateScriptsCache } from "../cloudflare/scripts-cache.server";
 import { JOB_KINDS, type JobKind } from "../db/schema";
 import { notifyJobEnd } from "../notifications/job-end";
 import { runSandboxDisable } from "../sandbox/disable-job";
@@ -140,9 +141,13 @@ export async function runJob(
   const parsed = jobParams.safeParse(payload);
   if (!parsed.success) throw new NonRetryableError("invalid job payload");
   const ctx: JobContext = { params: parsed.data, step, env, deps };
+  // A job may add, remove or rename Workers: the Worker names this isolate
+  // keeps for the catalog pages are dropped as it runs and when it ends.
+  invalidateScriptsCache();
   try {
     await handlers[parsed.data.kind](ctx);
   } finally {
+    invalidateScriptsCache();
     // Tells notification channels the job ended; never throws, and skips
     // self-updates, after whose promotion nothing else may run.
     await notifyJobEnd(ctx);

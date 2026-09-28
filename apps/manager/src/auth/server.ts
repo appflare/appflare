@@ -28,6 +28,17 @@ export const PASSKEY_SIGN_IN_RATE_LIMITS = {
   "/passkey/verify-authentication": { window: 10, max: 3 },
 } as const satisfies Record<string, { window: number; max: number }>;
 
+/**
+ * How long the signed session cookie answers a session check without D1.
+ * Signing out clears it at once in that browser; a session revoked
+ * elsewhere, a ban or a role change reaches page reads (GET server
+ * functions, `GET /api/auth/get-session`) within this long. Every change
+ * reads the session from D1: the manager's own changes ask Better Auth with
+ * `disableCookieCache`, and every other `/api/auth/*` request reaches Better
+ * Auth without the cookie copy (`withoutSessionCopy`).
+ */
+export const SESSION_COOKIE_CACHE_SECONDS = 60;
+
 export interface AuthDeps {
   db: Database;
   secret: string;
@@ -51,8 +62,9 @@ export interface RecoveryAuthDeps extends RecoveryPluginDeps {
 }
 
 /**
- * Better Auth for the manager. Built per request: Workers have
- * no process-level env, and the base URL comes from the request.
+ * Better Auth for the manager. Built from the request's bindings and origin
+ * (Workers have no process-level env, and the base URL comes from the
+ * request), and kept per isolate and origin (`server/auth.server.ts`).
  *
  * - Email + password, plus passkeys a signed-in user adds for themselves. Public
  *   sign-up is disabled. The owner is created by `/setup` and every further
@@ -65,6 +77,10 @@ export interface RecoveryAuthDeps extends RecoveryPluginDeps {
  *   100,000, so KV-backed auth state could be exhausted by unauthenticated
  *   traffic and lock everyone out. KV holds only caches written by cron.
  * - Cookies are Better Auth's defaults: HttpOnly, SameSite=Lax, Secure on https.
+ *   Besides the session token, a signed copy of the session answers page
+ *   reads for `SESSION_COOKIE_CACHE_SECONDS`; sessions ended elsewhere (a
+ *   reset password, a revoked session) stop reads within that long and
+ *   changes at once.
  * - The trusted origin is the manager's own origin only, and passkeys are bound
  *   to it too (see `passkeyRelyingParty`).
  * - A forgotten password is reset with a recovery code (always) or an emailed
@@ -78,6 +94,8 @@ export function createAuth({ db, secret, baseURL, recovery }: AuthDeps) {
     secret,
     trustedOrigins: [baseURL],
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
+    // Sessions still live in D1 only; the cookie is a signed, short-lived copy.
+    session: { cookieCache: { enabled: true, maxAge: SESSION_COOKIE_CACHE_SECONDS } },
     // Reset link tokens are kept only as SHA-256 hashes, so a copy of the
     // database cannot be used to reset anyone's password. Other verification
     // values (passkey challenges) stay as Better Auth stores them.

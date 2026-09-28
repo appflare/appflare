@@ -15,13 +15,6 @@ html {
   height: 1lh;
 }
 
-/* Agent prompts wrap to the page width instead of scrolling sideways. */
-.docs-prompt pre {
-  width: 100%;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 /*
  * Opening a dialog (search, the mobile menu) locks scrolling and pads the body
  * with an inline style to make up for the hidden scrollbar. The gutter above

@@ -98,6 +98,9 @@ describe("safeReturnPath", () => {
       "/catalog?repository=owner%2Frepo",
       "/install/cut",
       "/install/github/cloudflare/agents-starter",
+      // Setup's last step, where the wizard resumes at a new address.
+      "/setup?checklist=true",
+      "/setup?checklist=true&address=true&returnTo=%2Fapps%2Fx",
     ]) {
       expect(safeReturnPath(href), href).toBe(href);
     }
@@ -114,6 +117,10 @@ describe("safeReturnPath", () => {
       "/login",
       "/login?returnTo=%2Fcatalog",
       "/setup",
+      "/setup?returnTo=%2Fcatalog",
+      "/setup?checklist=false",
+      "/setup?checklist=true&next=//evil.com",
+      "/setup/x?checklist=true",
       "/forgot-password",
       "/api/health",
       "/catalog?next=//evil.com",

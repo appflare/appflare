@@ -3,6 +3,7 @@ import { CheckCircleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { serverErrorMessage } from "../auth/sign-in-errors";
 import { issuePasswordRecoveryCode, sendPasswordResetLink } from "../server/recovery.functions";
+import { BusyMark, busyActionProps } from "./busy-button";
 
 type Way = "link" | "code";
 
@@ -128,7 +129,8 @@ export function ResetPasswordDialog({
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel={outcome === null ? "Cancel" : "Close"}>
           {outcome === null ? (
-            <LayerDialog.Actions.Primary loading={pending} onClick={run}>
+            <LayerDialog.Actions.Primary onClick={run} {...busyActionProps(pending)}>
+              <BusyMark pending={pending} />
               {way === "link" ? "Send reset link" : "Show recovery code"}
             </LayerDialog.Actions.Primary>
           ) : (

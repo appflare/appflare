@@ -46,11 +46,14 @@ export async function getCfClient(
     fetch?: FetchLike;
     /** Also sees every request (`METHOD path -> status`), e.g. to put it in a job log. */
     onRequest?: (entry: RequestLog) => void;
+    /** The account id from `settings`, when the caller read it already. */
+    accountId?: string;
   } = {},
 ): Promise<CloudflareClient> {
   const token = env.CF_API_TOKEN;
   if (token === undefined || token.length === 0) throw new CfTokenNotConfiguredError("token");
-  const { account_id: accountId } = await readSettings(createDb(env.DB), [SETTING.accountId]);
+  const accountId =
+    opts.accountId ?? (await readSettings(createDb(env.DB), [SETTING.accountId])).account_id;
   if (accountId === undefined || accountId.length === 0) {
     throw new CfTokenNotConfiguredError("account");
   }

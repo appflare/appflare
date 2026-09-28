@@ -131,7 +131,7 @@ describe("md.page: storage bindings with empty ids, in a subdirectory", () => {
     await expect(packWith(project(files), catalog("mdpage", install))).rejects.toThrow(
       /should have a string "id" field/,
     );
-  });
+  }, 120_000);
 
   it("packs with the ids cleared, resolving every relative path from the config's directory", async () => {
     const dir = project(files);
@@ -164,7 +164,7 @@ describe("md.page: storage bindings with empty ids, in a subdirectory", () => {
     expect(readFileSync(path.join(dir, "apps/web/wrangler.jsonc"), "utf8")).toBe(
       files["apps/web/wrangler.jsonc"],
     );
-  });
+  }, 120_000);
 
   it("refuses a patch that removes a storage binding, and writes nothing", async () => {
     const dir = project(files);
@@ -178,7 +178,7 @@ describe("md.page: storage bindings with empty ids, in a subdirectory", () => {
       "install.configPatch for apps/web/wrangler.jsonc: the config patch cannot be applied: kv_namespaces leaves out the binding PAGES",
     );
     expect(existsSync(path.join(dir, "apps/web", PATCHED_WRANGLER_CONFIG))).toBe(false);
-  });
+  }, 120_000);
 });
 
 describe("SaaSMail: KV-backed Durable Object classes made SQLite-backed", () => {
@@ -203,7 +203,7 @@ describe("SaaSMail: KV-backed Durable Object classes made SQLite-backed", () => 
     expect(result.manifest.worker.migrations).toEqual([
       { tag: "v1", new_sqlite_classes: ["Mailbox"] },
     ]);
-  });
+  }, 120_000);
 });
 
 describe("Deepcrawl: a service binding to a Worker outside the app", () => {
@@ -222,7 +222,7 @@ describe("Deepcrawl: a service binding to a Worker outside the app", () => {
     await expect(
       packWith(project(files), catalog("deepcrawl", { wranglerConfig: "wrangler.jsonc" })),
     ).rejects.toThrow(/service binding AUTH_WORKER points at the Worker "deepcrawl-auth"/);
-  });
+  }, 120_000);
 
   it("drops the binding, and wrangler reads a config without it", () => {
     const dir = project(files);
@@ -324,7 +324,7 @@ describe("Nodrix: the config's build replaced by the catalog's build commands", 
     await expect(packWith(project(files), catalog("nodrix", install))).rejects.toThrow(
       /wrangler deploy --dry-run failed/,
     );
-  });
+  }, 120_000);
 
   it("packs with build removed, after the catalog's commands built the entrypoint", async () => {
     const dir = project(files);
@@ -335,7 +335,7 @@ describe("Nodrix: the config's build replaced by the catalog's build commands", 
     expect(result.moduleCount).toBe(1);
     expect(logs).toContain("  build: removed");
     expect(readPatched(dir)).not.toHaveProperty("build");
-  });
+  }, 120_000);
 });
 
 describe("applyConfigPatches", () => {

@@ -5,6 +5,7 @@ import { GITHUB_ACCESS_PLACE } from "../github/tokens";
 import { NOT_FROM_CATALOG } from "../installs/source-build-input";
 import { startSourceBuild } from "../installs/source-builds.functions";
 import type { SandboxReadiness } from "../sandbox/readiness";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { DocsLink } from "./docs-link";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner, MessageText } from "./message-text";
@@ -177,9 +178,9 @@ export function RepositoryBuildDialog({
           <LayerDialog.Actions.Primary
             type="submit"
             form={formId}
-            loading={pending}
-            disabled={!ready}
+            {...busyActionProps(pending, !ready)}
           >
+            <BusyMark pending={pending} />
             Build for review
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

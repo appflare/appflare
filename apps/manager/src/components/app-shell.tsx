@@ -122,14 +122,14 @@ function ShellHeader() {
   }
   return (
     <Sidebar.Header className="justify-between">
-      {/* The full logo alone, its mark in line with the menu's icons. */}
+      {/* The full logo alone, its mark in line with the menu's icons; the mark plays the loading motion once on hover. */}
       <Link
         href="/"
         variant="plain"
         className="flex items-center rounded-md px-2.5 py-1"
         onClick={onHomeClick}
       >
-        <Logo height={24} />
+        <Logo height={24} morphOnHover />
       </Link>
       {isMobile ? (
         <Sidebar.Close />

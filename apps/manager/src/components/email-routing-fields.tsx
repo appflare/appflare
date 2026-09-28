@@ -1,4 +1,4 @@
-import { Banner, Link, LinkButton, Loader, Select, Text } from "@cloudflare/kumo";
+import { Banner, Link, LinkButton, Select, Text } from "@cloudflare/kumo";
 import {
   EnvelopeSimpleIcon,
   InfoIcon,
@@ -12,6 +12,7 @@ import { EMAIL_ROUTING_PERMISSIONS } from "../installs/email-routing";
 import { getEmailZoneOptions, previewEmailRouting } from "../installs/email-routing.functions";
 import type { EmailRoutingPreview, EmailZoneOptions } from "../installs/email-routing.server";
 import { WORKER_NAME_PATTERN } from "../installs/install-input";
+import { AppflareLoader } from "./appflare-loader";
 import { settingsLink } from "./settings-links";
 import { useAccountId } from "./use-account-id";
 
@@ -123,7 +124,7 @@ export function EmailRoutingFields({
       </div>
       {options === null && loadError === null && (
         <div className="flex items-center gap-2">
-          <Loader size="sm" />
+          <AppflareLoader size="sm" />
           <Text variant="secondary">Reading the account's domains…</Text>
         </div>
       )}
@@ -155,7 +156,7 @@ export function EmailRoutingFields({
       )}
       {zoneId !== null && previewing && preview === null && (
         <div className="flex items-center gap-2">
-          <Loader size="sm" />
+          <AppflareLoader size="sm" />
           <Text variant="secondary">Reading Email Routing on {zoneName ?? "the domain"}…</Text>
         </div>
       )}

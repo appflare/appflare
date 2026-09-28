@@ -10,6 +10,7 @@ import {
 } from "../auth/passkey-errors";
 import { type PasskeyRow, removePasskey } from "../server/passkeys.functions";
 import { passkeyNameInput } from "../server/schemas";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Section, SectionBody, SectionEmpty, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
@@ -71,6 +72,14 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
                       ({p.provider})
                     </Text>
                   )}
+                  {p.worksAt !== undefined && p.worksAt !== null && (
+                    // Added at an address Appflare has since left: the browser offers it only there.
+                    <span className="block">
+                      <Text as="span" variant="secondary" size="sm">
+                        {passkeyWorksAt(p.worksAt)}
+                      </Text>
+                    </span>
+                  )}
                 </Table.Cell>
                 <Table.Cell>
                   <Badge variant={p.synced ? "primary" : "neutral"}>
@@ -96,6 +105,11 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
 
 function passkeyLabel(p: PasskeyRow): string {
   return p.name ?? p.provider ?? "Unnamed passkey";
+}
+
+/** The line under a passkey added at another address of Appflare's. */
+export function passkeyWorksAt(hostname: string): string {
+  return `Works at ${hostname}`;
 }
 
 /** Names the passkey, then hands over to the browser's passkey prompt. */
@@ -169,7 +183,8 @@ function AddPasskeyDialog() {
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">
-          <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+          <LayerDialog.Actions.Primary type="submit" form={formId} {...busyActionProps(pending)}>
+            <BusyMark pending={pending} />
             Create passkey
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

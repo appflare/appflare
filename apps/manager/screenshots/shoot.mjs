@@ -285,6 +285,15 @@ const shots = [
     height: 850,
   },
   {
+    // The front page of the site: the whole viewport, the sidebar with the
+    // logo and the list of apps included.
+    name: "landing-home",
+    path: "/",
+    expected: "Needs attention",
+    sidebar: true,
+    height: 900,
+  },
+  {
     name: "catalog-phone",
     path: "/catalog?q=statusbeam",
     expected: "Catalog",
@@ -330,10 +339,11 @@ try {
         "document.body.innerText.match(/Missing screenshot fixture: [A-Za-z0-9_]+/)?.[0] ?? null",
       );
       if (fixtureError) throw new Error(`${shot.name}: ${fixtureError}`);
+      const wholeWidth = Boolean(shot.width || shot.sidebar);
       let crop = {
-        left: shot.width ? 0 : 264,
+        left: wholeWidth ? 0 : 264,
         top: 0,
-        width: shot.cropWidth ?? (shot.width ? width : width - 264),
+        width: shot.cropWidth ?? (wholeWidth ? width : width - 264),
         height: shot.height,
       };
       if (shot.cropSelector) {

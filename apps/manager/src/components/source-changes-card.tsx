@@ -4,6 +4,7 @@ import { type FormEvent, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { checkSourceChanges, startSourceBuild } from "../installs/source-builds.functions";
 import type { SourceChanges } from "../installs/source-builds.server";
+import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { DocsLink } from "./docs-link";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
@@ -97,14 +98,14 @@ export function SourceChangesCard({
         {error !== null && <ErrorMessageBanner message={error} newTab />}
         {isAdmin && (
           <SectionFormActions>
-            <Button
+            <BusyButton
+              pending={checking}
               variant="secondary"
               icon={<MagnifyingGlassIcon />}
-              loading={checking}
               onClick={() => void check()}
             >
               Check for changes
-            </Button>
+            </BusyButton>
             <RebuildDialog install={install} target={changes?.latest ?? null} disabled={!canAct} />
           </SectionFormActions>
         )}
@@ -195,9 +196,9 @@ function RebuildDialog({
           <LayerDialog.Actions.Primary
             type="submit"
             form={formId}
-            loading={pending}
-            disabled={!costConfirmed}
+            {...busyActionProps(pending, !costConfirmed)}
           >
+            <BusyMark pending={pending} />
             Rebuild for review
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

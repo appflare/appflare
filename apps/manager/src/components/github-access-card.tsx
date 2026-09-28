@@ -6,7 +6,6 @@ import {
   Input,
   LayerDialog,
   Link,
-  Loader,
   SensitiveInput,
   Table,
   Text,
@@ -36,6 +35,8 @@ import {
   getGithubAccess,
 } from "../github/tokens.functions";
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
+import { AppflareLoader } from "./appflare-loader";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { FieldHelp } from "./field-label";
@@ -102,7 +103,7 @@ export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
       {state === null && loadError === null && (
         <SectionBody>
           <div className="flex items-center gap-2">
-            <Loader size="sm" />
+            <AppflareLoader size="sm" />
             <Text variant="secondary">Loading the tokens…</Text>
           </div>
         </SectionBody>
@@ -381,7 +382,8 @@ function AddTokenDialog({
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">
-          <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+          <LayerDialog.Actions.Primary type="submit" form={formId} {...busyActionProps(pending)}>
+            <BusyMark pending={pending} />
             Add token
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

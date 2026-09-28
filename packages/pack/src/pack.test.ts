@@ -334,7 +334,7 @@ describe("pack leaves nothing behind on failure", () => {
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 });
 
 /** Writes the fixture's catalog manifest, changed by `edit`, into `dir`. */

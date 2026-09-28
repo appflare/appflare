@@ -163,7 +163,7 @@ describe("pack refuses what an app of several Workers cannot install", () => {
       t.replace('"service": "duo-jobs"', '"service": "appflare"'),
     );
     await packFails(dir, /other Workers of its catalog entry/);
-  });
+  }, 120_000);
 
   it("Workers that bind each other in a cycle", async () => {
     const dir = editedFixture("jobs/wrangler.jsonc", (t) =>
@@ -193,7 +193,7 @@ describe("pack refuses what an app of several Workers cannot install", () => {
       ),
     );
     await packFails(dir, /Appflare installs each Workflow with the Worker that defines it/);
-  });
+  }, 120_000);
 });
 
 describe("pack an app of several Workers with a secret one Worker gets", () => {

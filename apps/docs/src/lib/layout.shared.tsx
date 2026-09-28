@@ -6,17 +6,24 @@ import { repositoryUrl, siteName } from "./shared.ts";
 /** The catalog's apps page, linked from every page. */
 export const appsLink: LinkItemType = { text: "Apps", url: "/apps/", active: "nested-url" };
 
-/** The documentation's home, linked from the catalog pages, which have no docs sidebar. */
-export const docsLink: LinkItemType = { text: "Docs", url: "/", active: "url" };
+/**
+ * Where the documentation starts, linked from the pages that have no docs
+ * sidebar: the front page and the catalog's pages. `/` is the front page.
+ */
+export const DOCS_HOME = "/start/overview/";
+
+export const docsLink: LinkItemType = { text: "Docs", url: DOCS_HOME, active: "url" };
 
 /**
- * Options every layout shares: the logo in the navigation bar, the link to
- * the apps, the GitHub link, and the theme switch.
+ * Options every layout shares: the logo in the navigation bar, which leads
+ * to the front page from every page, the link to the apps, the GitHub link,
+ * and the theme switch.
  */
 export function baseOptions(): BaseLayoutProps {
   return {
     links: [appsLink],
     nav: {
+      url: "/",
       title: (
         <>
           <img src={logoLight} alt={siteName} className="h-5 w-auto dark:hidden" />

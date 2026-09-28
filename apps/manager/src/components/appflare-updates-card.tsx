@@ -14,6 +14,7 @@ import {
   type ManagerUpdateState,
   startSelfUpdate,
 } from "../catalog/manager-releases.functions";
+import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { useJobStarted } from "./job-started";
@@ -62,9 +63,14 @@ export function AppflareUpdatesCard({
       ? latest
       : null;
   const checkNow = isAdmin ? (
-    <Button variant="secondary" icon={<ArrowsClockwiseIcon />} loading={checking} onClick={onCheck}>
+    <BusyButton
+      pending={checking}
+      variant="secondary"
+      icon={<ArrowsClockwiseIcon />}
+      onClick={onCheck}
+    >
       Check now
-    </Button>
+    </BusyButton>
   ) : null;
   return (
     <Section

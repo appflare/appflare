@@ -1,69 +1,47 @@
 import { env } from "cloudflare:workers";
-import {
-  appWorkers,
-  type CatalogAuthor,
-  type CatalogManifest,
-  catalogWorkerName,
-  hyperdriveDeclarations,
-  type IndexApp,
-} from "@appflare/schema";
+import type { IndexApp } from "@appflare/schema";
 import {
   type AppLicense,
   type AppPopularity,
   appPopularity,
-  freshStats,
 } from "@appflare/schema/catalog-display";
 import { createServerFn } from "@tanstack/react-start";
-import { asc, ne } from "drizzle-orm";
 import { z } from "zod";
-import type { AccountPlan } from "../account/plan";
-import { hasRole } from "../auth/roles";
 import type { CapabilitiesView } from "../capabilities/capabilities";
 import { readCapabilitiesView } from "../capabilities/capabilities.server";
-import { getCfClient } from "../cloudflare/client.server";
+import { invalidateScriptsCache } from "../cloudflare/scripts-cache.server";
 import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
-import { installs } from "../db/schema";
-import { readSettings, SETTING, writeSettings } from "../db/settings";
-import { distinctLabels } from "../installs/display-name";
-import { namedInstall } from "../installs/install-names.server";
-import { type InstallVarField, installVarFields } from "../installs/install-vars";
-import { suggestWorkerName } from "../installs/instance-names";
-import { entryBindings } from "../jobs/entry-workers";
-import { planBindings } from "../jobs/install/bindings";
 import { sandboxBinding } from "../sandbox/binding";
 import { type SandboxReadiness, sandboxReadinessOf } from "../sandbox/readiness";
 import { requireRole, requireSession } from "../server/auth.server";
-import { appFacts, NO_APP_FACTS } from "./app-facts";
-import { getCatalogManifest } from "./app-manifest.server";
-import { moduleBytes } from "./app-page";
+import { appFacts } from "./app-facts";
+import {
+  type ActiveInstalls,
+  activeInstalls,
+  type CatalogDetail,
+  currentStats,
+  type InstalledRef,
+  readCatalogEntry,
+  sourceBuildsOffered,
+} from "./catalog-entry.server";
 import { listCatalogRecords } from "./catalogs.server";
-import { cronTriggerCount } from "./cron-triggers";
 import { type FeaturedCard, featuredCard, pickFeatured } from "./featured";
 import { dismissedFeaturedIds, dismissFeaturedItem } from "./featured.server";
 import { CatalogError, catalogIndexUrl } from "./index.server";
 import { type AppMediaView, appMediaView } from "./media";
 import {
   type CatalogIndexRead,
-  findCatalogApp,
-  type ListedApp,
   readEnabledCatalogs,
   refreshCustomCatalog,
   refreshOfficialCatalog,
 } from "./merged.server";
 import type { AppPrimitives } from "./primitives";
-import { appKey, type CatalogSource, installAppKey, unsignedTierRefusal } from "./sources";
-import { readCatalogStats } from "./stats.server";
+import { appKey, type CatalogSource, unsignedTierRefusal } from "./sources";
+
+export type { CatalogDetail, InstalledRef } from "./catalog-entry.server";
 
 /** Catalog browsing. */
-
-export interface InstalledRef {
-  installId: string;
-  status: string;
-  workerName: string;
-  /** What the UI calls the install (`distinctLabels`). */
-  instanceName: string;
-}
 
 export interface CatalogListItem extends IndexApp {
   /** The app key (`sources.ts`): its page is `/catalog/<key>`. */
@@ -113,75 +91,6 @@ export interface CatalogList {
   repositoryBuilds: boolean;
   /** Sandbox builds: on, turned on by the first build that needs them, or what is missing. */
   sandbox: SandboxReadiness;
-}
-
-/**
- * Whether builds from a repository (and from source) are offered to this
- * viewer: admins on Workers Paid. With sandbox builds off the first build
- * turns them on, or its dialog says what is missing.
- */
-function sourceBuildsOffered(role: string | null | undefined, sandbox: SandboxReadiness): boolean {
-  return hasRole(role, "admin") && sandbox.state !== "needs-plan";
-}
-
-/** Popularity for the index's apps, when the index names a stats file and it is recent. */
-async function currentStats(indexStatsUrl: string | undefined) {
-  if (indexStatsUrl === undefined) return null;
-  return freshStats(await readCatalogStats(env.KV), new Date());
-}
-
-/** The official catalog's popularity, from its cached stats (the index names the file). */
-async function officialStats() {
-  const reads = await readEnabledCatalogs(env, { refreshOnMiss: false });
-  const official = reads.find((r) => r.source.official);
-  return currentStats(official?.ok === true ? official.index.stats : undefined);
-}
-
-interface ActiveInstalls {
-  /** By app key: an install counts only for the catalog it came from. */
-  bySlug: Map<string, InstalledRef[]>;
-  /** Worker names held by any active install, whatever the app. */
-  workerNames: string[];
-}
-
-async function activeInstalls(): Promise<ActiveInstalls> {
-  const rows = await createDb(env.DB)
-    .select({
-      id: installs.id,
-      slug: installs.app_slug,
-      catalogId: installs.catalog_id,
-      status: installs.status,
-      worker: installs.worker_name,
-      displayName: installs.display_name,
-      manifestJson: installs.manifest_json,
-    })
-    .from(installs)
-    .where(ne(installs.status, "uninstalled"))
-    .orderBy(asc(installs.installed_at));
-  const labels = distinctLabels(
-    rows.map((r) =>
-      namedInstall({
-        id: r.id,
-        app_slug: r.slug,
-        worker_name: r.worker,
-        display_name: r.displayName,
-        manifest_json: r.manifestJson,
-      }),
-    ),
-  );
-  const bySlug = new Map<string, InstalledRef[]>();
-  for (const r of rows) {
-    const key = installAppKey({ app_slug: r.slug, catalog_id: r.catalogId });
-    const list = bySlug.get(key) ?? [];
-    list.push({
-      installId: r.id,
-      status: r.status,
-      workerName: r.worker,
-      instanceName: labels.get(r.id) ?? r.worker,
-    });
-    bySlug.set(key, list);
-  }
-  return { bySlug, workerNames: rows.map((r) => r.worker) };
 }
 
 /**
@@ -320,6 +229,8 @@ export const dismissFeatured = createServerFn({ method: "POST" })
 export const refreshCatalog = createServerFn({ method: "POST" }).handler(
   async (): Promise<{ updatedAt: string | null; count: number; failed: string[] }> => {
     await requireRole("admin");
+    // A refresh asks for everything the catalog pages show to be read again.
+    invalidateScriptsCache();
     const records = (await listCatalogRecords(createDb(env.DB))).filter((r) => r.enabled);
     let count = 0;
     let updatedAt: string | null = null;
@@ -346,241 +257,8 @@ export const refreshCatalog = createServerFn({ method: "POST" }).handler(
   },
 );
 
-export interface CatalogDetail {
-  app: IndexApp | null;
-  /** The app key (`sources.ts`); what the install form and source builds send back. */
-  key: string | null;
-  /** The catalog that lists it; null when the app was not found. */
-  source: CatalogSource | null;
-  /** The entry's cover and screenshots (and icon), as manager paths. */
-  images: AppMediaView;
-  /** Stars and install counts; null when the catalog publishes none (or they are stale). */
-  popularity: AppPopularity | null;
-  /** The signed catalog manifest (form definitions, links, license). */
-  catalog: CatalogManifest | null;
-  /**
-   * Who wrote the app: the index's authors, else the catalog manifest's
-   * (the owner of its repository when it lists none); empty when neither loaded.
-   */
-  authors: CatalogAuthor[];
-  /** Resources the install will create, by binding (`kv`, `d1`, ...). */
-  creates: Array<{ kind: string; binding: string }>;
-  durableObjects: string[];
-  /** Why the index or the manifest could not be loaded. */
-  error: string | null;
-  /** Installs of this app that are not uninstalled, oldest first. */
-  instances: InstalledRef[];
-  /** Worker name to prefill: the catalog's, or the next free `<name>-N`. */
-  suggestedWorkerName: string | null;
-  /** The app only works under its catalog Worker name, so it installs once. */
-  fixedWorkerName: boolean;
-  /** The install form's settings, one per catalog var. */
-  varFields: InstallVarField[];
-  /**
-   * The account's workers.dev subdomain, to show `{{workerUrl}}` and `{{appUrl}}` filled in
-   * on the form; null when it is not known (the install fills it in).
-   */
-  subdomain: string | null;
-  /**
-   * False for a sandbox tier app: its bindings come from the wrangler config
-   * at the pinned commit, known only once it is built.
-   */
-  createsKnown: boolean;
-  /** This manager has its `SANDBOX` binding (sandbox tier apps need it). */
-  sandboxConnected: boolean;
-  /**
-   * Sandbox builds: on, turned on first by an install that needs them, or
-   * what is missing.
-   */
-  sandbox: SandboxReadiness;
-  /**
-   * Distinct cron triggers the artifact declares; 0 when none, or for a
-   * sandbox tier app, whose wrangler config is read only when it is built.
-   */
-  cronTriggers: number;
-  /**
-   * Bytes of Worker code the install uploads, across the app's Workers; null
-   * before a build (sandbox and self-deploying apps) or for an app that only
-   * serves static files.
-   */
-  moduleBytes: number | null;
-  /** The account's Workers plan in force: detected, else as Settings records it, else free. */
-  accountPlan: AccountPlan;
-  /** What the account capability probes found, for the requirement badges. */
-  capabilities: CapabilitiesView;
-  /** The Cloudflare primitives the app uses, as far as its manifests are known. */
-  primitives: AppPrimitives;
-  /** The catalog manifest's categories; empty when it could not be loaded. */
-  categories: string[];
-  /** The license from the index row, else the catalog manifest; null when neither states it. */
-  appLicense: AppLicense | null;
-  /**
-   * "Build from source at a commit" is offered: the viewer is an admin, the
-   * account is on Workers Paid, and the app does not deploy itself.
-   */
-  sourceBuilds: boolean;
-}
-
-/**
- * Worker names in the account, for admins only (members cannot install, so
- * the extra API call would be wasted). Best effort: the install checks again.
- */
-async function accountWorkerNames(role: string | null | undefined): Promise<string[]> {
-  if (!hasRole(role, "admin")) return [];
-  try {
-    return (await (await getCfClient(env)).workers.listScripts()).map((s) => s.id);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * The account's workers.dev subdomain: cached by the first install, else
- * looked up for admins (who can install) and cached the same way. Best
- * effort; null when unknown.
- */
-async function accountSubdomain(role: string | null | undefined): Promise<string | null> {
-  const orm = createDb(env.DB);
-  const cached = (await readSettings(orm, [SETTING.accountSubdomain])).account_subdomain;
-  if (cached) return cached;
-  if (!hasRole(role, "admin")) return null;
-  try {
-    const found = (await (await getCfClient(env)).workers.getAccountSubdomain()).subdomain;
-    await writeSettings(orm, { [SETTING.accountSubdomain]: found });
-    return found;
-  } catch {
-    return null;
-  }
-}
-
 /** Any signed-in user. */
 export const getCatalogEntry = createServerFn({ method: "GET" })
   // `slug` is the app key: the plain slug, or `<catalog>:<slug>` for a custom catalog.
   .validator(z.object({ slug: z.string().min(1).max(130) }))
-  .handler(async ({ data }): Promise<CatalogDetail> => {
-    const session = await requireSession();
-    const capabilities = await readCapabilitiesView(createDb(env.DB));
-    const accountPlan = capabilities.plan.plan;
-    const sandbox = sandboxReadinessOf(capabilities, sandboxBinding(env) !== undefined);
-    const empty = {
-      key: null,
-      source: null,
-      catalog: null,
-      authors: [],
-      creates: [],
-      durableObjects: [],
-      instances: [],
-      suggestedWorkerName: null,
-      fixedWorkerName: false,
-      varFields: [],
-      subdomain: null,
-      createsKnown: true,
-      sandboxConnected: sandboxBinding(env) !== undefined,
-      sandbox,
-      cronTriggers: 0,
-      moduleBytes: null,
-      accountPlan,
-      capabilities,
-      images: appMediaView(undefined, ""),
-      popularity: null,
-      sourceBuilds: false,
-      ...NO_APP_FACTS,
-    };
-    const read = await findCatalogApp(env, data.slug);
-    if (!read.ok) return { app: null, error: read.error, ...empty };
-    if (read.listed === null) return { app: null, error: null, ...empty };
-    const { app, key, source, trust }: ListedApp = read.listed;
-    const [active, stats] = await Promise.all([
-      activeInstalls(),
-      // Popularity and images are the official catalog's alone.
-      source.official ? officialStats() : Promise.resolve(null),
-    ]);
-    const instances = active.bySlug.get(key) ?? [];
-    const shown = {
-      key,
-      source,
-      images: appMediaView(source.official ? app.media : undefined, catalogIndexUrl(env)),
-      popularity: source.official ? appPopularity(stats, app.slug) : null,
-      ...appFacts(app),
-    };
-    // An added catalog's sandbox or self-deploying entry is trusted by its
-    // unsigned index alone: shown, never read or installed.
-    const unsigned = unsignedTierRefusal(source.id, app.tier);
-    if (unsigned !== null) {
-      return {
-        ...empty,
-        ...shown,
-        app,
-        authors: app.authors,
-        instances,
-        error: unsigned,
-      };
-    }
-    // Verified with the keys of the catalog that lists it, and no others.
-    const manifest = await getCatalogManifest(env, app, trust);
-    if (!manifest.ok) {
-      return {
-        ...empty,
-        ...shown,
-        app,
-        authors: app.authors,
-        instances,
-        error: manifest.error,
-      };
-    }
-    const { install } = manifest.catalog;
-    const fixed = install.fixedWorkerName;
-    const catalogName = catalogWorkerName(manifest.catalog);
-    const [accountNames, subdomain] = await Promise.all([
-      fixed ? [] : accountWorkerNames(session.user.role),
-      accountSubdomain(session.user.role),
-    ]);
-    const taken = fixed ? [] : [...active.workerNames, ...accountNames];
-    const plan =
-      manifest.manifest === null
-        ? null
-        : planBindings(
-            catalogName,
-            entryBindings(manifest.manifest),
-            hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
-            manifest.catalog.resources?.pipelines,
-          );
-    return {
-      ...empty,
-      ...shown,
-      ...appFacts(app),
-      app,
-      catalog: manifest.catalog,
-      sourceBuilds:
-        app.tier !== "self-deploying" && sourceBuildsOffered(session.user.role, sandbox),
-      authors: app.authors,
-      createsKnown: plan !== null,
-      creates:
-        plan?.resources.flatMap((r) => [
-          // A Pipelines sink's bucket that no R2 binding has is created with the stream.
-          ...(r.type === "pipelines" && r.pipeline.bucket.create
-            ? [{ kind: "r2" as const, binding: r.pipeline.bucket.key }]
-            : []),
-          { kind: r.kind, binding: r.binding },
-        ]) ?? [],
-      durableObjects: plan?.durableObjects.map((d) => d.className) ?? [],
-      cronTriggers:
-        manifest.manifest === null
-          ? 0
-          : appWorkers(manifest.manifest).reduce((n, w) => n + cronTriggerCount(w.worker.crons), 0),
-      moduleBytes:
-        manifest.manifest === null
-          ? null
-          : moduleBytes(appWorkers(manifest.manifest).map((w) => w.worker)) || null,
-      error: null,
-      instances,
-      suggestedWorkerName: fixed ? catalogName : suggestWorkerName(catalogName, taken),
-      fixedWorkerName: fixed,
-      // A sandbox tier app's wrangler config is read only when it is built, so
-      // before that every var is a text field.
-      varFields: installVarFields(
-        manifest.manifest ?? { catalog: manifest.catalog, worker: { bindings: [] } },
-      ),
-      subdomain,
-    };
-  });
+  .handler(async ({ data }): Promise<CatalogDetail> => readCatalogEntry(data.slug, requireSession));

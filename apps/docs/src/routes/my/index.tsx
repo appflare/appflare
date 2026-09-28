@@ -24,7 +24,8 @@ export const Route = createFileRoute("/my/")({
       title: `Your Appflare | ${siteName}`,
       description: "Choose the Appflare that Install buttons on this site open.",
       url: `${SITE_URL}${myPath}`,
-      image: `${SITE_URL}${ogImagePath(["apps"])}`,
+      // No card of its own: the site's card.
+      image: `${SITE_URL}${ogImagePath([])}`,
     }),
   component: MyPage,
 });

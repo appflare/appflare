@@ -7,6 +7,7 @@ import {
   clientReplaced,
   followJob,
   type LiveJobState,
+  lastLogIdOf,
   type SwitchJob,
   switchAnswer,
   switchTargetOf,
@@ -47,13 +48,21 @@ export function useLiveJob(
   const { job } = state;
   const unread = job === undefined;
   const active = jobId !== null && (unread || isActive(job));
+  // The last log line shown, so a poll asks only for newer ones.
+  const lastLogId = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    lastLogId.current = lastLogIdOf(job);
+  }, [job]);
   useEffect(() => {
     if (!active || jobId === null) return;
     const id = jobId;
     let cancelled = false;
     async function poll() {
       try {
-        const next = await getJob({ data: { jobId: id } });
+        const afterLogId = lastLogId.current;
+        const next = await getJob({
+          data: afterLogId === undefined ? { jobId: id } : { jobId: id, afterLogId },
+        });
         if (!cancelled) setStored((s) => acceptPoll(s, id, next));
       } catch {
         // A missed poll is retried on the next tick.

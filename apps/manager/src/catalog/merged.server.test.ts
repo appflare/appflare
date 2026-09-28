@@ -10,7 +10,12 @@ import { migrations } from "../db/migrations/index";
 import { type ArtifactFixture, buildArtifactFixture } from "../test/artifact-fixture";
 import { getAppManifest, manifestCacheKey } from "./app-manifest.server";
 import { addCatalogCore, setCatalogEnabledCore } from "./catalog-admin.server";
-import { CatalogTrustError, catalogTrust, OFFICIAL_TRUST } from "./catalogs.server";
+import {
+  CatalogTrustError,
+  catalogTrust,
+  listCatalogRecords,
+  OFFICIAL_TRUST,
+} from "./catalogs.server";
 import { CATALOG_INDEX_KEY } from "./index.server";
 import {
   catalogLookup,
@@ -18,6 +23,7 @@ import {
   lookupOf,
   readCachedListing,
   readEnabledCatalogs,
+  refreshMissingInBackground,
 } from "./merged.server";
 import { refreshEnabledCatalogs } from "./refresh.server";
 
@@ -59,6 +65,29 @@ async function addAcme(release: ArtifactFixture) {
 beforeEach(async () => {
   await reset();
   await createMigrator(migrations).ensure(env.DB);
+});
+
+describe("a catalog missing from the cache on a page load", () => {
+  it("is fetched after the answer, once at a time, and read from the cache next time", async () => {
+    const release = await buildArtifactFixture();
+    const w = world(release, { [OFFICIAL_URL]: indexOf([release.index]) });
+    const reads = await readEnabledCatalogs(mergedEnv(), { refreshOnMiss: false });
+    expect(reads.map((r) => r.ok)).toEqual([false]);
+    expect(w.hits).toEqual([]);
+    const records = await listCatalogRecords(createDb(env.DB));
+    const started: Promise<unknown>[] = [];
+    const background = (p: Promise<unknown>) => started.push(p);
+    refreshMissingInBackground(mergedEnv(), reads, records, background, { fetch: w.fetch });
+    // A second page load while it runs starts nothing more.
+    refreshMissingInBackground(mergedEnv(), reads, records, background, { fetch: w.fetch });
+    expect(started).toHaveLength(1);
+    await Promise.all(started);
+    expect(w.hits).toEqual([OFFICIAL_URL]);
+    const again = await readEnabledCatalogs(mergedEnv(), { refreshOnMiss: false });
+    expect(again.map((r) => r.ok)).toEqual([true]);
+    refreshMissingInBackground(mergedEnv(), again, records, background, { fetch: w.fetch });
+    expect(started).toHaveLength(1);
+  });
 });
 
 describe("per-catalog verification", () => {
@@ -144,7 +173,11 @@ describe("the merged catalog", () => {
       "cut",
     ]);
     expect(await readCachedListing(mergedEnv(), "acme", "cut")).toBeNull();
-    expect(await findCatalogApp(mergedEnv(), "acme:cut")).toEqual({ ok: true, listed: null });
+    expect(await findCatalogApp(mergedEnv(), "acme:cut")).toEqual({
+      ok: true,
+      listed: null,
+      index: null,
+    });
   });
 
   it("refreshes every enabled catalog once, and skips one that is off", async () => {

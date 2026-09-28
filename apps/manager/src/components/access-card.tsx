@@ -1,13 +1,4 @@
-import {
-  Badge,
-  Banner,
-  Button,
-  Checkbox,
-  LayerDialog,
-  LinkButton,
-  Loader,
-  Text,
-} from "@cloudflare/kumo";
+import { Badge, Banner, Button, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
 import {
   ArrowsClockwiseIcon,
   CheckCircleIcon,
@@ -29,6 +20,8 @@ import {
   turnOffAccess,
   turnOnAccess,
 } from "../server/access.functions";
+import { AppflareLoader } from "./appflare-loader";
+import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { Section, SectionBody } from "./section";
@@ -139,14 +132,14 @@ function EnabledDetails({ status, isAdmin }: { status: AccessStatus; isAdmin: bo
       )}
       {isAdmin && (
         <div className="flex flex-wrap justify-end gap-2">
-          <Button
+          <BusyButton
+            pending={syncing}
             variant="secondary"
             icon={<ArrowsClockwiseIcon />}
-            loading={syncing}
             onClick={onResync}
           >
             Re-sync admins
-          </Button>
+          </BusyButton>
           <TurnOffDialog domain={status.domain} />
         </div>
       )}
@@ -229,7 +222,7 @@ function TurnOnDialog({ viewerEmail }: { viewerEmail: string }) {
 
             {state.step === "checking" && error === null && (
               <div className="flex items-center gap-3">
-                <Loader size="sm" />
+                <AppflareLoader size="sm" />
                 <Text variant="secondary">Checking the token and the Zero Trust organization…</Text>
               </div>
             )}
@@ -284,10 +277,10 @@ function TurnOnDialog({ viewerEmail }: { viewerEmail: string }) {
         {ready && (
           <LayerDialog.Actions dismissLabel="Cancel">
             <LayerDialog.Actions.Primary
-              loading={pending}
-              disabled={!confirmed}
               onClick={() => void onTurnOn()}
+              {...busyActionProps(pending, !confirmed)}
             >
+              <BusyMark pending={pending} />
               Turn on
             </LayerDialog.Actions.Primary>
           </LayerDialog.Actions>

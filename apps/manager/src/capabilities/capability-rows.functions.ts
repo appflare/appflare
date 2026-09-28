@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { CfTokenNotConfiguredError } from "../cloudflare/client.server";
+import { invalidateScriptsCache } from "../cloudflare/scripts-cache.server";
 import { createDb } from "../db/client";
 import { requireRole, requireSession } from "../server/auth.server";
 import { refreshCapabilitiesWithStoredToken } from "./capabilities.server";
@@ -22,6 +23,8 @@ export const getCapabilityRowsData = createServerFn({ method: "GET" }).handler(
 export const checkCapabilitiesAgain = createServerFn({ method: "POST" }).handler(
   async (): Promise<CapabilityRowsData> => {
     await requireRole("admin");
+    // Checking the account again reads its Workers again too (the catalog pages keep their names).
+    invalidateScriptsCache();
     const db = createDb(env.DB);
     try {
       await refreshCapabilitiesWithStoredToken(env, db);

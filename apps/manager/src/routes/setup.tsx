@@ -1,4 +1,4 @@
-import { Banner, Button, ClipboardText, Collapsible, Input, Loader, Text } from "@cloudflare/kumo";
+import { Banner, Button, ClipboardText, Collapsible, Input, Text } from "@cloudflare/kumo";
 import { CheckCircleIcon, InfoIcon, SignOutIcon, WarningIcon } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useReducer, useState } from "react";
@@ -8,19 +8,28 @@ import { serverErrorMessage } from "../auth/sign-in-errors";
 import { getCapabilityRowsData } from "../capabilities/capability-rows.functions";
 import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
 import { SetupCapabilities } from "../capabilities/capability-section";
+import { AppflareLoader } from "../components/appflare-loader";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
+import { BusyButton } from "../components/busy-button";
 import { SetupTokenForm, type SetupTokenSaved } from "../components/cloudflare-token-form";
 import { MessageText } from "../components/message-text";
 import { PasswordInput } from "../components/password-input";
 import { afterSignIn, returnToSearchSchema, withReturnTo } from "../components/return-to";
 import {
+  type AddressOptions,
+  getManagerAddressOptions,
+} from "../domains/manager-address.functions";
+import { AddressSkippedNote, AddressStep } from "../onboarding/address-step";
+import {
   initialWizardState,
+  offersAddressStep,
   type SavedTokenSummary,
+  setupResumePath,
   type WizardEvent,
   type WizardState,
   wizardCopy,
+  wizardProgress,
   wizardReducer,
-  wizardStepNumber,
 } from "../onboarding/wizard";
 import { enterSetup } from "../server/gate.functions";
 import { MIN_PASSWORD_LENGTH } from "../server/schemas";
@@ -37,12 +46,17 @@ import { loadAppflareVersion } from "../server/version.functions";
  * Step 1 (anyone, before any user exists): paste a Cloudflare API token for
  * the account this Appflare runs in; one Continue verifies and saves it, and
  * saving gives this browser the right to finish setup. Step 2 (only that
- * browser): create the owner, who is signed in at once. Step 3: what the
- * account can run (the same rows as on Your account), then Finish goes home. Once the owner exists,
- * everyone else is sent to sign in.
+ * browser): create the owner, who is signed in at once. Then, only when the
+ * account has an active zone, where Appflare should live: its workers.dev
+ * address or a domain of the account (moving there ends at the sign-in page
+ * of the new address, which returns here). Last: what the account can run
+ * (the same rows as on Your account), then Finish goes home. Once the owner
+ * exists, everyone else is sent to sign in.
  *
- * `?checklist=true` marks step 3, so a reload stays there. `?token=` from
- * older installers is accepted and ignored; it is removed from the address bar.
+ * `?checklist=true` marks the last step, so a reload stays there (a reload
+ * on the address step goes on to it too); `?address=true` says the address
+ * step was shown, so the step indicator keeps counting four steps. `?token=`
+ * from older installers is accepted and ignored; it is removed from the address bar.
  * `?returnTo=` is the page a visitor was sent here from: Finish (or setup
  * being done already) opens it instead of home, and sign-in carries it on.
  */
@@ -51,20 +65,28 @@ export const Route = createFileRoute("/setup")({
   validateSearch: returnToSearchSchema.extend({
     token: z.string().optional(),
     checklist: z.boolean().optional(),
+    address: z.boolean().optional().catch(undefined),
   }),
   // No loaderDeps: moving to step 3 sets `?checklist=true` without a new match
   // (which would suspend and remount the page). The loader runs once per visit.
   shouldReload: false,
   loader: async ({ location }) => {
     stripTokenFromAddressBar();
-    const { checklist, returnTo } = location.search as { checklist?: boolean; returnTo?: string };
+    const { checklist, address, returnTo } = location.search as {
+      checklist?: boolean;
+      address?: boolean;
+      returnTo?: string;
+    };
     // Redirects to /login (users exist, no session) or returnTo or / (setup complete).
     const [gate, version] = await Promise.all([
       enterSetup({ data: { checklist: checklist === true, returnTo } }),
       loadAppflareVersion(),
     ]);
     const checklistData = gate.step === "checklist" ? await getCapabilityRowsData() : null;
-    return { initial: initialWizardState(gate.step, checklistData), version };
+    return {
+      initial: initialWizardState(gate.step, checklistData, { addressShown: address === true }),
+      version,
+    };
   },
   component: SetupPage,
 });
@@ -96,12 +118,12 @@ function SetupPage() {
   }, [loaded.initial]);
 
   const copy = wizardCopy(state);
-  const step = wizardStepNumber(state);
+  const progress = wizardProgress(state);
   return (
     <AuthLayout
       width="wide"
       placement="top"
-      {...(step === null ? {} : { step })}
+      {...(progress === null ? {} : { step: progress.step, stepCount: progress.count })}
       title={copy.title}
       description={<MessageText message={copy.description} newTab />}
       version={loaded.version}
@@ -135,14 +157,25 @@ function StepContent({
     case "create-owner":
       return (
         <CreateOwnerStep
-          onCreated={(checklist) => dispatch({ type: "owner-created", checklist })}
+          onCreated={(checklist, address) =>
+            dispatch({ type: "owner-created", checklist, address })
+          }
           resync={resync}
+        />
+      );
+    case "address":
+      return (
+        <SetupAddressStep
+          options={state.options}
+          accountId={state.checklist.view.accountId}
+          onDone={() => dispatch({ type: "address-done" })}
         />
       );
     case "checklist":
       return (
         <ChecklistStep
           data={state.checklist}
+          addressUnreadable={state.addressUnreadable === true}
           onRechecked={(checklist) => dispatch({ type: "checklist-loaded", checklist })}
         />
       );
@@ -165,12 +198,45 @@ function StepContent({
   }
 }
 
-/** Moves the address to step 3, so a reload stays there, without a new route match. */
+/**
+ * Moves the address bar to the last step, so a reload goes there, without a
+ * new route match. `address` records that the address step is (or was)
+ * shown, so the step indicator keeps counting it.
+ */
 function useShowChecklistInAddress() {
   const router = useRouter();
+  const search = Route.useSearch();
+  return ({ address }: { address?: boolean } = {}) =>
+    router.navigate({
+      to: "/setup",
+      search: {
+        checklist: true,
+        ...((address ?? search.address) === true ? { address: true } : {}),
+        returnTo: search.returnTo,
+      },
+      replace: true,
+    });
+}
+
+/** Where Appflare should live, shown only when the account has an active zone. */
+function SetupAddressStep({
+  options,
+  accountId,
+  onDone,
+}: {
+  options: AddressOptions;
+  accountId: string | null;
+  onDone: () => void;
+}) {
   const { returnTo } = Route.useSearch();
-  return () =>
-    router.navigate({ to: "/setup", search: { checklist: true, returnTo }, replace: true });
+  return (
+    <AddressStep
+      options={options}
+      accountId={accountId}
+      returnTo={setupResumePath(returnTo)}
+      onDone={onDone}
+    />
+  );
 }
 
 /** How often the redeploy wait asks `/api/health` whether the new version serves. */
@@ -200,7 +266,7 @@ function RedeployingStep({ onReady }: { onReady: () => void }) {
   }, [onReady]);
   return (
     <div className="flex items-center gap-2">
-      <Loader size="sm" />
+      <AppflareLoader size="sm" />
       <Text>Waiting for the new version to answer…</Text>
     </div>
   );
@@ -211,7 +277,7 @@ function CreateOwnerStep({
   onCreated,
   resync,
 }: {
-  onCreated: (checklist: CapabilityRowsData) => void;
+  onCreated: (checklist: CapabilityRowsData, address: AddressOptions | null) => void;
   resync: () => Promise<void>;
 }) {
   const router = useRouter();
@@ -241,9 +307,13 @@ function CreateOwnerStep({
       await router.navigate({ href: withReturnTo("/login", returnTo) });
       return;
     }
-    const checklist = await getCapabilityRowsData();
-    onCreated(checklist);
-    await showChecklist();
+    // The zones decide whether the address step shows; without them, it does not.
+    const [checklist, address] = await Promise.all([
+      getCapabilityRowsData(),
+      getManagerAddressOptions().catch(() => null),
+    ]);
+    onCreated(checklist, address);
+    await showChecklist({ address: offersAddressStep(address) });
   }
 
   return (
@@ -259,9 +329,9 @@ function CreateOwnerStep({
         maxLength={128}
         description={`At least ${MIN_PASSWORD_LENGTH} characters.`}
       />
-      <Button type="submit" variant="primary" className={FULL_WIDTH_ACTION} loading={pending}>
+      <BusyButton pending={pending} type="submit" variant="primary" className={FULL_WIDTH_ACTION}>
         Create owner account
-      </Button>
+      </BusyButton>
     </form>
   );
 }
@@ -269,15 +339,19 @@ function CreateOwnerStep({
 /** Step 3: what the account can run, then Finish (home, or the page asked for first). */
 function ChecklistStep({
   data,
+  addressUnreadable,
   onRechecked,
 }: {
   data: CapabilityRowsData;
+  /** The address step was skipped because the domains could not be read. */
+  addressUnreadable: boolean;
   onRechecked: (data: CapabilityRowsData) => void;
 }) {
   const router = useRouter();
   const { returnTo } = Route.useSearch();
   return (
     <>
+      {addressUnreadable && <AddressSkippedNote />}
       <SetupCapabilities data={data} onChanged={onRechecked} />
       <Button
         variant="primary"
@@ -309,15 +383,15 @@ function WaitForAdminStep() {
         title="An admin needs to finish setup"
         description="Appflare needs a Cloudflare API token before anyone can use it. Ask an admin to sign in and add one."
       />
-      <Button
+      <BusyButton
+        pending={signingOut}
         variant="secondary"
         icon={<SignOutIcon />}
         className={FULL_WIDTH_ACTION}
-        loading={signingOut}
         onClick={signOut}
       >
         Sign out
-      </Button>
+      </BusyButton>
     </>
   );
 }
@@ -376,7 +450,7 @@ function TokenSavedStep({
             {hasSecret ? (
               <CheckCircleIcon weight="fill" className="text-kumo-success" />
             ) : (
-              <Loader size="sm" />
+              <AppflareLoader size="sm" />
             )}
           </span>
           <Text>
@@ -415,14 +489,14 @@ function TokenSavedStep({
           />
         )}
       </div>
-      <Button
+      <BusyButton
+        pending={continuing}
         variant="primary"
         className={FULL_WIDTH_ACTION}
-        loading={continuing}
         onClick={() => void onContinue()}
       >
         Continue
-      </Button>
+      </BusyButton>
     </>
   );
 }

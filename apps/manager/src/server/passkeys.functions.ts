@@ -1,6 +1,13 @@
+import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
-import { listOwnPasskeys, type PasskeyRow, removeOwnPasskey } from "../auth/passkeys.server";
+import {
+  listOwnPasskeys,
+  type PasskeyRow,
+  removeOwnPasskey,
+  withPasskeyHosts,
+} from "../auth/passkeys.server";
+import { readPasskeyHosts } from "../domains/manager-address.server";
 import { currentAuth, requireSession } from "./auth.server";
 import { removePasskeyInput } from "./schemas";
 import { authErrorMessage } from "./users.server";
@@ -12,11 +19,20 @@ export type { PasskeyRow } from "../auth/passkeys.server";
  * passkeys: a passkey is a way to sign in to their own account, not a change to
  * the manager. Adding one needs the browser's WebAuthn prompt, so that goes
  * through the auth client directly (`authClient.passkey.addPasskey`).
+ *
+ * A passkey added at an address Appflare has since left names that address
+ * (`worksAt`): the browser offers it only there.
  */
 export const listPasskeys = createServerFn({ method: "GET" }).handler(
   async (): Promise<PasskeyRow[]> => {
     await requireSession();
-    return listOwnPasskeys(currentAuth(), getRequest().headers);
+    const request = getRequest();
+    const rows = await listOwnPasskeys(currentAuth(), request.headers);
+    const hosts = await readPasskeyHosts(
+      env.DB,
+      rows.map((r) => r.id),
+    );
+    return withPasskeyHosts(rows, hosts, new URL(request.url).hostname);
   },
 );
 

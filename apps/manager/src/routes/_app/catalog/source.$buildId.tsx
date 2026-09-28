@@ -1,15 +1,4 @@
-import {
-  Badge,
-  Banner,
-  Button,
-  Checkbox,
-  Empty,
-  Link,
-  LinkButton,
-  Loader,
-  Table,
-  Text,
-} from "@cloudflare/kumo";
+import { Badge, Banner, Checkbox, Empty, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   ArrowRightIcon,
@@ -27,6 +16,8 @@ import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capabili
 import { cronTriggerCount } from "../../../catalog/cron-triggers";
 import { analyticsEngineRefusal } from "../../../catalog/requirement-checks";
 import { requirementSentence } from "../../../catalog/requirements";
+import { AppflareLoader } from "../../../components/appflare-loader";
+import { BusyButton } from "../../../components/busy-button";
 import { PrimitiveBadges } from "../../../components/catalog-badges";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
@@ -154,14 +145,14 @@ function DiscardButton({ buildId }: { buildId: string }) {
   }
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      <Button
+      <BusyButton
+        pending={pending}
         variant="secondary-destructive"
         icon={<TrashIcon />}
-        loading={pending}
         onClick={() => void discard()}
       >
         Throw away
-      </Button>
+      </BusyButton>
       {error !== null && (
         <Text as="span" variant="error" size="sm">
           {error}
@@ -178,7 +169,7 @@ function BuildState({ build, isAdmin }: { build: SourceBuildView; isAdmin: boole
       return (
         <Banner
           variant="secondary"
-          icon={<Loader size="sm" />}
+          icon={<AppflareLoader size="sm" />}
           title="Building in your sandbox Worker"
           description="This page shows the review once the build is done. Its log shows each step as it runs."
           action={
@@ -748,15 +739,15 @@ function UpdateFromBuild({
           )}
           {error !== null && <ErrorMessageBanner message={error} newTab />}
           <div className="flex justify-end">
-            <Button
+            <BusyButton
+              pending={pending}
               type="submit"
               variant="primary"
               icon={<ArrowCircleUpIcon />}
-              loading={pending}
               disabled={!ready}
             >
               Update
-            </Button>
+            </BusyButton>
           </div>
         </form>
       </SectionBody>

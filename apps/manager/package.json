@@ -8,6 +8,7 @@
     "dev:init": "node scripts/init-dev-vars.mjs",
     "build": "vite build && node scripts/release-wrangler-config.mjs",
     "preview": "vite preview",
+    "test:dist": "node scripts/check-no-kumo-ring.mjs",
     "typecheck": "tsc --noEmit",
     "screenshots:check": "biome check screenshots && tsc --noEmit --project screenshots/tsconfig.json",
     "lint": "biome check .",

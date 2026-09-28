@@ -1,5 +1,7 @@
 import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
+import { returnToSearch } from "../components/return-to";
 import { settingsPlace } from "../components/settings-links";
+import type { AddressOptions } from "../domains/manager-address.server";
 import type { SetupStep as GateStep } from "../server/gate";
 
 /**
@@ -25,7 +27,22 @@ export type WizardState =
   | { step: "connect" }
   | { step: "redeploying" }
   | { step: "create-owner" }
-  | { step: "checklist"; checklist: CapabilityRowsData }
+  /**
+   * Where Appflare should live, shown only when the account has an active
+   * zone; what the account can run is read already and waits.
+   */
+  | { step: "address"; options: AddressOptions; checklist: CapabilityRowsData }
+  /**
+   * `addressShown`: the address step came before, so setup has four steps.
+   * `addressUnreadable`: it was skipped because the domains could not be
+   * read, which the step says in one line ({@link ADDRESS_UNREADABLE_NOTE}).
+   */
+  | {
+      step: "checklist";
+      checklist: CapabilityRowsData;
+      addressShown?: boolean;
+      addressUnreadable?: boolean;
+    }
   /** An admin whose manager has users but no token yet. */
   | { step: "cloudflare-token" }
   /** That admin's token is saved; waiting for the redeployed Worker to hold it. */
@@ -37,8 +54,13 @@ export type WizardEvent =
   | { type: "connected"; next: "create-owner" | "redeploying" }
   /** A version with the auth secret serves. */
   | { type: "auth-ready" }
-  /** The owner exists and is signed in; what the account can run was read. */
-  | { type: "owner-created"; checklist: CapabilityRowsData }
+  /**
+   * The owner exists and is signed in; what the account can run was read,
+   * and the zones Appflare could move to (null when they could not be read).
+   */
+  | { type: "owner-created"; checklist: CapabilityRowsData; address: AddressOptions | null }
+  /** The address step is done: Appflare stays where it is, now or for later. */
+  | { type: "address-done" }
   /** An admin saved the token outside first-run setup. */
   | { type: "token-saved"; saved: SavedTokenSummary }
   /** What the account can run was read (after the token-saved wait, or checked again). */
@@ -49,14 +71,42 @@ export type WizardEvent =
 /**
  * The state a visit starts in, from the server's gate and, for the last
  * step, what the account can run, as the loader read it with the gate.
+ * `addressShown` says the address step came before the last one (the page
+ * reloaded, or the wizard resumed at Appflare's new address).
  */
 export function initialWizardState(
   step: GateStep,
   checklist: CapabilityRowsData | null,
+  { addressShown = false }: { addressShown?: boolean } = {},
 ): WizardState {
   if (step !== "checklist") return { step };
   if (checklist === null) throw new Error("The last setup step needs what the account can run.");
-  return { step, checklist };
+  return addressShown ? { step, checklist, addressShown } : { step, checklist };
+}
+
+/**
+ * Setup's last step as the page to return to after signing in at
+ * Appflare's new address (`?address=true`: the address step was shown),
+ * carrying the page this visit should end on.
+ */
+export function setupResumePath(returnTo: string | undefined): string {
+  const params = new URLSearchParams({
+    checklist: "true",
+    address: "true",
+    ...returnToSearch(returnTo),
+  });
+  return `/setup?${params.toString()}`;
+}
+
+/** The last step's line when the address step was skipped because the domains could not be read. */
+export const ADDRESS_UNREADABLE_NOTE = `Could not read your domains; you can set Appflare's address later in ${settingsPlace("domains", "address", "Domains settings")}.`;
+
+/**
+ * Whether setup asks where Appflare should live: only when the account has
+ * an active zone to move to.
+ */
+export function offersAddressStep(options: AddressOptions | null): options is AddressOptions {
+  return options !== null && options.zones.length > 0;
 }
 
 /**
@@ -72,35 +122,52 @@ export function wizardReducer(state: WizardState, event: WizardEvent): WizardSta
     case "auth-ready":
       return state.step === "redeploying" ? { step: "create-owner" } : state;
     case "owner-created":
-      return state.step === "create-owner"
-        ? { step: "checklist", checklist: event.checklist }
+      if (state.step !== "create-owner") return state;
+      if (offersAddressStep(event.address)) {
+        return { step: "address", options: event.address, checklist: event.checklist };
+      }
+      return event.address === null
+        ? { step: "checklist", checklist: event.checklist, addressUnreadable: true }
+        : { step: "checklist", checklist: event.checklist };
+    case "address-done":
+      return state.step === "address"
+        ? { step: "checklist", checklist: state.checklist, addressShown: true }
         : state;
     case "token-saved":
       return state.step === "cloudflare-token"
         ? { step: "token-saved", saved: event.saved }
         : state;
     case "checklist-loaded":
-      return state.step === "token-saved" || state.step === "checklist"
+      if (state.step === "checklist") return { ...state, checklist: event.checklist };
+      return state.step === "token-saved"
         ? { step: "checklist", checklist: event.checklist }
         : state;
   }
 }
 
-export type WizardStepNumber = 1 | 2 | 3;
+/** The step indicator: this screen's step, and how many steps this run of setup has. */
+export interface WizardProgress {
+  step: 1 | 2 | 3 | 4;
+  count: 3 | 4;
+}
 
 /**
- * The step indicator's position, or null for screens outside the three steps
- * (a member waiting for an admin, an admin adding a missing token).
+ * The step indicator's position, or null for screens outside the steps (a
+ * member waiting for an admin, an admin adding a missing token). Setup has
+ * three steps, and four once the address step is shown: it counts only
+ * when the account has a domain, which is known once the owner exists.
  */
-export function wizardStepNumber(state: WizardState): WizardStepNumber | null {
+export function wizardProgress(state: WizardState): WizardProgress | null {
   switch (state.step) {
     case "connect":
-      return 1;
+      return { step: 1, count: 3 };
     case "redeploying":
     case "create-owner":
-      return 2;
+      return { step: 2, count: 3 };
+    case "address":
+      return { step: 3, count: 4 };
     case "checklist":
-      return 3;
+      return state.addressShown === true ? { step: 4, count: 4 } : { step: 3, count: 3 };
     case "cloudflare-token":
     case "token-saved":
     case "wait-for-admin":
@@ -132,6 +199,11 @@ export function wizardCopy(state: WizardState): WizardCopy {
         title: "Create the owner account",
         description:
           "The owner installs apps, manages users, and is the only one who can hand ownership over.",
+      };
+    case "address":
+      return {
+        title: "Where should Appflare live?",
+        description: `Appflare answers at its workers.dev address. It can live on a domain of yours instead, now or later in ${settingsPlace("domains", "address", "Domains settings")}.`,
       };
     case "checklist":
       return {

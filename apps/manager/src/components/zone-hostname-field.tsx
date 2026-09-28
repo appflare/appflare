@@ -19,6 +19,7 @@ export function ZoneHostnameField({
   disabled,
   hint,
   wildcard,
+  subject = "The app",
 }: {
   /** The chosen zone; null while none is chosen (the field is then disabled). */
   zoneName: string | null;
@@ -32,12 +33,14 @@ export function ZoneHostnameField({
   hint?: string;
   /** The app answers on every name under the hostname too (a wildcard domain). */
   wildcard?: boolean;
+  /** What answers at the hostname, in the sentence under the field. */
+  subject?: string;
 }) {
   const answers =
     checked?.ok === true
       ? wildcard === true
-        ? `The app answers at https://${checked.hostname} and on every name under it (${wildcardPattern(checked.hostname)}).`
-        : `The app answers at https://${checked.hostname}.`
+        ? `${subject} answers at https://${checked.hostname} and on every name under it (${wildcardPattern(checked.hostname)}).`
+        : `${subject} answers at https://${checked.hostname}.`
       : null;
   const description =
     zoneName === null

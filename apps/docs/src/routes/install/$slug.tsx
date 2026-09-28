@@ -20,7 +20,7 @@ export const Route = createFileRoute("/install/$slug")({
     const { findApp, installApp } = await import("../../catalog/data.ts");
     const app = findApp(params.slug);
     if (!app) throw notFound();
-    return { app: installApp(app), cover: app.cover };
+    return { app: installApp(app) };
   },
   head: ({ loaderData }) =>
     loaderData
@@ -28,8 +28,7 @@ export const Route = createFileRoute("/install/$slug")({
           title: `Install ${loaderData.app.name} | ${siteName}`,
           description: loaderData.app.pitch,
           url: `${SITE_URL}${installPath(loaderData.app.slug)}`,
-          // The app page's card, so a shared install link previews the app.
-          image: loaderData.cover ?? `${SITE_URL}${ogImagePath(["apps", loaderData.app.slug])}`,
+          image: `${SITE_URL}${ogImagePath(["install", loaderData.app.slug])}`,
         })
       : {},
   component: InstallAppPage,

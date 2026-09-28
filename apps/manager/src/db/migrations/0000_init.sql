@@ -104,6 +104,13 @@ CREATE TABLE `jobs` (
 );
 --> statement-breakpoint
 CREATE INDEX `jobs_install_id_idx` ON `jobs` (`install_id`);--> statement-breakpoint
+CREATE TABLE `passkey_host` (
+	`passkey_id` text PRIMARY KEY NOT NULL,
+	`hostname` text NOT NULL,
+	`recorded_at` integer NOT NULL,
+	FOREIGN KEY (`passkey_id`) REFERENCES `passkey`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
 CREATE TABLE `resources` (
 	`id` text PRIMARY KEY NOT NULL,
 	`install_id` text NOT NULL,

@@ -5,8 +5,9 @@ description: Serve an installed app on a hostname in one of your own domains.
 
 Every app gets a `workers.dev` URL. You can also serve it on a hostname in a domain
 you have on Cloudflare, such as `notes.example.com`. Cloudflare creates the DNS record
-and the certificate. Once the domain answers as the app, Appflare turns the
-`workers.dev` URL off (see [Turn off the workers.dev URL](#turn-off-the-workersdev-url)).
+and the certificate. Once the app answers on the domain, Appflare turns the
+`workers.dev` URL off, so the domain is the app's one address. You can
+[turn it back on](#turn-off-the-workersdev-url) at any time.
 
 For a hostname whose DNS is managed somewhere else, see
 [Domains held outside this account](#domains-held-outside-this-account).
@@ -53,7 +54,9 @@ domain sends one request to it.
 ## Remove a domain
 
 Select **Remove** next to the domain. The app stops answering on that hostname.
-Uninstalling an app removes all of its custom domains first.
+If it is the app's last working domain and the `workers.dev` URL is off, see
+[below](#turn-off-the-workersdev-url). Uninstalling an app removes all of its custom
+domains first.
 
 ## Wildcard domains
 
@@ -134,23 +137,39 @@ domain for these apps.
 
 ## Turn off the workers.dev URL
 
-Once a custom domain or an [external domain](/guides/external-domains/) answers as
-the app, Appflare turns off its `workers.dev` URL, and turns it back on if the last
-such domain is removed. Admins can also set **Serve on workers.dev** on the app's
-**Domains and email** tab themselves; Appflare then leaves it where they put it.
-Before turning it off, Appflare sends one request to each of the app's domains and
-goes ahead only when one of them answers as the app. Updates keep the choice, and
-their checks still work because Cloudflare keeps the Worker's preview URLs. While it
-is off, health checks, **Open app** and the `{{appUrl}}` value an app's settings may
-use all point at the domain that answered (or, once that domain is removed, the
-first remaining one). When the switch was turned off by hand, the app's last domain
-cannot be removed. Turn the switch back on at any time.
+Appflare turns the app's `workers.dev` URL off by itself the first time a custom
+domain, a wildcard domain or an [external domain](/guides/external-domains/) answers
+as the app: in the install's domain step, or when **Check now** next to the domain
+gets an answer from the app. The app's **Domains and email** tab then shows
+"workers.dev turned off because a domain is live".
 
-When the app's address moves from `workers.dev` to a domain, or back, Appflare
-deploys the app's settings again, so a setting that uses `{{appUrl}}` follows. A
-setting that uses `{{workerUrl}}` always holds the `workers.dev` address, so while
-an app's settings use it, a domain going live leaves `workers.dev` on, and the tab
-says why.
+It stays on, and the tab says why, when:
+
+- an admin has used the **Serve on workers.dev** switch on this app. From then on
+  Appflare leaves the switch where the admin put it.
+- the app's settings use `{{workerUrl}}` or `{{workerHostname}}`, which always name
+  the `workers.dev` address and would then lead nowhere. Settings that use
+  `{{appUrl}}` do not hold it back: they follow the domain.
+- the app ships its own installer, which decides where its Workers answer.
+- a job of the app is running. The next check through the domain tries again.
+
+Admins can turn **Serve on workers.dev** on or off at any time. Before turning it
+off, Appflare sends one request to each of the app's domains and turns the
+`workers.dev` URL off only when one of them answers as the app. Updates keep the
+setting, and their checks still work because Cloudflare keeps the Worker's preview
+URLs.
+
+While it is off, health checks, **Open app** and the `{{appUrl}}` value an app's
+settings may use all point at the domain that answered (or, once that domain is
+removed, the next working one). When the app's address moves from `workers.dev` to
+a domain, or back, Appflare deploys the app's settings again, so a setting that uses
+`{{appUrl}}` follows at once. A setting that uses `{{workerUrl}}` always holds the
+`workers.dev` address.
+
+Removing the app's last working domain while the `workers.dev` URL is off turns the
+URL back on first when Appflare turned it off. When an admin turned it off with the
+switch, the removal is refused until they turn **Serve on workers.dev** on again or
+add another domain, so the app never loses its last address.
 
 ## Domains held outside this account
 

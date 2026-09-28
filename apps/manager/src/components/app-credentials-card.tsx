@@ -1,9 +1,10 @@
 import type { TokenPermission } from "@appflare/schema";
-import { Banner, Button, Input, Text } from "@cloudflare/kumo";
+import { Banner, Input, Text } from "@cloudflare/kumo";
 import { CheckCircleIcon, KeyIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useState } from "react";
 import { replaceAppCredentials } from "../installs/app-credentials.functions";
 import { AppTokenHelp } from "./app-token-permissions";
+import { BusyButton } from "./busy-button";
 import { Section, SectionBody } from "./section";
 
 /**
@@ -106,15 +107,15 @@ export function AppCredentialsCard({
           )}
           {canEdit && (
             <div className="flex justify-end">
-              <Button
+              <BusyButton
+                pending={pending}
                 type="submit"
                 variant="secondary"
                 icon={<KeyIcon />}
-                loading={pending}
                 disabled={!entered}
               >
                 Store on the sandbox Worker
-              </Button>
+              </BusyButton>
             </div>
           )}
         </form>

@@ -38,15 +38,16 @@ export interface CapabilityRowsData {
  * running Worker has the `SANDBOX` binding) or being turned on, the cached
  * catalog, and the account's installs with the catalog entries they came
  * from. No Cloudflare API call; "Check again" refreshes the capabilities
- * first. A caller that already read the enabled catalogs or the installs
- * passes them in `known`, which saves reading them again.
+ * first. A caller that already read the enabled catalogs or the installs,
+ * or is reading them, passes them (or the reads under way) in `known`,
+ * which saves reading them again; its own reads start at once either way.
  */
 export async function readCapabilityRowsData(
   env: { KV: KVNamespace; SANDBOX?: unknown; DB: D1Database },
   db: Database,
   known: {
-    reads?: readonly CatalogIndexRead[];
-    installs?: readonly InstallOfApp[];
+    reads?: readonly CatalogIndexRead[] | Promise<readonly CatalogIndexRead[]>;
+    installs?: readonly InstallOfApp[] | Promise<readonly InstallOfApp[]>;
   } = {},
 ): Promise<CapabilityRowsData> {
   const [view, reads, sandboxJobs, present] = await Promise.all([

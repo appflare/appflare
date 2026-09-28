@@ -1,8 +1,9 @@
-import { Button, Collapsible, Input, LayerCard, Text } from "@cloudflare/kumo";
+import { Collapsible, Input, LayerCard, Text } from "@cloudflare/kumo";
 import { GitBranchIcon } from "@phosphor-icons/react";
 import { type FormEvent, useState } from "react";
 import { startSourceBuild } from "../installs/source-builds.functions";
 import type { SandboxReadiness } from "../sandbox/readiness";
+import { BusyButton } from "./busy-button";
 import { DocsLink } from "./docs-link";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner } from "./message-text";
@@ -122,15 +123,15 @@ export function BuildFromSourceCard({
               )}
               {error !== null && <ErrorMessageBanner message={error} newTab />}
               <div className="flex justify-end">
-                <Button
+                <BusyButton
+                  pending={pending}
                   type="submit"
                   variant="secondary"
                   icon={<GitBranchIcon />}
-                  loading={pending}
                   disabled={!ready}
                 >
                   Build for review
-                </Button>
+                </BusyButton>
               </div>
             </form>
           </Collapsible.DefaultPanel>

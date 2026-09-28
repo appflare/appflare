@@ -6,7 +6,12 @@ import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { passkey, session } from "../db/schema";
-import { listOwnPasskeys, removeOwnPasskey, toPasskeyRow } from "./passkeys.server";
+import {
+  listOwnPasskeys,
+  removeOwnPasskey,
+  toPasskeyRow,
+  withPasskeyHosts,
+} from "./passkeys.server";
 import { type Auth, createAuth, passkeyRelyingParty } from "./server";
 
 const HOST = "appflare.appflare-dev.workers.dev";
@@ -201,9 +206,18 @@ describe("passkey routes", () => {
       .update(session)
       .set({ createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) })
       .where(eq(session.userId, userId));
+    // A day on, the cookie's one-minute copy of the session is long gone.
+    const aDayOn = new Headers(headers);
+    aDayOn.set(
+      "cookie",
+      (headers.get("cookie") ?? "")
+        .split("; ")
+        .filter((c) => !c.includes("session_data"))
+        .join("; "),
+    );
 
     const res = await call(a, "GET", "/passkey/generate-register-options?name=Laptop", {
-      headers,
+      headers: aDayOn,
     });
     expect(res.status).toBe(403);
     expect(((await res.json()) as { code: string }).code).toBe("SESSION_NOT_FRESH");
@@ -272,5 +286,28 @@ describe("toPasskeyRow", () => {
         createdAt: null,
       }),
     ).toEqual({ id: "pk", name: null, provider: null, synced: false, createdAt: null });
+  });
+});
+
+describe("withPasskeyHosts", () => {
+  const row = { name: null, provider: null, synced: true, createdAt: null };
+  it("names the hostname of a passkey added at another address, and only then", () => {
+    const rows = withPasskeyHosts(
+      [
+        { id: "here", ...row },
+        { id: "old", ...row },
+        { id: "back", ...row },
+      ],
+      new Map([
+        ["old", "appflare.ada.workers.dev"],
+        ["back", "Appflare.Example.com"],
+      ]),
+      "appflare.example.com",
+    );
+    expect(rows.map((r) => [r.id, r.worksAt])).toEqual([
+      ["here", null],
+      ["old", "appflare.ada.workers.dev"],
+      ["back", null],
+    ]);
   });
 });

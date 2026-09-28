@@ -26,6 +26,7 @@ import {
   sinceDay,
   storefrontRows,
 } from "../../../catalog/storefront";
+import { BusyButton } from "../../../components/busy-button";
 import { CatalogAddMenu } from "../../../components/catalog-add-menu";
 import { AppGrid, AppRow, CatalogSection } from "../../../components/catalog-row";
 import { CatalogSearch, useSearchText } from "../../../components/catalog-search";
@@ -37,6 +38,7 @@ import { MessageLinkButtons, MessageText } from "../../../components/message-tex
 import { PageHeader } from "../../../components/page-header";
 import { settingsLink } from "../../../components/settings-links";
 import { Tooltip } from "../../../components/tooltip";
+import { CATALOG_STALE_MS } from "../../../router-timing";
 
 /**
  * `/catalog`: the apps of every enabled catalog, as a storefront. A search
@@ -56,6 +58,7 @@ export const Route = createFileRoute("/_app/catalog/")({
     repository: z.string().max(200).optional().catch(undefined),
   }),
   loader: () => listCatalog(),
+  staleTime: CATALOG_STALE_MS,
   component: CatalogPage,
 });
 
@@ -347,11 +350,11 @@ function RefreshButton() {
     <Tooltip
       content="Refresh the list of apps"
       render={
-        <Button
+        <BusyButton
+          pending={pending}
           variant="ghost"
           shape="square"
           icon={ArrowsClockwiseIcon}
-          loading={pending}
           aria-label="Refresh the list of apps"
           onClick={onRefresh}
         />

@@ -1,6 +1,6 @@
 import { env, waitUntil } from "cloudflare:workers";
 import { redirect } from "@tanstack/react-router";
-import { getRequest } from "@tanstack/react-start/server";
+import { getRequest, getResponseHeaders } from "@tanstack/react-start/server";
 import * as guards from "../auth/guards";
 import { deleteRecoverySecret, sendResetEmailFromSettings } from "../auth/password-email.server";
 import { versionCreatedAt } from "../auth/recovery.server";
@@ -14,7 +14,17 @@ import { createDb } from "../db/client";
  * bindings through `cloudflare:workers`, so it only runs on the server.
  */
 
-const authByRequest = new WeakMap<Request, Auth>();
+/**
+ * Better Auth, built once per isolate for each origin the manager is reached
+ * on (its workers.dev hostname, a custom domain) and kept while the auth
+ * secret is the same. Building it takes CPU on every request otherwise;
+ * nothing in it belongs to one request (`waitUntil` and the bindings are
+ * read when used).
+ */
+const authByOrigin = new Map<string, { secret: string; auth: Auth }>();
+
+/** A Worker is reached on a handful of hostnames; more than this means something odd, so start over. */
+const MAX_ORIGINS = 8;
 
 /**
  * Whether this version of the Worker has `BETTER_AUTH_SECRET`. A manager
@@ -37,16 +47,17 @@ export class AuthNotReadyError extends Error {
 export function authFor(request: Request): Auth {
   const secret = env.BETTER_AUTH_SECRET;
   if (secret === undefined || secret.length === 0) throw new AuthNotReadyError();
-  let auth = authByRequest.get(request);
-  if (auth === undefined) {
-    auth = createAuth({
-      db: createDb(env.DB),
-      secret,
-      baseURL: new URL(request.url).origin,
-      recovery: recoveryDeps(),
-    });
-    authByRequest.set(request, auth);
-  }
+  const origin = new URL(request.url).origin;
+  const held = authByOrigin.get(origin);
+  if (held !== undefined && held.secret === secret) return held.auth;
+  const auth = createAuth({
+    db: createDb(env.DB),
+    secret,
+    baseURL: origin,
+    recovery: recoveryDeps(),
+  });
+  if (authByOrigin.size >= MAX_ORIGINS) authByOrigin.clear();
+  authByOrigin.set(origin, { secret, auth });
   return auth;
 }
 
@@ -75,13 +86,50 @@ export function currentAuth(): Auth {
   return authFor(getRequest());
 }
 
-/** The session `request` carries, or null; always null while no auth secret is bound. */
-export async function sessionFor(request: Request) {
+/**
+ * The session `request` carries, or null; always null while no auth secret
+ * is bound. Answered from the signed session cookie while it is fresh (see
+ * `SESSION_COOKIE_CACHE_SECONDS`), else from D1; `fresh` always reads D1,
+ * for anything that changes something. The cookies Better Auth refreshes on
+ * the way are passed on to the browser, so the next request is answered
+ * from the cookie again.
+ */
+export async function sessionFor(request: Request, opts: { fresh?: boolean } = {}) {
   if (!authSecretBound()) return null;
-  return authFor(request).api.getSession({ headers: request.headers });
+  const { headers, response } = await authFor(request).api.getSession({
+    headers: request.headers,
+    ...(opts.fresh === true ? { query: { disableCookieCache: true } } : {}),
+    returnHeaders: true,
+  });
+  passOnCookies(headers);
+  return response;
 }
 
-const loadSession: guards.SessionLoader = async () => sessionFor(getRequest());
+/** Adds the `Set-Cookie` headers of a Better Auth call to the response being served, if any. */
+function passOnCookies(headers: Headers): void {
+  const cookies = headers.getSetCookie();
+  if (cookies.length === 0) return;
+  try {
+    const response = getResponseHeaders();
+    for (const cookie of cookies) response.append("set-cookie", cookie);
+  } catch {
+    // Not inside a TanStack Start request: the next check reads D1 again.
+  }
+}
+
+/**
+ * Reads (GET server functions) may be answered from the session cookie, so
+ * a revoked session, a ban or a role change reaches them within
+ * `SESSION_COOKIE_CACHE_SECONDS`; every change (a POST) reads D1.
+ */
+const loadSession: guards.SessionLoader = async () => {
+  const request = getRequest();
+  return sessionFor(request, { fresh: request.method !== "GET" });
+};
+
+/** For changes: a session revoked, a user banned or a role taken away counts at once. */
+const loadFreshSession: guards.SessionLoader = async () =>
+  sessionFor(getRequest(), { fresh: true });
 
 /**
  * Wraps a guard so a missing session becomes a router redirect to `/login`
@@ -103,6 +151,10 @@ export function requireSession(): Promise<guards.AuthSession> {
   return guarded(() => guards.requireSession(loadSession));
 }
 
+/**
+ * The role checks guard the manager's changes, so they always read the
+ * session from D1 rather than from the session cookie.
+ */
 export function requireRole(role: Role): Promise<guards.AuthSession> {
-  return guarded(() => guards.requireRole(role, loadSession));
+  return guarded(() => guards.requireRole(role, loadFreshSession));
 }

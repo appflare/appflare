@@ -1,5 +1,5 @@
-import { Button, Input, Link, Text } from "@cloudflare/kumo";
-import { FingerprintIcon } from "@phosphor-icons/react";
+import { Banner, Input, Link, Text } from "@cloudflare/kumo";
+import { FingerprintIcon, InfoIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { authClient } from "../auth/client";
@@ -10,8 +10,10 @@ import {
 } from "../auth/passkey-errors";
 import { passwordSignInErrorMessage } from "../auth/sign-in-errors";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION, OrDivider } from "../components/auth-layout";
+import { BusyButton } from "../components/busy-button";
 import { PasswordInput } from "../components/password-input";
-import { afterSignIn, returnToSearchSchema, withReturnTo } from "../components/return-to";
+import { afterSignIn, withReturnTo } from "../components/return-to";
+import { loginSearchSchema, MOVED_SIGN_IN_NOTE, showsMovedNote } from "../domains/moved-note";
 import { getSetupStatus } from "../server/setup.functions";
 import { loadAppflareVersion } from "../server/version.functions";
 
@@ -23,7 +25,7 @@ import { loadAppflareVersion } from "../server/version.functions";
  */
 export const Route = createFileRoute("/login")({
   staticData: { title: "Sign in" },
-  validateSearch: returnToSearchSchema,
+  validateSearch: loginSearchSchema,
   beforeLoad: async ({ search }) => {
     const [{ needsSetup }, version] = await Promise.all([getSetupStatus(), loadAppflareVersion()]);
     // Until the owner exists, everything leads to /setup.
@@ -35,7 +37,8 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const { version } = Route.useRouteContext();
-  const { returnTo } = Route.useSearch();
+  const search = Route.useSearch();
+  const { returnTo } = search;
   const router = useRouter();
   const signedIn = () => router.navigate({ href: afterSignIn(returnTo), replace: true });
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +84,13 @@ function LoginPage() {
       version={version}
     >
       <div className="grid gap-5">
+        {showsMovedNote(search) && (
+          <Banner
+            variant="secondary"
+            icon={<InfoIcon weight="fill" />}
+            description={MOVED_SIGN_IN_NOTE}
+          />
+        )}
         {error !== null && <AuthError message={error} />}
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Input label="Email" name="email" type="email" autoComplete="username" required />
@@ -88,27 +98,27 @@ function LoginPage() {
           <Text variant="secondary" size="sm" as="p">
             <Link href={withReturnTo("/forgot-password", returnTo)}>Forgot your password?</Link>
           </Text>
-          <Button
+          <BusyButton
+            pending={pending === "password"}
             type="submit"
             variant="primary"
             className={FULL_WIDTH_ACTION}
-            loading={pending === "password"}
             disabled={pending === "passkey"}
           >
             Sign in
-          </Button>
+          </BusyButton>
         </form>
         <OrDivider />
-        <Button
+        <BusyButton
+          pending={pending === "passkey"}
           variant="secondary"
           icon={<FingerprintIcon />}
           className={FULL_WIDTH_ACTION}
-          loading={pending === "passkey"}
           disabled={pending === "password"}
           onClick={onPasskey}
         >
           Sign in with a passkey
-        </Button>
+        </BusyButton>
       </div>
     </AuthLayout>
   );

@@ -5,6 +5,7 @@ import type { FileObject } from "next-validate-link";
 import { beforeAll, describe, expect, it } from "vitest";
 import { siteCatalog } from "./catalog/data.ts";
 import { catalogPagePaths, handoffPagePaths } from "./catalog/urls.ts";
+import { AGENT_PROMPTS } from "./lib/agent-prompts.ts";
 import {
   type BrokenLink,
   findBrokenLinks,
@@ -41,8 +42,17 @@ async function contentFiles(): Promise<FileObject[]> {
  */
 const scanTimeout = 120_000;
 
-/** The catalog's pages and the install pages, which content may link to. */
-const catalogPages = [...catalogPagePaths(siteCatalog), ...handoffPagePaths(siteCatalog)];
+/** The front page, the catalog's pages and the install pages, which content may link to. */
+const catalogPages = ["/", ...catalogPagePaths(siteCatalog), ...handoffPagePaths(siteCatalog)];
+
+/** The instructions the agent prompts point at, served as they are from `public/agent/`. */
+function agentFiles(): FileObject[] {
+  return Object.values(AGENT_PROMPTS).map(({ path: url }) => ({
+    path: `public${url}`,
+    content: readFileSync(new URL(`../public${url}`, import.meta.url), "utf8"),
+    url,
+  }));
+}
 
 describe("internal links", () => {
   let files: FileObject[];
@@ -61,17 +71,18 @@ describe("internal links", () => {
     expect(report).toEqual([]);
   });
 
-  it("written as absolute URLs of this site, as in the agent prompts, exist", () => {
-    const broken = findBrokenSiteUrls(files, targets, SITE_URL, catalogPages);
+  it("written as absolute URLs of this site, as in the agent instructions, exist", () => {
+    const broken = findBrokenSiteUrls([...files, ...agentFiles()], targets, SITE_URL, catalogPages);
     expect(broken.map(({ file, line, url }) => `${file}:${line} ${url}`)).toEqual([]);
   });
 
   it("covers every page, including the generated manifest reference", () => {
     const urls = source.getPages().map((page) => pageUrl(page.slugs));
-    expect(urls).toContain("/");
+    expect(urls).toContain("/start/overview/");
     expect(urls).toContain("/catalog/manifest-reference/");
-    expect(urls).toContain("/start/install-with-an-agent/");
-    expect(urls).toContain("/catalog/submit-with-an-agent/");
+    expect(urls).toContain("/privacy/");
+    // `/` is the front page, a route of its own, not a docs page.
+    expect(urls).not.toContain("/");
   });
 });
 

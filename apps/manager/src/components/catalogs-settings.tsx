@@ -40,6 +40,7 @@ import {
   catalogLabelSchema,
   MAX_CUSTOM_CATALOGS,
 } from "../catalog/sources";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { CatalogSourceBadge } from "./catalog-source-badge";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
@@ -424,7 +425,8 @@ function CatalogDialog({ editing }: { editing: CatalogView | null }) {
           </form>
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel="Cancel">
-          <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+          <LayerDialog.Actions.Primary type="submit" form={formId} {...busyActionProps(pending)}>
+            <BusyMark pending={pending} />
             {editing === null ? "Check and add" : "Save"}
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

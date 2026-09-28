@@ -22,6 +22,7 @@ import { rollbackDialogCopy } from "../installs/rollback-copy";
 import { restoreDatabase, startRollback } from "../installs/versions.functions";
 import type { RestoreDatabaseResult, SnapshotView } from "../installs/versions.server";
 import { appPlace } from "./app-links";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
@@ -380,9 +381,9 @@ function RestoreDatabaseDialog({
               type="submit"
               form={formId}
               variant="destructive"
-              loading={pending}
-              disabled={!confirmed}
+              {...busyActionProps(pending, !confirmed)}
             >
+              <BusyMark pending={pending} />
               Restore database
             </LayerDialog.Actions.Primary>
           ) : (

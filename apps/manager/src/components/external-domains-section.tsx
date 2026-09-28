@@ -6,7 +6,6 @@ import {
   Input,
   LayerDialog,
   Link,
-  Loader,
   Radio,
   Table,
   Text,
@@ -41,6 +40,8 @@ import {
 } from "../installs/external-domains.functions";
 import type { CustomDomainView, InstallDetail } from "../installs/installs.functions";
 import { WILDCARD_EXTERNAL_REFUSAL } from "../installs/wildcard-domain-input";
+import { AppflareLoader } from "./appflare-loader";
+import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
@@ -219,20 +220,20 @@ function ExternalDomainRow({
             <Link.ExternalIcon />
           </Link>
           {status !== null && <PhaseBadge status={status} />}
-          {status === null && error === null && <Loader size="sm" />}
+          {status === null && error === null && <AppflareLoader size="sm" />}
         </span>
       }
       action={
         <>
-          <Button
+          <BusyButton
+            pending={checking}
             size="sm"
             variant="secondary"
             icon={<ArrowsClockwiseIcon />}
-            loading={checking}
             onClick={() => void refresh(true)}
           >
             Check now
-          </Button>
+          </BusyButton>
           {canRemove && <RemoveExternalDomainDialog installId={installId} domain={domain} />}
         </>
       }
@@ -432,7 +433,7 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
           <div className="grid gap-4">
             {options === null && loadError === null && (
               <div className="flex items-center gap-2">
-                <Loader size="sm" />
+                <AppflareLoader size="sm" />
                 <Text variant="secondary">Reading the gateway…</Text>
               </div>
             )}
@@ -498,9 +499,9 @@ function AddExternalDomainDialog({ install }: { install: InstallDetail }) {
             <LayerDialog.Actions.Primary
               type="submit"
               form={formId}
-              loading={pending}
-              disabled={checked === null || !checked.ok}
+              {...busyActionProps(pending, checked === null || !checked.ok)}
             >
+              <BusyMark pending={pending} />
               Add domain
             </LayerDialog.Actions.Primary>
           </LayerDialog.Actions>

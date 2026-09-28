@@ -96,6 +96,7 @@ describe("findRemovalTargets", () => {
         d1Id: "d1-manager",
         kvId: "kv-manager",
         workflowName: MANAGER_WORKFLOW,
+        domain: null,
       },
       gateway: GATEWAY,
       sandbox: {
@@ -362,6 +363,20 @@ describe("runRemoval", () => {
   );
 });
 
+describe("findRemovalTargets and Appflare's address", () => {
+  it("reads the custom domain Appflare lives on, to detach before the Worker goes", async () => {
+    await writeSettings(createDb(env.DB), {
+      [SETTING.managerHostname]: "appflare.example.com",
+      [SETTING.managerDomainId]: "dom-1",
+    });
+    const targets = await findRemovalTargets(env.DB, world().api);
+    expect(targets.manager.domain).toEqual({
+      hostname: "appflare.example.com",
+      domainId: "dom-1",
+    });
+  });
+});
+
 describe("deleteManagerWorker", () => {
   const manager = { workerName: MANAGER_WORKER, workflowName: MANAGER_WORKFLOW };
 
@@ -389,6 +404,26 @@ describe("deleteManagerWorker", () => {
       fail: { [`DELETE /a/workflows/${MANAGER_WORKFLOW}`]: { status: 500, code: 10001 } },
     });
     expect(await deleteManagerWorker(w.api, manager)).toBe(true);
+  });
+
+  it("detaches Appflare's custom domain before deleting the Worker", async () => {
+    const w = world();
+    const domain = { hostname: "appflare.example.com", domainId: "dom-1" };
+    expect(await deleteManagerWorker(w.api, { ...manager, domain })).toBe(true);
+    expect(w.account.deletes()).toEqual([
+      "DELETE /a/workers/domains/dom-1",
+      `DELETE /a/workers/scripts/${MANAGER_WORKER}`,
+      `DELETE /a/workflows/${MANAGER_WORKFLOW}`,
+    ]);
+  });
+
+  it("still deletes the Worker when its custom domain cannot be detached", async () => {
+    const w = world({
+      fail: { "DELETE /a/workers/domains/dom-1": { status: 500, code: 10013 } },
+    });
+    const domain = { hostname: "appflare.example.com", domainId: "dom-1" };
+    expect(await deleteManagerWorker(w.api, { ...manager, domain })).toBe(true);
+    expect(w.account.deletes()).toContain(`DELETE /a/workers/scripts/${MANAGER_WORKER}`);
   });
 
   it("deletes no Workflow when the manager runs none of its own", async () => {

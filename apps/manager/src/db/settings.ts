@@ -125,6 +125,18 @@ export const SETTING = {
    * old password (recovery code or email link), shown on Settings > Users.
    */
   lastPasswordRecovery: "last_password_recovery",
+  /**
+   * Appflare's own address (domains/manager-address.server.ts): the custom
+   * domain it lives on, the Workers custom domain's id and zone, the
+   * hostname it was at before, and the ISO 8601 time it moved. All written
+   * together and all deleted together; absent means its workers.dev address,
+   * which then redirects page requests to the custom domain.
+   */
+  managerHostname: "manager_hostname",
+  managerDomainId: "manager_domain_id",
+  managerZoneId: "manager_zone_id",
+  managerPreviousHostname: "manager_previous_hostname",
+  managerMovedAt: "manager_moved_at",
 } as const;
 
 export type SettingKey = (typeof SETTING)[keyof typeof SETTING];

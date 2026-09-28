@@ -1,14 +1,15 @@
 import { COVER_HEIGHT, COVER_WIDTH } from "@appflare/schema";
 import { cn } from "@cloudflare/kumo";
-import { useState } from "react";
 import { monogram } from "../catalog/monogram";
+import { CatalogImage } from "./catalog-image";
 
 /**
  * Catalog images. Every `src` here is a manager path
  * (`/api/catalog/media/<sha256>` or `/api/catalog/avatar/<handle>`) that the
  * manager checked against the catalog index; nothing is loaded from another
  * origin. Kumo has no image, avatar or carousel component, so these are
- * plain elements styled with Kumo tokens.
+ * plain elements styled with Kumo tokens, each in a box of fixed size
+ * (`CatalogImage`) so nothing moves as images arrive.
  */
 
 /** Two letters from a name on a neutral square (or circle), where there is no image. */
@@ -37,37 +38,47 @@ export function AppIcon({
   src,
   name,
   size = 40,
+  eager = false,
 }: {
   src: string | null;
   /** The app's name, for the monogram. */
   name: string;
   size?: number;
+  /** For an icon at the top of a page, which should not wait its turn to load. */
+  eager?: boolean;
 }) {
-  const [failed, setFailed] = useState<string | null>(null);
-  if (src === null || failed === src) return <Monogram name={name} size={size} />;
+  if (src === null) return <Monogram name={name} size={size} />;
   return (
-    <img
+    <CatalogImage
       src={src}
       alt=""
+      eager={eager}
+      fallback={<Monogram name={name} size={size} />}
       style={{ width: size, height: size }}
-      className="shrink-0 rounded-lg bg-kumo-recessed object-contain ring ring-kumo-hairline"
-      loading="lazy"
-      decoding="async"
-      onError={() => setFailed(src)}
+      className="shrink-0 rounded-lg ring ring-kumo-hairline"
     />
   );
 }
 
 /** An app's cover (the schema's cover size, 1200x630), full width. */
-export function AppCover({ src, alt }: { src: string; alt: string }) {
+export function AppCover({
+  src,
+  alt,
+  eager = false,
+}: {
+  src: string;
+  alt: string;
+  /** For a cover at the top of a page, which should not wait its turn to load. */
+  eager?: boolean;
+}) {
   return (
-    <img
+    <CatalogImage
       src={src}
       alt={alt}
-      width={COVER_WIDTH}
-      height={COVER_HEIGHT}
-      className="aspect-[1200/630] h-auto w-full rounded-lg bg-kumo-recessed object-cover ring ring-kumo-hairline"
-      decoding="async"
+      fit="cover"
+      eager={eager}
+      style={{ aspectRatio: `${COVER_WIDTH} / ${COVER_HEIGHT}` }}
+      className="w-full rounded-lg ring ring-kumo-hairline"
     />
   );
 }
@@ -82,19 +93,15 @@ export function AuthorAvatar({
   name: string;
   size?: number;
 }) {
-  const [failed, setFailed] = useState(false);
-  if (src === null || failed) return <Monogram name={name} size={size} round />;
+  if (src === null) return <Monogram name={name} size={size} round />;
   return (
-    <img
+    <CatalogImage
       src={src}
       alt=""
-      width={size}
-      height={size}
+      fit="cover"
+      fallback={<Monogram name={name} size={size} round />}
       style={{ width: size, height: size }}
-      className="shrink-0 rounded-full bg-kumo-recessed object-cover ring ring-kumo-hairline"
-      loading="lazy"
-      decoding="async"
-      onError={() => setFailed(true)}
+      className="shrink-0 rounded-full ring ring-kumo-hairline"
     />
   );
 }

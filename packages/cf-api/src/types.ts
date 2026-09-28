@@ -325,6 +325,8 @@ export interface AccessApp {
   domain?: string;
   type?: string;
   session_duration?: string;
+  /** The application's policies, as `GET` and `PUT /access/apps/{id}` answer them. */
+  policies?: Array<{ id: string; name?: string; decision?: string; precedence?: number }>;
 }
 
 /** Body of `POST`/`PUT /access/apps/{id}/policies[/{policy_id}]`. */

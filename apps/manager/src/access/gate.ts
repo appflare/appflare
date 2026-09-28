@@ -17,9 +17,10 @@ import { accessRecoverySteps } from "./recovery";
  * calls `invalidate()` in the isolate that did it; other isolates follow
  * within `configTtlMs`.
  *
- * Static assets (the SPA shell and bundles) are served before the Worker runs,
- * so this check covers what reaches the Worker: server functions and server
- * routes, which carry all data. Access itself guards the assets at the edge.
+ * The hashed bundles under /assets/ are served before the Worker runs, so
+ * this check covers what reaches the Worker: pages, server functions and
+ * server routes, which carry all data. Access itself guards the bundles at
+ * the edge.
  */
 
 /** Paths answered without an Access token: what the health check canaries and the installer read. */

@@ -43,7 +43,7 @@ export const SETTINGS_SECTIONS = {
   },
   domains: {
     path: "/settings/domains",
-    sections: { "external-domains": "External domains" },
+    sections: { address: "Appflare's address", "external-domains": "External domains" },
   },
   notifications: {
     path: "/settings/notifications",

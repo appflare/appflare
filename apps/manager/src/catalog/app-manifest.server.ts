@@ -15,9 +15,10 @@ import { createDb } from "../db/client";
 import { fetchWhole, verifyArtifactManifest } from "../jobs/install/artifact";
 import { verifyCatalogManifest } from "../sandbox/verify";
 import {
+  type RecordedRevision,
   readCatalogRevision,
   recordCatalogRevision,
-  recordedRevisionFor,
+  revisionApplies,
   verifyRevisedCatalog,
 } from "./revisions.server";
 import { OFFICIAL_CATALOG_ID } from "./sources";
@@ -98,13 +99,16 @@ export async function getAppManifest(
   app: IndexApp,
   opts: AppManifestOptions = {},
 ): Promise<AppManifestRead> {
-  const signed = await getSignedAppManifest(env, app, opts);
   const release = indexAppArtifact(app);
-  if (!signed.ok || release === null) return signed;
-  const recorded =
-    env.DB === undefined
+  const [signed, held] = await Promise.all([
+    getSignedAppManifest(env, app, opts),
+    // Keyed by the release's digest, so read alongside the signed manifest.
+    release === null || env.DB === undefined
       ? null
-      : await recordedRevisionFor(createDb(env.DB), signed.manifest, release.digest);
+      : readCatalogRevision(createDb(env.DB), release.digest),
+  ]);
+  if (!signed.ok || release === null) return signed;
+  const recorded = held !== null && revisionApplies(signed.manifest, held) ? held : null;
   const listed = app.catalogManifest;
   if (listed === undefined || (recorded !== null && recorded.revision >= app.revision)) {
     return recorded === null
@@ -364,14 +368,17 @@ export interface InstalledRelease {
  * the Worker, so it starts no job and offers no update. Does nothing unless
  * `listed` is the installed release (same version and digest) and lists a
  * newer revision than the recorded one; a failure leaves the recorded form in
- * place until the next read.
+ * place until the next read. `recorded` is the release's recorded revision
+ * when the caller already read it (`readCatalogRevision`). Returns whether it
+ * tried to record one, after which the recorded revision is read again.
  */
 export async function refreshInstalledRevision(
   env: AppManifestEnv & { DB: D1Database },
   install: InstalledRelease,
   listed: IndexApp | null | undefined,
   opts: AppManifestOptions = {},
-): Promise<void> {
+  recorded?: RecordedRevision | null,
+): Promise<boolean> {
   const file = listed?.catalogManifest;
   if (
     listed == null ||
@@ -380,10 +387,14 @@ export async function refreshInstalledRevision(
     listed.version !== install.catalog_version ||
     listed.artifacts?.digest !== install.artifact_digest
   ) {
-    return;
+    return false;
   }
-  const recorded = await readCatalogRevision(createDb(env.DB), install.artifact_digest);
-  if (recorded !== null && recorded.revision >= listed.revision) return;
+  const held =
+    recorded === undefined
+      ? await readCatalogRevision(createDb(env.DB), install.artifact_digest)
+      : recorded;
+  if (held !== null && held.revision >= listed.revision) return false;
   // Verifies and records it; a refusal is logged there and leaves the recorded form.
   await getAppManifest(env, listed, opts);
+  return true;
 }

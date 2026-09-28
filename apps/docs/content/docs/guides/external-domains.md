@@ -211,8 +211,9 @@ tell you when one goes active or fails.
   does not reach the app yet. Try again shortly.
 
 Once the domain is active it counts as one of the app's addresses, like a custom
-domain: you can [turn off the workers.dev URL](/guides/custom-domains/#turn-off-the-workersdev-url),
-and health checks and **Open app** then use it.
+domain: when the app first answers on it, Appflare
+[turns the workers.dev URL off](/guides/custom-domains/#turn-off-the-workersdev-url),
+and health checks and **Open app** then use the domain.
 
 ## Remove a domain
 
@@ -220,8 +221,10 @@ Select **Remove** next to the domain, then **Remove domain**. Appflare deletes t
 custom hostname and its routing entry. Cloudflare stops serving the app on it at
 once, and visitors get error 1014 until the owner points the name elsewhere; the
 owner can then delete the records they added. Removing an app's last external domain
-also removes the gateway's service binding to its Worker. While the app's
-`workers.dev` URL is off, its last domain cannot be removed.
+also removes the gateway's service binding to its Worker. Removing the app's last
+working domain while its `workers.dev` URL is off turns that URL back on first, or is
+refused when an admin turned it off with the switch; see
+[the workers.dev URL](/guides/custom-domains/#turn-off-the-workersdev-url).
 
 [Uninstalling](/guides/uninstall/) an app removes its external domains, then the
 gateway's binding to its Worker, before its custom domains and the Worker itself. If

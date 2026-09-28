@@ -11,6 +11,7 @@ import {
 } from "@appflare/cf-api";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
+import { invalidateScriptsCache } from "../cloudflare/scripts-cache.server";
 import {
   EXTERNAL_DOMAINS_FEATURE,
   permissionName,
@@ -302,6 +303,8 @@ async function uploadGateway(
     modules: [{ name: GATEWAY_MODULE, type: "esm", content: gatewaySource }],
     excludeScript: true,
   });
+  // A Worker was added: the catalog pages list the account's Workers again.
+  invalidateScriptsCache();
 }
 
 /**
@@ -577,6 +580,7 @@ export async function turnOffGatewayCore(deps: GatewayDeps): Promise<void> {
     await save(state);
   }
   await unlessGone(() => api.workers.deleteScript(GATEWAY_WORKER_NAME, { force: true }));
+  invalidateScriptsCache();
   state = { ...state, workerUploaded: false };
   await save(state);
   if (state.fallbackSet) {

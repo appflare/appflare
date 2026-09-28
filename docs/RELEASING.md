@@ -59,6 +59,11 @@ node packages/pack/bin/appflare-pack.js verify /tmp/manager-release --hashes-onl
 - Pull requests opened with the workflow token do not trigger other workflows, so
   CI does not run on the version pull request by itself. Close and reopen
   it (or push to its branch) to run CI before merging.
+- Settings > General > Social preview: GitHub has no API for it, so upload the
+  image by hand. `docs/assets/social-preview.png` is this repository's,
+  `social-preview-catalog.png` belongs to `appflare/catalog` and
+  `social-preview-deploy.png` to `appflare/deploy`; redraw them with
+  `CATALOG_SNAPSHOT=live pnpm --filter @appflare/docs social-previews`.
 
 ## Secrets
 

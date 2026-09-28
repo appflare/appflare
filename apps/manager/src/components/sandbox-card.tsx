@@ -20,6 +20,7 @@ import {
   type SandboxCardState,
   startSandboxJob,
 } from "../server/sandbox.functions";
+import { BusyButton } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
@@ -274,15 +275,15 @@ function ActionButton({
   }
   return (
     <div className="grid justify-items-end gap-2">
-      <Button
+      <BusyButton
+        pending={pending}
         variant={variant}
         icon={icon}
-        loading={pending}
         disabled={disabled === true}
         onClick={onClick}
       >
         {label}
-      </Button>
+      </BusyButton>
       {error !== null && <ErrorMessageBanner message={error} />}
     </div>
   );

@@ -1,9 +1,10 @@
-import { Banner, Button, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
+import { Banner, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
 import { ArrowCircleUpIcon, ArrowRightIcon, InfoIcon, WarningIcon } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { startUpdate } from "../installs/versions.functions";
 import type { UpdateNeeds } from "../installs/versions.server";
+import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { CronTriggersField } from "./cron-triggers-field";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner } from "./message-text";
@@ -74,14 +75,14 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
         description={`Installed: ${install.version}. Appflare takes a snapshot first, checks the new version before it serves any traffic where Cloudflare allows it, and keeps the current one for a rollback.`}
         action={
           canStart ? (
-            <Button
+            <BusyButton
+              pending={update.pendingId === install.id}
               variant="secondary"
               icon={<ArrowCircleUpIcon />}
-              loading={update.pendingId === install.id}
               onClick={() => update.start(install)}
             >
               Update
-            </Button>
+            </BusyButton>
           ) : undefined
         }
       />
@@ -295,9 +296,9 @@ function UpdateDialog({
           <LayerDialog.Actions.Primary
             type="submit"
             form={formId}
-            loading={pending}
-            disabled={!ready}
+            {...busyActionProps(pending, !ready)}
           >
+            <BusyMark pending={pending} />
             Update
           </LayerDialog.Actions.Primary>
         </LayerDialog.Actions>

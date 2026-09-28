@@ -1,4 +1,4 @@
-import { InputGroup, Loader } from "@cloudflare/kumo";
+import { InputGroup } from "@cloudflare/kumo";
 import { CheckCircleIcon, XCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { WORKER_NAME_MAX_LENGTH } from "../installs/install-input";
@@ -10,6 +10,7 @@ import {
   workerNameVerdict,
 } from "../installs/worker-name-check";
 import { listTakenWorkerNames } from "../installs/worker-names.functions";
+import { AppflareLoader } from "./appflare-loader";
 import { tooltipContent } from "./tooltip";
 
 /**
@@ -130,7 +131,7 @@ export function WorkerNameField({
           <InputGroup.Addon align="end">
             <span data-name-check={check.state} className="flex">
               {check.state === "checking" ? (
-                <Loader />
+                <AppflareLoader />
               ) : check.state === "free" ? (
                 <CheckCircleIcon aria-hidden weight="duotone" className="text-kumo-success" />
               ) : (

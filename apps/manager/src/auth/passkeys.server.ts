@@ -18,6 +18,29 @@ export interface PasskeyRow {
   synced: boolean;
   /** ISO 8601, or null if the row predates the timestamp. */
   createdAt: string | null;
+  /**
+   * The hostname the passkey was added at, when that is not the address the
+   * list was read at: the browser offers a passkey only at its own hostname,
+   * so this one works only there. Unset when it works here.
+   */
+  worksAt?: string | null;
+}
+
+/**
+ * `rows` with `worksAt` set from `hosts` (passkey id to the hostname it was
+ * added at, for passkeys added at an address Appflare has since left) where
+ * that hostname is not `currentHostname`.
+ */
+export function withPasskeyHosts(
+  rows: readonly PasskeyRow[],
+  hosts: ReadonlyMap<string, string>,
+  currentHostname: string,
+): PasskeyRow[] {
+  const here = currentHostname.toLowerCase();
+  return rows.map((row) => {
+    const host = hosts.get(row.id)?.toLowerCase();
+    return { ...row, worksAt: host === undefined || host === here ? null : host };
+  });
 }
 
 interface StoredPasskey {

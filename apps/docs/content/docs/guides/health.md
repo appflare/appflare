@@ -75,8 +75,8 @@ message.
 
 The recorded check uses the app's `workers.dev` URL. While
 [workers.dev is off](/guides/custom-domains/#turn-off-the-workersdev-url) for the app,
-it uses the custom domain that answered when the switch was turned off (or, once that
-domain is removed, the first remaining one). An app with
+it uses the domain that answered when workers.dev was turned off (or, once that
+domain is removed, the next working one). An app with
 [custom domains](/guides/custom-domains/) has a **Check now** button next to each
 one, which sends the same single request to that hostname and shows the answer
 there without recording it. A new custom domain can take a few minutes before its

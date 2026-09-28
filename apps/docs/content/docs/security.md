@@ -152,7 +152,7 @@ app, never the manager's.
 - **Password recovery.** A forgotten password is reset from the sign-in page with an
   emailed link (only when the owner turned reset emails on) or a one-time recovery
   code. A code comes from the owner (for any other user), from an admin (for a
-  member), or from `npx create-appflare recover`, which writes a fingerprint of the
+  member), or from the installer's `recover` command, which writes a fingerprint of the
   code as the Worker secret `RECOVERY_CODE_HASH`. By design, anyone who can set
   secrets on the manager's Worker, that is, whoever controls the Cloudflare account,
   can reset any admin's password, the owner's included. Links and codes work once,

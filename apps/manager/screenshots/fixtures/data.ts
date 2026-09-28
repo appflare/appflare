@@ -572,6 +572,23 @@ export function fixture(name: string, args: unknown[]): unknown {
       missing: [],
       noZones: false,
     }),
+    getManagerAddress: () => ({
+      hostname: null,
+      zoneId: null,
+      previousHostname: null,
+      movedAt: null,
+      workersDevHostname: "appflare.example.workers.dev",
+      serving: null,
+      attachedByHand: [],
+    }),
+    getManagerAddressOptions: () => ({
+      zones: [
+        { id: "zone-example", name: "example.com", suggestedHostname: "appflare.example.com" },
+      ],
+      inactiveZones: [],
+      missing: [],
+      noZones: false,
+    }),
     getExternalDomainOptions: () => ({
       gateway: { zoneName: "example.com", hostname: "apps.example.com" },
       accountZones: ["example.com"],

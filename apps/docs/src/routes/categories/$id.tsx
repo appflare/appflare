@@ -1,5 +1,7 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import Link from "fumadocs-core/link";
+import { useEffect } from "react";
+import { track } from "../../analytics/analytics.ts";
 import { categoryDescription, categoryTitle } from "../../catalog/pages.ts";
 import { appsInCategory } from "../../catalog/storefront.ts";
 import { appsPath, categoryPath } from "../../catalog/urls.ts";
@@ -34,6 +36,9 @@ export const Route = createFileRoute("/categories/$id")({
 
 function CategoryPage() {
   const { category, apps, categories } = Route.useLoaderData();
+  useEffect(() => {
+    track("category_viewed", { category: category.id });
+  }, [category.id]);
   return (
     <CatalogLayout>
       <nav aria-label="Breadcrumb" className="-mb-6 text-fd-muted-foreground text-sm">

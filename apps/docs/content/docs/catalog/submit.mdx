@@ -7,6 +7,12 @@ Adding an app takes one file, `apps/<slug>/appflare.jsonc`, in a pull request to
 [appflare/catalog](https://github.com/appflare/catalog). You do not need to change the
 app's own repository.
 
+<AgentPrompt kind="submit" label="Or let a coding agent write it:" />
+
+The agent reads the app's repository, writes the manifest, runs the catalog's checks,
+and asks you before it pushes or opens the pull request. It needs no Cloudflare
+credentials.
+
 ## Before you start
 
 - **The app needs a public repository.** Its license does not decide whether it is
@@ -526,7 +532,8 @@ Points that need care:
   `vars[].default`, and the values of the wrangler config's own `vars`, and fills
   vars in again on every update and settings change:
   - `{{appUrl}}` is the address the app is served at, as an `https://` URL without a
-    trailing slash: its custom domain while workers.dev is turned off for it, else
+    trailing slash: its custom domain while workers.dev is
+    [turned off](/guides/custom-domains/#turn-off-the-workersdev-url) for it, else
     its workers.dev URL. `{{appHostname}}` is that address without `https://`, such
     as `links.example.com`. When a domain takes over from workers.dev, or workers.dev
     from a domain, Appflare deploys the app's settings again so they follow. Use

@@ -6,10 +6,8 @@
     "start/overview",
     "start/deploy-button",
     "start/install",
-    "start/install-with-an-agent",
     "---Using Appflare---",
     "guides/catalog",
-    "guides/custom-catalogs",
     "guides/install-apps",
     "guides/install-links",
     "guides/health",
@@ -20,8 +18,6 @@
     "guides/settings",
     "guides/notifications",
     "guides/uninstall",
-    "guides/builds",
-    "guides/install-from-a-repository",
     "guides/update-appflare",
     "guides/users",
     "guides/forgot-password",
@@ -29,13 +25,16 @@
     "---Catalog---",
     "catalog/how-it-works",
     "catalog/submit",
-    "catalog/submit-with-an-agent",
     "catalog/bumps",
     "catalog/install-badge",
     "catalog/manifest-reference",
     "---More---",
     "security",
     "telemetry",
-    "faq"
+    "faq",
+    "---Advanced---",
+    "guides/custom-catalogs",
+    "guides/install-from-a-repository",
+    "guides/builds"
   ]
 }

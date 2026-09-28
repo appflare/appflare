@@ -1,4 +1,4 @@
-import { Button, LayerCard, Link, Loader, Sidebar, Text } from "@cloudflare/kumo";
+import { Button, LayerCard, Link, Sidebar, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   CheckCircleIcon,
@@ -19,6 +19,8 @@ import {
   UPDATED_CARD_MS,
   UPDATED_TO_KEY,
 } from "./appflare-card-state";
+import { AppflareLoader } from "./appflare-loader";
+import { BusyButton } from "./busy-button";
 import { SendReportButton } from "./job-report-dialog";
 import { MessageText } from "./message-text";
 
@@ -100,7 +102,7 @@ export function AppflareVersion({ version }: { version: string }) {
 const RAIL_ICONS: Record<AppflareRailItem["tone"], ReactNode> = {
   success: <CheckCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-success" />,
   update: <ArrowCircleUpIcon weight="fill" className="size-4 shrink-0 text-kumo-link" />,
-  progress: <Loader size="sm" />,
+  progress: <AppflareLoader size="sm" />,
   warning: <WarningCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-warning" />,
   danger: <WarningCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-danger" />,
 };
@@ -263,23 +265,23 @@ function CardBody({
               {/* No "running" line: the footer right below shows the current version. */}
               <Text bold>Appflare {state.latest} is available</Text>
               {state.canUpdate && (
-                <Button
+                <BusyButton
+                  pending={starting}
                   className="justify-self-start"
                   size="sm"
                   variant="primary"
                   icon={<ArrowCircleUpIcon />}
-                  loading={starting}
                   onClick={() => onUpdate(state.latest)}
                 >
                   Update
-                </Button>
+                </BusyButton>
               )}
             </>
           )}
           {(state.kind === "running" || state.kind === "switching") && (
             <>
               <div className="flex items-center gap-2">
-                <Loader size="sm" />
+                <AppflareLoader size="sm" />
                 <Text bold>
                   {state.kind === "running" ? "Updating" : "Switching"} to {state.target}
                 </Text>
@@ -333,16 +335,16 @@ function CardBody({
               </div>
               {logLink}
               {state.retry !== null && (
-                <Button
+                <BusyButton
+                  pending={starting}
                   className="justify-self-start"
                   size="sm"
                   variant="secondary"
                   icon={<ArrowCircleUpIcon />}
-                  loading={starting}
                   onClick={() => state.retry !== null && onUpdate(state.retry)}
                 >
                   Try again
-                </Button>
+                </BusyButton>
               )}
               {isAdmin && jobId !== null && (
                 <div className="justify-self-start">

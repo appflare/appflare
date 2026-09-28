@@ -32,6 +32,8 @@ import {
   transferOwnership,
   type UserRow,
 } from "../server/users.functions";
+import { appEntryMemo } from "./app-entry-memo";
+import { BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 import { Section, SectionBody, SectionTable } from "./section";
@@ -326,6 +328,8 @@ function UserConfirmDialog({
           confirmText: u.email,
           onConfirm: async () => {
             await transferOwnership({ data: { userId: u.id } });
+            // The signed-in layout reads who the viewer is again: no longer the owner.
+            appEntryMemo.forget();
             toasts.add({
               title: "Ownership transferred",
               description: `${u.email} is now the owner.`,
@@ -497,7 +501,8 @@ export function AddUserDialog() {
         </LayerDialog.Body>
         <LayerDialog.Actions dismissLabel={created === null ? "Cancel" : "Close"}>
           {created === null ? (
-            <LayerDialog.Actions.Primary type="submit" form={formId} loading={pending}>
+            <LayerDialog.Actions.Primary type="submit" form={formId} {...busyActionProps(pending)}>
+              <BusyMark pending={pending} />
               Create user
             </LayerDialog.Actions.Primary>
           ) : (

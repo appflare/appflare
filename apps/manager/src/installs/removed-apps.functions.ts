@@ -5,6 +5,7 @@ import { catalogLookup } from "../catalog/merged.server";
 import { parseAppKey } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs, jobs } from "../db/schema";
+import { jobCreator } from "../jobs/create-job.server";
 import { reconcileJobs } from "../jobs/reconcile.server";
 import { requireRole, requireSession } from "../server/auth.server";
 import {
@@ -66,7 +67,7 @@ export const deleteRetainedData = createServerFn({ method: "POST" })
         {
           db: env.DB,
           workflows: env.JOBS,
-          createJob: (id, params) => env.JOBS.create({ id, params }),
+          createJob: jobCreator(env.JOBS),
         },
         data.installId,
       );

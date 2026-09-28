@@ -231,7 +231,10 @@ const KEY_COMMENTS: Record<string, string[]> = {
     "name in the binding, which fails the deploy. Appflare adds SELF by its real name",
     "at its first update; until then its jobs run every step in place.",
   ],
-  assets: ["The single-page app. /api/* and server functions always reach the Worker."],
+  assets: [
+    "The single-page app. Every request except the bundles under /assets/ reaches the Worker",
+    "first, so the workers.dev address can send pages on to a custom domain.",
+  ],
   version_metadata: [
     "Lets the setup wizard check that the API token you paste is for the account this",
     "Worker runs in.",

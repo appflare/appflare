@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import Link from "fumadocs-core/link";
 import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { trackWhenSettled } from "../../analytics/analytics.ts";
 import { longDate } from "../../catalog/app-page.ts";
 import { appsPageDescription, appsPageTitle } from "../../catalog/pages.ts";
 import { appsByName, searchApps, storefrontRows } from "../../catalog/storefront.ts";
@@ -77,6 +78,17 @@ function AppsPage() {
   );
   const byName = useMemo(() => appsByName(catalog.apps), [catalog.apps]);
   const results = text.trim() === "" ? null : searchApps(catalog.apps, text);
+  const resultCount = results?.length ?? null;
+  // What was searched for and what it found, once the field rests.
+  const query = text.trim();
+  useEffect(() => {
+    if (resultCount === null) return;
+    return trackWhenSettled("catalog_search", {
+      query,
+      query_length: query.length,
+      result_count: resultCount,
+    });
+  }, [query, resultCount]);
   const featuredApp =
     catalog.featured?.slug === undefined
       ? null

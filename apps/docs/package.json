@@ -10,14 +10,17 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "catalog:fixture": "node scripts/update-catalog-fixture.ts"
+    "catalog:fixture": "node scripts/update-catalog-fixture.ts",
+    "social-previews": "node scripts/social-previews.ts"
   },
   "dependencies": {
     "@fumadocs/base-ui": "16.15.14",
+    "@phosphor-icons/react": "2.1.10",
     "@tanstack/react-router": "1.170.38",
     "@tanstack/react-start": "1.168.57",
     "fumadocs-core": "16.15.14",
     "fumadocs-mdx": "15.4.4",
+    "posthog-js": "1.434.17",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "takumi-js": "2.14.0"
