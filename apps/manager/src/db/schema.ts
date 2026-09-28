@@ -520,8 +520,9 @@ export const source_builds = sqliteTable(
 
 /**
  * GitHub access tokens an admin added (Settings, Building apps): fine-grained,
- * read-only tokens for building private repositories. Only the record is
- * here; each token's value is a secret on the sandbox Worker
+ * read-only tokens for building private repositories and for downloading
+ * Appflare's own releases, as the admin ticked. Only the record is here;
+ * each token's value is a secret on the sandbox Worker
  * (`githubTokenSecretName(id)`), never in this database. Disabling sandbox
  * builds deletes that Worker, and with it every token, so the rows go too.
  */
@@ -529,8 +530,14 @@ export const github_tokens = sqliteTable("github_tokens", {
   /** A ULID; also names the token's secret on the sandbox Worker. */
   id: text("id").primaryKey(),
   label: text("label").notNull(),
-  /** The repositories it covers, as the admin describes them (`acme/api, acme/*`). */
-  repositories: text("repositories").notNull(),
+  /**
+   * The repositories it covers, as the admin describes them (`acme/api,
+   * acme/*`); null when the admin named none. It only orders the tokens
+   * tried for a build: a token that names none matches no repository.
+   */
+  repositories: text("repositories"),
+  /** Builds of private repositories may use this token. */
+  for_builds: integer("for_builds", { mode: "boolean" }).notNull().default(true),
   /** Appflare reads its own releases with this token (at most one row). */
   for_releases: integer("for_releases", { mode: "boolean" }).notNull().default(false),
   created_at: timestamp("created_at").notNull(),

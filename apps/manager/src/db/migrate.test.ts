@@ -181,6 +181,50 @@ describe("ensure", () => {
     ]);
   });
 
+  it("keeps existing GitHub access tokens' repositories and uses, and lets new ones name none", async () => {
+    const before = migrations.findIndex((m) => m.tag === "0024_github_token_uses");
+    expect(before).toBeGreaterThan(0);
+    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO github_tokens (id, label, repositories, for_releases, created_at, last_used_at)
+         VALUES ('T1', 'Acme', 'acme/*', 0, 1, NULL), ('T2', 'Updates', 'appflare/appflare', 1, 2, 5)`,
+      ),
+    ]);
+    await createMigrator(migrations).ensure(env.DB);
+    const rows = await env.DB.prepare(
+      "SELECT id, label, repositories, for_builds, for_releases, created_at, last_used_at FROM github_tokens ORDER BY id",
+    ).all();
+    // Every token was tried for builds before, so each keeps that use.
+    expect(rows.results).toEqual([
+      {
+        id: "T1",
+        label: "Acme",
+        repositories: "acme/*",
+        for_builds: 1,
+        for_releases: 0,
+        created_at: 1,
+        last_used_at: null,
+      },
+      {
+        id: "T2",
+        label: "Updates",
+        repositories: "appflare/appflare",
+        for_builds: 1,
+        for_releases: 1,
+        created_at: 2,
+        last_used_at: 5,
+      },
+    ]);
+    await env.DB.prepare(
+      "INSERT INTO github_tokens (id, label, created_at) VALUES ('T3', 'Any', 3)",
+    ).run();
+    const added = await env.DB.prepare(
+      "SELECT repositories, for_builds, for_releases FROM github_tokens WHERE id = 'T3'",
+    ).first();
+    expect(added).toEqual({ repositories: null, for_builds: 1, for_releases: 0 });
+  });
+
   it("is a no-op on the second call (no D1 access at all)", async () => {
     const migrator = createMigrator(migrations);
     await migrator.ensure(env.DB);

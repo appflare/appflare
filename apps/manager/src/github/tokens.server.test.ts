@@ -4,11 +4,13 @@ import type { SandboxInfo } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
+import { githubTokenUses } from "./tokens";
 import {
   addGithubTokenCore,
   deleteGithubTokenCore,
   type GithubTokenDeps,
   githubTokenCount,
+  githubTokenViews,
   readGithubTokens,
 } from "./tokens.server";
 
@@ -74,6 +76,7 @@ describe("addGithubTokenCore", () => {
         id,
         label: "Acme private",
         repositories: "acme/*",
+        forBuilds: true,
         forReleases: false,
         createdAt: Date.parse("2026-09-26T12:00:00Z"),
         lastUsedAt: null,
@@ -81,6 +84,53 @@ describe("addGithubTokenCore", () => {
     ]);
     expect(await everythingInD1()).not.toContain(TOKEN);
     expect(await githubTokenCount(env.DB)).toBe(1);
+  });
+
+  it("records a token that names no repositories, and one only for release downloads", async () => {
+    const { deps: d } = deps();
+    const any = await addGithubTokenCore(d, { label: "Any", repositories: "", token: TOKEN });
+    const updates = await addGithubTokenCore(d, {
+      label: "Updates",
+      token: TOKEN,
+      forBuilds: false,
+      forReleases: true,
+    });
+    const records = await readGithubTokens(env.DB);
+    expect(
+      records.map(({ id, repositories, forBuilds, forReleases }) => ({
+        id,
+        repositories,
+        forBuilds,
+        forReleases,
+      })),
+    ).toEqual([
+      { id: any.id, repositories: null, forBuilds: true, forReleases: false },
+      { id: updates.id, repositories: null, forBuilds: false, forReleases: true },
+    ]);
+  });
+
+  it("leaves a token only for release downloads used for nothing when another takes that over", async () => {
+    const { deps: d } = deps();
+    const old = await addGithubTokenCore(d, {
+      label: "Old updates",
+      token: TOKEN,
+      forBuilds: false,
+      forReleases: true,
+    });
+    await addGithubTokenCore(d, { label: "New", token: TOKEN, forReleases: true });
+    const views = githubTokenViews(await readGithubTokens(env.DB));
+    const left = views.find((t) => t.id === old.id);
+    expect(left).toMatchObject({ forBuilds: false, forReleases: false });
+    expect(left && githubTokenUses(left)).toEqual(["Not used"]);
+  });
+
+  it("refuses a token used for nothing, before storing anything", async () => {
+    const { deps: d, calls } = deps();
+    await expect(
+      addGithubTokenCore(d, { label: "x", token: TOKEN, forBuilds: false, forReleases: false }),
+    ).rejects.toThrow();
+    expect(calls).toEqual([]);
+    expect(await githubTokenCount(env.DB)).toBe(0);
   });
 
   it("keeps at most one token for release downloads", async () => {

@@ -6,15 +6,21 @@ import { github_tokens } from "../db/schema";
 import { usesGithubTokens } from "../sandbox/binding";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
-import { type AddGithubTokenInput, addGithubTokenInput, type GithubTokenView } from "./tokens";
+import {
+  type AddGithubTokenInput,
+  addGithubTokenInput,
+  type GithubTokenView,
+  storedRepositories,
+} from "./tokens";
 
 /**
  * GitHub access tokens, stored the way self-deploying apps' tokens are: the
  * value goes straight to a secret on the sandbox Worker
  * (`GITHUB_TOKEN_<id>`), written with the manager's Cloudflare token, and
- * this database records only the id, the label, the repositories the admin
- * says it covers, whether it serves release downloads, and when it was last
- * used. Nothing can read the value back; it is never shown again.
+ * this database records only the id, the label, what the admin uses it for
+ * (builds, with the repositories it covers if the admin named any, and
+ * release downloads), and when it was last used. Nothing can read the value
+ * back; it is never shown again.
  *
  * Adding a token needs sandbox builds on: the sandbox Worker is where tokens
  * live and where private repositories are cloned. Disabling sandbox builds
@@ -28,7 +34,11 @@ export class GithubTokenError extends Error {
 export interface GithubTokenRecord {
   id: string;
   label: string;
-  repositories: string;
+  /** The repositories it covers, as the admin describes them; null when none are named. */
+  repositories: string | null;
+  /** Builds of private repositories may use it. */
+  forBuilds: boolean;
+  /** Appflare downloads its own releases with it (at most one token). */
   forReleases: boolean;
   /** ms since the epoch. */
   createdAt: number;
@@ -45,6 +55,7 @@ export async function readGithubTokens(db: D1Database): Promise<GithubTokenRecor
     id: row.id,
     label: row.label,
     repositories: row.repositories,
+    forBuilds: row.for_builds,
     forReleases: row.for_releases,
     createdAt: row.created_at.getTime(),
     lastUsedAt: row.last_used_at?.getTime() ?? null,
@@ -57,6 +68,7 @@ export function githubTokenViews(records: readonly GithubTokenRecord[]): GithubT
     id: r.id,
     label: r.label,
     repositories: r.repositories,
+    forBuilds: r.forBuilds,
     forReleases: r.forReleases,
     createdAt: new Date(r.createdAt).toISOString(),
     lastUsedAt: r.lastUsedAt === null ? null : new Date(r.lastUsedAt).toISOString(),
@@ -144,7 +156,8 @@ export async function addGithubTokenCore(
   const insert = orm.insert(github_tokens).values({
     id,
     label: input.label,
-    repositories: input.repositories,
+    repositories: storedRepositories(input),
+    for_builds: input.forBuilds,
     for_releases: input.forReleases,
     created_at: at,
     last_used_at: null,

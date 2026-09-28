@@ -19,7 +19,16 @@ import {
   WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from "react";
-import { addGithubTokenInput, type GithubTokenView, newTokenUrl } from "../github/tokens";
+import {
+  addGithubTokenInput,
+  deleteTokenDescription,
+  type GithubTokenView,
+  githubTokenUses,
+  newTokenUrl,
+  RELEASE_DOWNLOADS_HELP,
+  REPOSITORIES_HELP,
+  releaseTakeoverNote,
+} from "../github/tokens";
 import {
   addGithubToken,
   deleteGithubToken,
@@ -29,6 +38,7 @@ import {
 import { ENABLE_SANDBOX_PLACE, UPDATE_SANDBOX_HINT } from "../sandbox/connect-copy";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
+import { FieldHelp } from "./field-label";
 import { ErrorMessageBanner, MessageText } from "./message-text";
 import { Section, SectionBody, SectionEmpty, SectionTable } from "./section";
 import { settingsSection } from "./settings-links";
@@ -36,11 +46,11 @@ import { Timestamp } from "./timestamp";
 
 /**
  * The Building apps settings' GitHub access section: fine-grained, read-only
- * GitHub tokens for installing from private repositories (and, while
- * Appflare's own releases are private, reading them). Each token is stored
- * as a secret on the sandbox Worker and never shown again; the list shows
- * its label, the repositories the admin says it covers, and when it was
- * last used. The section loads its own data, so the page only places it.
+ * GitHub tokens for building private repositories and, while Appflare's own
+ * releases are private, downloading them. Each token is stored as a secret
+ * on the sandbox Worker and never shown again; the list shows its label,
+ * what it is used for, and when it was last used. The section loads its own
+ * data, so the page only places it.
  */
 export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
   // undefined: loading; null: the server says this user is not an admin.
@@ -66,7 +76,10 @@ export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
 
   const addToken =
     state !== null && canAdd ? (
-      <AddTokenDialog hasReleaseToken={state.tokens.some((t) => t.forReleases)} onAdded={load} />
+      <AddTokenDialog
+        releaseToken={state.tokens.find((t) => t.forReleases) ?? null}
+        onAdded={load}
+      />
     ) : null;
   const hasTokens = state !== null && state.tokens.length > 0;
   const notice = state === null ? null : accessNotice(state);
@@ -81,7 +94,7 @@ export function GithubAccessCard({ isAdmin }: { isAdmin: boolean }) {
           </Badge>
         )
       }
-      description="Install from private GitHub repositories with fine-grained, read-only tokens. Each token is kept as a secret on the sandbox Worker and is never shown again."
+      description="Read-only GitHub tokens for installing from private repositories and for downloading Appflare's own releases. Each token is kept as a secret on the sandbox Worker and is never shown again."
       // With no token yet, the empty state offers it instead.
       action={hasTokens ? addToken : null}
       error={loadError}
@@ -160,7 +173,7 @@ function TokenTable({
       <Table.Header>
         <Table.Row>
           <Table.Head>Label</Table.Head>
-          <Table.Head>Repositories</Table.Head>
+          <Table.Head>Used for</Table.Head>
           <Table.Head>Last used</Table.Head>
           <Table.Head>
             <span className="sr-only">Actions</span>
@@ -170,14 +183,16 @@ function TokenTable({
       <Table.Body>
         {tokens.map((token) => (
           <Table.Row key={token.id}>
+            <Table.Cell>{token.label}</Table.Cell>
             <Table.Cell>
-              <span className="flex flex-wrap items-center gap-2">
-                {token.label}
-                {token.forReleases && <Badge variant="info">Release downloads</Badge>}
-              </span>
-            </Table.Cell>
-            <Table.Cell>
-              <span className="break-words">{token.repositories}</span>
+              {/* Narrow enough to wrap beside the label on a phone. */}
+              <ul className="grid max-w-44 gap-1 whitespace-normal md:max-w-xs">
+                {githubTokenUses(token).map((use) => (
+                  <li key={use} className="break-words">
+                    {use}
+                  </li>
+                ))}
+              </ul>
             </Table.Cell>
             <Table.Cell>
               <Timestamp iso={token.lastUsedAt} fallback="Never" />
@@ -194,15 +209,22 @@ function TokenTable({
   );
 }
 
+/** The form's two uses of a token, as `Checkbox.Group` values. */
+const BUILDS = "builds";
+const RELEASES = "releases";
+
 /**
- * Label, repositories and the token itself, with a link to GitHub's page for
- * a new fine-grained token filled in with the permissions Appflare needs.
+ * Label, the token itself, and what Appflare uses it for: builds of private
+ * repositories (optionally naming them) and Appflare release downloads. A
+ * link opens GitHub's page for a new fine-grained token filled in with the
+ * permissions Appflare needs.
  */
 function AddTokenDialog({
-  hasReleaseToken,
+  releaseToken,
   onAdded,
 }: {
-  hasReleaseToken: boolean;
+  /** The token now used for release downloads, if there is one. */
+  releaseToken: GithubTokenView | null;
   onAdded: () => Promise<void>;
 }) {
   const formId = useId();
@@ -210,16 +232,20 @@ function AddTokenDialog({
   const [label, setLabel] = useState("");
   const [repositories, setRepositories] = useState("");
   const [token, setToken] = useState("");
-  const [forReleases, setForReleases] = useState(false);
+  const [uses, setUses] = useState<string[]>([BUILDS]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repositoriesError, setRepositoriesError] = useState<string | null>(null);
+  const forBuilds = uses.includes(BUILDS);
+  const forReleases = uses.includes(RELEASES);
 
   function reset() {
     setLabel("");
     setRepositories("");
     setToken("");
-    setForReleases(false);
+    setUses([BUILDS]);
     setError(null);
+    setRepositoriesError(null);
   }
 
   function onOpenChange(next: boolean) {
@@ -230,13 +256,26 @@ function AddTokenDialog({
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const parsed = addGithubTokenInput.safeParse({ label, repositories, token, forReleases });
+    const parsed = addGithubTokenInput.safeParse({
+      label,
+      // A description left in the field while builds are unticked is not sent.
+      repositories: forBuilds ? repositories : "",
+      token,
+      forBuilds,
+      forReleases,
+    });
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "Check the fields.");
+      // The repositories field shows its own problem; the banner any other.
+      const issues = parsed.error.issues;
+      const onRepositories = issues.find((issue) => issue.path[0] === "repositories");
+      const other = issues.find((issue) => issue !== onRepositories);
+      setRepositoriesError(onRepositories?.message ?? null);
+      setError(other?.message ?? null);
       return;
     }
     setPending(true);
     setError(null);
+    setRepositoriesError(null);
     try {
       await addGithubToken({ data: parsed.data });
       // The value leaves the browser's memory with the form.
@@ -264,10 +303,14 @@ function AddTokenDialog({
         <LayerDialog.Description>
           Create a fine-grained personal access token on GitHub with{" "}
           <strong className="font-medium text-kumo-default">Contents: Read-only</strong> on the
-          repositories to install (GitHub adds{" "}
+          repositories it is for (GitHub adds{" "}
           <strong className="font-medium text-kumo-default">Metadata: Read-only</strong> itself),
           and nothing else.{" "}
-          <Link href={newTokenUrl(label, repositories)} target="_blank" rel="noopener noreferrer">
+          <Link
+            href={newTokenUrl(label, repositories, { forBuilds, forReleases })}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Create it on GitHub
             <ArrowSquareOutIcon className="ml-1 inline" aria-hidden />
           </Link>
@@ -284,17 +327,6 @@ function AddTokenDialog({
               required
               disabled={pending}
             />
-            <Input
-              label="Repositories"
-              description="The repositories it can read, as you chose them on GitHub: owner/repo, or owner/* for all of an owner's. Appflare tries the token that names a repository first."
-              placeholder="acme/api, acme/*"
-              value={repositories}
-              onChange={(e) => setRepositories(e.currentTarget.value)}
-              autoComplete="off"
-              maxLength={500}
-              required
-              disabled={pending}
-            />
             <SensitiveInput
               label="Token"
               description="Stored on the sandbox Worker as a secret. Appflare cannot show it again."
@@ -303,16 +335,48 @@ function AddTokenDialog({
               autoComplete="off"
               disabled={pending}
             />
-            <Checkbox
-              checked={forReleases}
-              onCheckedChange={(v: boolean) => setForReleases(v)}
+            <Checkbox.Group
+              legend="Use it for"
+              value={uses}
+              onValueChange={(next: string[]) => setUses(next)}
               disabled={pending}
-              label={
-                hasReleaseToken
-                  ? "Use for Appflare release downloads instead of the current one"
-                  : "Use for Appflare release downloads"
-              }
-            />
+            >
+              <div className="grid gap-3">
+                <Checkbox.Item value={BUILDS} label="Builds of private repositories" />
+                {forBuilds && (
+                  <div className="pl-6">
+                    <Input
+                      label="Repositories"
+                      required={false}
+                      description={<FieldHelp text={REPOSITORIES_HELP} />}
+                      placeholder="acme/api, acme/*"
+                      value={repositories}
+                      onChange={(e) => {
+                        setRepositories(e.currentTarget.value);
+                        setRepositoriesError(null);
+                      }}
+                      error={repositoriesError ?? undefined}
+                      autoComplete="off"
+                      maxLength={500}
+                      disabled={pending}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="grid gap-1">
+                <Checkbox.Item value={RELEASES} label="Appflare release downloads" />
+                <div className="grid gap-1 pl-6">
+                  <Text as="p" variant="secondary" size="sm">
+                    <FieldHelp text={RELEASE_DOWNLOADS_HELP} />
+                  </Text>
+                  {forReleases && releaseToken !== null && (
+                    <Text as="p" variant="secondary" size="sm">
+                      {releaseTakeoverNote(releaseToken)}
+                    </Text>
+                  )}
+                </div>
+              </div>
+            </Checkbox.Group>
             {error !== null && <ErrorMessageBanner message={error} newTab />}
           </form>
         </LayerDialog.Body>
@@ -347,11 +411,7 @@ function DeleteTokenDialog({
         </Button>
       )}
       title={`Delete ${token.label}`}
-      description={
-        token.forReleases
-          ? "Appflare deletes the token from the sandbox Worker. Apps already installed keep running, but they cannot be rebuilt from a private repository it covered, and release downloads fall back to the GITHUB_TOKEN secret, if Appflare has one. Revoke the token on GitHub as well."
-          : "Appflare deletes the token from the sandbox Worker. Apps already installed keep running, but they cannot be rebuilt from a private repository only it covered. Revoke the token on GitHub as well."
-      }
+      description={deleteTokenDescription(token)}
       actionLabel="Delete token"
       onConfirm={async () => {
         await deleteGithubToken({ data: { id: token.id } });

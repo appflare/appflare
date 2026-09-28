@@ -38,17 +38,30 @@ function anonymous(publicRepos: readonly string[]) {
   return { fetch, seen };
 }
 
-async function addToken(id: string, repositories: string, createdAt: number, forReleases = false) {
+async function addToken(
+  id: string,
+  repositories: string | null,
+  createdAt: number,
+  forReleases = false,
+  forBuilds = true,
+) {
   await env.DB.prepare(
-    "INSERT INTO github_tokens (id, label, repositories, for_releases, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+    "INSERT INTO github_tokens (id, label, repositories, for_builds, for_releases, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
   )
-    .bind(id, `label ${id}`, repositories, forReleases ? 1 : 0, createdAt)
+    .bind(id, `label ${id}`, repositories, forBuilds ? 1 : 0, forReleases ? 1 : 0, createdAt)
     .run();
+}
+
+/** The token secrets the sandbox Worker was asked to send to GitHub, in order. */
+function secretsSent(sandbox: ReturnType<typeof fakeSandbox>): string[] {
+  return sandbox.githubRequests.map((r) => (r as { tokenSecret: string }).tokenSecret);
 }
 
 const OTHER = "01J8TOKENAAAAAAAAAAAAAAAAA";
 const OWNER = "01J8TOKENBBBBBBBBBBBBBBBBB";
 const EXACT = "01J8TOKENCCCCCCCCCCCCCCCCC";
+const ANY = "01J8TOKENDDDDDDDDDDDDDDDDD";
+const RELEASES = "01J8TOKENEEEEEEEEEEEEEEEEE";
 
 beforeEach(async () => {
   await reset();
@@ -96,6 +109,51 @@ describe("readRepositoryRefs", () => {
     const used = await readGithubTokens(env.DB);
     expect(used.find((t) => t.id === OWNER)?.lastUsedAt).toBe(AT.getTime());
     expect(used.find((t) => t.id === EXACT)?.lastUsedAt).toBeNull();
+  });
+
+  it("tries a token that names no repositories after those that name it, and never one only for release downloads", async () => {
+    await addToken(RELEASES, null, 0, true, false);
+    await addToken(ANY, null, 1);
+    await addToken(OWNER, "acme/*", 2);
+    const sandbox = fakeSandbox(null, {
+      github: ({ tokenSecret }) =>
+        tokenSecret === `GITHUB_TOKEN_${ANY}`
+          ? new Response(ADVERTISEMENT)
+          : new Response("", { status: 404 }),
+    });
+    const refs = await readRepositoryRefs(
+      { db: env.DB, fetch: anonymous([]).fetch, sandbox, now: () => AT },
+      "acme/api",
+    );
+    expect(refs.token).toEqual({ id: ANY, label: `label ${ANY}` });
+    expect(secretsSent(sandbox)).toEqual([`GITHUB_TOKEN_${OWNER}`, `GITHUB_TOKEN_${ANY}`]);
+  });
+
+  it("never sends a token for acme/* to another owner's repository", async () => {
+    await addToken(OWNER, "acme/*", 1);
+    const sandbox = fakeSandbox(null, { github: () => new Response(ADVERTISEMENT) });
+    await expect(
+      readRepositoryRefs({ db: env.DB, fetch: anonymous([]).fetch, sandbox }, "evil/app"),
+    ).rejects.toThrow(/None of the GitHub access tokens is for evil\/app\. To build/);
+    expect(secretsSent(sandbox)).toEqual([]);
+
+    // A token that names no repositories is for any.
+    await addToken(ANY, null, 2);
+    const refs = await readRepositoryRefs(
+      { db: env.DB, fetch: anonymous([]).fetch, sandbox, now: () => AT },
+      "evil/app",
+    );
+    expect(refs.token?.id).toBe(ANY);
+    expect(secretsSent(sandbox)).toEqual([`GITHUB_TOKEN_${ANY}`]);
+  });
+
+  it("counts a token only for release downloads as no token for builds", async () => {
+    await addToken(RELEASES, null, 0, true, false);
+    const sandbox = fakeSandbox(null, { github: () => Response.json([]) });
+    await expect(
+      readRepositoryRefs({ db: env.DB, fetch: anonymous([]).fetch, sandbox }, "acme/api"),
+    ).rejects.toThrow(/add a GitHub access token that can read it/);
+    expect(secretsSent(sandbox)).toEqual([]);
   });
 
   it("says how to read a private repository when no token can", async () => {
@@ -178,5 +236,17 @@ describe("release downloads", () => {
     expect(releaseTokenOptions({ GITHUB_TOKEN: "env", SANDBOX: sandbox }, null)).toEqual({
       token: "env",
     });
+  });
+
+  it("pick the token marked for them, never a token only for builds", async () => {
+    const sandbox = fakeSandbox(null);
+    // A build token that names Appflare's repository is still not a release token.
+    await addToken(OWNER, "appflare/*", 1);
+    await addToken(ANY, null, 2);
+    expect(await releaseTokenSecret({ DB: env.DB, SANDBOX: sandbox })).toBeNull();
+    await addToken(RELEASES, null, 3, true, false);
+    expect(await releaseTokenSecret({ DB: env.DB, SANDBOX: sandbox })).toBe(
+      `GITHUB_TOKEN_${RELEASES}`,
+    );
   });
 });

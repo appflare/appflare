@@ -39,8 +39,10 @@ export interface RepositoryReader {
 /**
  * The branches and tags of `repo`, as a public repository first (no token
  * spent on a public repository), and when GitHub refuses that, with each
- * GitHub access token in turn: those whose repositories name `repo` first,
- * then its owner's, then the others. The token that worked is returned (the
+ * GitHub access token for builds of `repo` in turn: those whose repositories
+ * name it first, then its owner's, then `*`, then those naming none (for any
+ * repository). A token that names only other repositories, or is only for
+ * release downloads, is never tried. The token that worked is returned (the
  * build clones with the same one) and its last use recorded. Throws
  * `GitRefError`.
  */
@@ -55,10 +57,16 @@ export async function readRepositoryRefs(
     if (!(error instanceof GitRefError) || !error.refused) throw error;
     refusal = error;
   }
-  const tokens = await readGithubTokens(reader.db);
+  // Only the tokens for builds of this repository: one that names other
+  // repositories, or is only for release downloads, is never sent for it.
+  const all = await readGithubTokens(reader.db);
+  const tokens = orderTokensFor(all, repo);
   if (tokens.length === 0) {
+    const others = all.some((token) => token.forBuilds)
+      ? ` None of the GitHub access tokens is for ${repo}.`
+      : "";
     throw new GitRefError(
-      `${refusal.message} To build a private repository, add a GitHub access token that can read it in ${GITHUB_ACCESS_PLACE}.`,
+      `${refusal.message}${others} To build a private repository, add a GitHub access token that can read it in ${GITHUB_ACCESS_PLACE}.`,
       true,
     );
   }
@@ -72,7 +80,7 @@ export async function readRepositoryRefs(
   let unreachable: string | null = null;
   /** A token added a moment ago that the answering sandbox Worker version does not hold yet. */
   let notYetHeld: string | null = null;
-  for (const token of orderTokensFor(tokens, repo)) {
+  for (const token of tokens) {
     try {
       const refs = await listRemoteRefs(
         sandboxGithubFetch(reader.sandbox, githubTokenSecretName(token.id)),

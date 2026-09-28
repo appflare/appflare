@@ -118,7 +118,8 @@ export function FieldHelp({
             variant="ghost"
             size="xs"
             aria-expanded={open}
-            className="align-baseline"
+            // Kumo's Button is a block-level flex box; inline, "More" follows the text.
+            className="inline-flex align-baseline"
             onClick={() => setOpen((o) => !o)}
           >
             {open ? "Less" : "More"}

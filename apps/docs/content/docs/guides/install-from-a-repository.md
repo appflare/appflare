@@ -130,18 +130,24 @@ see; members get nothing about them. With sandbox builds on, an admin adds one:
    Read-only**, plus **Metadata: Read-only**, which GitHub adds to every token. Pick
    the owner and **Only select repositories**, choose the repositories to install, and
    an expiry. Give it no other permission.
-2. Back in Appflare, enter a **Label**, the **Repositories** it covers as you chose them
-   (`owner/repo`, or `owner/*` for all of an owner's), and paste the token.
+2. Back in Appflare, enter a **Label** and paste the token.
+3. Under **Use it for**, keep **Builds of private repositories** ticked. **Repositories**
+   is optional: leave it empty to use the token for any private repository, or name
+   repositories (`owner/repo`, or `owner/*` for all of an owner's) to use it only for
+   those.
 
 You can add several tokens, for example one per organisation. When a repository is not
-public, Appflare tries the tokens in order: the ones whose repositories name it first,
-then those naming its owner, then the others. The token that reads it is the one the
-build clones with, and **Check for changes** and **Rebuild and update** find it the same
-way. The list shows when each token was last used.
+public, Appflare tries only the tokens for builds of it, the most specific first: those
+naming the repository, then those naming its owner, then `*`, then those that name no
+repositories. A token that names other repositories only is never sent for it. The token
+that reads it is the one the build clones with, and **Check for changes** and **Rebuild
+and update** find it the same way. The list shows what each token is used
+for (for example **Builds of `acme/*`** or **Appflare release downloads**) and when it was
+last used.
 
 Appflare stores each token as a secret on the sandbox Worker, the same way it keeps a
-self-deploying app's token, and records only its label, repositories and last use. It
-never shows a token again. In a build, only the commands that fetch the repository get
+self-deploying app's token, and records only its label, what it is used for and its last
+use. It never shows a token again. In a build, only the commands that fetch the repository get
 the token, as the password of the https clone; the dependency install and the build
 command, which run the repository's own code, never see it, and the job log never shows
 it. The token is sent to github.com and api.github.com only.
@@ -151,11 +157,21 @@ running, but a private repository no remaining token covers cannot be rebuilt. R
 the token on GitHub as well. Disabling sandbox builds deletes the sandbox Worker, and
 every token with it.
 
-While Appflare's own repository is private, one token may be marked **Use for Appflare
-release downloads**. Appflare then reads its own releases, and nothing else, with that token (for update
+### Appflare release downloads
+
+While Appflare's own repository on GitHub is private, updating Appflare needs a token
+that can read its releases. Tick **Appflare release downloads** under **Use it for** on
+such a token. It needs only **Contents: Read-only** on `appflare/appflare`; once that
+repository is public, no token is needed for this. A token for release downloads alone
+needs no repositories, and untick **Builds of private repositories** so builds never try
+it.
+
+Appflare then reads its own releases, and nothing else, with that token (for update
 checks, self-updates and updating the sandbox Worker) instead of the `GITHUB_TOKEN`
-secret, which stays the fallback. Turning sandbox builds on for the first time cannot
-use it, since the token is kept on the sandbox Worker being created.
+secret, which stays the fallback. Only one token is used for release downloads: ticking
+it on a new token moves it from the old one. If the old token was for nothing else, the
+list shows it as **Not used**, and you can delete it. Turning sandbox builds on for the first
+time cannot use it, since the token is kept on the sandbox Worker being created.
 
 ## If the build fails
 

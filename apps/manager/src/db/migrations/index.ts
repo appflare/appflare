@@ -24,6 +24,7 @@ import m0020 from "./0020_catalogs.sql?raw";
 import m0021 from "./0021_worker_versions.sql?raw";
 import m0022 from "./0022_snapshot_hyperdrive.sql?raw";
 import m0023 from "./0023_job_failure_reports.sql?raw";
+import m0024 from "./0024_github_token_uses.sql?raw";
 
 /** Every migration in apply order. `schema_version` counts how many have been applied. */
 export const migrations: readonly { tag: string; sql: string }[] = [
@@ -51,4 +52,5 @@ export const migrations: readonly { tag: string; sql: string }[] = [
   { tag: "0021_worker_versions", sql: m0021 },
   { tag: "0022_snapshot_hyperdrive", sql: m0022 },
   { tag: "0023_job_failure_reports", sql: m0023 },
+  { tag: "0024_github_token_uses", sql: m0024 },
 ];
