@@ -6,18 +6,13 @@ import {
   type IndexBuild,
   isSeedOnly,
 } from "@appflare/schema";
-import { Banner, Button, Input, InputGroup, Link, Text } from "@cloudflare/kumo";
+import { Banner, Button, Input, Link, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useState } from "react";
 import type { AccountPlan } from "../account/plan";
 import { appTokenSecret } from "../installs/app-token-secret";
 import { DISPLAY_NAME_MAX_LENGTH, displayNameProblem } from "../installs/display-name";
-import {
-  type InstallDomainInput,
-  WORKER_NAME_HINT,
-  WORKER_NAME_MAX_LENGTH,
-  WORKER_NAME_PATTERN,
-} from "../installs/install-input";
+import type { InstallDomainInput } from "../installs/install-input";
 import {
   enteredVarFields,
   type InstallVarField,
@@ -27,6 +22,7 @@ import {
 import { startInstall } from "../installs/installs.functions";
 import { workersDevUrl } from "../installs/post-install";
 import { installSourceBuild } from "../installs/source-builds.functions";
+import { workerNameAllowsInstall, workerNameFormatProblem } from "../installs/worker-name-check";
 import { AppTokenHelp } from "./app-token-permissions";
 import { CronTriggersField } from "./cron-triggers-field";
 import { connectionsComplete, DatabaseFields } from "./database-fields";
@@ -47,6 +43,7 @@ import { Section, SectionBody } from "./section";
 import { generatedSeedCredentials, holdSeedCredentials } from "./seed-credentials";
 import { tooltipContent } from "./tooltip";
 import { type PlaceholderChips, VarField } from "./var-field";
+import { useWorkerNameCheck, WorkerNameField } from "./worker-name-field";
 import {
   WorkersPaidConfirmation,
   type WorkersPaidConfirmationState,
@@ -64,10 +61,12 @@ export function installFormNotice(
 }
 
 /**
- * The install form of `/catalog/$slug`, generated from
- * the signed catalog manifest: the Worker name, the install's optional display
- * name, one field
- * per secret and var, and the Workers Paid confirmation. The confirmation of
+ * The install form of `/catalog/$slug`, generated from the signed catalog
+ * manifest. First the address: the Worker name, checked as it is typed (its
+ * format, then whether a Worker already has it, `worker-name-field.tsx`), and
+ * the choice of a domain besides workers.dev; then the install's optional
+ * display name, one field per secret and var, and the Workers Paid
+ * confirmation. The confirmation of
  * the app's account requirements is a checkbox in the page's prerequisites
  * callout; it arrives here as `requirementsConfirmed`. Generated secrets
  * (`generate`) are prefilled with a fresh value the admin can copy now; it is
@@ -246,7 +245,17 @@ export function InstallForm({
     }
     return out;
   };
-  const nameValid = installer !== null || WORKER_NAME_PATTERN.test(workerName);
+  // Checked live while the admin can change the name; a fixed name is the catalog's.
+  const nameCheck = useWorkerNameCheck(
+    workerName,
+    installer === null && !fixedWorkerName && canInstall && blockedReason === null,
+  );
+  const namePattern = workerNameFormatProblem(workerName);
+  const shownNameCheck =
+    nameCheck ??
+    (namePattern === null ? null : { state: "invalid" as const, message: namePattern });
+  const nameValid =
+    installer !== null || shownNameCheck === null || workerNameAllowsInstall(shownNameCheck);
   const displayNameError = displayNameProblem(displayName);
   const disabled = !canInstall || blockedReason !== null || pending;
   const missing =
@@ -339,36 +348,35 @@ export function InstallForm({
                   ), so several installs never share one.
                 </Text>
               ) : (
-                <InputGroup
-                  label="Worker name"
-                  labelTooltip={tooltipContent(
-                    "Resources are named after it. Each install of an app needs its own Worker name.",
-                  )}
-                  error={
-                    nameValid ? undefined : { message: `Use ${WORKER_NAME_HINT}`, match: true }
-                  }
+                <WorkerNameField
+                  value={workerName}
+                  onChange={setWorkerName}
+                  check={shownNameCheck}
+                  subdomain={subdomain}
+                  readOnly={fixedWorkerName}
                   description={
                     fixedWorkerName
                       ? `${catalog.name} only works as the Worker "${workerName}", so it installs once per account.`
                       : "The app is served at this address."
                   }
-                >
-                  <InputGroup.Addon>https://</InputGroup.Addon>
-                  <InputGroup.Input
-                    aria-label="Worker name"
-                    value={workerName}
-                    onChange={(e) => setWorkerName(e.currentTarget.value.trim())}
-                    readOnly={fixedWorkerName}
-                    autoComplete="off"
-                    spellCheck={false}
-                    required
-                    maxLength={WORKER_NAME_MAX_LENGTH}
-                  />
-                  <InputGroup.Suffix>
-                    .{subdomain ?? "<your subdomain>"}.workers.dev
-                  </InputGroup.Suffix>
-                </InputGroup>
+                />
               )}
+
+              {/* The address comes first, next to the Worker name: they are what the app's
+                page shows at the top. The zone and gateway reads are admin-only calls; the
+                installer of a self-deploying app decides where its Workers answer. */}
+              {installer === null && canInstall && blockedReason === null && (
+                <InstallDomainFields
+                  disabled={disabled}
+                  onChange={onDomainChange}
+                  wildcard={
+                    catalog.install.wildcardHostname === true
+                      ? { reason: catalog.install.wildcardReason ?? "" }
+                      : null
+                  }
+                />
+              )}
+
               <Input
                 label="Name"
                 required={false}
@@ -483,20 +491,6 @@ export function InstallForm({
                   zoneId={emailZoneId}
                   onZoneChange={setEmailZoneId}
                   onReadyChange={setEmailReady}
-                />
-              )}
-
-              {/* The zone and gateway reads are admin-only calls; the installer of a
-                self-deploying app decides where its Workers answer. */}
-              {installer === null && canInstall && blockedReason === null && (
-                <InstallDomainFields
-                  disabled={disabled}
-                  onChange={onDomainChange}
-                  wildcard={
-                    catalog.install.wildcardHostname === true
-                      ? { reason: catalog.install.wildcardReason ?? "" }
-                      : null
-                  }
                 />
               )}
 

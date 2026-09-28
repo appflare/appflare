@@ -1,29 +1,33 @@
 import { Banner, Button, Input, LayerDialog } from "@cloudflare/kumo";
 import { PencilSimpleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useId, useRef, useState } from "react";
 import {
   DISPLAY_NAME_MAX_LENGTH,
   displayNameProblem,
-  installLabel,
+  renameChange,
+  renameStartValue,
 } from "../installs/display-name";
 import { renameInstall } from "../installs/installs.functions";
 
 /**
  * "Rename" on the app page (admins): a pencil button beside the title that
- * opens a small dialog with the install's display name. Saving an empty name
- * clears it, so the Worker name is shown again. Only Appflare's record
- * changes; nothing is deployed.
+ * opens a small dialog whose field holds the name the title shows, selected
+ * so that typing replaces it. Saving an empty name (or the app's own) clears
+ * the display name; saving it unchanged just closes the dialog. Only
+ * Appflare's record changes; nothing is deployed.
  */
 export function RenameInstallDialog({
   install,
 }: {
-  install: { id: string; displayName: string | null; workerName: string };
+  /** `name` is the app's name, which the page shows while there is no display name. */
+  install: { id: string; displayName: string | null; name: string; workerName: string };
 }) {
   const router = useRouter();
   const formId = useId();
+  const field = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
-  const [value, setValue] = useState(install.displayName ?? "");
+  const [value, setValue] = useState(() => renameStartValue(install));
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const problem = displayNameProblem(value);
@@ -31,7 +35,7 @@ export function RenameInstallDialog({
   function onOpenChange(next: boolean) {
     setOpen(next);
     if (next) {
-      setValue(install.displayName ?? "");
+      setValue(renameStartValue(install));
       setFailure(null);
     }
   }
@@ -39,10 +43,15 @@ export function RenameInstallDialog({
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (problem !== null || pending) return;
+    const change = renameChange(install, value);
+    if (change === null) {
+      setOpen(false);
+      return;
+    }
     setPending(true);
     setFailure(null);
     try {
-      await renameInstall({ data: { installId: install.id, displayName: value } });
+      await renameInstall({ data: { installId: install.id, displayName: change } });
       await router.invalidate();
       setOpen(false);
     } catch (error) {
@@ -53,7 +62,17 @@ export function RenameInstallDialog({
   }
 
   return (
-    <LayerDialog.Root open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
+    <LayerDialog.Root
+      open={open}
+      onOpenChange={onOpenChange}
+      // Once the dialog is open, the name is selected, so typing replaces it.
+      onOpenChangeComplete={(opened: boolean) => {
+        if (!opened) return;
+        field.current?.focus();
+        field.current?.select();
+      }}
+      dismissDisabled={pending}
+    >
       <LayerDialog.Trigger
         render={(p) => (
           <Button
@@ -68,7 +87,7 @@ export function RenameInstallDialog({
         )}
       />
       <LayerDialog.Content size="sm">
-        <LayerDialog.Title>Rename {installLabel(install)}</LayerDialog.Title>
+        <LayerDialog.Title>Rename {renameStartValue(install)}</LayerDialog.Title>
         <LayerDialog.Description>
           The name Appflare shows for this install. The Worker, its address and its resources keep
           their names.
@@ -76,14 +95,15 @@ export function RenameInstallDialog({
         <LayerDialog.Body>
           <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
             <Input
+              ref={field}
               label="Name"
               value={value}
               onChange={(e) => setValue(e.currentTarget.value)}
-              placeholder={install.workerName}
+              placeholder={install.name}
               autoComplete="off"
               maxLength={DISPLAY_NAME_MAX_LENGTH}
               error={problem ?? undefined}
-              description="Leave empty to show the Worker name."
+              description={`Leave empty to use the Worker name, ${install.workerName}.`}
             />
             {failure !== null && (
               <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={failure} />

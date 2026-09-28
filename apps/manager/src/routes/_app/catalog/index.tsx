@@ -25,6 +25,7 @@ import {
   sinceDay,
   storefrontRows,
 } from "../../../catalog/storefront";
+import { CatalogAddMenu } from "../../../components/catalog-add-menu";
 import { AppGrid, AppRow, CatalogSection } from "../../../components/catalog-row";
 import { CatalogSearch, useSearchText } from "../../../components/catalog-search";
 import { CategoryCards } from "../../../components/category-cards";
@@ -33,7 +34,6 @@ import { formatExactDateTime } from "../../../components/format";
 import { plainMessage } from "../../../components/message-links";
 import { MessageLinkButtons } from "../../../components/message-text";
 import { PageHeader } from "../../../components/page-header";
-import { RepositoryBuildButton } from "../../../components/repository-build-dialog";
 import { settingsLink } from "../../../components/settings-links";
 import { Tooltip } from "../../../components/tooltip";
 
@@ -66,7 +66,10 @@ function CatalogPage() {
         actions={
           viewer.role === "admin" ? (
             <>
-              {catalog.repositoryBuilds && <RepositoryBuildButton sandbox={catalog.sandbox} />}
+              <CatalogAddMenu
+                repositoryBuilds={catalog.repositoryBuilds}
+                sandbox={catalog.sandbox}
+              />
               <RefreshButton />
             </>
           ) : undefined

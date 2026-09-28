@@ -1,7 +1,6 @@
 import { parseRepositoryInput } from "@appflare/schema";
-import { Button, Input, LayerDialog, Text } from "@cloudflare/kumo";
-import { GitBranchIcon } from "@phosphor-icons/react";
-import { type FormEvent, useId, useState } from "react";
+import { Input, LayerDialog, Text } from "@cloudflare/kumo";
+import { type FormEvent, type RefObject, useId, useState } from "react";
 import { GITHUB_ACCESS_PLACE } from "../github/tokens";
 import { NOT_FROM_CATALOG } from "../installs/source-build-input";
 import { startSourceBuild } from "../installs/source-builds.functions";
@@ -19,18 +18,32 @@ import {
 } from "./source-build-fields";
 
 /**
- * "From a repository" on the Catalog page (admins on Workers Paid; sandbox
- * builds on, or turned on first by the build when the account has what they
- * need, else the dialog says what is missing): the admin names a public
- * GitHub repository and
- * optionally a branch, tag or commit and a build command; the sandbox Worker
- * builds it, and the build's review page shows what it declares before
- * anything is installed. The build's log opens once it starts.
+ * "From a repository…" in the Catalog page's add menu (admins on Workers
+ * Paid; sandbox builds on, or turned on first by the build when the account
+ * has what they need, else the dialog says what is missing): the admin names
+ * a public GitHub repository and optionally a branch, tag or commit and a
+ * build command; the sandbox Worker builds it, and the build's review page
+ * shows what it declares before anything is installed. The build's log opens
+ * once it starts.
+ *
+ * Mounted with the page and driven by `open` (a dialog mounted on demand
+ * would skip its opening animation). A menu item opens it, and the menu is
+ * gone by the time it closes, so it hands focus back to `returnFocus` (the
+ * menu's button) once it has closed.
  */
-export function RepositoryBuildButton({ sandbox }: { sandbox: SandboxReadiness }) {
+export function RepositoryBuildDialog({
+  sandbox,
+  open,
+  onOpenChange: setOpen,
+  returnFocus,
+}: {
+  sandbox: SandboxReadiness;
+  open: boolean;
+  onOpenChange(open: boolean): void;
+  returnFocus?: RefObject<HTMLElement | null>;
+}) {
   const jobStarted = useJobStarted();
   const formId = useId();
-  const [open, setOpen] = useState(false);
   const [repository, setRepository] = useState("");
   const [ref, setRef] = useState("");
   const [buildCommand, setBuildCommand] = useState(INITIAL_BUILD_COMMAND);
@@ -68,33 +81,27 @@ export function RepositoryBuildButton({ sandbox }: { sandbox: SandboxReadiness }
     }
   }
 
-  // Each opening starts from an empty form.
-  function onOpenChange(next: boolean) {
-    setOpen(next);
-    if (next) {
-      setRepository("");
-      setRef("");
-      setBuildCommand(INITIAL_BUILD_COMMAND);
-      setCostConfirmed(false);
-      setError(null);
-    }
+  // Each opening starts from an empty form: it is cleared once the dialog has closed.
+  function clear() {
+    setRepository("");
+    setRef("");
+    setBuildCommand(INITIAL_BUILD_COMMAND);
+    setCostConfirmed(false);
+    setError(null);
   }
 
   return (
     <LayerDialog.Root
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={setOpen}
+      onOpenChangeComplete={(opened: boolean) => {
+        if (opened) return;
+        clear();
+        returnFocus?.current?.focus();
+      }}
       disablePointerDismissal
       dismissDisabled={pending}
     >
-      {/* The dialog's own trigger, so focus returns to the button when it closes. */}
-      <LayerDialog.Trigger
-        render={(p) => (
-          <Button {...p} variant="secondary" icon={<GitBranchIcon />}>
-            From a repository
-          </Button>
-        )}
-      />
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>Install from a repository</LayerDialog.Title>
         <LayerDialog.Description>

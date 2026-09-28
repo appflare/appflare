@@ -5,6 +5,8 @@ import {
   displayNameProblem,
   displayNameSchema,
   installLabel,
+  renameChange,
+  renameStartValue,
 } from "./display-name";
 
 describe("installLabel", () => {
@@ -48,5 +50,30 @@ describe("displayNameProblem", () => {
     expect(displayNameProblem("Links")).toBeNull();
     expect(displayNameProblem("x".repeat(61))).toBe("Use at most 60 characters.");
     expect(displayNameProblem("a\tb")).toBe("The name cannot hold line breaks or tabs.");
+  });
+});
+
+describe("renaming from the app's page", () => {
+  const unnamed = { displayName: null, name: "Sink" };
+  const named = { displayName: "Team links", name: "Sink" };
+
+  it("starts from the name the page shows", () => {
+    expect(renameStartValue(unnamed)).toBe("Sink");
+    expect(renameStartValue(named)).toBe("Team links");
+  });
+
+  it("changes nothing when the field is saved as it opened", () => {
+    expect(renameChange(unnamed, "Sink")).toBeNull();
+    expect(renameChange(unnamed, " Sink ")).toBeNull();
+    expect(renameChange(unnamed, "")).toBeNull();
+    expect(renameChange(named, "Team links")).toBeNull();
+  });
+
+  it("sends a new name, or an empty one that clears the display name", () => {
+    expect(renameChange(unnamed, "Short links")).toBe("Short links");
+    expect(renameChange(named, " Links ")).toBe("Links");
+    expect(renameChange(named, "")).toBe("");
+    // The app's own name is what the page shows without a display name.
+    expect(renameChange(named, "Sink")).toBe("");
   });
 });

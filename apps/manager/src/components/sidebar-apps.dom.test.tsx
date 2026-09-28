@@ -141,6 +141,56 @@ describe("Your apps in the sidebar", () => {
     expect(rows()).toHaveLength(12);
     expect(list()?.hasAttribute("data-capped")).toBe(true);
     expect(list()?.className).toContain("max-h-[279px]");
-    expect(list()?.className).toContain("overflow-y-auto");
+    // Base UI's scroll area scrolls it and draws its own thin scrollbar (only
+    // with real overflow, so it is checked in a browser, not here).
+    expect(list()?.style.overflow).toBe("scroll");
+  });
+});
+
+describe("Your apps in the folded rail", () => {
+  function renderFolded(list: SidebarApp[], pathname = "/") {
+    act(() =>
+      root.render(
+        <Sidebar.Provider open={false} collapsible="icon">
+          <Sidebar>
+            <Sidebar.Content>
+              <SidebarAppsGroup apps={list} pathname={pathname} folded />
+            </Sidebar.Content>
+          </Sidebar>
+        </Sidebar.Provider>,
+      ),
+    );
+  }
+
+  it("still lists every app, the open one marked", () => {
+    renderFolded(apps(12), "/apps/cut");
+    expect(rows()).toHaveLength(12);
+    expect(container.querySelector("a[aria-current='page']")?.getAttribute("href")).toBe(
+      "/apps/cut",
+    );
+    expect(
+      container.querySelector("[data-sidebar='group'] [data-sidebar='viewport']")?.className,
+    ).toContain("max-h-[279px]");
+  });
+
+  it("puts the status dot on the icon, and only shows it there while folded", () => {
+    renderFolded(apps(4, { cut: "failed" }));
+    const cut = container.querySelector("a[href='/apps/cut']");
+    const railDot = cut?.querySelector("[data-rail-signal='failed']");
+    expect(railDot?.className).toContain("group-not-data-[state=collapsed]/sidebar:hidden");
+    const rowDot = cut?.querySelector("[data-app-label] ~ [data-signal='failed']");
+    expect(rowDot?.className).toContain("group-data-[state=collapsed]/sidebar:hidden");
+  });
+
+  it("closes the filter when the sidebar folds", () => {
+    render(apps(12));
+    act(() => filterButton()?.click());
+    const input = filterInput();
+    if (input === null) throw new Error("no filter field");
+    typeInto(input, "edge");
+    expect(rows()).toHaveLength(2);
+    renderFolded(apps(12));
+    expect(filterInput()).toBeNull();
+    expect(rows()).toHaveLength(12);
   });
 });

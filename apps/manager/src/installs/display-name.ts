@@ -48,3 +48,26 @@ export function displayNameProblem(typed: string): string | null {
 export function installLabel(install: { displayName: string | null; workerName: string }): string {
   return install.displayName ?? install.workerName;
 }
+
+/**
+ * What the rename field on an app's page starts with: the name the page's
+ * title shows, which is the display name, else the app's name.
+ */
+export function renameStartValue(install: { displayName: string | null; name: string }): string {
+  return install.displayName ?? install.name;
+}
+
+/**
+ * What saving the rename field sends: null when nothing would change, else
+ * the display name to store, where empty clears it. The app's own name counts
+ * as no display name (the page shows it either way), so saving the field
+ * untouched changes nothing.
+ */
+export function renameChange(
+  install: { displayName: string | null; name: string },
+  typed: string,
+): string | null {
+  const trimmed = typed.trim();
+  const next = trimmed === install.name ? "" : trimmed;
+  return next === (install.displayName ?? "") ? null : next;
+}
