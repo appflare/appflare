@@ -1,4 +1,4 @@
-import { Badge, Banner, Empty, LinkButton, Loader, Table, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Empty, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
   ArrowRightIcon,
   ArrowsClockwiseIcon,
@@ -8,6 +8,7 @@ import {
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { startedByLabel } from "../../../auto-update/auto-update";
+import { AppflareLoader } from "../../../components/appflare-loader";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
@@ -85,7 +86,7 @@ function JobPage() {
         title="Status"
         badge={
           <span className="flex items-center gap-2">
-            {isActive(job) && <Loader size="sm" />}
+            {isActive(job) && <AppflareLoader size="sm" />}
             <StatusBadge status={job.status} of="job" />
           </span>
         }
@@ -219,7 +220,7 @@ function BuildProgress({ build }: { build: BuildProgressView }) {
       }
       badge={
         <span className="flex items-center gap-2">
-          <Loader size="sm" />
+          <AppflareLoader size="sm" />
           <Badge variant="info">{build.stage}</Badge>
         </span>
       }

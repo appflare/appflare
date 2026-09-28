@@ -1,5 +1,5 @@
-import { Loader } from "@cloudflare/kumo";
 import { createRouter } from "@tanstack/react-router";
+import { AppflareLoader } from "./components/appflare-loader";
 import { NotFound } from "./components/not-found";
 import { RouteError } from "./components/route-error";
 import { NOT_FOUND_MODE } from "./router-not-found";
@@ -14,7 +14,7 @@ export function getRouter() {
     // component in place of the matched routes).
     defaultPendingComponent: () => (
       <div className="flex min-h-dvh items-center justify-center">
-        <Loader />
+        <AppflareLoader />
       </div>
     ),
     defaultErrorComponent: RouteError,

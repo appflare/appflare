@@ -7,7 +7,6 @@ import {
   Empty,
   Link,
   LinkButton,
-  Loader,
   Table,
   Text,
 } from "@cloudflare/kumo";
@@ -28,6 +27,7 @@ import { ANALYTICS_ENGINE_CAPABILITY_LINK } from "../../../capabilities/capabili
 import { cronTriggerCount } from "../../../catalog/cron-triggers";
 import { analyticsEngineRefusal } from "../../../catalog/requirement-checks";
 import { requirementSentence } from "../../../catalog/requirements";
+import { AppflareLoader } from "../../../components/appflare-loader";
 import { PrimitiveBadges } from "../../../components/catalog-badges";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
@@ -179,7 +179,7 @@ function BuildState({ build, isAdmin }: { build: SourceBuildView; isAdmin: boole
       return (
         <Banner
           variant="secondary"
-          icon={<Loader size="sm" />}
+          icon={<AppflareLoader size="sm" />}
           title="Building in your sandbox Worker"
           description="This page shows the review once the build is done. Its log shows each step as it runs."
           action={

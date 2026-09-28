@@ -1,9 +1,10 @@
-import { Banner, CodeBlock, Collapsible, Loader, Text } from "@cloudflare/kumo";
+import { Banner, CodeBlock, Collapsible, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { TELEMETRY_COPY, type TelemetryStatus } from "../telemetry/telemetry";
 import { previewTelemetry, setTelemetry } from "../telemetry/telemetry.functions";
+import { AppflareLoader } from "./appflare-loader";
 import { Section, SectionBody } from "./section";
 import { settingsSection } from "./settings-links";
 import { UsageDataBenefits, UsageDataSummary, UsageDataSwitch } from "./usage-data-parts";
@@ -82,7 +83,7 @@ export function UsageDataCard({ status, isAdmin }: { status: TelemetryStatus; is
                 title={previewFailure}
               />
             ) : preview === null ? (
-              <Loader size="sm" />
+              <AppflareLoader size="sm" />
             ) : (
               <CodeBlock lang="jsonc" code={preview} />
             )}

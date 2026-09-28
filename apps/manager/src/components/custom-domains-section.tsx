@@ -5,7 +5,6 @@ import {
   LayerDialog,
   Link,
   LinkButton,
-  Loader,
   Select,
   Table,
   Text,
@@ -41,6 +40,7 @@ import {
   WILDCARD_EXPLAINER,
 } from "../installs/wildcard-domain-input";
 import { addWildcardDomain, removeWildcardDomain } from "../installs/wildcard-domains.functions";
+import { AppflareLoader } from "./appflare-loader";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { DomainName } from "./domain-name";
@@ -407,7 +407,7 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
           <div className="grid gap-4">
             {options === null && loadError === null && (
               <div className="flex items-center gap-2">
-                <Loader size="sm" />
+                <AppflareLoader size="sm" />
                 <Text variant="secondary">Reading the account's domains…</Text>
               </div>
             )}
@@ -669,7 +669,7 @@ function AddWildcardDomainDialog({ install, reason }: { install: InstallDetail; 
           <div className="grid gap-4">
             {options === null && loadError === null && (
               <div className="flex items-center gap-2">
-                <Loader size="sm" />
+                <AppflareLoader size="sm" />
                 <Text variant="secondary">Reading the account's domains…</Text>
               </div>
             )}

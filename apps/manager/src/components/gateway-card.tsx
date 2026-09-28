@@ -1,13 +1,4 @@
-import {
-  Badge,
-  Banner,
-  Button,
-  InlineCopyText,
-  LinkButton,
-  Loader,
-  Select,
-  Text,
-} from "@cloudflare/kumo";
+import { Badge, Banner, Button, InlineCopyText, LinkButton, Select, Text } from "@cloudflare/kumo";
 import {
   ArrowSquareOutIcon,
   ArrowsClockwiseIcon,
@@ -31,6 +22,7 @@ import {
 } from "../gateway/gateway";
 import { checkGatewayZone, setUpGateway, turnOffGateway } from "../gateway/gateway.functions";
 import type { GatewayView } from "../gateway/gateway.server";
+import { AppflareLoader } from "./appflare-loader";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
@@ -258,7 +250,7 @@ function ChooseZone({
       />
       {checking && (
         <div className="flex items-center gap-2">
-          <Loader size="sm" />
+          <AppflareLoader size="sm" />
           <Text variant="secondary">Asking Cloudflare about {zone?.name ?? "the domain"}…</Text>
         </div>
       )}

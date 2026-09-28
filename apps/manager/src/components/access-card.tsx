@@ -1,13 +1,4 @@
-import {
-  Badge,
-  Banner,
-  Button,
-  Checkbox,
-  LayerDialog,
-  LinkButton,
-  Loader,
-  Text,
-} from "@cloudflare/kumo";
+import { Badge, Banner, Button, Checkbox, LayerDialog, LinkButton, Text } from "@cloudflare/kumo";
 import {
   ArrowsClockwiseIcon,
   CheckCircleIcon,
@@ -29,6 +20,7 @@ import {
   turnOffAccess,
   turnOnAccess,
 } from "../server/access.functions";
+import { AppflareLoader } from "./appflare-loader";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { Section, SectionBody } from "./section";
@@ -229,7 +221,7 @@ function TurnOnDialog({ viewerEmail }: { viewerEmail: string }) {
 
             {state.step === "checking" && error === null && (
               <div className="flex items-center gap-3">
-                <Loader size="sm" />
+                <AppflareLoader size="sm" />
                 <Text variant="secondary">Checking the token and the Zero Trust organization…</Text>
               </div>
             )}

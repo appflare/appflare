@@ -1,4 +1,4 @@
-import { Button, LayerCard, Link, Loader, Sidebar, Text } from "@cloudflare/kumo";
+import { Button, LayerCard, Link, Sidebar, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   CheckCircleIcon,
@@ -19,6 +19,7 @@ import {
   UPDATED_CARD_MS,
   UPDATED_TO_KEY,
 } from "./appflare-card-state";
+import { AppflareLoader } from "./appflare-loader";
 import { SendReportButton } from "./job-report-dialog";
 import { MessageText } from "./message-text";
 
@@ -100,7 +101,7 @@ export function AppflareVersion({ version }: { version: string }) {
 const RAIL_ICONS: Record<AppflareRailItem["tone"], ReactNode> = {
   success: <CheckCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-success" />,
   update: <ArrowCircleUpIcon weight="fill" className="size-4 shrink-0 text-kumo-link" />,
-  progress: <Loader size="sm" />,
+  progress: <AppflareLoader size="sm" />,
   warning: <WarningCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-warning" />,
   danger: <WarningCircleIcon weight="fill" className="size-4 shrink-0 text-kumo-danger" />,
 };
@@ -279,7 +280,7 @@ function CardBody({
           {(state.kind === "running" || state.kind === "switching") && (
             <>
               <div className="flex items-center gap-2">
-                <Loader size="sm" />
+                <AppflareLoader size="sm" />
                 <Text bold>
                   {state.kind === "running" ? "Updating" : "Switching"} to {state.target}
                 </Text>

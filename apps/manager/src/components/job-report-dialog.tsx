@@ -1,8 +1,9 @@
-import { Banner, Button, LayerDialog, Loader } from "@cloudflare/kumo";
+import { Banner, Button, LayerDialog } from "@cloudflare/kumo";
 import { PaperPlaneTiltIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { FAILURE_REPORT_COPY, type FailureReportPreview } from "../telemetry/failure-report";
 import { previewJobReport, sendJobReport } from "../telemetry/telemetry.functions";
+import { AppflareLoader } from "./appflare-loader";
 import { FailureReportBody, ReportSent } from "./job-report-parts";
 
 /**
@@ -83,7 +84,7 @@ export function SendReportButton({
         <LayerDialog.Body>
           <div className="grid gap-4">
             {preview === null ? (
-              failure === null && <Loader size="sm" />
+              failure === null && <AppflareLoader size="sm" />
             ) : (
               <FailureReportBody preview={preview} note={note} onNoteChange={setNote} />
             )}

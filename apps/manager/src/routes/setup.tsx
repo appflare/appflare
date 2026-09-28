@@ -1,4 +1,4 @@
-import { Banner, Button, ClipboardText, Collapsible, Input, Loader, Text } from "@cloudflare/kumo";
+import { Banner, Button, ClipboardText, Collapsible, Input, Text } from "@cloudflare/kumo";
 import { CheckCircleIcon, InfoIcon, SignOutIcon, WarningIcon } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useReducer, useState } from "react";
@@ -8,6 +8,7 @@ import { serverErrorMessage } from "../auth/sign-in-errors";
 import { getCapabilityRowsData } from "../capabilities/capability-rows.functions";
 import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
 import { SetupCapabilities } from "../capabilities/capability-section";
+import { AppflareLoader } from "../components/appflare-loader";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { SetupTokenForm, type SetupTokenSaved } from "../components/cloudflare-token-form";
 import { MessageText } from "../components/message-text";
@@ -200,7 +201,7 @@ function RedeployingStep({ onReady }: { onReady: () => void }) {
   }, [onReady]);
   return (
     <div className="flex items-center gap-2">
-      <Loader size="sm" />
+      <AppflareLoader size="sm" />
       <Text>Waiting for the new version to answer…</Text>
     </div>
   );
@@ -376,7 +377,7 @@ function TokenSavedStep({
             {hasSecret ? (
               <CheckCircleIcon weight="fill" className="text-kumo-success" />
             ) : (
-              <Loader size="sm" />
+              <AppflareLoader size="sm" />
             )}
           </span>
           <Text>
