@@ -24,6 +24,8 @@ describe("JobUnits over the SELF binding", () => {
     expect(self).toBeDefined();
   });
 
+  // The first call over SELF loads the test Worker's whole module graph, which
+  // takes seconds on a shared CI runner.
   it("returns a failure as plain data across the call, with the API token read from its own env", async () => {
     expect(env.CF_API_TOKEN).toBeUndefined();
     const result = await self?.emptyR2Page({
@@ -42,7 +44,7 @@ describe("JobUnits over the SELF binding", () => {
       log: { lines: [], requests: [] },
       subrequests: 0,
     });
-  });
+  }, 30_000);
 
   it("validates its input on arrival", async () => {
     const result = await self?.emptyR2Page({

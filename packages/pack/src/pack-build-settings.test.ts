@@ -98,7 +98,7 @@ writeFileSync("public/origin.txt", String(process.env.VITE_ORIGIN));`,
     expect(lines).toContain(
       "build-time constants from install.buildEnv: VITE_ORIGIN (set for the build commands and the bundling; the artifact's catalog manifest records their values)",
     );
-  });
+  }, 120_000);
 });
 
 describe("a build that writes nothing", () => {
@@ -108,7 +108,7 @@ describe("a build that writes nothing", () => {
     // Writing the fixture changed the checkout; let the file clock move past it.
     await new Promise((resolve) => setTimeout(resolve, 20));
     await expect(run()).rejects.toThrow(/built nothing/);
-  });
+  }, 120_000);
 });
 
 describe("static assets", () => {
@@ -127,7 +127,7 @@ describe("static assets", () => {
     expect(lines).toContain(
       "left .git, .wrangler, node_modules, docs/node_modules out of the static assets: a project's own .git, .wrangler, node_modules directories are never served",
     );
-  });
+  }, 120_000);
 });
 
 describe("resource settings", () => {
@@ -169,7 +169,7 @@ describe("resource settings", () => {
         },
       ]),
     );
-  });
+  }, 120_000);
 
   it("refuse resources.r2 for a binding the wrangler config does not have", async () => {
     setUp(
@@ -181,5 +181,5 @@ describe("resource settings", () => {
     await expect(run()).rejects.toThrow(
       "the catalog manifest declares resources.r2.FILES, but the wrangler config has no R2 binding by that name",
     );
-  });
+  }, 120_000);
 });

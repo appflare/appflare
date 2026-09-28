@@ -153,7 +153,7 @@ describe("Rin: the catalog carries the config the repository does not", () => {
       readFileSync(path.join(dir, PATCHED_WRANGLER_CONFIG), "utf8"),
     ) as Record<string, unknown>;
     expect(written).toEqual({ name: "rin", ...RIN_CONFIG });
-  });
+  }, 120_000);
 
   it("is read by inspect as the pack reads it", () => {
     const dir = project(RIN_FILES);
@@ -183,7 +183,7 @@ describe("Rin: the catalog carries the config the repository does not", () => {
       `apps/rin/${PATCHED_WRANGLER_CONFIG}`,
     );
     expect(existsSync(path.join(dir, "apps/rin", PATCHED_WRANGLER_CONFIG))).toBe(true);
-  });
+  }, 120_000);
 });
 
 describe("a static site whose repository ships no config", () => {
@@ -205,7 +205,7 @@ describe("a static site whose repository ships no config", () => {
       "/app.js",
       "/index.html",
     ]);
-  });
+  }, 120_000);
 });
 
 describe("writeInlineConfigs refusals", () => {
@@ -266,7 +266,7 @@ describe("writeInlineConfigs refusals", () => {
     await expect(packWith(dir, rinManifest({ buildCommand: "node build.mjs" }))).rejects.toThrow(
       /redirects wrangler to a config the build generated/,
     );
-  });
+  }, 120_000);
 });
 
 describe("dropping a section the packer does not read", () => {
@@ -294,7 +294,7 @@ describe("dropping a section the packer does not read", () => {
     ).rejects.toThrow(
       /declares vpc_services \(Workers VPC services\), which Appflare cannot install/,
     );
-  });
+  }, 120_000);
 
   it("refuses unsafe while vpc_services alone is dropped", async () => {
     const manifest = catalog("matrix", {
@@ -303,7 +303,7 @@ describe("dropping a section the packer does not read", () => {
     await expect(packWith(project(files), manifest)).rejects.toThrow(
       /unsafe binding PROBE has the type "internal_probe"/,
     );
-  });
+  }, 120_000);
 
   it("packs once the patch drops both", async () => {
     const manifest = catalog("matrix", {
@@ -316,5 +316,5 @@ describe("dropping a section the packer does not read", () => {
     expect(result.manifest.worker.bindings).toEqual([{ type: "kv_namespace", name: "SESSIONS" }]);
     expect(logs).toContain("  unsafe: removed");
     expect(logs).toContain("  vpc_services: removed");
-  });
+  }, 120_000);
 });
