@@ -43,7 +43,17 @@ export function TileMeta({ app }: { app: Pick<TileApp, "plan" | "popularity"> })
     // `overflow-hidden` rather than wrapping: the line never runs under the
     // action beside it, even in the narrowest tile.
     <span className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-kumo-subtle text-xs">
-      <Tooltip content={plan.tooltip} render={<span />}>
+      {/* A button, so a keyboard can reach the tooltip too. */}
+      <Tooltip
+        content={plan.tooltip}
+        render={
+          <button
+            type="button"
+            // Inset: the line clips anything drawn outside it.
+            className="cursor-default rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand focus-visible:ring-inset"
+          />
+        }
+      >
         {plan.word}
         <span className="sr-only"> ({plan.name} plan)</span>
       </Tooltip>

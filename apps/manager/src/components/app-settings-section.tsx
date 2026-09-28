@@ -7,7 +7,6 @@ import {
   cn,
   Input,
   Label,
-  LayerCard,
   LinkButton,
   SensitiveInput,
   Text,
@@ -39,6 +38,7 @@ import {
   FieldLabel,
   TechnicalNamesProvider,
   TechnicalNamesSwitch,
+  useShowTechnicalNames,
   useTechnicalNames,
 } from "./field-label";
 import { FLUSH_RING_CLASS } from "./hash-target";
@@ -47,6 +47,7 @@ import { ErrorMessageBanner } from "./message-text";
 import { placeholderOptions } from "./placeholder-chips";
 import { SandboxBuildConfirmation } from "./sandbox-build-confirmation";
 import { generatedSecret, MultilineSecretInput } from "./secret-fields";
+import { Section, SectionBody } from "./section";
 import { type PlaceholderChips, VarField } from "./var-field";
 
 /** The one notice at the top of the settings form, or null when an admin can save. */
@@ -102,7 +103,7 @@ export function AppSettingsSection({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [showNames, setShowNames] = useState(false);
+  const [showNames] = useShowTechnicalNames();
   // Placeholders stay in the fields as chips; each deploy fills them in.
   const chips: PlaceholderChips = {
     options: placeholderOptions({
@@ -215,321 +216,317 @@ export function AppSettingsSection({
   const notice = settingsNotice(isAdmin, busy, settings.unavailable);
 
   return (
-    <section
-      id="settings"
-      aria-label="Settings and secrets"
-      className={cn("grid scroll-mt-6 gap-3", FLUSH_RING_CLASS)}
-    >
-      <LayerCard>
-        <LayerCard.Primary className="px-5 py-4">
-          <form className="grid gap-6" onSubmit={onSubmit}>
-            {notice === "members" && (
-              <Banner
-                variant="secondary"
-                icon={<InfoIcon weight="fill" />}
-                title="Only admins can change settings."
-              />
-            )}
-            {notice === "busy" && (
-              <Banner
-                variant="secondary"
-                icon={<InfoIcon weight="fill" />}
-                title="A job of this app is running"
-                description="Settings can be saved once it has finished."
-                action={
-                  <LinkButton
-                    href={`/jobs/${install.activeJobId}`}
-                    variant="secondary"
-                    icon={<ArrowRightIcon />}
-                  >
-                    View log
-                  </LinkButton>
-                }
-              />
-            )}
-            {notice === "unavailable" && settings.unavailable !== null && (
-              <Banner
-                variant="secondary"
-                icon={<InfoIcon weight="fill" />}
-                title={settings.unavailable}
-              />
-            )}
-            {nothingToEdit ? (
-              <Text variant="secondary">This app has no settings or secrets to change.</Text>
-            ) : (
-              <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-                <Text variant="secondary" size="sm">
-                  <FieldHelp
-                    links
-                    text={
-                      selfDeploying
-                        ? "Saving runs the app's own installer again with these values. It changes the app in place: there is no snapshot and no undo."
-                        : `Saving deploys the app again with these values, after checking them on a preview where Cloudflare allows it. You can undo it from ${appPlace(install.id, "versions", "Versions")}.`
-                    }
-                    after={
-                      <DocsLink
-                        topic={selfDeploying ? "settingsChangeBuilt" : "settingsChange"}
-                        variant="inline"
-                      />
-                    }
-                  />
-                </Text>
-                <TechnicalNamesSwitch checked={showNames} onChange={setShowNames} />
-              </div>
-            )}
-
-            <TechnicalNamesProvider value={showNames}>
-              <fieldset disabled={!canEdit || pending} className="grid gap-6">
-                {settings.fields.length > 0 && (
-                  <Group
-                    title="Settings"
-                    description={
-                      selfDeploying
-                        ? "Handed to the app's installer. One left at its default follows the default of each new version."
-                        : "One left at its default follows the default of each new version."
-                    }
-                  >
-                    {settings.fields.map((field) => (
-                      <VarField
-                        key={field.name}
-                        field={field}
-                        value={shownOf(field)}
-                        when="when the app is deployed"
-                        chips={chips}
-                        onChange={(value) => setEdited((s) => ({ ...s, [field.name]: value }))}
-                      />
-                    ))}
-                  </Group>
-                )}
-
-                {settings.secrets.length > 0 && (
-                  <Group
-                    id="secrets"
-                    title="Secrets"
-                    description={
-                      selfDeploying
-                        ? "Kept encrypted for the app's installer. Values are never shown; a new value replaces the current one."
-                        : "Kept encrypted on the app. Values are never shown; a new value replaces the current one."
-                    }
-                  >
-                    <div className="grid gap-4">
-                      {settings.secrets.map((slot) => (
-                        <SecretRow
-                          key={slot.name}
-                          tokenHelp={
-                            settings.appToken?.secret === slot.name ? (
-                              <AppTokenHelp
-                                appName={install.name}
-                                permissions={settings.appToken.permissions}
-                              />
-                            ) : undefined
-                          }
-                          slot={slot}
-                          value={newSecrets[slot.name]}
-                          removed={removed.has(slot.name)}
-                          canRemove={settings.canRemoveSecrets && slot.optional && slot.present}
-                          disabled={!canEdit || pending}
-                          onValueChange={(value) =>
-                            setNewSecrets((s) => {
-                              if (value === undefined) {
-                                const { [slot.name]: _dropped, ...rest } = s;
-                                return rest;
-                              }
-                              return { ...s, [slot.name]: value };
-                            })
-                          }
-                          onRemovedChange={(remove) =>
-                            setRemoved((s) => {
-                              const next = new Set(s);
-                              if (remove) next.add(slot.name);
-                              else next.delete(slot.name);
-                              return next;
-                            })
-                          }
-                        />
-                      ))}
-                    </div>
-                  </Group>
-                )}
-
-                {settings.appToken !== null && settings.appToken.secret === null && (
-                  <Group
-                    title={`Cloudflare token for ${install.name}`}
-                    description={`${install.name} uses a Cloudflare API token of its own, which you give it in its own setup steps. Create one, or a new one, here.`}
-                  >
-                    <AppTokenHelp
-                      appName={install.name}
-                      permissions={settings.appToken.permissions}
+    <Section id="settings" title="Settings and secrets" className={FLUSH_RING_CLASS}>
+      <SectionBody>
+        <form className="grid gap-6" onSubmit={onSubmit}>
+          {notice === "members" && (
+            <Banner
+              variant="secondary"
+              icon={<InfoIcon weight="fill" />}
+              title="Only admins can change settings."
+            />
+          )}
+          {notice === "busy" && (
+            <Banner
+              variant="secondary"
+              icon={<InfoIcon weight="fill" />}
+              title="A job of this app is running"
+              description="Settings can be saved once it has finished."
+              action={
+                <LinkButton
+                  href={`/jobs/${install.activeJobId}`}
+                  variant="secondary"
+                  icon={<ArrowRightIcon />}
+                >
+                  View log
+                </LinkButton>
+              }
+            />
+          )}
+          {notice === "unavailable" && settings.unavailable !== null && (
+            <Banner
+              variant="secondary"
+              icon={<InfoIcon weight="fill" />}
+              title={settings.unavailable}
+            />
+          )}
+          {nothingToEdit ? (
+            <Text variant="secondary">This app has no settings or secrets to change.</Text>
+          ) : (
+            <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+              <Text variant="secondary" size="sm">
+                <FieldHelp
+                  links
+                  text={
+                    selfDeploying
+                      ? "Saving runs the app's own installer again with these values. It changes the app in place: there is no snapshot and no undo."
+                      : `Saving deploys the app again with these values, after checking them on a preview where Cloudflare allows it. You can undo it from ${appPlace(install.id, "versions", "Versions")}.`
+                  }
+                  after={
+                    <DocsLink
+                      topic={selfDeploying ? "settingsChangeBuilt" : "settingsChange"}
+                      variant="inline"
                     />
-                  </Group>
-                )}
+                  }
+                />
+              </Text>
+              <TechnicalNamesSwitch />
+            </div>
+          )}
 
-                {settings.databases.length > 0 && (
-                  <Group
-                    id="databases"
-                    title="Databases"
-                    description="Connection strings are never stored, so they are never shown. A new one gets a new Hyperdrive configuration, which the new version binds. The old configuration is kept until the next update or settings change, so undoing this change from Versions still reaches the old database."
-                  >
-                    <div className="grid gap-4">
-                      {settings.databases.map((db) => (
-                        <DatabaseRow
-                          key={db.binding}
-                          slot={db}
-                          value={newConnections[db.binding]}
-                          disabled={!canEdit || pending}
-                          onValueChange={(value) =>
-                            setNewConnections((s) => {
-                              if (value === undefined) {
-                                const { [db.binding]: _dropped, ...rest } = s;
-                                return rest;
-                              }
-                              return { ...s, [db.binding]: value };
-                            })
-                          }
-                        />
-                      ))}
-                    </div>
-                  </Group>
-                )}
+          <TechnicalNamesProvider value={showNames}>
+            <fieldset disabled={!canEdit || pending} className="grid gap-6">
+              {settings.fields.length > 0 && (
+                <Group
+                  title="Settings"
+                  description={
+                    selfDeploying
+                      ? "Handed to the app's installer. One left at its default follows the default of each new version."
+                      : "One left at its default follows the default of each new version."
+                  }
+                >
+                  {settings.fields.map((field) => (
+                    <VarField
+                      key={field.name}
+                      field={field}
+                      value={shownOf(field)}
+                      when="when the app is deployed"
+                      chips={chips}
+                      onChange={(value) => setEdited((s) => ({ ...s, [field.name]: value }))}
+                    />
+                  ))}
+                </Group>
+              )}
 
-                {settings.email !== null && (
-                  <Group
-                    id="email-zone"
-                    title="Email"
-                    description={
-                      settings.email.zoneName === null
-                        ? "The app receives email through Cloudflare Email Routing; Appflare has no record of its zone."
-                        : `The app receives email for ${settings.email.zoneName} through Cloudflare Email Routing.`
-                    }
-                  >
-                    {leftover.length > 0 && (
-                      <Banner
-                        variant="alert"
-                        icon={<WarningIcon weight="fill" />}
-                        title="Moving email did not finish"
-                        description={`Routing rules the app no longer needs are still set up on ${leftover.join(", ")}. Finishing the move checks ${settings.email.zoneName ?? "the new zone"} again and removes them; the Worker is not deployed again.`}
-                        action={
-                          canEdit ? (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              icon={<ArrowsClockwiseIcon />}
-                              loading={pending}
-                              disabled={dirty}
-                              onClick={finishMove}
-                            >
-                              Finish moving email
-                            </Button>
+              {settings.secrets.length > 0 && (
+                <Group
+                  id="secrets"
+                  title="Secrets"
+                  description={
+                    selfDeploying
+                      ? "Kept encrypted for the app's installer. Values are never shown; a new value replaces the current one."
+                      : "Kept encrypted on the app. Values are never shown; a new value replaces the current one."
+                  }
+                >
+                  <div className="grid gap-4">
+                    {settings.secrets.map((slot) => (
+                      <SecretRow
+                        key={slot.name}
+                        tokenHelp={
+                          settings.appToken?.secret === slot.name ? (
+                            <AppTokenHelp
+                              appName={install.name}
+                              permissions={settings.appToken.permissions}
+                            />
                           ) : undefined
                         }
+                        slot={slot}
+                        value={newSecrets[slot.name]}
+                        removed={removed.has(slot.name)}
+                        canRemove={settings.canRemoveSecrets && slot.optional && slot.present}
+                        disabled={!canEdit || pending}
+                        onValueChange={(value) =>
+                          setNewSecrets((s) => {
+                            if (value === undefined) {
+                              const { [slot.name]: _dropped, ...rest } = s;
+                              return rest;
+                            }
+                            return { ...s, [slot.name]: value };
+                          })
+                        }
+                        onRemovedChange={(remove) =>
+                          setRemoved((s) => {
+                            const next = new Set(s);
+                            if (remove) next.add(slot.name);
+                            else next.delete(slot.name);
+                            return next;
+                          })
+                        }
                       />
-                    )}
-                    {movingEmail && canEdit ? (
-                      <div className="grid gap-4">
-                        <EmailRoutingFields
-                          slug={settings.slug}
-                          workerName={install.workerName}
-                          disabled={!canEdit || pending}
-                          zoneId={zoneId}
-                          onZoneChange={setZoneId}
-                          onReadyChange={setEmailReady}
-                        />
-                        <Text variant="secondary" size="sm">
-                          Saving sets up the routes on the new zone first, then removes the ones on
-                          the current zone the way an uninstall does. Routing rules name the Worker,
-                          so moving email alone does not deploy it again, and a rollback does not
-                          move email back.
-                        </Text>
-                        <div>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            icon={<ArrowUUpLeftIcon />}
-                            onClick={() => {
-                              setMovingEmail(false);
-                              setZoneId(settings.email?.zoneId ?? null);
-                            }}
-                          >
-                            Keep the current zone
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      canEdit && (
-                        <div>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            icon={<EnvelopeSimpleIcon />}
-                            onClick={() => {
-                              // The admin picks the new zone; the current one is not a choice.
-                              setZoneId(null);
-                              setMovingEmail(true);
-                            }}
-                          >
-                            Receive email for another zone
-                          </Button>
-                        </div>
-                      )
-                    )}
-                  </Group>
-                )}
+                    ))}
+                  </div>
+                </Group>
+              )}
 
-                {canEdit && redeploys && settings.skipsPreview !== null && (
-                  <div className="grid gap-3">
+              {settings.appToken !== null && settings.appToken.secret === null && (
+                <Group
+                  title={`Cloudflare token for ${install.name}`}
+                  description={`${install.name} uses a Cloudflare API token of its own, which you give it in its own setup steps. Create one, or a new one, here.`}
+                >
+                  <AppTokenHelp
+                    appName={install.name}
+                    permissions={settings.appToken.permissions}
+                  />
+                </Group>
+              )}
+
+              {settings.databases.length > 0 && (
+                <Group
+                  id="databases"
+                  title="Databases"
+                  description="Connection strings are never stored, so they are never shown. A new one gets a new Hyperdrive configuration, which the new version binds. The old configuration is kept until the next update or settings change, so undoing this change from Versions still reaches the old database."
+                >
+                  <div className="grid gap-4">
+                    {settings.databases.map((db) => (
+                      <DatabaseRow
+                        key={db.binding}
+                        slot={db}
+                        value={newConnections[db.binding]}
+                        disabled={!canEdit || pending}
+                        onValueChange={(value) =>
+                          setNewConnections((s) => {
+                            if (value === undefined) {
+                              const { [db.binding]: _dropped, ...rest } = s;
+                              return rest;
+                            }
+                            return { ...s, [db.binding]: value };
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                </Group>
+              )}
+
+              {settings.email !== null && (
+                <Group
+                  id="email-zone"
+                  title="Email"
+                  description={
+                    settings.email.zoneName === null
+                      ? "The app receives email through Cloudflare Email Routing; Appflare has no record of its domain."
+                      : `The app receives email for ${settings.email.zoneName} through Cloudflare Email Routing.`
+                  }
+                >
+                  {leftover.length > 0 && (
                     <Banner
                       variant="alert"
                       icon={<WarningIcon weight="fill" />}
-                      title="No preview check for this change"
-                      description={`${settings.skipsPreview}.`}
+                      title="Moving email did not finish"
+                      description={`Routing rules the app no longer needs are still set up on ${leftover.join(", ")}. Finishing the move checks ${settings.email.zoneName ?? "the new domain"} again and removes them; the Worker is not deployed again.`}
+                      action={
+                        canEdit ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            icon={<ArrowsClockwiseIcon />}
+                            loading={pending}
+                            disabled={dirty}
+                            onClick={finishMove}
+                          >
+                            Finish moving email
+                          </Button>
+                        ) : undefined
+                      }
                     />
-                    <Checkbox
-                      checked={confirmNoPreview}
-                      onCheckedChange={(checked: boolean) => setConfirmNoPreview(checked)}
-                      label="Save without checking the new settings first"
-                    />
-                  </div>
-                )}
-                {canEdit && dirty && settings.installer !== null && (
-                  <SandboxBuildConfirmation
-                    build={settings.installer}
-                    checked={buildConfirmed}
-                    onChange={setBuildConfirmed}
-                    action="settings change"
-                    kind="installer"
-                  />
-                )}
-              </fieldset>
-            </TechnicalNamesProvider>
+                  )}
+                  {movingEmail && canEdit ? (
+                    <div className="grid gap-4">
+                      <EmailRoutingFields
+                        slug={settings.slug}
+                        workerName={install.workerName}
+                        disabled={!canEdit || pending}
+                        zoneId={zoneId}
+                        onZoneChange={setZoneId}
+                        onReadyChange={setEmailReady}
+                        // Inside the "Email" group of the settings form.
+                        headingLevel="h4"
+                      />
+                      <Text variant="secondary" size="sm">
+                        Saving sets up the routes on the new domain first, then removes the ones on
+                        the current domain the way an uninstall does. Routing rules name the Worker,
+                        so moving email alone does not deploy it again, and a rollback does not move
+                        email back.
+                      </Text>
+                      <div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          icon={<ArrowUUpLeftIcon />}
+                          onClick={() => {
+                            setMovingEmail(false);
+                            setZoneId(settings.email?.zoneId ?? null);
+                          }}
+                        >
+                          Keep the current domain
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    canEdit && (
+                      <div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          icon={<EnvelopeSimpleIcon />}
+                          onClick={() => {
+                            // The admin picks the new zone; the current one is not a choice.
+                            setZoneId(null);
+                            setMovingEmail(true);
+                          }}
+                        >
+                          Receive email for another domain
+                        </Button>
+                      </div>
+                    )
+                  )}
+                </Group>
+              )}
 
-            {error !== null && <ErrorMessageBanner message={error} newTab />}
-            {canEdit && !nothingToEdit && (
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={!dirty || pending}
-                  onClick={discard}
-                >
-                  Discard changes
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  icon={<ArrowsClockwiseIcon />}
-                  loading={pending}
-                  disabled={!ready}
-                >
-                  Save and redeploy
-                </Button>
-              </div>
-            )}
-          </form>
-        </LayerCard.Primary>
-      </LayerCard>
-    </section>
+              {canEdit && redeploys && settings.skipsPreview !== null && (
+                <div className="grid gap-3">
+                  <Banner
+                    variant="alert"
+                    icon={<WarningIcon weight="fill" />}
+                    title="No preview check for this change"
+                    description={`${settings.skipsPreview}.`}
+                  />
+                  <Checkbox
+                    checked={confirmNoPreview}
+                    onCheckedChange={(checked: boolean) => setConfirmNoPreview(checked)}
+                    label="Save without checking the new settings first"
+                  />
+                </div>
+              )}
+              {canEdit && dirty && settings.installer !== null && (
+                <SandboxBuildConfirmation
+                  build={settings.installer}
+                  checked={buildConfirmed}
+                  onChange={setBuildConfirmed}
+                  action="settings change"
+                  kind="installer"
+                />
+              )}
+            </fieldset>
+          </TechnicalNamesProvider>
+
+          {error !== null && <ErrorMessageBanner message={error} newTab />}
+          {canEdit && !nothingToEdit && (
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!dirty || pending}
+                onClick={discard}
+              >
+                Discard changes
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                icon={<ArrowsClockwiseIcon />}
+                loading={pending}
+                disabled={!ready}
+              >
+                Save and redeploy
+              </Button>
+            </div>
+          )}
+        </form>
+      </SectionBody>
+    </Section>
   );
 }
 
@@ -549,7 +546,9 @@ function Group({
   return (
     <div id={id} className={cn("grid scroll-mt-6 gap-4", FLUSH_RING_CLASS)}>
       <div className="grid gap-1.5">
-        <Text bold>{title}</Text>
+        <Text bold as="h3">
+          {title}
+        </Text>
         <Text variant="secondary" size="sm">
           <FieldHelp text={description} />
         </Text>

@@ -1,12 +1,13 @@
 import type { TokenPermission } from "@appflare/schema";
-import { Banner, Button, Input, LayerCard, Text } from "@cloudflare/kumo";
+import { Banner, Button, Input, Text } from "@cloudflare/kumo";
 import { CheckCircleIcon, KeyIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { type FormEvent, useState } from "react";
 import { replaceAppCredentials } from "../installs/app-credentials.functions";
 import { AppTokenHelp } from "./app-token-permissions";
+import { Section, SectionBody } from "./section";
 
 /**
- * The install page's card for a self-deploying app's own token: the sandbox
+ * The install page's section for a self-deploying app's own token: the sandbox
  * Worker holds it (and the app's secret values) for the app's installer.
  * Admins enter it again here when it was rotated or the sandbox Worker lost
  * it; the next update or uninstall uses it. Values are never shown.
@@ -58,12 +59,8 @@ export function AppCredentialsCard({
   }
 
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center gap-2">
-        <KeyIcon aria-hidden />
-        App token
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="px-5 py-4">
+    <Section title="App token">
+      <SectionBody>
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Text variant="secondary">
             {appName}'s installer runs with the token you created for it, which your sandbox Worker
@@ -121,7 +118,7 @@ export function AppCredentialsCard({
             </div>
           )}
         </form>
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }

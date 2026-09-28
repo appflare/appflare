@@ -35,6 +35,7 @@ export function EmailRoutingFields({
   zoneId,
   onZoneChange,
   onReadyChange,
+  headingLevel = "h3",
 }: {
   slug: string;
   workerName: string;
@@ -44,6 +45,8 @@ export function EmailRoutingFields({
   onZoneChange(zoneId: string | null): void;
   /** A state setter (stable). */
   onReadyChange(ready: boolean): void;
+  /** The fields' heading, one level below the section they sit in. */
+  headingLevel?: "h3" | "h4";
 }) {
   const [options, setOptions] = useState<EmailZoneOptions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -62,7 +65,9 @@ export function EmailRoutingFields({
       })
       .catch((err: unknown) => {
         if (live) {
-          setLoadError(err instanceof Error ? err.message : "Could not read the account's zones.");
+          setLoadError(
+            err instanceof Error ? err.message : "Could not read the account's domains.",
+          );
         }
       });
     return () => {
@@ -89,7 +94,7 @@ export function EmailRoutingFields({
         .catch((err: unknown) => {
           if (live) {
             setPreviewFailure(
-              err instanceof Error ? err.message : "Could not read Email Routing for that zone.",
+              err instanceof Error ? err.message : "Could not read Email Routing for that domain.",
             );
           }
         })
@@ -108,16 +113,18 @@ export function EmailRoutingFields({
   return (
     <div className="grid gap-4">
       <div className="grid gap-1.5">
-        <Text bold>Email</Text>
+        <Text bold as={headingLevel}>
+          Email
+        </Text>
         <Text variant="secondary" size="sm">
-          This app receives email through Cloudflare Email Routing. Choose the zone whose email it
+          This app receives email through Cloudflare Email Routing. Choose the domain whose email it
           should receive; it must use Cloudflare DNS.
         </Text>
       </div>
       {options === null && loadError === null && (
         <div className="flex items-center gap-2">
           <Loader size="sm" />
-          <Text variant="secondary">Reading the account's zones…</Text>
+          <Text variant="secondary">Reading the account's domains…</Text>
         </div>
       )}
       {loadError !== null && (
@@ -125,21 +132,21 @@ export function EmailRoutingFields({
       )}
       {options?.noZones && (
         <PermissionsBanner
-          title="Appflare cannot see any zone in this account"
+          title="Appflare cannot see any domain in this account"
           missing={EMAIL_ROUTING_PERMISSIONS}
           why="Either the account has no domain on Cloudflare yet (add one and wait until it is active), or the token lacks the permissions receiving email needs."
         />
       )}
       {options !== null && !options.noZones && options.zones.length === 0 && (
         <Text variant="secondary">
-          None of the account's zones is active yet ({options.inactiveZones.join(", ")}). A zone can
-          receive email once Cloudflare shows it as active.
+          None of the account's domains is active yet ({options.inactiveZones.join(", ")}). A domain
+          can receive email once Cloudflare shows it as active.
         </Text>
       )}
       {options !== null && options.zones.length > 0 && (
         <Select
-          label="Zone"
-          placeholder="Choose a zone"
+          label="Domain"
+          placeholder="Choose a domain"
           value={zoneId}
           onValueChange={(v) => onZoneChange(typeof v === "string" ? v : null)}
           items={Object.fromEntries(options.zones.map((z) => [z.id, z.name]))}
@@ -149,7 +156,7 @@ export function EmailRoutingFields({
       {zoneId !== null && previewing && preview === null && (
         <div className="flex items-center gap-2">
           <Loader size="sm" />
-          <Text variant="secondary">Reading Email Routing on {zoneName ?? "the zone"}…</Text>
+          <Text variant="secondary">Reading Email Routing on {zoneName ?? "the domain"}…</Text>
         </div>
       )}
       {previewFailure !== null && (
@@ -180,7 +187,7 @@ function PermissionsBanner({
           <span>{why}</span>
           <span>
             Needed: {missing.join(", ")}. Edit the Appflare token under API Tokens in the Cloudflare
-            dashboard, add them for the zones you want to use, and save; an edited token keeps its
+            dashboard, add them for the domains you want to use, and save; an edited token keeps its
             value. Or create a new token and replace the old one in the{" "}
             <Link href={settingsLink("account", "connection")} target="_blank" rel="noopener">
               Cloudflare connection settings
@@ -211,7 +218,7 @@ function PreviewDetails({
   preview: EmailRoutingPreview;
   workerName: string;
 }) {
-  const zone = preview.zoneName ?? "the zone";
+  const zone = preview.zoneName ?? "the domain";
   const steps: string[] = [];
   if (preview.enablesRouting) {
     steps.push(`Turn Email Routing on for ${zone}. Cloudflare adds ${ROUTING_RECORDS}.`);

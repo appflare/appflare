@@ -1,6 +1,7 @@
 import { DropdownMenu, Select, Sidebar } from "@cloudflare/kumo";
-import { GearIcon } from "@phosphor-icons/react";
+import { CheckIcon, GearIcon } from "@phosphor-icons/react";
 import { currentSettingsPage, isSettingsPath, type SettingsPage } from "./navigation";
+import { RouterAnchor } from "./router-anchor";
 import { useSettingsMenu, useSettingsNavigation } from "./settings-menu";
 
 /**
@@ -90,16 +91,19 @@ function SettingsRailMenu({
           <DropdownMenu.Group>
             <DropdownMenu.Label>Settings</DropdownMenu.Label>
             {pages.map((page) => (
-              <DropdownMenu.Item
+              <DropdownMenu.LinkItem
                 key={page.href}
-                // A link through the app's router (Kumo's link provider).
                 href={page.href}
-                selected={page === current}
+                // A link through the app's router; the page changes in place,
+                // so the menu closes itself.
+                render={<RouterAnchor />}
+                closeOnClick
                 aria-current={page === current ? "page" : undefined}
               >
                 {/* Takes the room, so the tick of the page open sits at the right. */}
                 <span className="flex-1">{page.label}</span>
-              </DropdownMenu.Item>
+                {page === current && <CheckIcon aria-hidden className="size-4" />}
+              </DropdownMenu.LinkItem>
             ))}
           </DropdownMenu.Group>
         </DropdownMenu.Content>

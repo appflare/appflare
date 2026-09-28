@@ -1,5 +1,5 @@
 import { SANDBOX_BUCKET_NAME } from "@appflare/schema";
-import { Badge, Banner, Button, Link, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Collapsible, Link, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
   CheckCircleIcon,
@@ -460,7 +460,7 @@ function DisableDialog({ status, disabled }: { status: SandboxCardState; disable
         </Button>
       )}
       title="Disable sandbox builds"
-      description="Appflare disconnects from the sandbox Worker, then deletes it, its two container applications, and the R2 bucket appflare-builds with every build output and log in it. GitHub access tokens are kept on the sandbox Worker, so they are removed too."
+      description="Appflare disconnects from the sandbox Worker, then deletes it with the containers it builds in and the storage that holds every build and its log. GitHub access tokens are kept on the sandbox Worker, so they are removed too."
       {...(inUse ? {} : { confirmText: SANDBOX_WORKER })}
       actionLabel="Disable and delete"
       disabled={inUse}
@@ -479,6 +479,16 @@ function DisableDialog({ status, disabled }: { status: SandboxCardState; disable
           again at any time.
         </Text>
       )}
+      <Collapsible.Root>
+        <Collapsible.DefaultTrigger>Technical details</Collapsible.DefaultTrigger>
+        <Collapsible.DefaultPanel>
+          <Text variant="secondary" size="sm">
+            Deleted: the Worker <span className="font-mono text-[0.9em]">{SANDBOX_WORKER}</span>,
+            its two container applications, and the R2 bucket{" "}
+            <span className="font-mono text-[0.9em]">appflare-builds</span>.
+          </Text>
+        </Collapsible.DefaultPanel>
+      </Collapsible.Root>
     </ConfirmDialog>
   );
 }

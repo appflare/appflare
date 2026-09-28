@@ -1,4 +1,4 @@
-import { Banner, Button, Link, Loader, Text } from "@cloudflare/kumo";
+import { Banner, Button, Collapsible, Link, Loader, Text } from "@cloudflare/kumo";
 import { KeyIcon, TrashIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { type ReactNode, useState } from "react";
 import { appLink } from "../components/app-links";
@@ -77,7 +77,7 @@ function RotateAuthSecretDialog() {
         </Button>
       )}
       title="Rotate the auth secret"
-      description="Appflare writes a new random BETTER_AUTH_SECRET to its own Worker, which deploys a new version of the same code with it."
+      description="Appflare gives itself a new random sign-in secret, which deploys a new version of the same code with it."
       confirmText={ROTATE_CONFIRMATION}
       actionLabel="Rotate and sign everyone out"
       onConfirm={(typed) => submitForm(ROTATE_PATH, typed)}
@@ -96,6 +96,15 @@ function RotateAuthSecretDialog() {
           or webhook URL again.
         </Text>
       </div>
+      <Collapsible.Root>
+        <Collapsible.DefaultTrigger>Technical details</Collapsible.DefaultTrigger>
+        <Collapsible.DefaultPanel>
+          <Text variant="secondary" size="sm">
+            The secret is the <span className="font-mono text-[0.9em]">BETTER_AUTH_SECRET</span>{" "}
+            secret of Appflare's own Worker.
+          </Text>
+        </Collapsible.DefaultPanel>
+      </Collapsible.Root>
     </ConfirmDialog>
   );
 }

@@ -1,4 +1,4 @@
-import { LinkProvider, Toasty } from "@cloudflare/kumo";
+import { LinkProvider, Toasty, TooltipProvider } from "@cloudflare/kumo";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { COLOR_MODE_SCRIPT } from "../components/color-mode";
@@ -51,7 +51,10 @@ function RootComponent() {
     <LinkProvider component={RouterAnchor}>
       {/* Kumo toasts, such as the one confirming that a job started. */}
       <Toasty>
-        <Outlet />
+        {/* One provider, so moving from one tooltip to the next skips the wait. */}
+        <TooltipProvider>
+          <Outlet />
+        </TooltipProvider>
       </Toasty>
     </LinkProvider>
   );
@@ -64,7 +67,8 @@ function RootDocument({ children }: { children: ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body className="bg-kumo-base text-kumo-default antialiased">
+      {/* The canvas behind the pages, so their cards stand out as they do on the sign-in pages. */}
+      <body className="bg-kumo-canvas text-kumo-default antialiased">
         {/* Kumo portals popups to <body>; the app root gets its own stacking context. */}
         <div className="isolate min-h-dvh">{children}</div>
         <Scripts />

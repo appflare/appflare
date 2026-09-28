@@ -23,10 +23,10 @@ import { restoreDatabase, startRollback } from "../installs/versions.functions";
 import type { RestoreDatabaseResult, SnapshotView } from "../installs/versions.server";
 import { appPlace } from "./app-links";
 import { ConfirmDialog } from "./confirm-dialog";
+import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner, MessageText } from "./message-text";
-import { PageSection } from "./page-section";
-import { ResponsiveTable } from "./responsive-table";
+import { Section, SectionBody, SectionRows, SectionTable } from "./section";
 import { StatusBadge } from "./status-badge";
 import { Timestamp } from "./timestamp";
 
@@ -56,21 +56,25 @@ export function VersionsSection({
   // Actions need an installed app with no job running.
   const canAct = isAdmin && install.status === "installed" && install.activeJobId === null;
   return (
-    <PageSection id="versions" title="Versions">
+    <Section id="versions" title="Versions" className={FLUSH_RING_CLASS}>
       {install.build.kind === "self-deploying" ? (
-        <Text variant="secondary">
-          This app's own installer changes it in place on every update, so Appflare takes no
-          snapshot and cannot roll it back. To undo an update, restore the app's data with its own
-          tools; the job log of each update shows what the installer did.
-        </Text>
+        <SectionBody>
+          <Text variant="secondary">
+            This app's own installer changes it in place on every update, so Appflare takes no
+            snapshot and cannot roll it back. To undo an update, restore the app's data with its own
+            tools; the job log of each update shows what the installer did.
+          </Text>
+        </SectionBody>
       ) : snapshots.length === 0 ? (
-        <Text variant="secondary">
-          No updates or settings changes yet. Each takes a snapshot first: the Worker version that
-          was serving, its settings, and a Time Travel bookmark of each D1 database.
-        </Text>
+        <SectionBody>
+          <Text variant="secondary">
+            No updates or settings changes yet. Each takes a snapshot first: the Worker version that
+            was serving, its settings, and a Time Travel bookmark of each D1 database.
+          </Text>
+        </SectionBody>
       ) : (
-        <>
-          <ResponsiveTable label="Versions" minWidth="lg" stickyFirstColumn>
+        <SectionRows>
+          <SectionTable label="Versions" minWidth="lg" stickyFirstColumn>
             <Table.Header>
               <Table.Row>
                 <Table.Head>Snapshot taken</Table.Head>
@@ -142,18 +146,20 @@ export function VersionsSection({
                 </Table.Row>
               ))}
             </Table.Body>
-          </ResponsiveTable>
-          <Text variant="secondary" size="sm">
-            A rollback redeploys the Worker version that served before an update; it never changes
-            data. Restoring a database is a separate action. D1 keeps Time Travel history for 7 days
-            on Workers Free and 30 days on Workers Paid; older bookmarks cannot be restored. Each
-            uploaded version stays reachable at its own preview URL (
-            <span className={mono}>&lt;version&gt;-{install.workerName}</span> on your workers.dev
-            subdomain) until Cloudflare drops it from the Worker's version history.
-          </Text>
-        </>
+          </SectionTable>
+          <SectionBody>
+            <Text variant="secondary" size="sm">
+              A rollback redeploys the Worker version that served before an update; it never changes
+              data. Restoring a database is a separate action. D1 keeps Time Travel history for 7
+              days on Workers Free and 30 days on Workers Paid; older bookmarks cannot be restored.
+              Each uploaded version stays reachable at its own preview URL (
+              <span className={mono}>&lt;version&gt;-{install.workerName}</span> on your workers.dev
+              subdomain) until Cloudflare drops it from the Worker's version history.
+            </Text>
+          </SectionBody>
+        </SectionRows>
       )}
-    </PageSection>
+    </Section>
   );
 }
 

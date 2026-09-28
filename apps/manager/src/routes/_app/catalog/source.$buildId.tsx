@@ -5,7 +5,6 @@ import {
   Button,
   Checkbox,
   Empty,
-  LayerCard,
   Link,
   LinkButton,
   Loader,
@@ -32,20 +31,20 @@ import { requirementSentence } from "../../../catalog/requirements";
 import { PrimitiveBadges } from "../../../components/catalog-badges";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
+import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
 import { useJobStarted } from "../../../components/job-started";
 import { ErrorMessageBanner, MessageText } from "../../../components/message-text";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
-import { PageSection } from "../../../components/page-section";
-import { ResponsiveTable } from "../../../components/responsive-table";
 import {
   initialSecretValues,
   SecretFields,
   secretsComplete,
   withSecretValue,
 } from "../../../components/secret-fields";
+import { Section, SectionBody, SectionRows, SectionTable } from "../../../components/section";
 import { Timestamp } from "../../../components/timestamp";
 import {
   discardSourceBuild,
@@ -359,12 +358,8 @@ function Review({
 function SourceCard({ build, review }: { build: SourceBuildView; review: SourceBuildReview }) {
   const detected = build.detected;
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
-        <span>Source</span>
-        <OriginBadge origin={build.origin} />
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+    <Section title="Source" badge={<OriginBadge origin={build.origin} />}>
+      <SectionBody>
         <Text variant="secondary">
           {build.origin === "repository"
             ? "The catalog never reviewed this repository. Appflare checked that this build came from the commit below and that it installs like any other app, nothing more. Read what it declares before you install it, and install only code you trust."
@@ -464,8 +459,8 @@ function SourceCard({ build, review }: { build: SourceBuildView; review: SourceB
             </DescriptionItem>
           )}
         </DescriptionList>
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }
 
@@ -476,21 +471,67 @@ const BUILD_COMMAND_FROM: Record<string, string> = {
   none: "",
 };
 
+/**
+ * Secrets or settings as a list in a sentence: each by its label (its name
+ * when it has none), with the name the app reads it as after it while
+ * technical names are shown. "none" for an empty list.
+ */
+function DeclaredNames({
+  items,
+  showNames,
+}: {
+  items: ReadonlyArray<{ name: string; label?: string; note: string | null }>;
+  showNames: boolean;
+}) {
+  if (items.length === 0) return <>none</>;
+  return (
+    <>
+      {items.map((item, i) => {
+        const label = item.label === undefined || item.label === "" ? item.name : item.label;
+        return (
+          <span key={item.name}>
+            {i > 0 && ", "}
+            {label}
+            {showNames && label !== item.name && (
+              <>
+                {" "}
+                <span className={mono}>{item.name}</span>
+              </>
+            )}
+            {item.note !== null && ` (${item.note})`}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 /** Bindings, resources, crons, secrets and settings. */
 function WhatItDeclares({ review }: { review: SourceBuildReview }) {
+  // The bindings, and the names the code reads secrets and settings as, are technical detail.
+  const [showNames] = useShowTechnicalNames();
+  // What the install creates, by kind; the names the code gives them while technical names show.
+  // Keyed by the full name, which is unique; shown by kind alone unless technical names show.
+  const named = (kind: string, name: string) => ({
+    key: `${kind} ${name}`,
+    text: showNames ? `${kind} ${name}` : kind,
+  });
   const creates = [
-    ...review.creates.map((c) => `${resourceKindLabel(c.kind)} for ${c.binding}`),
-    ...review.durableObjects.map((d) => `Durable Object class ${d}`),
-    ...review.workflows.map((w) => `Workflow ${w}`),
+    ...review.creates.map((c) => named(resourceKindLabel(c.kind), `for ${c.binding}`)),
+    ...review.durableObjects.map((d) => named("Durable Object class", d)),
+    ...review.workflows.map((w) => named("Workflow", w)),
   ];
   const { secrets, vars } = review.catalog;
+  const hasBindings = review.bindings.length > 0;
+  const hasNames = hasBindings || creates.length > 0 || secrets.length > 0 || vars.length > 0;
   return (
-    <PageSection
+    <Section
       title="What it declares"
       description="Read from the built Worker, as the install will use it."
+      action={hasNames ? <TechnicalNamesSwitch /> : null}
     >
-      <LayerCard>
-        <LayerCard.Primary className="grid gap-4 px-5 py-4">
+      <SectionRows>
+        <SectionBody>
           <div className="flex flex-wrap items-center gap-2">
             <Text variant="secondary" size="sm">
               {creates.length > 0
@@ -498,8 +539,8 @@ function WhatItDeclares({ review }: { review: SourceBuildReview }) {
                 : "The install creates a Worker, nothing else."}
             </Text>
             {creates.map((c) => (
-              <Badge key={c} variant="outline">
-                {c}
+              <Badge key={c.key} variant="outline">
+                {c.text}
               </Badge>
             ))}
           </div>
@@ -510,38 +551,41 @@ function WhatItDeclares({ review }: { review: SourceBuildReview }) {
           )}
           <Text variant="secondary" size="sm">
             Secrets it asks for:{" "}
-            {secrets.length === 0
-              ? "none"
-              : secrets
-                  .map((s) => `${s.name}${s.optional === true ? " (optional)" : ""}`)
-                  .join(", ")}
-            . Settings: {vars.length === 0 ? "none" : vars.map((v) => v.name).join(", ")}.
+            <DeclaredNames
+              items={secrets.map((s) => ({
+                ...s,
+                note: s.optional === true ? "optional" : null,
+              }))}
+              showNames={showNames}
+            />
+            . Settings:{" "}
+            <DeclaredNames items={vars.map((v) => ({ ...v, note: null }))} showNames={showNames} />.
           </Text>
-        </LayerCard.Primary>
-      </LayerCard>
-      {review.bindings.length > 0 && (
-        <ResponsiveTable label="Bindings" minWidth="sm">
-          <Table.Header>
-            <Table.Row>
-              <Table.Head>Binding</Table.Head>
-              <Table.Head>Type</Table.Head>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {review.bindings.map((b) => (
-              <Table.Row key={`${b.type} ${b.name}`}>
-                <Table.Cell>
-                  <span className={mono}>{b.name}</span>
-                </Table.Cell>
-                <Table.Cell>
-                  <span className={mono}>{b.type}</span>
-                </Table.Cell>
+        </SectionBody>
+        {hasBindings && showNames && (
+          <SectionTable label="Bindings" minWidth="sm">
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>Binding</Table.Head>
+                <Table.Head>Type</Table.Head>
               </Table.Row>
-            ))}
-          </Table.Body>
-        </ResponsiveTable>
-      )}
-    </PageSection>
+            </Table.Header>
+            <Table.Body>
+              {review.bindings.map((b) => (
+                <Table.Row key={`${b.type} ${b.name}`}>
+                  <Table.Cell>
+                    <span className={mono}>{b.name}</span>
+                  </Table.Cell>
+                  <Table.Cell>
+                    <span className={mono}>{b.type}</span>
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </SectionTable>
+        )}
+      </SectionRows>
+    </Section>
   );
 }
 
@@ -561,62 +605,58 @@ function Requirements({
       ? null
       : `Available on this account: ${checks.met.map((c) => c.label).join(", ")}.`;
   return (
-    <PageSection title="Runs on" titleAction={<DocsLink topic="requirements" />}>
-      <LayerCard>
-        <LayerCard.Primary className="grid gap-4 px-5 py-4">
-          <PrimitiveBadges
-            primitives={review.primitives}
-            capabilities={review.capabilities}
-            tier="sandbox"
+    <Section title="Runs on" titleAction={<DocsLink topic="requirements" />}>
+      <SectionBody>
+        <PrimitiveBadges
+          primitives={review.primitives}
+          capabilities={review.capabilities}
+          tier="sandbox"
+        />
+        {checks.pending.length > 0 ? (
+          <Banner
+            variant="alert"
+            icon={<WarningIcon weight="fill" />}
+            title={build.purpose === "update" ? "Before you update" : "Before you install"}
+            description={
+              <div className="grid gap-2">
+                <span>Check that this account offers what the app needs:</span>
+                <ul className="grid list-disc gap-1 pl-5">
+                  {checks.pending.map((check) => (
+                    <li key={check.key}>
+                      <span className="font-semibold">{check.label}.</span>{" "}
+                      {check.key === "plan"
+                        ? "Built in a container, which needs the Workers Paid plan on this account."
+                        : requirementSentence(check.key, { tier: "sandbox" })}{" "}
+                      {check.key !== "plan" && (
+                        <CapabilityBadge badge={requirementBadge(check.key, review.capabilities)} />
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {metLine !== null && (
+                  <Text as="span" variant="secondary" size="sm">
+                    {metLine}
+                  </Text>
+                )}
+                {confirmation !== null && (
+                  <Checkbox
+                    label="This account meets these requirements"
+                    checked={confirmation.checked}
+                    onCheckedChange={(checked: boolean) => confirmation.onChange(checked)}
+                  />
+                )}
+              </div>
+            }
           />
-          {checks.pending.length > 0 ? (
-            <Banner
-              variant="alert"
-              icon={<WarningIcon weight="fill" />}
-              title={build.purpose === "update" ? "Before you update" : "Before you install"}
-              description={
-                <div className="grid gap-2">
-                  <span>Check that this account offers what the app needs:</span>
-                  <ul className="grid list-disc gap-1 pl-5">
-                    {checks.pending.map((check) => (
-                      <li key={check.key}>
-                        <span className="font-semibold">{check.label}.</span>{" "}
-                        {check.key === "plan"
-                          ? "Built in a container, which needs the Workers Paid plan on this account."
-                          : requirementSentence(check.key, { tier: "sandbox" })}{" "}
-                        {check.key !== "plan" && (
-                          <CapabilityBadge
-                            badge={requirementBadge(check.key, review.capabilities)}
-                          />
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  {metLine !== null && (
-                    <Text as="span" variant="secondary" size="sm">
-                      {metLine}
-                    </Text>
-                  )}
-                  {confirmation !== null && (
-                    <Checkbox
-                      label="This account meets these requirements"
-                      checked={confirmation.checked}
-                      onCheckedChange={(checked: boolean) => confirmation.onChange(checked)}
-                    />
-                  )}
-                </div>
-              }
-            />
-          ) : (
-            metLine !== null && (
-              <Text variant="secondary" size="sm">
-                {metLine}
-              </Text>
-            )
-          )}
-        </LayerCard.Primary>
-      </LayerCard>
-    </PageSection>
+        ) : (
+          metLine !== null && (
+            <Text variant="secondary" size="sm">
+              {metLine}
+            </Text>
+          )
+        )}
+      </SectionBody>
+    </Section>
   );
 }
 
@@ -664,9 +704,8 @@ function UpdateFromBuild({
   }
 
   return (
-    <LayerCard>
-      <LayerCard.Secondary>Update {build.install?.label ?? "the install"}</LayerCard.Secondary>
-      <LayerCard.Primary className="px-5 py-4">
+    <Section title={`Update ${build.install?.label ?? "the install"}`}>
+      <SectionBody>
         <form className="grid gap-5" onSubmit={onSubmit}>
           <Text variant="secondary">
             The update takes a snapshot of the current version and of each D1 database, checks the
@@ -721,7 +760,7 @@ function UpdateFromBuild({
             </Button>
           </div>
         </form>
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }

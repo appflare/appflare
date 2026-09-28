@@ -22,7 +22,8 @@ export const HIGHLIGHT_CLASSES = [
   "ring-2",
   "ring-kumo-brand",
   "ring-offset-8",
-  "ring-offset-kumo-base",
+  // The page's own background, so the gap between ring and target does not show.
+  "ring-offset-kumo-canvas",
 ] as const;
 
 /**

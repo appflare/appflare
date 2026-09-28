@@ -1,4 +1,4 @@
-import { Banner, Button, cn, LayerCard, LayerDialog, Link, Text } from "@cloudflare/kumo";
+import { Banner, Button, LayerDialog, Link, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, GitBranchIcon, MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { type FormEvent, useId, useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
@@ -9,12 +9,13 @@ import { FLUSH_RING_CLASS } from "./hash-target";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner } from "./message-text";
 import { OriginBadge } from "./origin-badge";
+import { Section, SectionBody, SectionFormActions } from "./section";
 import { SourceBuildCostConfirmation } from "./source-build-fields";
 
 const mono = "font-mono text-[0.9em]";
 
 /**
- * The Overview card of an install whose code does not come from the catalog
+ * The Overview section of an install whose code does not come from the catalog
  * (a repository, or a catalog app built from source): where it came from,
  * "Check for changes" (the newest commit of the branch or tag it follows),
  * and "Rebuild and update", which builds that commit for review; the review
@@ -30,7 +31,6 @@ export function SourceChangesCard({
   const [checking, setChecking] = useState(false);
   const [changes, setChanges] = useState<SourceChanges | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [rebuilding, setRebuilding] = useState(false);
   if (install.origin === "catalog" || install.source === null) return null;
   const { source } = install;
   const repo = source.url.replace(/^https:\/\/github\.com\//, "");
@@ -48,15 +48,14 @@ export function SourceChangesCard({
   }
 
   return (
-    <LayerCard id="source" className={cn("scroll-mt-6", FLUSH_RING_CLASS)}>
-      <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
-        <span className="flex items-center gap-1">
-          Source
-          <DocsLink topic="repositoryUpdates" />
-        </span>
-        <OriginBadge origin={install.origin} />
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+    <Section
+      id="source"
+      title="Source"
+      titleAction={<DocsLink topic="repositoryUpdates" />}
+      badge={<OriginBadge origin={install.origin} />}
+      className={FLUSH_RING_CLASS}
+    >
+      <SectionBody>
         <Text>
           Built from{" "}
           <Link href={source.url} target="_blank" rel="noopener noreferrer">
@@ -97,7 +96,7 @@ export function SourceChangesCard({
         )}
         {error !== null && <ErrorMessageBanner message={error} newTab />}
         {isAdmin && (
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <SectionFormActions>
             <Button
               variant="secondary"
               icon={<MagnifyingGlassIcon />}
@@ -106,44 +105,43 @@ export function SourceChangesCard({
             >
               Check for changes
             </Button>
-            <Button
-              variant="secondary"
-              icon={<ArrowsClockwiseIcon />}
-              disabled={!canAct}
-              onClick={() => setRebuilding(true)}
-            >
-              Rebuild and update
-            </Button>
-          </div>
+            <RebuildDialog install={install} target={changes?.latest ?? null} disabled={!canAct} />
+          </SectionFormActions>
         )}
-      </LayerCard.Primary>
-      {rebuilding && (
-        <RebuildDialog
-          install={install}
-          target={changes?.latest ?? null}
-          onClose={() => setRebuilding(false)}
-        />
-      )}
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }
 
-/** Confirms the rebuild's cost, then starts it; its log opens, and its review follows. */
+/**
+ * "Rebuild and update": confirms the rebuild's cost, then starts it; its log
+ * opens, and its review follows. The dialog stays mounted and opens from its
+ * own trigger, so it animates and focus returns to the button.
+ */
 function RebuildDialog({
   install,
   target,
-  onClose,
+  disabled,
 }: {
   install: InstallDetail;
   /** The commit "Check for changes" found, if it ran. */
   target: string | null;
-  onClose(): void;
+  disabled: boolean;
 }) {
   const jobStarted = useJobStarted();
   const formId = useId();
+  const [open, setOpen] = useState(false);
   const [costConfirmed, setCostConfirmed] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function onOpenChange(next: boolean) {
+    setOpen(next);
+    if (next) {
+      setCostConfirmed(false);
+      setError(null);
+    }
+  }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -163,11 +161,18 @@ function RebuildDialog({
 
   return (
     <LayerDialog.Root
-      open
-      onOpenChange={(open) => !open && onClose()}
+      open={open}
+      onOpenChange={onOpenChange}
       disablePointerDismissal
       dismissDisabled={pending}
     >
+      <LayerDialog.Trigger
+        render={(p) => (
+          <Button {...p} variant="secondary" icon={<ArrowsClockwiseIcon />} disabled={disabled}>
+            Rebuild and update
+          </Button>
+        )}
+      />
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>Rebuild {install.label}</LayerDialog.Title>
         <LayerDialog.Description>

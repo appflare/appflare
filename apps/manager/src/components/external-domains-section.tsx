@@ -4,7 +4,6 @@ import {
   Button,
   InlineCopyText,
   Input,
-  LayerCard,
   LayerDialog,
   Link,
   Loader,
@@ -45,10 +44,11 @@ import { WILDCARD_EXTERNAL_REFUSAL } from "../installs/wildcard-domain-input";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { formatTime } from "./format";
+import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
 import { ErrorMessageBanner } from "./message-text";
-import { PageSection } from "./page-section";
 import { ResponsiveTable } from "./responsive-table";
+import { Section, SectionBody, SectionRow, SectionRows } from "./section";
 import { settingsLink } from "./settings-links";
 
 /** How often a pending domain is read again while the page is open. */
@@ -81,40 +81,45 @@ export function ExternalDomainsSection({
   // custom hostnames are Enterprise only.
   if (install.wildcard !== null && install.externalDomains.length === 0) {
     return (
-      <PageSection
+      <Section
         id="external-domains"
         title="External domains"
         description="Hostnames in DNS outside this account, such as a customer's domain."
+        className={FLUSH_RING_CLASS}
       >
-        <Text variant="secondary">{WILDCARD_EXTERNAL_REFUSAL}</Text>
-      </PageSection>
+        <SectionBody>
+          <Text variant="secondary">{WILDCARD_EXTERNAL_REFUSAL}</Text>
+        </SectionBody>
+      </Section>
     );
   }
   return (
-    <PageSection
+    <Section
       id="external-domains"
       title="External domains"
       description="Hostnames in DNS outside this account, such as a customer's domain."
-      actions={canAdd ? <AddExternalDomainDialog install={install} /> : undefined}
+      action={canAdd ? <AddExternalDomainDialog install={install} /> : null}
+      className={FLUSH_RING_CLASS}
+      empty={
+        install.externalDomains.length === 0 ? (
+          <Text variant="secondary">
+            None yet. An external domain needs the gateway, set up once in the{" "}
+            <Link href={settingsLink("domains", "external-domains")}>domains settings</Link>.
+          </Text>
+        ) : null
+      }
     >
-      {install.externalDomains.length === 0 ? (
-        <Text variant="secondary">
-          None yet. An external domain needs the gateway, set up once in the{" "}
-          <Link href={settingsLink("domains", "external-domains")}>domains settings</Link>.
-        </Text>
-      ) : (
-        <div className="grid gap-3">
-          {install.externalDomains.map((domain) => (
-            <ExternalDomainCard
-              key={domain.id}
-              installId={install.id}
-              domain={domain}
-              canRemove={canRemove}
-            />
-          ))}
-        </div>
-      )}
-    </PageSection>
+      <SectionRows>
+        {install.externalDomains.map((domain) => (
+          <ExternalDomainRow
+            key={domain.id}
+            installId={install.id}
+            domain={domain}
+            canRemove={canRemove}
+          />
+        ))}
+      </SectionRows>
+    </Section>
   );
 }
 
@@ -137,7 +142,7 @@ function PhaseBadge({ status }: { status: ExternalDomainStatus }) {
  * while it is not active; the records to add while pending; a probe of the
  * app through it once active.
  */
-function ExternalDomainCard({
+function ExternalDomainRow({
   installId,
   domain,
   canRemove,
@@ -203,8 +208,8 @@ function ExternalDomainCard({
   }, [refresh]);
 
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex flex-wrap items-center justify-between gap-3">
+    <SectionRow
+      title={
         <span className="flex flex-wrap items-center gap-2">
           <Link href={domain.url} target="_blank" rel="noopener noreferrer">
             {domain.hostname}
@@ -213,7 +218,9 @@ function ExternalDomainCard({
           {status !== null && <PhaseBadge status={status} />}
           {status === null && error === null && <Loader size="sm" />}
         </span>
-        <span className="flex items-center gap-2">
+      }
+      action={
+        <>
           <Button
             size="sm"
             variant="secondary"
@@ -224,15 +231,14 @@ function ExternalDomainCard({
             Check now
           </Button>
           {canRemove && <RemoveExternalDomainDialog installId={installId} domain={domain} />}
-        </span>
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-3 px-5 py-4">
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-        {status !== null && <DomainState status={status} />}
-      </LayerCard.Primary>
-    </LayerCard>
+        </>
+      }
+    >
+      {error !== null && (
+        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
+      )}
+      {status !== null && <DomainState status={status} />}
+    </SectionRow>
   );
 }
 
@@ -277,7 +283,7 @@ function DomainState({ status }: { status: ExternalDomainStatus }) {
 
 function RecordsTable({ records }: { records: ExternalDomainStatus["records"] }) {
   return (
-    <ResponsiveTable label="DNS records">
+    <ResponsiveTable label="DNS records" card={false}>
       <Table.Header>
         <Table.Row>
           <Table.Head>Type</Table.Head>

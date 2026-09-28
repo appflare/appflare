@@ -1,5 +1,6 @@
 import { Button, Switch } from "@cloudflare/kumo";
 import { createContext, type ReactNode, useContext, useState } from "react";
+import { localChoice } from "./local-choice";
 import { MessageText } from "./message-text";
 import { Tooltip } from "./tooltip";
 
@@ -23,20 +24,37 @@ export function useTechnicalNames(): boolean {
 /** What the switch at the top of a form says. */
 export const TECHNICAL_NAMES_LABEL = "Show technical names";
 
-/** The form's switch that shows every field's technical name inline. */
-export function TechnicalNamesSwitch({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange(checked: boolean): void;
-}) {
+/** Where the browser remembers whether technical names are shown. */
+export const TECHNICAL_NAMES_KEY = "appflare:technical-names";
+
+export type TechnicalNamesChoice = "shown" | "hidden";
+
+/** A stored value as the choice: anything but "shown" hides technical names. */
+export function parseTechnicalNames(value: string | null | undefined): TechnicalNamesChoice {
+  return value === "shown" ? "shown" : "hidden";
+}
+
+const technicalNames = localChoice(TECHNICAL_NAMES_KEY, parseTechnicalNames);
+
+/**
+ * Whether technical names are shown, and a setter: one choice for every
+ * "Show technical names" switch, remembered per browser (`local-choice.ts`),
+ * so turning it on in one place shows them everywhere, on every page.
+ */
+export function useShowTechnicalNames(): [boolean, (show: boolean) => void] {
+  const [choice, setChoice] = technicalNames.useChoice();
+  return [choice === "shown", (show) => setChoice(show ? "shown" : "hidden")];
+}
+
+/** The switch that shows technical names; every instance shows and sets the same choice. */
+export function TechnicalNamesSwitch() {
+  const [show, setShow] = useShowTechnicalNames();
   return (
     <Switch
       size="sm"
       label={TECHNICAL_NAMES_LABEL}
-      checked={checked}
-      onCheckedChange={(next: boolean) => onChange(next)}
+      checked={show}
+      onCheckedChange={(next: boolean) => setShow(next)}
     />
   );
 }

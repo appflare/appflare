@@ -26,17 +26,23 @@ export function ResetPasswordDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [way, setWay] = useState<Way>(emailReset ? "link" : "code");
+  // The way picked when emails are on; with them off only a code is possible,
+  // whatever was picked, as the setting may change while the dialog is mounted.
+  const [chosen, setChosen] = useState<Way>("link");
+  const way: Way = emailReset ? chosen : "code";
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
 
-  function change(next: boolean) {
-    onOpenChange(next);
-    if (!next) {
+  // The dialog stays mounted and opens without `onOpenChange(true)`: each
+  // opening starts clean. Closing keeps what it showed while it animates out.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setChosen("link");
       setOutcome(null);
       setError(null);
-      setWay(emailReset ? "link" : "code");
     }
   }
 
@@ -59,7 +65,7 @@ export function ResetPasswordDialog({
   }
 
   return (
-    <LayerDialog.Root open={open} onOpenChange={change} dismissDisabled={pending}>
+    <LayerDialog.Root open={open} onOpenChange={onOpenChange} dismissDisabled={pending}>
       <LayerDialog.Content>
         <LayerDialog.Title>{`Reset ${user.name}'s password`}</LayerDialog.Title>
         <LayerDialog.Description>
@@ -78,7 +84,7 @@ export function ResetPasswordDialog({
               <Radio.Group
                 legend="How"
                 value={way}
-                onValueChange={(v: string) => setWay(v === "code" ? "code" : "link")}
+                onValueChange={(v: string) => setChosen(v === "code" ? "code" : "link")}
                 appearance="card"
               >
                 <Radio.Item
@@ -126,7 +132,7 @@ export function ResetPasswordDialog({
               {way === "link" ? "Send reset link" : "Show recovery code"}
             </LayerDialog.Actions.Primary>
           ) : (
-            <LayerDialog.Actions.Primary onClick={() => change(false)}>
+            <LayerDialog.Actions.Primary onClick={() => onOpenChange(false)}>
               Done
             </LayerDialog.Actions.Primary>
           )}

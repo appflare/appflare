@@ -1,4 +1,4 @@
-import { Badge, Button, Link, LinkButton, Popover, Text } from "@cloudflare/kumo";
+import { Badge, Button, LayerCard, Link, LinkButton, Popover, Text } from "@cloudflare/kumo";
 import { InfoIcon, XIcon } from "@phosphor-icons/react";
 import { dismissFeatured } from "../catalog/catalog.functions";
 import { type FeaturedCard as FeaturedCardData, safeExternalUrl } from "../catalog/featured";
@@ -28,9 +28,9 @@ export function FeaturedCard({ item }: { item: FeaturedCardData }) {
   const sponsorUrl = safeExternalUrl(item.sponsorUrl);
 
   return (
-    <aside
-      aria-label="Sponsored"
-      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg px-3 py-2 ring ring-kumo-hairline"
+    <LayerCard
+      render={<aside aria-label="Sponsored" />}
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2"
     >
       {item.image !== null && (
         <div className="w-20 shrink-0 max-sm:hidden">
@@ -105,6 +105,6 @@ export function FeaturedCard({ item }: { item: FeaturedCardData }) {
           }
         />
       </div>
-    </aside>
+    </LayerCard>
   );
 }

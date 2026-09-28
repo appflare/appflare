@@ -28,26 +28,9 @@ import {
  * anything is installed. The build's log opens once it starts.
  */
 export function RepositoryBuildButton({ sandbox }: { sandbox: SandboxReadiness }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button variant="secondary" icon={<GitBranchIcon />} onClick={() => setOpen(true)}>
-        From a repository
-      </Button>
-      {open && <RepositoryBuildDialog sandbox={sandbox} onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
-function RepositoryBuildDialog({
-  sandbox,
-  onClose,
-}: {
-  sandbox: SandboxReadiness;
-  onClose(): void;
-}) {
   const jobStarted = useJobStarted();
   const formId = useId();
+  const [open, setOpen] = useState(false);
   const [repository, setRepository] = useState("");
   const [ref, setRef] = useState("");
   const [buildCommand, setBuildCommand] = useState(INITIAL_BUILD_COMMAND);
@@ -85,13 +68,33 @@ function RepositoryBuildDialog({
     }
   }
 
+  // Each opening starts from an empty form.
+  function onOpenChange(next: boolean) {
+    setOpen(next);
+    if (next) {
+      setRepository("");
+      setRef("");
+      setBuildCommand(INITIAL_BUILD_COMMAND);
+      setCostConfirmed(false);
+      setError(null);
+    }
+  }
+
   return (
     <LayerDialog.Root
-      open
-      onOpenChange={(next) => !next && onClose()}
+      open={open}
+      onOpenChange={onOpenChange}
       disablePointerDismissal
       dismissDisabled={pending}
     >
+      {/* The dialog's own trigger, so focus returns to the button when it closes. */}
+      <LayerDialog.Trigger
+        render={(p) => (
+          <Button {...p} variant="secondary" icon={<GitBranchIcon />}>
+            From a repository
+          </Button>
+        )}
+      />
       <LayerDialog.Content size="lg">
         <LayerDialog.Title>Install from a repository</LayerDialog.Title>
         <LayerDialog.Description>

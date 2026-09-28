@@ -1,6 +1,7 @@
-import { Banner, ClipboardText, LayerCard, Text } from "@cloudflare/kumo";
+import { Banner, ClipboardText, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { Section, SectionBody } from "./section";
 import { forgetSeedCredentials, peekSeedCredentials } from "./seed-credentials";
 
 /**
@@ -15,9 +16,8 @@ export function SeedCredentialsCard({ jobId }: { jobId: string }) {
   useEffect(() => forgetSeedCredentials(jobId), [jobId]);
   if (credentials.length === 0) return null;
   return (
-    <LayerCard>
-      <LayerCard.Secondary>First sign-in</LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-4 px-5 py-4">
+    <Section title="First sign-in">
+      <SectionBody>
         <Banner
           variant="alert"
           icon={<WarningCircleIcon weight="fill" />}
@@ -32,7 +32,7 @@ export function SeedCredentialsCard({ jobId }: { jobId: string }) {
             <ClipboardText text={c.value} />
           </div>
         ))}
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }

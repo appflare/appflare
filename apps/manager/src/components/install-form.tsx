@@ -6,7 +6,7 @@ import {
   type IndexBuild,
   isSeedOnly,
 } from "@appflare/schema";
-import { Banner, Button, Input, InputGroup, LayerCard, Link, Text } from "@cloudflare/kumo";
+import { Banner, Button, Input, InputGroup, Link, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useState } from "react";
 import type { AccountPlan } from "../account/plan";
@@ -31,7 +31,7 @@ import { AppTokenHelp } from "./app-token-permissions";
 import { CronTriggersField } from "./cron-triggers-field";
 import { connectionsComplete, DatabaseFields } from "./database-fields";
 import { EmailRoutingFields } from "./email-routing-fields";
-import { TechnicalNamesProvider, TechnicalNamesSwitch } from "./field-label";
+import { TechnicalNamesProvider, TechnicalNamesSwitch, useShowTechnicalNames } from "./field-label";
 import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner } from "./message-text";
@@ -43,6 +43,7 @@ import {
   secretsComplete,
   withSecretValue,
 } from "./secret-fields";
+import { Section, SectionBody } from "./section";
 import { generatedSeedCredentials, holdSeedCredentials } from "./seed-credentials";
 import { tooltipContent } from "./tooltip";
 import { type PlaceholderChips, VarField } from "./var-field";
@@ -203,7 +204,7 @@ export function InstallForm({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showNames, setShowNames] = useState(false);
+  const [showNames] = useShowTechnicalNames();
   const notice = installFormNotice(canInstall, blockedReason, blockedLink);
   /** Fields labelled for people, whose technical names the switch at the top shows. */
   const namedFields =
@@ -304,9 +305,8 @@ export function InstallForm({
   }
 
   return (
-    <LayerCard>
-      <LayerCard.Secondary>Install {catalog.name}</LayerCard.Secondary>
-      <LayerCard.Primary className="px-5 py-4">
+    <Section title={`Install ${catalog.name}`}>
+      <SectionBody>
         <form className="grid gap-6" onSubmit={onSubmit}>
           {notice !== null && (
             <Banner
@@ -322,7 +322,7 @@ export function InstallForm({
           )}
           {namedFields && (
             <div className="flex justify-end">
-              <TechnicalNamesSwitch checked={showNames} onChange={setShowNames} />
+              <TechnicalNamesSwitch />
             </div>
           )}
           <TechnicalNamesProvider value={showNames}>
@@ -535,7 +535,7 @@ export function InstallForm({
             </Button>
           </div>
         </form>
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }

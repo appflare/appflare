@@ -121,7 +121,7 @@ export function RowHeader({
   return (
     <div className="flex items-end justify-between gap-3">
       <div className="grid min-w-0 gap-0.5">
-        <Text as="h2" variant="heading" size="lg" id={titleId}>
+        <Text as="h2" variant="heading" id={titleId}>
           {title}
         </Text>
         {caption !== null && (
@@ -277,7 +277,7 @@ export function CatalogSection({
 }) {
   return (
     <section aria-labelledby={titleId} className="grid min-w-0 grid-cols-1 gap-2">
-      <Text as="h2" variant="heading" size="lg" id={titleId}>
+      <Text as="h2" variant="heading" id={titleId}>
         {title}
       </Text>
       {children}

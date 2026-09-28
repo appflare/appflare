@@ -1,4 +1,4 @@
-import { Banner, Button, Input, Loader, Text } from "@cloudflare/kumo";
+import { Banner, Button, ClipboardText, Collapsible, Input, Loader, Text } from "@cloudflare/kumo";
 import { CheckCircleIcon, InfoIcon, SignOutIcon, WarningIcon } from "@phosphor-icons/react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useReducer, useState } from "react";
@@ -384,15 +384,26 @@ function TokenSavedStep({
             icon={<WarningIcon weight="fill" />}
             title="The old setup secret could not be removed"
             description={
-              <>
-                Appflare could not delete the{" "}
-                <code className="font-mono text-[0.9em]">SETUP_TOKEN</code> secret from its Worker.
-                It guards nothing any more, but you can remove it with{" "}
-                <code className="font-mono text-[0.9em]">
-                  wrangler secret delete SETUP_TOKEN --name {saved.workerName}
-                </code>
-                .
-              </>
+              <div className="grid gap-2">
+                <p>
+                  It guards nothing any more, so it can stay. A developer can remove it with the
+                  command under Technical details.
+                </p>
+                <Collapsible.Root>
+                  <Collapsible.DefaultTrigger>Technical details</Collapsible.DefaultTrigger>
+                  <Collapsible.DefaultPanel>
+                    <div className="grid gap-1.5">
+                      <p>
+                        The secret is <code className="font-mono text-[0.9em]">SETUP_TOKEN</code> on
+                        Appflare's own Worker. To remove it:
+                      </p>
+                      <ClipboardText
+                        text={`wrangler secret delete SETUP_TOKEN --name ${saved.workerName}`}
+                      />
+                    </div>
+                  </Collapsible.DefaultPanel>
+                </Collapsible.Root>
+              </div>
             }
           />
         )}

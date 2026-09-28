@@ -1,4 +1,4 @@
-import { Banner, Button, Checkbox, Link, Popover, Text } from "@cloudflare/kumo";
+import { Banner, Button, Checkbox, LayerCard, Link, Popover, Text } from "@cloudflare/kumo";
 import {
   CheckCircleIcon,
   GithubLogoIcon,
@@ -349,7 +349,7 @@ export function LinksList({
 /** The installs of this app on the account, each linked to its page; the Worker name on hover. */
 export function InstallsList({ instances }: { instances: readonly InstalledRef[] }) {
   return (
-    <ul className="m-0 grid list-none divide-y divide-kumo-hairline rounded-lg p-0 ring ring-kumo-hairline">
+    <LayerCard render={<ul />} className="m-0 grid list-none divide-y divide-kumo-hairline p-0">
       {instances.map((instance) => (
         <li
           key={instance.installId}
@@ -365,6 +365,6 @@ export function InstallsList({ instances }: { instances: readonly InstalledRef[]
           <StatusBadge status={instance.status} of="install" />
         </li>
       ))}
-    </ul>
+    </LayerCard>
   );
 }

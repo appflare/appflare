@@ -75,7 +75,7 @@ export function UpdateBanner({ install, isAdmin }: { install: InstallDetail; isA
         action={
           canStart ? (
             <Button
-              variant="primary"
+              variant="secondary"
               icon={<ArrowCircleUpIcon />}
               loading={update.pendingId === install.id}
               onClick={() => update.start(install)}

@@ -1,10 +1,11 @@
-import { Banner, LayerCard, Switch, Text } from "@cloudflare/kumo";
+import { Banner, Switch, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import type { InstallDetail } from "../installs/installs.functions";
 import { WORKERS_DEV_COPY } from "../installs/workers-dev";
 import { setWorkersDev } from "../installs/workers-dev.functions";
+import { SectionBody } from "./section";
 
 /**
  * `/apps/$installId`, "Serve on workers.dev" (admins): turns the app's
@@ -43,32 +44,30 @@ export function WorkersDevSwitch({ install }: { install: InstallDetail }) {
   // The note stands for the stored state; a change in flight reloads the page.
   const note = enabled === install.workersDevEnabled ? install.workersDevNote : null;
   return (
-    <LayerCard>
-      <LayerCard.Primary className="grid gap-1 px-5 py-4">
-        <Switch
-          label={WORKERS_DEV_COPY.label}
-          checked={enabled}
-          disabled={!canChange || pending}
-          onCheckedChange={(next: boolean) => void onChange(next)}
-        />
-        {note === "auto-off" && (
-          <Text as="span" size="sm">
-            {WORKERS_DEV_COPY.autoOff}
-          </Text>
-        )}
-        <Text variant="secondary" size="sm">
-          {!enabled
-            ? WORKERS_DEV_COPY.offHelp
-            : note === "settings"
-              ? WORKERS_DEV_COPY.settingsKeep
-              : domains === 0
-                ? WORKERS_DEV_COPY.noDomain
-                : WORKERS_DEV_COPY.onHelp(install.workersDevUrl ?? "its workers.dev URL")}
+    <SectionBody className="gap-1">
+      <Switch
+        label={WORKERS_DEV_COPY.label}
+        checked={enabled}
+        disabled={!canChange || pending}
+        onCheckedChange={(next: boolean) => void onChange(next)}
+      />
+      {note === "auto-off" && (
+        <Text as="span" size="sm">
+          {WORKERS_DEV_COPY.autoOff}
         </Text>
-        {error !== null && (
-          <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
-        )}
-      </LayerCard.Primary>
-    </LayerCard>
+      )}
+      <Text variant="secondary" size="sm">
+        {!enabled
+          ? WORKERS_DEV_COPY.offHelp
+          : note === "settings"
+            ? WORKERS_DEV_COPY.settingsKeep
+            : domains === 0
+              ? WORKERS_DEV_COPY.noDomain
+              : WORKERS_DEV_COPY.onHelp(install.workersDevUrl ?? "its workers.dev URL")}
+      </Text>
+      {error !== null && (
+        <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
+      )}
+    </SectionBody>
   );
 }

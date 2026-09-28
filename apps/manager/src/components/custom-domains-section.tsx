@@ -45,10 +45,10 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
 import { DomainName } from "./domain-name";
 import { formatTime } from "./format";
+import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
 import { useJobStarted } from "./job-started";
-import { PageSection } from "./page-section";
-import { ResponsiveTable } from "./responsive-table";
+import { Section, SectionTable } from "./section";
 import { settingsLink } from "./settings-links";
 import { useAccountId } from "./use-account-id";
 import { WildcardNotes } from "./wildcard-notes";
@@ -71,26 +71,30 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
     (wildcard === null || !install.domains.some((d) => d.wildcard));
   const canRemove = install.status !== "uninstalling" && install.status !== "uninstalled";
   return (
-    <PageSection
+    <Section
       id="domains"
       title={wildcard === null ? "Custom domains" : "Wildcard domain"}
       titleAction={<DocsLink topic="customDomains" />}
-      actions={
-        !canAdd ? undefined : wildcard === null ? (
+      className={FLUSH_RING_CLASS}
+      action={
+        !canAdd ? null : wildcard === null ? (
           <AddDomainDialog install={install} />
         ) : (
           <AddWildcardDomainDialog install={install} reason={wildcard.reason} />
         )
       }
+      empty={
+        install.domains.length === 0 ? (
+          <Text variant="secondary">
+            {wildcard === null
+              ? "The app is served on its workers.dev URL only. Add a hostname in one of your domains on Cloudflare to serve it there too."
+              : `The app is served on its workers.dev URL only, and needs a hostname with every name under it. ${wildcard.reason}`}
+          </Text>
+        ) : null
+      }
     >
-      {install.domains.length === 0 ? (
-        <Text variant="secondary">
-          {wildcard === null
-            ? "The app is served on its workers.dev URL only. Add a hostname in one of your domains on Cloudflare to serve it there too."
-            : `The app is served on its workers.dev URL only, and needs a hostname with every name under it. ${wildcard.reason}`}
-        </Text>
-      ) : (
-        <ResponsiveTable label="Domains" minWidth="sm" stickyFirstColumn>
+      {install.domains.length > 0 && (
+        <SectionTable label="Domains" minWidth="sm" stickyFirstColumn>
           <Table.Header>
             <Table.Row>
               <Table.Head>Hostname</Table.Head>
@@ -121,9 +125,9 @@ export function CustomDomainsSection({ install }: { install: InstallDetail }) {
               </Table.Row>
             ))}
           </Table.Body>
-        </ResponsiveTable>
+        </SectionTable>
       )}
-    </PageSection>
+    </Section>
   );
 }
 

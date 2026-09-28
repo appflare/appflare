@@ -192,6 +192,10 @@ describe("the app page, opened from a link to a section", () => {
     expect(selectedTab()).toBe("Settings");
     const secrets = container.querySelector("#secrets");
     expect(secrets).not.toBeNull();
+    // The secret's name is technical detail, shown once asked for.
+    expect(secrets?.textContent).toContain("1 secret is set");
+    expect(secrets?.textContent).not.toContain("ADMIN_PASSWORD");
+    act(() => secrets?.querySelector<HTMLElement>('[role="switch"]')?.click());
     expect(secrets?.textContent).toContain("ADMIN_PASSWORD");
     expect(container.querySelector("#danger-zone")).toBeNull();
   });

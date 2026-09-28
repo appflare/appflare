@@ -1,6 +1,6 @@
 import { Banner, cn, Empty, LayerCard, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
-import type { ComponentProps, ReactElement, ReactNode } from "react";
+import { type ComponentProps, type ReactElement, type ReactNode, useId } from "react";
 import { ErrorMessageBanner } from "./message-text";
 import { ResponsiveTable } from "./responsive-table";
 
@@ -31,9 +31,11 @@ export function Section({
   action,
   error,
   empty,
+  className,
   children,
 }: {
-  id: string;
+  /** The section's link target; without one the section is not a link target. */
+  id?: string;
   title: string;
   /** A small control right after the heading: the section's docs link. */
   titleAction?: ReactNode;
@@ -47,18 +49,26 @@ export function Section({
   error?: string | ReactNode | null;
   /** Shown instead of the body when set. */
   empty?: ReactNode;
+  /** Merged over the section's own classes, such as how a link's ring sits around it. */
+  className?: string;
   children?: ReactNode;
 }) {
   const hasError = error !== undefined && error !== null && error !== "";
+  const ownId = useId();
+  const headingId = `${id ?? ownId}-heading`;
   return (
-    <section id={id} aria-labelledby={`${id}-heading`} className="grid scroll-mt-6 gap-3">
+    <section
+      id={id}
+      aria-labelledby={headingId}
+      className={cn("grid scroll-mt-6 gap-3", className)}
+    >
       {/* On phones the action goes under the text; from 640 px it stays at the
           right, beside a description of any length. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="grid min-w-0 gap-1 sm:flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="flex items-center gap-1">
-              <Text variant="heading" as="h2" id={`${id}-heading`}>
+              <Text variant="heading" as="h2" id={headingId}>
                 {title}
               </Text>
               {titleAction}

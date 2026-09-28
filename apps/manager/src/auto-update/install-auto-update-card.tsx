@@ -1,8 +1,10 @@
-import { Banner, LayerCard, Link, Radio, Text } from "@cloudflare/kumo";
+import { Banner, Link, Radio, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { DocsLink } from "../components/docs-link";
+import { FLUSH_RING_CLASS } from "../components/hash-target";
+import { Section, SectionBody } from "../components/section";
 import { settingsLink } from "../components/settings-links";
 import type { InstallDetail } from "../installs/installs.functions";
 import {
@@ -53,23 +55,22 @@ export function InstallAutoUpdateCard({
   const on = effectiveAutoUpdate(choice, install.autoUpdateDefault);
   const needsApproval = install.build.kind !== "artifact";
   return (
-    // The radio group's legend titles the card; each choice says what it does.
-    <LayerCard>
-      <LayerCard.Primary className="grid gap-3 px-5 py-4">
+    <Section
+      id="automatic-updates"
+      title={AUTO_UPDATE_COPY.installLegend}
+      titleAction={<DocsLink topic="automaticUpdates" />}
+      description={<Link href={settingsLink("updates", "apps")}>Change the default</Link>}
+      className={FLUSH_RING_CLASS}
+    >
+      <SectionBody className="gap-3">
+        {/* The section's heading says what the choices are for; each choice says what it does. */}
         <Radio.Group
-          legend={AUTO_UPDATE_COPY.installLegend}
-          description={
-            <>
-              <Link href={settingsLink("updates", "apps")}>Change the default</Link>
-              {" · "}
-              <DocsLink topic="automaticUpdates" variant="inline" />
-            </>
-          }
           value={choice}
           onValueChange={(next: string) => void onChange(next)}
           disabled={!isAdmin || pending}
           appearance="card"
         >
+          <Radio.Legend className="sr-only">{AUTO_UPDATE_COPY.installLegend}</Radio.Legend>
           <Radio.Item
             label={AUTO_UPDATE_COPY.choiceLabels.inherit(install.autoUpdateDefault)}
             description={AUTO_UPDATE_COPY.inheritDescription}
@@ -112,7 +113,7 @@ export function InstallAutoUpdateCard({
         {error !== null && (
           <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={error} />
         )}
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }

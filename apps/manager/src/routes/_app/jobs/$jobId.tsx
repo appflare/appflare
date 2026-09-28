@@ -1,23 +1,22 @@
-import { Badge, Banner, Empty, LayerCard, LinkButton, Loader, Table, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Empty, LinkButton, Loader, Table, Text } from "@cloudflare/kumo";
 import {
   ArrowRightIcon,
   ArrowsClockwiseIcon,
   GitBranchIcon,
   ListChecksIcon,
-  ShippingContainerIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { startedByLabel } from "../../../auto-update/auto-update";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
 import { DocsLink } from "../../../components/docs-link";
+import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { formatTime, jobKindLabel } from "../../../components/format";
 import { SendReportButton } from "../../../components/job-report-dialog";
 import { MessageText } from "../../../components/message-text";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { PageHeader } from "../../../components/page-header";
-import { PageSection } from "../../../components/page-section";
-import { ResponsiveTable } from "../../../components/responsive-table";
+import { Section, SectionBody, SectionTable } from "../../../components/section";
 import { SeedCredentialsCard } from "../../../components/seed-credentials-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
@@ -41,6 +40,8 @@ function JobPage() {
   const { switching } = useVersionSwitch(job);
   const { viewer } = Route.useRouteContext();
   const isAdmin = viewer.role === "admin";
+  // Technical detail such as the Worker version's id shows on request.
+  const [showNames] = useShowTechnicalNames();
 
   if (job === null) {
     return (
@@ -81,15 +82,17 @@ function JobPage() {
           ) : undefined
         }
       />
-      <LayerCard>
-        <LayerCard.Secondary className="flex items-center justify-between gap-3">
-          <span>Status</span>
-          <div className="flex items-center gap-2">
+      <Section
+        title="Status"
+        badge={
+          <span className="flex items-center gap-2">
             {isActive(job) && <Loader size="sm" />}
             <StatusBadge status={job.status} of="job" />
-          </div>
-        </LayerCard.Secondary>
-        <LayerCard.Primary className="px-5 py-4">
+          </span>
+        }
+        action={job.workerVersionId === null ? null : <TechnicalNamesSwitch />}
+      >
+        <SectionBody>
           <DescriptionList>
             {job.install !== null && (
               <DescriptionItem label="Worker">
@@ -101,7 +104,8 @@ function JobPage() {
                 <span className="font-mono text-[0.9em]">{job.targetVersion}</span>
               </DescriptionItem>
             )}
-            {job.workerVersionId !== null && (
+            {/* The Worker version's id is technical detail, shown on request. */}
+            {job.workerVersionId !== null && showNames && (
               <DescriptionItem
                 label={
                   job.kind === "update" || job.kind === "self_update" || job.kind === "reconfigure"
@@ -120,8 +124,8 @@ function JobPage() {
               <Timestamp iso={job.finishedAt} />
             </DescriptionItem>
           </DescriptionList>
-        </LayerCard.Primary>
-      </LayerCard>
+        </SectionBody>
+      </Section>
       {job.kind === "install" && <SeedCredentialsCard jobId={job.id} />}
       {switching && (
         <Banner
@@ -173,28 +177,31 @@ function JobPage() {
         />
       )}
       {job.build !== null && <BuildProgress build={job.build} />}
-      <PageSection title="Log">
-        {job.logs.length === 0 ? (
-          <Text variant="secondary">
-            {isActive(job) ? "Waiting for the first step…" : "No log lines were written."}
-          </Text>
-        ) : (
-          <ResponsiveTable label="Log">
-            <Table.Header>
-              <Table.Row>
-                <Table.Head>Time</Table.Head>
-                <Table.Head>Level</Table.Head>
-                <Table.Head>Message</Table.Head>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {job.logs.map((line) => (
-                <LogRow key={line.id} line={line} />
-              ))}
-            </Table.Body>
-          </ResponsiveTable>
-        )}
-      </PageSection>
+      <Section
+        title="Log"
+        empty={
+          job.logs.length === 0 ? (
+            <Text variant="secondary">
+              {isActive(job) ? "Waiting for the first step…" : "No log lines were written."}
+            </Text>
+          ) : null
+        }
+      >
+        <SectionTable label="Log">
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Time</Table.Head>
+              <Table.Head>Level</Table.Head>
+              <Table.Head>Message</Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {job.logs.map((line) => (
+              <LogRow key={line.id} line={line} />
+            ))}
+          </Table.Body>
+        </SectionTable>
+      </Section>
     </>
   );
 }
@@ -202,20 +209,20 @@ function JobPage() {
 /** Live output of the sandbox build the job waits on; the job log gets it when the build ends. */
 function BuildProgress({ build }: { build: BuildProgressView }) {
   return (
-    <LayerCard>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
+    <Section
+      title={
+        build.kind === "installer"
+          ? "Running the app's installer in your sandbox Worker"
+          : "Building in your sandbox Worker"
+      }
+      badge={
         <span className="flex items-center gap-2">
-          <ShippingContainerIcon aria-hidden />
-          {build.kind === "installer"
-            ? "Running the app's installer in your sandbox Worker"
-            : "Building in your sandbox Worker"}
-        </span>
-        <div className="flex items-center gap-2">
           <Loader size="sm" />
           <Badge variant="info">{build.stage}</Badge>
-        </div>
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="grid gap-2 px-5 py-4">
+        </span>
+      }
+    >
+      <SectionBody className="gap-2">
         <Text variant="secondary" size="sm">
           Last output at {formatTime(build.updatedAt)}. The end of the output goes to the log below
           when the {build.kind === "installer" ? "run" : "build"} ends.
@@ -233,8 +240,8 @@ function BuildProgress({ build }: { build: BuildProgressView }) {
             ))
           )}
         </div>
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }
 

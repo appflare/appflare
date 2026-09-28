@@ -1,10 +1,8 @@
 import {
   Badge,
   Banner,
-  cn,
   Empty,
   InlineCopyText,
-  LayerCard,
   Link,
   LinkButton,
   Table,
@@ -13,7 +11,7 @@ import {
 } from "@cloudflare/kumo";
 import { ArrowRightIcon, InfoIcon, PackageIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { startedByLabel } from "../../../auto-update/auto-update";
 import { InstallAutoUpdateCard } from "../../../auto-update/install-auto-update-card";
@@ -33,6 +31,7 @@ import { DescriptionItem, DescriptionList } from "../../../components/descriptio
 import { DocsLink } from "../../../components/docs-link";
 import { DomainName, DomainNameList } from "../../../components/domain-name";
 import { ExternalDomainsSection } from "../../../components/external-domains-section";
+import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { jobKindLabel, resourceKindLabel } from "../../../components/format";
 import { FLUSH_RING_CLASS } from "../../../components/hash-target";
 import { InstallHealth } from "../../../components/install-health";
@@ -40,11 +39,16 @@ import { Markdown } from "../../../components/markdown";
 import { OpenAppButton } from "../../../components/open-app-button";
 import { OriginBadge } from "../../../components/origin-badge";
 import { PageHeader } from "../../../components/page-header";
-import { PageSection } from "../../../components/page-section";
 import { DeleteRetainedDialog, ForgetDialog } from "../../../components/removed-app-actions";
 import { RenameInstallDialog } from "../../../components/rename-install-dialog";
-import { ResponsiveTable } from "../../../components/responsive-table";
 import { revealSelectedTab } from "../../../components/reveal-tab";
+import {
+  Section,
+  SectionBody,
+  SectionRow,
+  SectionRows,
+  SectionTable,
+} from "../../../components/section";
 import { SourceChangesCard } from "../../../components/source-changes-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
@@ -105,8 +109,8 @@ export const Route = createFileRoute("/_app/apps/$installId")({
 const HOME_CRUMB = { label: "Home", href: "/" };
 
 /**
- * The page's title: the install's display name when it has one (the app and
- * Worker names go beneath), else the app's name.
+ * The page's title: the install's display name when it has one (the app's
+ * name goes beneath), else the app's name.
  */
 function pageTitle(install: Pick<InstallDetail, "displayName" | "name">): string {
   return install.displayName ?? install.name;
@@ -154,11 +158,8 @@ function InstallPage() {
     <>
       <PageHeader
         title={pageTitle(install)}
-        description={
-          install.displayName === null
-            ? `Worker ${install.workerName}`
-            : `${install.name}, Worker ${install.workerName}`
-        }
+        // The Worker's name is technical detail; Details lists it.
+        description={install.displayName === null ? undefined : install.name}
         parents={[HOME_CRUMB]}
         icon={<AppIcon src={install.icon} name={install.name} size={40} />}
         titleAction={isAdmin ? <RenameInstallDialog install={install} /> : undefined}
@@ -204,15 +205,13 @@ function OverviewTab({ install, isAdmin }: { install: InstallDetail; isAdmin: bo
       <Details install={install} isAdmin={isAdmin} />
       {!gone && <SourceChangesCard install={install} isAdmin={isAdmin} />}
       {!gone && install.postInstall.length > 0 && (
-        <PageSection id="next-steps" title="Next steps">
-          <LayerCard>
-            <LayerCard.Primary className="grid gap-4 px-5 py-4">
-              {install.postInstall.map((content) => (
-                <Markdown key={content}>{content}</Markdown>
-              ))}
-            </LayerCard.Primary>
-          </LayerCard>
-        </PageSection>
+        <Section id="next-steps" title="Next steps" className={FLUSH_RING_CLASS}>
+          <SectionBody>
+            {install.postInstall.map((content) => (
+              <Markdown key={content}>{content}</Markdown>
+            ))}
+          </SectionBody>
+        </Section>
       )}
       {!gone && install.build.kind === "self-deploying" && (
         <AppCredentialsCard
@@ -248,49 +247,65 @@ function SettingsTab({
           isAdmin={isAdmin}
         />
       ) : (
-        <PageSection id="secrets" title="Secrets">
-          {install.secretNames.length === 0 ? (
-            <Text variant="secondary">No secrets are set.</Text>
-          ) : (
-            <div className="grid gap-1.5">
-              <div className="flex flex-wrap gap-2">
-                {install.secretNames.map((name) => (
-                  <Badge key={name} variant="outline">
-                    {name}
-                  </Badge>
-                ))}
-              </div>
-              <Text variant="secondary" size="sm">
-                Secret values are stored encrypted on the Worker and cannot be shown.
-              </Text>
-            </div>
-          )}
-        </PageSection>
+        <SecretNamesSection names={install.secretNames} />
       )}
       {install.origin === "catalog" ? (
-        <div id="automatic-updates" className={cn("scroll-mt-6", FLUSH_RING_CLASS)}>
-          <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />
-        </div>
+        <InstallAutoUpdateCard install={install} isAdmin={isAdmin} />
       ) : (
-        <PageSection id="automatic-updates" title="Automatic updates">
-          <Text variant="secondary">
-            {install.origin === "repository" ? (
-              <>
-                Never: this app is not from the catalog. Check for changes under{" "}
-                <Link href={appLink(install.id, "source")}>Source</Link>, then rebuild and review
-                the update.
-              </>
-            ) : (
-              <>
-                Never: this app was built from source at a commit you chose. Update it from the
-                catalog, or rebuild it under{" "}
-                <Link href={appLink(install.id, "source")}>Source</Link>.
-              </>
-            )}
-          </Text>
-        </PageSection>
+        <Section id="automatic-updates" title="Automatic updates" className={FLUSH_RING_CLASS}>
+          <SectionBody>
+            <Text variant="secondary">
+              {install.origin === "repository" ? (
+                <>
+                  Never: this app is not from the catalog. Check for changes under{" "}
+                  <Link href={appLink(install.id, "source")}>Source</Link>, then rebuild and review
+                  the update.
+                </>
+              ) : (
+                <>
+                  Never: this app was built from source at a commit you chose. Update it from the
+                  catalog, or rebuild it under{" "}
+                  <Link href={appLink(install.id, "source")}>Source</Link>.
+                </>
+              )}
+            </Text>
+          </SectionBody>
+        </Section>
       )}
     </>
+  );
+}
+
+/**
+ * The secrets an install has, when its settings cannot be read: how many,
+ * with their names (technical detail) behind "Show technical names".
+ */
+function SecretNamesSection({ names }: { names: readonly string[] }) {
+  const [showNames] = useShowTechnicalNames();
+  return (
+    <Section
+      id="secrets"
+      title="Secrets"
+      className={FLUSH_RING_CLASS}
+      action={names.length === 0 ? null : <TechnicalNamesSwitch />}
+    >
+      <SectionBody className="gap-1.5">
+        <Text variant="secondary">
+          {names.length === 0
+            ? "No secrets are set."
+            : `${names.length} ${names.length === 1 ? "secret is" : "secrets are"} set. Their values are stored encrypted on the app and cannot be shown.`}
+        </Text>
+        {showNames && (
+          <div className="flex flex-wrap gap-2">
+            {names.map((name) => (
+              <Badge key={name} variant="outline">
+                <span className={mono}>{name}</span>
+              </Badge>
+            ))}
+          </div>
+        )}
+      </SectionBody>
+    </Section>
   );
 }
 
@@ -298,32 +313,35 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
   return (
     <>
       {isAdmin && install.build.kind !== "self-deploying" && (
-        <PageSection id="workers-dev" title="workers.dev URL">
+        <Section id="workers-dev" title="workers.dev URL" className={FLUSH_RING_CLASS}>
           <WorkersDevSwitch install={install} />
-        </PageSection>
+        </Section>
       )}
       {isAdmin ? (
         <CustomDomainsSection install={install} />
       ) : (
-        <PageSection
+        <Section
           id="domains"
           title={install.wildcard === null ? "Custom domains" : "Wildcard domain"}
           titleAction={<DocsLink topic="customDomains" />}
+          className={FLUSH_RING_CLASS}
         >
-          {install.domains.length === 0 ? (
-            <Text variant="secondary">The app is served on its workers.dev URL only.</Text>
-          ) : (
-            <DomainNameList domains={install.domains} />
-          )}
-        </PageSection>
+          <SectionBody>
+            {install.domains.length === 0 ? (
+              <Text variant="secondary">The app is served on its workers.dev URL only.</Text>
+            ) : (
+              <DomainNameList domains={install.domains} />
+            )}
+          </SectionBody>
+        </Section>
       )}
       <ExternalDomainsSection install={install} isAdmin={isAdmin} />
-      <PageSection id="email" title="Email">
-        {install.emailRoutes.length === 0 ? (
-          <Text variant="secondary">This app does not receive email through Email Routing.</Text>
-        ) : (
-          <LayerCard>
-            <LayerCard.Primary className="grid gap-3 px-5 py-4">
+      <Section id="email" title="Email" className={FLUSH_RING_CLASS}>
+        <SectionBody className="gap-3">
+          {install.emailRoutes.length === 0 ? (
+            <Text variant="secondary">This app does not receive email through Email Routing.</Text>
+          ) : (
+            <>
               <ul className="grid list-disc gap-1 pl-5">
                 {install.emailRoutes.map((r) => (
                   <li key={r.id}>
@@ -332,25 +350,30 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
                 ))}
               </ul>
               <Text variant="secondary" size="sm">
-                To receive email for another zone, change{" "}
+                To receive email for another domain, change{" "}
                 <Link href={appLink(install.id, "email-zone")}>Email in the app's settings</Link>.
               </Text>
-            </LayerCard.Primary>
-          </LayerCard>
-        )}
-      </PageSection>
+            </>
+          )}
+        </SectionBody>
+      </Section>
     </>
   );
 }
 
 function ResourcesTab({ install }: { install: InstallDetail }) {
   const gone = install.status === "uninstalled";
+  // The binding each resource is bound to the app as is technical detail.
+  const [showNames] = useShowTechnicalNames();
+  const kept = install.retained.length > 0;
+  const namesSwitch = <TechnicalNamesSwitch />;
   return (
     <>
-      {install.retained.length > 0 && (
-        <PageSection
+      {kept && (
+        <Section
           id="kept-resources"
           title="Kept in the account"
+          className={FLUSH_RING_CLASS}
           description={
             <>
               These were kept when the app was uninstalled. Appflare no longer uses them. When you
@@ -359,27 +382,35 @@ function ResourcesTab({ install }: { install: InstallDetail }) {
               them in the Cloudflare dashboard.
             </>
           }
+          action={namesSwitch}
         >
-          <ResourceTable rows={install.retained} />
-        </PageSection>
+          <ResourceTable rows={install.retained} showBindings={showNames} />
+        </Section>
       )}
       {!gone && (
-        <PageSection
+        <Section
           id="resources"
           title="Resources"
           description="What the install created in this account."
+          className={FLUSH_RING_CLASS}
+          action={!kept && install.resources.length > 0 ? namesSwitch : null}
+          empty={
+            install.resources.length === 0 ? (
+              <Text variant="secondary">No resources have been created yet.</Text>
+            ) : null
+          }
         >
-          {install.resources.length === 0 ? (
-            <Text variant="secondary">No resources have been created yet.</Text>
-          ) : (
-            <ResourceTable rows={install.resources} />
-          )}
-        </PageSection>
+          <ResourceTable rows={install.resources} showBindings={showNames} />
+        </Section>
       )}
-      {gone && install.retained.length === 0 && (
-        <Text variant="secondary">
-          The Worker and every resource Appflare created for it are deleted.
-        </Text>
+      {gone && !kept && (
+        <Section id="resources" title="Resources" className={FLUSH_RING_CLASS}>
+          <SectionBody>
+            <Text variant="secondary">
+              The Worker and every resource Appflare created for it are deleted.
+            </Text>
+          </SectionBody>
+        </Section>
       )}
     </>
   );
@@ -399,8 +430,8 @@ function JobsTab({
       {install.status !== "uninstalled" && (
         <VersionsSection install={install} snapshots={snapshots} isAdmin={isAdmin} />
       )}
-      <PageSection id="job-history" title="Job history">
-        <ResponsiveTable label="Job history" stickyFirstColumn>
+      <Section id="job-history" title="Job history" className={FLUSH_RING_CLASS}>
+        <SectionTable label="Job history" stickyFirstColumn>
           <Table.Header>
             <Table.Row>
               <Table.Head>Job</Table.Head>
@@ -429,30 +460,9 @@ function JobsTab({
               </Table.Row>
             ))}
           </Table.Body>
-        </ResponsiveTable>
-      </PageSection>
+        </SectionTable>
+      </Section>
     </>
-  );
-}
-
-/** One action of the danger zone: what it does, and its buttons. */
-function DangerAction({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-4">
-      <div className="grid max-w-prose gap-1">
-        <Text bold>{title}</Text>
-        <Text variant="secondary">{description}</Text>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">{children}</div>
-    </div>
   );
 }
 
@@ -469,56 +479,55 @@ function DangerZone({ install }: { install: InstallDetail }) {
   const selfDeploying = install.build.kind === "self-deploying";
   const busy = install.activeJobId !== null;
   return (
-    <PageSection id="danger-zone" title="Danger zone">
-      <LayerCard>
-        <LayerCard.Primary className="grid gap-4 px-5 py-4">
-          {install.uninstall === "start" && (
-            <DangerAction
-              title="Uninstall"
-              description={
-                selfDeploying
-                  ? "Runs the app's own installer to delete everything it created. Nothing can be kept."
-                  : "Deletes the Worker and everything bound to it. You choose which data resources to keep."
-              }
-            >
-              <UninstallDialog install={install} mode="start" />
-            </DangerAction>
-          )}
-          {install.uninstall === "retry" && (
-            <DangerAction
-              title="Finish uninstalling"
-              description="Deletes what the last attempt left. You can keep a resource Cloudflare refuses to delete."
-            >
-              <UninstallDialog install={install} mode="retry" />
-            </DangerAction>
-          )}
-          {kept && (
-            <DangerAction
-              title="Kept data"
-              description={
-                install.forgotten
-                  ? "Delete retained data deletes the resources this app kept, with everything in them. The app was forgotten, so Removed apps no longer lists it."
-                  : "Delete retained data deletes the resources this app kept, with everything in them. Forget only stops listing the app under Removed apps; the resources stay in the account."
-              }
-            >
-              <DeleteRetainedDialog app={install} disabled={busy} />
-              {!install.forgotten && <ForgetDialog app={install} disabled={busy} />}
-            </DangerAction>
-          )}
-        </LayerCard.Primary>
-      </LayerCard>
-    </PageSection>
+    <Section id="danger-zone" title="Danger zone" className={FLUSH_RING_CLASS}>
+      <SectionRows>
+        {install.uninstall === "start" && (
+          <SectionRow
+            title="Uninstall"
+            description={
+              selfDeploying
+                ? "Runs the app's own installer to delete everything it created. Nothing can be kept."
+                : "Deletes the Worker and everything bound to it. You choose which data resources to keep."
+            }
+            action={<UninstallDialog install={install} mode="start" />}
+          />
+        )}
+        {install.uninstall === "retry" && (
+          <SectionRow
+            title="Finish uninstalling"
+            description="Deletes what the last attempt left. You can keep a resource Cloudflare refuses to delete."
+            action={<UninstallDialog install={install} mode="retry" />}
+          />
+        )}
+        {kept && (
+          <SectionRow
+            title="Kept data"
+            description={
+              install.forgotten
+                ? "Delete retained data deletes the resources this app kept, with everything in them. The app was forgotten, so Removed apps no longer lists it."
+                : "Delete retained data deletes the resources this app kept, with everything in them. Forget only stops listing the app under Removed apps; the resources stay in the account."
+            }
+            action={
+              <>
+                <DeleteRetainedDialog app={install} disabled={busy} />
+                {!install.forgotten && <ForgetDialog app={install} disabled={busy} />}
+              </>
+            }
+          />
+        )}
+      </SectionRows>
+    </Section>
   );
 }
 
-function ResourceTable({ rows }: { rows: ResourceView[] }) {
+function ResourceTable({ rows, showBindings }: { rows: ResourceView[]; showBindings: boolean }) {
   const managedColumn = rows.some((r) => r.managedByApp);
   return (
-    <ResponsiveTable label="Resources" minWidth="lg">
+    <SectionTable label="Resources" minWidth={showBindings ? "lg" : "md"}>
       <Table.Header>
         <Table.Row>
           <Table.Head>Kind</Table.Head>
-          <Table.Head>Binding</Table.Head>
+          {showBindings && <Table.Head>Binding</Table.Head>}
           <Table.Head>Name</Table.Head>
           <Table.Head>ID</Table.Head>
           {managedColumn && <Table.Head>Managed by</Table.Head>}
@@ -528,9 +537,11 @@ function ResourceTable({ rows }: { rows: ResourceView[] }) {
         {rows.map((r) => (
           <Table.Row key={r.id}>
             <Table.Cell>{resourceKindLabel(r.kind)}</Table.Cell>
-            <Table.Cell>
-              <span className={mono}>{r.binding ?? ""}</span>
-            </Table.Cell>
+            {showBindings && (
+              <Table.Cell>
+                <span className={mono}>{r.binding ?? ""}</span>
+              </Table.Cell>
+            )}
             <Table.Cell>
               <span className={mono}>{r.name}</span>
             </Table.Cell>
@@ -551,7 +562,7 @@ function ResourceTable({ rows }: { rows: ResourceView[] }) {
           </Table.Row>
         ))}
       </Table.Body>
-    </ResponsiveTable>
+    </SectionTable>
   );
 }
 
@@ -644,17 +655,23 @@ function OtherWorkers({ workers }: { workers: OtherWorkerView[] }) {
 /** The Overview's details: what is installed, where it serves, its health and build. */
 function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
   const vars = Object.entries(install.vars);
+  const [showNames] = useShowTechnicalNames();
   return (
-    <LayerCard id="details" className={cn("scroll-mt-6", FLUSH_RING_CLASS)}>
-      <LayerCard.Secondary className="flex items-center justify-between gap-3">
-        <span>Details</span>
-        <div className="flex items-center gap-2">
+    <Section
+      id="details"
+      title="Details"
+      className={FLUSH_RING_CLASS}
+      badge={
+        <span className="flex flex-wrap items-center gap-2">
           <OriginBadge origin={install.origin} />
           {install.updateAvailable && <Badge variant="info">Update available</Badge>}
           <StatusBadge status={install.status} of="install" />
-        </div>
-      </LayerCard.Secondary>
-      <LayerCard.Primary className="px-5 py-4">
+        </span>
+      }
+      // The Worker version and the settings' names show on request.
+      action={<TechnicalNamesSwitch />}
+    >
+      <SectionBody>
         <DescriptionList>
           <DescriptionItem label="App">
             {install.origin === "repository" ? (
@@ -728,17 +745,22 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
               />
             </DescriptionItem>
           )}
-          <DescriptionItem label="Worker version">
-            {install.currentVersionId === null ? (
-              "None yet"
-            ) : (
-              <InlineCopyText
-                labels={{ copyAction: "Copy the Worker version", copied: "Worker version copied" }}
-              >
-                {install.currentVersionId}
-              </InlineCopyText>
-            )}
-          </DescriptionItem>
+          {showNames && (
+            <DescriptionItem label="Worker version">
+              {install.currentVersionId === null ? (
+                "None yet"
+              ) : (
+                <InlineCopyText
+                  labels={{
+                    copyAction: "Copy the Worker version",
+                    copied: "Worker version copied",
+                  }}
+                >
+                  {install.currentVersionId}
+                </InlineCopyText>
+              )}
+            </DescriptionItem>
+          )}
           {install.build.kind === "self-deploying" ? (
             <DescriptionItem label="Deployed">
               <span className="grid gap-1">
@@ -797,16 +819,18 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
               </DescriptionItem>
             )
           )}
-          {vars.map(([name, value]) => (
-            <DescriptionItem key={name} label={name}>
-              <span className={mono}>{value}</span>
-            </DescriptionItem>
-          ))}
+          {/* Settings are listed by the names the app reads them as: technical detail. */}
+          {showNames &&
+            vars.map(([name, value]) => (
+              <DescriptionItem key={name} label={name}>
+                <span className={mono}>{value}</span>
+              </DescriptionItem>
+            ))}
           <DescriptionItem label="Last change">
             <Timestamp iso={install.updatedAt} />
           </DescriptionItem>
         </DescriptionList>
-      </LayerCard.Primary>
-    </LayerCard>
+      </SectionBody>
+    </Section>
   );
 }

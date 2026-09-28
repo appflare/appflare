@@ -156,15 +156,12 @@ function UsersTable({
           ))}
         </Table.Body>
       </SectionTable>
-      {picked !== null && (
-        <UserActionDialog
-          user={picked.user}
-          action={picked.action}
-          open={open}
-          onOpenChange={setOpen}
-          emailReset={emailReset}
-        />
-      )}
+      <UserActionDialogs
+        picked={picked}
+        open={open}
+        onOpenChange={setOpen}
+        emailReset={emailReset}
+      />
     </>
   );
 }
@@ -236,23 +233,58 @@ function UserRowMenu({
 const ACCESS_NOT_UPDATED =
   'The Cloudflare Access policy was not updated. Use "Re-sync admins" under Cloudflare Access.';
 
+/** Stands in for the user before any row's action has been picked; its dialogs stay closed until then. */
+const NO_USER = { id: "", name: "", email: "" } as const;
+
 /**
- * The confirmation for the action picked from a row's menu. Deleting a user
- * and transferring ownership ask for the user's email to be typed, as Kumo's
- * delete-resource pattern has it; a role change is a plain confirmation.
+ * The dialogs for the action picked from a row's menu, mounted with the table
+ * and driven by `open` (a dialog created on the first pick would skip its
+ * opening animation). Resetting a password has its own dialog; the other
+ * actions share one confirmation. Deleting a user and transferring ownership
+ * ask for the user's email to be typed, as Kumo's delete-resource pattern has
+ * it; a role change is a plain confirmation.
  */
-function UserActionDialog({
-  user,
-  action,
+function UserActionDialogs({
+  picked,
   open,
   onOpenChange,
   emailReset,
 }: {
-  user: UserRow;
-  action: UserAction;
+  /** The last action picked; kept after closing so the dialog's content stays while it animates out. */
+  picked: { user: UserRow; action: UserAction } | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   emailReset: boolean;
+}) {
+  const action = picked === null || picked.action.kind === "reset" ? null : picked.action;
+  return (
+    <>
+      <ResetPasswordDialog
+        user={picked?.user ?? NO_USER}
+        emailReset={emailReset}
+        open={open && picked?.action.kind === "reset"}
+        onOpenChange={onOpenChange}
+      />
+      <UserConfirmDialog
+        user={action === null ? null : (picked?.user ?? null)}
+        action={action}
+        open={open && action !== null}
+        onOpenChange={onOpenChange}
+      />
+    </>
+  );
+}
+
+function UserConfirmDialog({
+  user,
+  action,
+  open,
+  onOpenChange,
+}: {
+  user: UserRow | null;
+  action: Exclude<UserAction, { kind: "reset" }> | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
   const toasts = useKumoToastManager();
@@ -267,72 +299,62 @@ function UserActionDialog({
     }
   }
 
-  const common = { open, onOpenChange, actionLabel: actionLabel(action) };
-  switch (action.kind) {
-    case "reset":
-      return (
-        <ResetPasswordDialog
-          user={user}
-          emailReset={emailReset}
-          open={open}
-          onOpenChange={onOpenChange}
-        />
-      );
-    case "role": {
-      const toAdmin = action.role === "admin";
-      return (
-        <ConfirmDialog
-          {...common}
-          destructive={false}
-          title={toAdmin ? `Make ${user.name} an admin` : `Make ${user.name} a member`}
-          description={
-            toAdmin
-              ? `${user.email} will be able to install, update and uninstall apps, change settings, and add users. Only you can change roles or delete users.`
-              : `${user.email} will be able to see everything but change nothing, apart from their own passkeys.`
-          }
-          onConfirm={async () => {
+  function spec(u: UserRow, a: Exclude<UserAction, { kind: "reset" }>) {
+    switch (a.kind) {
+      case "role": {
+        const toAdmin = a.role === "admin";
+        return {
+          destructive: false,
+          title: toAdmin ? `Make ${u.name} an admin` : `Make ${u.name} a member`,
+          description: toAdmin
+            ? `${u.email} will be able to install, update and uninstall apps, change settings, and add users. Only you can change roles or delete users.`
+            : `${u.email} will be able to see everything but change nothing, apart from their own passkeys.`,
+          onConfirm: async () => {
             const { accessPolicy } = await changeUserRole({
-              data: { userId: user.id, role: action.role },
+              data: { userId: u.id, role: a.role },
             });
             reportAccess(accessPolicy);
             await router.invalidate();
-          }}
-        />
-      );
-    }
-    case "transfer":
-      return (
-        <ConfirmDialog
-          {...common}
-          title={`Transfer ownership to ${user.name}`}
-          description={`${user.email} becomes the owner: the only one who can change roles, delete users, and transfer ownership. You stay an admin, and only they can give ownership back.`}
-          confirmText={user.email}
-          onConfirm={async () => {
-            await transferOwnership({ data: { userId: user.id } });
+          },
+        };
+      }
+      case "transfer":
+        return {
+          destructive: true,
+          title: `Transfer ownership to ${u.name}`,
+          description: `${u.email} becomes the owner: the only one who can change roles, delete users, and transfer ownership. You stay an admin, and only they can give ownership back.`,
+          confirmText: u.email,
+          onConfirm: async () => {
+            await transferOwnership({ data: { userId: u.id } });
             toasts.add({
               title: "Ownership transferred",
-              description: `${user.email} is now the owner.`,
+              description: `${u.email} is now the owner.`,
               variant: "success",
             });
             await router.invalidate();
-          }}
-        />
-      );
-    case "delete":
-      return (
-        <ConfirmDialog
-          {...common}
-          title={`Delete ${user.name}`}
-          description={`Deletes ${user.email} with their password and passkeys, and signs them out everywhere. Installed apps, jobs and settings stay as they are.`}
-          confirmText={user.email}
-          onConfirm={async () => {
-            const { accessPolicy } = await deleteUser({ data: { userId: user.id } });
+          },
+        };
+      case "delete":
+        return {
+          destructive: true,
+          title: `Delete ${u.name}`,
+          description: `Deletes ${u.email} with their password and passkeys, and signs them out everywhere. Installed apps, jobs and settings stay as they are.`,
+          confirmText: u.email,
+          onConfirm: async () => {
+            const { accessPolicy } = await deleteUser({ data: { userId: u.id } });
             reportAccess(accessPolicy);
             await router.invalidate();
-          }}
-        />
-      );
+          },
+        };
+    }
   }
+
+  const shown =
+    user !== null && action !== null
+      ? { ...spec(user, action), actionLabel: actionLabel(action) }
+      : // Nothing picked yet: the dialog stays closed.
+        { destructive: true, title: "", actionLabel: "", onConfirm: async () => {} };
+  return <ConfirmDialog {...shown} open={open} onOpenChange={onOpenChange} />;
 }
 
 /** The roles a new user can get, as the add dialog offers them. */
