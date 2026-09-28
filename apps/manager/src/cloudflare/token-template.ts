@@ -18,9 +18,18 @@
  * key the page does list (`zone_read` is `zone`, `zone_settings_write` is
  * `zone_settings`, `access_acct_read` is `access_acct`); the dashboard labels
  * these groups `email_routing_rule_write` and `email_routing_address_read`.
+ *
+ * An app's own permissions take their keys from the catalog schema's list of
+ * the groups an app may ask for (`APP_TOKEN_PERMISSION_GROUPS`), which says
+ * where each key comes from.
  */
 
-import type { TokenPermission } from "@appflare/schema";
+import {
+  appTokenPermissionGroup,
+  type TokenPermission,
+  type TokenPermissionAccess,
+  type TokenPermissionScope,
+} from "@appflare/schema";
 import { dashboardUrl } from "./dashboard-links";
 
 export type PermissionType = "read" | "edit";
@@ -299,139 +308,63 @@ export function r2ApiTokensUrl(accountId: string | null): string {
 }
 
 /**
- * Permission names an app's catalog manifest may use, `<Scope>.<Group>` in the
- * dashboard's wording, mapped to template keys. Matching ignores case. Where
- * each key comes from:
- *
- * - The permission reference on Cloudflare's "API token template URLs" page
- *   (linked above): `dns`, `zone`, `zone_settings`, `analytics`,
- *   `firewall_services`, `page_rules`, `ssl_and_certificates`,
- *   `account_settings`, `account_analytics`, `billing`, `workers_scripts`,
- *   `workers_kv_storage`, `workers_routes`, `workers_r2`, `d1`, `queues`,
- *   `logs`, `access`, `access_acct`.
- * - The dashboard's own group labels (`<key>_read` / `<key>_write`, the rule
- *   described at the top of this file; Cloudflare-Mining/Cloudflare-Datamining's
- *   `token_permission_groups_dash.json`): `email_routing_rule`,
- *   `email_routing_address`, `query_cache` (Hyperdrive), `pipelines`,
- *   `vectorize`, `workers_tail`, `load_balancers`, `account_logs` (the
- *   account-scoped Logs group; `logs` is the zone one), `magic_transit`.
- * - Public template links for groups added after that list: Cloudflare's own
- *   cloudflare-prometheus-exporter README (`firewall_services`,
- *   `load_balancers`, `account_logs`, `magic_transit`), savvyagents/larasend
- *   (`email_sending`), pkishorez/monorepo's Alchemy console (`secrets_store`),
- *   shivamanupadi/traks (`r2_catalog`, `r2_catalog_sql`), and the manager's
- *   own `containers` (see TOKEN_PERMISSION_GROUPS above).
- *
- * A name not listed here is listed without a key: the token link cannot
- * select it, and the app's page says so next to it.
- */
-const APP_PERMISSION_KEYS: Readonly<Record<string, Omit<PermissionGroup, "type">>> = {
-  "zone.dns": { key: "dns", label: "Zone: DNS" },
-  "zone.zone": { key: "zone", label: "Zone: Zone" },
-  "zone.zone settings": { key: "zone_settings", label: "Zone: Zone Settings" },
-  "zone.analytics": { key: "analytics", label: "Zone: Analytics" },
-  "zone.page rules": { key: "page_rules", label: "Zone: Page Rules" },
-  "zone.ssl and certificates": { key: "ssl_and_certificates", label: "Zone: SSL and Certificates" },
-  "zone.firewall services": { key: "firewall_services", label: "Zone: Firewall Services" },
-  "zone.load balancers": { key: "load_balancers", label: "Zone: Load Balancers" },
-  "zone.logs": { key: "logs", label: "Zone: Logs" },
-  "zone.workers routes": { key: "workers_routes", label: "Zone: Workers Routes" },
-  "zone.email routing rules": { key: "email_routing_rule", label: "Zone: Email Routing Rules" },
-  "account.account settings": { key: "account_settings", label: "Account: Account Settings" },
-  "account.account analytics": { key: "account_analytics", label: "Account: Account Analytics" },
-  "account.billing": { key: "billing", label: "Account: Billing" },
-  "account.logs": { key: "account_logs", label: "Account: Logs" },
-  "account.magic transit": { key: "magic_transit", label: "Account: Magic Transit" },
-  "account.workers scripts": { key: "workers_scripts", label: "Account: Workers Scripts" },
-  "account.workers kv storage": { key: "workers_kv_storage", label: "Account: Workers KV Storage" },
-  "account.workers r2 storage": { key: "workers_r2", label: "Account: Workers R2 Storage" },
-  "account.workers r2 data catalog": {
-    key: "r2_catalog",
-    label: "Account: Workers R2 Data Catalog",
-  },
-  "account.workers r2 sql": { key: "r2_catalog_sql", label: "Account: Workers R2 SQL" },
-  "account.workers tail": { key: "workers_tail", label: "Account: Workers Tail" },
-  "account.workers containers": { key: "containers", label: "Account: Workers Containers" },
-  "account.d1": { key: "d1", label: "Account: D1" },
-  "account.queues": { key: "queues", label: "Account: Queues" },
-  "account.vectorize": { key: "vectorize", label: "Account: Vectorize" },
-  "account.secrets store": { key: "secrets_store", label: "Account: Secrets Store" },
-  "account.email sending": { key: "email_sending", label: "Account: Email Sending" },
-  "account.email routing addresses": {
-    key: "email_routing_address",
-    label: "Account: Email Routing Addresses",
-  },
-  // The dashboard's key for Hyperdrive (see TOKEN_PERMISSION_GROUPS above).
-  "account.hyperdrive": { key: "query_cache", label: "Account: Hyperdrive" },
-  // The dashboard's key for Pipelines (see TOKEN_PERMISSION_GROUPS above).
-  "account.pipelines": { key: "pipelines", label: "Account: Pipelines" },
-  // The same two groups the manager asks for to put itself behind Access; apps
-  // that create their own Access application (self-deploying ones) need them.
-  "account.access: apps and policies": { key: "access", label: "Access: Apps and Policies" },
-  "account.access: organizations, identity providers, and groups": {
-    key: "access_acct",
-    label: "Access: Organizations, Identity Providers, and Groups",
-  },
-};
-
-/**
  * Why the token link cannot select a permission (one line, next to it on the
- * app's page): its name matches no dashboard group Appflare knows of, or it
- * names no scope to tell an account group from a zone one.
+ * app's page): its group has no template key this version of Appflare
+ * knows. The catalog schema lists only groups whose keys are known
+ * (`APP_TOKEN_PERMISSION_GROUPS`), so this is for a manifest written for a
+ * later version with a group added since.
  */
-export function unmappedPermissionReason(
-  permission: Pick<AppTokenPermission, "name" | "scope">,
-): string {
-  const bare = !permission.name.includes(".") && permission.scope === null;
-  return bare
-    ? "Not selected for you: the app does not say whether it is an account or a zone permission. Add it in the form."
-    : "Not selected for you: Cloudflare's token link has no way to select it. Add it in the form.";
-}
+export const UNMAPPED_PERMISSION_REASON =
+  "Not selected for you: Cloudflare's token link has no way to select it. Add it in the form.";
 
-/** One entry of an app's `tokenPermissions`, with the template group it maps to. */
+/** One entry of an app's `tokenPermissions`, with the template group that selects it. */
 export interface AppTokenPermission {
-  name: string;
-  description: string | null;
-  scope: NonNullable<TokenPermission["scope"]> | null;
-  /** Null when the name has no known template key: the token link cannot select it. */
+  scope: TokenPermissionScope;
+  /** The group's name in the dashboard's permission picker, such as "DNS". */
+  groupName: string;
+  access: TokenPermissionAccess;
+  /** Why the app needs it, in the catalog's words. */
+  reason: string;
+  /**
+   * The template group, `label` in the dashboard's wording ("Zone: DNS");
+   * null when the group has no known template key (see
+   * {@link UNMAPPED_PERMISSION_REASON}).
+   */
   group: PermissionGroup | null;
 }
 
 /**
- * Maps a manifest permission to a template group. The name is `<Scope>.<Group>`
- * (`Zone.DNS`), or just `<Group>` when `scope` is set, with an optional `:Read`
- * or `:Edit` suffix. Without a suffix the level is Edit: the manifest lists what
- * the app must be able to do, and the dashboard form shows the level before the
- * token is created. A prefix that contradicts `scope` maps to nothing rather
- * than to a guess.
+ * The group's label as the dashboard's token form shows a permission row:
+ * the scope, then the group (`Zone: DNS`, `Account: D1`). The Access groups
+ * carry their product in their name already (`Access: Apps and Policies`).
  */
-function templateGroup(permission: TokenPermission): PermissionGroup | null {
-  const match = /^(.*?)(?::(read|edit))?$/i.exec(permission.name.trim());
-  if (match === null) return null;
-  const base = (match[1] ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-  const type: PermissionType = match[2]?.toLowerCase() === "read" ? "read" : "edit";
-  const dot = base.indexOf(".");
-  let qualified = base;
-  if (dot === -1) {
-    if (permission.scope === undefined) return null;
-    qualified = `${permission.scope}.${base}`;
-  } else if (permission.scope !== undefined && base.slice(0, dot) !== permission.scope) {
-    return null;
-  }
-  const known = APP_PERMISSION_KEYS[qualified];
-  return known === undefined ? null : { ...known, type };
+function groupLabel(scope: TokenPermissionScope, group: string): string {
+  if (group.startsWith("Access:")) return group;
+  return `${scope === "zone" ? "Zone" : "Account"}: ${group}`;
 }
 
-/** The app's `tokenPermissions`, each with the template group it maps to, if any. */
+/**
+ * The app's `tokenPermissions` (with the permissions Appflare adds for a
+ * Pipelines sink's token, `appTokenPermissions`), each with the template
+ * group that selects it: the scope and group give the key from the schema's
+ * group list, the access its level.
+ */
 export function resolveAppTokenPermissions(
   permissions: readonly TokenPermission[],
 ): AppTokenPermission[] {
-  return permissions.map((p) => ({
-    name: p.name,
-    description: p.description ?? null,
-    scope: p.scope ?? null,
-    group: templateGroup(p),
-  }));
+  return permissions.map((p) => {
+    const known = appTokenPermissionGroup(p.scope, p.group);
+    return {
+      scope: p.scope,
+      groupName: p.group,
+      access: p.access,
+      reason: p.reason,
+      group:
+        known === null
+          ? null
+          : { key: known.templateKey, type: p.access, label: groupLabel(p.scope, p.group) },
+    };
+  });
 }
 
 /**

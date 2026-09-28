@@ -125,8 +125,8 @@ export async function checkCatalog(
   const { app, release } = found;
   try {
     const [manifest, sig] = await Promise.all([
-      fetchWhole(fetchImpl, release.artifacts.manifest),
-      fetchWhole(fetchImpl, release.artifacts.sig),
+      fetchWhole(fetchImpl, release.manifest),
+      fetchWhole(fetchImpl, release.sig),
     ]);
     const verified = await verifyArtifactManifest(
       manifest.bytes,

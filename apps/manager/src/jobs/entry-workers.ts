@@ -120,10 +120,11 @@ export function entryBindings(manifest: ArtifactManifest): WorkerBinding[] {
 }
 
 /**
- * What `{{workerUrl:<name>}}` and `{{workerName:<name>}}` become: each
- * Worker's installed name and workers.dev URL. The primary Worker's URL is
- * `appUrl`, the app's address, as `{{workerUrl}}` is. Undefined for an app
- * of one Worker.
+ * What the per-Worker placeholders (`{{appUrl:<name>}}`,
+ * `{{workerUrl:<name>}}`, `{{workerName:<name>}}`) become: each Worker's
+ * installed name, its workers.dev URL, and where it is served. The primary
+ * Worker is served at `appUrl`, the app's address, as `{{appUrl}}` is; every
+ * other Worker at its workers.dev URL. Undefined for an app of one Worker.
  */
 export function entryPlaceholders(
   manifest: ArtifactManifest,

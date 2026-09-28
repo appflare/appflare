@@ -16,6 +16,7 @@ import {
   WILDCARD_PARTS_KINDS,
   WORKER_ROUTE_KIND,
 } from "./resource-kinds";
+import { type RefreshVars, refreshSettings, type VarsRefresh } from "./vars-refresh.server";
 import {
   type AddWildcardDomainInput,
   checkWildcardBase,
@@ -622,34 +623,11 @@ export interface WildcardDomainDeps {
   now?: () => Date;
   newId?: () => string;
   /**
-   * Deploys the app's settings again when they use `{{wildcardHostname}}`
-   * (`startVarsRefreshCore`): the job's id, or null when none uses it.
-   * Without it nothing is deployed.
+   * Deploys the app's settings again when they use `{{wildcardHostname}}`,
+   * or `{{appUrl}}` when the removal moved the app's address
+   * (`startVarsRefreshCore`). Without it nothing is deployed.
    */
-  refreshVars?: (installId: string) => Promise<{ jobId: string } | null>;
-}
-
-/** What assigning or removing the wildcard domain did to the app's settings. */
-export interface VarsRefresh {
-  /** The settings change that fills `{{wildcardHostname}}` in again; null when none started. */
-  settingsJobId: string | null;
-  /** Why the settings could not be deployed again now; null when they were, or need not be. */
-  settingsNote: string | null;
-}
-
-/** Starts the settings refresh, reporting a refusal (another job runs) instead of failing. */
-async function refreshSettings(deps: WildcardDomainDeps, installId: string): Promise<VarsRefresh> {
-  if (deps.refreshVars === undefined) return { settingsJobId: null, settingsNote: null };
-  try {
-    const started = await deps.refreshVars(installId);
-    return { settingsJobId: started?.jobId ?? null, settingsNote: null };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    return {
-      settingsJobId: null,
-      settingsNote: `The app's settings use {{wildcardHostname}} and were not deployed again (${reason}). Save the app's settings once that is done to fill it in.`,
-    };
-  }
+  refreshVars?: RefreshVars;
 }
 
 async function readInstall(db: D1Database, installId: string) {
@@ -791,7 +769,11 @@ export async function addWildcardDomainCore(
         : `The app started uninstalling while ${hostname} was being added, and Appflare could not remove its records and routes again. Delete the routes and DNS records for ${hostname} and ${wildcardPattern(hostname)} in the Cloudflare dashboard.`,
     );
   }
-  return { resourceId, hostname, ...(await refreshSettings(deps, install.id)) };
+  return {
+    resourceId,
+    hostname,
+    ...(await refreshSettings(deps.refreshVars, install.id, ["wildcardHostname"])),
+  };
 }
 
 /**
@@ -800,7 +782,8 @@ export async function addWildcardDomainCore(
  * workers.dev is off, workers.dev is turned back on first (or the removal is
  * refused when an admin turned it off). While an uninstall runs, the
  * uninstall removes it. Settings that use `{{wildcardHostname}}` are then
- * deployed again, empty.
+ * deployed again, empty, and so are settings that use `{{appUrl}}` when the
+ * app's address moved (it was the served domain).
  */
 export async function removeWildcardDomainCore(
   deps: WildcardDomainDeps,
@@ -826,7 +809,7 @@ export async function removeWildcardDomainCore(
   if (domain === undefined) {
     throw new WildcardDomainError("That is not a wildcard domain of this app.");
   }
-  await asWildcardDomainError(() =>
+  const removal = await asWildcardDomainError(() =>
     beforeDomainRemoval(
       { db: deps.db, api: async () => deps.api },
       { installId: request.installId, resourceId: domain.id },
@@ -848,5 +831,11 @@ export async function removeWildcardDomainCore(
     .update(resources)
     .set({ deleted_at: at })
     .where(inArray(resources.id, [domain.id, ...parts.map((p) => p.id)]));
-  return { hostname: domain.name, ...(await refreshSettings(deps, request.installId)) };
+  return {
+    hostname: domain.name,
+    ...(await refreshSettings(deps.refreshVars, request.installId, [
+      "wildcardHostname",
+      ...(removal.addressChanged ? (["appUrl"] as const) : []),
+    ])),
+  };
 }

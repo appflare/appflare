@@ -41,7 +41,7 @@ describe("checkInstallHealthCore", () => {
           packageManager: "pnpm",
           wranglerConfig: "wrangler.jsonc",
           workerName: "cut",
-          healthPath: "/api/health",
+          health: { path: "/api/health" },
         },
       },
     });

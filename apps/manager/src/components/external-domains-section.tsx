@@ -50,6 +50,7 @@ import { ErrorMessageBanner } from "./message-text";
 import { ResponsiveTable } from "./responsive-table";
 import { Section, SectionBody, SectionRow, SectionRows } from "./section";
 import { settingsLink } from "./settings-links";
+import { NEW_ADDRESS_SETTINGS, useSettingsRefresh } from "./settings-refresh";
 
 /** How often a pending domain is read again while the page is open. */
 const POLL_MS = 10_000;
@@ -152,6 +153,7 @@ function ExternalDomainRow({
   canRemove: boolean;
 }) {
   const router = useRouter();
+  const settingsRefresh = useSettingsRefresh();
   const [status, setStatus] = useState<ExternalDomainStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -172,6 +174,7 @@ function ExternalDomainRow({
           (!domain.live && next.health?.status === "verified")
         ) {
           await router.invalidate();
+          await settingsRefresh(next, NEW_ADDRESS_SETTINGS, { follow: false });
         }
         return next;
       } catch (err) {
@@ -181,7 +184,7 @@ function ExternalDomainRow({
         setChecking(false);
       }
     },
-    [installId, domain.id, domain.live, router],
+    [installId, domain.id, domain.live, router, settingsRefresh],
   );
 
   useEffect(() => {
@@ -515,6 +518,7 @@ function RemoveExternalDomainDialog({
   domain: CustomDomainView;
 }) {
   const router = useRouter();
+  const settingsRefresh = useSettingsRefresh();
   return (
     <ConfirmDialog
       trigger={(p) => (
@@ -532,8 +536,9 @@ function RemoveExternalDomainDialog({
       description="Cloudflare stops serving the app on this hostname at once; visitors get an error page until its owner points the name elsewhere. The records its owner added can then be deleted."
       actionLabel="Remove domain"
       onConfirm={async () => {
-        await removeExternalDomain({ data: { installId, resourceId: domain.id } });
+        const removed = await removeExternalDomain({ data: { installId, resourceId: domain.id } });
         await router.invalidate();
+        await settingsRefresh(removed, NEW_ADDRESS_SETTINGS);
       }}
     />
   );

@@ -69,7 +69,7 @@ describe("licenseBadgeCopy", () => {
     });
     expect(licenseBadgeCopy(plain("LicenseRef-Acme"))).toMatchObject({
       kind: "unknown",
-      label: "LicenseRef-Acme",
+      label: "Custom license",
       variant: "neutral",
     });
     expect(licenseBadgeCopy(plain("MIT License"))).toMatchObject({
@@ -106,6 +106,24 @@ describe("licenseFileHref", () => {
   });
 });
 
+describe("licenseBadgeCopy for a license of the app's own", () => {
+  it("shows Custom license, not the LicenseRef id, and the note as what it allows", () => {
+    const copy = licenseBadgeCopy({
+      expression: "LicenseRef-Ledger-Source-Available",
+      note: "Source-available: free for personal use; see the license",
+    });
+    expect(copy).toMatchObject({
+      kind: "source-available",
+      prefix: "Source-available",
+      label: "Custom license",
+      tooltip: "Source-available: free for personal use; see the license",
+    });
+    expect(licenseBadgeCopy({ expression: "MIT OR LicenseRef-Acme", note: null }).label).toBe(
+      "MIT OR LicenseRef-Acme",
+    );
+  });
+});
+
 describe("licenseHref", () => {
   it("links common licenses to choosealicense.com by their base id", () => {
     expect(licenseHref("MIT")).toBe("https://choosealicense.com/licenses/mit/");
@@ -117,7 +135,10 @@ describe("licenseHref", () => {
 
   it("links any other id to its SPDX page, and refuses what is not an id", () => {
     expect(licenseHref("Elastic-2.0")).toBe("https://spdx.org/licenses/Elastic-2.0.html");
+    expect(licenseHref("GPL-3.0")).toBe("https://choosealicense.com/licenses/gpl-3.0/");
     expect(licenseHref("LicenseRef-Proprietary")).toBeNull();
+    // Only ids of the SPDX License List (the schema's copy) are linked.
+    expect(licenseHref("Acme-Proprietary-1.0")).toBeNull();
     expect(licenseHref("OR")).toBeNull();
     expect(licenseHref("see LICENSE")).toBeNull();
   });

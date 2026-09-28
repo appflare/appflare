@@ -6,6 +6,7 @@ import type { InstallDetail } from "../installs/installs.functions";
 import { WORKERS_DEV_COPY } from "../installs/workers-dev";
 import { setWorkersDev } from "../installs/workers-dev.functions";
 import { SectionBody } from "./section";
+import { NEW_ADDRESS_SETTINGS, useSettingsRefresh } from "./settings-refresh";
 
 /**
  * `/apps/$installId`, "Serve on workers.dev" (admins): turns the app's
@@ -16,6 +17,7 @@ import { SectionBody } from "./section";
  */
 export function WorkersDevSwitch({ install }: { install: InstallDetail }) {
   const router = useRouter();
+  const settingsRefresh = useSettingsRefresh();
   const [enabled, setEnabled] = useState(install.workersDevEnabled);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,8 +30,9 @@ export function WorkersDevSwitch({ install }: { install: InstallDetail }) {
     setPending(true);
     setError(null);
     try {
-      await setWorkersDev({ data: { installId: install.id, enabled: next } });
+      const changed = await setWorkersDev({ data: { installId: install.id, enabled: next } });
       await router.invalidate();
+      await settingsRefresh(changed, NEW_ADDRESS_SETTINGS);
     } catch (err) {
       setEnabled(previous);
       setError(err instanceof Error ? err.message : "Could not change the workers.dev URL.");

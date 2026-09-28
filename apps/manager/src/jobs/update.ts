@@ -2,8 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { ScriptMetadata, VersionMetadata } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
-  appHealthMode,
-  appHealthPath,
+  hyperdriveDeclarations,
   workerUploadProblem,
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
@@ -469,7 +468,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       entryBindings(manifest),
       started.resources,
       started.vectorizeShapes,
-      manifest.catalog.resources?.hyperdrive ?? [],
+      hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
       manifest.catalog.resources?.pipelines,
       // A step output recorded before streams were compared has none.
       started.pipelineShapes ?? {},
@@ -504,8 +503,8 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         primaryManifest.catalog.secrets.some((s) => s.name === name),
       ),
     );
-    const healthPath = appHealthPath(manifest.catalog.install);
-    const healthMode = appHealthMode(manifest.catalog.install);
+    const healthPath = manifest.catalog.install.health.path;
+    const healthMode = manifest.catalog.install.health.mode;
 
     await run("plan update", async ({ log }) => {
       const problems = [...diff.problems, ...queuePlan.problems, ...queueDiff.problems];
@@ -677,12 +676,12 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       source.host,
     );
 
-    // Vars may name the Worker's URL (`{{workerUrl}}`), so the account's
+    // Vars may name the Worker's addresses (`{{workerUrl}}`, `{{appUrl}}`), so the account's
     // workers.dev subdomain is known before the upload.
     const subdomain = await lookupSubdomainPhase(steps);
     // A stored value this version cannot read falls back to its default; the
     // upload step says so in its log.
-    // Where the app is reached, for `{{workerUrl}}` and the health check below.
+    // Where the app is served, for `{{appUrl}}` and the health check below.
     const appBase = appBaseUrl({
       workerName,
       subdomain,
@@ -696,7 +695,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       workerName,
       subdomain,
       accountId: steps.accountId(),
-      workerUrl: appBase,
+      appUrl: appBase,
       wildcardHostname: started.wildcardHostname ?? null,
       ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
     });
@@ -782,7 +781,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
       manifest_json: manifestText,
       artifact_url: source.zipUrl,
       artifact_digest: source.digest,
-      pin_sha: manifest.source.sha,
+      pin_sha: manifest.catalog.source.sha,
       ...source.provenance,
       do_migration_tag: fullDeploy?.new_tag ?? started.appliedDoTag,
       ...(others.length === 0

@@ -24,7 +24,9 @@ const RULE = "a7e6fb77503c41d8a7f3113c6918f10c";
 
 describe("planEmailRouting", () => {
   it("puts local parts in the zone and keeps full addresses in it", () => {
-    expect(planEmailRouting({ rules: ["inbox", "bills@example.com"] }, "Example.com")).toEqual({
+    expect(
+      planEmailRouting({ catchAll: false, rules: ["inbox", "bills@example.com"] }, "Example.com"),
+    ).toEqual({
       ok: true,
       plan: {
         zoneName: "example.com",
@@ -32,7 +34,7 @@ describe("planEmailRouting", () => {
         catchAll: false,
       },
     });
-    expect(planEmailRouting({ catchAll: true }, "example.com")).toEqual({
+    expect(planEmailRouting({ rules: [], catchAll: true }, "example.com")).toEqual({
       ok: true,
       plan: { zoneName: "example.com", addresses: [], catchAll: true },
     });
@@ -40,18 +42,24 @@ describe("planEmailRouting", () => {
 
   it("refuses an address outside the zone, subdomains included", () => {
     for (const rule of ["inbox@other.com", "inbox@mail.example.com"]) {
-      const planned = planEmailRouting({ rules: [rule] }, "example.com");
+      const planned = planEmailRouting({ catchAll: false, rules: [rule] }, "example.com");
       expect(planned.ok, rule).toBe(false);
     }
   });
 
   it("refuses an address longer than a rule can match", () => {
-    const planned = planEmailRouting({ rules: ["a".repeat(64)] }, `${"b".repeat(30)}.com`);
+    const planned = planEmailRouting(
+      { catchAll: false, rules: ["a".repeat(64)] },
+      `${"b".repeat(30)}.com`,
+    );
     expect(planned.ok).toBe(false);
   });
 
   it("routes an address given both ways once", () => {
-    const planned = planEmailRouting({ rules: ["inbox", "inbox@example.com"] }, "example.com");
+    const planned = planEmailRouting(
+      { catchAll: false, rules: ["inbox", "inbox@example.com"] },
+      "example.com",
+    );
     expect(planned.ok && planned.plan.addresses).toEqual(["inbox@example.com"]);
   });
 });
@@ -140,17 +148,25 @@ describe("the catch-all before an install", () => {
 describe("email routing across versions", () => {
   it("warns only when a version receives different email", () => {
     expect(
-      emailRoutingChangeWarning({ rules: ["a", "b"] }, { rules: ["b", "a"] }, "2.0.0"),
+      emailRoutingChangeWarning(
+        { catchAll: false, rules: ["a", "b"] },
+        { catchAll: false, rules: ["b", "a"] },
+        "2.0.0",
+      ),
     ).toBeNull();
     expect(emailRoutingChangeWarning(null, undefined, "2.0.0")).toBeNull();
-    const warning = emailRoutingChangeWarning({ rules: ["inbox"] }, { catchAll: true }, "2.0.0");
+    const warning = emailRoutingChangeWarning(
+      { catchAll: false, rules: ["inbox"] },
+      { catchAll: true, rules: [] },
+      "2.0.0",
+    );
     expect(warning).toContain(
       "Version 2.0.0 receives the catch-all; the installed one receives inbox.",
     );
     expect(warning).toContain("does not change Email Routing on an update or rollback");
-    expect(emailRoutingChangeWarning(null, { rules: ["inbox"] }, "2.0.0")).toContain(
-      "the installed one receives no email",
-    );
+    expect(
+      emailRoutingChangeWarning(null, { catchAll: false, rules: ["inbox"] }, "2.0.0"),
+    ).toContain("the installed one receives no email");
   });
 
   it("reads emailRouting from a stored manifest, and nothing from a broken one", () => {

@@ -18,14 +18,14 @@ function manifest(
     format: 1,
     app: "cut",
     version: "1.0.0",
-    source: { repo: "MendyLanda/cut", sha: "a".repeat(40), ref: "main" },
     builtAt: "2026-09-01T00:00:00.000Z",
     builder: "@appflare/pack@0.0.0",
     keyId: "unsigned",
     assets: { config: {}, binding: null, files: [] },
-    d1Migrations: {},
+    d1: {},
     worker: {
       name: "cut",
+      wranglerConfig: { declared: "wrangler.jsonc", effective: "{}" },
       mainModule: "index.js",
       compatibilityDate: "2026-09-01",
       compatibilityFlags: [],
@@ -42,6 +42,7 @@ function manifest(
       bindings,
       migrations: [],
       crons: [],
+      queueConsumers: [],
       observability: null,
       placement: null,
       limits: null,
@@ -138,7 +139,7 @@ describe("reviewBuild", () => {
       ...built,
       catalog: {
         ...built.catalog,
-        install: { ...built.catalog.install, emailRouting: { catchAll: true } },
+        install: { ...built.catalog.install, emailRouting: { catchAll: true, rules: [] } },
       },
     };
     expect(reviewBuild(withMail, null, "cut").problems).toEqual([

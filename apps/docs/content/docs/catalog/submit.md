@@ -57,8 +57,9 @@ section, drop it with the config patch the message names, such as
 `{ "vpc_services": null }`.
 
 An app that needs every name under one hostname, such as a tunnel that gives each
-session `<id>.<hostname>`, sets `install.wildcardHostname: true` and a one-sentence
-`install.wildcardReason` that the admin sees when assigning the hostname. Appflare
+session `<id>.<hostname>`, sets `install.wildcardHostname` with a one-sentence
+`reason` that the admin sees when assigning the hostname, such as
+`"wildcardHostname": { "reason": "Each tunnel gets its own address under this hostname." }`. Appflare
 then serves the app's Worker on the hostname the admin chooses and every name under
 it, through Workers routes in one of the account's domains (see
 [Wildcard domains](/guides/custom-domains/#wildcard-domains)). An app that needs its
@@ -90,7 +91,7 @@ example:
   "slug": "cut",
   "name": "Cut",
   "summary": "Self-hosted link shortener on Workers + KV.",
-  "homepage": "https://github.com/MendyLanda/cut",
+  "tagline": "Short links on your own domain",
   "repo": "MendyLanda/cut",
   "license": "MIT",
   "categories": ["utilities"],
@@ -98,19 +99,16 @@ example:
   "maintainers": ["MendyLanda"],
   "source": { "ref": "v0.1.0", "sha": "6056400d47530aa87e4ae5764b37ffca9d00e87f" },
   "install": {
-    "tier": "artifact",
     "packageManager": "pnpm",
-    "wranglerConfig": "wrangler.jsonc",
-    "workerName": "cut"
+    "wranglerConfig": "wrangler.jsonc"
   },
   "plan": "free",
-  "requires": [],
   "secrets": [
     {
       "name": "ADMIN_PASSWORD",
       "label": "Admin password",
       "help": "Used to sign in to /admin.",
-      "generate": true
+      "generate": "password"
     }
   ],
   "vars": [
@@ -130,24 +128,47 @@ example:
   "postInstall": [
     {
       "type": "markdown",
-      "content": "Open {{workerUrl}}/admin and sign in with the admin password to create your first link."
+      "content": "Open {{appUrl}}/admin and sign in with the admin password to create your first link."
     }
-  ],
-  "tokenPermissions": []
+  ]
 }
 ```
 
+A field you leave out takes its default: `install.tier` is `"artifact"`,
+`install.workerName` is the slug, `homepage` is the app's repository on GitHub, and
+`requires`, `secrets`, `vars` and `tokenPermissions` are empty lists. Leave them out
+unless the app needs something else. The packer and the catalog checks refuse a field
+the schema does not know, so a misspelled field is an error rather than a setting that
+is quietly ignored; for a field that has moved, the message names its new place.
+
 Points that need care:
 
-- **`tagline`** (optional). What the app does, as one plain sentence of at most 80
+- **`tagline`.** Required. What the app does, as one plain sentence of at most 80
   characters without a trailing period, such as `"Short links on your own domain"`.
   Managers show it under the app's name on catalog tiles. Write it for someone who
-  is not a developer. Without it, tiles show the first clause of `summary`.
+  is not a developer.
+- **`categories`.** One to three categories the catalog lists the app under, each
+  once, by id from this fixed list: `ai` (AI), `analytics` (Analytics), `bots`
+  (Bots), `business` (Business), `chat` (Chat), `cms` (Websites and blogs),
+  `community` (Community), `developer-tools` (Developer tools), `ecommerce`
+  (E-commerce), `education` (Education), `email` (Email), `family` (Family), `files`
+  (Files), `finance` (Finance), `games` (Games), `marketing` (Marketing), `media`
+  (Media), `monitoring` (Monitoring), `networking` (Networking), `notes` (Notes),
+  `notifications` (Notifications), `passwords` (Passwords), `privacy` (Privacy),
+  `productivity` (Productivity), `remote-access` (Remote access), `scheduling`
+  (Scheduling), `security` (Security), `sharing` (Sharing), `sync` (Sync), and
+  `utilities` (Utilities). Managers show each category by its label.
 - **`license`.** Write the license the app's own repository declares, as an SPDX
-  license expression: `MIT`, `Apache-2.0`, `MIT OR Apache-2.0`, or a
-  source-available license such as `BUSL-1.1`, `FSL-1.1-MIT`, `PolyForm-Noncommercial-1.0.0`
-  or `Elastic-2.0`. Use `NONE` when the repository publishes no license, and
-  `SEE LICENSE IN <file>` (a path in the repository) for a license with no SPDX id.
+  license expression of ids from the current SPDX License List: `MIT`, `Apache-2.0`,
+  `GPL-3.0-only`, `MIT OR Apache-2.0`, or a source-available license such as
+  `BUSL-1.1`, `FSL-1.1-MIT`, `PolyForm-Noncommercial-1.0.0` or `Elastic-2.0`.
+  Deprecated ids are refused: write `GPL-3.0-only` or `GPL-3.0-or-later` as the
+  project's license notice says ("or any later version" means `-or-later`), never
+  `GPL-3.0`. Use `NONE` when the repository publishes no license. For a license with
+  no SPDX id, write `LicenseRef-<name>`, such as `LicenseRef-Acme`, and describe it
+  in `licenseNote`. `NOASSERTION` and `SEE LICENSE IN <file>` are refused in a
+  catalog entry: Appflare writes them only for an app
+  [built from a repository](/guides/install-from-a-repository/) without one.
   Add `licenseNote`, one short line such as `"Source-available: production use
   restricted; see the license"`, when the id does not say what matters. Managers
   show the license on the app's card and page: `NONE` as **No license**, and
@@ -156,15 +177,17 @@ Points that need care:
 - **`source`.** Set `sha` to the full 40-character commit SHA, and `ref` to the tag it
   belongs to (`v1.2.3`) or the branch (`main`) for an untagged app. A semver tag
   gives the version `1.2.3`; anything else gives `0.0.0-<commit date>.<sha7>`.
-- **`install.version`.** Only for repositories whose tags do not describe this app,
+- **`source.version`.** Only for repositories whose tags do not describe this app,
   such as a monorepo of templates. It overrides the version and must change whenever
-  `source` moves.
-- **`install.healthPath`.** Set it when `/` returns an error or needs a login, so
-  the health check requests a path that answers.
-- **`install.healthMode`.** Set it to `"status-only"` when every route of the app,
-  its health path included, sits behind Cloudflare Access or the app's own sign-in.
-  Such an app can answer the check with an error of its own, and any answer from its
-  Worker then counts as healthy. See [Health checks](/guides/health/#apps-behind-a-sign-in).
+  `sha` moves.
+- **`install.health`.** How the health check reads the app, for example
+  `"health": { "path": "/api/health" }`. Set `path` when `/` returns an error or
+  needs a login, so the check requests a path that answers; it defaults to `/`.
+  `mode` defaults to `"no-server-errors"`: any answer but a server error (5xx)
+  passes. Set it to `"any-response"` when every route of the app, its health path
+  included, sits behind Cloudflare Access or the app's own sign-in. Such an app can
+  answer the check with an error of its own, and any answer from its Worker then
+  counts as healthy. See [Health checks](/guides/health/#apps-behind-a-sign-in).
 - **`install.buildCommand`.** One command, such as `pnpm --filter @scope/web build`,
   that the packer runs at the root of the repository after installing dependencies
   and before bundling, or a list of up to eight such commands run in order, such as
@@ -360,12 +383,11 @@ Points that need care:
   the admin can delete in the bucket's settings. A rollback does not change a
   bucket's rules either: the rules of the version it leaves stay and keep deleting
   or moving objects, and the rollback's log names each rule the version it returns
-  to does not declare. An artifact with either setting needs a manager that reads
-  format 6.
+  to does not declare.
 - **Databases elsewhere.** An app that keeps its data in PostgreSQL or MySQL outside
   Cloudflare binds it through Hyperdrive. Declare each Hyperdrive binding of the
-  wrangler config under `resources.hyperdrive`, for example
-  `"resources": { "hyperdrive": [{ "binding": "HYPERDRIVE", "protocol": "postgres", "label": "Main database" }] }`,
+  wrangler config under `resources.hyperdrive`, keyed by the binding, for example
+  `"resources": { "hyperdrive": { "HYPERDRIVE": { "protocol": "postgres", "label": "Main database" } } }`,
   with an optional `help` sentence. The install form then asks for a connection
   string per binding (`postgres://user:password@host:5432/database`, or `mysql://`),
   and the manager creates a Hyperdrive configuration of the install's own from it,
@@ -398,7 +420,7 @@ Points that need care:
   relative to the config you name in `install.wranglerConfig`. When the app's D1 SQL
   is elsewhere, say where under `resources.d1`, keyed by the D1 binding, with paths
   relative to the repository's root:
-  `migrationsDir` for another folder of migrations; `migrations` for a glob such as
+  `migrationsDir` for another folder of migrations; `migrationsGlob` for a glob such as
   `prisma/migrations/*/migration.sql`, which works as wrangler's `migrations_dir`
   (the folder before the first `*`) plus `migrations_pattern`, so each file is
   recorded as wrangler records it (`20240101_init/migration.sql`) and they run in
@@ -438,8 +460,10 @@ Points that need care:
   a column a migration adds must also be in the baseline. Check that when you submit
   the entry and when you move its pin.
 - **`secrets` and `vars`.** List every secret and setting the app reads from `env`
-  that is not in its wrangler config. Use `"generate": true` for passwords and
-  signing keys the user does not need to choose. List a var from the wrangler config
+  that is not in its wrangler config. Use `"generate": "password"` for passwords and
+  signing keys the user does not need to choose. Every var needs a value, typed in
+  the form or from its `default`, before the install runs, unless it sets
+  `"optional": true`. List a var from the wrangler config
   too when admins should be able to change it; without a `default`, the form starts
   with the wrangler config's value. The secrets the wrangler config lists in
   `secrets.required` belong here too; the pack names any it finds missing.
@@ -465,8 +489,8 @@ Points that need care:
   `"derive": { "from": "VAPID_PRIVATE_KEY", "method": "vapid-public-key" }`: the
   manager computes it (the unpadded base64url of the 65-byte uncompressed point)
   at install and whenever the private key gets a new value, and the install and
-  settings forms show it read-only. A derived var has no `default`, `type`,
-  `options` or `required: true`, and its source is a `vapid-private-key` secret of
+  settings forms show it read-only. A derived var has no `default`, `options`,
+  `"type": "select"` or `"optional": true`, and its source is a `vapid-private-key` secret of
   the same manifest that is not optional. The same `derive` works on a secret, for
   an app that reads the public key as one. Self-deploying entries cannot derive vars.
 - **Raw 256-bit keys.** For an app that reads an encryption key as base64 of 32
@@ -482,8 +506,7 @@ Points that need care:
   of the last line are dropped; every other character, line breaks included, is
   kept. A text area cannot hide its text, so the value shows while the admin enters
   it and cannot be read back once saved. A multi-line secret cannot be `generate` or
-  `derive`. An artifact whose manifest has one is format 5, so a manager too old to
-  know the field refuses it rather than ask for the value on one line.
+  `derive`.
 - **A first admin.** An app that has no sign-up page and expects its first admin
   account in the database can have Appflare add it at install. See
   [Seeding a first admin](#seeding-a-first-admin).
@@ -499,20 +522,36 @@ Points that need care:
   four options and a dropdown for more. `default`, when given, must be one of the
   values. For a var the app reads as JSON, each value is JSON text, such as `"true"`.
   `HOME_PAGE` in the example above is one.
-- **Placeholders.** The manager replaces `{{workerUrl}}` (the install's workers.dev
-  URL, without a trailing slash) and `{{workerName}}` (its Worker name) in
-  `postInstall` text, in `vars[].default`, and in the values of the wrangler config's
-  own `vars`. Use them for apps that need their public URL in a variable, for example
-  `{ "name": "PUBLIC_URL", "label": "Public URL", "default": "{{workerUrl}}" }`.
-  `{{accountId}}` becomes the id of the account the app is installed in, for apps
-  that query the Cloudflare API about their own account, such as the
-  Analytics Engine SQL API. `{{wildcardHostname}}` becomes the hostname of the
-  app's [wildcard domain](/guides/custom-domains/#wildcard-domains) (no scheme, such
-  as `tunnels.example.com`) for an entry with `install.wildcardHostname`, and is
-  empty until the admin assigns one; assigning or removing it deploys the settings
-  again, so the var follows the domain. Vars are filled in again on every update and
-  settings change. `{{workerUrl}}` is always the
-  workers.dev address, even when a custom domain is attached to the install. An
+- **Placeholders.** The manager fills these in within `postInstall` text,
+  `vars[].default`, and the values of the wrangler config's own `vars`, and fills
+  vars in again on every update and settings change:
+  - `{{appUrl}}` is the address the app is served at, as an `https://` URL without a
+    trailing slash: its custom domain while workers.dev is turned off for it, else
+    its workers.dev URL. `{{appHostname}}` is that address without `https://`, such
+    as `links.example.com`. When a domain takes over from workers.dev, or workers.dev
+    from a domain, Appflare deploys the app's settings again so they follow. Use
+    these for the address people open: a link in `postInstall`, a callback URL, or a
+    public URL setting such as
+    `{ "name": "PUBLIC_URL", "label": "Public URL", "default": "{{appUrl}}" }`.
+  - `{{workerUrl}}` and `{{workerHostname}}` are always the workers.dev address
+    (`https://<worker name>.<account subdomain>.workers.dev`), even while a custom
+    domain serves the app. Use them only when the app must name that address. A
+    setting that uses them keeps the workers.dev URL on when a domain goes live,
+    since the setting would otherwise name an address that no longer answers.
+  - `{{workerName}}` is the name the Worker is installed under.
+  - `{{accountId}}` is the id of the account the app is installed in, for apps that
+    query the Cloudflare API about their own account, such as the Analytics Engine
+    SQL API.
+  - `{{wildcardHostname}}` is the hostname of the app's
+    [wildcard domain](/guides/custom-domains/#wildcard-domains) (no scheme, such as
+    `tunnels.example.com`) for an entry with `install.wildcardHostname`, and is empty
+    until the admin assigns one; assigning or removing it deploys the settings again,
+    so the var follows the domain.
+  - `{{stage}}` works only in the Worker names a self-deploying entry lists in
+    `install.selfDeploying.workerNames`.
+
+  Placeholder names are case-sensitive: `{{appURL}}` is refused, as is a placeholder
+  in a field that does not take it. An
   [app of several Workers](#apps-of-several-workers) can also name each of its
   Workers.
 - **JSON vars.** A wrangler config var whose value is not a string (an array, object,
@@ -522,7 +561,23 @@ Points that need care:
 - **`requires`.** List account features the app needs beyond Workers, such as `r2`
   or `workers-ai`.
 - **`tokenPermissions`.** Only for apps that call the Cloudflare API with a token of
-  their own.
+  their own, never Appflare's. Each entry names one permission group as the
+  Cloudflare dashboard's token form shows it, where it applies, the access the app
+  needs, and why:
+  `{ "group": "DNS", "scope": "zone", "access": "edit", "reason": "Updates the DNS record for your home address." }`.
+  `scope` is `"zone"` or `"account"`, `access` is `"read"` or `"edit"`, and `reason`
+  is one plain sentence (start it with "Optional:" when the app works without the
+  permission). `group` must be a group Appflare can select in the token link. Zone
+  groups: DNS, Zone, Zone Settings, Analytics, Page Rules, SSL and Certificates,
+  Firewall Services, Load Balancers, Logs, Workers Routes, and Email Routing Rules.
+  Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit,
+  Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog,
+  Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize,
+  Hyperdrive, Pipelines, Secrets Store, Email Sending, Email Routing Addresses,
+  "Access: Apps and Policies", and "Access: Organizations, Identity Providers, and
+  Groups". The secret that takes the token sets `"cloudflareToken": true`, and the
+  install form shows how to create the token next to it. At most one secret does,
+  and it cannot be generated, derived or seed-only.
 - **`authors`.** Who wrote the app upstream, shown on the catalog card and the app
   page: one or more `{ "name", "url"?, "github"?, "x"? }`, with handles written
   without `@`. Optional; without it the catalog lists the owner of `repo`. Changing
@@ -552,13 +607,12 @@ Such a Worker has no code to use anything else, so the pack fails when it has
 bindings (`vars` included), catalog `secrets` or `vars`, Durable Objects, cron
 triggers, queue consumers, an `assets.binding`, or `assets.run_worker_first`.
 Observability, placement, limits and `cache` settings are left out, as wrangler
-leaves them out, and the pack log says so. The health check requests `healthPath`
-(default `/`) as for any app, so the site should answer there. When the asset
+leaves them out, and the pack log says so. The health check requests
+`install.health.path` (default `/`) as for any app, so the site should answer there. When the asset
 directory is the repository root, it needs an `.assetsignore` that leaves out
 everything else that is not part of the site (the wrangler config, the sources), as
 `wrangler deploy` would upload it too; the packer always leaves out `.git`,
-`.wrangler` and `node_modules` directories, whatever `.assetsignore` says. Such an artifact is written in format 5,
-which an earlier version of Appflare refuses with a message to update it first.
+`.wrangler` and `node_modules` directories, whatever `.assetsignore` says.
 
 `_redirects` and `_headers` at the root of the asset directory work as they do with
 `wrangler deploy`, for a static site and for a Worker with code alike: the packer
@@ -579,10 +633,10 @@ at install, from values the admin enters in the install form. Declare it under
 
 ```jsonc
 "secrets": [
-  { "name": "ADMIN_PASSWORD", "label": "Admin password", "generate": true, "seedOnly": true }
+  { "name": "ADMIN_PASSWORD", "label": "Admin password", "generate": "password", "seedOnly": true }
 ],
 "vars": [
-  { "name": "ADMIN_USERNAME", "label": "Admin user name", "required": true, "seedOnly": true }
+  { "name": "ADMIN_USERNAME", "label": "Admin user name", "seedOnly": true }
 ],
 "resources": {
   "d1": {
@@ -637,7 +691,7 @@ at install, from values the admin enters in the install form. Declare it under
   app's environment. A generated seed-only password is shown once more, with a copy
   button, on the install's job page. A seed-only value must be used by a seed, cannot
   be optional, derived or limited to some Workers, and no derived value may come
-  from it. A var a seed uses must be required, have a default, or be derived. Name
+  from it. A var a seed uses must not be optional unless it has a default. Name
   the user in `postInstall`, never the password.
 - **When it runs.** Only the install job seeds, after the binding's migrations,
   schema files and post-deploy migrations. With `"beforeSchema": true` it runs
@@ -651,9 +705,7 @@ at install, from values the admin enters in the install form. Declare it under
   again. Say so in the app's `README.md`, and prefer an upstream change that drops
   the default row.
 
-Seeds are not allowed on self-deploying entries. An artifact with a seed is format
-4, which older managers refuse with a message to update Appflare instead of
-installing the app without its first admin.
+Seeds are not allowed on self-deploying entries.
 
 ## Apps of several Workers
 
@@ -664,7 +716,6 @@ as one app:
 
 ```jsonc
 "install": {
-  "tier": "artifact",
   "packageManager": "pnpm",
   "wranglerConfig": "apps/web/wrangler.jsonc",
   "workerName": "notes",
@@ -675,10 +726,10 @@ as one app:
   ]
 },
 "secrets": [
-  { "name": "SESSION_SECRET", "label": "Session secret", "generate": true, "workers": ["web"] },
-  { "name": "API_KEY", "label": "API key", "generate": true }
+  { "name": "SESSION_SECRET", "label": "Session secret", "generate": "password", "workers": ["web"] },
+  { "name": "API_KEY", "label": "API key", "generate": "password" }
 ],
-"vars": [{ "name": "API_URL", "label": "API URL", "default": "{{workerUrl:api}}" }]
+"vars": [{ "name": "API_URL", "label": "API URL", "default": "{{appUrl:api}}" }]
 ```
 
 - **Two to 24 Workers**, on the artifact tier only. Each has a `name` within the
@@ -696,7 +747,7 @@ as one app:
   before creating anything when the app's Workers would not fit.
 - **Exactly one is `primary`.** It is the app: it runs under the install's Worker
   name and serves the app's address, its custom domains, and the health check
-  (`install.healthPath` is a path on it). Its `wranglerConfig` must equal
+  (`install.health.path` is a path on it). Its `wranglerConfig` must equal
   `install.wranglerConfig`, so tools that build one Worker build the primary. Every
   other Worker runs as `<install Worker name>-<name>` on its own workers.dev
   address: `notes-api` in the example.
@@ -709,19 +760,22 @@ as one app:
   from the internet. Leave it out for every Worker that people or other services
   call, such as a file origin, an inbox, or a webhook endpoint. The primary Worker
   cannot set it: it is the app's address and health check until the admin adds a
-  custom domain, which turns its workers.dev URL off anyway. `{{workerUrl:<name>}}`
-  of such a Worker is refused, since it has no URL. Managers too old to know the
-  field refuse the release and ask the admin to update Appflare first.
+  custom domain, which turns its workers.dev URL off anyway. `{{appUrl:<name>}}`,
+  `{{workerUrl:<name>}}` and their hostname forms are refused for such a Worker,
+  since it has no address.
 - **Builds.** `install.buildCommand` runs once, first. Then each Worker's own
   `buildCommand`, if it has one, runs in the order of the list. Both follow the
   rules for `install.buildCommand` above.
 - **Secrets and vars.** A secret's or var's `workers` lists the Workers that get it.
   Without it, a secret goes to every Worker, and a var goes to the Workers whose
   wrangler config declares it, or to every Worker when none does.
-- **Placeholders.** `{{workerUrl:<name>}}` and `{{workerName:<name>}}` give one
-  Worker's workers.dev URL and installed Worker name (`{{workerUrl:<name>}}` only for
-  a Worker on workers.dev). `{{workerUrl}}` and
-  `{{workerName}}` still mean the app, that is, the primary Worker.
+- **Placeholders.** `{{appUrl:<name>}}`, `{{appHostname:<name>}}`,
+  `{{workerUrl:<name>}}`, `{{workerHostname:<name>}}` and `{{workerName:<name>}}`
+  give one Worker's address, its workers.dev address and its installed Worker name
+  (the address forms only for a Worker on workers.dev). Without a name,
+  `{{appUrl}}`, `{{workerUrl}}`, `{{workerName}}` and the rest still mean the app,
+  that is, the primary Worker. An entry of one Worker cannot use the forms with a
+  name.
 - **Resources are shared by binding name.** Workers that both bind `DB` use one D1
   database, so they must bring the same migrations, or only one of them brings any.
   A queue one Worker sends to and another consumes is one queue. Bindings of one
@@ -742,8 +796,8 @@ Commit messages follow Conventional Commits, for example `feat(apps): add cut`.
 
 The pull request runs these checks:
 
-1. The manifest is validated against the schema, and `CODEOWNERS` must match the
-   manifests.
+1. The manifest is validated against the schema, which refuses a field it does not
+   know, and `CODEOWNERS` must match the manifests.
 2. The app is packed from the pinned commit exactly as a release would be, and every
    file's hashes are verified. Packing fails if a Worker is too large for the
    manager to upload in one request.
@@ -774,12 +828,13 @@ To change a published app's manifest, re-pin `source` in the same pull request.
 A change to a released version without a new pin fails to publish, with two
 exceptions:
 
-- a change to `authors` alone, which `index.json` reads from the manifest;
-- a change to the form or copy only (`name`, `summary`, `tagline`, `homepage`, `license`,
+- a change to `authors`, `tagline` or `licenseNote` alone, which `index.json` reads
+  from the manifest;
+- a change to the form or copy only (`name`, `summary`, `homepage`, `license`,
   `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump`) together
   with `revision` raised by one (it starts at 1 when omitted). CI signs and
   publishes the revised manifest without building anything; managers switch to the
   new form without an update. Anything else, such as `install`, `requires`, `plan`
   or `tokenPermissions`, changes what gets built or provisioned and needs a new pin.
-  Once a revision is published, any further change to the manifest, `authors`
-  included, needs the next revision.
+  Once a revision is published, any further change to the manifest, `authors`,
+  `tagline` and `licenseNote` included, needs the next revision.

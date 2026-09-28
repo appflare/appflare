@@ -1,4 +1,4 @@
-import type { CatalogManifest, IndexBuild } from "@appflare/schema";
+import { type CatalogManifest, catalogWorkerName, type IndexBuild } from "@appflare/schema";
 import { Banner } from "@cloudflare/kumo";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -32,7 +32,7 @@ function render(catalog: CatalogManifest, props: Partial<Props> = {}): string {
       } as unknown as Parameters<typeof installVarFields>[0]),
       subdomain: "acme",
       canInstall: true,
-      defaultWorkerName: catalog.install.workerName,
+      defaultWorkerName: catalogWorkerName(catalog),
       fixedWorkerName: false,
       blockedReason: null,
       requirementsConfirmed: true,
@@ -52,9 +52,10 @@ function bannerCount(html: string): number {
 
 const ANALYTICS_TOKEN: CatalogManifest["tokenPermissions"] = [
   {
-    name: "Account.Account Analytics:Read",
+    group: "Account Analytics",
     scope: "account",
-    description: "Read visits through the Analytics Engine SQL API.",
+    access: "read",
+    reason: "Read visits through the Analytics Engine SQL API.",
   },
 ];
 
@@ -94,7 +95,7 @@ describe("the install form's notices", () => {
 
 describe("the install form's labels", () => {
   const catalog = baseCatalog({
-    vars: [{ name: "SITE_TITLE", label: "Site title", required: true, default: "My site" }],
+    vars: [{ name: "SITE_TITLE", label: "Site title", default: "My site" }],
   });
 
   it("show labels only, with the technical names behind a switch", () => {
@@ -110,7 +111,7 @@ describe("the install form's labels", () => {
   it("mark optional fields with a quiet suffix", () => {
     const html = render(
       baseCatalog({
-        vars: [{ name: "FOOTER", label: "Footer text", required: false }],
+        vars: [{ name: "FOOTER", label: "Footer text", optional: true }],
       }),
     );
     expect(html).toMatch(/Footer text.*\(optional\)/);
@@ -123,21 +124,27 @@ describe("placeholders in the install form", () => {
       {
         name: "CALLBACK_URL",
         label: "Sign-in callback",
-        required: true,
-        default: "{{workerUrl}}/auth/callback",
+        default: "{{appUrl}}/auth/callback",
       },
+      { name: "PREVIEW_HOST", label: "Preview host", default: "{{workerHostname}}" },
     ],
   });
 
   it("show as chips that say what they become, and never as raw text", () => {
     const html = render(catalog);
     expect(html).toContain("App address");
-    expect(html).toContain('data-placeholder="{{workerUrl}}"');
+    expect(html).toContain('data-placeholder="{{appUrl}}"');
     expect(html).toContain('value="/auth/callback"');
-    expect(html).not.toContain('value="{{workerUrl}}/auth/callback"');
+    expect(html).not.toContain('value="{{appUrl}}/auth/callback"');
     // Nothing is filled in: the stored value keeps the placeholder.
     expect(html).not.toContain("https://cut.acme.workers.dev/auth/callback");
     expect(html).toContain(">Insert<");
+  });
+
+  it("show the workers.dev forms by their own name", () => {
+    const html = render(catalog);
+    expect(html).toContain('data-placeholder="{{workerHostname}}"');
+    expect(html).toContain("workers.dev hostname");
   });
 });
 
@@ -146,8 +153,8 @@ describe("the app's own Cloudflare token", () => {
     const catalog = baseCatalog({
       tokenPermissions: ANALYTICS_TOKEN,
       secrets: [
-        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-        { name: "CF_API_TOKEN", label: "Analytics API token", generate: false },
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+        { name: "CF_API_TOKEN", label: "Analytics API token", cloudflareToken: true },
       ],
     });
     const html = render(catalog);
@@ -161,7 +168,9 @@ describe("the app's own Cloudflare token", () => {
 
   it("is explained next to a self-deploying app's token field", () => {
     const catalog = baseCatalog({
-      tokenPermissions: [{ name: "Workers Scripts", scope: "account" }],
+      tokenPermissions: [
+        { group: "Workers Scripts", scope: "account", access: "edit", reason: "Deploys the app." },
+      ],
       secrets: [],
       vars: [],
     });

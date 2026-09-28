@@ -35,12 +35,17 @@ function settings(overrides: Partial<InstallSettings> = {}): InstallSettings {
         stored: null,
       },
     ],
-    placeholders: { workerName: "counterscale", workerUrl: null, wildcardHostname: null },
+    placeholders: {
+      workerName: "counterscale",
+      workerUrl: null,
+      appUrl: null,
+      wildcardHostname: null,
+    },
     secrets: [
       {
         name: "CF_BEARER_TOKEN",
         label: "Analytics API token",
-        generate: false,
+        generate: undefined,
         declared: true,
         optional: false,
         present: true,
@@ -53,7 +58,9 @@ function settings(overrides: Partial<InstallSettings> = {}): InstallSettings {
     installer: null,
     appToken: {
       secret: "CF_BEARER_TOKEN",
-      permissions: [{ name: "Account.Account Analytics:Read", scope: "account" }],
+      permissions: [
+        { group: "Account Analytics", scope: "account", access: "read", reason: "Reads visits." },
+      ],
     },
     ...overrides,
   };
@@ -78,7 +85,12 @@ describe("the app's settings form", () => {
         slug: "unifi-ddns",
         fields: [],
         secrets: [],
-        appToken: { secret: null, permissions: [{ name: "Zone.DNS", scope: "zone" }] },
+        appToken: {
+          secret: null,
+          permissions: [
+            { group: "DNS", scope: "zone", access: "edit", reason: "Updates records." },
+          ],
+        },
       }),
     );
     expect(html).toContain("Cloudflare token for Counterscale");
@@ -97,7 +109,14 @@ describe("the app's settings form", () => {
         secrets: [],
         appToken: {
           secret: null,
-          permissions: [{ name: "Account.Workers R2 Data Catalog:Edit" }],
+          permissions: [
+            {
+              group: "Workers R2 Data Catalog",
+              scope: "account",
+              access: "edit",
+              reason: "Writes the table.",
+            },
+          ],
         },
       }),
     );
@@ -113,7 +132,7 @@ describe("the app's settings form", () => {
           {
             name: "CF_PASSWORD",
             label: "Dashboard password",
-            generate: false,
+            generate: undefined,
             declared: true,
             optional: false,
             present: true,

@@ -1,6 +1,6 @@
 import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { artifactManifestSchema } from "@appflare/schema";
-import { and, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
@@ -20,7 +20,14 @@ import {
   WILDCARD_DOMAIN_KIND,
 } from "./resource-kinds";
 import {
+  NO_VARS_REFRESH,
+  type RefreshVars,
+  refreshSettings,
+  type VarsRefresh,
+} from "./vars-refresh.server";
+import {
   domainHostnames,
+  primaryDomain,
   type SetWorkersDevInput,
   type WorkersDevKeptReason,
   workersDevSubdomain,
@@ -55,6 +62,8 @@ export interface WorkersDevDeps {
   /** The manager's `fetch`, for probing custom domains. */
   fetch: FetchLike;
   now?: () => Date;
+  /** Deploys the settings again when they use the app's address; without it nothing is. */
+  refreshVars?: RefreshVars;
 }
 
 /** At most this many custom domains are probed before turning workers.dev off. */
@@ -114,7 +123,7 @@ export async function recordDomainLive(
   await markLive(createDb(db), resourceId, (now ?? (() => new Date()))());
 }
 
-export interface SetWorkersDevResult {
+export interface SetWorkersDevResult extends VarsRefresh {
   enabled: boolean;
   /** The custom domain that answered, when workers.dev was turned off. */
   servedBy: string | null;
@@ -138,7 +147,9 @@ export async function setWorkersDevCore(
       "A job of this app is running, or it is not installed. Wait for it to finish.",
     );
   }
-  if (install.workersDev === input.enabled) return { enabled: input.enabled, servedBy: null };
+  if (install.workersDev === input.enabled) {
+    return { enabled: input.enabled, servedBy: null, ...NO_VARS_REFRESH };
+  }
 
   let served: { id: string; name: string } | null = null;
   if (!input.enabled) {
@@ -192,15 +203,19 @@ export async function setWorkersDevCore(
     })
     .where(eq(installs.id, input.installId));
   if (served !== null) await markLive(orm, served.id, (deps.now ?? (() => new Date()))());
-  return { enabled: input.enabled, servedBy: served?.name ?? null };
+  // The app's address moved between workers.dev and a domain.
+  const refresh = await refreshSettings(deps.refreshVars, input.installId, ["appUrl"]);
+  return { enabled: input.enabled, servedBy: served?.name ?? null, ...refresh };
 }
 
 const configSchema = z.record(z.string(), z.string());
 
 /**
- * Whether the Worker's vars were filled in with its URL (`{{workerUrl}}`),
- * read from the install's recorded manifest and settings. False when the
- * manifest cannot be read (then there is nothing to go by).
+ * Whether the Worker's vars were filled in with its workers.dev address
+ * (`{{workerUrl}}`, `{{workerHostname}}`), read from the install's recorded
+ * manifest and settings. False when the manifest cannot be read (then there
+ * is nothing to go by). Settings that use the app's address (`{{appUrl}}`)
+ * do not count: they are deployed again with the domain.
  */
 export function settingsUseWorkerUrl(manifestJson: string | null, configJson: string | null) {
   if (manifestJson === null) return false;
@@ -226,7 +241,7 @@ export interface DomainLiveRequest {
   job?: { settingsUseWorkerUrl: boolean };
 }
 
-export interface DomainLiveResult {
+export interface DomainLiveResult extends VarsRefresh {
   /** This call turned workers.dev off. */
   turnedOff: boolean;
   /** Why workers.dev was left as it was; null when this call turned it off. */
@@ -239,10 +254,18 @@ export interface DomainLiveResult {
  * with one subdomain call (version previews stay on, so update checks keep
  * working) and the domain recorded as the one that serves the app. Outside
  * the install job it changes nothing while a job of the app runs (that job
- * sends the stored value when it deploys); the next check tries again.
+ * sends the stored value when it deploys); the next check tries again. Once
+ * workers.dev is off, settings that use the app's address (`{{appUrl}}`)
+ * are deployed again with the domain (`refreshVars`; the install job does
+ * that itself once it is recorded).
  */
 export async function applyDomainLive(
-  deps: { db: D1Database; api: () => Promise<WorkersApi>; now?: () => Date },
+  deps: {
+    db: D1Database;
+    api: () => Promise<WorkersApi>;
+    now?: () => Date;
+    refreshVars?: RefreshVars;
+  },
   request: DomainLiveRequest,
 ): Promise<DomainLiveResult> {
   const orm = createDb(deps.db);
@@ -256,12 +279,14 @@ export async function applyDomainLive(
       request.job?.settingsUseWorkerUrl ??
       settingsUseWorkerUrl(install.manifestJson, install.configJson),
   });
-  if (outcome.action === "keep") return { turnedOff: false, kept: outcome.reason };
+  if (outcome.action === "keep") {
+    return { turnedOff: false, kept: outcome.reason, ...NO_VARS_REFRESH };
+  }
   if (
     request.job === undefined &&
     (install.status !== "installed" || (await activeJobOf(orm, request.installId)) !== null)
   ) {
-    return { turnedOff: false, kept: "busy" };
+    return { turnedOff: false, kept: "busy", ...NO_VARS_REFRESH };
   }
   const api = await deps.api();
   await api.workers.enableSubdomain(install.workerName, workersDevSubdomain(false));
@@ -269,7 +294,11 @@ export async function applyDomainLive(
     .update(installs)
     .set({ workers_dev_enabled: false, served_domain: request.hostname })
     .where(eq(installs.id, request.installId));
-  return { turnedOff: true, kept: null };
+  const refresh =
+    request.job === undefined
+      ? await refreshSettings(deps.refreshVars, request.installId, ["appUrl"])
+      : NO_VARS_REFRESH;
+  return { turnedOff: true, kept: null, ...refresh };
 }
 
 /**
@@ -296,11 +325,14 @@ export function nextServedDomain(
  * loses its last address. Refuses too while a job of the app runs, since
  * that job would send workers.dev's old value when it deploys. When it is
  * the served domain and another live one remains, that one becomes served.
+ * `addressChanged` says the app's address moved (to workers.dev or to
+ * another domain), so the caller deploys settings that use `{{appUrl}}`
+ * again once the domain is gone.
  */
 export async function beforeDomainRemoval(
   deps: { db: D1Database; api: () => Promise<WorkersApi> },
   request: { installId: string; resourceId: string },
-): Promise<{ turnedOn: boolean }> {
+): Promise<{ turnedOn: boolean; addressChanged: boolean }> {
   const orm = createDb(deps.db);
   const install = await readInstall(orm, request.installId);
   const [removed] = await orm
@@ -308,18 +340,22 @@ export async function beforeDomainRemoval(
     .from(resources)
     .where(eq(resources.id, request.resourceId))
     .limit(1);
-  const others = await orm
-    .select({ id: resources.id, kind: resources.kind, name: resources.name })
+  const domains = await orm
+    .select({
+      id: resources.id,
+      kind: resources.kind,
+      name: resources.name,
+      live_at: resources.live_at,
+    })
     .from(resources)
     .where(
       and(
         eq(resources.install_id, request.installId),
         inArray(resources.kind, [...ADDRESS_KINDS]),
         isNull(resources.deleted_at),
-        isNotNull(resources.live_at),
-        ne(resources.id, request.resourceId),
       ),
     );
+  const others = domains.filter((d) => d.live_at !== null && d.id !== request.resourceId);
   const outcome = workersDevWhenDomainRemoved({
     choice: install.choice,
     enabled: install.workersDev,
@@ -327,7 +363,7 @@ export async function beforeDomainRemoval(
   });
   if (outcome.action === "refuse") throw new WorkersDevError(outcome.message);
   if (outcome.action === "keep") {
-    // Health checks, canaries and `{{workerUrl}}` follow the served domain:
+    // Health checks, canaries and `{{appUrl}}` follow the served domain:
     // it moves to another live domain rather than stay on one being removed.
     if (removed !== undefined && install.servedDomain === removed.name) {
       await orm
@@ -335,7 +371,15 @@ export async function beforeDomainRemoval(
         .set({ served_domain: nextServedDomain(others) })
         .where(eq(installs.id, request.installId));
     }
-    return { turnedOn: false };
+    // With workers.dev on, the app is served there whichever domain goes;
+    // with it off, the address moves only when this domain was the one.
+    const servedBefore = install.workersDev
+      ? null
+      : primaryDomain(domainHostnames(domains), install.servedDomain);
+    return {
+      turnedOn: false,
+      addressChanged: removed !== undefined && servedBefore === removed.name,
+    };
   }
   if ((await activeJobOf(orm, request.installId)) !== null) {
     throw new WorkersDevError(
@@ -348,5 +392,5 @@ export async function beforeDomainRemoval(
     .update(installs)
     .set({ workers_dev_enabled: true, served_domain: null })
     .where(eq(installs.id, request.installId));
-  return { turnedOn: true };
+  return { turnedOn: true, addressChanged: true };
 }

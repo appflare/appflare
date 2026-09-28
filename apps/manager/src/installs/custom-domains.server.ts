@@ -18,6 +18,12 @@ import { type HealthStatus, installs, resources } from "../db/schema";
 import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
 import { checkHostnameInZone } from "./custom-domain-input";
 import { CUSTOM_DOMAIN_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
+import {
+  NO_VARS_REFRESH,
+  type RefreshVars,
+  refreshSettings,
+  type VarsRefresh,
+} from "./vars-refresh.server";
 import { wildcardOfManifest } from "./wildcard-domain-input";
 import {
   applyDomainLive,
@@ -47,6 +53,8 @@ export interface CustomDomainDeps {
   api: CloudflareClient;
   now?: () => Date;
   newId?: () => string;
+  /** Deploys the settings again when they use the app's address; without it nothing is. */
+  refreshVars?: RefreshVars;
 }
 
 /** The permission groups by the dashboard's names, for messages. */
@@ -449,14 +457,14 @@ async function readDomain(
 export async function removeCustomDomainCore(
   deps: CustomDomainDeps,
   request: { installId: string; resourceId: string },
-): Promise<{ hostname: string }> {
+): Promise<{ hostname: string } & VarsRefresh> {
   const install = await readInstall(deps.db, request.installId);
   if (install.status === "uninstalling" || install.status === "uninstalled") {
     throw new CustomDomainError("The uninstall removes this app's custom domains.");
   }
   const domain = await readDomain(deps.db, request);
   // With workers.dev off, the last live domain is the app's only address.
-  await asCustomDomainError(() =>
+  const removal = await asCustomDomainError(() =>
     beforeDomainRemoval(
       { db: deps.db, api: async () => deps.api },
       { installId: request.installId, resourceId: domain.id },
@@ -471,7 +479,11 @@ export async function removeCustomDomainCore(
     .update(resources)
     .set({ deleted_at: (deps.now ?? (() => new Date()))() })
     .where(eq(resources.id, domain.id));
-  return { hostname: domain.name };
+  // The app's address moved: settings that use `{{appUrl}}` follow it.
+  const refresh = removal.addressChanged
+    ? await refreshSettings(deps.refreshVars, request.installId, ["appUrl"])
+    : NO_VARS_REFRESH;
+  return { hostname: domain.name, ...refresh };
 }
 
 /**
@@ -520,7 +532,7 @@ export function detachMessage(hostname: string, outcome: DetachOutcome): string 
   }
 }
 
-export interface CustomDomainCheck {
+export interface CustomDomainCheck extends VarsRefresh {
   hostname: string;
   url: string;
   status: HealthStatus;
@@ -547,6 +559,8 @@ export async function checkCustomDomainCore(
     /** For turning workers.dev off; without it a live domain is only recorded. */
     api?: () => Promise<Pick<CloudflareClient, "workers">>;
     now?: () => Date;
+    /** Deploys the settings again once the domain serves them; without it nothing is. */
+    refreshVars?: RefreshVars;
   },
   request: { installId: string; resourceId: string },
 ): Promise<CustomDomainCheck> {
@@ -562,6 +576,7 @@ export async function checkCustomDomainCore(
   const probe = await probeHealth(deps.fetch, url);
   const settled = settleHealthProbe(probe, check.mode);
   let workersDevTurnedOff = false;
+  let refresh: VarsRefresh = NO_VARS_REFRESH;
   if (domainServesApp(probe, check.mode)) {
     const live = { installId: install.id, resourceId: domain.id, hostname: domain.name };
     if (deps.api === undefined) {
@@ -570,11 +585,17 @@ export async function checkCustomDomainCore(
       const { api } = deps;
       const applied = await asCustomDomainError(() =>
         applyDomainLive(
-          { db: deps.db, api, ...(deps.now === undefined ? {} : { now: deps.now }) },
+          {
+            db: deps.db,
+            api,
+            ...(deps.now === undefined ? {} : { now: deps.now }),
+            ...(deps.refreshVars === undefined ? {} : { refreshVars: deps.refreshVars }),
+          },
           live,
         ),
       );
       workersDevTurnedOff = applied.turnedOff;
+      refresh = { settingsJobId: applied.settingsJobId, settingsNote: applied.settingsNote };
     }
   }
   return {
@@ -583,5 +604,6 @@ export async function checkCustomDomainCore(
     ...settled,
     checkedAt: (deps.now ?? (() => new Date()))().toISOString(),
     workersDevTurnedOff,
+    ...refresh,
   };
 }

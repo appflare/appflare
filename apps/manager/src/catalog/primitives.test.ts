@@ -62,12 +62,8 @@ describe("indexPrimitives", () => {
   });
 
   it("marks a row of an app that is not a prebuilt artifact as incomplete", () => {
-    expect(indexPrimitives({ tier: "self-deploying", services: ["r2"] })?.complete).toBe(false);
-    expect(indexPrimitives({ tier: "sandbox", services: [] })?.complete).toBe(false);
-  });
-
-  it("is null for a row written before the index published services", () => {
-    expect(indexPrimitives({ tier: "artifact" })).toBeNull();
+    expect(indexPrimitives({ tier: "self-deploying", services: ["r2"] }).complete).toBe(false);
+    expect(indexPrimitives({ tier: "sandbox", services: [] }).complete).toBe(false);
   });
 });
 

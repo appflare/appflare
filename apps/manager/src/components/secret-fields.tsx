@@ -44,7 +44,7 @@ export const SEED_ONLY_VAR_NOTE =
 
 /**
  * A fresh value for a secret the catalog generates: a random password for
- * `generate: true`, a new VAPID private key for `"vapid-private-key"`, 32
+ * `generate: "password"`, a new VAPID private key for `"vapid-private-key"`, 32
  * random bytes as padded base64 for `"base64-key-32"` (WebCrypto's
  * `getRandomValues`, in the browser).
  */

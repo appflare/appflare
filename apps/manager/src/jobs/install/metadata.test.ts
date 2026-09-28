@@ -27,9 +27,8 @@ describe("installVars", () => {
             name: "NUXT_CF_ACCOUNT_ID",
             label: "Account",
             default: "{{accountId}}",
-            required: true,
           },
-          { name: "API_BASE", label: "API", required: false },
+          { name: "API_BASE", label: "API", optional: true },
         ],
       },
     });
@@ -58,9 +57,9 @@ describe("installVars", () => {
       ],
       catalog: {
         vars: [
-          { name: "HOME_PAGE", label: "Home", required: false },
-          { name: "GREETING", label: "Greeting", default: "hi", required: false },
-          { name: "EMPTY", label: "Empty", required: false },
+          { name: "HOME_PAGE", label: "Home", optional: true },
+          { name: "GREETING", label: "Greeting", default: "hi", optional: true },
+          { name: "EMPTY", label: "Empty", optional: true },
         ],
       },
     });
@@ -85,12 +84,12 @@ describe("installVars", () => {
       ],
       catalog: {
         vars: [
-          { name: "PUBLIC_URL", label: "URL", default: "{{workerUrl}}", required: false },
+          { name: "PUBLIC_URL", label: "URL", default: "{{workerUrl}}", optional: true },
           {
             name: "EMAIL_ADDRESSES",
             label: "Addresses",
             default: '["{{workerName}}@example.com"]',
-            required: false,
+            optional: true,
           },
         ],
       },
@@ -133,7 +132,7 @@ describe("installVars", () => {
             name: "ADDRESSES",
             label: "Addresses",
             default: '["{{workerName}}@example.com"]',
-            required: false,
+            optional: true,
           },
         ],
       },
@@ -146,7 +145,7 @@ describe("installVars", () => {
     });
     const withoutDefault = await buildArtifactFixture({
       bindings: [{ type: "json", name: "ADDRESSES", json: ["upstream@example.com"] }],
-      catalog: { vars: [{ name: "ADDRESSES", label: "Addresses", required: false }] },
+      catalog: { vars: [{ name: "ADDRESSES", label: "Addresses", optional: true }] },
     });
     const resolved = installVars(withoutDefault.manifest, stored, worker);
     expect(resolved.vars).toEqual([

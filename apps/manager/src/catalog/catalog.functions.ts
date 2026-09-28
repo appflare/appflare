@@ -1,9 +1,10 @@
-import { env, waitUntil } from "cloudflare:workers";
+import { env } from "cloudflare:workers";
 import {
   appWorkers,
   type CatalogAuthor,
   type CatalogManifest,
-  hasFixedWorkerName,
+  catalogWorkerName,
+  hyperdriveDeclarations,
   type IndexApp,
 } from "@appflare/schema";
 import { createServerFn } from "@tanstack/react-start";
@@ -26,11 +27,9 @@ import { planBindings } from "../jobs/install/bindings";
 import { sandboxBinding } from "../sandbox/binding";
 import { type SandboxReadiness, sandboxReadinessOf } from "../sandbox/readiness";
 import { requireRole, requireSession } from "../server/auth.server";
-import { appFacts } from "./app-facts";
-import { listAppFacts } from "./app-facts.server";
+import { appFacts, NO_APP_FACTS } from "./app-facts";
 import { getCatalogManifest } from "./app-manifest.server";
 import { moduleBytes } from "./app-page";
-import { appAuthors } from "./authors";
 import { listCatalogRecords } from "./catalogs.server";
 import { cronTriggerCount } from "./cron-triggers";
 import { type FeaturedCard, featuredCard, pickFeatured } from "./featured";
@@ -46,7 +45,6 @@ import {
   refreshCustomCatalog,
   refreshOfficialCatalog,
 } from "./merged.server";
-import { appPitch } from "./pitch";
 import { type AppPopularity, appPopularity, freshStats } from "./popularity";
 import type { AppPrimitives } from "./primitives";
 import { appKey, type CatalogSource, installAppKey, unsignedTierRefusal } from "./sources";
@@ -77,9 +75,9 @@ export interface CatalogListItem extends IndexApp {
   primitives: AppPrimitives;
   /** The catalog manifest's categories; empty until it has been read. */
   categories: string[];
-  /** The license from the index row, else the catalog manifest; null until either states it. */
+  /** The license, from the index row. */
   appLicense: AppLicense | null;
-  /** The line under its name on a catalog tile: the tagline, else the summary's first clause. */
+  /** The line under its name on a catalog tile: the catalog's tagline. */
   pitch: string;
 }
 
@@ -171,8 +169,7 @@ async function activeInstalls(): Promise<ActiveInstalls> {
 
 /**
  * The apps of one catalog's index as list items: an official app's images
- * and popularity, and for any app the facts its manifests give (verified
- * with that catalog's keys).
+ * and popularity, and for any app the facts its index row publishes.
  */
 async function listItems(
   read: Extract<CatalogIndexRead, { ok: true }>,
@@ -185,8 +182,6 @@ async function listItems(
   const apps = read.index.apps.filter(
     (app) => unsignedTierRefusal(read.source.id, app.tier) === null,
   );
-  // Manifests not cached yet are fetched after the response, for the next view.
-  const facts = await listAppFacts(env, apps, waitUntil, read.trust);
   return apps.map((app) => {
     const key = appKey(read.source.id, app.slug);
     return {
@@ -197,8 +192,8 @@ async function listItems(
       // Images, avatars and popularity come from the official catalog alone.
       images: appMediaView(official ? app.media : undefined, indexUrl),
       popularity: official ? appPopularity(stats, app.slug) : null,
-      pitch: appPitch(app),
-      ...(facts.get(app.slug) ?? appFacts(app, null)),
+      pitch: app.tagline,
+      ...appFacts(app),
     };
   });
 }
@@ -365,7 +360,7 @@ export interface CatalogDetail {
   /** The install form's settings, one per catalog var. */
   varFields: InstallVarField[];
   /**
-   * The account's workers.dev subdomain, to show `{{workerUrl}}` filled in
+   * The account's workers.dev subdomain, to show `{{workerUrl}}` and `{{appUrl}}` filled in
    * on the form; null when it is not known (the install fills it in).
    */
   subdomain: string | null;
@@ -472,7 +467,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       images: appMediaView(undefined, ""),
       popularity: null,
       sourceBuilds: false,
-      ...appFacts({ tier: "artifact", requires: [] }, null),
+      ...NO_APP_FACTS,
     };
     const read = await findCatalogApp(env, data.slug);
     if (!read.ok) return { app: null, error: read.error, ...empty };
@@ -489,7 +484,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       source,
       images: appMediaView(source.official ? app.media : undefined, catalogIndexUrl(env)),
       popularity: source.official ? appPopularity(stats, app.slug) : null,
-      ...appFacts(app, null),
+      ...appFacts(app),
     };
     // An added catalog's sandbox or self-deploying entry is trusted by its
     // unsigned index alone: shown, never read or installed.
@@ -499,7 +494,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
         ...empty,
         ...shown,
         app,
-        authors: appAuthors(app, null),
+        authors: app.authors,
         instances,
         error: unsigned,
       };
@@ -511,13 +506,14 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
         ...empty,
         ...shown,
         app,
-        authors: appAuthors(app, null),
+        authors: app.authors,
         instances,
         error: manifest.error,
       };
     }
     const { install } = manifest.catalog;
-    const fixed = hasFixedWorkerName(install);
+    const fixed = install.fixedWorkerName;
+    const catalogName = catalogWorkerName(manifest.catalog);
     const [accountNames, subdomain] = await Promise.all([
       fixed ? [] : accountWorkerNames(session.user.role),
       accountSubdomain(session.user.role),
@@ -527,20 +523,20 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
       manifest.manifest === null
         ? null
         : planBindings(
-            install.workerName,
+            catalogName,
             entryBindings(manifest.manifest),
-            manifest.catalog.resources?.hyperdrive ?? [],
+            hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
             manifest.catalog.resources?.pipelines,
           );
     return {
       ...empty,
       ...shown,
-      ...appFacts(app, manifest),
+      ...appFacts(app),
       app,
       catalog: manifest.catalog,
       sourceBuilds:
         app.tier !== "self-deploying" && sourceBuildsOffered(session.user.role, sandbox),
-      authors: appAuthors(app, manifest.catalog),
+      authors: app.authors,
       createsKnown: plan !== null,
       creates:
         plan?.resources.flatMap((r) => [
@@ -561,9 +557,7 @@ export const getCatalogEntry = createServerFn({ method: "GET" })
           : moduleBytes(appWorkers(manifest.manifest).map((w) => w.worker)) || null,
       error: null,
       instances,
-      suggestedWorkerName: fixed
-        ? install.workerName
-        : suggestWorkerName(install.workerName, taken),
+      suggestedWorkerName: fixed ? catalogName : suggestWorkerName(catalogName, taken),
       fixedWorkerName: fixed,
       // A sandbox tier app's wrangler config is read only when it is built, so
       // before that every var is a text field.

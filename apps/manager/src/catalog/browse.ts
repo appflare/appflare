@@ -1,4 +1,10 @@
-import { type CatalogAuthor, type Plan, planSchema } from "@appflare/schema";
+import {
+  type CatalogAuthor,
+  categoryLabel as catalogCategoryLabel,
+  isCatalogCategory,
+  type Plan,
+  planSchema,
+} from "@appflare/schema";
 import { z } from "zod";
 import { type AppLicense, type LicenseFilter, licenseKind } from "./license";
 import { type AppPopularity, comparePopularity } from "./popularity";
@@ -18,7 +24,7 @@ export interface BrowsableApp {
   slug: string;
   name: string;
   summary: string;
-  /** The catalog's one-line pitch, when the entry has one. */
+  /** The catalog's one-line pitch. */
   tagline?: string | undefined;
   plan: Plan;
   lastVerified: string | null;
@@ -109,8 +115,8 @@ function haystack(app: BrowsableApp): string {
       app.summary,
       ...(app.authors ?? []).map((a) => a.name),
       ...app.primitives.ids.flatMap((id) => [PRIMITIVE_LABELS[id], id]),
-      // The old slug and the one it became, so either word finds the app.
-      ...app.categories.flatMap((c) => [c, canonicalCategory(c)]),
+      // The id and its label, so either finds the app.
+      ...app.categories.flatMap((c) => [c, categoryLabel(c)]),
     ].join("\n"),
   );
 }
@@ -189,15 +195,17 @@ export function showsResults(query: BrowseQuery): boolean {
 }
 
 /**
- * Every category the apps list with its number of apps: the most apps first,
- * then by label. A folded category counts toward the one it became.
+ * Every category of the catalog's list (`CATALOG_CATEGORIES`) the apps use,
+ * with its number of apps: the most apps first, then by label. An id a
+ * custom catalog uses that this version does not know gets no card or row
+ * of its own; the app is still found by search and shows the id on its page.
  */
 export function categoryCounts(
   apps: ReadonlyArray<Pick<BrowsableApp, "categories">>,
 ): Array<{ id: string; count: number }> {
   const counts = new Map<string, number>();
   for (const app of apps) {
-    for (const category of new Set(app.categories.map(canonicalCategory))) {
+    for (const category of new Set(app.categories.filter(isCatalogCategory))) {
       counts.set(category, (counts.get(category) ?? 0) + 1);
     }
   }
@@ -208,66 +216,12 @@ export function categoryCounts(
     );
 }
 
-/** The label of every category the catalog uses, written as a person would write it. */
-const CATEGORY_LABELS: Readonly<Record<string, string>> = {
-  ai: "AI",
-  analytics: "Analytics",
-  bots: "Bots",
-  business: "Business",
-  chat: "Chat",
-  cms: "Websites and blogs",
-  community: "Community",
-  "developer-tools": "Developer tools",
-  dns: "DNS",
-  ecommerce: "E-commerce",
-  education: "Education",
-  email: "Email",
-  family: "Family",
-  files: "Files",
-  finance: "Finance",
-  games: "Games",
-  "link-shortener": "Link shortener",
-  marketing: "Marketing",
-  media: "Media",
-  monitoring: "Monitoring",
-  networking: "Networking",
-  notes: "Notes",
-  notifications: "Notifications",
-  passwords: "Passwords",
-  privacy: "Privacy",
-  productivity: "Productivity",
-  "remote-access": "Remote access",
-  scheduling: "Scheduling",
-  security: "Security",
-  sharing: "Sharing",
-  sync: "Sync",
-  utilities: "Utilities",
-};
-
-/**
- * Categories the catalog folded into another, each with the one it became. An
- * older index or another catalog may still list the old slug; it counts, filters
- * and reads as its target, so the page never shows two cards for one category.
- */
-const FOLDED_CATEGORIES: Readonly<Record<string, string>> = {
-  blogging: "cms",
-  gaming: "games",
-  social: "community",
-  storage: "files",
-};
-
-/** The category a slug stands for: the target of a folded category, any other slug itself. */
-export function canonicalCategory(category: string): string {
-  return FOLDED_CATEGORIES[category] ?? category;
-}
-
-/** Whether `app` is listed under `category`, counting the categories folded into it. */
+/** Whether `app` is listed under `category`. */
 export function inCategory(app: Pick<BrowsableApp, "categories">, category: string): boolean {
-  const target = canonicalCategory(category);
-  return app.categories.some((c) => canonicalCategory(c) === target);
+  return app.categories.includes(category);
 }
 
-/** Words kept in capitals when a category without a label is spelled out from its slug. */
+/** Words kept in capitals when a category without a label is spelled out from its id. */
 const CATEGORY_WORDS: Readonly<Record<string, string>> = {
   ai: "AI",
   cms: "CMS",
@@ -276,14 +230,14 @@ const CATEGORY_WORDS: Readonly<Record<string, string>> = {
 };
 
 /**
- * A category slug as a label: `ecommerce` → "E-commerce", `developer-tools` →
- * "Developer tools", a folded category as the one it became. A category
- * without a label of its own is spelled out from its slug in sentence case,
- * keeping known acronyms: `dns-tools` → "DNS tools".
+ * A category id as a label: the catalog's own label for an id of its list
+ * (`ecommerce` → "E-commerce", `cms` → "Websites and blogs"). An id this
+ * version does not know (a custom catalog's, or one added later) is spelled
+ * out in sentence case, keeping known acronyms: `dns-tools` → "DNS tools".
  */
 export function categoryLabel(category: string): string {
-  const label = CATEGORY_LABELS[canonicalCategory(category)];
-  if (label !== undefined) return label;
+  const label = catalogCategoryLabel(category);
+  if (label !== null) return label;
   const words = category.split(/[-_\s]+/).filter((w) => w.length > 0);
   return words
     .map((word, i) => {

@@ -221,7 +221,7 @@ describe("update job", () => {
       manifest_json: new TextDecoder().decode(r.fixture.manifestBytes),
       artifact_url: ZIP_URL,
       artifact_digest: r.fixture.digest,
-      pin_sha: r.fixture.manifest.source.sha,
+      pin_sha: r.fixture.manifest.catalog.source.sha,
       do_migration_tag: null,
     });
 
@@ -382,7 +382,7 @@ describe("update job", () => {
             name: "HOME_PAGE",
             label: "Home page",
             default: '["{{workerName}}"]',
-            required: false,
+            optional: true,
           },
         ],
       },
@@ -540,8 +540,8 @@ describe("update job", () => {
         ...NEW_APP,
         catalog: {
           secrets: [
-            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-            { name: "API_KEY", label: "API key", generate: false },
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+            { name: "API_KEY", label: "API key" },
           ],
         },
       },
@@ -576,14 +576,13 @@ describe("update job", () => {
         ...NEW_APP,
         catalog: {
           secrets: [
-            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
             { name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" },
           ],
           vars: [
             {
               name: "VAPID_PUBLIC_KEY",
               label: "Push public key",
-              required: false,
               derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
             },
           ],
@@ -623,8 +622,8 @@ describe("update job", () => {
         ...NEW_APP,
         revision: {
           secrets: [
-            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-            { name: "API_KEY", label: "API key", generate: false },
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+            { name: "API_KEY", label: "API key" },
           ],
         },
       },
@@ -665,8 +664,8 @@ describe("update job", () => {
         ...NEW_APP,
         catalog: {
           secrets: [
-            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-            { name: "API_KEY", label: "API key", generate: false },
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+            { name: "API_KEY", label: "API key" },
           ],
         },
       },
@@ -700,8 +699,8 @@ describe("update job", () => {
         ...NEW_APP,
         catalog: {
           secrets: [
-            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-            { name: "API_KEY", label: "API key", generate: false },
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+            { name: "API_KEY", label: "API key" },
           ],
         },
       },
@@ -753,13 +752,21 @@ describe("update job", () => {
     expect(r.logs.at(-1)?.message).toContain("at https://links.example.com/ (health: verified");
   });
 
-  it("uses the domain the switch verified for {{workerUrl}} and the health check", async () => {
+  it("uses the domain the switch verified for {{appUrl}} and the health check, and workers.dev for {{workerUrl}}", async () => {
     const r = await update(
       {
         ...NEW_APP,
         catalog: {
           vars: [
-            { name: "BASE_URL", label: "Base URL", default: "{{workerUrl}}", required: false },
+            { name: "BASE_URL", label: "Base URL", default: "{{appUrl}}", optional: true },
+            { name: "HOST", label: "Host", default: "{{appHostname}}", optional: true },
+            { name: "DEV_URL", label: "workers.dev", default: "{{workerUrl}}", optional: true },
+            {
+              name: "DEV_HOST",
+              label: "workers.dev host",
+              default: "{{workerHostname}}",
+              optional: true,
+            },
           ],
         },
       },
@@ -788,6 +795,17 @@ describe("update job", () => {
       name: "BASE_URL",
       text: "https://zz.example.com",
     });
+    expect(bindings).toContainEqual({ type: "plain_text", name: "HOST", text: "zz.example.com" });
+    expect(bindings).toContainEqual({
+      type: "plain_text",
+      name: "DEV_URL",
+      text: "https://cut.appflare-dev.workers.dev",
+    });
+    expect(bindings).toContainEqual({
+      type: "plain_text",
+      name: "DEV_HOST",
+      text: "cut.appflare-dev.workers.dev",
+    });
     expect(r.fake.state.domainProbes).toEqual(["zz.example.com"]);
   });
 
@@ -797,8 +815,8 @@ describe("update job", () => {
         ...NEW_APP,
         catalog: {
           secrets: [
-            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-            { name: "API_KEY", label: "API key", generate: false },
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+            { name: "API_KEY", label: "API key" },
           ],
         },
       },
@@ -831,7 +849,7 @@ describe("update job", () => {
           packageManager: "pnpm" as const,
           wranglerConfig: "wrangler.jsonc",
           workerName: "cut",
-          healthPath: "/api/health",
+          health: { path: "/api/health" },
         },
       },
     };
@@ -992,12 +1010,14 @@ describe("update job", () => {
       catalog: {
         secrets: [
           ...base.secrets,
-          { name: "FIRST_ADMIN_PASSWORD", label: "Admin password", generate: true, seedOnly: true },
+          {
+            name: "FIRST_ADMIN_PASSWORD",
+            label: "Admin password",
+            generate: "password",
+            seedOnly: true,
+          },
         ],
-        vars: [
-          ...base.vars,
-          { name: "FIRST_ADMIN_NAME", label: "Admin name", required: true, seedOnly: true },
-        ],
+        vars: [...base.vars, { name: "FIRST_ADMIN_NAME", label: "Admin name", seedOnly: true }],
         resources: {
           d1: {
             DB: {
@@ -1532,10 +1552,7 @@ describe("update job", () => {
       bindings: [...(NEW_APP.bindings ?? []), { type: "pipelines", name: "EVENTS" }],
       catalog: {
         plan: "paid" as const,
-        secrets: [
-          ...baseCatalog().secrets,
-          { name: "CATALOG_TOKEN", label: "R2 API token", generate: false },
-        ],
+        secrets: [...baseCatalog().secrets, { name: "CATALOG_TOKEN", label: "R2 API token" }],
         resources: { pipelines: { EVENTS: events } },
       },
     });
@@ -1941,8 +1958,8 @@ describe("update job, an app of several Workers", () => {
     otherWorkers: [jobsWorker(crons)],
     catalog: {
       secrets: [
-        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-        { name: "JOBS_KEY", label: "Jobs key", generate: false, workers: ["jobs"] },
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+        { name: "JOBS_KEY", label: "Jobs key", workers: ["jobs"] },
       ],
     },
   });

@@ -90,11 +90,15 @@ describe("live health window", () => {
   });
 
   it("passes a plain 404 at once when the route was live before the job, never Cloudflare's pages", () => {
-    expect(classifyLiveProbe(res(404, "Not found"), "default", true)).toBe("pass");
-    expect(classifyLiveProbe(res(404, "Not found"), "status-only", true)).toBe("pass");
-    expect(classifyLiveProbe(edge, "default", true)).toBe("retry");
-    expect(classifyLiveProbe(res(404, "error code: 1101"), "default", true)).toBe("soft-404");
-    expect(decideLiveHealth(res(404, "Not found"), 1, 0, undefined, "default", true)).toEqual({
+    expect(classifyLiveProbe(res(404, "Not found"), "no-server-errors", true)).toBe("pass");
+    expect(classifyLiveProbe(res(404, "Not found"), "any-response", true)).toBe("pass");
+    expect(classifyLiveProbe(edge, "no-server-errors", true)).toBe("retry");
+    expect(classifyLiveProbe(res(404, "error code: 1101"), "no-server-errors", true)).toBe(
+      "soft-404",
+    );
+    expect(
+      decideLiveHealth(res(404, "Not found"), 1, 0, undefined, "no-server-errors", true),
+    ).toEqual({
       done: true,
       status: "verified",
       detail: "HTTP 404",
@@ -161,7 +165,7 @@ describe("live health window", () => {
   });
 });
 
-describe("the status-only health mode", () => {
+describe("the any-response health mode", () => {
   const crashed = res(500, "error code: 1101");
   const edge = res(404, "error code: 1042");
   const down: HealthProbe = { kind: "error", message: "connection refused" };
@@ -180,13 +184,13 @@ describe("the status-only health mode", () => {
       res(401),
       res(302),
     ]) {
-      expect(classifyLiveProbe(answer, "status-only")).toBe("pass");
-      expect(settleHealthProbe(answer, "status-only").status).toBe("verified");
-      expect(decideLiveHealth(answer, 1, 0, undefined, "status-only")).toMatchObject({
+      expect(classifyLiveProbe(answer, "any-response")).toBe("pass");
+      expect(settleHealthProbe(answer, "any-response").status).toBe("verified");
+      expect(decideLiveHealth(answer, 1, 0, undefined, "any-response")).toMatchObject({
         done: true,
         status: "verified",
       });
-      expect(classifyHealthProbe(answer, 1, 0, 6, "status-only").verdict).toBe("healthy");
+      expect(classifyHealthProbe(answer, 1, 0, 6, "any-response").verdict).toBe("healthy");
     }
     // The default still calls the Worker's own 5xx unhealthy.
     expect(settleHealthProbe(res(500, "oops")).status).toBe("unhealthy");
@@ -194,16 +198,16 @@ describe("the status-only health mode", () => {
   });
 
   it("still retries the 1042 page and connection errors, and judges a crash page as before", () => {
-    expect(classifyLiveProbe(edge, "status-only")).toBe("retry");
-    expect(classifyLiveProbe(down, "status-only")).toBe("retry");
-    expect(classifyLiveProbe(crashed, "status-only")).toBe("retry");
-    expect(settleHealthProbe(edge, "status-only").status).toBe("unverified");
-    expect(settleHealthProbe(down, "status-only").status).toBe("unverified");
-    expect(settleHealthProbe(crashed, "status-only").status).toBe("unhealthy");
-    expect(classifyHealthProbe(edge, 1, 0, 6, "status-only").verdict).toBe("retry");
-    expect(classifyHealthProbe(crashed, 6, 30_000, 6, "status-only").verdict).toBe("unhealthy");
+    expect(classifyLiveProbe(edge, "any-response")).toBe("retry");
+    expect(classifyLiveProbe(down, "any-response")).toBe("retry");
+    expect(classifyLiveProbe(crashed, "any-response")).toBe("retry");
+    expect(settleHealthProbe(edge, "any-response").status).toBe("unverified");
+    expect(settleHealthProbe(down, "any-response").status).toBe("unverified");
+    expect(settleHealthProbe(crashed, "any-response").status).toBe("unhealthy");
+    expect(classifyHealthProbe(edge, 1, 0, 6, "any-response").verdict).toBe("retry");
+    expect(classifyHealthProbe(crashed, 6, 30_000, 6, "any-response").verdict).toBe("unhealthy");
     // A plain 404 may be a route still going live: it waits out the window as before.
-    expect(classifyLiveProbe(res(404, "Not found"), "status-only")).toBe("soft-404");
+    expect(classifyLiveProbe(res(404, "Not found"), "any-response")).toBe("soft-404");
   });
 });
 
@@ -216,16 +220,15 @@ describe("healthCheckOfManifest", () => {
           packageManager: "pnpm",
           wranglerConfig: "wrangler.jsonc",
           workerName: "cut",
-          healthPath: "/api/health",
-          healthMode: "status-only",
+          health: { path: "/api/health", mode: "any-response" },
         },
       },
     });
     expect(healthCheckOfManifest(JSON.stringify(f.manifest))).toEqual({
       path: "/api/health",
-      mode: "status-only",
+      mode: "any-response",
     });
-    expect(healthCheckOfManifest(null)).toEqual({ path: "/", mode: "default" });
+    expect(healthCheckOfManifest(null)).toEqual({ path: "/", mode: "no-server-errors" });
   });
 });
 

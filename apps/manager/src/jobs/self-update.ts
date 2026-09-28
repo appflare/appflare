@@ -2,7 +2,6 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { FetchLike, WorkerBinding as UploadBinding, VersionMetadata } from "@appflare/cf-api";
 import {
   artifactManifestSchema,
-  indexArtifactsSchema,
   SANDBOX_WORKER_NAME,
   workerUploadCost,
   workerUploadProblem,
@@ -10,6 +9,7 @@ import {
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../catalog/app-manifest.server";
+import { releaseAssetsSchema } from "../catalog/release-assets";
 import { releaseFetch } from "../catalog/release-fetch";
 import { createDb } from "../db/client";
 import { jobs, snapshots } from "../db/schema";
@@ -80,7 +80,7 @@ export const selfUpdateJobParams = z.object({
   /** The release tag (`manager@<version>`). */
   tag: z.string().min(1),
   /** The release asset URLs. */
-  artifacts: indexArtifactsSchema,
+  artifacts: releaseAssetsSchema,
 });
 export type SelfUpdateJobParams = z.infer<typeof selfUpdateJobParams>;
 

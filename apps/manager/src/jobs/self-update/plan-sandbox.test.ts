@@ -7,6 +7,7 @@ import { selfUpdateBindings } from "./plan";
 const MANIFEST: Pick<ArtifactManifest, "worker" | "assets"> = {
   worker: {
     name: "appflare",
+    wranglerConfig: { declared: "wrangler.jsonc", effective: "{}" },
     mainModule: "index.js",
     compatibilityDate: "2026-09-21",
     compatibilityFlags: ["nodejs_compat"],
@@ -18,6 +19,7 @@ const MANIFEST: Pick<ArtifactManifest, "worker" | "assets"> = {
     ],
     migrations: [],
     crons: [],
+    queueConsumers: [],
     observability: null,
     placement: null,
     limits: null,

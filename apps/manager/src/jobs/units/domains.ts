@@ -1,4 +1,5 @@
 import type { FetchLike } from "@appflare/cf-api";
+import { HEALTH_MODES } from "@appflare/schema";
 import { z } from "zod";
 import { GATEWAY_SETUP_PLACE, gatewayHostname } from "../../gateway/gateway";
 import { GatewayError, gatewayStateSchema } from "../../gateway/gateway.server";
@@ -248,7 +249,7 @@ export const waitForExternalDomainInputSchema = z.object({
   target: z.string().min(1),
   /** The app's health URL on the domain. */
   healthUrl: z.string().url(),
-  healthMode: z.enum(["default", "status-only"]),
+  healthMode: z.enum(HEALTH_MODES),
   maxPolls: z.number().int().min(1).max(EXTERNAL_DOMAIN_MAX_POLLS),
 });
 export type WaitForExternalDomainInput = z.infer<typeof waitForExternalDomainInputSchema>;
@@ -336,7 +337,7 @@ export const waitForCustomDomainInputSchema = z.object({
   accountId: z.string().min(1),
   /** The app's health URL on the domain. */
   healthUrl: z.string().url(),
-  healthMode: z.enum(["default", "status-only"]),
+  healthMode: z.enum(HEALTH_MODES),
   maxProbes: z.number().int().min(1).max(CUSTOM_DOMAIN_MAX_PROBES),
 });
 export type WaitForCustomDomainInput = z.infer<typeof waitForCustomDomainInputSchema>;

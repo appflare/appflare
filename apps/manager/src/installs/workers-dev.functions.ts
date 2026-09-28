@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { requireRole } from "../server/auth.server";
+import { varsRefresher } from "./reconfigure.server";
 import { setWorkersDevInput } from "./workers-dev";
 import { type SetWorkersDevResult, setWorkersDevCore, WorkersDevError } from "./workers-dev.server";
 
@@ -19,6 +20,7 @@ export const setWorkersDev = createServerFn({ method: "POST" })
           db: env.DB,
           api: () => getCfClient(env),
           fetch: (input, init) => fetch(input, init),
+          refreshVars: varsRefresher(env),
         },
         data,
       );

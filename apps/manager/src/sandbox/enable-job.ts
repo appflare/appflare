@@ -3,7 +3,6 @@ import { CloudflareApiError, type FetchLike } from "@appflare/cf-api";
 import { probeContainers, probeR2 } from "@appflare/cf-api/capabilities";
 import {
   artifactManifestSchema,
-  indexArtifactsSchema,
   SANDBOX_BUCKET_NAME,
   SANDBOX_CONTAINERS,
   SANDBOX_WORKER_NAME,
@@ -11,6 +10,7 @@ import {
 } from "@appflare/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { releaseAssetsSchema } from "../catalog/release-assets";
 import { releaseFetch, releaseFetchAuthenticated } from "../catalog/release-fetch";
 import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
@@ -191,7 +191,7 @@ export async function runSandboxEnable(ctx: JobContext): Promise<void> {
       log.info(`Found the release sandbox@${version}.`);
       return { assets };
     });
-    const assets = indexArtifactsSchema.parse(release.assets);
+    const assets = releaseAssetsSchema.parse(release.assets);
     const verified = await run("verify sandbox Worker release", async ({ log, fetch }) => {
       const manifestFile = await fetchWhole(feed(fetch), assets.manifest);
       const sigFile = await fetchWhole(feed(fetch), assets.sig);

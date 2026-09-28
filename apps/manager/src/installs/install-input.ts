@@ -113,5 +113,5 @@ export const startInstallInput = z.object({
 });
 export type StartInstallInput = z.infer<typeof startInstallInput>;
 
-/** Length of a value generated for a `generate: true` secret. */
+/** Length of a value generated for a `generate: "password"` secret. */
 export const GENERATED_SECRET_LENGTH = 32;

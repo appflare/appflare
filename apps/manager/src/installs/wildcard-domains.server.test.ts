@@ -29,7 +29,7 @@ const REASON = "Each tunnel gets its own address under this hostname.";
 const WILDCARD_MANIFEST = JSON.stringify({
   version: "1.0.0",
   worker: { migrations: [] },
-  catalog: { slug: "hostc", install: { wildcardHostname: true, wildcardReason: REASON } },
+  catalog: { slug: "hostc", install: { wildcardHostname: { reason: REASON } } },
 });
 
 interface FakeRecord {

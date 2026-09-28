@@ -1,10 +1,10 @@
 import type { EnvBinding } from "@appflare/cf-api";
 import {
   boundToWorker,
-  type CatalogHyperdrive,
   type CatalogSecret,
   type CatalogVar,
   connectionStringProblems,
+  type HyperdriveDeclaration,
   hyperdriveFieldLabel,
   isMultilineSecret,
   isOptionalSecret,
@@ -58,7 +58,7 @@ export interface SecretSlot {
   help?: string;
   /**
    * A fresh value is generated in the form (the catalog's `generate`): a
-   * random password for `true`, or a value of the kind it names.
+   * value of the kind it names; undefined when the admin enters one.
    */
   generate: CatalogSecret["generate"];
   /** The installed version declares it. */
@@ -98,7 +98,10 @@ export interface SecretSlot {
  * each secret.
  */
 export function secretSlots(
-  declared: readonly CatalogSecret[],
+  declared: ReadonlyArray<
+    Pick<CatalogSecret, "name" | "label" | "help" | "generate" | "derive"> &
+      Partial<Pick<CatalogSecret, "optional" | "multiline" | "seedOnly">>
+  >,
   recordedNames: readonly string[],
   vars: readonly (Pick<CatalogVar, "name" | "derive"> & { label?: string })[] = [],
 ): SecretSlot[] {
@@ -136,7 +139,7 @@ export function secretSlots(
     slots.push({
       name,
       label: name,
-      generate: false,
+      generate: undefined,
       declared: false,
       optional: true,
       present: true,
@@ -150,7 +153,7 @@ export function secretSlots(
  * section lists it: the installed version's declaration, and the Hyperdrive
  * configuration recorded for it.
  */
-export interface DatabaseSlot extends CatalogHyperdrive {
+export interface DatabaseSlot extends HyperdriveDeclaration {
   /** The field label (`hyperdriveFieldLabel`). */
   fieldLabel: string;
   /** The recorded configuration's name; null when none is recorded (it cannot be replaced). */
@@ -163,7 +166,7 @@ export interface DatabaseSlot extends CatalogHyperdrive {
  * string itself is never stored, so it is never shown; it can only be replaced.
  */
 export function databaseSlots(
-  declared: readonly CatalogHyperdrive[],
+  declared: readonly HyperdriveDeclaration[],
   recorded: ReadonlyArray<{ binding: string | null; name: string }>,
 ): DatabaseSlot[] {
   return declared.map((decl) => ({

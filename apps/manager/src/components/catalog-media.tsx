@@ -1,3 +1,4 @@
+import { COVER_HEIGHT, COVER_WIDTH } from "@appflare/schema";
 import { cn } from "@cloudflare/kumo";
 import { useState } from "react";
 import { monogram } from "../catalog/monogram";
@@ -57,14 +58,14 @@ export function AppIcon({
   );
 }
 
-/** An app's 1200x630 cover, full width. */
+/** An app's cover (the schema's cover size, 1200x630), full width. */
 export function AppCover({ src, alt }: { src: string; alt: string }) {
   return (
     <img
       src={src}
       alt={alt}
-      width={1200}
-      height={630}
+      width={COVER_WIDTH}
+      height={COVER_HEIGHT}
       className="aspect-[1200/630] h-auto w-full rounded-lg bg-kumo-recessed object-cover ring ring-kumo-hairline"
       decoding="async"
     />

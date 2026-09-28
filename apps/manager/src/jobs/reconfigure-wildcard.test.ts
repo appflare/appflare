@@ -33,15 +33,14 @@ const TUNNEL_APP: ArtifactFixtureOptions = {
   catalog: {
     install: {
       ...baseCatalog().install,
-      wildcardHostname: true,
-      wildcardReason: "Each tunnel gets its own address under this hostname.",
+      wildcardHostname: { reason: "Each tunnel gets its own address under this hostname." },
     },
     vars: [
       {
         name: "TUNNEL_DOMAIN",
         label: "Tunnel domain",
         default: "{{wildcardHostname}}",
-        required: false,
+        optional: true,
       },
     ],
   },
@@ -75,6 +74,7 @@ async function refresh(app: ArtifactFixtureOptions, resources: SeedResource[]) {
       newId: () => "job1",
     },
     INSTALL_ID,
+    ["wildcardHostname"],
   );
   return { fixture, started, params: params as ReconfigureJobParams | null };
 }
@@ -119,7 +119,7 @@ describe("settings that use {{wildcardHostname}}", () => {
       kind: "reconfigure",
       vars: {},
       secrets: { set: {}, unset: [] },
-      refreshVars: true,
+      refreshVars: ["wildcardHostname"],
     });
     const input = await env.DB.prepare(
       "SELECT kind, input_json FROM jobs WHERE id = 'job1'",
@@ -128,7 +128,10 @@ describe("settings that use {{wildcardHostname}}", () => {
       input_json: string;
     }>();
     expect(input?.kind).toBe("reconfigure");
-    expect(JSON.parse(input?.input_json ?? "{}")).toMatchObject({ refreshVars: true, vars: [] });
+    expect(JSON.parse(input?.input_json ?? "{}")).toMatchObject({
+      refreshVars: ["wildcardHostname"],
+      vars: [],
+    });
 
     if (params === null) throw new Error("no Workflow params");
     const r = await run(fixture, params);
@@ -178,7 +181,7 @@ describe("settings that use {{wildcardHostname}}", () => {
       { kind: "wildcard_domain", name: BASE, cfId: "z1" },
     ]);
     expect(started).toEqual({ jobId: "job1" });
-    expect(params).toMatchObject({ kind: "reconfigure", refreshVars: true });
+    expect(params).toMatchObject({ kind: "reconfigure", refreshVars: ["wildcardHostname"] });
   });
 
   it("are deployed again after an install whose wildcard domain was not set up", async () => {
@@ -215,7 +218,10 @@ describe("settings that use {{wildcardHostname}}", () => {
     expect(created).toEqual([
       {
         id: expect.any(String),
-        params: expect.objectContaining({ kind: "reconfigure", refreshVars: true }),
+        params: expect.objectContaining({
+          kind: "reconfigure",
+          refreshVars: ["wildcardHostname"],
+        }),
       },
     ]);
     const logs = (
@@ -253,6 +259,7 @@ describe("settings that use {{wildcardHostname}}", () => {
     const started = await startVarsRefreshCore(
       { db: env.DB, createJob: async (id) => ({ id }), newId: () => "job1" },
       INSTALL_ID,
+      ["wildcardHostname"],
     );
     expect(started).toBeNull();
   });

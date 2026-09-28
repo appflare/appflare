@@ -18,14 +18,12 @@ const catalog = catalogManifestSchema.parse({
     tier: "self-deploying",
     packageManager: "pnpm",
     wranglerConfig: "wrangler.jsonc",
-    workerName: "cut",
-    healthPath: "/api/health",
+    health: { path: "/api/health" },
     selfDeploying: {
       tool: "alchemy",
       deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
       destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-      stateStore: "cloudflare",
-      workers: ["cut-{{stage}}"],
+      workerNames: ["cut-{{stage}}"],
     },
   },
   vars: [
@@ -85,11 +83,11 @@ describe("installer requests", () => {
 });
 
 describe("a self-deploying install's recorded catalog manifest", () => {
-  it("is read back for the uninstall and the health check (status-only by default)", () => {
+  it("is read back for the uninstall and the health check, with the entry's health mode", () => {
     const json = JSON.stringify(catalog);
     expect(recordedCatalog(json)?.slug).toBe("cut");
     expect(recordedCatalog(JSON.stringify(baseCatalog()))).toBeNull();
     expect(recordedCatalog(null)).toBeNull();
-    expect(healthCheckOfManifest(json)).toEqual({ path: "/api/health", mode: "status-only" });
+    expect(healthCheckOfManifest(json)).toEqual({ path: "/api/health", mode: "no-server-errors" });
   });
 });

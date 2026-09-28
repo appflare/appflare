@@ -1,10 +1,10 @@
 import type { FetchLike } from "@appflare/cf-api";
-import { indexArtifactsSchema } from "@appflare/schema";
 import { z } from "zod";
 import { releaseTokenOptions, releaseTokenSecret } from "../github/release-access.server";
 import { GITHUB_ACCESS_PLACE } from "../github/tokens";
 import { pickReleaseNotes } from "../whats-new/release-notes";
 import { storeReleaseNotes } from "../whats-new/release-notes.server";
+import { releaseAssetsSchema } from "./release-assets";
 import { releaseFetch, releaseFetchAuthenticated } from "./release-fetch";
 import { compareVersions, isUpdateAvailable, parseVersion } from "./versions";
 
@@ -32,7 +32,7 @@ export const DEV_VERSION = "0.0.0-dev";
 export const managerReleaseSchema = z.object({
   version: z.string().min(1),
   tag: z.string().min(1),
-  assets: indexArtifactsSchema,
+  assets: releaseAssetsSchema,
   /** ISO 8601; null when GitHub did not say. */
   publishedAt: z.string().nullable(),
   /** ISO 8601 time of the check that found it. */
@@ -127,7 +127,7 @@ export function pickLatestManagerRelease(
     const manifest = urlOf("manifest.json");
     const sig = urlOf("manifest.sig");
     if (zip === null || manifest === null || sig === null) continue;
-    const assets = indexArtifactsSchema.safeParse({ zip, manifest, sig });
+    const assets = releaseAssetsSchema.safeParse({ zip, manifest, sig });
     if (!assets.success) continue;
     if (best !== null && (compareVersions(version, best.version) ?? 0) <= 0) continue;
     best = {

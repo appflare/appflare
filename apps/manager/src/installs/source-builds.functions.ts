@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import {
   type CatalogManifest,
   type CatalogSecret,
+  catalogWorkerName,
   type RepositoryDetection,
   repositoryUrl,
 } from "@appflare/schema";
@@ -231,7 +232,7 @@ export const getSourceBuild = createServerFn({ method: "GET" })
       const suggested = updating
         ? install.worker_name
         : suggestWorkerName(
-            manifest.catalog.install.workerName,
+            catalogWorkerName(manifest.catalog),
             status === "built" ? await takenWorkerNames(admin) : [],
           );
       const facts = reviewBuild(

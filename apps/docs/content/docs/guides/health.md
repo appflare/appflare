@@ -5,7 +5,7 @@ description: How Appflare checks that an installed app answers, and what each re
 
 After an install, an update, or a rollback, the manager requests the app's URL to
 see whether it answers. Most apps are checked at `/`. An app can name another path
-in its catalog manifest (`install.healthPath`), for example `/api/health`.
+in its catalog manifest (`install.health.path`), for example `/api/health`.
 
 ## How the check runs
 
@@ -28,9 +28,10 @@ sign-in page, a 401, or a 403 already counts as **Verified**, but some of these 
 answer with an error of their own instead, for example while their sign-in is not
 configured yet.
 
-Such an app sets `install.healthMode` to `"status-only"` in its catalog manifest.
-Any answer from the app's Worker then counts as **Verified**, a 5xx of its own
-included. Connection failures and Cloudflare's own error pages are still treated as
+Such an app sets `install.health.mode` to `"any-response"` in its catalog manifest,
+instead of the default `"no-server-errors"`, which counts any answer but a server
+error (5xx) as **Verified**. Any answer from the app's Worker then counts as
+**Verified**, a 5xx of its own included. Connection failures and Cloudflare's own error pages are still treated as
 above: the "not live yet" page (`error code: 1042`) and connection errors are
 retried, and a page Cloudflare serves because the Worker crashed (such as
 `error code: 1101`) still counts as a server error. An update's check of the new

@@ -18,7 +18,6 @@ import {
   settingsToChoose,
 } from "../../../catalog/app-page";
 import { type CatalogDetail, getCatalogEntry } from "../../../catalog/catalog.functions";
-import { appPitch } from "../../../catalog/pitch";
 import { primitivesNote } from "../../../catalog/primitives";
 import {
   analyticsEngineRefusal,
@@ -163,7 +162,7 @@ function AppPage({
         <AppPageHeader
           name={app.name}
           iconSrc={detail.images.icon}
-          tagline={appPitch(app)}
+          tagline={app.tagline}
           authors={detail.authors}
           // Avatars come through the official catalog's proxy only; others get monograms.
           withAvatars={detail.source?.official !== false}
@@ -231,7 +230,11 @@ function AppPage({
 
       {catalog !== null && (
         <AppSection title="Links">
-          <LinksList links={appLinks(catalog, detail.appLicense)} maintainers={app.maintainers} />
+          <LinksList
+            links={appLinks(catalog, detail.appLicense)}
+            maintainers={app.maintainers}
+            licenseNote={detail.appLicense?.note ?? null}
+          />
         </AppSection>
       )}
 

@@ -193,7 +193,7 @@ describe("addCatalogCore", () => {
     );
     await expect(add({ hello: "world" })).rejects.toThrow("is not a catalog index");
     await expect(add(indexOf([]))).rejects.toThrow("lists no apps yet");
-    const { artifacts: _a, digest: _d, ...unreleased } = fixture.index;
+    const { artifacts: _a, ...unreleased } = fixture.index;
     await expect(
       add(
         indexOf([

@@ -26,8 +26,15 @@ const INDEX = {
         manifest:
           "https://github.com/appflare/catalog/releases/download/cut@0.0.0-20260826.6056400/manifest.json",
         sig: "https://github.com/appflare/catalog/releases/download/cut@0.0.0-20260826.6056400/manifest.sig",
+        digest: "a".repeat(64),
       },
-      digest: "a".repeat(64),
+      tagline: "Short links on your own domain",
+      addedAt: "2026-09-01T00:00:00Z",
+      revision: 1,
+      services: ["kv"],
+      categories: ["utilities"],
+      license: "MIT",
+      authors: [{ name: "MendyLanda", github: "MendyLanda" }],
       tier: "artifact",
       plan: "free",
       requires: [],
@@ -121,7 +128,7 @@ describe("catalog index cache", () => {
 
 describe("parseCatalogIndex", () => {
   it("keeps the entries this manager can read and leaves out the rest", () => {
-    const { artifacts: _a, digest: _d, ...entry } = INDEX.apps[0] ?? { artifacts: 0, digest: 0 };
+    const { artifacts: _a, ...entry } = INDEX.apps[0] ?? { artifacts: 0 };
     const sandbox = {
       ...entry,
       slug: "built",

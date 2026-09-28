@@ -67,15 +67,13 @@ export function derivePrimitives(sources: ServiceSources & { complete: boolean }
 }
 
 /**
- * What an app uses as its index row publishes it, or null for a row written
- * before the catalog published `services`. Ids this manager does not know yet
- * are skipped. Complete for an artifact tier app, whose row the catalog worked
- * out from the artifact's Worker.
+ * What an app uses as its index row publishes it. Ids this manager does not
+ * know yet are skipped. Complete for an artifact tier app, whose row the
+ * catalog worked out from the artifact's Worker.
  */
 export function indexPrimitives(
   app: Pick<IndexApp, "tier" | "services" | "keyValueDurableObjects">,
-): AppPrimitives | null {
-  if (app.services === undefined) return null;
+): AppPrimitives {
   const listed = new Set(app.services);
   return {
     ids: PRIMITIVE_IDS.filter((id) => listed.has(id)),

@@ -1,10 +1,14 @@
 import {
   appTokenPermissions,
   type CatalogManifest,
+  catalogWorkerName,
   enteredSecrets,
   entryPlaceholderValues,
+  hyperdriveDeclarations,
   type IndexBuild,
   isSeedOnly,
+  needsWildcardHostname,
+  STAGE_PLACEHOLDER,
 } from "@appflare/schema";
 import { Banner, Button, Input, InputGroup, Link, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon } from "@phosphor-icons/react";
@@ -172,7 +176,7 @@ export function InstallForm({
     initialSecretValues(catalog.secrets),
   );
   /** Connection strings by Hyperdrive binding, for an app that uses a database elsewhere. */
-  const databases = catalog.resources?.hyperdrive ?? [];
+  const databases = hyperdriveDeclarations(catalog.resources?.hyperdrive);
   const [connections, setConnections] = useState<Record<string, string>>({});
   /** Settings the admin edited; the others follow their default. */
   const [editedVars, setEditedVars] = useState<Record<string, string>>({});
@@ -218,14 +222,18 @@ export function InstallForm({
   // Placeholders stay in the fields as chips, each saying what it becomes;
   // the install fills them in, for the Worker name it gets.
   const entryWorkers = entryPlaceholderValues(catalog, workerName, subdomain);
+  const workerUrl = installer === null ? workersDevUrl(workerName, subdomain) : null;
   const chips: PlaceholderChips = {
     options: placeholderOptions({
-      wildcard: catalog.install.wildcardHostname === true,
+      wildcard: needsWildcardHostname(catalog.install),
       workers: Object.keys(entryWorkers ?? {}),
     }),
     known: {
       workerName: installer === null ? workerName : null,
-      workerUrl: installer === null ? workersDevUrl(workerName, subdomain) : null,
+      workerUrl,
+      // The app is served on workers.dev until a domain chosen here goes
+      // live; the settings are then filled in again with the domain.
+      appUrl: domain.value === null ? workerUrl : null,
       ...(entryWorkers === undefined ? {} : { entryWorkers }),
     },
   };
@@ -331,10 +339,10 @@ export function InstallForm({
                 <Text variant="secondary" size="sm">
                   {catalog.name}'s installer names its Workers after this install (
                   <span className="font-mono text-[0.9em]">
-                    {catalog.install.selfDeploying?.workers[0]?.replace(
-                      "{{stage}}",
+                    {catalog.install.selfDeploying?.workerNames[0]?.replace(
+                      STAGE_PLACEHOLDER,
                       "appflare-…",
-                    ) ?? catalog.install.workerName}
+                    ) ?? catalogWorkerName(catalog)}
                   </span>
                   ), so several installs never share one.
                 </Text>
@@ -492,11 +500,7 @@ export function InstallForm({
                 <InstallDomainFields
                   disabled={disabled}
                   onChange={onDomainChange}
-                  wildcard={
-                    catalog.install.wildcardHostname === true
-                      ? { reason: catalog.install.wildcardReason ?? "" }
-                      : null
-                  }
+                  wildcard={catalog.install.wildcardHostname ?? null}
                 />
               )}
 

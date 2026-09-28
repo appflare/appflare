@@ -116,8 +116,8 @@ describe("startAllUpdatesCore", () => {
       ...NEW_APP,
       catalog: {
         secrets: [
-          { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-          { name: "API_KEY", label: "API key", generate: false },
+          { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+          { name: "API_KEY", label: "API key" },
         ],
       },
     });

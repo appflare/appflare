@@ -159,7 +159,7 @@ export async function runSelfDeployingReconfigure(
     });
 
     steps.current = "prepare installer";
-    const instanceType = catalog.install.sandbox?.instanceType;
+    const instanceType = catalog.install.container?.instanceType;
     const request = installerRequest({
       action: "deploy",
       installId: params.installId,

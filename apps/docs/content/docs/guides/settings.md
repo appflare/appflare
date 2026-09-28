@@ -30,9 +30,11 @@ Settings are variables on the app's Worker. They work as on the
 - A setting with a fixed set of values shows them as choices. If a newer version no
   longer offers the value you chose, the app gets the version's default instead, the
   job log says so, and the Settings tab asks you to choose again before saving.
-- A default that names the app's own address (`{{workerUrl}}`) is filled in with the
+- A default that names the app's own address (`{{appUrl}}`) is filled in with the
   address the app is reached at: its `workers.dev` URL, or its custom domain while
-  [workers.dev is off](/guides/custom-domains/#turn-off-the-workersdev-url).
+  [workers.dev is off](/guides/custom-domains/#turn-off-the-workersdev-url). When
+  that address changes, Appflare deploys the app's settings again so they follow. A
+  default that names `{{workerUrl}}` always gets the `workers.dev` URL.
 
 ## Rotate a secret
 

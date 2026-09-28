@@ -1,29 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { appAuthors, authorLinks, authorNames, maintainerProfile } from "./authors";
+import { authorLinks, authorNames, maintainerProfile } from "./authors";
 
 const gabriel = { name: "Gabriel Massadas", url: "https://massadas.com", github: "G4brym" };
 const cloudflare = { name: "Cloudflare", url: "https://www.cloudflare.com", github: "cloudflare" };
-
-describe("appAuthors", () => {
-  it("takes the index row's authors over the catalog manifest's", () => {
-    expect(
-      appAuthors({ authors: [gabriel] }, { repo: "cloudflare/templates", authors: [cloudflare] }),
-    ).toEqual([gabriel]);
-  });
-
-  it("falls back to the catalog manifest's authors, then to the repository owner", () => {
-    expect(appAuthors({}, { repo: "cloudflare/templates", authors: [cloudflare] })).toEqual([
-      cloudflare,
-    ]);
-    expect(appAuthors({}, { repo: "willswire/unifi-ddns" })).toEqual([
-      { name: "willswire", github: "willswire" },
-    ]);
-  });
-
-  it("is empty when neither the index nor a manifest names anyone", () => {
-    expect(appAuthors({}, null)).toEqual([]);
-  });
-});
 
 describe("authorNames", () => {
   it("joins names as a sentence would", () => {

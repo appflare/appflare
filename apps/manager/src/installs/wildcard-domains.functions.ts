@@ -1,15 +1,14 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
-import { sandboxBinding } from "../sandbox/binding";
 import { requireRole } from "../server/auth.server";
 import { customDomainInput } from "./custom-domain-input";
-import { startVarsRefreshCore } from "./reconfigure.server";
+import { varsRefresher } from "./reconfigure.server";
+import type { VarsRefresh } from "./vars-refresh.server";
 import { addWildcardDomainInput } from "./wildcard-domain-input";
 import {
   addWildcardDomainCore,
   removeWildcardDomainCore,
-  type VarsRefresh,
   type WildcardDomainDeps,
   WildcardDomainError,
   WildcardDomainTransientError,
@@ -26,16 +25,7 @@ async function deps(): Promise<WildcardDomainDeps> {
   return {
     db: env.DB,
     api: await getCfClient(env),
-    refreshVars: (installId) =>
-      startVarsRefreshCore(
-        {
-          db: env.DB,
-          workflows: env.JOBS,
-          sandboxConnected: sandboxBinding(env) !== undefined,
-          createJob: (id, params) => env.JOBS.create({ id, params }),
-        },
-        installId,
-      ),
+    refreshVars: varsRefresher(env),
   };
 }
 

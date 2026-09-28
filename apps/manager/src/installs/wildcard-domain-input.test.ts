@@ -91,12 +91,12 @@ describe("wildcardCertificateNote", () => {
 
 describe("wildcardOfManifest", () => {
   const manifest = (install: Record<string, unknown>) =>
-    JSON.stringify({ format: 4, catalog: { slug: "hostc", install } });
+    JSON.stringify({ format: 1, catalog: { slug: "hostc", install } });
 
   it("reads the flag and the reason from the recorded manifest", () => {
-    expect(
-      wildcardOfManifest(manifest({ wildcardHostname: true, wildcardReason: "Each tunnel." })),
-    ).toEqual({ reason: "Each tunnel." });
+    expect(wildcardOfManifest(manifest({ wildcardHostname: { reason: "Each tunnel." } }))).toEqual({
+      reason: "Each tunnel.",
+    });
   });
 
   it("is null without the flag, or for a manifest it cannot read", () => {

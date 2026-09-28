@@ -1,4 +1,3 @@
-import { hasFixedWorkerName } from "@appflare/schema";
 import {
   Badge,
   Banner,
@@ -326,7 +325,7 @@ function Review({
           subdomain={review.subdomain}
           canInstall={isAdmin}
           defaultWorkerName={review.suggestedWorkerName}
-          fixedWorkerName={hasFixedWorkerName(review.catalog.install)}
+          fixedWorkerName={review.catalog.install.fixedWorkerName}
           blockedReason={
             refused
               ? "This build cannot be installed; the problems are listed above."

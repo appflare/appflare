@@ -836,17 +836,14 @@ describe("install job", () => {
     const r = await install(
       {
         catalog: {
-          secrets: [
-            ...base.secrets,
-            { name: "APP_KEY", label: "Private key", generate: false, multiline: true },
-          ],
+          secrets: [...base.secrets, { name: "APP_KEY", label: "Private key", multiline: true }],
         },
       },
       {},
       { secrets: { ADMIN_PASSWORD: PASSWORD, APP_KEY: key } },
     );
     expect(r.error).toBeNull();
-    expect(r.fixture.manifest.format).toBe(5);
+    expect(r.fixture.manifest.format).toBe(1);
     expect(r.fake.state.secrets).toEqual({ ADMIN_PASSWORD: PASSWORD, APP_KEY: key });
     expect(r.fake.state.secrets.APP_KEY?.split("\n")).toHaveLength(5);
     expect(JSON.stringify(r.logs)).not.toContain(body);
@@ -960,14 +957,11 @@ describe("install job", () => {
             {
               name: "FIRST_ADMIN_PASSWORD",
               label: "Admin password",
-              generate: true,
+              generate: "password",
               seedOnly: true,
             },
           ],
-          vars: [
-            ...base.vars,
-            { name: "FIRST_ADMIN_NAME", label: "Admin name", required: true, seedOnly: true },
-          ],
+          vars: [...base.vars, { name: "FIRST_ADMIN_NAME", label: "Admin name", seedOnly: true }],
           resources: {
             d1: {
               DB: { schema: ["schema.sql"], postDeployMigrationsDir: "after-deploy", seed },
@@ -1053,7 +1047,7 @@ describe("install job", () => {
 
     it("carries the seed-only values in the Workflow params alone", async () => {
       const fixture = await buildArtifactFixture(seedApp(false));
-      expect(fixture.manifest.format).toBe(4);
+      expect(fixture.manifest.format).toBe(1);
       const started = await start(fixture, seedInput);
       expect(started.params.seed).toEqual({
         secrets: { FIRST_ADMIN_PASSWORD: SEED_PASSWORD },
@@ -1160,7 +1154,7 @@ describe("install job", () => {
     });
     expect(r.error).toBeNull();
     expect(r.job?.status).toBe("succeeded");
-    expect(r.fixture.manifest.format).toBe(6);
+    expect(r.fixture.manifest.format).toBe(1);
     const names = r.step.names;
     const at = (name: string) => names.indexOf(name);
     expect(at("record R2 bucket cut-files")).toBeLessThan(
@@ -1205,7 +1199,7 @@ describe("install job", () => {
         { type: "kv_namespace", name: "CUT_KV" },
       ],
       catalog: {
-        resources: { hyperdrive: [{ binding: "HYPERDRIVE", protocol: "postgres" as const }] },
+        resources: { hyperdrive: { HYPERDRIVE: { protocol: "postgres" as const } } },
       },
     };
 
@@ -1307,8 +1301,8 @@ describe("install job", () => {
       catalog: {
         plan: "paid" as const,
         secrets: [
-          { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-          { name: "CATALOG_TOKEN", label: "R2 token", generate: false },
+          { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" as const },
+          { name: "CATALOG_TOKEN", label: "R2 token" },
         ],
         resources: {
           pipelines: {
@@ -1596,12 +1590,12 @@ describe("install job", () => {
         ],
         catalog: {
           vars: [
-            { name: "HOME_PAGE", label: "Home page", required: false },
+            { name: "HOME_PAGE", label: "Home page", optional: true },
             {
               name: "EMAIL_ADDRESSES",
               label: "Addresses",
               default: '["{{workerName}}@example.com"]',
-              required: false,
+              optional: true,
             },
           ],
         },
@@ -2378,7 +2372,7 @@ describe("install job", () => {
             packageManager: "pnpm",
             wranglerConfig: "wrangler.jsonc",
             workerName: "cut",
-            healthPath: "/api/health",
+            health: { path: "/api/health" },
           },
         },
       },
@@ -2622,7 +2616,7 @@ describe("install job", () => {
     });
   });
 
-  it("verifies an app in status-only mode by any answer of its own Worker", async () => {
+  it("verifies an app in any-response mode by any answer of its own Worker", async () => {
     const r = await install(
       {
         catalog: {
@@ -2631,7 +2625,7 @@ describe("install job", () => {
             packageManager: "pnpm",
             wranglerConfig: "wrangler.jsonc",
             workerName: "cut",
-            healthMode: "status-only",
+            health: { mode: "any-response" },
           },
         },
       },
@@ -2691,11 +2685,11 @@ describe("install job, an app of several Workers", () => {
     ],
     catalog: {
       secrets: [
-        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true, workers: ["app"] },
-        { name: "SHARED_KEY", label: "Shared key", generate: true },
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password", workers: ["app"] },
+        { name: "SHARED_KEY", label: "Shared key", generate: "password" },
       ],
       vars: [
-        { name: "JOBS_URL", label: "Jobs URL", default: "{{workerUrl:jobs}}", required: false },
+        { name: "JOBS_URL", label: "Jobs URL", default: "{{workerUrl:jobs}}", optional: true },
       ],
     },
   });
@@ -2827,6 +2821,11 @@ describe("install job, an app of several Workers", () => {
   it("refuses an entry of more than three Workers not marked paid, before creating anything", async () => {
     const r = await install({
       otherWorkers: [{ name: "a" }, { name: "b" }, { name: "c" }],
+      catalog: { plan: "paid" },
+      // A manifest the catalog would refuse, signed all the same.
+      tweak: (m) => {
+        m.catalog.plan = "free";
+      },
     });
     expect(r.job?.status).toBe("failed");
     expect(r.job?.error).toContain('an entry of 4 Workers needs \\"plan\\": \\"paid\\"');

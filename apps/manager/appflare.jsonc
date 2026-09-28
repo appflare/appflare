@@ -8,36 +8,31 @@
   "slug": "appflare",
   "name": "Appflare",
   "summary": "A single Worker in your own Cloudflare account that lets you browse a catalog of Cloudflare-native apps, install them, and keep them updated.",
-  "homepage": "https://github.com/appflare/appflare",
+  "tagline": "Install and update apps in your own Cloudflare account",
   "repo": "appflare/appflare",
   "license": "Apache-2.0",
-  "categories": ["platform"],
+  "categories": ["utilities"],
   "maintainers": ["MendyLanda"],
   // Placeholders. At build time `ref` becomes the release version (APPFLARE_VERSION,
   // e.g. "0.1.0"; the packer derives the artifact version from a semver ref) and
   // `sha` becomes the commit being built (`git rev-parse HEAD`).
   "source": { "ref": "0.0.0-dev", "sha": "0000000000000000000000000000000000000000" },
   "install": {
-    "tier": "artifact",
     "packageManager": "pnpm",
     // The Cloudflare Vite plugin's generated config (main is dist/server/index.js,
     // assets come from dist/client) without the Worker's service binding to
     // itself, which the installer and the self-update add by the Worker's own
     // name. `pnpm build` writes it (scripts/release-wrangler-config.mjs).
-    "wranglerConfig": "dist/server/wrangler.release.json",
-    "workerName": "appflare"
+    "wranglerConfig": "dist/server/wrangler.release.json"
   },
   "plan": "free",
-  "requires": [],
   // BETTER_AUTH_SECRET is set by the CLI at install; CF_API_TOKEN is stored by
   // the manager itself from the setup wizard.
   "secrets": [],
-  "vars": [],
   "postInstall": [
     {
       "type": "markdown",
       "content": "Open {{workerUrl}} to finish setup: paste a Cloudflare API token for this account, then create the owner account."
     }
-  ],
-  "tokenPermissions": []
+  ]
 }

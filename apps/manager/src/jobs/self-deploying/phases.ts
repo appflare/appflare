@@ -144,7 +144,7 @@ export function installerOf(catalog: CatalogManifest) {
 /** The Workers an install's installer creates, stage filled in; the first serves the app. */
 export function expectedWorkers(catalog: CatalogManifest, installId: string): string[] {
   const stage = selfDeployingStage(installId);
-  return installerOf(catalog).workers.map((template) => renderWorkerTemplate(template, stage));
+  return installerOf(catalog).workerNames.map((template) => renderWorkerTemplate(template, stage));
 }
 
 /** The run id that names a run's log: `deploy-<version>` or `destroy-<version>`. */
@@ -167,13 +167,16 @@ export function settingsRunId(jobId: string): string {
  * The app's settings as the installer gets them: each catalog var's default
  * (placeholders filled in for the Worker that serves the app), replaced by
  * what the admin entered. Empty values are left out, and so is a stored
- * choice this version no longer offers (the default applies instead).
+ * choice this version no longer offers (the default applies instead). The
+ * app's own installer decides where its Workers answer and Appflare adds no
+ * domain to them, so the served address (`{{appUrl}}`) is the workers.dev one.
  */
 export function installerVars(
   catalog: CatalogManifest,
   entered: Readonly<Record<string, string>>,
-  placeholders: PlaceholderValues,
+  worker: Omit<PlaceholderValues, "appUrl">,
 ): Record<string, string> {
+  const placeholders: PlaceholderValues = { ...worker, appUrl: worker.workerUrl };
   const out: Record<string, string> = {};
   for (const v of catalog.vars) {
     const stored = entered[v.name];

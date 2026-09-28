@@ -1,40 +1,42 @@
-import type { CatalogSecret } from "@appflare/schema";
+import { type CatalogSecret, catalogSecretSchema, type TokenPermission } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
+import type { z } from "zod";
 import { appTokenSecret } from "./app-token-secret";
 
-const secret = (name: string, extra: Partial<CatalogSecret> = {}): CatalogSecret => ({
-  name,
-  label: name,
-  generate: false,
-  ...extra,
-});
+const secret = (name: string, extra: Partial<z.input<typeof catalogSecretSchema>> = {}) =>
+  catalogSecretSchema.parse({ name, label: name, ...extra }) as CatalogSecret;
 
-const ANALYTICS = [{ name: "Account.Account Analytics:Read" }];
+const ANALYTICS: TokenPermission[] = [
+  { group: "Account Analytics", scope: "account", access: "read", reason: "Reads the charts." },
+];
 
 describe("appTokenSecret", () => {
-  it("finds the secret that takes the app's Cloudflare token by the names apps give it", () => {
-    for (const name of [
-      "CF_API_TOKEN",
-      "CLOUDFLARE_API_TOKEN",
-      "CF_TOKEN",
-      "CF_BEARER_TOKEN",
-      "NUXT_CF_API_TOKEN",
-    ]) {
-      expect(
-        appTokenSecret({
-          secrets: [secret("ADMIN_PASSWORD", { generate: true }), secret(name)],
-          tokenPermissions: ANALYTICS,
-        }),
-      ).toBe(name);
-    }
-  });
-
-  it("finds none when the app needs no token of its own, or no secret takes it", () => {
-    expect(appTokenSecret({ secrets: [secret("CF_API_TOKEN")], tokenPermissions: [] })).toBe(null);
+  it("takes the secret the entry declares with cloudflareToken, whatever it is called", () => {
     expect(
       appTokenSecret({
-        secrets: [secret("SETUP_TOKEN"), secret("POLAR_ACCESS_TOKEN"), secret("GITHUB_TOKEN")],
+        secrets: [
+          secret("ADMIN_PASSWORD", { generate: "password" }),
+          secret("API_KEY", { cloudflareToken: true }),
+        ],
         tokenPermissions: ANALYTICS,
+      }),
+    ).toBe("API_KEY");
+  });
+
+  it("does not guess from a secret's name", () => {
+    expect(
+      appTokenSecret({
+        secrets: [secret("CF_API_TOKEN"), secret("CLOUDFLARE_API_TOKEN")],
+        tokenPermissions: ANALYTICS,
+      }),
+    ).toBe(null);
+  });
+
+  it("finds none when the app needs no token of its own", () => {
+    expect(
+      appTokenSecret({
+        secrets: [secret("CF_API_TOKEN", { cloudflareToken: true })],
+        tokenPermissions: [],
       }),
     ).toBe(null);
   });
@@ -42,13 +44,13 @@ describe("appTokenSecret", () => {
   it("skips a seed-only secret, which is used once and never reaches the app", () => {
     expect(
       appTokenSecret({
-        secrets: [secret("CF_API_TOKEN", { seedOnly: true })],
+        secrets: [secret("CF_API_TOKEN", { seedOnly: true, cloudflareToken: true })],
         tokenPermissions: ANALYTICS,
       }),
     ).toBe(null);
   });
 
-  it("takes the secret a Pipelines sink names, whatever it is called", () => {
+  it("takes the secret a Pipelines sink names when none is declared", () => {
     expect(
       appTokenSecret({
         secrets: [secret("CF_API_TOKEN"), secret("CATALOG_TOKEN")],
