@@ -1,6 +1,7 @@
 import { Button, Dialog, Text } from "@cloudflare/kumo";
 import { CaretLeftIcon, CaretRightIcon, XIcon } from "@phosphor-icons/react";
 import { type KeyboardEvent, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { CatalogImage } from "./catalog-image";
 import {
   LIGHTBOX_CLOSED,
   type LightboxAction,
@@ -26,8 +27,18 @@ function scrollBehavior(): ScrollBehavior {
 }
 
 /**
- * An app's screenshots as one strip: every image at the same height and its
- * own width, snapping as it scrolls, with no scrollbar; arrows on wider
+ * Every screenshot's box: 16:10, the shape most app screenshots are. The
+ * catalog index gives no dimensions, so the box is fixed before any image
+ * arrives and each screenshot is letterboxed into it; the strip, its arrows
+ * and the counter under it never move as screenshots load. In the strip a
+ * portrait screenshot (a phone's) shows its top across the box's width
+ * rather than a thin strip between bars; the large view shows all of it.
+ */
+const SCREENSHOT_BOX = { aspectRatio: "16 / 10" } as const;
+
+/**
+ * An app's screenshots as one strip: every screenshot in a box of the same
+ * size, snapping as it scrolls, with no scrollbar; arrows on wider
  * screens when the strip overflows, and "N of M" under it. Selecting a
  * screenshot opens it large in a Kumo dialog with previous and next. Kumo has
  * no carousel, so the strip is a list of buttons with a roving tab stop
@@ -67,8 +78,7 @@ export function ScreenshotGallery({
     });
   }, []);
 
-  // The box's own size changes with the window; each screenshot's width is
-  // known only once it loads, which is measured from its `onLoad`.
+  // The strip's own size changes with the window; the screenshots' never do.
   useEffect(() => {
     const el = list.current;
     if (el === null) return;
@@ -151,15 +161,15 @@ export function ScreenshotGallery({
                 onClick={() => dispatch({ type: "open", index: i })}
                 onFocus={() => move({ type: "focus", index: i })}
                 onKeyDown={onStripKey}
-                className="block h-52 cursor-zoom-in overflow-hidden rounded-lg bg-kumo-recessed ring ring-kumo-hairline focus-visible:outline-2 focus-visible:outline-kumo-brand focus-visible:outline-offset-2 md:h-72"
+                className="block cursor-zoom-in rounded-lg focus-visible:outline-2 focus-visible:outline-kumo-brand focus-visible:outline-offset-2"
               >
-                <img
+                <CatalogImage
                   src={image.src}
                   alt=""
-                  className="h-full w-auto max-w-none"
-                  loading={i < 3 ? "eager" : "lazy"}
-                  decoding="async"
-                  onLoad={measure}
+                  fit="contain-landscape"
+                  eager={i === 0}
+                  style={SCREENSHOT_BOX}
+                  className="h-52 rounded-lg ring ring-kumo-hairline md:h-72"
                 />
               </button>
             </li>
@@ -223,12 +233,14 @@ export function ScreenshotGallery({
           </div>
           {shown !== undefined && (
             <figure className="m-0 grid justify-items-center gap-2">
-              <img
+              {/* Full width and as tall as the window allows, whatever the image turns out to be. */}
+              <CatalogImage
                 key={shown.src}
                 src={shown.src}
                 alt={shown.alt}
-                className="max-h-[calc(100dvh-16rem)] w-auto max-w-full rounded-md object-contain"
-                decoding="async"
+                eager
+                style={SCREENSHOT_BOX}
+                className="max-h-[calc(100dvh-16rem)] w-full rounded-md"
               />
               {/* The image's alt already names it for screen readers. */}
               <figcaption aria-hidden className="text-center text-kumo-subtle text-sm">

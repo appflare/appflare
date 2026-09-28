@@ -155,7 +155,7 @@ function InstallPage() {
         title={install.label}
         description={install.displayName === null ? undefined : install.name}
         parents={[HOME_CRUMB]}
-        icon={<AppIcon src={install.icon} name={install.name} size={40} />}
+        icon={<AppIcon src={install.icon} name={install.name} size={40} eager />}
         titleAction={isAdmin ? <RenameInstallDialog install={install} /> : undefined}
         actions={
           install.address !== null ? (
