@@ -109,7 +109,8 @@ function haystack(app: BrowsableApp): string {
       app.summary,
       ...(app.authors ?? []).map((a) => a.name),
       ...app.primitives.ids.flatMap((id) => [PRIMITIVE_LABELS[id], id]),
-      ...app.categories,
+      // The old slug and the one it became, so either word finds the app.
+      ...app.categories.flatMap((c) => [c, canonicalCategory(c)]),
     ].join("\n"),
   );
 }
@@ -128,7 +129,7 @@ export function matchesSearch(app: BrowsableApp, q: string | undefined): boolean
 export function matchesFilters(app: BrowsableApp, query: BrowseQuery): boolean {
   if (query.installed === 1 && app.instances.length === 0) return false;
   if (query.plan !== undefined && app.plan !== query.plan) return false;
-  if (query.category !== undefined && !app.categories.includes(query.category)) return false;
+  if (query.category !== undefined && !inCategory(app, query.category)) return false;
   if (query.source !== undefined && app.source?.id !== query.source) return false;
   if (query.license !== undefined) {
     if (app.appLicense == null || licenseKind(app.appLicense) !== query.license) return false;
@@ -187,13 +188,16 @@ export function showsResults(query: BrowseQuery): boolean {
   return isFiltered(query) || query.sort !== undefined;
 }
 
-/** Every category the apps list with its number of apps: the most apps first, then by label. */
+/**
+ * Every category the apps list with its number of apps: the most apps first,
+ * then by label. A folded category counts toward the one it became.
+ */
 export function categoryCounts(
   apps: ReadonlyArray<Pick<BrowsableApp, "categories">>,
 ): Array<{ id: string; count: number }> {
   const counts = new Map<string, number>();
   for (const app of apps) {
-    for (const category of new Set(app.categories)) {
+    for (const category of new Set(app.categories.map(canonicalCategory))) {
       counts.set(category, (counts.get(category) ?? 0) + 1);
     }
   }
@@ -208,11 +212,10 @@ export function categoryCounts(
 const CATEGORY_LABELS: Readonly<Record<string, string>> = {
   ai: "AI",
   analytics: "Analytics",
-  blogging: "Blogging",
   bots: "Bots",
   business: "Business",
   chat: "Chat",
-  cms: "CMS",
+  cms: "Websites and blogs",
   community: "Community",
   "developer-tools": "Developer tools",
   dns: "DNS",
@@ -223,9 +226,6 @@ const CATEGORY_LABELS: Readonly<Record<string, string>> = {
   files: "Files",
   finance: "Finance",
   games: "Games",
-  // The catalog is folding "gaming" into "games". Until it has, both can be
-  // listed at once, and two cards both named "Games" could not be told apart.
-  gaming: "Gaming",
   "link-shortener": "Link shortener",
   marketing: "Marketing",
   media: "Media",
@@ -240,11 +240,32 @@ const CATEGORY_LABELS: Readonly<Record<string, string>> = {
   scheduling: "Scheduling",
   security: "Security",
   sharing: "Sharing",
-  social: "Social",
-  storage: "Storage",
   sync: "Sync",
   utilities: "Utilities",
 };
+
+/**
+ * Categories the catalog folded into another, each with the one it became. An
+ * older index or another catalog may still list the old slug; it counts, filters
+ * and reads as its target, so the page never shows two cards for one category.
+ */
+const FOLDED_CATEGORIES: Readonly<Record<string, string>> = {
+  blogging: "cms",
+  gaming: "games",
+  social: "community",
+  storage: "files",
+};
+
+/** The category a slug stands for: the target of a folded category, any other slug itself. */
+export function canonicalCategory(category: string): string {
+  return FOLDED_CATEGORIES[category] ?? category;
+}
+
+/** Whether `app` is listed under `category`, counting the categories folded into it. */
+export function inCategory(app: Pick<BrowsableApp, "categories">, category: string): boolean {
+  const target = canonicalCategory(category);
+  return app.categories.some((c) => canonicalCategory(c) === target);
+}
 
 /** Words kept in capitals when a category without a label is spelled out from its slug. */
 const CATEGORY_WORDS: Readonly<Record<string, string>> = {
@@ -255,12 +276,13 @@ const CATEGORY_WORDS: Readonly<Record<string, string>> = {
 };
 
 /**
- * A category slug as a label: `cms` → "CMS", `developer-tools` → "Developer
- * tools". A category without a label of its own is spelled out from its slug
- * in sentence case, keeping known acronyms: `dns-tools` → "DNS tools".
+ * A category slug as a label: `ecommerce` → "E-commerce", `developer-tools` →
+ * "Developer tools", a folded category as the one it became. A category
+ * without a label of its own is spelled out from its slug in sentence case,
+ * keeping known acronyms: `dns-tools` → "DNS tools".
  */
 export function categoryLabel(category: string): string {
-  const label = CATEGORY_LABELS[category];
+  const label = CATEGORY_LABELS[canonicalCategory(category)];
   if (label !== undefined) return label;
   const words = category.split(/[-_\s]+/).filter((w) => w.length > 0);
   return words

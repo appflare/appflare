@@ -7,7 +7,7 @@ import {
 } from "@appflare/schema";
 import { formatBytes, formatExactDateTime } from "../components/format";
 import type { InstallVarField } from "../installs/install-vars";
-import { categoryLabel } from "./browse";
+import { canonicalCategory, categoryLabel } from "./browse";
 import { type AppLicense, licenseBadgeCopy, licenseFileHref, licenseHref } from "./license";
 import { type AppPopularity, formatCount } from "./popularity";
 import type { CatalogSource } from "./sources";
@@ -288,7 +288,8 @@ export function appStats(input: AppStatsInput, options: DateOptions = {}): AppSt
           tone: "default",
         },
   );
-  const [category, ...more] = input.categories;
+  // An index that lists a folded category next to the one it became names it once.
+  const [category, ...more] = [...new Set(input.categories.map(canonicalCategory))];
   if (category !== undefined) {
     stats.push({
       id: "category",

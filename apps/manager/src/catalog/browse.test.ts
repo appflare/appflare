@@ -4,6 +4,7 @@ import {
   browseApps,
   browseNavigation,
   browseSearchSchema,
+  canonicalCategory,
   categoryCounts,
   categoryLabel,
   compareNewest,
@@ -260,6 +261,41 @@ describe("categories", () => {
       { id: "notes", count: 1 },
     ]);
     expect(categoryCounts([])).toEqual([]);
+  });
+
+  it("counts a folded category toward the one it became, once per app", () => {
+    expect(
+      categoryCounts([
+        { categories: ["games"] },
+        { categories: ["gaming"] },
+        { categories: ["games", "gaming"] },
+        { categories: ["notes"] },
+      ]),
+    ).toEqual([
+      { id: "games", count: 3 },
+      { id: "notes", count: 1 },
+    ]);
+    expect(categoryLabel("games")).toBe("Games");
+  });
+
+  it("filters and searches a folded category as the one it became", () => {
+    const chess = app({ slug: "chess", categories: ["games"] });
+    const snake = app({ slug: "snake", categories: ["gaming"] });
+    const notes = app({ slug: "notes", categories: ["notes"] });
+    const all = [chess, snake, notes];
+    expect(slugs(browseApps(all, { category: "games" }))).toEqual(["chess", "snake"]);
+    expect(slugs(browseApps(all, { category: "gaming" }))).toEqual(["chess", "snake"]);
+    expect(slugs(all.filter((a) => matchesSearch(a, "games")))).toEqual(["chess", "snake"]);
+    expect(slugs(all.filter((a) => matchesSearch(a, "gaming")))).toEqual(["snake"]);
+  });
+
+  it("maps each folded category to the one it became", () => {
+    expect(canonicalCategory("blogging")).toBe("cms");
+    expect(canonicalCategory("gaming")).toBe("games");
+    expect(canonicalCategory("social")).toBe("community");
+    expect(canonicalCategory("storage")).toBe("files");
+    expect(canonicalCategory("games")).toBe("games");
+    expect(canonicalCategory("something-new")).toBe("something-new");
   });
 
   it("labels slugs in sentence case, keeping acronyms", () => {

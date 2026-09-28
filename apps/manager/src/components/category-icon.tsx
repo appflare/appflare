@@ -1,7 +1,7 @@
 import {
   ArrowsClockwiseIcon,
-  ArticleIcon,
   BellIcon,
+  BrowserIcon,
   BuildingsIcon,
   CalendarBlankIcon,
   ChartLineIcon,
@@ -18,39 +18,35 @@ import {
   GameControllerIcon,
   GlobeIcon,
   GraduationCapIcon,
-  HardDrivesIcon,
   type Icon,
   LinkIcon,
   MegaphoneIcon,
   NetworkIcon,
   NotepadIcon,
   PasswordIcon,
-  PencilLineIcon,
   PulseIcon,
   RobotIcon,
   ShareNetworkIcon,
   ShieldCheckIcon,
   ShoppingCartIcon,
   SparkleIcon,
-  ThumbsUpIcon,
   UsersIcon,
   UsersThreeIcon,
   WrenchIcon,
 } from "@phosphor-icons/react";
+import { canonicalCategory } from "../catalog/browse";
 
 /**
- * An icon per catalog category, chosen to be recognised at a glance. Chat and
- * sharing already use speech bubbles and the share symbol, so social is a
- * thumbs up.
+ * An icon per catalog category, chosen to be recognised at a glance. Websites
+ * and blogs (`cms`) are a browser window, since the globe is DNS.
  */
 const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
   ai: SparkleIcon,
   analytics: ChartLineIcon,
-  blogging: PencilLineIcon,
   bots: RobotIcon,
   business: BuildingsIcon,
   chat: ChatCircleIcon,
-  cms: ArticleIcon,
+  cms: BrowserIcon,
   community: UsersThreeIcon,
   "developer-tools": CodeIcon,
   dns: GlobeIcon,
@@ -61,7 +57,6 @@ const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
   files: FolderIcon,
   finance: CurrencyDollarIcon,
   games: GameControllerIcon,
-  gaming: GameControllerIcon,
   "link-shortener": LinkIcon,
   marketing: MegaphoneIcon,
   media: FilmStripIcon,
@@ -76,8 +71,6 @@ const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
   scheduling: CalendarBlankIcon,
   security: ShieldCheckIcon,
   sharing: ShareNetworkIcon,
-  social: ThumbsUpIcon,
-  storage: HardDrivesIcon,
   sync: ArrowsClockwiseIcon,
   utilities: WrenchIcon,
 };
@@ -85,9 +78,12 @@ const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
 /** The icon of a category the catalog adds before it has one of its own. */
 export const FALLBACK_CATEGORY_ICON: Icon = CloudIcon;
 
-/** The icon of a catalog category, or the fallback for one without its own. */
+/**
+ * The icon of a catalog category (a folded one shows the icon of the one it
+ * became), or the fallback for one without its own.
+ */
 export function categoryIcon(category: string): Icon {
-  return CATEGORY_ICONS[category] ?? FALLBACK_CATEGORY_ICON;
+  return CATEGORY_ICONS[canonicalCategory(category)] ?? FALLBACK_CATEGORY_ICON;
 }
 
 /** The icon of a catalog category, decorative (the category's name is always next to it). */

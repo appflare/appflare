@@ -12,6 +12,7 @@ import {
   browseApps,
   browseNavigation,
   browseSearchSchema,
+  canonicalCategory,
   categoryCounts,
   showsResults,
 } from "../../../catalog/browse";
@@ -194,7 +195,7 @@ function Storefront({ catalog }: { catalog: CatalogList }) {
         </div>
         <CategoryCards
           categories={categories}
-          selected={query.category}
+          selected={query.category === undefined ? undefined : canonicalCategory(query.category)}
           onSelect={(category) => update({ category })}
         />
       </div>

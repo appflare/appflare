@@ -6,6 +6,7 @@ import {
   categoryCounts,
   categoryLabel,
   compareNewest,
+  inCategory,
 } from "./browse";
 import { LICENSE_FILTERS } from "./license";
 import { comparePopularity } from "./popularity";
@@ -134,7 +135,7 @@ function categoryRows<T extends BrowsableApp>(apps: readonly T[]): Array<Storefr
       title: categoryLabel(id),
       caption: null,
       apps: apps
-        .filter((app) => app.categories.includes(id))
+        .filter((app) => inCategory(app, id))
         .sort((a, b) => comparePopularity(a.popularity, b.popularity))
         .slice(0, ROW_LIMIT),
       seeAll: { category: id },
