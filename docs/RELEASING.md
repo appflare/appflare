@@ -158,12 +158,12 @@ rebuilt:
   ```sh
   curl -fsS -X POST \
     -H "Accept: application/vnd.github+json" \
-    -H "Authorization: Bearer $DOCS_DISPATCH_TOKEN" \
+    -H "Authorization: Bearer $DOCS_REBUILD_TOKEN" \
     https://api.github.com/repos/appflare/appflare/actions/workflows/docs.yml/dispatches \
     -d '{"ref":"main"}'
   ```
 
-  `DOCS_DISPATCH_TOKEN` is a fine-grained token for `appflare/appflare` only, with
+  `DOCS_REBUILD_TOKEN` is a fine-grained token for `appflare/appflare` only, with
   **Actions: write** and nothing else. The job runs no code from either repository
   and takes no inputs; the docs workflow always builds `main` against whatever the
   catalog has published.
