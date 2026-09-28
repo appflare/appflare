@@ -26,6 +26,7 @@ import { CloudflareTokenCard } from "./cloudflare-token-card";
 import { DocsLink } from "./docs-link";
 import { GatewayCard } from "./gateway-card";
 import { GithubAccessCard } from "./github-access-card";
+import { type AddressView, ManagerAddressSection } from "./manager-address-section";
 import { ManagerVersionsSection } from "./manager-versions-section";
 import { SETTINGS_PAGES } from "./navigation";
 import { NotificationChannels } from "./notification-channels";
@@ -222,20 +223,24 @@ export function UsageDataSettingsView({
 }
 
 /**
- * `/settings/domains`: the gateway that serves external domains (Cloudflare
- * for SaaS). Custom domains in the account's own zones need no setting; they
- * are added on each app's page.
+ * `/settings/domains`: Appflare's own address (admins), then the gateway
+ * that serves external domains (Cloudflare for SaaS). Custom domains in the
+ * account's own zones need no setting; they are added on each app's page.
  */
 export function DomainsSettingsView({
   view,
+  address = null,
   isAdmin,
 }: {
   view: GatewayView | { error: string };
+  /** Null for members. */
+  address?: AddressView | null;
   isAdmin: boolean;
 }) {
   return (
     <>
       <SettingsPageHeader page="domains" />
+      {isAdmin && address !== null && <ManagerAddressSection view={address} />}
       <GatewayCard view={view} isAdmin={isAdmin} />
     </>
   );

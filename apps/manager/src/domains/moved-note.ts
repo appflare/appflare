@@ -8,8 +8,11 @@ import { returnToSearchSchema } from "../components/return-to";
  * says why. Client-safe.
  */
 
-export const MOVED_SIGN_IN_NOTE =
-  "Sign in again at the new address. Passkeys added at the old address work only there; add new ones in Users and sign-in.";
+/** What becomes of passkeys when Appflare changes its address. */
+export const MOVED_PASSKEY_NOTE =
+  "Passkeys added at the old address work only there; add new ones in Users and sign-in.";
+
+export const MOVED_SIGN_IN_NOTE = `Sign in again at the new address. ${MOVED_PASSKEY_NOTE}`;
 
 /**
  * `moved=1`, read as true; anything else as nothing. The router parses

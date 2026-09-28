@@ -2,17 +2,29 @@ import { describe, expect, it } from "vitest";
 import { capabilitiesView } from "../capabilities/capabilities";
 import { catalogNeeds } from "../capabilities/capability-rows";
 import type { CapabilityRowsData } from "../capabilities/capability-rows.server";
+import { safeReturnPath } from "../components/internal-path";
+import type { AddressOptions } from "../domains/manager-address.server";
 import { NO_SANDBOX_JOBS } from "../sandbox/readiness";
 import {
+  ADDRESS_UNREADABLE_NOTE,
   initialWizardState,
   type SavedTokenSummary,
+  setupResumePath,
   tokenOutcome,
   type WizardEvent,
   type WizardState,
   wizardCopy,
+  wizardProgress,
   wizardReducer,
-  wizardStepNumber,
 } from "./wizard";
+
+const ZONES: AddressOptions = {
+  zones: [{ id: "z1", name: "example.com", suggestedHostname: "appflare.example.com" }],
+  inactiveZones: [],
+  missing: [],
+  noZones: false,
+};
+const NO_ZONES: AddressOptions = { zones: [], inactiveZones: [], missing: [], noZones: true };
 
 const CHECKLIST: CapabilityRowsData = {
   view: capabilitiesView(undefined, null, "acc0000000000000000000000000000a"),
@@ -43,15 +55,59 @@ describe("the setup wizard", () => {
       checklist: CHECKLIST,
     });
     expect(() => initialWizardState("checklist", null)).toThrow();
+    // Resumed after the address step (a reload, or at Appflare's new address).
+    expect(initialWizardState("checklist", CHECKLIST, { addressShown: true })).toEqual({
+      step: "checklist",
+      checklist: CHECKLIST,
+      addressShown: true,
+    });
   });
 
-  it("walks token, owner, checklist in place", () => {
+  it("walks token, owner, checklist in place when the account has no domain", () => {
     const start: WizardState = { step: "connect" };
     const owner = run(start, { type: "connected", next: "create-owner" });
     expect(owner).toEqual({ step: "create-owner" });
-    expect(run(owner, { type: "owner-created", checklist: CHECKLIST })).toEqual({
+    for (const address of [NO_ZONES, { ...NO_ZONES, noZones: false, inactiveZones: ["x.dev"] }]) {
+      expect(run(owner, { type: "owner-created", checklist: CHECKLIST, address })).toEqual({
+        step: "checklist",
+        checklist: CHECKLIST,
+      });
+    }
+  });
+
+  it("skips the address step when the domains could not be read, and says so on the last step", () => {
+    const last = run(
+      { step: "create-owner" },
+      { type: "owner-created", checklist: CHECKLIST, address: null },
+    );
+    expect(last).toEqual({ step: "checklist", checklist: CHECKLIST, addressUnreadable: true });
+    expect(wizardProgress(last)).toEqual({ step: 3, count: 3 });
+    // Check again keeps the line.
+    expect(run(last, { type: "checklist-loaded", checklist: LATER })).toEqual({
+      step: "checklist",
+      checklist: LATER,
+      addressUnreadable: true,
+    });
+    expect(ADDRESS_UNREADABLE_NOTE).toBe(
+      "Could not read your domains; you can set Appflare's address later in [Domains settings](/settings/domains#address).",
+    );
+  });
+
+  it("asks where Appflare should live between the owner and the checklist when there is a domain", () => {
+    const address = run(
+      { step: "create-owner" },
+      { type: "owner-created", checklist: CHECKLIST, address: ZONES },
+    );
+    expect(address).toEqual({ step: "address", options: ZONES, checklist: CHECKLIST });
+    expect(wizardCopy(address).title).toBe("Where should Appflare live?");
+    // Keep, Later, or a move that has not left the page: on to the checklist.
+    expect(run(address, { type: "address-done" })).toEqual({
       step: "checklist",
       checklist: CHECKLIST,
+      addressShown: true,
+    });
+    expect(run({ step: "create-owner" }, { type: "address-done" })).toEqual({
+      step: "create-owner",
     });
   });
 
@@ -68,7 +124,9 @@ describe("the setup wizard", () => {
     expect(run(owner, { type: "connected", next: "redeploying" })).toBe(owner);
     expect(run(owner, { type: "checklist-loaded", checklist: CHECKLIST })).toBe(owner);
     const connect: WizardState = { step: "connect" };
-    expect(run(connect, { type: "owner-created", checklist: CHECKLIST })).toBe(connect);
+    expect(run(connect, { type: "owner-created", checklist: CHECKLIST, address: ZONES })).toBe(
+      connect,
+    );
     expect(run(connect, { type: "token-saved", saved: SAVED })).toBe(connect);
   });
 
@@ -98,13 +156,41 @@ describe("the setup wizard", () => {
     });
   });
 
-  it("keeps the step indicator on the three steps only", () => {
-    expect(wizardStepNumber({ step: "connect" })).toBe(1);
-    expect(wizardStepNumber({ step: "redeploying" })).toBe(2);
-    expect(wizardStepNumber({ step: "create-owner" })).toBe(2);
-    expect(wizardStepNumber({ step: "checklist", checklist: CHECKLIST })).toBe(3);
-    expect(wizardStepNumber({ step: "wait-for-admin" })).toBeNull();
-    expect(wizardStepNumber({ step: "cloudflare-token" })).toBeNull();
+  it("keeps the step indicator on the steps, counting the address step only when shown", () => {
+    expect(wizardProgress({ step: "connect" })).toEqual({ step: 1, count: 3 });
+    expect(wizardProgress({ step: "redeploying" })).toEqual({ step: 2, count: 3 });
+    expect(wizardProgress({ step: "create-owner" })).toEqual({ step: 2, count: 3 });
+    expect(wizardProgress({ step: "checklist", checklist: CHECKLIST })).toEqual({
+      step: 3,
+      count: 3,
+    });
+    expect(wizardProgress({ step: "address", options: ZONES, checklist: CHECKLIST })).toEqual({
+      step: 3,
+      count: 4,
+    });
+    expect(wizardProgress({ step: "checklist", checklist: CHECKLIST, addressShown: true })).toEqual(
+      { step: 4, count: 4 },
+    );
+    expect(wizardProgress({ step: "wait-for-admin" })).toBeNull();
+    expect(wizardProgress({ step: "cloudflare-token" })).toBeNull();
+  });
+
+  it("resumes at the last step after signing in at the new address", () => {
+    expect(setupResumePath(undefined)).toBe("/setup?checklist=true&address=true");
+    const kept = setupResumePath("/apps/a1#secrets");
+    expect(kept).toBe("/setup?checklist=true&address=true&returnTo=%2Fapps%2Fa1%23secrets");
+    // Sign-in takes it as a page to return to, and drops a hostile one inside.
+    for (const path of [kept, setupResumePath(undefined)]) expect(safeReturnPath(path)).toBe(path);
+    expect(setupResumePath("//evil.example")).toBe("/setup?checklist=true&address=true");
+  });
+
+  it("keeps the four-step count when Check again reloads the last step", () => {
+    expect(
+      run(
+        { step: "checklist", checklist: CHECKLIST, addressShown: true },
+        { type: "checklist-loaded", checklist: LATER },
+      ),
+    ).toEqual({ step: "checklist", checklist: LATER, addressShown: true });
   });
 
   it("titles the redeploy wait as the owner step it belongs to", () => {

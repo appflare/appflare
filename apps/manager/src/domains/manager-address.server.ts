@@ -783,6 +783,26 @@ export async function readManagerDomain(
   return rows.hostname === null ? null : { hostname: rows.hostname, domainId: rows.domainId };
 }
 
+/**
+ * The hostname each of `passkeyIds` was added at, for the passkeys added at
+ * an address Appflare has since left (the `passkey_host` rows). A passkey
+ * missing from the map was added at the current address.
+ */
+export async function readPasskeyHosts(
+  db: D1Database,
+  passkeyIds: readonly string[],
+): Promise<Map<string, string>> {
+  if (passkeyIds.length === 0) return new Map();
+  const { results } = await db
+    .prepare(
+      `SELECT passkey_id, hostname FROM passkey_host
+       WHERE passkey_id IN (SELECT value FROM json_each(?1))`,
+    )
+    .bind(JSON.stringify(passkeyIds))
+    .all<{ passkey_id: string; hostname: string }>();
+  return new Map(results.map((r) => [r.passkey_id, r.hostname]));
+}
+
 async function asAddressError<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();

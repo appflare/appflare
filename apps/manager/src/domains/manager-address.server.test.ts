@@ -14,6 +14,7 @@ import {
   type ManagerAddressDeps,
   moveManagerAddress,
   readManagerAddress,
+  readPasskeyHosts,
   reconcileManagerAddress,
   revertManagerAddress,
   waitForManager,
@@ -846,5 +847,20 @@ describe("waitForManager", () => {
     const d = deps(w);
     expect(await waitForManager(d, HOST)).toEqual({ ok: true });
     expect(d.slept).toEqual([]);
+  });
+});
+
+describe("readPasskeyHosts", () => {
+  it("names the address of each passkey added at an address Appflare left", async () => {
+    await addPasskey("pk-here");
+    await addPasskey("pk-old");
+    await env.DB.prepare(
+      "INSERT INTO passkey_host (passkey_id, hostname, recorded_at) VALUES ('pk-old', ?1, 1)",
+    )
+      .bind(WORKERS_DEV)
+      .run();
+    const hosts = await readPasskeyHosts(env.DB, ["pk-here", "pk-old", "pk-gone"]);
+    expect([...hosts]).toEqual([["pk-old", WORKERS_DEV]]);
+    expect((await readPasskeyHosts(env.DB, [])).size).toBe(0);
   });
 });

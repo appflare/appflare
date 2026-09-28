@@ -72,6 +72,14 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
                       ({p.provider})
                     </Text>
                   )}
+                  {p.worksAt !== undefined && p.worksAt !== null && (
+                    // Added at an address Appflare has since left: the browser offers it only there.
+                    <span className="block">
+                      <Text as="span" variant="secondary" size="sm">
+                        {passkeyWorksAt(p.worksAt)}
+                      </Text>
+                    </span>
+                  )}
                 </Table.Cell>
                 <Table.Cell>
                   <Badge variant={p.synced ? "primary" : "neutral"}>
@@ -97,6 +105,11 @@ export function PasskeysSection({ passkeys }: { passkeys: PasskeyRow[] }) {
 
 function passkeyLabel(p: PasskeyRow): string {
   return p.name ?? p.provider ?? "Unnamed passkey";
+}
+
+/** The line under a passkey added at another address of Appflare's. */
+export function passkeyWorksAt(hostname: string): string {
+  return `Works at ${hostname}`;
 }
 
 /** Names the passkey, then hands over to the browser's passkey prompt. */

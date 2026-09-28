@@ -1,26 +1,15 @@
 import {
   Banner,
   Button,
-  Checkbox,
   LayerDialog,
-  Link,
-  LinkButton,
   Select,
   Table,
   Text,
   useKumoToastManager,
 } from "@cloudflare/kumo";
-import {
-  ArrowsClockwiseIcon,
-  KeyIcon,
-  PlusIcon,
-  TrashIcon,
-  WarningCircleIcon,
-  WarningIcon,
-} from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, PlusIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
-import { accountTokenTemplateUrl } from "../cloudflare/token-template";
 import { checkSubdomainInZone } from "../installs/custom-domain-input";
 import {
   addCustomDomain,
@@ -28,11 +17,7 @@ import {
   getDomainOptions,
   removeCustomDomain,
 } from "../installs/custom-domains.functions";
-import type {
-  ConflictingRecord,
-  CustomDomainCheck,
-  DomainOptions,
-} from "../installs/custom-domains.server";
+import type { CustomDomainCheck, DomainOptions } from "../installs/custom-domains.server";
 import type { CustomDomainView, InstallDetail } from "../installs/installs.functions";
 import {
   checkWildcardSubdomain,
@@ -44,13 +29,13 @@ import { AppflareLoader } from "./appflare-loader";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { DocsLink } from "./docs-link";
+import { type DnsConflict, DnsConflictNotice, TokenPermissionsBanner } from "./domain-dialog-parts";
 import { DomainName } from "./domain-name";
 import { formatTime } from "./format";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
 import { useJobStarted } from "./job-started";
 import { Section, SectionTable } from "./section";
-import { settingsLink } from "./settings-links";
 import { useAccountId } from "./use-account-id";
 import { WildcardNotes } from "./wildcard-notes";
 import { ZoneHostnameField } from "./zone-hostname-field";
@@ -242,60 +227,9 @@ function DomainCheck({
   );
 }
 
-/**
- * What to change when the token cannot manage custom domains. Editing the
- * token's permissions in the dashboard keeps its value, so Appflare needs no
- * change; a new token replaces the old one under Settings.
- */
-function TokenPermissionsBanner({ options }: { options: DomainOptions }) {
-  const accountId = useAccountId();
-  const permissions = options.missing.join(", ");
-  const title = options.noZones
-    ? "Appflare cannot see any domain in this account"
-    : "The Cloudflare token cannot manage custom domains yet";
-  const why = options.noZones
-    ? `Either the account has no domain on Cloudflare yet (add one first; it must be active before it can serve an app), or the token lacks the custom domain permissions: ${permissions}.`
-    : `The token lacks ${permissions}.`;
-  return (
-    <Banner
-      variant="alert"
-      icon={<WarningIcon weight="fill" />}
-      title={title}
-      description={
-        <span className="grid gap-1.5">
-          <span>{why}</span>
-          <span>
-            To add them, open API Tokens in the Cloudflare dashboard, edit the Appflare token, add
-            these permissions for the domains you want to use, and save. An edited token keeps its
-            value, so nothing changes here. Or create a new token and replace the old one in the{" "}
-            <Link href={settingsLink("account", "connection")} target="_blank" rel="noopener">
-              Cloudflare connection settings
-            </Link>{" "}
-            with Rotate token.
-          </span>
-        </span>
-      }
-      action={
-        <LinkButton
-          href={accountTokenTemplateUrl(accountId)}
-          external
-          variant="secondary"
-          icon={<KeyIcon />}
-        >
-          Create a new token
-        </LinkButton>
-      }
-    />
-  );
-}
-
-function recordList(records: ConflictingRecord[]): string {
-  return records.map((r) => (r.content === null ? r.type : `${r.type} ${r.content}`)).join(", ");
-}
-
-interface Conflict {
-  hostname: string;
-  records: ConflictingRecord[];
+/** {@link TokenPermissionsBanner} in the account this manager runs in. */
+function AccountTokenPermissionsBanner({ options }: { options: DomainOptions }) {
+  return <TokenPermissionsBanner options={options} accountId={useAccountId()} />;
 }
 
 /**
@@ -313,7 +247,7 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [subdomain, setSubdomain] = useState("");
   const [touched, setTouched] = useState(false);
-  const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [conflict, setConflict] = useState<DnsConflict | null>(null);
   const [replace, setReplace] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -420,7 +354,7 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
               />
             )}
             {options !== null && options.missing.length > 0 && (
-              <TokenPermissionsBanner options={options} />
+              <AccountTokenPermissionsBanner options={options} />
             )}
             {options !== null && !options.noZones && options.zones.length === 0 && (
               <Text variant="secondary">
@@ -454,24 +388,13 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
                   disabled={pending}
                 />
                 {conflict !== null && (
-                  <div className="grid gap-3">
-                    <Banner
-                      variant="alert"
-                      icon={<WarningIcon weight="fill" />}
-                      title={`${conflict.hostname} already has DNS records`}
-                      description={
-                        conflict.records.length > 0
-                          ? `Adding the domain replaces them: ${recordList(conflict.records)}. Whatever they point to stops receiving traffic for this hostname.`
-                          : "Cloudflare reports DNS records at this hostname that the domain would replace. Whatever they point to stops receiving traffic for this hostname."
-                      }
-                    />
-                    <Checkbox
-                      checked={replace}
-                      onCheckedChange={(v: boolean) => setReplace(v)}
-                      disabled={pending}
-                      label="Replace the existing DNS records with the one for this app"
-                    />
-                  </div>
+                  <DnsConflictNotice
+                    conflict={conflict}
+                    replace={replace}
+                    onReplaceChange={setReplace}
+                    disabled={pending}
+                    checkboxLabel="Replace the existing DNS records with the one for this app"
+                  />
                 )}
                 {error !== null && (
                   <Banner
@@ -682,7 +605,7 @@ function AddWildcardDomainDialog({ install, reason }: { install: InstallDetail; 
               />
             )}
             {options !== null && options.missing.length > 0 && (
-              <TokenPermissionsBanner options={options} />
+              <AccountTokenPermissionsBanner options={options} />
             )}
             {options !== null && !options.noZones && options.zones.length === 0 && (
               <Text variant="secondary">

@@ -59,6 +59,17 @@ export const INTERNAL_PAGE_PATH = pathPattern(PAGE_ROOTS, true, true);
  */
 export const RETURN_PATH = pathPattern(RETURN_ROOTS, true, true);
 
+/**
+ * The one sign-in page a return path may name: setup's last step
+ * (`/setup?checklist=true`, then more of the same query), where the setup
+ * wizard resumes after it moved Appflare to a new address and the owner
+ * signed in again there. It is a signed-in step, so it sends nobody round
+ * in a circle.
+ */
+export const SETUP_RESUME_PATH = new RegExp(
+  `^/setup\\?checklist=true(?:&(?:[A-Za-z0-9._~=&+-]|%[0-9A-Fa-f]{2})*)?${HASH}$`,
+);
+
 /** The longest return path kept; a longer one is dropped. */
 export const MAX_RETURN_PATH_LENGTH = 1024;
 
@@ -74,11 +85,12 @@ export function isInternalPagePath(href: string): boolean {
 
 /**
  * `value` when it is a page of this manager to return to after signing in
- * (`RETURN_PATH`), else null. The value comes from the address bar, so
- * anything else (another site, `//host`, `/\host`, a scheme, a sign-in
- * page) is dropped, and the caller goes home instead.
+ * (`RETURN_PATH`, or setup's last step, `SETUP_RESUME_PATH`), else null.
+ * The value comes from the address bar, so anything else (another site,
+ * `//host`, `/\host`, a scheme, another sign-in page) is dropped, and the
+ * caller goes home instead.
  */
 export function safeReturnPath(value: unknown): string | null {
   if (typeof value !== "string" || value.length > MAX_RETURN_PATH_LENGTH) return null;
-  return RETURN_PATH.test(value) ? value : null;
+  return RETURN_PATH.test(value) || SETUP_RESUME_PATH.test(value) ? value : null;
 }

@@ -6,7 +6,12 @@ import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { passkey, session } from "../db/schema";
-import { listOwnPasskeys, removeOwnPasskey, toPasskeyRow } from "./passkeys.server";
+import {
+  listOwnPasskeys,
+  removeOwnPasskey,
+  toPasskeyRow,
+  withPasskeyHosts,
+} from "./passkeys.server";
 import { type Auth, createAuth, passkeyRelyingParty } from "./server";
 
 const HOST = "appflare.appflare-dev.workers.dev";
@@ -281,5 +286,28 @@ describe("toPasskeyRow", () => {
         createdAt: null,
       }),
     ).toEqual({ id: "pk", name: null, provider: null, synced: false, createdAt: null });
+  });
+});
+
+describe("withPasskeyHosts", () => {
+  const row = { name: null, provider: null, synced: true, createdAt: null };
+  it("names the hostname of a passkey added at another address, and only then", () => {
+    const rows = withPasskeyHosts(
+      [
+        { id: "here", ...row },
+        { id: "old", ...row },
+        { id: "back", ...row },
+      ],
+      new Map([
+        ["old", "appflare.ada.workers.dev"],
+        ["back", "Appflare.Example.com"],
+      ]),
+      "appflare.example.com",
+    );
+    expect(rows.map((r) => [r.id, r.worksAt])).toEqual([
+      ["here", null],
+      ["old", "appflare.ada.workers.dev"],
+      ["back", null],
+    ]);
   });
 });
