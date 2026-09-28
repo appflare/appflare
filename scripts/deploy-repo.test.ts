@@ -5,6 +5,7 @@ import path from "node:path";
 import type { VerifiedArtifact } from "@appflare/cli";
 import { pack, parseJsonc } from "@appflare/pack";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { siteUrl } from "../apps/docs/src/lib/shared.ts";
 import {
   buildDeployRepo,
   DEPLOY_BUTTON_URL,
@@ -13,6 +14,7 @@ import {
   deployRepoProblems,
   deployRepoReadme,
   deployRepoWranglerConfig,
+  docsPage,
   parseDeployRepository,
   renderWranglerJsonc,
   repoWranglerVersion,
@@ -159,6 +161,17 @@ describe("the deploy repository's npm project", () => {
     expect(readme).toContain("manager@1.2.3");
   });
 
+  it("links the documentation on the docs site's own address", () => {
+    const readme = deployRepoReadme("1.2.3");
+    expect(docsPage("start", "deploy-button")).toBe(`${siteUrl}/start/deploy-button/`);
+    expect(readme).toContain(`(${siteUrl}/start/deploy-button/)`);
+    expect(readme).toContain(`(${siteUrl}/start/install/)`);
+    const docsLinks = readme.match(/\]\((https:\/\/[^)]+)\)/g) ?? [];
+    for (const link of docsLinks.filter((l) => !/github\.com|cloudflare\.com/.test(l))) {
+      expect(link).toContain(siteUrl);
+    }
+  });
+
   it("points the README's button at another repository when asked", () => {
     expect(DEPLOY_BUTTON_URL).toBe(
       "https://deploy.workers.cloudflare.com/?url=https://github.com/appflare/deploy",
@@ -201,12 +214,82 @@ describe("the deploy repository's npm project", () => {
   });
 });
 
+/**
+ * The push job's `deploy_repo_action` shell function, as written in
+ * release.yml: the job checks out nothing from this repository, so the
+ * decision lives in the workflow and is tested from there.
+ */
+function deployRepoAction(current: string, next: string, reset: boolean): string {
+  const workflow = readFileSync(
+    path.join(REPO_ROOT, ".github", "workflows", "release.yml"),
+    "utf8",
+  ).split("\n");
+  const start = workflow.findIndex((line) => /^\s*deploy_repo_action\(\) \{$/.test(line));
+  expect(start, "deploy_repo_action is not defined in release.yml").toBeGreaterThanOrEqual(0);
+  const indent = (workflow[start] ?? "").match(/^\s*/)?.[0] ?? "";
+  const end = workflow.indexOf(`${indent}}`, start);
+  expect(end).toBeGreaterThan(start);
+  const fn = workflow
+    .slice(start, end + 1)
+    .map((line) => line.slice(indent.length))
+    .join("\n");
+  const res = spawnSync(
+    "bash",
+    [
+      "-euo",
+      "pipefail",
+      "-c",
+      `${fn}\ndeploy_repo_action "$1" "$2" "$3"`,
+      "bash",
+      current,
+      next,
+      String(reset),
+    ],
+    { encoding: "utf8" },
+  );
+  expect(res.status, res.stderr).toBe(0);
+  return res.stdout.trim();
+}
+
+describe("the push job's version decision", () => {
+  it("pushes to an empty repository, or over an older version", () => {
+    expect(deployRepoAction("", "0.1.0", false)).toBe("push");
+    expect(deployRepoAction("1.2.3", "1.2.4", false)).toBe("push");
+    expect(deployRepoAction("1.9.0", "1.10.0", false)).toBe("push");
+    expect(deployRepoAction("1.2.3", "2.0.0", true)).toBe("push");
+  });
+
+  it("leaves the same or a newer version alone", () => {
+    expect(deployRepoAction("1.2.3", "1.2.3", false)).toBe("skip");
+    expect(deployRepoAction("1.10.0", "1.9.0", false)).toBe("skip");
+    expect(deployRepoAction("0.4.2", "0.1.0", false)).toBe("skip");
+  });
+
+  it("replaces the same or a newer version only when a reset is asked for", () => {
+    expect(deployRepoAction("0.4.2", "0.1.0", true)).toBe("reset");
+    expect(deployRepoAction("0.1.0", "0.1.0", true)).toBe("reset");
+  });
+
+  it("never resets on a push", () => {
+    const workflow = readFileSync(
+      path.join(REPO_ROOT, ".github", "workflows", "release.yml"),
+      "utf8",
+    );
+    expect(workflow).toMatch(
+      /RESET: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.deploy_repo_reset \}\}\n/,
+    );
+    expect(workflow).toMatch(/deploy_repo_reset:\n(?: {8}.*\n)*? {8}default: false\n/);
+  });
+});
+
 describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))(
   "the deploy repository of the built manager",
   () => {
     let tmp: string;
+    let releaseDir: string;
     let outDir: string;
     let version: string;
+    let legacy: boolean;
 
     beforeAll(async () => {
       const built = JSON.parse(readFileSync(MANAGER_BUILT_WRANGLER, "utf8")) as {
@@ -220,14 +303,14 @@ describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))(
         sha: "0123456789abcdef0123456789abcdef01234567",
       });
       writeFileSync(manifestPath, JSON.stringify(catalog));
-      const releaseDir = path.join(tmp, "release");
+      releaseDir = path.join(tmp, "release");
       await pack({ checkoutDir: MANAGER_DIR, manifestPath, outDir: releaseDir, install: false });
       outDir = path.join(tmp, "deploy");
       // The built manager may not declare version_metadata yet.
       const release = JSON.parse(readFileSync(MANAGER_RELEASE_WRANGLER, "utf8")) as {
         version_metadata?: { binding?: string };
       };
-      const legacy = typeof release.version_metadata?.binding !== "string";
+      legacy = typeof release.version_metadata?.binding !== "string";
       const result = await buildDeployRepo({
         artifactDir: releaseDir,
         outDir,
@@ -253,6 +336,30 @@ describe.skipIf(!existsSync(MANAGER_RELEASE_WRANGLER))(
       );
       expect(existsSync(path.join(outDir, "assets", ".dev.vars"))).toBe(false);
       expect(existsSync(path.join(outDir, ".dev.vars.example"))).toBe(false);
+    });
+
+    it("carries no absolute path from the machine that built it", () => {
+      const worker = readFileSync(path.join(outDir, "worker", "index.js"), "utf8");
+      expect(worker).not.toContain(REPO_ROOT);
+      expect(worker).toContain('filePath: "src/routes/login.tsx"');
+    });
+
+    it("deletes a copy that contains a secret and names where it comes from", async () => {
+      // A string the Worker is known to contain stands in for a leaked value.
+      const leakDir = path.join(tmp, "leak");
+      const result = await buildDeployRepo({
+        artifactDir: releaseDir,
+        outDir: leakDir,
+        allowUnsigned: true,
+        allowLegacy: legacy,
+        lockfile: false,
+        secrets: [{ source: "the value of TEST_TOKEN in .env", value: "src/routes/login.tsx" }],
+      });
+      expect(result.problems).toEqual([
+        "worker/index.js contains the value of TEST_TOKEN in .env",
+        `${leakDir} was deleted rather than kept with these values in it`,
+      ]);
+      expect(existsSync(leakDir)).toBe(false);
     });
 
     it("points the README's button at the repository it was built for", () => {

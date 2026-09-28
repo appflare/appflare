@@ -2,7 +2,7 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import react from "@vitejs/plugin-react";
-import { defaultClientConditions, defineConfig } from "vite";
+import { defaultClientConditions, defineConfig, type Plugin } from "vite";
 
 /**
  * Workspace packages list a custom `@appflare/source` export condition first,
@@ -24,6 +24,36 @@ const SOURCE_CONDITION = "@appflare/source";
  * (src/server/build-version.ts): a var can be edited on deploy, the code cannot.
  */
 const APPFLARE_VERSION = process.env.APPFLARE_VERSION?.trim() || "0.0.0-dev";
+
+/**
+ * TanStack Start bundles a route manifest into the Worker that names each
+ * route's source file by its absolute path on the machine that built it
+ * (`filePath`, e.g. `/home/runner/work/.../src/routes/login.tsx`). The build
+ * uses those paths to match routes to client chunks before this module is
+ * written; nothing reads them at runtime, and TanStack Start has no option to
+ * leave them out. This rewrites them relative to the app's root, so a release
+ * carries no path from the machine that built it.
+ */
+const START_MANIFEST_MODULE = "\0tanstack-start-manifest:v";
+
+function relativeRouteFilePaths(): Plugin {
+  let rootPrefix = "";
+  return {
+    name: "appflare:relative-route-file-paths",
+    enforce: "post",
+    applyToEnvironment: (environment) => environment.name === "ssr",
+    configResolved(config) {
+      rootPrefix = `${config.root.replaceAll("\\", "/").replace(/\/$/, "")}/`;
+    },
+    transform: {
+      filter: { id: /^\0tanstack-start-manifest:v$/ },
+      handler(code, id) {
+        if (id !== START_MANIFEST_MODULE || !code.includes(rootPrefix)) return null;
+        return { code: code.replaceAll(rootPrefix, ""), map: null };
+      },
+    },
+  };
+}
 
 export default defineConfig({
   define: { __APPFLARE_BUILD_VERSION__: JSON.stringify(APPFLARE_VERSION) },
@@ -78,5 +108,6 @@ export default defineConfig({
     }),
     react(),
     tailwindcss(),
+    relativeRouteFilePaths(),
   ],
 });

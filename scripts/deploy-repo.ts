@@ -5,12 +5,15 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MANAGER_APP, unpackArtifact, type VerifiedArtifact, verifyArtifact } from "@appflare/cli";
 import { parseJsonc } from "@appflare/pack";
+import { pageUrl, siteUrl } from "../apps/docs/src/lib/shared.ts";
+import { findSecrets, repoSecrets, type Secret } from "./deploy-repo-guard.ts";
 
 /**
  * The public deploy repository (`appflare/deploy`) that the "Deploy to
@@ -283,8 +286,14 @@ export function deployRepoPackageJson(options: {
   };
 }
 
-/** The public documentation site. */
-export const DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/";
+/**
+ * A documentation page's absolute URL. The site's address comes from the docs
+ * app's own `siteUrl` (apps/docs/src/lib/shared.ts), the one place it is set,
+ * which must be the public docs domain by the first public release.
+ */
+export function docsPage(...slugs: string[]): string {
+  return `${siteUrl}${pageUrl(slugs)}`;
+}
 
 /** A GitHub repository as `owner/name`, with the characters GitHub allows in each part. */
 const GITHUB_REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
@@ -349,8 +358,8 @@ ${version} for the Deploy to Cloudflare button. Nothing in it is built on deploy
 - **A \`workers.dev\` subdomain.** Register one in the dashboard (Workers & Pages) first
   if the account has none.
 
-The full guide: [Deploy with the button](${DOCS_URL}start/deploy-button/). Other ways
-to install are listed in [Install Appflare](${DOCS_URL}start/install/).
+The full guide: [Deploy with the button](${docsPage("start", "deploy-button")}). Other ways
+to install are listed in [Install Appflare](${docsPage("start", "install")}).
 
 ## About this repository
 
@@ -499,9 +508,18 @@ export interface BuildDeployRepoOptions {
    * trial run. Checked with `parseDeployRepository`.
    */
   repository?: string;
+  /**
+   * Values no file in the repository may contain. Defaults to `repoSecrets`
+   * of this repository: its pinned account ids and its `.env` values.
+   */
+  secrets?: readonly Secret[];
 }
 
-/** Verifies and unpacks the release, writes the repository, and checks it. */
+/**
+ * Verifies and unpacks the release, writes the repository, and checks it.
+ * When a file contains one of the secrets, the written copy is deleted and
+ * the problems name the files and where each value comes from.
+ */
 export async function buildDeployRepo(
   options: BuildDeployRepoOptions,
 ): Promise<{ version: string; problems: string[] }> {
@@ -544,6 +562,14 @@ export async function buildDeployRepo(
 
   if (options.lockfile !== false) {
     writeLockfile(outDir);
+  }
+  const leaks = findSecrets(outDir, options.secrets ?? repoSecrets(REPO_ROOT));
+  if (leaks.length > 0) {
+    rmSync(outDir, { recursive: true, force: true });
+    return {
+      version: manifest.version,
+      problems: [...leaks, `${outDir} was deleted rather than kept with these values in it`],
+    };
   }
   return {
     version: manifest.version,

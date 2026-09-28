@@ -91,12 +91,33 @@ After each release of the current version, two jobs of `release.yml` update it:
 
 - **deploy-repo-build** (no secrets) downloads the published release, verifies its
   signature and every file's hash, and writes the repository's contents with
-  `node scripts/build-deploy-repo.ts`.
+  `node scripts/build-deploy-repo.ts`. Before it keeps the copy, the script searches
+  every file for the `account_id` of each wrangler config tracked here and for each
+  value of at least 16 characters in a local `.env`; if one turns up, it deletes the
+  copy and fails, naming the file and where the value comes from (never the value).
 - **deploy-repo** (holds only `DEPLOY_REPO_PUSH_KEY`, runs no code from this
   repository) replaces the files on `main` of `appflare/deploy` and pushes one
   commit, `chore(release): appflare <version>`. A repository that already holds this
   version or a newer one is left alone, so re-runs and older versions never add
   commits.
+
+After a version reset (every package set back to an earlier version, such as
+`0.1.0`), `appflare/deploy` still holds the higher version and would never be
+updated again. Once the reset version is released, run the release workflow by hand
+with **deploy_repo_reset** ticked:
+
+```sh
+gh workflow run release.yml --ref main -f deploy_repo_reset=true
+```
+
+That run replaces the deploy repository's contents with the current version
+whatever version it holds, logs a warning saying so, and adds "Replaces Appflare
+<old version> after a version reset." to the commit. Runs started by a push never
+reset.
+
+The README's documentation links start at the docs site's `siteUrl` in
+`apps/docs/src/lib/shared.ts`, the one place the site's address is set. It must be
+the public docs domain by the first public release.
 
 To set up the key once:
 

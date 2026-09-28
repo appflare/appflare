@@ -4,7 +4,11 @@
  * config can load it before the MDX pipeline exists.
  */
 
-/** The deployed site. Absolute URLs (OpenGraph, sitemap, llms.txt) start here. */
+/**
+ * The deployed site. Absolute URLs (OpenGraph, sitemap, llms.txt, and the
+ * documentation links in the deploy repository's README) start here. Must be
+ * the public docs domain by the first public release.
+ */
 export const siteUrl = "https://appflare-docs.appflare-dev.workers.dev";
 
 export const siteName = "Appflare";

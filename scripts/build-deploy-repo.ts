@@ -20,6 +20,9 @@ import { buildDeployRepo, parseDeployRepository } from "./deploy-repo.ts";
  * `--no-lockfile` skips package-lock.json, which needs the npm registry.
  * `--repo` points the README's Deploy to Cloudflare button at another GitHub
  * repository than appflare/deploy, to try the button from a copy pushed there.
+ * A copy in which any file contains an account id pinned in this repository's
+ * wrangler configs, or a value from its `.env`, is deleted and the run fails
+ * (scripts/deploy-repo-guard.ts).
  *
  * Needs @appflare/cli and @appflare/pack built (`pnpm exec turbo run build
  * --filter=@appflare/cli...`), since Node runs this file without the

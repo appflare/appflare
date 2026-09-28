@@ -33,6 +33,9 @@ name: release
 #
 # Manual runs (workflow_dispatch) may name a `version` to (re)release that exact
 # version from the commit that set it; without it they behave like a push.
+# `deploy_repo_reset` makes deploy-repo replace appflare/deploy even when it
+# already holds the same or a newer version, for a version reset (every package
+# back to an earlier version); pushes never set it.
 #
 # The sandbox Worker (apps/sandbox) is released by the sandbox-* jobs the same
 # way, from apps/sandbox/package.json's version, as the GitHub Release
@@ -60,6 +63,11 @@ on:
         required: false
         default: ""
         type: string
+      deploy_repo_reset:
+        description: "Replace appflare/deploy with this run's version even when it holds the same or a newer one (after a version reset). Pushes never set it."
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -631,8 +639,28 @@ jobs:
           DEPLOY_REPO_PUSH_KEY: ${{ secrets.DEPLOY_REPO_PUSH_KEY }}
           VERSION: ${{ needs.plan.outputs.version }}
           SHA: ${{ needs.plan.outputs.sha }}
+          # Only a manual run can ask for a reset; on a push this is "false".
+          RESET: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_repo_reset }}
         run: |
           set -euo pipefail
+          # What to do with a deploy repository holding version $1 (empty: none)
+          # when this run has version $2 and reset flag $3: "push" a newer
+          # version; "skip" one it already holds, or an older one, so re-runs
+          # and old versions never add commits; "reset" when $3 is "true" and it
+          # would otherwise skip, which replaces the contents anyway.
+          # scripts/deploy-repo.test.ts runs this function.
+          deploy_repo_action() {
+            local current="$1" next="$2" reset="$3"
+            if [ -z "${current}" ] \
+              || [ "$(printf '%s\n%s\n' "${current}" "${next}" | sort -V | tail -n 1)" != "${current}" ]; then
+              echo push
+            elif [ "${reset}" = "true" ]; then
+              echo reset
+            else
+              echo skip
+            fi
+          }
+
           if [ -z "${DEPLOY_REPO_PUSH_KEY}" ]; then
             echo "::notice title=DEPLOY_REPO_PUSH_KEY is not set::${DEPLOY_REPOSITORY} was not updated to ${VERSION}. Add a deploy key with write access to ${DEPLOY_REPOSITORY} and store its private key as the DEPLOY_REPO_PUSH_KEY Actions secret (docs/RELEASING.md), then re-run this workflow."
             exit 0
@@ -653,18 +681,25 @@ jobs:
           # Fails on a missing repository or a key without access; prints nothing
           # while the repository is still empty.
           heads="$(git ls-remote --heads origin main)"
+          current=""
+          action="push"
           if [ -n "${heads}" ]; then
             git fetch -q --depth=1 origin main
             git checkout -q -B main FETCH_HEAD
             # One commit per release: a repository already holding this version
             # (or a newer one) is left as it is, even if its lockfile would
-            # resolve differently today.
+            # resolve differently today, unless a manual run asked for a reset.
             current="$(jq -r '.version // empty' package.json 2> /dev/null || true)"
-            if [ -n "${current}" ] \
-              && [ "$(printf '%s\n%s\n' "${current}" "${VERSION}" | sort -V | tail -n 1)" = "${current}" ]; then
-              echo "::notice::${DEPLOY_REPOSITORY} already holds Appflare ${current}; left as it is"
-              exit 0
-            fi
+            action="$(deploy_repo_action "${current}" "${VERSION}" "${RESET}")"
+            case "${action}" in
+              skip)
+                echo "::notice::${DEPLOY_REPOSITORY} already holds Appflare ${current}; left as it is"
+                exit 0
+                ;;
+              reset)
+                echo "::warning title=deploy_repo_reset::replacing Appflare ${current} in ${DEPLOY_REPOSITORY} with Appflare ${VERSION}, although ${current} is not older, because this run set deploy_repo_reset"
+                ;;
+            esac
             git rm -rq --ignore-unmatch .
           fi
           git clean -fdxq
@@ -686,11 +721,16 @@ jobs:
             echo "::notice::${DEPLOY_REPOSITORY} already holds Appflare ${VERSION}"
             exit 0
           fi
+          message=(
+            -m "chore(release): appflare ${VERSION}"
+            -m "Generated from the signed release manager@${VERSION} of ${GITHUB_REPOSITORY} (${SHA})."
+          )
+          if [ "${action}" = reset ]; then
+            message+=(-m "Replaces Appflare ${current} after a version reset.")
+          fi
           git -c user.name="github-actions[bot]" \
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -q \
-            -m "chore(release): appflare ${VERSION}" \
-            -m "Generated from the signed release manager@${VERSION} of ${GITHUB_REPOSITORY} (${SHA})."
+            commit -q "${message[@]}"
           git push -q origin main
           echo "${DEPLOY_REPOSITORY} now holds Appflare ${VERSION}: $(git rev-parse HEAD)"
 
