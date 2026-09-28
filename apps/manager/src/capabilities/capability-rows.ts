@@ -1,5 +1,6 @@
 import type { CapabilityUnknown } from "@appflare/cf-api/capabilities";
 import { type IndexApp, isServiceId, requirementService, type ServiceId } from "@appflare/schema";
+import { listWords } from "@appflare/schema/catalog-display";
 import { dashboardLinks } from "../cloudflare/dashboard-links";
 import { settingsLink } from "../components/settings-links";
 import {
@@ -613,12 +614,6 @@ function refused(view: CapabilitiesView, probe: keyof CapabilitiesView): boolean
   return isUnknown(value) && value.reason === "no-permission";
 }
 
-/** "A", "A and B", "A, B and C". */
-function listOf(items: readonly string[]): string {
-  if (items.length <= 1) return items.join("");
-  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
-}
-
 /** Whether a probe got an answer: it ran, and was neither refused nor failed. */
 function answered(view: CapabilitiesView, probe: keyof CapabilitiesView): boolean {
   const value = view[probe] as Probe;
@@ -667,7 +662,7 @@ function tokenPermissionsRow({ view }: CapabilityRowsInput): CapabilityRow {
   const note =
     optional.length === 0
       ? null
-      : `Optional permissions the token does not have: ${listOf(optional)}.`;
+      : `Optional permissions the token does not have: ${listWords(optional)}.`;
   if (missing.length > 0) {
     return {
       ...base,
@@ -676,7 +671,7 @@ function tokenPermissionsRow({ view }: CapabilityRowsInput): CapabilityRow {
       details: details(view, {
         found: "Missing permissions Appflare needs",
         source: "detected",
-        problem: `Cloudflare refused the token's reads that need ${listOf(missing)}. Edit the token in the Cloudflare dashboard (editing keeps its value) and add ${missing.length === 1 ? "it" : "them"}.`,
+        problem: `Cloudflare refused the token's reads that need ${listWords(missing)}. Edit the token in the Cloudflare dashboard (editing keeps its value) and add ${missing.length === 1 ? "it" : "them"}.`,
         note,
       }),
     };

@@ -361,9 +361,36 @@ describe("what the install adds", () => {
       ),
     ).toEqual({
       sentence:
-        "The install adds the app's Worker, 2 KV namespaces, a D1 database, an R2 bucket and a Durable Object class to your account.",
+        "The install adds the app's Worker, two KV namespaces, a D1 database, an R2 bucket and a Durable Object class to your account.",
       detail:
         "Named in the app: LINKS (KV namespace), CACHE (KV namespace), DB (D1 database), FILES (R2 bucket), Room (Durable Object class).",
+    });
+  });
+
+  it("counts every kind it creates in the same words as the catalog", () => {
+    const creates = [
+      { kind: "queue", binding: "JOBS" },
+      { kind: "queue", binding: "MAIL" },
+      { kind: "vectorize", binding: "INDEX" },
+      { kind: "vectorize", binding: "INDEX_2" },
+      { kind: "hyperdrive", binding: "PG" },
+      { kind: "pipeline_stream", binding: "EVENTS" },
+      { kind: "r2", binding: "A" },
+      { kind: "r2", binding: "B" },
+      { kind: "ratelimit", binding: "LIMIT" },
+    ];
+    expect(installAdds(creates, ["Room", "Lobby"]).sentence).toBe(
+      "The install adds the app's Worker, two queues, two Vectorize indexes, a Hyperdrive configuration, a Pipelines stream, two R2 buckets, a Rate limit and two Durable Object classes to your account.",
+    );
+  });
+
+  it("counts the app's cron triggers in lower case", () => {
+    expect(installAdds([{ kind: "d1", binding: "DB" }], [], 1).sentence).toBe(
+      "The install adds the app's Worker, a D1 database and a cron trigger to your account.",
+    );
+    expect(installAdds([], [], 2)).toEqual({
+      sentence: "The install adds the app's Worker and two cron triggers to your account.",
+      detail: null,
     });
   });
 

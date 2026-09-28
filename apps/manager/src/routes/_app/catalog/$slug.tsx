@@ -216,7 +216,7 @@ function AppPage({
           needs={accountNeeds(needsOf, detail.primitives, detail.capabilities)}
           adds={
             app.tier === "artifact" && detail.createsKnown
-              ? installAdds(detail.creates, detail.durableObjects)
+              ? installAdds(detail.creates, detail.durableObjects, detail.cronTriggers)
               : null
           }
           note={primitivesNote(detail.primitives, app.tier)}
