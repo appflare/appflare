@@ -44,7 +44,7 @@ function apps(count: number, signals: Record<string, AppSignal> = {}): SidebarAp
       id: name.toLowerCase(),
       name,
       displayName: null,
-      label: name.toLowerCase(),
+      workerName: name.toLowerCase(),
       icon: null,
     })),
     new Map(Object.entries(signals)),

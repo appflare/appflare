@@ -16,7 +16,11 @@ const appRef = z.object({
   installId: z.string(),
   /** The catalog app's name ("Cut"). */
   app: z.string(),
-  /** What the UI calls the install (`installLabel`): its display name, else its Worker name. */
+  /**
+   * What the UI calls the install (`distinctLabels`): its display name, else
+   * the app's name, with its Worker name in parentheses when another install
+   * reads the same. Events stored by older versions hold the Worker name.
+   */
   instance: z.string(),
   workerName: z.string(),
 });
@@ -82,7 +86,6 @@ function managerLink(managerUrl: string | null, path: string): string | null {
   return managerUrl === null ? null : `${managerUrl.replace(/\/+$/, "")}${path}`;
 }
 
-const worker = (app: AppRef) => `${app.instance} (Worker ${app.workerName})`;
 const v = (value: string | null) => value ?? "an unknown version";
 
 export function renderMessage(facts: NotificationFacts, managerUrl: string | null): Message {
@@ -91,7 +94,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: `Update available: ${facts.app.instance}`,
         lines: [
-          `${facts.app.app} ${facts.to} is available. ${worker(facts.app)} runs ${facts.from}.`,
+          `${facts.app.app} ${facts.to} is available. ${facts.app.instance} runs ${facts.from}.`,
         ],
         url: managerLink(managerUrl, appLink(facts.app.installId)),
       };
@@ -99,7 +102,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: `Updated ${facts.app.instance}`,
         lines: [
-          `${worker(facts.app)} now runs ${facts.app.app} ${v(facts.to)}, updated from ${v(facts.from)}.`,
+          `${facts.app.instance} now runs ${facts.app.app} ${v(facts.to)}, updated from ${v(facts.from)}.`,
         ],
         url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
       };
@@ -107,7 +110,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: `Update failed: ${facts.app.instance}`,
         lines: [
-          `Updating ${worker(facts.app)} from ${v(facts.from)} to ${v(facts.to)} failed. The job log says where.`,
+          `Updating ${facts.app.instance} from ${v(facts.from)} to ${v(facts.to)} failed. The job log says where.`,
         ],
         url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
       };
@@ -115,13 +118,13 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return facts.outcome === "succeeded"
         ? {
             title: `Installed ${facts.app.instance}`,
-            lines: [`${facts.app.app} ${v(facts.version)} is installed as ${worker(facts.app)}.`],
+            lines: [`${facts.app.app} ${v(facts.version)} is installed as ${facts.app.instance}.`],
             url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
           }
         : {
             title: `Install failed: ${facts.app.instance}`,
             lines: [
-              `Installing ${facts.app.app} ${v(facts.version)} as ${worker(facts.app)} failed. The job log says where.`,
+              `Installing ${facts.app.app} ${v(facts.version)} as ${facts.app.instance} failed. The job log says where.`,
             ],
             url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
           };
@@ -129,18 +132,18 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return facts.outcome === "succeeded"
         ? {
             title: `Uninstalled ${facts.app.instance}`,
-            lines: [`${worker(facts.app)} was uninstalled.`],
+            lines: [`${facts.app.instance} was uninstalled.`],
             url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
           }
         : {
             title: `Uninstall failed: ${facts.app.instance}`,
-            lines: [`Uninstalling ${worker(facts.app)} failed. The job log says where.`],
+            lines: [`Uninstalling ${facts.app.instance} failed. The job log says where.`],
             url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
           };
     case "health_failing":
       return {
         title: `Health check failing: ${facts.app.instance}`,
-        lines: [`${worker(facts.app)} answers its health check with a server error.`],
+        lines: [`${facts.app.instance} answers its health check with a server error.`],
         url: managerLink(managerUrl, appLink(facts.app.installId, "health")),
       };
     case "manager_update_available":
@@ -153,7 +156,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: `Domain active: ${facts.hostname}`,
         lines: [
-          `${facts.hostname} now serves ${worker(facts.app)}. Cloudflare validated it and issued its certificate.`,
+          `${facts.hostname} now serves ${facts.app.instance}. Cloudflare validated it and issued its certificate.`,
         ],
         url: managerLink(managerUrl, appLink(facts.app.installId, "external-domains")),
       };
@@ -161,7 +164,7 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
       return {
         title: `Domain failed: ${facts.hostname}`,
         lines: [
-          `${facts.hostname}, an external domain of ${worker(facts.app)}, does not serve the app. ${facts.reason}`,
+          `${facts.hostname}, an external domain of ${facts.app.instance}, does not serve the app. ${facts.reason}`,
         ],
         url: managerLink(managerUrl, appLink(facts.app.installId, "external-domains")),
       };

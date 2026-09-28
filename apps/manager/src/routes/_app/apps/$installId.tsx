@@ -99,7 +99,7 @@ export const Route = createFileRoute("/_app/apps/$installId")({
   head: ({ loaderData }) => ({
     meta: [
       {
-        title: `${loaderData?.install == null ? "App" : pageTitle(loaderData.install)} · Appflare`,
+        title: `${loaderData?.install == null ? "App" : loaderData.install.label} · Appflare`,
       },
     ],
   }),
@@ -107,14 +107,6 @@ export const Route = createFileRoute("/_app/apps/$installId")({
 });
 
 const HOME_CRUMB = { label: "Home", href: "/" };
-
-/**
- * The page's title: the install's display name when it has one (the app's
- * name goes beneath), else the app's name.
- */
-function pageTitle(install: Pick<InstallDetail, "displayName" | "name">): string {
-  return install.displayName ?? install.name;
-}
 
 const mono = "font-mono text-[0.9em]";
 
@@ -157,8 +149,10 @@ function InstallPage() {
   return (
     <>
       <PageHeader
-        title={pageTitle(install)}
-        // The Worker's name is technical detail; Details lists it.
+        // The install's display name (the app's name goes beneath), else the
+        // app's name; the Worker's name only tells two installs apart that
+        // would read the same, as in the sidebar. Details lists it.
+        title={install.label}
         description={install.displayName === null ? undefined : install.name}
         parents={[HOME_CRUMB]}
         icon={<AppIcon src={install.icon} name={install.name} size={40} />}
@@ -689,7 +683,7 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
           <DescriptionItem label="Name">
             {install.displayName ?? (
               <Text as="span" variant="secondary">
-                None; the Worker name is shown
+                None; the app's name is shown
               </Text>
             )}
           </DescriptionItem>

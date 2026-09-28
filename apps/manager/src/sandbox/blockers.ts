@@ -1,6 +1,8 @@
-import { and, inArray, ne } from "drizzle-orm";
+import { ne } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { installs } from "../db/schema";
+import { distinctLabels } from "../installs/display-name";
+import { namedInstall } from "../installs/install-names.server";
 
 /**
  * The installs that still need the sandbox Worker: every install built by it
@@ -11,7 +13,7 @@ import { installs } from "../db/schema";
  */
 export interface SandboxInstall {
   id: string;
-  /** What Settings calls it: the admin's name for it, else its Worker. */
+  /** What Settings calls it (`distinctLabels`): its display name, else the app's name. */
   label: string;
 }
 
@@ -19,17 +21,19 @@ export async function installsNeedingSandbox(orm: Database): Promise<SandboxInst
   const rows = await orm
     .select({
       id: installs.id,
-      workerName: installs.worker_name,
-      displayName: installs.display_name,
+      app_slug: installs.app_slug,
+      worker_name: installs.worker_name,
+      display_name: installs.display_name,
+      manifest_json: installs.manifest_json,
+      build_kind: installs.build_kind,
     })
     .from(installs)
-    .where(
-      and(
-        inArray(installs.build_kind, ["sandbox", "self-deploying"]),
-        ne(installs.status, "uninstalled"),
-      ),
-    );
-  return rows.map((r) => ({ id: r.id, label: r.displayName ?? r.workerName }));
+    .where(ne(installs.status, "uninstalled"));
+  // Every install is read so the labels match the sidebar's, which tells apart all of them.
+  const labels = distinctLabels(rows.map(namedInstall));
+  return rows
+    .filter((r) => r.build_kind === "sandbox" || r.build_kind === "self-deploying")
+    .map((r) => ({ id: r.id, label: labels.get(r.id) ?? r.worker_name }));
 }
 
 /** Why disabling is refused while `blocking` exist. */

@@ -27,6 +27,7 @@ import { sandboxAutoEnableDeps } from "../sandbox/auto-enable-env.server";
 import { sandboxBinding, sandboxInfo } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { installLabel } from "./display-name";
+import { namedInstall, readInstallLabels } from "./install-names.server";
 import { type InstallVarField, installVarFields } from "./install-vars";
 import { suggestWorkerName } from "./instance-names";
 import {
@@ -223,6 +224,9 @@ export const getSourceBuild = createServerFn({ method: "GET" })
         release = await getAppManifest(env, listed, found.trust);
       }
     }
+    // What the page calls the install it updates, told apart as in the sidebar.
+    const named = install === undefined ? null : namedInstall(install);
+    const labels = named === null ? null : await readInstallLabels(env.DB, [named]);
     let review: SourceBuildReview | null = null;
     if (manifest !== null && (status === "built" || status === "used")) {
       const capabilities = await readCapabilitiesView(orm);
@@ -290,14 +294,11 @@ export const getSourceBuild = createServerFn({ method: "GET" })
       detected,
       app,
       install:
-        install === undefined
+        install === undefined || named === null
           ? null
           : {
               id: install.id,
-              label: installLabel({
-                displayName: install.display_name,
-                workerName: install.worker_name,
-              }),
+              label: labels?.get(install.id) ?? installLabel(named),
               workerName: install.worker_name,
               version: install.catalog_version,
               commit: install.pin_sha,

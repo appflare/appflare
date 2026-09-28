@@ -18,7 +18,8 @@ import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
 import { installs } from "../db/schema";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
-import { installLabel } from "../installs/display-name";
+import { distinctLabels } from "../installs/display-name";
+import { namedInstall } from "../installs/install-names.server";
 import { type InstallVarField, installVarFields } from "../installs/install-vars";
 import { suggestWorkerName } from "../installs/instance-names";
 import { entryBindings } from "../jobs/entry-workers";
@@ -58,7 +59,7 @@ export interface InstalledRef {
   installId: string;
   status: string;
   workerName: string;
-  /** What the UI calls the install (`installLabel`). */
+  /** What the UI calls the install (`distinctLabels`). */
   instanceName: string;
 }
 
@@ -150,10 +151,22 @@ async function activeInstalls(): Promise<ActiveInstalls> {
       status: installs.status,
       worker: installs.worker_name,
       displayName: installs.display_name,
+      manifestJson: installs.manifest_json,
     })
     .from(installs)
     .where(ne(installs.status, "uninstalled"))
     .orderBy(asc(installs.installed_at));
+  const labels = distinctLabels(
+    rows.map((r) =>
+      namedInstall({
+        id: r.id,
+        app_slug: r.slug,
+        worker_name: r.worker,
+        display_name: r.displayName,
+        manifest_json: r.manifestJson,
+      }),
+    ),
+  );
   const bySlug = new Map<string, InstalledRef[]>();
   for (const r of rows) {
     const key = installAppKey({ app_slug: r.slug, catalog_id: r.catalogId });
@@ -162,7 +175,7 @@ async function activeInstalls(): Promise<ActiveInstalls> {
       installId: r.id,
       status: r.status,
       workerName: r.worker,
-      instanceName: installLabel({ displayName: r.displayName, workerName: r.worker }),
+      instanceName: labels.get(r.id) ?? r.worker,
     });
     bySlug.set(key, list);
   }

@@ -1,4 +1,5 @@
-import { type AppSignal, homeName } from "../home/attention";
+import type { AppSignal } from "../home/attention";
+import { distinctLabels } from "../installs/display-name";
 
 /**
  * The sidebar's "Your apps" list: every install by name, each with the dot
@@ -12,8 +13,9 @@ export const MAX_VISIBLE_APPS = 8;
 export interface SidebarApp {
   id: string;
   /**
-   * What the row says: the name Home uses (`homeName`), or the install's
-   * label (`installLabel`) when another install goes by the same name.
+   * What the row says (`distinctLabels`): the install's display name, else
+   * the app's name, with its Worker name added when another install reads
+   * the same.
    */
   label: string;
   /** The app's name from the catalog, which the filter also matches. */
@@ -26,20 +28,18 @@ export interface SidebarApp {
 export function sidebarApps(
   apps: readonly {
     id: string;
-    label: string;
     displayName: string | null;
     name: string;
+    workerName: string;
     icon: string | null;
   }[],
   signals: ReadonlyMap<string, AppSignal>,
 ): SidebarApp[] {
-  const uses = new Map<string, number>();
-  for (const app of apps) uses.set(homeName(app), (uses.get(homeName(app)) ?? 0) + 1);
+  const labels = distinctLabels(apps);
   return apps
     .map((app) => ({
       id: app.id,
-      // Two installs of one app without names of their own: the labels tell them apart.
-      label: (uses.get(homeName(app)) ?? 0) > 1 ? app.label : homeName(app),
+      label: labels.get(app.id) ?? app.name,
       name: app.name,
       icon: app.icon,
       signal: signals.get(app.id) ?? null,

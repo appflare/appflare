@@ -21,7 +21,7 @@ export function RenameInstallDialog({
   install,
 }: {
   /** `name` is the app's name, which the page shows while there is no display name. */
-  install: { id: string; displayName: string | null; name: string; workerName: string };
+  install: { id: string; displayName: string | null; name: string };
 }) {
   const router = useRouter();
   const formId = useId();
@@ -103,7 +103,7 @@ export function RenameInstallDialog({
               autoComplete="off"
               maxLength={DISPLAY_NAME_MAX_LENGTH}
               error={problem ?? undefined}
-              description={`Leave empty to use the Worker name, ${install.workerName}.`}
+              description={`Leave empty to use the app's name, ${install.name}.`}
             />
             {failure !== null && (
               <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={failure} />

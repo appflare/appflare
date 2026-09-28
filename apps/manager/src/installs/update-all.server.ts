@@ -1,5 +1,6 @@
 import { NEEDS_ADMIN_COPY, planUpdateAll } from "../auto-update/auto-update";
 import {
+  candidateKey,
   describeNeeds,
   readCandidateRows,
   type ScheduledUpdatesDeps,
@@ -9,6 +10,7 @@ import {
 } from "../auto-update/cron.server";
 import type { AppLookup } from "../catalog/merged.server";
 import { installLabel } from "./display-name";
+import { recordedName } from "./install-names.server";
 import type { UpdateAllInput, UpdateAllOutcome } from "./update-all";
 import { statusRefusal, VersionActionError } from "./versions.server";
 
@@ -39,7 +41,13 @@ export async function startAllUpdatesCore(
     if (row === undefined) continue;
     const item = {
       installId: row.id,
-      label: installLabel(row),
+      // As Home, where Update all is, names it: never by its Worker name.
+      label: installLabel({
+        displayName: row.displayName,
+        name:
+          listed.get(candidateKey(row))?.app.name ??
+          recordedName({ app_slug: row.slug, manifest_json: null }),
+      }),
       version: decision.action === "skip" ? row.version : decision.version,
     };
     if (decision.action === "skip") {

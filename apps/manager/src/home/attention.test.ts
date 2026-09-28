@@ -9,7 +9,6 @@ import {
   attentionBadge,
   attentionItems,
   type FailedJob,
-  homeName,
   SEVERITY_ORDER,
   updateAllTargets,
 } from "./attention";
@@ -288,10 +287,5 @@ describe("the rows' words", () => {
       expect(description).not.toBe("");
       expect(`${title} ${description}`).not.toContain(CLEANUP.workerName);
     }
-  });
-
-  it("calls an install by its own name, else the app's", () => {
-    expect(homeName({ displayName: "Short links", name: "Cut" })).toBe("Short links");
-    expect(homeName({ displayName: null, name: "Cut" })).toBe("Cut");
   });
 });

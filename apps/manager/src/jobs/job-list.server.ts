@@ -1,7 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
-import type { Database } from "../db/client";
+import { createDb } from "../db/client";
 import { installs, type JobStarter, jobs } from "../db/schema";
-import { installLabel } from "../installs/display-name";
+import { namedInstall, readInstallLabels } from "../installs/install-names.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { JOB_LIST_LIMIT } from "./job-list";
 import { isRestoreJob } from "./reconcile.server";
@@ -30,10 +30,10 @@ export interface JobListRow {
  * running are settled by the pages that show them one by one.
  */
 export async function listRecentJobs(
-  db: Database,
+  d1: D1Database,
   limit: number = JOB_LIST_LIMIT,
 ): Promise<JobListRow[]> {
-  const rows = await db
+  const rows = await createDb(d1)
     .select({
       id: jobs.id,
       kind: jobs.kind,
@@ -43,13 +43,31 @@ export async function listRecentJobs(
       startedAt: jobs.started_at,
       finishedAt: jobs.finished_at,
       installId: installs.id,
+      appSlug: installs.app_slug,
       displayName: installs.display_name,
       workerName: installs.worker_name,
+      manifestJson: installs.manifest_json,
     })
     .from(jobs)
     .leftJoin(installs, eq(jobs.install_id, installs.id))
     .orderBy(sql`${jobs.started_at} IS NULL DESC`, desc(jobs.started_at), desc(jobs.id))
     .limit(limit);
+  // Two installs that read the same are told apart, as in the sidebar.
+  const named = rows.flatMap((row) =>
+    row.installId === null
+      ? []
+      : [
+          namedInstall({
+            id: row.installId,
+            app_slug: row.appSlug ?? "",
+            worker_name: row.workerName ?? row.installId,
+            display_name: row.displayName,
+            manifest_json: row.manifestJson,
+          }),
+        ],
+  );
+  const labels =
+    named.length === 0 ? new Map<string, string>() : await readInstallLabels(d1, named);
   return rows.map((row) => ({
     id: row.id,
     kind: row.kind,
@@ -62,12 +80,6 @@ export async function listRecentJobs(
     install:
       row.installId === null
         ? null
-        : {
-            id: row.installId,
-            label: installLabel({
-              displayName: row.displayName,
-              workerName: row.workerName ?? row.installId,
-            }),
-          },
+        : { id: row.installId, label: labels.get(row.installId) ?? row.installId },
   }));
 }

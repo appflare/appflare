@@ -61,7 +61,7 @@ export const startInstallInput = z.object({
    * The install's display name. Several installs of one app may coexist; the
    * Worker name tells them apart (two installs that are not uninstalled never
    * share one), and this optional name is what people see instead. Empty or
-   * missing: none, so the Worker name is shown.
+   * missing: none, so the install goes by the app's name.
    */
   displayName: displayNameInput.optional(),
   /** Secret values by name. Never logged, never stored outside the Workflow payload. */

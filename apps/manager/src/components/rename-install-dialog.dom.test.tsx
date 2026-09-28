@@ -30,9 +30,7 @@ afterEach(() => {
 });
 
 async function openDialog(install: { displayName: string | null; name: string }) {
-  act(() =>
-    root.render(<RenameInstallDialog install={{ id: "i1", workerName: "sink", ...install }} />),
-  );
+  act(() => root.render(<RenameInstallDialog install={{ id: "i1", ...install }} />));
   const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Rename"]');
   if (trigger === null) throw new Error("no Rename button");
   await act(async () => trigger.click());
@@ -58,6 +56,8 @@ describe("the rename dialog", () => {
     const input = nameField();
     expect(input.value).toBe("Team links");
     expect(document.activeElement).toBe(input);
+    // Clearing the name goes back to the app's name, never the Worker's.
+    expect(document.body.textContent).toContain("Leave empty to use the app's name, Sink.");
     expect([input.selectionStart, input.selectionEnd]).toEqual([0, "Team links".length]);
   });
 

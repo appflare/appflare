@@ -98,7 +98,7 @@ describe("startAllUpdatesCore", () => {
     const r = await run(fixture, [INSTALL_ID, "i2"]);
     expect(r.outcome).toEqual({
       started: [
-        { installId: INSTALL_ID, label: "cut", version: "1.1.0", jobId: "job1" },
+        { installId: INSTALL_ID, label: "Cut", version: "1.1.0", jobId: "job1" },
         { installId: "i2", label: "Links", version: "1.1.0", jobId: "job2" },
       ],
       needsInput: [],
@@ -126,7 +126,7 @@ describe("startAllUpdatesCore", () => {
     expect(r.outcome.needsInput).toEqual([
       {
         installId: INSTALL_ID,
-        label: "cut",
+        label: "Cut",
         version: "1.1.0",
         reason: "It needs a value for API_KEY.",
       },

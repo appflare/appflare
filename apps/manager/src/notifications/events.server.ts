@@ -2,6 +2,7 @@ import { managerUpdateView, readManagerLatest } from "../catalog/manager-release
 import { catalogLookup } from "../catalog/merged.server";
 import { installAppKey } from "../catalog/sources";
 import { installLabel } from "../installs/display-name";
+import { namedInstall, readInstallLabels } from "../installs/install-names.server";
 import { pendingUpdates } from "../installs/pending-updates";
 import type { AppRef, NotificationFacts } from "./messages";
 import {
@@ -40,25 +41,28 @@ export interface InstallRow {
   manifest_json: string | null;
 }
 
-/** The app's name from the stored manifest (artifact: `catalog.name`; self-deploying: `name`). */
-export function appNameOf(row: Pick<InstallRow, "app_slug" | "manifest_json">): string {
-  if (row.manifest_json !== null) {
-    try {
-      const m = JSON.parse(row.manifest_json) as { catalog?: { name?: unknown }; name?: unknown };
-      const name = m.catalog?.name ?? m.name;
-      if (typeof name === "string" && name.length > 0) return name;
-    } catch {
-      // fall through to the slug
-    }
-  }
-  return row.app_slug;
+/**
+ * What a message names each of `rows` by (see `readInstallLabels`): told
+ * apart from each other and from every install that is not uninstalled.
+ */
+export function readMessageLabels(
+  db: D1Database,
+  rows: readonly InstallRow[],
+): Promise<Map<string, string>> {
+  return readInstallLabels(db, rows.map(namedInstall));
 }
 
-export function appRefOf(row: InstallRow, name?: string): AppRef {
+export function appRefOf(
+  row: InstallRow,
+  /** From `readMessageLabels`. */
+  labels: ReadonlyMap<string, string>,
+  name?: string,
+): AppRef {
+  const named = namedInstall(row);
   return {
     installId: row.id,
-    app: name ?? appNameOf(row),
-    instance: installLabel({ displayName: row.display_name, workerName: row.worker_name }),
+    app: name ?? named.name,
+    instance: labels.get(row.id) ?? installLabel(named),
     workerName: row.worker_name,
   };
 }
@@ -107,7 +111,7 @@ export async function jobEventOf(db: D1Database, jobId: string): Promise<JobEven
   if (row === null || (row.status !== "succeeded" && row.status !== "failed")) return null;
   const outcome = row.status;
   const input = parseInput(row.input_json);
-  const app = appRefOf(row);
+  const app = appRefOf(row, await readMessageLabels(db, [row]));
   const occurredAt = row.finished_at ?? Date.now();
   const base = { occurredAt, dedupeKey: `job:${jobId}` };
   switch (row.kind) {
@@ -240,6 +244,12 @@ export async function detectConditions(
           >()
       ).results
     : [];
+  // What messages call the installs, read only once a message may name one.
+  let labels: Map<string, string> | undefined;
+  const labelsOf = async () => {
+    labels ??= await readMessageLabels(db, installs);
+    return labels;
+  };
 
   if (wants(channels, "update_available")) {
     // Every enabled catalog's cached index; each install is compared with its own catalog's.
@@ -250,8 +260,6 @@ export async function detectConditions(
           id: r.id,
           status: r.status,
           appSlug: installAppKey(r),
-          displayName: r.display_name,
-          workerName: r.worker_name,
           catalogVersion: r.catalog_version,
         })),
         new Map([...apps].map(([key, l]) => [key, l.app.version])),
@@ -267,7 +275,7 @@ export async function detectConditions(
           occurredAt: now,
           facts: {
             type: "update_available",
-            app: appRefOf(row, apps.get(installAppKey(row))?.app.name),
+            app: appRefOf(row, await labelsOf(), apps.get(installAppKey(row))?.app.name),
             from: update.version,
             to: update.latestVersion,
           },
@@ -341,7 +349,7 @@ export async function detectConditions(
         type: "health_failing",
         dedupeKey: `health_failing:${id}:${since}`,
         occurredAt: Number(since),
-        facts: { type: "health_failing", app: appRefOf(row) },
+        facts: { type: "health_failing", app: appRefOf(row, await labelsOf()) },
       });
     }
     if (closing.length > 0) await db.batch(closing);

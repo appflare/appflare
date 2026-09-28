@@ -4,17 +4,53 @@ import {
   displayNameInput,
   displayNameProblem,
   displayNameSchema,
+  distinctLabels,
   installLabel,
   renameChange,
   renameStartValue,
 } from "./display-name";
 
 describe("installLabel", () => {
-  it("is the display name when set, else the Worker name", () => {
-    expect(installLabel({ displayName: "Team link shortener", workerName: "cut-2" })).toBe(
+  it("is the display name when set, else the app's name", () => {
+    expect(installLabel({ displayName: "Team link shortener", name: "Cut" })).toBe(
       "Team link shortener",
     );
-    expect(installLabel({ displayName: null, workerName: "cut-2" })).toBe("cut-2");
+    expect(installLabel({ displayName: null, name: "Cut" })).toBe("Cut");
+  });
+});
+
+describe("distinctLabels", () => {
+  const install = (id: string, name: string, displayName: string | null = null) => ({
+    id,
+    name,
+    displayName,
+    workerName: id,
+  });
+
+  it("adds the Worker name only to installs that would read the same", () => {
+    const labels = distinctLabels([
+      install("sink", "Sink"),
+      install("sink-2", "Sink"),
+      install("cut", "Cut"),
+      install("sink-3", "Sink", "Team inbox"),
+    ]);
+    expect(Object.fromEntries(labels)).toEqual({
+      sink: "Sink (sink)",
+      "sink-2": "Sink (sink-2)",
+      cut: "Cut",
+      "sink-3": "Team inbox",
+    });
+  });
+
+  it("counts a display name that reads like another install's app name, ignoring case", () => {
+    const labels = distinctLabels([install("cut", "Cut"), install("links", "Links", "CUT")]);
+    expect(labels.get("cut")).toBe("Cut (cut)");
+    expect(labels.get("links")).toBe("CUT (links)");
+  });
+
+  it("counts an install listed twice once", () => {
+    const labels = distinctLabels([install("sink", "Sink"), install("sink", "Sink")]);
+    expect(labels.get("sink")).toBe("Sink");
   });
 });
 
@@ -32,7 +68,7 @@ describe("displayNameSchema", () => {
 });
 
 describe("displayNameInput", () => {
-  it("turns empty or blank into null, which restores the Worker name", () => {
+  it("turns empty or blank into null, which goes back to the app's name", () => {
     expect(displayNameInput.parse("")).toBeNull();
     expect(displayNameInput.parse("  ")).toBeNull();
     expect(displayNameInput.parse(" Links ")).toBe("Links");

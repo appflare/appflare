@@ -1,7 +1,6 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
@@ -47,7 +46,7 @@ describe("listRecentJobs", () => {
     await addJob("j-self", { installId: null, kind: "self_update", startedAt: 2_000 });
     await addJob("j-queued", { kind: "uninstall", status: "queued", startedAt: null });
 
-    const rows = await listRecentJobs(createDb(env.DB));
+    const rows = await listRecentJobs(env.DB);
     expect(rows.map((r) => r.id)).toEqual(["j-queued", "j-new", "j-self", "j-old"]);
     expect(rows[1]).toMatchObject({
       kind: "update",
@@ -64,8 +63,38 @@ describe("listRecentJobs", () => {
       .bind(INSTALL_ID)
       .run();
     await addJob("j1");
-    const [row] = await listRecentJobs(createDb(env.DB));
+    const [row] = await listRecentJobs(env.DB);
     expect(row?.install).toEqual({ id: INSTALL_ID, label: "Team links" });
+  });
+
+  it("names an install by the app's name, adding the Worker name only to tell two apart", async () => {
+    const manifest = JSON.stringify({ version: "1.0.0", catalog: { name: "Cut" } });
+    await seedInstall({ manifestJson: manifest });
+    await addJob("j1", { startedAt: 1_000 });
+    expect((await listRecentJobs(env.DB))[0]?.install).toEqual({ id: INSTALL_ID, label: "Cut" });
+
+    // A second install of the same app, with no job yet: the first one's jobs now tell it apart.
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status,
+         manifest_json, installed_at, updated_at)
+       VALUES ('i2', 'cut', 'cut-2', '1.0.0', 'https://artifacts.test/cut/old.zip', 'installed',
+         ?1, 2, 2)`,
+    )
+      .bind(manifest)
+      .run();
+    expect((await listRecentJobs(env.DB))[0]?.install?.label).toBe("Cut (cut)");
+    await addJob("j2", { installId: "i2", startedAt: 2_000 });
+    expect((await listRecentJobs(env.DB)).map((r) => r.install?.label)).toEqual([
+      "Cut (cut-2)",
+      "Cut (cut)",
+    ]);
+
+    // Uninstalled, it still shares the list with the other one, so both stay told apart.
+    await env.DB.prepare("UPDATE installs SET status = 'uninstalled' WHERE id = 'i2'").run();
+    expect((await listRecentJobs(env.DB)).map((r) => r.install?.label)).toEqual([
+      "Cut (cut-2)",
+      "Cut (cut)",
+    ]);
   });
 
   it("marks a database restore and a deletion of kept data, and stops at the limit", async () => {
@@ -74,7 +103,7 @@ describe("listRecentJobs", () => {
     await addJob("j2", { kind: "uninstall", input: { deleteRetained: true }, startedAt: 2_000 });
     await addJob("j3", { kind: "rollback", input: {}, startedAt: 3_000 });
 
-    const rows = await listRecentJobs(createDb(env.DB), 2);
+    const rows = await listRecentJobs(env.DB, 2);
     expect(rows.map((r) => [r.id, r.restore, r.deleteRetained])).toEqual([
       ["j3", false, false],
       ["j2", false, true],

@@ -158,8 +158,8 @@ export const installs = sqliteTable("installs", {
    */
   instance_name: text("instance_name"),
   /**
-   * The name an admin gave the install ("Team link shortener"); null shows
-   * the Worker name. UI only: never part of usage data.
+   * The name an admin gave the install ("Team link shortener"); null goes
+   * by the app's name. UI only: never part of usage data.
    */
   display_name: text("display_name"),
   catalog_version: text("catalog_version").notNull(),

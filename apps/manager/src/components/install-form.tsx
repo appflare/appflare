@@ -165,7 +165,7 @@ export function InstallForm({
 }) {
   const jobStarted = useJobStarted();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
-  /** Empty: no display name, so the install is shown by its Worker name. */
+  /** Empty: no display name, so the install goes by the app's name. */
   const [displayName, setDisplayName] = useState("");
   const [secrets, setSecrets] = useState<Record<string, string>>(() =>
     initialSecretValues(catalog.secrets),
@@ -385,11 +385,11 @@ export function InstallForm({
                 )}
                 value={displayName}
                 onChange={(e) => setDisplayName(e.currentTarget.value)}
-                placeholder={installer !== null ? catalog.name : workerName}
+                placeholder={catalog.name}
                 autoComplete="off"
                 maxLength={DISPLAY_NAME_MAX_LENGTH}
                 error={displayNameError ?? undefined}
-                description={`How it is listed in Appflare. Leave empty to use ${installer !== null ? catalog.name : "the Worker name"}.`}
+                description={`How it is listed in Appflare. Leave empty to use the app's name, ${catalog.name}.`}
               />
 
               {installer !== null && (
