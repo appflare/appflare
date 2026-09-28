@@ -247,6 +247,9 @@ const selfDeploying = `{
 }
 `;
 
+/** A self-deploying entry from before v1 that sets no health mode, so it was checked as "status-only". */
+const selfDeployingNoMode = selfDeploying.replace('    "healthMode": "status-only",\n', "");
+
 describe("codemod-manifest-v1, run again", () => {
   const fixtures: Record<string, string> = {
     "every changed field": old,
@@ -256,6 +259,11 @@ describe("codemod-manifest-v1, run again", () => {
     ),
     "only the old lists": listsOnly,
     "a self-deploying entry": selfDeploying,
+    "a self-deploying entry without a health mode": selfDeployingNoMode,
+    "a self-deploying entry with only a health path": selfDeployingNoMode.replace(
+      '"wranglerConfig": "alchemy.run.ts",',
+      '"wranglerConfig": "alchemy.run.ts",\n    "healthPath": "/api/health",',
+    ),
   };
 
   for (const [name, text] of Object.entries(fixtures)) {
@@ -288,10 +296,52 @@ describe("codemod-manifest-v1, run again", () => {
 
   it("still sees a manifest from before v1 by its lists, and makes its vars optional", () => {
     const once = migrate(listsOnly);
-    expect(parseJsonc(once.text)).toMatchObject({
+    const parsed = parseJsonc(once.text) as { [key: string]: unknown };
+    expect(parsed).toMatchObject({
       vars: [{ name: "TITLE", label: "Title", default: "Books", optional: true }],
     });
-    expect(strictCatalogManifestSchema.safeParse(parseJsonc(once.text)).success).toBe(true);
+    for (const key of ["requires", "secrets", "postInstall", "tokenPermissions"]) {
+      expect(parsed, key).not.toHaveProperty(key);
+    }
+    expect(strictCatalogManifestSchema.safeParse(parsed).success).toBe(true);
+  });
+
+  it("drops an empty maintainers list, as it does the other empty lists", () => {
+    const once = migrate(listsOnly.replace('"maintainers": ["acme"]', '"maintainers": []'));
+    const parsed = parseJsonc(once.text) as { [key: string]: unknown };
+    expect(parsed).not.toHaveProperty("maintainers");
+    expect(once.changes).toContain("removed maintainers (defaults to [])");
+    expect(strictCatalogManifestSchema.parse(parsed).maintainers).toEqual([]);
+  });
+
+  it('keeps a self-deploying entry without a health mode on "any-response", and says so', () => {
+    const once = migrate(selfDeployingNoMode);
+    const parsed = parseJsonc(once.text) as { install: { health?: unknown } };
+    expect(parsed.install.health).toEqual({ mode: "any-response" });
+    expect(once.changes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          'install.health.mode is "any-response", the check a self-deploying',
+        ),
+      ]),
+    );
+    expect(strictCatalogManifestSchema.safeParse(parsed).error?.issues).toBeUndefined();
+
+    const withPath = migrate(
+      selfDeployingNoMode.replace(
+        '"wranglerConfig": "alchemy.run.ts",',
+        '"wranglerConfig": "alchemy.run.ts",\n    "healthPath": "/api/health",',
+      ),
+    );
+    expect((parseJsonc(withPath.text) as { install: { health?: unknown } }).install.health).toEqual(
+      { path: "/api/health", mode: "any-response" },
+    );
+
+    // "default" said so explicitly: that is the v1 default for every entry.
+    const explicit = migrate(
+      selfDeploying.replace('"healthMode": "status-only"', '"healthMode": "default"'),
+    );
+    expect(parseJsonc(explicit.text)).not.toHaveProperty("install.health");
   });
 
   it("rewrites a self-deploying entry into a manifest the strict schema takes", () => {

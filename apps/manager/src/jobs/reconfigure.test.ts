@@ -78,7 +78,7 @@ const APP: ArtifactFixtureOptions = {
 const HOME_PAGE_SELECT = {
   name: "HOME_PAGE",
   label: "Home page",
-  required: false,
+  optional: true,
   type: "select" as const,
   options: [
     { value: "default", label: "Show the landing page" },
@@ -90,7 +90,6 @@ const TITLE_VAR = {
   name: "TITLE",
   label: "Title",
   default: "Cut on {{workerName}}",
-  required: true,
 };
 
 /** The fake Workflow engine, except that steps named `name` run a second time after they finished. */

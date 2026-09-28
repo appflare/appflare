@@ -136,7 +136,7 @@ example:
 
 A field you leave out takes its default: `install.tier` is `"artifact"`,
 `install.workerName` is the slug, `homepage` is the app's repository on GitHub, and
-`requires`, `secrets`, `vars` and `tokenPermissions` are empty lists. Leave them out
+`requires`, `secrets`, `vars`, `postInstall` and `tokenPermissions` are empty lists. Leave them out
 unless the app needs something else. The packer and the catalog checks refuse a field
 the schema does not know, so a misspelled field is an error rather than a setting that
 is quietly ignored; for a field that has moved, the message names its new place.

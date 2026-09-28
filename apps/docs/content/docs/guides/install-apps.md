@@ -39,8 +39,8 @@ address, its Worker name or your account ID, show as chips ("App address",
 is removed whole with Backspace or Delete, or with its ×, and **Insert** on the field
 adds one back. The setting keeps
 the chip, not its current value, so the app's address follows the Worker name you
-typed and stays the real workers.dev address (also when you attach a custom domain
-later). Only settings you change are stored; the others follow the app's default on
+typed, and moves to the custom domain when one takes over from workers.dev later
+(a "workers.dev address" chip always stays the workers.dev URL). Only settings you change are stored; the others follow the app's default on
 each update. Settings marked JSON take a JSON value, such as `["inbox@example.com"]`,
 and the form checks it before you can install. A setting with a fixed set of values
 shows them as choices: cards for up to four, a dropdown for more. A setting derived

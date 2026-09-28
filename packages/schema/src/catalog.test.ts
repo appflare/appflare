@@ -108,6 +108,10 @@ describe("catalogManifestSchema", () => {
     expect(catalogManifestSchema.parse({ ...validManifest, secrets: undefined }).secrets).toEqual(
       [],
     );
+    const { maintainers: _, postInstall: __, ...withoutLists } = validManifest;
+    const bare = strictCatalogManifestSchema.parse(withoutLists);
+    expect(bare.maintainers).toEqual([]);
+    expect(bare.postInstall).toEqual([]);
   });
 
   it("requires a tagline", () => {

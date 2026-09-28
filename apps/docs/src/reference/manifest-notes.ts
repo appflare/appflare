@@ -40,7 +40,6 @@ export const manifestFieldNotes: FieldNotes = {
   plan: 'The Workers plan the app needs. Use `"paid"` when it cannot run on the free plan.',
   secrets: "Secrets the install form asks for.",
   vars: "Settings the install form asks for. Each reaches the Worker as a variable: text, or JSON when the wrangler config gives it a value that is not a string.",
-  postInstall: "Instructions shown after a successful install.",
   resources: "Settings for resources that the wrangler config cannot describe.",
   "install.packageManager": "The package manager used to install the app's dependencies.",
   "install.wranglerConfig":

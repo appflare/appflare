@@ -80,7 +80,7 @@ Steps:
    - vars: settings an admin should set or change. Every var needs a value unless it sets "optional": true. Use {{appUrl}} where the app needs the address people open it at (it follows a custom domain), {{workerName}} where it needs its Worker name, {{accountId}} where it needs the Cloudflare account id, and {{wildcardHostname}} where an app with install.wildcardHostname needs the hostname its sessions live under. Use {{workerUrl}} only when the app must name its workers.dev address even behind a custom domain.
    - postInstall: what to do after installing, in Markdown (use {{appUrl}} for the app's address).
    - tokenPermissions: only if the app calls the Cloudflare API with a token of its own. Each entry is { "group", "scope", "access", "reason" }, with group as the dashboard's token form names it, such as { "group": "DNS", "scope": "zone", "access": "edit", "reason": "Updates the DNS record for your home address." }. Mark the secret that takes that token with "cloudflareToken": true.
-   Leave out fields that only restate their default: requires, secrets, vars and tokenPermissions when empty. The catalog's checks refuse any field the schema does not know, so a misspelled field is an error.
+   Leave out fields that only restate their default: requires, secrets, vars, postInstall and tokenPermissions when empty. The catalog's checks refuse any field the schema does not know, so a misspelled field is an error.
    - resources.vectorize: dimensions and metric for each Vectorize binding.
    Do not repeat bindings, compatibility settings, static assets, cron triggers, or migrations; the packer reads them from the wrangler config at the pin.
 6. Check the entry, in the catalog checkout:

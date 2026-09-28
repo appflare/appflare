@@ -29,7 +29,10 @@
 // hand where the app cannot run without the value.
 //
 // Health check modes: `"default"` is now `"no-server-errors"` (the default,
-// so it is dropped) and `"status-only"` is now `"any-response"`.
+// so it is dropped) and `"status-only"` is now `"any-response"`. A
+// self-deploying entry without `healthMode` was checked as `"status-only"`,
+// so it gets `health.mode: "any-response"` written out: in v1 every entry
+// that sets no mode is checked with `"no-server-errors"`.
 //
 // Needs Node 22.18 or later: it reads the schema's own TypeScript sources
 // (the permission groups, the licence rules, the strict schema) through
@@ -390,6 +393,29 @@ export function preV1Signs(manifest) {
   return signs;
 }
 
+/**
+ * Replaces `install.healthPath` and `install.healthMode` with `install.health`
+ * (`health`: what is left of them once defaults are dropped). The first of the
+ * two becomes it, so a comment above it stays.
+ */
+function renameHealth(doc, install, health) {
+  const keys = Object.keys(install);
+  const [first, second] =
+    install.healthPath === undefined ||
+    (install.healthMode !== undefined && keys.indexOf("healthMode") < keys.indexOf("healthPath"))
+      ? ["healthMode", "healthPath"]
+      : ["healthPath", "healthMode"];
+  doc.remove(["install", second]);
+  if (Object.keys(health).length > 0) {
+    doc.rename(["install", first], "health", false);
+    doc.set(["install", "health"], health);
+    doc.changes.push("install.healthPath and healthMode are now install.health");
+  } else {
+    // No comment explains it (else `health` would hold the value), so this removes it.
+    doc.strip(["install", first], "is the default health check");
+  }
+}
+
 /** Rewrites one manifest's text; returns the document with its record of changes. */
 export function migrate(text) {
   const doc = new Document(text);
@@ -412,7 +438,14 @@ export function migrate(text) {
   if (manifest.homepage === `https://github.com/${manifest.repo}`) {
     doc.strip(["homepage"], "defaults to the repository");
   }
-  for (const key of ["requires", "secrets", "vars", "tokenPermissions"]) {
+  for (const key of [
+    "maintainers",
+    "requires",
+    "secrets",
+    "vars",
+    "postInstall",
+    "tokenPermissions",
+  ]) {
     if (Array.isArray(manifest[key]) && manifest[key].length === 0) {
       doc.strip([key], "defaults to []");
     }
@@ -447,8 +480,14 @@ export function migrate(text) {
   }
   if (install.fixedWorkerName === false)
     doc.strip(["install", "fixedWorkerName"], "is the default");
-  if (install.healthPath !== undefined || install.healthMode !== undefined) {
-    // The first of the two becomes install.health, so a comment above it stays.
+  // A self-deploying entry without a mode was checked as "status-only".
+  const selfDeployingAnyResponse =
+    preV1 && install.selfDeploying !== undefined && install.healthMode === undefined;
+  if (
+    install.healthPath !== undefined ||
+    install.healthMode !== undefined ||
+    selfDeployingAnyResponse
+  ) {
     // A value that is now the default is dropped, as other defaults are,
     // unless a comment explains it: then it stays, stated in the new shape.
     const health = {};
@@ -478,21 +517,16 @@ export function migrate(text) {
       } else if (keepsDefault("healthMode", `health.mode "${mode}"`)) {
         health.mode = mode;
       }
+    } else if (selfDeployingAnyResponse) {
+      health.mode = "any-response";
+      doc.changes.push(
+        'install.health.mode is "any-response", the check a self-deploying entry without healthMode had (an entry without a mode is now checked with "no-server-errors")',
+      );
     }
-    const keys = Object.keys(install);
-    const [first, second] =
-      install.healthPath === undefined ||
-      (install.healthMode !== undefined && keys.indexOf("healthMode") < keys.indexOf("healthPath"))
-        ? ["healthMode", "healthPath"]
-        : ["healthPath", "healthMode"];
-    doc.remove(["install", second]);
-    if (Object.keys(health).length > 0) {
-      doc.rename(["install", first], "health", false);
+    if (install.healthPath === undefined && install.healthMode === undefined) {
       doc.set(["install", "health"], health);
-      doc.changes.push("install.healthPath and healthMode are now install.health");
     } else {
-      // No comment explains it (else `health` would hold the value), so this removes it.
-      doc.strip(["install", first], "is the default health check");
+      renameHealth(doc, install, health);
     }
   }
   if (install.version !== undefined) {

@@ -1620,7 +1620,7 @@ describe("install job", () => {
     const homePage = {
       name: "HOME_PAGE",
       label: "Home page",
-      required: false,
+      optional: true,
       type: "select" as const,
       options: [
         { value: "default", label: "Show the landing page" },
@@ -1628,7 +1628,7 @@ describe("install job", () => {
       ],
       default: "404",
     };
-    const greeting = { name: "GREETING", label: "Greeting", default: "hi", required: false };
+    const greeting = { name: "GREETING", label: "Greeting", default: "hi", optional: true };
     const r = await install({ revision: { vars: [homePage, greeting] } }, {}, { vars: {} });
     expect(r.error).toBeNull();
     expect(r.job?.status).toBe("succeeded");

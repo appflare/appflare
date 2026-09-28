@@ -27,7 +27,7 @@ describe("readCatalogManifest", () => {
     expect(manifest.install).toMatchObject({
       tier: "artifact",
       fixedWorkerName: false,
-      health: { path: "/", mode: "default" },
+      health: { path: "/", mode: "no-server-errors" },
     });
     expect(manifest.tokenPermissions).toEqual([]);
     expect(manifest.revision).toBe(1);

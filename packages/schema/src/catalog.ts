@@ -2098,6 +2098,7 @@ export const catalogManifestSchema = z
     /** GitHub users who package the app for the catalog; shown as "Packaged by". */
     maintainers: z
       .array(z.string().min(1))
+      .default([])
       .describe(
         "The GitHub usernames, without @, of the people who package the app for the catalog and " +
           'look after this entry, shown as "Packaged by". Not the app\'s own authors (those are ' +
@@ -2116,7 +2117,10 @@ export const catalogManifestSchema = z
       .describe("Account capabilities the app needs beyond the free Workers baseline."),
     secrets: z.array(catalogSecretSchema).default([]),
     vars: z.array(catalogVarSchema).default([]),
-    postInstall: z.array(postInstallStepSchema),
+    postInstall: z
+      .array(postInstallStepSchema)
+      .default([])
+      .describe("Instructions shown after a successful install, in order."),
     tokenPermissions: tokenPermissionsSchema
       .default([])
       .describe(
