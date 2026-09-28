@@ -1,26 +1,29 @@
 import { Banner, cn, Empty, LayerCard, Text } from "@cloudflare/kumo";
 import { WarningCircleIcon } from "@phosphor-icons/react";
-import { type ComponentProps, type ReactElement, type ReactNode, useId } from "react";
+import { Children, type ComponentProps, type ReactElement, type ReactNode, useId } from "react";
 import { ErrorMessageBanner } from "./message-text";
 import { ResponsiveTable } from "./responsive-table";
 
 /**
- * One section of a settings page, the same everywhere:
+ * One section of a page, the same everywhere: one layered Kumo `LayerCard`.
  *
- * - a header: the sentence-case heading (with an optional docs link and a
- *   state badge beside it), one line of explanation under it, and at most
- *   one primary action on the right;
- * - one Kumo `LayerCard` for the body, never a card inside it. An error
- *   shows as a `Banner` at the top of the card; `empty` (a
+ * - Its grey top band (`LayerCard.Secondary`) is the header: the
+ *   sentence-case heading (with an optional docs link and a state badge
+ *   beside it), one line of explanation under it, and at most one primary
+ *   action on the right (under the text on phones).
+ * - Its body (`LayerCard.Primary`) holds the content, never a card inside
+ *   it. An error shows as a `Banner` at the top of the body; `empty` (a
  *   {@link SectionEmpty}, usually offering the section's action) replaces
- *   the body when there is nothing to list.
+ *   the content when there is nothing to list. A section with no content,
+ *   error or empty state is the band alone.
  *
- * The body is one of the layouts below: {@link SectionBody} for free text
- * and forms (with {@link SectionFormActions} at the bottom right),
- * {@link SectionRows} of {@link SectionRow}s split by dividers, or a Kumo
- * `Table` inside {@link SectionTable}. The `id` is the section's link target
- * (see `settings-links.ts`); `scroll-mt` keeps its heading clear of the top
- * when a link scrolls to it.
+ * The content is one of the layouts below, each with its own padding (the
+ * body adds none): {@link SectionBody} for free text and forms (with
+ * {@link SectionFormActions} at the bottom right), {@link SectionRows} of
+ * {@link SectionRow}s split by dividers, or a Kumo `Table` inside
+ * {@link SectionTable}, flush with the body's edges. The `id` is the
+ * section's link target (see `settings-links.ts`); `scroll-mt` keeps its
+ * top clear of the page's top when a link scrolls to it.
  */
 export function Section({
   id,
@@ -54,54 +57,65 @@ export function Section({
   children?: ReactNode;
 }) {
   const hasError = error !== undefined && error !== null && error !== "";
+  const hasEmpty = empty !== undefined && empty !== null && empty !== false;
+  const hasBody = hasError || hasEmpty || Children.toArray(children).length > 0;
   const ownId = useId();
   const headingId = `${id ?? ownId}-heading`;
   return (
-    <section
-      id={id}
-      aria-labelledby={headingId}
-      className={cn("grid scroll-mt-6 gap-3", className)}
-    >
-      {/* On phones the action goes under the text; from 640 px it stays at the
-          right, beside a description of any length. */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="grid min-w-0 gap-1 sm:flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="flex items-center gap-1">
-              <Text variant="heading" as="h2" id={headingId}>
-                {title}
-              </Text>
-              {titleAction}
-            </span>
-            {badge}
-          </div>
-          {description !== undefined && <Text variant="secondary">{description}</Text>}
-        </div>
-        {action !== undefined && action !== null && <div className="sm:shrink-0">{action}</div>}
-      </div>
+    // The card sits inside the section, so the ring of an arrival
+    // (`hash-target.ts`) goes around the card instead of replacing its outline.
+    <section id={id} aria-labelledby={headingId} className={cn("grid scroll-mt-6", className)}>
       <LayerCard className="min-w-0">
-        {hasError && (
-          <div className="px-5 pt-4 last:pb-4">
-            {typeof error === "string" ? (
-              <ErrorMessageBanner message={error} />
-            ) : (
-              <Banner
-                variant="error"
-                icon={<WarningCircleIcon weight="fill" />}
-                description={error}
-              />
-            )}
+        {/* Kumo's band pulls itself 8 px up and under the body by default; here
+            it keeps its place, with the body's 20 px sides. */}
+        <LayerCard.Secondary className={SECTION_BAND}>
+          {/* On phones the action goes under the text; from 640 px it stays at the
+              right, beside a description of any length. */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="grid min-w-0 gap-0.5 sm:flex-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="flex items-center gap-1">
+                  <Text variant="heading" as="h2" id={headingId}>
+                    {title}
+                  </Text>
+                  {titleAction}
+                </span>
+                {badge}
+              </div>
+              {description !== undefined && <Text variant="secondary">{description}</Text>}
+            </div>
+            {action !== undefined && action !== null && <div className="sm:shrink-0">{action}</div>}
           </div>
-        )}
-        {empty !== undefined && empty !== null && empty !== false ? (
-          <div className="px-5 py-4">{empty}</div>
-        ) : (
-          children
+        </LayerCard.Secondary>
+        {hasBody && (
+          // Kumo's padding and gap are dropped: every layout below brings its own.
+          <LayerCard.Primary className={SECTION_BODY}>
+            {hasError && (
+              <div className="px-5 pt-4 last:pb-4">
+                {typeof error === "string" ? (
+                  <ErrorMessageBanner message={error} />
+                ) : (
+                  <Banner
+                    variant="error"
+                    icon={<WarningCircleIcon weight="fill" />}
+                    description={error}
+                  />
+                )}
+              </div>
+            )}
+            {hasEmpty ? <div className="px-5 py-4">{empty}</div> : children}
+          </LayerCard.Primary>
         )}
       </LayerCard>
     </section>
   );
 }
+
+/** The band's classes over Kumo's own: see {@link Section}. */
+const SECTION_BAND = "my-0 block px-5 py-3 font-normal";
+
+/** The body's classes over Kumo's own: see {@link Section}. */
+const SECTION_BODY = "block min-w-0 p-0";
 
 /**
  * Kumo's `Empty` inside a section's card: without its own border and fill,
@@ -190,5 +204,10 @@ export function SectionRow({
  * its own. Children are the table's `Table.Header` and `Table.Body`.
  */
 export function SectionTable(props: Omit<ComponentProps<typeof ResponsiveTable>, "card">) {
-  return <ResponsiveTable {...props} card={false} />;
+  return (
+    // The first and last columns sit 20 px in, in line with the section's heading.
+    <div className="min-w-0 [&_tr>:first-child]:pl-5 [&_tr>:last-child]:pr-5">
+      <ResponsiveTable {...props} card={false} />
+    </div>
+  );
 }

@@ -22,8 +22,9 @@ const { CapabilitiesSection, SetupCapabilities } = await import("./capability-se
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ACC = "acc0000000000000000000000000000a";
-/** Kumo's card surface. */
-const CARD = '[class*="bg-kumo-base shadow-xs ring ring-kumo-line"]';
+/** Kumo's layered card, and its plain card surface. */
+const CARD = '[class*="bg-kumo-elevated text-base ring ring-kumo-hairline"]';
+const SURFACE = '[class*="bg-kumo-base shadow-xs ring ring-kumo-line"]';
 const CHECKED = "2026-09-24T10:00:00.000Z";
 
 /** Workers Free, R2 off, no Zero Trust, and Analytics Engine could not be checked. */
@@ -99,6 +100,7 @@ describe("What this account can run on Your account", () => {
     expect(section?.querySelector("h2")?.textContent).toBe("What this account can run");
     // One card, no card inside it.
     expect(section?.querySelectorAll(CARD).length).toBe(1);
+    expect(section?.querySelectorAll(SURFACE).length).toBe(0);
     // Nine rows; sandbox builds are paid only; R2, Zero Trust need action;
     // Analytics Engine could not be checked.
     const meter = section?.querySelector('[role="meter"]');
@@ -241,6 +243,7 @@ describe("the last setup step", () => {
     );
     // No card of its own inside the setup card.
     expect(container.querySelectorAll(CARD).length).toBe(0);
+    expect(container.querySelectorAll(SURFACE).length).toBe(0);
   });
 
   it("opens Building apps in a new tab, so setup keeps its place", () => {

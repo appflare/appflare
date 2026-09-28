@@ -232,6 +232,20 @@ describe("Home", () => {
     expect(container.textContent).not.toContain("-worker");
   });
 
+  it("lays out Your apps as one section card, its tiles split by hairlines, not cards", () => {
+    render(FULL, { input: FULL_INPUT });
+    const yours = container.querySelector("section#your-apps");
+    expect(yours?.querySelector("h2")?.textContent).toBe("Your apps");
+    const layered = '[class*="bg-kumo-elevated text-base ring ring-kumo-hairline"]';
+    expect(yours?.querySelectorAll(layered).length).toBe(1);
+    const surface = '[class*="bg-kumo-base shadow-xs ring ring-kumo-line"]';
+    expect(yours?.querySelectorAll(surface).length).toBe(0);
+    for (const tile of cards()) {
+      expect(yours?.contains(tile)).toBe(true);
+      expect(tile.className).toContain("border-kumo-hairline");
+    }
+  });
+
   it("hides Needs attention when nothing needs it", () => {
     const calm = [app({ id: "a", name: "Chat" }), app({ id: "b", name: "Stats" })];
     render(calm);

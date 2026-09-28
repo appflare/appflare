@@ -1,16 +1,19 @@
-import { Grid, LayerCard, LinkButton, Text } from "@cloudflare/kumo";
+import { Grid, LinkButton, Text } from "@cloudflare/kumo";
 import { AppIcon } from "../components/catalog-media";
 import { OpenAppButton } from "../components/open-app-button";
+import { Section } from "../components/section";
 import { StatusDot } from "../components/status-dot";
 import { appLine } from "./app-line";
 import { type AppSignal, homeName } from "./attention";
 import type { HomeApp } from "./layout-data";
 
 /**
- * Home's "Your apps": a card per install, by name, with its icon, its name
- * and one quiet line on its state (`appLine`), then Open (the app at its
- * address, in a new tab, when it has one) and Manage (its page here). One
- * column on a phone, with the buttons full width under the text.
+ * Home's "Your apps": a section with a tile per install, by name, with its
+ * icon, its name and one quiet line on its state (`appLine`), then Open (the
+ * app at its address, in a new tab, when it has one) and Manage (its page
+ * here). The tiles share the section's card, split by hairlines instead of
+ * each drawing a card of its own. One column on a phone, with the buttons
+ * full width under the text.
  */
 export function YourApps({
   apps,
@@ -25,26 +28,25 @@ export function YourApps({
     homeName(a).localeCompare(homeName(b), undefined, { sensitivity: "base" }),
   );
   return (
-    <section id="your-apps" aria-labelledby="your-apps-heading" className="grid scroll-mt-6 gap-3">
-      <Text variant="heading" as="h2" id="your-apps-heading">
-        Your apps
-      </Text>
-      <Grid variant="3up" gap="sm">
+    <Section id="your-apps" title="Your apps">
+      {/* Every tile draws a hairline on its right and bottom; the grid reaches 1 px
+          past the card's body on both sides, which hides the lines at its edges. */}
+      <Grid variant="3up" gap="none" className="-mr-px -mb-px">
         {sorted.map((app) => (
           <AppCard key={app.id} app={app} signal={signals.get(app.id)} now={now} />
         ))}
       </Grid>
-    </section>
+    </Section>
   );
 }
 
 function AppCard({ app, signal, now }: { app: HomeApp; signal: AppSignal | undefined; now: Date }) {
   const name = homeName(app);
   return (
-    <LayerCard
+    <div
       data-app-card={app.id}
       data-app-name={name}
-      className="flex h-full min-w-0 flex-col gap-4 px-4 py-4"
+      className="flex h-full min-w-0 flex-col gap-4 border-r border-b border-kumo-hairline px-5 py-4"
     >
       <div className="flex min-w-0 items-center gap-3">
         <AppIcon src={app.icon} name={app.name} size={40} />
@@ -78,6 +80,6 @@ function AppCard({ app, signal, now }: { app: HomeApp; signal: AppSignal | undef
           Manage
         </LinkButton>
       </div>
-    </LayerCard>
+    </div>
   );
 }

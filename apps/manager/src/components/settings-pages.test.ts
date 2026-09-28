@@ -55,8 +55,10 @@ vi.mock("@tanstack/react-start/server", () => ({
   getRequestHeader: () => undefined,
 }));
 
-/** Kumo's card surface; a settings page has one per section and none inside another. */
-const CARD = "bg-kumo-base shadow-xs ring ring-kumo-line";
+/** Kumo's layered card; a settings page has one per section. */
+const CARD = "bg-kumo-elevated text-base ring ring-kumo-hairline";
+/** Kumo's plain card surface: never inside a section. */
+const SURFACE = "bg-kumo-base shadow-xs ring ring-kumo-line";
 
 function render(element: ReactElement): string {
   // Dialog triggers read the toast manager; the app provides it at its root.
@@ -80,6 +82,7 @@ function count(html: string, needle: string): number {
 function expectPattern(html: string, ids: string[], actions: string[]) {
   expect(sectionIds(html)).toEqual(ids);
   expect(count(html, CARD)).toBe(ids.length);
+  expect(count(html, SURFACE)).toBe(0);
   expect(html).not.toContain('aria-label="breadcrumb"');
   expect(html).not.toMatch(/>Settings<\/a>/);
   for (const action of actions) expect(text(html)).toContain(action);
