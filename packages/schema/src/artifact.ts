@@ -743,9 +743,18 @@ export type ArtifactEntryWorker = z.infer<typeof artifactEntryWorkerSchema>;
  * app without, leaving it broken or exposed. An older manager refuses an
  * artifact of a format it does not know ({@link unknownArtifactFormatProblem})
  * and says to update Appflare. Anything an older manager may skip (it strips
- * keys it does not know) needs no new format.
+ * keys it does not know) needs no new format. Formats 2 to
+ * {@link LAST_EARLIER_ARTIFACT_FORMAT} were written by earlier versions of
+ * Appflare, before this shape, so the next format is 7.
  */
 export const LATEST_ARTIFACT_FORMAT = 1;
+
+/**
+ * The highest format earlier versions of Appflare wrote (they wrote 1 to 6,
+ * in a shape this version no longer reads). An artifact of format 2 to 6 is
+ * an old release, not one from a later Appflare.
+ */
+export const LAST_EARLIER_ARTIFACT_FORMAT = 6;
 export type ArtifactFormat = typeof LATEST_ARTIFACT_FORMAT;
 
 /**
@@ -858,16 +867,23 @@ export const strictArtifactManifestSchema = strictSchema(artifactManifestSchema)
 export const UPDATE_APPFLARE_PLACE = "Settings > Updates";
 
 /**
- * Why a manifest's `format` is one this version cannot read, as a sentence
- * that says to update Appflare, or null when it can read it (or it has no
- * numeric format, which the schema then refuses on its own).
+ * Why a manifest's `format` is one this version cannot read, as a sentence,
+ * or null when it can read it (or it has no numeric format, which the schema
+ * then refuses on its own). A format from a later Appflare says to update
+ * Appflare; one only earlier versions wrote (2 to
+ * {@link LAST_EARLIER_ARTIFACT_FORMAT}) says the release must be packed
+ * again, since no update reads it.
  */
 export function unknownArtifactFormatProblem(json: unknown): string | null {
   if (typeof json !== "object" || json === null || !("format" in json)) return null;
   const format = (json as { format: unknown }).format;
   if (typeof format !== "number" || !Number.isInteger(format)) return null;
   if (format === LATEST_ARTIFACT_FORMAT) return null;
-  return format > LATEST_ARTIFACT_FORMAT
-    ? `the artifact is format ${format}, and this version of Appflare reads format ${LATEST_ARTIFACT_FORMAT}; update Appflare in ${UPDATE_APPFLARE_PLACE}, then try again`
-    : `the artifact is format ${format}, which no version of Appflare reads`;
+  if (format > LAST_EARLIER_ARTIFACT_FORMAT) {
+    return `the artifact is format ${format}, and this version of Appflare reads format ${LATEST_ARTIFACT_FORMAT}; update Appflare in ${UPDATE_APPFLARE_PLACE}, then try again`;
+  }
+  if (format > LATEST_ARTIFACT_FORMAT) {
+    return `the artifact is format ${format}: the app's release was built for an earlier version of Appflare and needs to be packed again by its catalog`;
+  }
+  return `the artifact is format ${format}, which no version of Appflare reads`;
 }

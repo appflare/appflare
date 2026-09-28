@@ -568,8 +568,9 @@ Points that need care:
   `scope` is `"zone"` or `"account"`, `access` is `"read"` or `"edit"`, and `reason`
   is one plain sentence (start it with "Optional:" when the app works without the
   permission). `group` must be a group Appflare can select in the token link. Zone
-  groups: DNS, Zone, Zone Settings, Analytics, Page Rules, SSL and Certificates,
-  Firewall Services, Load Balancers, Logs, Workers Routes, and Email Routing Rules.
+  groups: DNS, Zone, Zone Settings, Analytics, Page Rules, Cache Purge, SSL and
+  Certificates, Firewall Services, Load Balancers, Logs, Workers Routes, and Email
+  Routing Rules. Cache Purge has one level, Purge, which `"access": "edit"` asks for.
   Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit,
   Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog,
   Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize,

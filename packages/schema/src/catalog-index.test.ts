@@ -102,8 +102,22 @@ describe("indexJsonSchema", () => {
     // A custom catalog may name a category this version does not know.
     expect(indexAppSchema.safeParse({ ...row, categories: ["gardening"] }).success).toBe(true);
     expect(indexAppSchema.safeParse({ ...row, categories: [] }).success).toBe(false);
+    // At most three, as in the catalog manifest.
+    const three = ["utilities", "developer-tools", "gardening"];
+    expect(indexAppSchema.safeParse({ ...row, categories: three }).success).toBe(true);
+    expect(indexAppSchema.safeParse({ ...row, categories: [...three, "media"] }).success).toBe(
+      false,
+    );
     expect(indexAppSchema.safeParse({ ...row, services: [""] }).success).toBe(false);
     expect(indexAppSchema.safeParse({ ...row, categories: "utilities" }).success).toBe(false);
+  });
+
+  it("holds the slug to lowercase letters, digits and dashes", () => {
+    const row = validIndex.apps[0];
+    expect(indexAppSchema.safeParse({ ...row, slug: "open-seo" }).success).toBe(true);
+    for (const slug of ["", "My_App", "-cut", "a".repeat(64)]) {
+      expect(indexAppSchema.safeParse({ ...row, slug }).success).toBe(false);
+    }
   });
 
   it("accepts a revision and a revised catalog manifest on a release row", () => {

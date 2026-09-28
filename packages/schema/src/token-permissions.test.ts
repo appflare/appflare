@@ -89,6 +89,35 @@ describe("strictTokenPermissionSchema", () => {
     }
   });
 
+  it("takes the zone group Cache Purge at its one level, Purge, written as edit", () => {
+    const purge = {
+      group: "Cache Purge",
+      scope: "zone",
+      access: "edit",
+      reason: "Purges the status page from the cache when a check changes.",
+    };
+    expect(strictTokenPermissionSchema.parse(purge)).toEqual(purge);
+    expect(strictTokenPermissionsSchema.safeParse([dns, purge]).success).toBe(true);
+    expect(appTokenPermissionGroup("zone", "Cache Purge")).toMatchObject({
+      templateKey: "cache",
+      onlyLevel: "purge",
+    });
+    expect(tokenPermissionName(purge as TokenPermission)).toBe("Zone: Cache Purge: Purge");
+    const read = strictTokenPermissionSchema.safeParse({ ...purge, access: "read" });
+    expect(read.error?.issues).toEqual([
+      expect.objectContaining({
+        path: ["access"],
+        message: '"Cache Purge" has one level, Purge, which access "edit" asks for',
+      }),
+    ]);
+    expect(tokenPermissionGroupProblems([{ ...purge, access: "read" }])).toEqual([
+      { path: [0, "access"], message: expect.stringContaining("one level, Purge") },
+    ]);
+    expect(strictTokenPermissionSchema.safeParse({ ...purge, scope: "account" }).success).toBe(
+      false,
+    );
+  });
+
   it("finds the groups of a list as written, leaving other shapes to the schema", () => {
     expect(
       tokenPermissionGroupProblems([dns, { ...dns, group: "Made Up" }, { name: "DNS" }, "x"]),

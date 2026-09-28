@@ -17,7 +17,8 @@ import type { ServiceId } from "./services";
  * `page_rules`, `ssl_and_certificates`, `account_settings`,
  * `account_analytics`, `billing`, `workers_scripts`, `workers_kv_storage`,
  * `workers_routes`, `workers_r2`, `d1`, `queues`, `logs`, `access`,
- * `access_acct`; the dashboard's own group labels (`<key>_read` /
+ * `access_acct`, and `cache` (Cache Purge, whose one level the page's
+ * `purge` type selects); the dashboard's own group labels (`<key>_read` /
  * `<key>_write`) for `email_routing_rule`, `email_routing_address`,
  * `query_cache` (Hyperdrive), `pipelines`, `vectorize`, `workers_tail`,
  * `load_balancers`, `account_logs`, `magic_transit`; public template links
@@ -46,6 +47,12 @@ export interface AppTokenPermissionGroup {
   templateKey: string;
   /** The Cloudflare service the group reaches, when it is one the catalog lists. */
   service?: ServiceId;
+  /**
+   * Set for a group with a single level that is neither Read nor Edit: the
+   * template type that selects it and the dashboard's word for it. A
+   * manifest asks for that level with `access: "edit"`; `"read"` is refused.
+   */
+  onlyLevel?: "purge";
 }
 
 /** Every permission group an app's token may ask for, by scope, in the dashboard's wording. */
@@ -55,6 +62,13 @@ export const APP_TOKEN_PERMISSION_GROUPS = [
   { scope: "zone", group: "Zone Settings", templateKey: "zone_settings", service: "zone" },
   { scope: "zone", group: "Analytics", templateKey: "analytics", service: "zone" },
   { scope: "zone", group: "Page Rules", templateKey: "page_rules", service: "zone" },
+  {
+    scope: "zone",
+    group: "Cache Purge",
+    templateKey: "cache",
+    service: "zone",
+    onlyLevel: "purge",
+  },
   {
     scope: "zone",
     group: "SSL and Certificates",
@@ -155,6 +169,27 @@ export function tokenPermissionGroupProblem(scope: string, group: string): strin
   return `"${group}" is not a ${scope} permission group; ${scope} groups are ${tokenPermissionGroupNames(scope as TokenPermissionScope).join(", ")}`;
 }
 
+/**
+ * Why `access` is not a level `group` of `scope` has, or null when it is (or
+ * the group is not on the list, which {@link tokenPermissionGroupProblem}
+ * reports). Only a group with a single level ({@link AppTokenPermissionGroup.onlyLevel})
+ * refuses one: `"read"`, since its level changes things.
+ */
+export function tokenPermissionAccessProblem(
+  scope: string,
+  group: string,
+  access: string,
+): string | null {
+  const known = appTokenPermissionGroup(scope, group);
+  if (known?.onlyLevel === undefined || access !== "read") return null;
+  return `"${group}" has one level, ${levelWord(known.onlyLevel)}, which access "edit" asks for`;
+}
+
+/** The dashboard's word for a single level: `Purge`. */
+function levelWord(level: "purge"): string {
+  return `${level.charAt(0).toUpperCase()}${level.slice(1)}`;
+}
+
 /** A problem with a `tokenPermissions` list, with its path inside the list. */
 export interface TokenPermissionProblem {
   path: Array<string | number>;
@@ -164,7 +199,8 @@ export interface TokenPermissionProblem {
 /**
  * The groups of a `tokenPermissions` list that are not on
  * {@link APP_TOKEN_PERMISSION_GROUPS} for their scope, one problem each at
- * `[i, "group"]`. Reads the list as written: entries of the wrong shape are
+ * `[i, "group"]`, and access levels their group does not have, at
+ * `[i, "access"]`. Reads the list as written: entries of the wrong shape are
  * left to {@link tokenPermissionsSchema}.
  */
 export function tokenPermissionGroupProblems(permissions: unknown): TokenPermissionProblem[] {
@@ -172,10 +208,13 @@ export function tokenPermissionGroupProblems(permissions: unknown): TokenPermiss
   const problems: TokenPermissionProblem[] = [];
   permissions.forEach((p: unknown, i) => {
     if (typeof p !== "object" || p === null) return;
-    const { scope, group } = p as { scope?: unknown; group?: unknown };
+    const { scope, group, access } = p as { scope?: unknown; group?: unknown; access?: unknown };
     if (typeof scope !== "string" || typeof group !== "string" || group.trim() === "") return;
     const message = tokenPermissionGroupProblem(scope, group);
     if (message !== null) problems.push({ path: [i, "group"], message });
+    if (typeof access !== "string") return;
+    const accessMessage = tokenPermissionAccessProblem(scope, group, access);
+    if (accessMessage !== null) problems.push({ path: [i, "access"], message: accessMessage });
   });
   return problems;
 }
@@ -239,11 +278,18 @@ export type TokenPermission = z.infer<typeof tokenPermissionSchema>;
 
 /**
  * One permission as the tools that write a manifest check it: `group` must be
- * a group of its scope on {@link APP_TOKEN_PERMISSION_GROUPS}.
+ * a group of its scope on {@link APP_TOKEN_PERMISSION_GROUPS}, and `access` a
+ * level it has.
  */
 export const strictTokenPermissionSchema = tokenPermissionSchema.superRefine((permission, ctx) => {
   const message = tokenPermissionGroupProblem(permission.scope, permission.group);
   if (message !== null) ctx.addIssue({ code: "custom", path: ["group"], message });
+  const access = tokenPermissionAccessProblem(
+    permission.scope,
+    permission.group,
+    permission.access,
+  );
+  if (access !== null) ctx.addIssue({ code: "custom", path: ["access"], message: access });
 });
 
 /** Refuses a scope and group listed twice. */
@@ -270,12 +316,18 @@ export const strictTokenPermissionsSchema = z
   .array(strictTokenPermissionSchema)
   .superRefine(listedOnce);
 
-/** How the dashboard's token form words a permission: `Zone: DNS: Edit`. */
+/**
+ * How the dashboard's token form words a permission: `Zone: DNS: Edit`, or
+ * the single level of a group that has one (`Zone: Cache Purge: Purge`).
+ */
 export function tokenPermissionName(
   p: Pick<TokenPermission, "scope" | "group" | "access">,
 ): string {
   const scope = p.scope === "zone" ? "Zone" : "Account";
-  return `${scope}: ${p.group}: ${p.access === "edit" ? "Edit" : "Read"}`;
+  const onlyLevel = appTokenPermissionGroup(p.scope, p.group)?.onlyLevel;
+  const level =
+    onlyLevel !== undefined ? levelWord(onlyLevel) : p.access === "edit" ? "Edit" : "Read";
+  return `${scope}: ${p.group}: ${level}`;
 }
 
 /**

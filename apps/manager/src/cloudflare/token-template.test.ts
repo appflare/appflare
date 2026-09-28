@@ -2,6 +2,7 @@ import { APP_TOKEN_PERMISSION_GROUPS, type TokenPermission } from "@appflare/sch
 import { describe, expect, it } from "vitest";
 import {
   ACCESS_FEATURE,
+  type AppTokenPermission,
   accountTokenTemplateUrl,
   appTokenTemplateUrl,
   CUSTOM_DOMAINS_FEATURE,
@@ -9,6 +10,7 @@ import {
   EMAIL_ROUTING_FEATURE,
   EXTERNAL_DOMAINS_FEATURE,
   optionalGroupsByFeature,
+  type PermissionGroup,
   PIPELINES_FEATURE,
   PLAN_DETECTION_FEATURE,
   permissionName,
@@ -252,6 +254,14 @@ describe("app token permissions", () => {
       { key: "query_cache", type: "read" },
       { key: "access_acct", type: "read" },
     ]);
+  });
+
+  it("selects Cache Purge at its one level, Purge, and names it so", () => {
+    const [purge] = resolveAppTokenPermissions([perm("zone", "Cache Purge")]);
+    expect(purge?.group).toEqual({ key: "cache", type: "purge", label: "Zone: Cache Purge" });
+    expect(permissionName(purge?.group as PermissionGroup)).toBe("Zone: Cache Purge: Purge");
+    const url = appTokenTemplateUrl("Statusbeam", [purge as AppTokenPermission]);
+    expect(decodeURIComponent(url ?? "")).toContain('[{"key":"cache","type":"purge"}]');
   });
 
   it("finds a template key for every group the schema lets an app ask for", () => {

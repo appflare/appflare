@@ -2044,19 +2044,28 @@ export const catalogRevisionSchema = z
       "manifest. Anything else needs a new build, so move `source` instead.",
   );
 
+/**
+ * A catalog slug, held to {@link CATALOG_SLUG_PATTERN} wherever it is read:
+ * it becomes a Worker name, a folder and a page address, so a manifest or an
+ * index row with any other slug could never be installed.
+ */
+export const catalogSlugSchema = z
+  .string()
+  .regex(
+    CATALOG_SLUG_PATTERN,
+    "must be lowercase letters, digits and dashes, starting with a letter or digit, at most 63 characters",
+  );
+
 /** The full catalog manifest, `appflare.jsonc`. */
 export const catalogManifestSchema = z
   .object({
     $schema: z.url().optional(),
-    slug: z
-      .string()
-      .min(1)
-      .describe(
-        "The entry's permanent id, in lowercase letters, digits and hyphens, for example " +
-          "`open-seo`. It is also the entry's folder in the catalog, the first part of its release " +
-          "tags (`<slug>@<version>`) and the Worker name the install form suggests. It never " +
-          "changes once the entry is published.",
-      ),
+    slug: catalogSlugSchema.describe(
+      "The entry's permanent id, in lowercase letters, digits and hyphens, for example " +
+        "`open-seo`. It is also the entry's folder in the catalog, the first part of its release " +
+        "tags (`<slug>@<version>`) and the Worker name the install form suggests. It never " +
+        "changes once the entry is published.",
+    ),
     name: z
       .string()
       .min(1)

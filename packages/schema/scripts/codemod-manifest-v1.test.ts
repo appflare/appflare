@@ -91,11 +91,11 @@ describe("codemod-manifest-v1", () => {
         { name: "CF_API_TOKEN", label: "Cloudflare API token", cloudflareToken: true },
       ],
       vars: [
-        { name: "BASE_URL", label: "Address", default: "{{workerUrl}}", optional: true },
+        { name: "BASE_URL", label: "Address", default: "{{appUrl}}", optional: true },
         { name: "TITLE", label: "Title" },
         { name: "THEME", label: "Theme", optional: true },
       ],
-      postInstall: [{ type: "markdown", content: "Open {{workerUrl}}." }],
+      postInstall: [{ type: "markdown", content: "Open {{appUrl}}." }],
       tokenPermissions: [
         { group: "DNS", scope: "zone", reason: "Writes the records.", access: "edit" },
         {
@@ -135,12 +135,65 @@ describe("codemod-manifest-v1", () => {
         expect.stringContaining("secrets[2] (CF_API_TOKEN) was marked cloudflareToken by its name"),
       ]),
     );
-    expect(result.notes).toEqual(
+    expect(result.changes).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('vars[0] (BASE_URL) defaults to "{{workerUrl}}"'),
-        expect.stringContaining("postInstall uses {{workerUrl}}"),
+        expect.stringContaining("vars[0] (BASE_URL) default: {{workerUrl}} is now {{appUrl}}"),
+        expect.stringContaining("postInstall[0] content: {{workerUrl}} is now {{appUrl}}"),
       ]),
     );
+    expect(result.notes.filter((note) => note.includes("workerUrl"))).toEqual([]);
+  });
+
+  it("rewrites {{workerUrl}}, per-Worker forms too, to {{appUrl}} in defaults and post-install steps", () => {
+    const withWorkers = old
+      .replace(
+        '"default": "{{workerUrl}}"',
+        '"default": "{{workerUrl}}/api, {{ workerUrl:api }} and \\u0041 {{workerUrlish}}"',
+      )
+      .replace(
+        '"content": "Open {{workerUrl}}."',
+        '"content": "Open {{workerUrl}}, then {{workerUrl:admin-panel}}; {{workerHostname}} stays."',
+      );
+    const text = migrate(withWorkers).text;
+    expect(text).toContain(
+      '"default": "{{appUrl}}/api, {{ appUrl:api }} and \\u0041 {{workerUrlish}}"',
+    );
+    expect(text).toContain(
+      '"content": "Open {{appUrl}}, then {{appUrl:admin-panel}}; {{workerHostname}} stays."',
+    );
+    expect(text).not.toMatch(/\{\{\s*workerUrl[:\s}]/);
+  });
+
+  it("leaves {{workerUrl}} in a v1 manifest, where it means workers.dev", () => {
+    const v1 = `{
+  "slug": "demo",
+  "name": "Demo",
+  "summary": "A demo app.",
+  "tagline": "Shows every change",
+  "repo": "acme/demo",
+  "license": "MIT",
+  "categories": ["ai"],
+  "source": { "ref": "v1.0.0", "sha": "${"a".repeat(40)}", "version": "1.0.0" },
+  "install": { "health": { "path": "/health" } },
+  "plan": "free",
+  "vars": [{ "name": "HOOK_URL", "label": "Webhook address", "default": "{{workerUrl}}/hook", "optional": true }],
+  "postInstall": [{ "type": "markdown", "content": "Point the webhook at {{workerUrl:api}}." }]
+}
+`;
+    const result = migrate(v1);
+    expect(result.text).toBe(v1);
+    expect(result.changes).toEqual([]);
+    expect(result.notes).toEqual(["already in the v1 shape; left as it is"]);
+    // Still left alone when the manifest has something for a person to finish.
+    const withUnknownGroup = v1.replace(
+      '  "plan": "free",',
+      '  "plan": "free",\n  "tokenPermissions": [{ "name": "Made Up Group", "scope": "account" }],',
+    );
+    const unfinished = migrate(withUnknownGroup);
+    expect(unfinished.todos).toEqual(
+      expect.arrayContaining([expect.stringContaining("tokenPermissions[0]")]),
+    );
+    expect(unfinished.text).toBe(withUnknownGroup);
   });
 
   it("leaves what the strict schema refuses only where a person must decide", () => {

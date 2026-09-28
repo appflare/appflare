@@ -37,7 +37,9 @@ describe("the catalog snapshot", () => {
       value.links[slug] = value.links[from];
       delete value.links[from];
       expect(problems(value)).toContainEqual(
-        expect.stringMatching(/^index\.apps\.0\.slug: .*slug/),
+        expect.stringMatching(
+          /^index\.apps\.0\.slug: must be lowercase letters, digits and dashes/,
+        ),
       );
     }
   });

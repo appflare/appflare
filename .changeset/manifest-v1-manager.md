@@ -2,7 +2,7 @@
 "@appflare/manager": major
 ---
 
-The manager reads the v1 catalog manifest, artifact and index, and nothing written in the earlier shapes: an artifact of another format is refused with a message that says to update Appflare, and existing installs are expected to start fresh.
+The manager reads the v1 catalog manifest, artifact and index, and nothing written in the earlier shapes: an artifact of a later format is refused with a message that says to update Appflare, one of formats 2 to 6 (built for an earlier Appflare) with a message that its catalog needs to pack the release again, and existing installs are expected to start fresh.
 
 - The link that creates an app's own Cloudflare API token is prefilled from the structured `tokenPermissions` (group, scope, access, reason), each group's template key coming from the schema's list; a group this version does not know is listed with "Not selected for you". The field that takes the token is the secret marked `cloudflareToken: true` (or a Pipelines sink's token secret), no longer guessed from its name.
 - Categories come from the schema's fixed list, with its labels and an icon each; an id a custom catalog uses that the list does not know gets a readable label but no card or row of its own. Slugs the catalog folded before the list was fixed are no longer mapped.

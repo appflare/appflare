@@ -3,6 +3,7 @@ import { sha256Schema } from "./artifact";
 import {
   catalogAuthorSchema,
   catalogRevisionSchema,
+  catalogSlugSchema,
   expectedBuildMinutesSchema,
   gitShaSchema,
   installTierSchema,
@@ -10,6 +11,7 @@ import {
   requirementSchema,
   sandboxInstanceTypeSchema,
 } from "./catalog";
+import { MAX_ENTRY_CATEGORIES } from "./category-list";
 import { licenseNoteSchema, licenseSchema } from "./license";
 import { MAX_SCREENSHOTS } from "./media";
 import { taglineSchema } from "./tagline";
@@ -120,7 +122,7 @@ export type IndexCatalogManifest = z.infer<typeof indexCatalogManifestSchema>;
  */
 export const indexAppSchema = z
   .object({
-    slug: z.string().min(1),
+    slug: catalogSlugSchema,
     name: z.string().min(1),
     summary: z.string().min(1),
     /** The catalog manifest's `tagline`, the pitch on catalog tiles. */
@@ -163,9 +165,10 @@ export const indexAppSchema = z
     /**
      * The catalog manifest's `categories`. Plain strings, not the list's ids,
      * so a manager still reads a custom catalog's row that names a category
-     * it does not know (it lists that row under no category).
+     * it does not know (it lists that row under no category). At most
+     * {@link MAX_ENTRY_CATEGORIES}, as in the manifest.
      */
-    categories: z.array(z.string().min(1)).min(1),
+    categories: z.array(z.string().min(1)).min(1).max(MAX_ENTRY_CATEGORIES),
     /** The catalog manifest's `license` and `licenseNote`, for the catalog card. */
     license: licenseSchema,
     licenseNote: licenseNoteSchema.optional(),

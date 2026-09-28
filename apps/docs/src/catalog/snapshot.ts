@@ -38,15 +38,8 @@ export const catalogSnapshotSchema = z
   .superRefine((snapshot, ctx) => {
     const seen = new Set<string>();
     snapshot.index.apps.forEach((app, i) => {
+      // The index schema holds slugs to the catalog slug form already.
       const path = ["index", "apps", i, "slug"];
-      // Slugs become page addresses, so only the strict form is accepted.
-      if (!CATALOG_SLUG_PATTERN.test(app.slug)) {
-        ctx.addIssue({
-          code: "custom",
-          path,
-          message: `"${app.slug}" is not a catalog slug: lowercase letters, digits and dashes`,
-        });
-      }
       if (seen.has(app.slug)) {
         ctx.addIssue({ code: "custom", path, message: `"${app.slug}" is listed twice` });
       }

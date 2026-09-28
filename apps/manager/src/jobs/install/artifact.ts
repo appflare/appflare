@@ -59,7 +59,8 @@ export async function verifyArtifactManifest(
     throw new ArtifactError(error instanceof Error ? error.message : String(error));
   }
   const json: unknown = JSON.parse(new TextDecoder().decode(manifestBytes));
-  // A newer packer's format says to update Appflare rather than list schema errors.
+  // A format this version does not read gets one sentence (update Appflare,
+  // or pack the release again) rather than a list of schema errors.
   const unknownFormat = unknownArtifactFormatProblem(json);
   if (unknownFormat !== null) {
     throw new ArtifactError(

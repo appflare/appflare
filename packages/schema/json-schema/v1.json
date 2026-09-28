@@ -10,7 +10,7 @@
     },
     "slug": {
       "type": "string",
-      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
       "description": "The entry's permanent id, in lowercase letters, digits and hyphens, for example `open-seo`. It is also the entry's folder in the catalog, the first part of its release tags (`<slug>@<version>`) and the Worker name the install form suggests. It never changes once the entry is published."
     },
     "name": {
@@ -3140,6 +3140,7 @@
               "Zone Settings",
               "Analytics",
               "Page Rules",
+              "Cache Purge",
               "SSL and Certificates",
               "Firewall Services",
               "Load Balancers",
@@ -3168,7 +3169,7 @@
               "Access: Apps and Policies",
               "Access: Organizations, Identity Providers, and Groups"
             ],
-            "description": "The permission group, as the Cloudflare dashboard's token form names it, for example `\"DNS\"` or `\"Workers Scripts\"`. Zone groups: DNS, Zone, Zone Settings, Analytics, Page Rules, SSL and Certificates, Firewall Services, Load Balancers, Logs, Workers Routes, Email Routing Rules. Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit, Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog, Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize, Hyperdrive, Pipelines, Secrets Store, Email Sending, Email Routing Addresses, Access: Apps and Policies, Access: Organizations, Identity Providers, and Groups."
+            "description": "The permission group, as the Cloudflare dashboard's token form names it, for example `\"DNS\"` or `\"Workers Scripts\"`. Zone groups: DNS, Zone, Zone Settings, Analytics, Page Rules, Cache Purge, SSL and Certificates, Firewall Services, Load Balancers, Logs, Workers Routes, Email Routing Rules. Account groups: Account Settings, Account Analytics, Billing, Logs, Magic Transit, Workers Scripts, Workers KV Storage, Workers R2 Storage, Workers R2 Data Catalog, Workers R2 SQL, Workers Tail, Workers Containers, D1, Queues, Vectorize, Hyperdrive, Pipelines, Secrets Store, Email Sending, Email Routing Addresses, Access: Apps and Policies, Access: Organizations, Identity Providers, and Groups."
           },
           "scope": {
             "type": "string",
@@ -3247,6 +3248,7 @@
                   "Zone Settings",
                   "Analytics",
                   "Page Rules",
+                  "Cache Purge",
                   "SSL and Certificates",
                   "Firewall Services",
                   "Load Balancers",

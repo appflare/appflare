@@ -34,6 +34,13 @@
 // so it gets `health.mode: "any-response"` written out: in v1 every entry
 // that sets no mode is checked with `"no-server-errors"`.
 //
+// Placeholders: before v1 `{{workerUrl}}` was the address the app is served
+// at (its custom domain while workers.dev is off), which v1 calls
+// `{{appUrl}}`; `{{workerUrl}}` is now always the workers.dev address. So
+// `{{workerUrl}}` and `{{workerUrl:<name>}}` become `{{appUrl}}` and
+// `{{appUrl:<name>}}` in `vars[].default` and `postInstall[].content` of a
+// manifest written before v1, and nowhere else.
+//
 // Needs Node 22.18 or later: it reads the schema's own TypeScript sources
 // (the permission groups, the licence rules, the strict schema) through
 // Node's type stripping, so it always agrees with this version of the schema.
@@ -707,25 +714,41 @@ export function migrate(text) {
       doc.rename(["resources", "d1", binding, "migrations"], "migrationsGlob");
   }
 
-  // Placeholders: {{workerUrl}} stays the workers.dev address; say where the
-  // app's own address is probably meant.
-  const workerUrl = /\{\{\s*workerUrl(?::[a-z0-9-]+)?\s*\}\}/;
-  (manifest.vars ?? []).forEach((v, i) => {
-    if (typeof v.default === "string" && workerUrl.test(v.default)) {
-      doc.notes.push(
-        `vars[${i}] (${v.name}) defaults to ${JSON.stringify(v.default)}; if it means the address people use, write {{appUrl}}`,
-      );
-    }
-  });
-  const inPostInstall = (manifest.postInstall ?? []).filter(
-    (step) => typeof step.content === "string" && workerUrl.test(step.content),
-  ).length;
-  if (inPostInstall > 0) {
-    doc.notes.push(
-      `postInstall uses {{workerUrl}} in ${inPostInstall} step(s); for the address people open, {{appUrl}} follows a custom domain`,
-    );
+  // Placeholders: before v1 {{workerUrl}} was the address the app is served
+  // at, which v1 calls {{appUrl}} ({{workerUrl}} is now always workers.dev).
+  // Only a manifest from before v1 is rewritten, so a v1 one keeps its own.
+  if (preV1) {
+    (manifest.vars ?? []).forEach((v, i) => {
+      if (typeof v.default === "string") {
+        renameWorkerUrl(doc, ["vars", i, "default"], `vars[${i}] (${v.name}) default`);
+      }
+    });
+    (manifest.postInstall ?? []).forEach((step, i) => {
+      if (typeof step.content === "string") {
+        renameWorkerUrl(doc, ["postInstall", i, "content"], `postInstall[${i}] content`);
+      }
+    });
   }
   return doc;
+}
+
+/** `{{workerUrl}}` and `{{workerUrl:<name>}}`, the name part and closing braces looked ahead at. */
+const WORKER_URL_PLACEHOLDER = /(\{\{\s*)workerUrl(?=(?::[a-z0-9-]+)?\s*\}\})/g;
+
+/**
+ * Rewrites `{{workerUrl}}` to `{{appUrl}}` (and each per-Worker form) in the
+ * string at `path`, in its text as written, so its escapes stay as they are.
+ */
+function renameWorkerUrl(doc, path, where) {
+  const node = doc.node(path);
+  if (node === undefined || node.type !== "string") return;
+  const raw = doc.slice(node);
+  const rewritten = raw.replace(WORKER_URL_PLACEHOLDER, "$1appUrl");
+  if (rewritten === raw) return;
+  doc.splice(node.offset, node.length, rewritten);
+  doc.changes.push(
+    `${where}: {{workerUrl}} is now {{appUrl}}, the address the app is served at, as it meant before v1`,
+  );
 }
 
 function main(argv) {

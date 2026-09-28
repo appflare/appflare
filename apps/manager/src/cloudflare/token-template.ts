@@ -32,7 +32,8 @@ import {
 } from "@appflare/schema";
 import { dashboardUrl } from "./dashboard-links";
 
-export type PermissionType = "read" | "edit";
+/** The template's `type`: `purge` selects the one level of Cache Purge. */
+export type PermissionType = "read" | "edit" | "purge";
 
 export interface PermissionGroup {
   /** Dashboard template key. */
@@ -256,9 +257,16 @@ export function optionalGroupsByFeature(
   return [...byFeature].map(([feature, list]) => ({ feature, groups: list }));
 }
 
-/** `Label: Edit` / `Label: Read`, the wording of the dashboard's picker. */
+/** The dashboard picker's word for each level. */
+export const LEVEL_WORDS: Record<PermissionType, string> = {
+  read: "Read",
+  edit: "Edit",
+  purge: "Purge",
+};
+
+/** `Label: Edit` / `Label: Read` / `Label: Purge`, the wording of the dashboard's picker. */
 export function permissionName(group: PermissionGroup): string {
-  const name = `${group.label}: ${group.type === "edit" ? "Edit" : "Read"}`;
+  const name = `${group.label}: ${LEVEL_WORDS[group.type]}`;
   return group.manual === true ? `${name} (add by hand)` : name;
 }
 
@@ -362,7 +370,11 @@ export function resolveAppTokenPermissions(
       group:
         known === null
           ? null
-          : { key: known.templateKey, type: p.access, label: groupLabel(p.scope, p.group) },
+          : {
+              key: known.templateKey,
+              type: known.onlyLevel ?? p.access,
+              label: groupLabel(p.scope, p.group),
+            },
     };
   });
 }

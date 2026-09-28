@@ -1373,6 +1373,22 @@ describe("multiline secrets", () => {
   });
 });
 
+describe("slug", () => {
+  it("takes lowercase letters, digits and dashes, starting with a letter or digit", () => {
+    for (const slug of ["cut", "2fa", "open-seo", "a".repeat(63)]) {
+      expect(catalogManifestSchema.safeParse({ ...validManifest, slug }).success).toBe(true);
+      expect(strictCatalogManifestSchema.safeParse({ ...validManifest, slug }).success).toBe(true);
+    }
+  });
+
+  it("refuses any other slug in the lenient and the strict schema", () => {
+    for (const slug of ["", "My_App", "Cut", "-cut", "cut.app", "a b", "a".repeat(64)]) {
+      expect(catalogManifestSchema.safeParse({ ...validManifest, slug }).success).toBe(false);
+      expect(strictCatalogManifestSchema.safeParse({ ...validManifest, slug }).success).toBe(false);
+    }
+  });
+});
+
 describe("strictCatalogManifestSchema", () => {
   it("parses what the lenient schema parses, to the same value", () => {
     expect(strictCatalogManifestSchema.parse(validManifest)).toEqual(

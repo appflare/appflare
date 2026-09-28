@@ -6,6 +6,7 @@ import {
   type ArtifactManifest,
   artifactD1Files,
   artifactManifestSchema,
+  LAST_EARLIER_ARTIFACT_FORMAT,
   LATEST_ARTIFACT_FORMAT,
   type SigningKey,
   signingKeys,
@@ -90,13 +91,16 @@ export async function verifyArtifact(options: VerifyArtifactOptions): Promise<Ve
   } catch {
     throw new Error("manifest.json is not valid JSON");
   }
-  // A later format means a release newer than this installer knows.
+  // A format above the earlier ones means a release newer than this
+  // installer knows; formats 2 to 6 are releases built for an earlier Appflare.
   if (unknownArtifactFormatProblem(json) !== null) {
     const format = (json as { format: number }).format;
     throw new Error(
-      format > LATEST_ARTIFACT_FORMAT
+      format > LAST_EARLIER_ARTIFACT_FORMAT
         ? `the release is artifact format ${format}, and this installer reads format ${LATEST_ARTIFACT_FORMAT}; run the latest installer (npx create-appflare@latest)`
-        : `the release is artifact format ${format}, which this installer does not read`,
+        : format > LATEST_ARTIFACT_FORMAT
+          ? `the release is artifact format ${format}: it was built for an earlier version of Appflare and needs to be packed again by its catalog`
+          : `the release is artifact format ${format}, which this installer does not read`,
     );
   }
   const parsed = artifactManifestSchema.safeParse(json);

@@ -141,7 +141,7 @@ describe("fetchCatalogSnapshot", () => {
     files.set(`${BASE}index.json`, JSON.stringify(index));
     const { fetch } = fakeFetch(files);
     await expect(fetchCatalogSnapshot({ ...options, fetch })).rejects.toThrow(
-      /index\.apps\.0\.slug/,
+      /apps\.0\.slug: must be lowercase letters, digits and dashes/,
     );
   });
 

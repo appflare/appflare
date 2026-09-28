@@ -109,13 +109,21 @@ describe("artifactManifestSchema", () => {
   it("reads format 1 only, and says to update Appflare for a newer one", () => {
     expect(artifactManifestSchema.safeParse({ ...validArtifact, format: 2 }).success).toBe(false);
     expect(unknownArtifactFormatProblem(validArtifact)).toBeNull();
-    expect(unknownArtifactFormatProblem({ format: 2 })).toBe(
-      "the artifact is format 2, and this version of Appflare reads format 1; update Appflare in Settings > Updates, then try again",
+    expect(unknownArtifactFormatProblem({ format: 7 })).toBe(
+      "the artifact is format 7, and this version of Appflare reads format 1; update Appflare in Settings > Updates, then try again",
     );
     expect(unknownArtifactFormatProblem({ format: 0 })).toBe(
       "the artifact is format 0, which no version of Appflare reads",
     );
     expect(unknownArtifactFormatProblem({ format: "1" })).toBeNull();
+  });
+
+  it("says a format 2 to 6 release must be packed again, since updating cannot read it", () => {
+    for (const format of [2, 6]) {
+      expect(unknownArtifactFormatProblem({ format })).toBe(
+        `the artifact is format ${format}: the app's release was built for an earlier version of Appflare and needs to be packed again by its catalog`,
+      );
+    }
   });
 
   it("carries a multiline secret in format 1", () => {

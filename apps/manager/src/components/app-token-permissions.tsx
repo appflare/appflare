@@ -4,6 +4,7 @@ import { KeyIcon } from "@phosphor-icons/react";
 import {
   type AppTokenPermission,
   appTokenTemplateUrl,
+  LEVEL_WORDS,
   r2ApiTokensUrl,
   resolveAppTokenPermissions,
   UNMAPPED_PERMISSION_REASON,
@@ -15,7 +16,8 @@ import { useAccountId } from "./use-account-id";
 export function permissionTitle(p: AppTokenPermission): string {
   const scope = p.scope === "zone" ? "Zone" : "Account";
   const label = p.group?.label ?? `${scope}: ${p.groupName}`;
-  return `${label} · ${p.access === "edit" ? "Edit" : "Read"}`;
+  // The template group's level (Purge for Cache Purge), else the access asked for.
+  return `${label} · ${LEVEL_WORDS[p.group?.type ?? p.access]}`;
 }
 
 /**

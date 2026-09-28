@@ -69,13 +69,29 @@ describe("verifyArtifactManifest", () => {
 
     const future = await buildArtifactFixture({
       tweak: (m) => {
-        (m as { format: number }).format = 2;
+        (m as { format: number }).format = 7;
       },
     });
     await expect(
       verifyArtifactManifest(future.manifestBytes, future.signature, expected(future), future.keys),
     ).rejects.toThrow(
-      "the artifact is format 2, and this version of Appflare reads format 1; update Appflare in [Settings > Updates](/settings/updates#appflare), then try again",
+      "the artifact is format 7, and this version of Appflare reads format 1; update Appflare in [Settings > Updates](/settings/updates#appflare), then try again",
+    );
+
+    const earlier = await buildArtifactFixture({
+      tweak: (m) => {
+        (m as { format: number }).format = 6;
+      },
+    });
+    await expect(
+      verifyArtifactManifest(
+        earlier.manifestBytes,
+        earlier.signature,
+        expected(earlier),
+        earlier.keys,
+      ),
+    ).rejects.toThrow(
+      "the artifact is format 6: the app's release was built for an earlier version of Appflare and needs to be packed again by its catalog",
     );
   });
 
