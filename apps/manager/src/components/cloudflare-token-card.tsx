@@ -1,8 +1,9 @@
-import { Badge, Banner, Button, LayerDialog, Text } from "@cloudflare/kumo";
-import { ArrowsClockwiseIcon, CheckCircleIcon } from "@phosphor-icons/react";
+import { Badge, Banner, Button, LayerDialog, Link, Text } from "@cloudflare/kumo";
+import { ArrowSquareOutIcon, ArrowsClockwiseIcon, CheckCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import type { TokenStatus } from "../server/token.functions";
+import { appflareDevLink } from "./appflare-dev-link";
 import { CloudflareTokenForm, type SavedToken } from "./cloudflare-token-form";
 import { DescriptionItem, DescriptionList } from "./description-list";
 import { DocsLink } from "./docs-link";
@@ -12,15 +13,20 @@ import { Timestamp } from "./timestamp";
 
 /**
  * The account settings' Cloudflare connection: the account and Worker the
- * manager runs as, the token's state, and (admins) rotating the token.
+ * manager runs as, the token's state, (admins) rotating the token, and a
+ * quiet link that makes appflare.dev's Install buttons open this manager.
  */
 export function CloudflareTokenCard({
   status,
   canRotate,
+  managerUrl,
 }: {
   status: TokenStatus;
   canRotate: boolean;
+  /** The address this browser uses for this manager, for the appflare.dev link; none, no link. */
+  managerUrl?: string | null;
 }) {
+  const appflareDev = appflareDevLink(managerUrl);
   return (
     <Section
       {...settingsSection("account", "connection")}
@@ -57,6 +63,19 @@ export function CloudflareTokenCard({
               : "The token is saved; the running version does not have it yet."}
           </DescriptionItem>
         </DescriptionList>
+        {appflareDev !== null && (
+          <div className="grid gap-0.5">
+            <Text size="sm" as="p">
+              <Link href={appflareDev} target="_blank" rel="noreferrer">
+                Use this Appflare on appflare.dev
+                <ArrowSquareOutIcon className="ml-1 inline" aria-hidden />
+              </Link>
+            </Text>
+            <Text variant="secondary" size="sm" as="p">
+              Remembers this Appflare in your browser so Install buttons on appflare.dev open here.
+            </Text>
+          </div>
+        )}
       </SectionBody>
     </Section>
   );

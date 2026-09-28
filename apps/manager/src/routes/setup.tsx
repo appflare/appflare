@@ -12,6 +12,7 @@ import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-lay
 import { SetupTokenForm, type SetupTokenSaved } from "../components/cloudflare-token-form";
 import { MessageText } from "../components/message-text";
 import { PasswordInput } from "../components/password-input";
+import { afterSignIn, returnToSearchSchema, withReturnTo } from "../components/return-to";
 import {
   initialWizardState,
   type SavedTokenSummary,
@@ -42,10 +43,12 @@ import { loadAppflareVersion } from "../server/version.functions";
  *
  * `?checklist=true` marks step 3, so a reload stays there. `?token=` from
  * older installers is accepted and ignored; it is removed from the address bar.
+ * `?returnTo=` is the page a visitor was sent here from: Finish (or setup
+ * being done already) opens it instead of home, and sign-in carries it on.
  */
 export const Route = createFileRoute("/setup")({
   staticData: { title: "Set up" },
-  validateSearch: z.object({
+  validateSearch: returnToSearchSchema.extend({
     token: z.string().optional(),
     checklist: z.boolean().optional(),
   }),
@@ -54,10 +57,10 @@ export const Route = createFileRoute("/setup")({
   shouldReload: false,
   loader: async ({ location }) => {
     stripTokenFromAddressBar();
-    const checklist = (location.search as { checklist?: boolean }).checklist === true;
-    // Redirects to /login (users exist, no session) or / (setup complete).
+    const { checklist, returnTo } = location.search as { checklist?: boolean; returnTo?: string };
+    // Redirects to /login (users exist, no session) or returnTo or / (setup complete).
     const [gate, version] = await Promise.all([
-      enterSetup({ data: { checklist } }),
+      enterSetup({ data: { checklist: checklist === true, returnTo } }),
       loadAppflareVersion(),
     ]);
     const checklistData = gate.step === "checklist" ? await getCapabilityRowsData() : null;
@@ -165,7 +168,9 @@ function StepContent({
 /** Moves the address to step 3, so a reload stays there, without a new route match. */
 function useShowChecklistInAddress() {
   const router = useRouter();
-  return () => router.navigate({ to: "/setup", search: { checklist: true }, replace: true });
+  const { returnTo } = Route.useSearch();
+  return () =>
+    router.navigate({ to: "/setup", search: { checklist: true, returnTo }, replace: true });
 }
 
 /** How often the redeploy wait asks `/api/health` whether the new version serves. */
@@ -210,6 +215,7 @@ function CreateOwnerStep({
   resync: () => Promise<void>;
 }) {
   const router = useRouter();
+  const { returnTo } = Route.useSearch();
   const showChecklist = useShowChecklistInAddress();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -232,7 +238,7 @@ function CreateOwnerStep({
     }
     const { error: signInError } = await authClient.signIn.email({ email, password });
     if (signInError) {
-      await router.navigate({ to: "/login" });
+      await router.navigate({ href: withReturnTo("/login", returnTo) });
       return;
     }
     const checklist = await getCapabilityRowsData();
@@ -260,7 +266,7 @@ function CreateOwnerStep({
   );
 }
 
-/** Step 3: what the account can run, then Finish. */
+/** Step 3: what the account can run, then Finish (home, or the page asked for first). */
 function ChecklistStep({
   data,
   onRechecked,
@@ -269,13 +275,14 @@ function ChecklistStep({
   onRechecked: (data: CapabilityRowsData) => void;
 }) {
   const router = useRouter();
+  const { returnTo } = Route.useSearch();
   return (
     <>
       <SetupCapabilities data={data} onChanged={onRechecked} />
       <Button
         variant="primary"
         className={FULL_WIDTH_ACTION}
-        onClick={() => void router.navigate({ to: "/" })}
+        onClick={() => void router.navigate({ href: afterSignIn(returnTo), replace: true })}
       >
         Finish
       </Button>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appGate, type GateState, setupGate } from "./gate";
+import { appGate, type GateState, redirectHref, setupGate } from "./gate";
 
 const state = (over: Partial<GateState>): GateState => ({
   hasUser: true,
@@ -39,6 +39,31 @@ describe("appGate (every signed-in page)", () => {
   it("lets signed-in users through once configured", () => {
     expect(appGate(state({}))).toEqual({ allow: true });
     expect(appGate(state({ isAdmin: false }))).toEqual({ allow: true });
+  });
+});
+
+describe("redirectHref (where a gate's redirect goes)", () => {
+  it("sends a signed-out visitor to sign in with the page they asked for, section included", () => {
+    const gate = appGate(state({ signedIn: false, isAdmin: false }));
+    if (!("redirect" in gate)) throw new Error("expected a redirect");
+    expect(redirectHref(gate.redirect, "/apps/01J9ZQ7K3M#secrets")).toBe(
+      "/login?returnTo=%2Fapps%2F01J9ZQ7K3M%23secrets",
+    );
+    expect(redirectHref(gate.redirect, "/install/cut")).toBe("/login?returnTo=%2Finstall%2Fcut");
+  });
+
+  it("carries it through setup too, and opens it once setup is done", () => {
+    expect(redirectHref("/setup", "/catalog/cut")).toBe("/setup?returnTo=%2Fcatalog%2Fcut");
+    expect(redirectHref("/", "/catalog/cut#install")).toBe("/catalog/cut#install");
+  });
+
+  it("drops a return path that is not one of the manager's pages", () => {
+    for (const hostile of ["//evil.example", "/\\evil.example", "javascript:alert(1)", "/login"]) {
+      expect(redirectHref("/login", hostile), hostile).toBe("/login");
+      expect(redirectHref("/", hostile), hostile).toBe("/");
+    }
+    expect(redirectHref("/login", "/")).toBe("/login");
+    expect(redirectHref("/login", undefined)).toBe("/login");
   });
 });
 

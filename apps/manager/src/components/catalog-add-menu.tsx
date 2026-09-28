@@ -14,17 +14,21 @@ export const ADD_CATALOG_HREF = settingsLink("catalogs", "catalogs");
  * with "From a repository…", which opens the repository build dialog when
  * the account can build from a repository, and "Add a catalog", which opens
  * the Catalogs settings. The dialog stays mounted with the page and gives
- * focus back to "+" when it closes.
+ * focus back to "+" when it closes. `prefill` (a repository install link)
+ * opens the dialog at once with the repository filled in.
  */
 export function CatalogAddMenu({
   repositoryBuilds,
   sandbox,
+  prefill,
 }: {
   /** Building from a repository is offered (Workers Paid, sandbox builds possible). */
   repositoryBuilds: boolean;
   sandbox: SandboxReadiness;
+  /** `owner/repo` from a repository install link, already checked; read once. */
+  prefill?: string;
 }) {
-  const [repositoryOpen, setRepositoryOpen] = useState(false);
+  const [repositoryOpen, setRepositoryOpen] = useState(repositoryBuilds && prefill !== undefined);
   const trigger = useRef<HTMLButtonElement>(null);
   return (
     <>
@@ -65,6 +69,7 @@ export function CatalogAddMenu({
           open={repositoryOpen}
           onOpenChange={setRepositoryOpen}
           returnFocus={trigger}
+          prefill={prefill}
         />
       )}
     </>

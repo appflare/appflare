@@ -5,7 +5,12 @@ import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { readSettings, SETTING } from "../db/settings";
-import { emailSendErrorMessage, resetEmail, resetPasswordUrl } from "./password-email";
+import {
+  emailSendErrorMessage,
+  resetEmail,
+  resetPasswordUrl,
+  returnToFromResetRequest,
+} from "./password-email";
 import {
   changeAuthEmailBinding,
   EMAIL_OFF_MESSAGE,
@@ -35,6 +40,34 @@ describe("reset emails", () => {
     expect(email.html).not.toContain("<b>@");
   });
 
+  it("carry the page to return to from the forgot-password request into the link", () => {
+    // What Better Auth hands the sender when the page asked with a return path.
+    const redirectTo = "/reset-password?returnTo=%2Fapps%2F01J9%23secrets";
+    const betterAuthUrl = `${BASE}/api/auth/reset-password/tok?callbackURL=${encodeURIComponent(redirectTo)}`;
+    const back = returnToFromResetRequest(betterAuthUrl);
+    expect(back).toBe("/apps/01J9#secrets");
+    const url = new URL(resetPasswordUrl(BASE, "tok", back));
+    expect(url.pathname).toBe("/reset-password");
+    expect(url.searchParams.get("token")).toBe("tok");
+    expect(url.searchParams.get("returnTo")).toBe("/apps/01J9#secrets");
+  });
+
+  it("leave a hostile or missing return path out of the link", () => {
+    for (const redirectTo of [
+      "/reset-password",
+      "/reset-password?returnTo=%2F%2Fevil.example",
+      "/reset-password?returnTo=javascript%3Aalert(1)",
+      "https://evil.example/reset-password?returnTo=%2Fcatalog",
+    ]) {
+      const betterAuthUrl = `${BASE}/api/auth/reset-password/tok?callbackURL=${encodeURIComponent(redirectTo)}`;
+      expect(returnToFromResetRequest(betterAuthUrl), redirectTo).toBeUndefined();
+    }
+    expect(returnToFromResetRequest("not a url")).toBeUndefined();
+    expect(resetPasswordUrl(BASE, "tok", "//evil.example")).toBe(
+      `${BASE}/reset-password?token=tok`,
+    );
+  });
+
   it("explain Email Sending's refusals in plain words", () => {
     expect(emailSendErrorMessage({ code: "E_SENDER_NOT_VERIFIED" })).toContain(
       "not set up for Email Sending",
@@ -59,15 +92,36 @@ describe("Better Auth with reset emails", () => {
     });
   }
 
-  function requestReset(a: ReturnType<typeof auth>, email: string) {
+  function requestReset(a: ReturnType<typeof auth>, email: string, redirectTo = "/reset-password") {
     return a.handler(
       new Request(`${BASE}/api/auth/request-password-reset`, {
         method: "POST",
         headers: { origin: BASE, "content-type": "application/json" },
-        body: JSON.stringify({ email, redirectTo: "/reset-password" }),
+        body: JSON.stringify({ email, redirectTo }),
       }),
     );
   }
+
+  it("keeps the page asked for before signing in in the emailed link", async () => {
+    const sent: { to: string; url: string }[] = [];
+    const a = auth(async (args) => {
+      sent.push(args);
+    });
+    await a.api.createUser({
+      body: { email: "ada@example.com", name: "Ada", password: "old password 1", role: "member" },
+    });
+    // What the forgot-password page sends when it was opened with ?returnTo=.
+    const res = await requestReset(
+      a,
+      "ada@example.com",
+      "/reset-password?returnTo=%2Finstall%2Fcut",
+    );
+    expect(res.status).toBe(200);
+    const link = new URL(sent[0]?.url ?? "");
+    expect(link.pathname).toBe("/reset-password");
+    expect(link.searchParams.get("returnTo")).toBe("/install/cut");
+    expect(link.searchParams.get("token")).not.toBeNull();
+  });
 
   it("answers alike for any address, mails only a real user, and the link resets once", async () => {
     const sent: { to: string; url: string }[] = [];

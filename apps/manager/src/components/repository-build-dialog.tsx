@@ -30,21 +30,27 @@ import {
  * would skip its opening animation). A menu item opens it, and the menu is
  * gone by the time it closes, so it hands focus back to `returnFocus` (the
  * menu's button) once it has closed.
+ *
+ * `prefill` (from a repository install link) fills in the repository of the
+ * first opening; the admin still chooses the rest and confirms.
  */
 export function RepositoryBuildDialog({
   sandbox,
   open,
   onOpenChange: setOpen,
   returnFocus,
+  prefill,
 }: {
   sandbox: SandboxReadiness;
   open: boolean;
   onOpenChange(open: boolean): void;
   returnFocus?: RefObject<HTMLElement | null>;
+  /** `owner/repo`, already checked; read once, when the dialog mounts. */
+  prefill?: string;
 }) {
   const jobStarted = useJobStarted();
   const formId = useId();
-  const [repository, setRepository] = useState("");
+  const [repository, setRepository] = useState(prefill ?? "");
   const [ref, setRef] = useState("");
   const [buildCommand, setBuildCommand] = useState(INITIAL_BUILD_COMMAND);
   const [costConfirmed, setCostConfirmed] = useState(false);

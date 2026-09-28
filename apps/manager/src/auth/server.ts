@@ -6,7 +6,11 @@ import { betterAuth } from "better-auth/minimal";
 import { admin } from "better-auth/plugins";
 import type { Database } from "../db/client";
 import * as schema from "../db/schema";
-import { RESET_LINK_TTL_SECONDS, resetPasswordUrl } from "./password-email";
+import {
+  RESET_LINK_TTL_SECONDS,
+  resetPasswordUrl,
+  returnToFromResetRequest,
+} from "./password-email";
 import { recordRecovery } from "./recovery.server";
 import { type RecoveryPluginDeps, recoveryCodes } from "./recovery-plugin";
 import { accessControl, DEFAULT_ROLE, roles } from "./roles";
@@ -93,14 +97,17 @@ export function createAuth({ db, secret, baseURL, recovery }: AuthDeps) {
         : {
             sendResetPassword: async ({
               user,
+              url,
               token,
             }: {
               user: { email: string };
+              url: string;
               token: string;
             }) => {
               await recovery.sendResetEmail?.({
                 to: user.email,
-                url: resetPasswordUrl(baseURL, token),
+                // Straight to the manager's page, keeping the page to return to.
+                url: resetPasswordUrl(baseURL, token, returnToFromResetRequest(url)),
               });
             },
           }),

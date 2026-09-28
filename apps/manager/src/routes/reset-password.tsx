@@ -11,19 +11,24 @@ import {
 } from "../auth/recovery-messages";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION } from "../components/auth-layout";
 import { PasswordInput } from "../components/password-input";
+import { returnToSearchSchema, withReturnTo } from "../components/return-to";
 import { getSetupStatus } from "../server/setup.functions";
 import { loadAppflareVersion } from "../server/version.functions";
 
-/** `/reset-password?token=…`: where an emailed reset link leads. */
+/**
+ * `/reset-password?token=…`: where an emailed reset link leads. The link
+ * carries `?returnTo=` when it was asked for from a sign-in page that had
+ * one, and "Sign in" passes it back.
+ */
 export const Route = createFileRoute("/reset-password")({
   staticData: { title: "Choose a new password" },
-  validateSearch: z.object({
+  validateSearch: returnToSearchSchema.extend({
     token: z.string().max(256).optional(),
     error: z.string().max(64).optional(),
   }),
-  beforeLoad: async () => {
+  beforeLoad: async ({ search }) => {
     const [{ needsSetup }, version] = await Promise.all([getSetupStatus(), loadAppflareVersion()]);
-    if (needsSetup) throw redirect({ to: "/setup" });
+    if (needsSetup) throw redirect({ href: withReturnTo("/setup", search.returnTo) });
     return { version };
   },
   component: ResetPasswordPage,
@@ -31,7 +36,8 @@ export const Route = createFileRoute("/reset-password")({
 
 function ResetPasswordPage() {
   const { version } = Route.useRouteContext();
-  const { token, error: linkError } = Route.useSearch();
+  const { token, error: linkError, returnTo } = Route.useSearch();
+  const signInHref = withReturnTo("/login", returnTo);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -65,7 +71,7 @@ function ResetPasswordPage() {
         {!usable ? (
           <>
             <AuthError message={RECOVERY_MESSAGES.linkInvalid} />
-            <Link href="/forgot-password">Ask for a new link</Link>
+            <Link href={withReturnTo("/forgot-password", returnTo)}>Ask for a new link</Link>
           </>
         ) : done ? (
           <>
@@ -75,7 +81,7 @@ function ResetPasswordPage() {
               title="Password changed"
               description="Sign in with your new password."
             />
-            <Link href="/login">Sign in</Link>
+            <Link href={signInHref}>Sign in</Link>
           </>
         ) : (
           <>
@@ -99,7 +105,7 @@ function ResetPasswordPage() {
               </Button>
             </form>
             <Text variant="secondary" size="sm" as="p">
-              <Link href="/login">Back to sign in</Link>
+              <Link href={signInHref}>Back to sign in</Link>
             </Text>
           </>
         )}

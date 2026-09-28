@@ -158,6 +158,27 @@ describe("AccountSettingsView", () => {
     expect(html).not.toContain('id="checklist-r2"');
   });
 
+  it("links the connection to appflare.dev with this manager's origin, quietly", () => {
+    const html = render(
+      createElement(AccountSettingsView, {
+        tokenStatus,
+        capabilities: capabilityRowsData,
+        danger: null,
+        viewer: { role: "member", isOwner: false },
+        managerUrl: "https://appflare.acme.workers.dev",
+      }),
+    );
+    expect(html).toContain(
+      'href="https://appflare.dev/my/#manager=https%3A%2F%2Fappflare.acme.workers.dev"',
+    );
+    expect(html).toMatch(/rel="noreferrer"/);
+    expect(text(html)).toContain(
+      "Remembers this Appflare in your browser so Install buttons on appflare.dev open here.",
+    );
+    // Still one primary action at most, and no extra section.
+    expect(sectionIds(html)).toEqual(["connection", "capabilities"]);
+  });
+
   it("shows no danger zone to admins who are not the owner", () => {
     const html = render(
       createElement(AccountSettingsView, {

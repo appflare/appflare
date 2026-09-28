@@ -5,6 +5,8 @@
  * address on a domain set up for Cloudflare Email Sending.
  */
 
+import { safeReturnPath } from "../components/internal-path";
+
 /** The binding the manager adds to itself when reset emails are turned on. */
 export const AUTH_EMAIL_BINDING = "AUTH_EMAIL";
 
@@ -22,11 +24,34 @@ export interface OutgoingEmail {
 const escapeHtml = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-/** The link a reset email carries: the manager's own page, with Better Auth's token. */
-export function resetPasswordUrl(origin: string, token: string): string {
+/**
+ * The link a reset email carries: the manager's own page, with Better Auth's
+ * token, and the page to return to after signing in again when it is one of
+ * the manager's pages.
+ */
+export function resetPasswordUrl(origin: string, token: string, returnTo?: unknown): string {
   const url = new URL("/reset-password", origin);
   url.searchParams.set("token", token);
+  const back = safeReturnPath(returnTo);
+  if (back !== null && back !== "/") url.searchParams.set("returnTo", back);
   return url.toString();
+}
+
+/**
+ * The return path the reset request asked for. Better Auth hands the email
+ * sender its own link, `…/reset-password/<token>?callbackURL=<redirectTo>`,
+ * where `redirectTo` is what the forgot-password page sent
+ * (`/reset-password?returnTo=…`); anything unreadable gives nothing.
+ */
+export function returnToFromResetRequest(betterAuthUrl: string): string | undefined {
+  try {
+    const callback = new URL(betterAuthUrl).searchParams.get("callbackURL");
+    if (callback === null || !callback.startsWith("/")) return undefined;
+    const back = new URL(callback, "https://manager.invalid").searchParams.get("returnTo");
+    return safeReturnPath(back) ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function resetEmail(args: { from: string; to: string; url: string }): OutgoingEmail {
