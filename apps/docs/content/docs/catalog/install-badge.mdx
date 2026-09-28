@@ -1,0 +1,89 @@
+---
+title: Add an Install badge
+description: Put an "Install with Appflare" button in your project's README, for an app in the catalog or for any GitHub repository.
+---
+
+The badge links on this page point at appflare.dev and start working when appflare.dev
+goes live.
+
+The Install badge lets people install your app from its README with a click. It takes
+them to appflare.dev, which opens the app in their own Appflare, where they check what
+it needs and confirm. People who do not have Appflare yet are shown how to get it, and
+the page keeps the app for them for 7 days.
+
+It is the same height as Cloudflare's Deploy button, so the two sit well side by side:
+
+<div className="flex flex-wrap items-center gap-3 [&_p]:m-0">
+
+![Install with Appflare](/badge.svg)
+
+![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)
+
+</div>
+
+## For an app in the catalog
+
+Use the app's slug, its short name in the catalog (the last part of its address on
+[the apps page](/apps/)). For an app with the slug `2fa`:
+
+```md
+[![Install with Appflare](https://appflare.dev/badge.svg)](https://appflare.dev/install/2fa/)
+```
+
+This is the badge to use whenever your app is in the catalog: the catalog's version is
+packaged and checked for Appflare, and it works on the free Workers plan unless the app
+itself needs Workers Paid.
+
+## For any GitHub repository
+
+Use your repository's `owner/repo`:
+
+```md
+[![Install with Appflare](https://appflare.dev/badge.svg)](https://appflare.dev/install/?repo=owner/repo)
+```
+
+**This form builds your project in the visitor's own Cloudflare account and needs
+Workers Paid**, with building turned on in their Appflare (**Settings › Building
+apps**). Nobody has checked the code for them, and Appflare shows the install as not
+from the catalog. Say so next to the badge, so that people on the free plan know before
+they select it. See
+[Install from a repository](/guides/install-from-a-repository/) for what the visitor
+goes through.
+
+If the repository is in the catalog, the page offers the catalog's version first.
+
+## Next to the Deploy button
+
+In HTML, which also lets you set the height:
+
+```html
+<a href="https://appflare.dev/install/2fa/"><img src="https://appflare.dev/badge.svg" alt="Install with Appflare" height="39"></a>
+<a href="https://deploy.workers.cloudflare.com/?url=https://github.com/owner/repo"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare" height="39"></a>
+```
+
+For a repository, use `https://appflare.dev/install/?repo=owner/repo` as the first
+link instead.
+
+In Markdown, put both on one line:
+
+```md
+[![Install with Appflare](https://appflare.dev/badge.svg)](https://appflare.dev/install/2fa/) [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/owner/repo)
+```
+
+## What happens when someone selects it
+
+- **They have told appflare.dev where their Appflare is:** the page shows "Opening in
+  your Appflare at …" with the address, and opens it a moment later. They can select
+  **Change** to stop.
+- **First visit:** the page asks whether they have Appflare. They enter its address
+  and choose **Remember** or **Just this once**; either way the page then shows where
+  it is going and opens it a moment later, with **Change** to stop. A browser that does
+  not let the site remember anything asks for the address each time and then goes on
+  the same way.
+- **No Appflare yet:** the page shows the Deploy to Cloudflare button and the
+  installer. Once Appflare is ready, **Your account › Use this Appflare on
+  appflare.dev** in Appflare brings them back to the app.
+
+The address of someone's Appflare stays in their browser. appflare.dev never installs
+anything itself, and the link only opens a page in their Appflare, where an admin
+confirms. See [Install links](/guides/install-links/) for the pages it opens.

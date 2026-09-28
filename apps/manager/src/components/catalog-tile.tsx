@@ -1,8 +1,8 @@
+import { formatCount, PLAN_WORDS } from "@appflare/schema/catalog-display";
 import { cn, LinkButton, Text } from "@cloudflare/kumo";
 import { StarIcon } from "@phosphor-icons/react";
 import type { CatalogListItem } from "../catalog/catalog.functions";
-import { formatCount } from "../catalog/popularity";
-import { PLAN_WORDS, primaryAction } from "../catalog/storefront";
+import { primaryAction } from "../catalog/storefront";
 import { AppIcon } from "./catalog-media";
 import { RouterAnchor } from "./router-anchor";
 import { Tooltip } from "./tooltip";

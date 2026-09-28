@@ -1,4 +1,5 @@
 import type { InstallTier, Plan } from "@appflare/schema";
+import { SERVICE_NAMES, serviceNeedWords } from "@appflare/schema/catalog-display";
 import { type CapabilitiesView, PLAN_LABELS } from "../capabilities/capabilities";
 import {
   CAPABILITY_STATE_LABELS,
@@ -32,28 +33,6 @@ import { requirementLabel } from "./requirements";
  * yet, and so only "Not set up" there, is needed here, and this app is why.
  * Client-safe.
  */
-
-/** Plain names for what an app uses; the product name stays where people know it by it. */
-const NEED_NAMES: Record<PrimitiveId, string> = {
-  kv: "KV storage",
-  d1: "D1 database",
-  r2: "R2 storage",
-  "durable-objects": "Durable Objects",
-  hyperdrive: "Your own database",
-  vectorize: "Vector search",
-  "analytics-engine": "Analytics Engine",
-  queues: "Queues",
-  pipelines: "Pipelines",
-  workflows: "Workflows",
-  cron: "Runs on a schedule",
-  "workers-ai": "Workers AI",
-  "browser-rendering": "Browser Rendering",
-  images: "Cloudflare Images",
-  containers: "Containers",
-  "email-routing": "Email Routing",
-  zone: "A domain",
-  access: "Cloudflare Access",
-};
 
 /** The row of "What this account can run" each need is, where it has one. */
 const NEED_CAPABILITIES: Partial<Record<PrimitiveId, CapabilityId>> = {
@@ -241,7 +220,7 @@ function capabilityNeed(key: string, row: CapabilityRow, declared: boolean): Acc
     name: row.name,
     state: CAPABILITY_STATE_LABELS[state],
     tone: state === "could-not-check" ? "unknown" : "missing",
-    reason: `${declared ? "This app needs it." : "This app uses it."} ${row.why}`,
+    reason: `${serviceNeedWords(declared)}. ${row.why}`,
     fix,
     more: seeInYourAccount(row.id),
   };
@@ -250,7 +229,7 @@ function capabilityNeed(key: string, row: CapabilityRow, declared: boolean): Acc
 /** What no account lacks: included on every plan, or brought by the admin. */
 function primitiveOnly(status: PrimitiveStatus): AccountNeed {
   const key = status.id;
-  const name = NEED_NAMES[status.id];
+  const name = SERVICE_NAMES[status.id];
   switch (status.availability) {
     case "available":
       return ready(
@@ -292,7 +271,7 @@ function primitiveNeed(id: PrimitiveId, ctx: NeedsContext): AccountNeed {
   if (WITH_WORKERS_PAID.has(id) && status.availability !== "available") {
     return workersPaidNeed(
       id,
-      NEED_NAMES[id],
+      SERVICE_NAMES[id],
       ctx,
       "It needs",
       status.availability === "unavailable",

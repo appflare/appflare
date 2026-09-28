@@ -3,12 +3,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StartUpdateHandle } from "../components/update-banner";
-import {
-  type AccountAttentionRow,
-  type AttentionInput,
-  attentionItems,
-  homeName,
-} from "./attention";
+import { installLabel } from "../installs/display-name";
+import { type AccountAttentionRow, type AttentionInput, attentionItems } from "./attention";
 import type { HomeApp } from "./layout-data";
 
 // Actions reach the server and the router; these tests only look and click.
@@ -88,7 +84,7 @@ const FULL: HomeApp[] = [
 function items(apps: HomeApp[], over: Partial<AttentionInput> = {}) {
   return attentionItems({
     isAdmin: true,
-    apps: apps.map((a) => ({ ...a, label: homeName(a) })),
+    apps: apps.map((a) => ({ ...a, label: installLabel(a) })),
     failedJobs: [],
     accountRows: [],
     dismissedAccountRows: new Set(),

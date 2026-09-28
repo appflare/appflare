@@ -7,6 +7,8 @@ import { installs, type JobStarter, job_logs, jobs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { appAddress } from "../installs/app-address";
 import { readAddressDomains } from "../installs/app-address.server";
+import { installLabel } from "../installs/display-name";
+import { namedInstall, readInstallLabels } from "../installs/install-names.server";
 import { isDeleteRetainedJob } from "../installs/removed-apps.server";
 import { sandboxBinding } from "../sandbox/binding";
 import {
@@ -25,7 +27,7 @@ export type { JobListRow } from "./job-list.server";
 export const listJobs = createServerFn({ method: "GET" }).handler(
   async (): Promise<JobListRow[]> => {
     await requireSession();
-    return listRecentJobs(createDb(env.DB));
+    return listRecentJobs(env.DB);
   },
 );
 
@@ -68,6 +70,8 @@ export interface JobView {
     workerName: string;
     /** The name an admin gave the install; null when it has none. */
     displayName: string | null;
+    /** What the UI calls the install (`distinctLabels`). */
+    label: string;
     status: string;
     /** Where "Open" takes the app (`appAddress`); null until installed, or with no address. */
     address: string | null;
@@ -148,6 +152,7 @@ export const getJob = createServerFn({ method: "GET" })
               slug: installs.app_slug,
               workerName: installs.worker_name,
               displayName: installs.display_name,
+              manifestJson: installs.manifest_json,
               status: installs.status,
               workersDevEnabled: installs.workers_dev_enabled,
               servedDomain: installs.served_domain,
@@ -160,7 +165,15 @@ export const getJob = createServerFn({ method: "GET" })
     const installRow = installRows[0];
     let install: JobView["install"] = null;
     if (installRow !== undefined) {
-      const { workersDevEnabled, servedDomain, ...rest } = installRow;
+      const { workersDevEnabled, servedDomain, manifestJson, ...rest } = installRow;
+      const named = namedInstall({
+        id: installRow.id,
+        app_slug: installRow.slug,
+        worker_name: installRow.workerName,
+        display_name: installRow.displayName,
+        manifest_json: manifestJson,
+      });
+      const labels = await readInstallLabels(env.DB, [named]);
       let address: string | null = null;
       if (installRow.status === "installed") {
         const [domains, settings] = await Promise.all([
@@ -175,7 +188,7 @@ export const getJob = createServerFn({ method: "GET" })
           subdomain: settings.account_subdomain || null,
         });
       }
-      install = { ...rest, address };
+      install = { ...rest, label: labels.get(named.id) ?? installLabel(named), address };
     }
     const building =
       job.status === "queued" || job.status === "running"

@@ -103,7 +103,8 @@ describe("listRemovedAppsCore", () => {
       activeJobId: null,
       lastFailure: null,
     });
-    expect(rows[0]?.label).toBe("b");
+    // Without a name of its own it goes by the app's; other installs of it add the Worker name.
+    expect(rows[0]?.label).toBe("cut (b)");
   });
 
   it("shows a deletion in progress, and the last one that failed", async () => {

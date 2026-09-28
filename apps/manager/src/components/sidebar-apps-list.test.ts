@@ -5,7 +5,7 @@ const install = (id: string, name: string, displayName: string | null = null) =>
   id,
   name,
   displayName,
-  label: displayName ?? id,
+  workerName: id,
   icon: null,
 });
 
@@ -26,9 +26,12 @@ describe("sidebarApps", () => {
     ]);
   });
 
-  it("tells two installs of one app apart by their labels", () => {
-    const apps = sidebarApps([install("cut-a", "Cut"), install("cut-b", "Cut")], new Map());
-    expect(apps.map((a) => a.label)).toEqual(["cut-a", "cut-b"]);
+  it("tells two installs that read the same apart by their Worker names", () => {
+    const apps = sidebarApps(
+      [install("cut-a", "Cut"), install("cut-b", "Cut"), install("cut-c", "Cut", "Team links")],
+      new Map(),
+    );
+    expect(apps.map((a) => a.label)).toEqual(["Cut (cut-a)", "Cut (cut-b)", "Team links"]);
   });
 });
 

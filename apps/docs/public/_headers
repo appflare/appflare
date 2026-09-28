@@ -1,0 +1,15 @@
+# Response headers for the static site (Workers static assets reads this file
+# and does not serve it).
+#
+# No page of the site may be shown inside another site's frame: /my/ asks a
+# visitor to remember an address with one click, and a hidden frame could
+# trick them into that click.
+/*
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY
+
+# The Install badge is shown in READMEs on other sites (GitHub proxies and
+# caches it), so it may be loaded from anywhere and cached for a day.
+/badge.svg
+  Cache-Control: public, max-age=86400
+  Cross-Origin-Resource-Policy: cross-origin

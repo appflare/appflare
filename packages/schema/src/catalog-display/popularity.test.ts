@@ -1,5 +1,5 @@
-import type { CatalogStats } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
+import type { CatalogStats } from "../catalog-stats";
 import {
   appPopularity,
   formatCount,

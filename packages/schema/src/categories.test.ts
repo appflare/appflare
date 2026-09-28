@@ -5,7 +5,6 @@ import {
   CATALOG_CATEGORY_IDS,
   catalogCategoriesSchema,
   catalogCategoryProblems,
-  categoryLabel,
   isCatalogCategory,
   MAX_ENTRY_CATEGORIES,
   strictCatalogCategoriesSchema,
@@ -22,11 +21,11 @@ describe("the category list", () => {
   });
 
   it("labels cms as websites and blogs, and has no merged-away ids", () => {
-    expect(categoryLabel("cms")).toBe("Websites and blogs");
-    expect(categoryLabel("developer-tools")).toBe("Developer tools");
+    const labels = new Map<string, string>(CATALOG_CATEGORIES.map((c) => [c.id, c.label]));
+    expect(labels.get("cms")).toBe("Websites and blogs");
+    expect(labels.get("developer-tools")).toBe("Developer tools");
     for (const gone of ["social", "storage", "blogging", "gaming", "dns", "link-shortener"]) {
       expect(isCatalogCategory(gone), gone).toBe(false);
-      expect(categoryLabel(gone)).toBeNull();
     }
   });
 });

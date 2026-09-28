@@ -1,12 +1,12 @@
 import { getRouteApi, type HistoryState, useRouter } from "@tanstack/react-router";
 import { type MouseEvent, useMemo } from "react";
 import { isPlainClick } from "../components/router-anchor";
+import { installLabel } from "../installs/display-name";
 import {
   type AccountAttentionRow,
   type AttentionItem,
   accountRowKey,
   attentionItems,
-  homeName,
 } from "./attention";
 import { useDismissedRows } from "./dismissed-rows";
 import { HOME_CLICK_STATE } from "./home-landing";
@@ -47,7 +47,7 @@ export function useAttention(
     () =>
       attentionItems({
         isAdmin,
-        apps: data.apps.map((app) => ({ ...app, label: homeName(app) })),
+        apps: data.apps.map((app) => ({ ...app, label: installLabel(app) })),
         failedJobs: data.failedJobs,
         accountRows: data.accountRows,
         dismissedAccountRows: dismissed,

@@ -30,7 +30,7 @@ function escapeLinkText(text: string): string {
 
 function formatLink({ title, description, url }: LlmsLink): string {
   const link = `- [${escapeLinkText(title)}](${url})`;
-  return description ? `${link}: ${description}` : link;
+  return description ? `${link}: ${escapeLinkText(description)}` : link;
 }
 
 /** `llms.txt`: an H1, a one-paragraph summary, then H2 sections of links. */

@@ -15,14 +15,19 @@ const staticFiles = [
   "/sitemap.xml",
   searchIndexPath,
   "/favicon.svg",
+  "/badge.svg",
 ];
 
 /**
  * Every internal URL the site serves. A page answers at its canonical URL and
  * without the trailing slash (Workers static assets redirects that form), and
- * each has its Markdown file.
+ * each docs page has its Markdown file. `pages` are the other pages the site
+ * builds (the catalog's), by canonical URL, which have no Markdown file.
  */
-export function siteUrls(targets: readonly LinkTarget[]): ScanResult {
+export function siteUrls(
+  targets: readonly LinkTarget[],
+  pages: readonly string[] = [],
+): ScanResult {
   const urls = new Map<string, UrlMeta>();
   for (const { slugs, headings } of targets) {
     const meta = { hashes: headings };
@@ -30,6 +35,10 @@ export function siteUrls(targets: readonly LinkTarget[]): ScanResult {
     urls.set(canonical, meta);
     if (canonical !== "/") urls.set(canonical.slice(0, -1), meta);
     urls.set(markdownUrl(slugs), {});
+  }
+  for (const page of pages) {
+    urls.set(page, {});
+    if (page !== "/") urls.set(page.replace(/\/$/, ""), {});
   }
   for (const file of staticFiles) urls.set(file, {});
   return { urls, fallbackUrls: [] };
@@ -44,8 +53,9 @@ export function findBrokenSiteUrls(
   files: readonly FileObject[],
   targets: readonly LinkTarget[],
   siteUrl: string,
+  pages: readonly string[] = [],
 ): BrokenLink[] {
-  const { urls } = siteUrls(targets);
+  const { urls } = siteUrls(targets, pages);
   const pattern = new RegExp(`${siteUrl.replaceAll(".", "\\.")}(/[^\\s)"'\`<>]*)?`, "g");
   const broken: BrokenLink[] = [];
   for (const file of files) {
@@ -79,9 +89,10 @@ export interface BrokenLink {
 export async function findBrokenLinks(
   files: FileObject[],
   targets: readonly LinkTarget[],
+  pages: readonly string[] = [],
 ): Promise<BrokenLink[]> {
   const results = await validateFiles(files, {
-    scanned: siteUrls(targets),
+    scanned: siteUrls(targets, pages),
     markdown: { components: { Card: { attributes: ["href"] } } },
     checkRelativePaths: "as-url",
   });

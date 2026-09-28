@@ -1,10 +1,10 @@
+import { LICENSE_FILTERS, type LicenseFilter, PLAN_WORDS } from "@appflare/schema/catalog-display";
 import { Badge, Button, DropdownMenu, InputGroup } from "@cloudflare/kumo";
 import { FunnelIcon, MagnifyingGlassIcon, XIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import type { BrowseQuery } from "../catalog/browse";
-import { LICENSE_FILTERS, type LicenseFilter } from "../catalog/license";
 import type { CatalogSource } from "../catalog/sources";
-import { type FilterPill, PLAN_WORDS, removePill } from "../catalog/storefront";
+import { type FilterPill, removePill } from "../catalog/storefront";
 import { Tooltip } from "./tooltip";
 
 /**

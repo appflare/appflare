@@ -29,7 +29,7 @@ interface NavItem {
   icon: Icon;
   /**
    * Also current on the pages below it: an app's page is under Home while
-   * the sidebar does not list the apps (folded into its rail).
+   * the sidebar lists no apps (such as the page of a removed app).
    */
   covers?: readonly string[];
 }
@@ -159,8 +159,8 @@ function ShellSidebar({
   const folded = useFolded();
   const onHomeClick = useHomeClick();
   useCloseDrawerOnNavigate(pathname);
-  // Not in the folded rail, where there is no room for names.
-  const appsListed = !folded && apps.length > 0;
+  // In the folded rail too, as icons.
+  const appsListed = apps.length > 0;
 
   return (
     <Sidebar>
@@ -189,7 +189,7 @@ function ShellSidebar({
             <SettingsNavItem pathname={pathname} pages={settingsPages} folded={folded} />
           </Sidebar.Menu>
         </Sidebar.Group>
-        {appsListed && <SidebarAppsGroup apps={apps} pathname={pathname} />}
+        {appsListed && <SidebarAppsGroup apps={apps} pathname={pathname} folded={folded} />}
       </Sidebar.Content>
       <AppflareCard manager={manager} isAdmin={viewer.role === "admin"} collapsed={folded} />
       {/* Appflare's version at the start, the account menu at the end; folded, the menu carries the version. */}
@@ -231,8 +231,8 @@ function MobileTopBar() {
  * carries the count of what needs attention, and each app its status dot.
  *
  * On a wide screen the sidebar folds into an icon rail (the button next to
- * the logo), with each item's name as a tooltip; the choice is remembered in
- * this browser. Below 768 px it is an off-canvas drawer, opened from a top
+ * the logo), with each item's name as a tooltip and the apps as their icons;
+ * the choice is remembered in this browser. Below 768 px it is an off-canvas drawer, opened from a top
  * bar with the logo, and closed by a page change, Escape or the backdrop.
  */
 export function AppShell({
@@ -302,8 +302,19 @@ export function AppShell({
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <MobileTopBar />
-        <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-6">
-          <div className={cn("mx-auto grid gap-6", wide ? "max-w-[72rem]" : "max-w-5xl")}>
+        {/* `relative`: the page's absolutely placed parts (visually hidden labels
+            among them) are placed within this scrolling pane. Placed within
+            Kumo's sidebar wrapper instead, one far down a long page reached
+            past the viewport and gave the whole document a second scrollbar. */}
+        <main className="relative min-w-0 flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-6">
+          {/* One column as wide as the pane at most: wide content (a strip of
+              screenshots, a table) scrolls inside itself, never the page sideways. */}
+          <div
+            className={cn(
+              "mx-auto grid grid-cols-[minmax(0,1fr)] gap-6",
+              wide ? "max-w-[72rem]" : "max-w-5xl",
+            )}
+          >
             <SettingsNavigationContext.Provider value={settingsNavigation}>
               {children}
             </SettingsNavigationContext.Provider>

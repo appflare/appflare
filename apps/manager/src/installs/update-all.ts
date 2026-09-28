@@ -13,7 +13,7 @@ export type UpdateAllInput = z.infer<typeof updateAllInput>;
 
 export interface UpdateAllItem {
   installId: string;
-  /** What the UI calls the install (`installLabel`). */
+  /** What Home calls the install (`installLabel`). */
   label: string;
   /** The version the update moves to. */
   version: string;

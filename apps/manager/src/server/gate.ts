@@ -6,6 +6,8 @@
  * the first user exists).
  */
 
+import { afterSignIn, withReturnTo } from "../components/return-to";
+
 export interface GateState {
   /** At least one user exists (the owner was created). */
   hasUser: boolean;
@@ -27,6 +29,16 @@ export interface GateState {
 }
 
 export type Redirect = { redirect: "/login" | "/setup" | "/" };
+
+/**
+ * The href a gate's redirect goes to. Sign-in and setup carry the page the
+ * visitor asked for (`returnTo`, from the browser's own address, so its
+ * `#section` survives), and "setup is done" goes straight to it; an unsafe
+ * `returnTo` is dropped and home is used.
+ */
+export function redirectHref(to: Redirect["redirect"], returnTo: unknown): string {
+  return to === "/" ? afterSignIn(returnTo) : withReturnTo(to, returnTo);
+}
 
 /** Every signed-in page (the `_app` layout). */
 export function appGate(state: GateState): Redirect | { allow: true } {

@@ -11,6 +11,9 @@ import {
 import { PlaceholderInput } from "./placeholder-input";
 import { SEED_ONLY_VAR_NOTE } from "./secret-fields";
 
+/** The choice cards' grid (Kumo's element inside the group): one column, two from `sm`. */
+export const CHOICE_GRID = "[&>div]:grid-cols-1 sm:[&>div]:grid-cols-2";
+
 /** What a form knows about the placeholders its settings may hold, for their chips. */
 export interface PlaceholderChips {
   /** What each field's Insert menu offers. */
@@ -60,14 +63,20 @@ export function VarField({
   if (field.options !== null && field.options.length <= MAX_CARD_OPTIONS) {
     return (
       <Radio.Group
-        description={description}
         value={value}
         onValueChange={(next: string) => onChange(next)}
         orientation="horizontal"
         appearance="card"
         error={problem}
+        // Kumo lays a horizontal card group out as a two-column grid of its
+        // children, legend included; the legend and help take a whole row above
+        // the choices, which get one column on a narrow screen.
+        className={CHOICE_GRID}
       >
-        <Radio.Legend>{label}</Radio.Legend>
+        <div data-choice-heading className="col-span-full grid gap-1.5">
+          <Radio.Legend>{label}</Radio.Legend>
+          {description !== undefined && <p className="text-kumo-subtle text-sm">{description}</p>}
+        </div>
         {field.options.map((option) => (
           <Radio.Item key={option.value} value={option.value} label={option.label} />
         ))}

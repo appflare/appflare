@@ -117,7 +117,57 @@ describe("runNotifications", () => {
     await runNotifications(cronEnv(), { fetch: w.fetch, now: () => NOW });
     expect(sentTexts(w.chat.posted)).toEqual(["*Update available: Team links*"]);
     expect(JSON.parse(w.chat.posted[0]?.body ?? "").text).toContain(
-      "Cut 1.1.0 is available. Team links (Worker cut) runs 1.0.0.",
+      "Cut 1.1.0 is available. Team links runs 1.0.0.",
+    );
+  });
+
+  it("adds the Worker name only when two installs would read the same", async () => {
+    const manifest = JSON.stringify({ version: "1.0.0", catalog: { name: "Cut" } });
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?1 WHERE id = 'i1'")
+      .bind(manifest)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status,
+         manifest_json, installed_at, updated_at)
+       VALUES ('i2', 'cut', 'cut-2', '1.0.0', 'https://artifacts.test/cut/old.zip', 'installed',
+         ?1, 2, 2)`,
+    )
+      .bind(manifest)
+      .run();
+    await addChannel(
+      {
+        label: "Updates",
+        events: ["update_available", "update_failed"],
+        settings: { kind: "slack", webhookUrl: SLACK_URL },
+      },
+      NOW - 100_000,
+    );
+    await cacheCatalog("1.1.0");
+    const w = world(() => 200);
+    const run = (t: number) => runNotifications(cronEnv(), { fetch: w.fetch, now: () => t });
+    await run(NOW);
+    expect(sentTexts(w.chat.posted).sort()).toEqual([
+      "*Update available: Cut (cut)*",
+      "*Update available: Cut (cut-2)*",
+    ]);
+    // The Worker name comes only with the label that needs it.
+    const lines = w.chat.posted.map((p) => (JSON.parse(p.body) as { text: string }).text);
+    expect(lines.some((t) => t.includes("Cut 1.1.0 is available. Cut (cut-2) runs 1.0.0."))).toBe(
+      true,
+    );
+
+    // Once one has a name of its own, the other reads as the app's name alone.
+    await env.DB.prepare("UPDATE installs SET display_name = 'Team links' WHERE id = 'i2'").run();
+    await env.DB.prepare(
+      `INSERT INTO jobs (id, install_id, kind, status, input_json, started_at, finished_at)
+       VALUES ('j9', 'i1', 'update', 'failed', '{"fromVersion":"1.0.0","version":"1.1.0"}', ?1, ?2)`,
+    )
+      .bind(NOW + 10_000, NOW + 20_000)
+      .run();
+    await run(NOW + 20_000 + JOB_SWEEP_LAG_MS + 1);
+    expect(sentTexts(w.chat.posted.slice(2))).toEqual(["*Update failed: Cut*"]);
+    expect(JSON.parse(w.chat.posted[2]?.body ?? "").text).toContain(
+      "Updating Cut from 1.0.0 to 1.1.0 failed",
     );
   });
 
@@ -237,7 +287,7 @@ describe("runNotifications", () => {
     await run(NOW + 20_000 + JOB_SWEEP_LAG_MS + 1);
     expect(w.chat.posted).toHaveLength(1);
     const text = JSON.parse(w.chat.posted[0]?.body ?? "").text as string;
-    expect(text).toContain("Updating cut (Worker cut) from 1.0.0 to 1.1.0 failed");
+    expect(text).toContain("Updating cut from 1.0.0 to 1.1.0 failed");
     expect(text).toContain(`${MANAGER}/jobs/j9`);
     // The job's error names a secret; the message never carries it.
     expect(text).not.toContain("STRIPE_KEY");

@@ -1,7 +1,7 @@
+import { categoryLabel } from "@appflare/schema/catalog-display";
 import { Button, cn, LayerCard, Text } from "@cloudflare/kumo";
 import { CaretDownIcon, CaretUpIcon } from "@phosphor-icons/react";
 import { useState } from "react";
-import { categoryLabel } from "../catalog/browse";
 import { COLLAPSED_CATEGORIES } from "../catalog/storefront";
 import { CategoryIcon } from "./category-icon";
 

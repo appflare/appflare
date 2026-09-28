@@ -1,6 +1,5 @@
 import { isUpdateAvailable } from "../catalog/versions";
 import { settingsLink } from "../components/settings-links";
-import { installLabel } from "./display-name";
 
 /**
  * Pending updates, for notifications: installs the catalog lists a newer
@@ -13,8 +12,6 @@ import { installLabel } from "./display-name";
 
 export interface PendingAppUpdate {
   installId: string;
-  /** What the UI calls the install (`installLabel`). */
-  label: string;
   version: string;
   latestVersion: string;
 }
@@ -40,8 +37,6 @@ export interface PendingInstallRow {
   id: string;
   status: string;
   appSlug: string;
-  displayName: string | null;
-  workerName: string;
   catalogVersion: string;
 }
 
@@ -58,7 +53,6 @@ export function pendingUpdates(
     if (latest === undefined || !isUpdateAvailable(row.catalogVersion, latest)) continue;
     apps.push({
       installId: row.id,
-      label: installLabel(row),
       version: row.catalogVersion,
       latestVersion: latest,
     });

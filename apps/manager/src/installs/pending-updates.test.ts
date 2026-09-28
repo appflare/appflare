@@ -4,8 +4,6 @@ import { type ManagerStatus, type PendingInstallRow, pendingUpdates } from "./pe
 const row = (over: Partial<PendingInstallRow> & { id: string }): PendingInstallRow => ({
   status: "installed",
   appSlug: "cut",
-  displayName: null,
-  workerName: over.id,
   catalogVersion: "1.0.0",
   ...over,
 });
@@ -21,7 +19,7 @@ describe("pendingUpdates", () => {
   it("counts every installed app behind the catalog, each install on its own", () => {
     const pending = pendingUpdates(
       [
-        row({ id: "a", displayName: "Links" }),
+        row({ id: "a" }),
         row({ id: "b" }),
         row({ id: "c", appSlug: "brain", catalogVersion: "2.0.0" }),
         // Not installed right now: an update is not offered.
@@ -38,8 +36,8 @@ describe("pendingUpdates", () => {
       upToDate,
     );
     expect(pending.apps).toEqual([
-      { installId: "a", label: "Links", version: "1.0.0", latestVersion: "1.1.0" },
-      { installId: "b", label: "b", version: "1.0.0", latestVersion: "1.1.0" },
+      { installId: "a", version: "1.0.0", latestVersion: "1.1.0" },
+      { installId: "b", version: "1.0.0", latestVersion: "1.1.0" },
     ]);
   });
 

@@ -13,9 +13,12 @@ vi.mock("./job-started", () => ({ useJobStarted: () => async () => {} }));
 vi.mock("./use-account-id", () => ({ useAccountId: () => "0123456789abcdef0123456789abcdef" }));
 vi.mock("../installs/installs.functions", () => ({ startInstall: vi.fn() }));
 vi.mock("../installs/source-builds.functions", () => ({ installSourceBuild: vi.fn() }));
-// The address and email pickers load their choices from the account; they
-// are not what these tests look at.
-vi.mock("./install-domain-fields", () => ({ InstallDomainFields: () => null }));
+vi.mock("../installs/worker-names.functions", () => ({ listTakenWorkerNames: vi.fn() }));
+// The address and email pickers load their choices from the account; only
+// where the address choice sits matters here, so it is a marker.
+vi.mock("./install-domain-fields", () => ({
+  InstallDomainFields: () => createElement("div", { "data-address-choice": "" }),
+}));
 vi.mock("./email-routing-fields", () => ({ EmailRoutingFields: () => null }));
 
 const { InstallForm, installFormNotice } = await import("./install-form");
@@ -90,6 +93,30 @@ describe("the install form's notices", () => {
     const html = render(baseCatalog(), { sandboxBuild: build });
     expect(bannerCount(html)).toBe(0);
     expect(html).toContain("Build it in my sandbox Worker");
+  });
+});
+
+describe("the install form's order", () => {
+  it("starts with the address, the Worker name and the domain choice, before the app's settings", () => {
+    const html = render(
+      baseCatalog({
+        vars: [{ name: "SITE_TITLE", label: "Site title", default: "My site" }],
+      }),
+    );
+    const at = (needle: string) => {
+      const i = html.indexOf(needle);
+      expect(i, needle).toBeGreaterThanOrEqual(0);
+      return i;
+    };
+    const workerName = at('aria-label="Worker name"');
+    const address = at("data-address-choice");
+    const displayName = at(">Name<");
+    const secrets = at("Admin password");
+    const settings = at("Site title");
+    expect(workerName).toBeLessThan(address);
+    expect(address).toBeLessThan(displayName);
+    expect(displayName).toBeLessThan(secrets);
+    expect(secrets).toBeLessThan(settings);
   });
 });
 

@@ -1,5 +1,4 @@
 import { env } from "cloudflare:workers";
-import { artifactManifestSchema } from "@appflare/schema";
 import { desc, ne } from "drizzle-orm";
 import { type CatalogRecord, listCatalogRecords, sourceOf } from "../catalog/catalogs.server";
 import { catalogIndexUrl } from "../catalog/index.server";
@@ -12,8 +11,8 @@ import { type HealthStatus, type InstallOrigin, installs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { type AddressDomain, type AppAddressInput, appAddress } from "./app-address";
 import { readAddressDomains } from "./app-address.server";
-import { installLabel } from "./display-name";
-import { REPOSITORY_SLUG_PREFIX } from "./source-review";
+import { distinctLabels } from "./display-name";
+import { recordedName } from "./install-names.server";
 
 /**
  * The installs as lists show them (Home, the sidebar's apps), and the row
@@ -37,7 +36,11 @@ export interface InstallRow {
   icon: string | null;
   /** The name an admin gave the install; null when it has none. */
   displayName: string | null;
-  /** What the UI calls the install (`installLabel`): its display name, else its Worker name. */
+  /**
+   * What lists call the install (`distinctLabels`): its display name, else
+   * the app's name, with its Worker name added when another install reads
+   * the same. Home, which never shows Worker names, uses `installLabel`.
+   */
   label: string;
   workerName: string;
   status: string;
@@ -56,27 +59,9 @@ export interface InstallRow {
   healthCheckedAt: string | null;
 }
 
-/**
- * The app's name when the catalog does not list it: an install from a
- * repository (or an app that left the catalog) carries its name in its
- * recorded artifact manifest.
- */
-export function recordedName(row: typeof installs.$inferSelect): string {
-  if (row.manifest_json !== null) {
-    try {
-      const parsed = artifactManifestSchema.safeParse(JSON.parse(row.manifest_json));
-      if (parsed.success) return parsed.data.catalog.name;
-    } catch {
-      // Not an artifact manifest; the slug below names it.
-    }
-  }
-  return row.app_slug.replace(REPOSITORY_SLUG_PREFIX, "");
-}
-
-/** The name fields of an install row, for the list and the detail page. */
+/** The name fields of an install row, for the list and the detail page (the label comes apart). */
 export function namesOf(row: typeof installs.$inferSelect) {
-  const names = { displayName: row.display_name, workerName: row.worker_name };
-  return { ...names, label: installLabel(names) };
+  return { displayName: row.display_name, workerName: row.worker_name };
 }
 
 /** What `appAddress` needs of an install row. */
@@ -163,7 +148,7 @@ export async function listInstallRows(
   const sources = await catalogSources(records);
   const addressOf = (row: InstallRecord): string | null =>
     appAddress(addressInput(row, domains.get(row.id) ?? [], sub));
-  return rows.map((row) => {
+  const listedRows = rows.map((row): Omit<InstallRow, "label"> => {
     // An install from a repository is never the catalog's app of the same name,
     // and an install is only ever compared with its own catalog's listing.
     const found = row.origin === "repository" ? undefined : lookup.get(installAppKey(row));
@@ -187,4 +172,6 @@ export async function listInstallRows(
       ...healthOf(row),
     };
   });
+  const labels = distinctLabels(listedRows);
+  return listedRows.map((row) => ({ ...row, label: labels.get(row.id) ?? row.name }));
 }

@@ -9,7 +9,7 @@ export class RenameInstallError extends Error {}
 export async function renameInstallCore(
   db: D1Database,
   installId: string,
-  /** The new display name, already validated; null shows the Worker name again. */
+  /** The new display name, already validated; null goes back to the app's name. */
   displayName: string | null,
 ): Promise<{ displayName: string | null }> {
   // `instance_name` follows, for a manager rolled back to a version that reads it.

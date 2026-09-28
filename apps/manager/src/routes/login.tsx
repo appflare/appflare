@@ -11,16 +11,23 @@ import {
 import { passwordSignInErrorMessage } from "../auth/sign-in-errors";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION, OrDivider } from "../components/auth-layout";
 import { PasswordInput } from "../components/password-input";
+import { afterSignIn, returnToSearchSchema, withReturnTo } from "../components/return-to";
 import { getSetupStatus } from "../server/setup.functions";
 import { loadAppflareVersion } from "../server/version.functions";
 
-/** `/login`: Better Auth email + password, or a passkey the user added in Settings. */
+/**
+ * `/login`: Better Auth email + password, or a passkey the user added in
+ * Settings. `?returnTo=` is the page the visitor was sent here from; signing
+ * in either way opens it (home when it is missing or not one of this
+ * manager's pages), and "Forgot your password?" carries it along.
+ */
 export const Route = createFileRoute("/login")({
   staticData: { title: "Sign in" },
-  beforeLoad: async () => {
+  validateSearch: returnToSearchSchema,
+  beforeLoad: async ({ search }) => {
     const [{ needsSetup }, version] = await Promise.all([getSetupStatus(), loadAppflareVersion()]);
     // Until the owner exists, everything leads to /setup.
-    if (needsSetup) throw redirect({ to: "/setup" });
+    if (needsSetup) throw redirect({ href: withReturnTo("/setup", search.returnTo) });
     return { version };
   },
   component: LoginPage,
@@ -28,7 +35,9 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const { version } = Route.useRouteContext();
+  const { returnTo } = Route.useSearch();
   const router = useRouter();
+  const signedIn = () => router.navigate({ href: afterSignIn(returnTo), replace: true });
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<"password" | "passkey" | null>(null);
 
@@ -46,7 +55,7 @@ function LoginPage() {
       setPending(null);
       return;
     }
-    await router.navigate({ to: "/" });
+    await signedIn();
   }
 
   async function onPasskey() {
@@ -62,7 +71,7 @@ function LoginPage() {
       setPending(null);
       return;
     }
-    await router.navigate({ to: "/" });
+    await signedIn();
   }
 
   return (
@@ -77,7 +86,7 @@ function LoginPage() {
           <Input label="Email" name="email" type="email" autoComplete="username" required />
           <PasswordInput label="Password" name="password" autoComplete="current-password" />
           <Text variant="secondary" size="sm" as="p">
-            <Link href="/forgot-password">Forgot your password?</Link>
+            <Link href={withReturnTo("/forgot-password", returnTo)}>Forgot your password?</Link>
           </Text>
           <Button
             type="submit"

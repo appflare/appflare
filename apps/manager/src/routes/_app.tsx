@@ -13,7 +13,8 @@ const LAYOUT_STALE_MS = 60_000;
 /**
  * Pathless layout for every signed-in page. `enterApp` returns the viewer or
  * redirects: to `/login` without a session, to `/setup` before the owner
- * exists or while the Cloudflare token is not configured. This is
+ * exists or while the Cloudflare token is not configured, either way with
+ * the page asked for as `?returnTo=`, opened once signed in. This is
  * UX; each server function still enforces its own guard. The loader reads,
  * in one call, the installs and what needs attention (Home lists them, the
  * sidebar counts them and lists the apps), Appflare's own version, and how
@@ -23,7 +24,9 @@ const LAYOUT_STALE_MS = 60_000;
  * minute as pages change, not on every click.
  */
 export const Route = createFileRoute("/_app")({
-  beforeLoad: () => enterApp(),
+  // The page asked for, as the browser holds it: its `#section` never reaches
+  // the server otherwise, and must survive signing in.
+  beforeLoad: ({ location }) => enterApp({ data: { returnTo: location.href } }),
   loader: () => getLayoutData(),
   staleTime: LAYOUT_STALE_MS,
   component: AppLayout,

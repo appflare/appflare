@@ -4,6 +4,12 @@ name: docs
 # prerendered) and deploys dist/client as the Worker `appflare-docs`, static
 # assets only. The manifest reference page is generated from @appflare/schema
 # during the build, so schema changes redeploy the site.
+#
+# The site also carries the whole catalog (/apps/, one page per app, one per
+# category), taken from the published catalog when the build starts. So it is
+# rebuilt when the catalog publishes (the catalog's publish workflow dispatches
+# this workflow; see docs/RELEASING.md) and once a day, which keeps star counts
+# current. A failed fetch fails the build and leaves the deployed site as it was.
 
 on:
   push:
@@ -18,6 +24,9 @@ on:
       - "turbo.json"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
+  schedule:
+    # Daily, at an odd minute to stay clear of the top-of-hour rush.
+    - cron: "17 5 * * *"
 
 permissions:
   contents: read
@@ -48,8 +57,12 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Builds @appflare/schema first (turbo's ^build), then the site.
+      # Builds @appflare/schema first (turbo's ^build), then the site, from
+      # the published catalog rather than the checked-in snapshot the other
+      # builds use.
       - run: pnpm exec turbo run build --filter=@appflare/docs...
+        env:
+          CATALOG_SNAPSHOT: live
       # The build fails on its own when a page cannot be prerendered or an
       # OpenGraph image cannot be drawn; this catches a file that went missing.
       - name: Check the site has its search index, agent files, and images
@@ -57,7 +70,7 @@ jobs:
         run: |
           for file in index.html 404.html api/search.json llms.txt llms-full.txt \
             sitemap.xml index.md start/install/index.html start/install.md \
-            og/image.png og/start/install/image.png; do
+            og/image.png og/start/install/image.png apps/index.html og/apps/image.png; do
             test -s "${file}" || { echo "::error::apps/docs/dist/client/${file} is missing"; exit 1; }
           done
       # wrangler deploys to the account_id pinned in apps/docs/wrangler.jsonc and

@@ -5,7 +5,6 @@ import {
   browseNavigation,
   browseSearchSchema,
   categoryCounts,
-  categoryLabel,
   compareNewest,
   isFiltered,
   MAX_QUERY_LENGTH,
@@ -282,13 +281,5 @@ describe("categories", () => {
     expect(slugs(browseApps(all, { category: "tabletop" }))).toEqual(["chess"]);
     expect(slugs(all.filter((a) => matchesSearch(a, "tabletop")))).toEqual(["chess"]);
     expect(slugs(all.filter((a) => matchesSearch(a, "websites")))).toEqual(["blog"]);
-  });
-
-  it("labels the schema's ids with its labels, and spells out an unknown id", () => {
-    expect(categoryLabel("ai")).toBe("AI");
-    expect(categoryLabel("cms")).toBe("Websites and blogs");
-    expect(categoryLabel("ecommerce")).toBe("E-commerce");
-    expect(categoryLabel("link-shortener")).toBe("Link shortener");
-    expect(categoryLabel("dns-tools")).toBe("DNS tools");
   });
 });

@@ -21,7 +21,6 @@ import { SeedCredentialsCard } from "../../../components/seed-credentials-card";
 import { StatusBadge } from "../../../components/status-badge";
 import { Timestamp } from "../../../components/timestamp";
 import { jobFailureTopic } from "../../../docs-topics";
-import { installLabel } from "../../../installs/display-name";
 import { type BuildProgressView, getJob, type JobLogRow } from "../../../jobs/jobs.functions";
 import { isActive, useLiveJob, useVersionSwitch } from "../../../jobs/live-job";
 
@@ -40,7 +39,7 @@ function JobPage() {
   const { switching } = useVersionSwitch(job);
   const { viewer } = Route.useRouteContext();
   const isAdmin = viewer.role === "admin";
-  // Technical detail such as the Worker version's id shows on request.
+  // Technical detail such as the Worker's name and its version's id shows on request.
   const [showNames] = useShowTechnicalNames();
 
   if (job === null) {
@@ -58,7 +57,7 @@ function JobPage() {
 
   const kind = jobKindLabel(job);
   const failureTopic = jobFailureTopic(job);
-  const title = job.install !== null ? `${kind} ${installLabel(job.install)}` : kind;
+  const title = job.install !== null ? `${kind} ${job.install.label}` : kind;
   return (
     <>
       <PageHeader
@@ -69,7 +68,7 @@ function JobPage() {
           job.install !== null ? (
             <>
               {job.install.address !== null && (
-                <OpenAppButton href={job.install.address} label={installLabel(job.install)} />
+                <OpenAppButton href={job.install.address} label={job.install.label} />
               )}
               <LinkButton
                 href={`/apps/${job.install.id}`}
@@ -90,11 +89,14 @@ function JobPage() {
             <StatusBadge status={job.status} of="job" />
           </span>
         }
-        action={job.workerVersionId === null ? null : <TechnicalNamesSwitch />}
+        action={
+          job.install === null && job.workerVersionId === null ? null : <TechnicalNamesSwitch />
+        }
       >
         <SectionBody>
           <DescriptionList>
-            {job.install !== null && (
+            {/* The Worker's name is technical detail too: the title names the app. */}
+            {job.install !== null && showNames && (
               <DescriptionItem label="Worker">
                 <span className="font-mono text-[0.9em]">{job.install.workerName}</span>
               </DescriptionItem>

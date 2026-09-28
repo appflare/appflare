@@ -40,7 +40,7 @@ export const SEVERITY_ORDER: readonly AttentionKind[] = [
 /** What the model reads of an install. */
 export interface AttentionApp {
   id: string;
-  /** What Home calls the install (`homeName`). */
+  /** What Home calls the install (`installLabel`: never its Worker name). */
   label: string;
   status: string;
   version: string;
@@ -150,14 +150,6 @@ export type AttentionItem =
   | { kind: "account"; key: string; row: AccountAttentionRow }
   | { kind: "deploy-copy"; key: string; cleanup: DeployCopyCleanup }
   | { kind: "downgrade"; key: string; downgrade: Downgrade };
-
-/**
- * What Home calls an install: the name an admin gave it, else the app's
- * name. Never its Worker name, which means nothing to most people.
- */
-export function homeName(app: { displayName: string | null; name: string }): string {
-  return app.displayName ?? app.name;
-}
 
 /** An install with a job running: its last failure is being dealt with. */
 function busy(status: string): boolean {

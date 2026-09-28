@@ -9,6 +9,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./catalog-display": {
+      "@appflare/source": "./src/catalog-display/index.ts",
+      "types": "./dist/catalog-display.d.ts",
+      "import": "./dist/catalog-display.js"
+    },
+    "./links": {
+      "@appflare/source": "./src/links.ts",
+      "types": "./dist/links.d.ts",
+      "import": "./dist/links.js"
+    },
     "./json-schema/v1.json": "./json-schema/v1.json"
   },
   "types": "./dist/index.d.ts",
@@ -21,6 +31,14 @@
       ".": {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
+      },
+      "./catalog-display": {
+        "types": "./dist/catalog-display.d.ts",
+        "import": "./dist/catalog-display.js"
+      },
+      "./links": {
+        "types": "./dist/links.d.ts",
+        "import": "./dist/links.js"
       },
       "./json-schema/v1.json": "./json-schema/v1.json"
     }

@@ -1,13 +1,14 @@
+import { type CatalogAuthor, type Plan, planSchema } from "@appflare/schema";
 import {
-  type CatalogAuthor,
-  categoryLabel as catalogCategoryLabel,
+  type AppLicense,
+  type AppPopularity,
+  categoryLabel,
+  comparePopularity,
   isCatalogCategory,
-  type Plan,
-  planSchema,
-} from "@appflare/schema";
+  type LicenseFilter,
+  licenseKind,
+} from "@appflare/schema/catalog-display";
 import { z } from "zod";
-import { type AppLicense, type LicenseFilter, licenseKind } from "./license";
-import { type AppPopularity, comparePopularity } from "./popularity";
 import { type AppPrimitives, PRIMITIVE_LABELS } from "./primitives";
 
 /**
@@ -219,31 +220,4 @@ export function categoryCounts(
 /** Whether `app` is listed under `category`. */
 export function inCategory(app: Pick<BrowsableApp, "categories">, category: string): boolean {
   return app.categories.includes(category);
-}
-
-/** Words kept in capitals when a category without a label is spelled out from its id. */
-const CATEGORY_WORDS: Readonly<Record<string, string>> = {
-  ai: "AI",
-  cms: "CMS",
-  dns: "DNS",
-  seo: "SEO",
-};
-
-/**
- * A category id as a label: the catalog's own label for an id of its list
- * (`ecommerce` → "E-commerce", `cms` → "Websites and blogs"). An id this
- * version does not know (a custom catalog's, or one added later) is spelled
- * out in sentence case, keeping known acronyms: `dns-tools` → "DNS tools".
- */
-export function categoryLabel(category: string): string {
-  const label = catalogCategoryLabel(category);
-  if (label !== null) return label;
-  const words = category.split(/[-_\s]+/).filter((w) => w.length > 0);
-  return words
-    .map((word, i) => {
-      const known = CATEGORY_WORDS[word.toLowerCase()];
-      if (known !== undefined) return known;
-      return i === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word;
-    })
-    .join(" ");
 }

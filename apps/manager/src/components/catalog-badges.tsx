@@ -1,4 +1,5 @@
 import type { InstallTier, Plan } from "@appflare/schema";
+import { type AppLicense, licenseBadgeCopy } from "@appflare/schema/catalog-display";
 import { Badge, Text } from "@cloudflare/kumo";
 import {
   ArchiveIcon,
@@ -23,7 +24,6 @@ import {
   VectorThreeIcon,
 } from "@phosphor-icons/react";
 import type { CapabilitiesView } from "../capabilities/capabilities";
-import { type AppLicense, licenseBadgeCopy } from "../catalog/license";
 import {
   type AppPrimitives,
   AVAILABILITY_LABELS,

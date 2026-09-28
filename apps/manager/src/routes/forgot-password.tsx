@@ -12,6 +12,7 @@ import {
 } from "../auth/recovery-messages";
 import { AuthError, AuthLayout, FULL_WIDTH_ACTION, OrDivider } from "../components/auth-layout";
 import { PasswordInput } from "../components/password-input";
+import { returnToSearchSchema, withReturnTo } from "../components/return-to";
 import { getPasswordRecoveryOptions } from "../server/recovery.functions";
 import { getSetupStatus } from "../server/setup.functions";
 import { loadAppflareVersion } from "../server/version.functions";
@@ -21,16 +22,19 @@ import { loadAppflareVersion } from "../server/version.functions";
  * emails on, an emailed link (the answer is the same whether or not the
  * address belongs to anyone); always, a recovery code from an admin or from
  * whoever manages the Cloudflare account (`create-appflare recover`).
+ * `?returnTo=` from the sign-in page travels on: into the emailed link, and
+ * back to sign in once the new password is set.
  */
 export const Route = createFileRoute("/forgot-password")({
   staticData: { title: "Forgot your password?" },
-  beforeLoad: async () => {
+  validateSearch: returnToSearchSchema,
+  beforeLoad: async ({ search }) => {
     const [{ needsSetup }, version, options] = await Promise.all([
       getSetupStatus(),
       loadAppflareVersion(),
       getPasswordRecoveryOptions(),
     ]);
-    if (needsSetup) throw redirect({ to: "/setup" });
+    if (needsSetup) throw redirect({ href: withReturnTo("/setup", search.returnTo) });
     return { version, emailReset: options.emailReset };
   },
   component: ForgotPasswordPage,
@@ -60,15 +64,22 @@ function ForgotPasswordPage() {
   );
 }
 
+/** `/login`, carrying the page to return to. */
+function useSignInHref(): string {
+  const { returnTo } = Route.useSearch();
+  return withReturnTo("/login", returnTo);
+}
+
 function BackToSignIn() {
   return (
     <Text variant="secondary" size="sm" as="p">
-      <Link href="/login">Back to sign in</Link>
+      <Link href={useSignInHref()}>Back to sign in</Link>
     </Text>
   );
 }
 
 function EmailForm({ onUseCode }: { onUseCode: () => void }) {
+  const { returnTo } = Route.useSearch();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -80,7 +91,8 @@ function EmailForm({ onUseCode }: { onUseCode: () => void }) {
     setError(null);
     const { error: failed } = await authClient.requestPasswordReset({
       email: String(form.get("email") ?? "").trim(),
-      redirectTo: "/reset-password",
+      // The emailed link opens /reset-password, which carries it back to sign in.
+      redirectTo: withReturnTo("/reset-password", returnTo),
     });
     setPending(false);
     if (failed) {
@@ -129,6 +141,7 @@ function EmailForm({ onUseCode }: { onUseCode: () => void }) {
 }
 
 function CodeForm({ onUseEmail }: { onUseEmail: (() => void) | undefined }) {
+  const signInHref = useSignInHref();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -163,7 +176,7 @@ function CodeForm({ onUseEmail }: { onUseEmail: (() => void) | undefined }) {
           title="Password changed"
           description="Sign in with your new password. You were signed out everywhere else."
         />
-        <Link href="/login">Sign in</Link>
+        <Link href={signInHref}>Sign in</Link>
       </div>
     );
   }

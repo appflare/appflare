@@ -6,7 +6,8 @@ import {
   WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
-import { Fragment, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
+import { z } from "zod";
 import {
   type BrowseQuery,
   browseApps,
@@ -16,6 +17,7 @@ import {
   showsResults,
 } from "../../../catalog/browse";
 import { type CatalogList, listCatalog, refreshCatalog } from "../../../catalog/catalog.functions";
+import { prefilledRepository } from "../../../catalog/install-intent";
 import { UNSIGNED_INDEX_REFUSAL } from "../../../catalog/sources";
 import {
   filterPills,
@@ -24,15 +26,15 @@ import {
   sinceDay,
   storefrontRows,
 } from "../../../catalog/storefront";
+import { CatalogAddMenu } from "../../../components/catalog-add-menu";
 import { AppGrid, AppRow, CatalogSection } from "../../../components/catalog-row";
 import { CatalogSearch, useSearchText } from "../../../components/catalog-search";
 import { CategoryCards } from "../../../components/category-cards";
 import { FeaturedCard } from "../../../components/featured-card";
 import { formatExactDateTime } from "../../../components/format";
 import { plainMessage } from "../../../components/message-links";
-import { MessageLinkButtons } from "../../../components/message-text";
+import { MessageLinkButtons, MessageText } from "../../../components/message-text";
 import { PageHeader } from "../../../components/page-header";
-import { RepositoryBuildButton } from "../../../components/repository-build-dialog";
 import { settingsLink } from "../../../components/settings-links";
 import { Tooltip } from "../../../components/tooltip";
 
@@ -45,10 +47,14 @@ import { Tooltip } from "../../../components/tooltip";
  * the matching apps as tiles. The search and filters live in the page
  * address (`?q=`, `?category=`, `?plan=`, `?license=`, `?installed=1`,
  * `?source=`, and `?sort=` for a row's "See all"), so any view can be shared.
+ * `?repository=owner/repo` (from `/install/github/<owner>/<repo>`) opens
+ * "Install from a repository" for an admin with the repository filled in.
  */
 export const Route = createFileRoute("/_app/catalog/")({
   staticData: { title: "Catalog", width: "wide" },
-  validateSearch: browseSearchSchema,
+  validateSearch: browseSearchSchema.extend({
+    repository: z.string().max(200).optional().catch(undefined),
+  }),
   loader: () => listCatalog(),
   component: CatalogPage,
 });
@@ -56,6 +62,7 @@ export const Route = createFileRoute("/_app/catalog/")({
 function CatalogPage() {
   const catalog = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
+  const prefill = useRepositoryLink(viewer.role === "admin");
 
   return (
     <>
@@ -65,12 +72,29 @@ function CatalogPage() {
         actions={
           viewer.role === "admin" ? (
             <>
-              {catalog.repositoryBuilds && <RepositoryBuildButton sandbox={catalog.sandbox} />}
+              <CatalogAddMenu
+                repositoryBuilds={catalog.repositoryBuilds}
+                sandbox={catalog.sandbox}
+                prefill={prefill ?? undefined}
+              />
               <RefreshButton />
             </>
           ) : undefined
         }
       />
+      {prefill !== null && !catalog.repositoryBuilds && (
+        <Banner
+          variant="secondary"
+          icon={<WarningCircleIcon weight="fill" />}
+          title={`Appflare cannot build ${prefill} on this account`}
+          description={
+            <MessageText
+              message={catalog.sandbox.missing ?? "Building from a repository is not available."}
+              newTab
+            />
+          }
+        />
+      )}
       {catalog.error === null &&
         catalog.failed.map(({ source, error }) => (
           <Banner
@@ -123,6 +147,27 @@ function CatalogPage() {
       )}
     </>
   );
+}
+
+/**
+ * The repository a repository install link named (`?repository=`), for an
+ * admin, checked again since anyone can type the address. Read once, then
+ * taken out of the address, so coming back to this page or reloading it
+ * does not open the dialog again.
+ */
+function useRepositoryLink(isAdmin: boolean): string | null {
+  const { repository } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const [prefill] = useState(() => (isAdmin ? prefilledRepository(repository) : null));
+  useEffect(() => {
+    if (repository === undefined) return;
+    void navigate({
+      search: ({ repository: _taken, ...rest }) => rest,
+      replace: true,
+      resetScroll: false,
+    });
+  }, [repository, navigate]);
+  return prefill;
 }
 
 function Storefront({ catalog }: { catalog: CatalogList }) {

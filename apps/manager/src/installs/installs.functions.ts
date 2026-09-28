@@ -30,10 +30,11 @@ import { sandboxBinding } from "../sandbox/binding";
 import { requireRole, requireSession } from "../server/auth.server";
 import { type AddressDomain, appAddress } from "./app-address";
 import { addressDomainOf } from "./app-address.server";
-import { displayNameInput } from "./display-name";
+import { displayNameInput, installLabel } from "./display-name";
 import { RenameInstallError, renameInstallCore } from "./display-name.server";
 import { type EmailRouteView, emailRouteViews, SEND_EMAIL_NOTE, sendsEmail } from "./email-routing";
 import { startInstallInput } from "./install-input";
+import { readInstallLabels } from "./install-names.server";
 import {
   addressInput,
   catalogSources,
@@ -389,6 +390,9 @@ export const getInstall = createServerFn({ method: "GET" })
         uninstall = "retry";
       }
     }
+    const names = namesOf(row);
+    // Told apart from the other installs the way the sidebar tells them apart.
+    const labels = await readInstallLabels(env.DB, [{ id: row.id, name, ...names }]);
     return {
       id: row.id,
       slug: installAppKey(row),
@@ -400,7 +404,8 @@ export const getInstall = createServerFn({ method: "GET" })
           : { url: row.source_url, ref: row.source_ref },
       name,
       icon: iconOf(found),
-      ...namesOf(row),
+      ...names,
+      label: labels.get(row.id) ?? installLabel({ displayName: row.display_name, name }),
       status: row.status,
       version: row.catalog_version,
       latestVersion: listed?.version ?? null,

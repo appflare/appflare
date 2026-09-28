@@ -1,6 +1,5 @@
-import { CATALOG_CATEGORIES } from "@appflare/schema";
+import { CATALOG_CATEGORIES, categoryLabel } from "@appflare/schema/catalog-display";
 import { describe, expect, it } from "vitest";
-import { categoryLabel } from "../catalog/browse";
 import { categoryIcon, FALLBACK_CATEGORY_ICON } from "./category-icon";
 
 describe("catalog categories", () => {

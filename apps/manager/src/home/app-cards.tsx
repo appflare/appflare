@@ -3,8 +3,9 @@ import { AppIcon } from "../components/catalog-media";
 import { OpenAppButton } from "../components/open-app-button";
 import { Section } from "../components/section";
 import { StatusDot } from "../components/status-dot";
+import { installLabel } from "../installs/display-name";
 import { appLine } from "./app-line";
-import { type AppSignal, homeName } from "./attention";
+import type { AppSignal } from "./attention";
 import type { HomeApp } from "./layout-data";
 
 /**
@@ -25,7 +26,7 @@ export function YourApps({
   now: Date;
 }) {
   const sorted = [...apps].sort((a, b) =>
-    homeName(a).localeCompare(homeName(b), undefined, { sensitivity: "base" }),
+    installLabel(a).localeCompare(installLabel(b), undefined, { sensitivity: "base" }),
   );
   return (
     <Section id="your-apps" title="Your apps">
@@ -41,7 +42,8 @@ export function YourApps({
 }
 
 function AppCard({ app, signal, now }: { app: HomeApp; signal: AppSignal | undefined; now: Date }) {
-  const name = homeName(app);
+  // Home never shows Worker names, even for two installs of one app.
+  const name = installLabel(app);
   return (
     <div
       data-app-card={app.id}

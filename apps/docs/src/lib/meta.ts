@@ -37,3 +37,12 @@ export function pageHead({ title, description, url, image }: PageMeta) {
   }
   return { meta, links: [{ rel: "canonical", href: url }] };
 }
+
+/**
+ * The `<head>` of a page search engines should leave out (the install pages
+ * and `/my/`, which only pass a visitor on): {@link pageHead} plus `noindex`.
+ */
+export function noindexPageHead(page: PageMeta) {
+  const head = pageHead(page);
+  return { ...head, meta: [...head.meta, { name: "robots", content: "noindex" }] };
+}

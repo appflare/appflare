@@ -11,7 +11,7 @@ import {
 import { and, eq, ne, sql } from "drizzle-orm";
 import { createDb } from "../db/client";
 import { catalogs, installs } from "../db/schema";
-import { installLabel } from "../installs/display-name";
+import { namedInstall, readInstallLabels } from "../installs/install-names.server";
 import {
   ArtifactError,
   ArtifactFetchError,
@@ -368,13 +368,18 @@ export async function deleteCatalogCore(
   const record = await customRecord(deps, input.id);
   const db = createDb(deps.db);
   const active = await db
-    .select({ worker: installs.worker_name, displayName: installs.display_name })
+    .select({
+      id: installs.id,
+      app_slug: installs.app_slug,
+      worker_name: installs.worker_name,
+      display_name: installs.display_name,
+      manifest_json: installs.manifest_json,
+    })
     .from(installs)
     .where(and(eq(installs.catalog_id, record.id), ne(installs.status, "uninstalled")));
   if (active.length > 0) {
-    const names = active.map((r) =>
-      installLabel({ displayName: r.displayName, workerName: r.worker }),
-    );
+    const labels = await readInstallLabels(deps.db, active.map(namedInstall));
+    const names = active.map((r) => labels.get(r.id) ?? r.worker_name);
     const shown = names.slice(0, 3).join(", ");
     const more = names.length > 3 ? ` and ${names.length - 3} more` : "";
     throw new CatalogAdminError(

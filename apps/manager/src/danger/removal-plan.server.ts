@@ -13,7 +13,8 @@ import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { type GatewayState, readGateway } from "../gateway/gateway.server";
-import { installLabel } from "../installs/display-name";
+import { distinctLabels } from "../installs/display-name";
+import { namedInstall, readInstallLabels } from "../installs/install-names.server";
 import {
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
@@ -249,10 +250,17 @@ export interface RemovalStays {
 export async function readRemovalStays(db: D1Database): Promise<RemovalStays> {
   const orm = createDb(db);
   const rows = await orm
-    .select({ displayName: installs.display_name, workerName: installs.worker_name })
+    .select({
+      id: installs.id,
+      app_slug: installs.app_slug,
+      worker_name: installs.worker_name,
+      display_name: installs.display_name,
+      manifest_json: installs.manifest_json,
+    })
     .from(installs)
     .where(ne(installs.status, "uninstalled"))
     .orderBy(asc(installs.worker_name));
+  const labels = distinctLabels(rows.map(namedInstall));
   const [domains] = await orm
     .select({ n: count() })
     .from(resources)
@@ -266,7 +274,10 @@ export async function readRemovalStays(db: D1Database): Promise<RemovalStays> {
       ),
     );
   return {
-    apps: rows.map((r) => ({ label: installLabel(r), workerName: r.workerName })),
+    apps: rows.map((r) => ({
+      label: labels.get(r.id) ?? r.worker_name,
+      workerName: r.worker_name,
+    })),
     customDomains: domains?.n ?? 0,
   };
 }
@@ -288,17 +299,31 @@ export async function externalDomainsInUse(db: D1Database): Promise<BlockingExte
   const rows = await createDb(db)
     .select({
       installId: installs.id,
+      appSlug: installs.app_slug,
       displayName: installs.display_name,
       workerName: installs.worker_name,
+      manifestJson: installs.manifest_json,
       hostname: resources.name,
     })
     .from(resources)
     .innerJoin(installs, eq(installs.id, resources.install_id))
     .where(and(eq(resources.kind, CUSTOM_HOSTNAME_KIND), isNull(resources.deleted_at)))
     .orderBy(asc(installs.worker_name), asc(resources.name));
+  const labels = await readInstallLabels(
+    db,
+    rows.map((r) =>
+      namedInstall({
+        id: r.installId,
+        app_slug: r.appSlug,
+        worker_name: r.workerName,
+        display_name: r.displayName,
+        manifest_json: r.manifestJson,
+      }),
+    ),
+  );
   return rows.map((r) => ({
     installId: r.installId,
-    label: installLabel(r),
+    label: labels.get(r.installId) ?? r.workerName,
     hostname: r.hostname,
   }));
 }

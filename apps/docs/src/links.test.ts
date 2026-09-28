@@ -1,5 +1,7 @@
 import type { FileObject } from "next-validate-link";
 import { beforeAll, describe, expect, it } from "vitest";
+import { siteCatalog } from "./catalog/data.ts";
+import { catalogPagePaths, handoffPagePaths } from "./catalog/urls.ts";
 import {
   type BrokenLink,
   findBrokenLinks,
@@ -36,6 +38,9 @@ async function contentFiles(): Promise<FileObject[]> {
  */
 const scanTimeout = 120_000;
 
+/** The catalog's pages and the install pages, which content may link to. */
+const catalogPages = [...catalogPagePaths(siteCatalog), ...handoffPagePaths(siteCatalog)];
+
 describe("internal links", () => {
   let files: FileObject[];
   let targets: LinkTarget[];
@@ -43,7 +48,7 @@ describe("internal links", () => {
 
   beforeAll(async () => {
     [files, targets] = await Promise.all([contentFiles(), contentTargets()]);
-    brokenLinks = await findBrokenLinks(files, targets);
+    brokenLinks = await findBrokenLinks(files, targets, catalogPages);
   }, scanTimeout);
 
   it("point at pages and headings that exist", () => {
@@ -54,7 +59,7 @@ describe("internal links", () => {
   });
 
   it("written as absolute URLs of this site, as in the agent prompts, exist", () => {
-    const broken = findBrokenSiteUrls(files, targets, siteUrl);
+    const broken = findBrokenSiteUrls(files, targets, siteUrl, catalogPages);
     expect(broken.map(({ file, line, url }) => `${file}:${line} ${url}`)).toEqual([]);
   });
 
@@ -81,6 +86,18 @@ describe("findBrokenLinks", () => {
       '<Card title="x" href="/start/install/" />',
     ].join("\n");
     expect(await findBrokenLinks([file(content)], targets)).toEqual([]);
+  });
+
+  it("accepts links to the catalog's pages, which have no Markdown file", async () => {
+    const content = "[a](/apps/) [b](/apps/cut/) [c](/apps/cut) [d](/categories/email/)";
+    const pages = ["/apps/", "/apps/cut/", "/categories/email/"];
+    expect(await findBrokenLinks([file(content)], targets, pages)).toEqual([]);
+    const broken = await findBrokenLinks(
+      [file("[a](/apps/cut.md) [b](/apps/gone/)")],
+      targets,
+      pages,
+    );
+    expect(broken.map(({ url }) => url)).toEqual(["/apps/cut.md", "/apps/gone/"]);
   });
 
   it("reports a missing page, a missing heading, and a broken Card", async () => {

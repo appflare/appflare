@@ -16,6 +16,13 @@ import {
   packageManagerSchema,
 } from "./install-dirs";
 import {
+  GIT_REF_CHARACTERS,
+  isCommitSha,
+  isGithubRepository,
+  isGitRefShape,
+  MAX_GIT_REF_LENGTH,
+} from "./links";
+import {
   buildFailureSchema,
   buildInstallIdSchema,
   buildOutcomeFields,
@@ -40,33 +47,21 @@ import {
  * updates it on its own.
  */
 
-/** The `info().features` entry of a sandbox Worker that builds from a repository. */
-export const SANDBOX_FEATURE_REPOSITORY = "repository-builds";
-
-/** A GitHub owner (user or organization): letters, digits, single hyphens, at most 39. */
-const GITHUB_OWNER = /^(?=.{1,39}$)[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9]))*$/;
-/** A GitHub repository name: letters, digits, `.`, `_` and `-`, at most 100, never `.` or `..`. */
-const GITHUB_REPO = /^[A-Za-z0-9._-]{1,100}$/;
+// The plain checks live with the other names that go into addresses, which
+// a browser bundle can import without Zod; the schemas here wrap them.
+export {
+  isCommitSha,
+  isGithubRepository,
+  isGitRef,
+  parseRepositoryInput,
+  type RepositoryInput,
+  repositoryUrl,
+} from "./links";
 
 /** A public GitHub repository as `owner/repo`. */
-export const githubRepositorySchema = z.string().refine((value) => {
-  const [owner, name, ...rest] = value.split("/");
-  return (
-    rest.length === 0 &&
-    owner !== undefined &&
-    name !== undefined &&
-    GITHUB_OWNER.test(owner) &&
-    GITHUB_REPO.test(name) &&
-    name !== "." &&
-    name !== ".." &&
-    !name.toLowerCase().endsWith(".git")
-  );
-}, 'must be a GitHub repository as "owner/repo"');
-
-/** Whether `ref` is a full commit SHA rather than a branch or tag name. */
-export function isCommitSha(ref: string): boolean {
-  return /^[0-9a-f]{40}$/.test(ref);
-}
+export const githubRepositorySchema = z
+  .string()
+  .refine(isGithubRepository, 'must be a GitHub repository as "owner/repo"');
 
 /**
  * A branch, tag or full commit SHA, as git accepts it on the command line and
@@ -76,72 +71,12 @@ export function isCommitSha(ref: string): boolean {
 export const gitRefSchema = z
   .string()
   .min(1)
-  .max(200)
-  .regex(/^[A-Za-z0-9._/+-]+$/, "may contain only letters, digits, and . _ / + -")
-  .refine(
-    (ref) =>
-      !ref.startsWith("-") &&
-      !ref.startsWith("/") &&
-      !ref.endsWith("/") &&
-      !ref.endsWith(".") &&
-      !ref.endsWith(".lock") &&
-      !ref.includes("..") &&
-      !ref.includes("//"),
-    "is not a valid branch, tag or commit",
-  );
+  .max(MAX_GIT_REF_LENGTH)
+  .regex(GIT_REF_CHARACTERS, "may contain only letters, digits, and . _ / + -")
+  .refine(isGitRefShape, "is not a valid branch, tag or commit");
 
-/** `https://github.com/<owner>/<repo>`: how a repository is shown and recorded. */
-export function repositoryUrl(repo: string): string {
-  return `https://github.com/${repo}`;
-}
-
-/** What an admin typed as a repository, understood; or why it cannot be one. */
-export type RepositoryInput =
-  | { ok: true; repo: string; ref: string | null }
-  | { ok: false; error: string };
-
-/**
- * Reads what an admin typed: `owner/repo`, `github.com/owner/repo`, or a
- * GitHub URL, with or without `.git`, and optionally pointing at a branch,
- * tag or commit (`/tree/<ref>`, `/commit/<sha>`), which becomes the ref.
- */
-export function parseRepositoryInput(text: string): RepositoryInput {
-  let rest = text.trim();
-  const refused = {
-    ok: false as const,
-    error: "Enter a GitHub repository, such as https://github.com/owner/repo.",
-  };
-  if (rest.length === 0 || rest.length > 400) return refused;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rest)) {
-    let url: URL;
-    try {
-      url = new URL(rest);
-    } catch {
-      return refused;
-    }
-    if (url.protocol !== "https:" && url.protocol !== "http:") return refused;
-    if (url.hostname !== "github.com" && url.hostname !== "www.github.com") {
-      return { ok: false, error: "Only repositories on github.com can be installed." };
-    }
-    if (url.search !== "" || url.username !== "" || url.password !== "") return refused;
-    rest = decodeURIComponent(url.pathname);
-  } else if (/^(www\.)?github\.com\//i.test(rest)) {
-    rest = rest.replace(/^(www\.)?github\.com/i, "");
-  }
-  const parts = rest.replace(/^\/+/, "").replace(/\/+$/, "").split("/");
-  const [owner, rawName, kind, ...refParts] = parts;
-  if (owner === undefined || rawName === undefined) return refused;
-  const name = rawName.replace(/\.git$/i, "");
-  const repo = `${owner}/${name}`;
-  if (!githubRepositorySchema.safeParse(repo).success) return refused;
-  if (kind === undefined) return { ok: true, repo, ref: null };
-  if ((kind !== "tree" && kind !== "commit") || refParts.length === 0) return refused;
-  const ref = refParts.join("/");
-  if (!gitRefSchema.safeParse(ref).success || (kind === "commit" && !isCommitSha(ref))) {
-    return { ok: false, error: `"${ref}" is not a branch, tag or commit Appflare can build.` };
-  }
-  return { ok: true, repo, ref };
-}
+/** The `info().features` entry of a sandbox Worker that builds from a repository. */
+export const SANDBOX_FEATURE_REPOSITORY = "repository-builds";
 
 /**
  * How the build command is chosen: `detect` runs `<package manager> run

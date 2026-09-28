@@ -1,9 +1,10 @@
-import type { CatalogStats } from "@appflare/schema";
+import type { CatalogStats } from "../catalog-stats";
 
 /**
  * Popularity from the catalog's `stats.json`: GitHub stars of each app's
  * upstream repository and install counts from anonymous manager events.
  * It only orders the catalog and labels cards; nothing else depends on it.
+ * The manager and the public site read it the same way.
  */
 
 /**

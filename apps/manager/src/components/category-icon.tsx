@@ -1,4 +1,4 @@
-import { type CatalogCategory, isCatalogCategory } from "@appflare/schema";
+import { type CatalogCategory, isCatalogCategory } from "@appflare/schema/catalog-display";
 import {
   ArrowsClockwiseIcon,
   BellIcon,

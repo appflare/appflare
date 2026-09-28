@@ -5,7 +5,6 @@ import {
   CATEGORY_ROWS,
   filterPills,
   knowsAddedDates,
-  PLAN_WORDS,
   primaryAction,
   RECENTLY_TESTED_CAPTION,
   ROW_LIMIT,
@@ -205,15 +204,6 @@ describe("resultsTitle", () => {
     expect(resultsTitle({ sort: "new" }, true)).toBe("Newest apps");
     expect(resultsTitle({ sort: "new" }, false)).toBe("Recently tested");
     expect(resultsTitle({ plan: "free" }, true)).toBe("Results");
-  });
-});
-
-describe("PLAN_WORDS", () => {
-  it("has a short word for tiles and the full plan name for its tooltip", () => {
-    expect(PLAN_WORDS.paid).toMatchObject({ word: "Paid", name: "Workers Paid" });
-    expect(PLAN_WORDS.paid.tooltip).toContain("Workers Paid");
-    expect(PLAN_WORDS.free).toMatchObject({ word: "Free", name: "Workers Free" });
-    expect(PLAN_WORDS.free.tooltip).toContain("Workers Free");
   });
 });
 

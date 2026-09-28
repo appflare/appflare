@@ -1,5 +1,5 @@
 import type { CloudflareClient, CustomHostname } from "@appflare/cf-api";
-import { appRefOf, type InstallRow } from "../notifications/events.server";
+import { appRefOf, type InstallRow, readMessageLabels } from "../notifications/events.server";
 import { emitEvent, readChannels } from "../notifications/outbox.server";
 import { parseExternalDomainRef } from "./external-domains.server";
 import {
@@ -156,6 +156,15 @@ export async function checkExternalDomains(deps: {
     byZone.set(domain.zoneId, [...(byZone.get(domain.zoneId) ?? []), domain]);
   }
   const channels = await readChannels(deps.db);
+  // What messages call the installs, read only once a domain changed.
+  let labels: Map<string, string> | undefined;
+  const labelsOf = async () => {
+    labels ??= await readMessageLabels(
+      deps.db,
+      plan.domains.map((d) => d.install),
+    );
+    return labels;
+  };
   const writes: D1PreparedStatement[] = [];
   for (const [zoneId, domains] of byZone) {
     let listed: CustomHostname[];
@@ -186,7 +195,7 @@ export async function checkExternalDomains(deps: {
         { now, addedAt: domain.addedAt },
       );
       if (change.event !== null) {
-        const app = appRefOf(domain.install);
+        const app = appRefOf(domain.install, await labelsOf());
         const facts =
           change.event === "domain_active"
             ? { type: "domain_active" as const, app, hostname: domain.hostname }

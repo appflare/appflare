@@ -47,7 +47,7 @@ describe("requests per kind", () => {
     const body = JSON.parse(p?.body ?? "");
     expect(body).toEqual({
       chat_id: CHAT_ID,
-      text: `Update failed: Links\nUpdating Links (Worker my-links) from 1.0.0 to 1.1.0 failed. The job log says where.\n${MANAGER}/jobs/j1`,
+      text: `Update failed: Links\nUpdating Links from 1.0.0 to 1.1.0 failed. The job log says where.\n${MANAGER}/jobs/j1`,
       link_preview_options: { is_disabled: true },
     });
   });
@@ -85,7 +85,7 @@ describe("requests per kind", () => {
       occurredAt: new Date(NOW - 1000).toISOString(),
       sentAt: new Date(NOW).toISOString(),
       title: "Update failed: Links",
-      text: "Updating Links (Worker my-links) from 1.0.0 to 1.1.0 failed. The job log says where.",
+      text: "Updating Links from 1.0.0 to 1.1.0 failed. The job log says where.",
       url: `${MANAGER}/jobs/j1`,
       managerUrl: MANAGER,
       data: {

@@ -141,6 +141,55 @@ pnpm deploy-repo --artifact-dir /tmp/manager-release --out /tmp/appflare-deploy 
 cd /tmp/appflare-deploy && npm ci && npx wrangler deploy --dry-run
 ```
 
+## The documentation site and the catalog
+
+The docs site (`apps/docs`, deployed by `.github/workflows/docs.yml`) also lists
+the whole catalog: `/apps/`, one page per app and one per category. The pages are
+built from the published catalog at build time, so the site changes only when it is
+rebuilt:
+
+- **On each push** that touches the site or the schema, as before.
+- **Daily**, on the workflow's schedule, so star and install counts stay current.
+  Stars are shown only when the catalog's `stats.json` was less than 72 hours old
+  when the site was built, the same rule the manager uses.
+- **When the catalog publishes.** The last job of the catalog's publish workflow,
+  after the Pages deploy, starts this repository's docs workflow:
+
+  ```sh
+  curl -fsS -X POST \
+    -H "Accept: application/vnd.github+json" \
+    -H "Authorization: Bearer $DOCS_REBUILD_TOKEN" \
+    https://api.github.com/repos/appflare/appflare/actions/workflows/docs.yml/dispatches \
+    -d '{"ref":"main"}'
+  ```
+
+  `DOCS_REBUILD_TOKEN` is a fine-grained token for `appflare/appflare` only, with
+  **Actions: write** and nothing else. The job runs no code from either repository
+  and takes no inputs; the docs workflow always builds `main` against whatever the
+  catalog has published.
+
+Only the deploy build reads the published catalog (`CATALOG_SNAPSHOT=live`). It
+fetches `index.json`, the `stats.json` the index names, and each app's catalog
+manifest (for its repository and homepage), checks every file against the digest
+the index gives and everything against `@appflare/schema`, and fails the build on
+any error, which leaves the deployed site as it was. The featured slot comes from
+the index's `featured` list, which the catalog builds from its `featured.json`.
+
+Every other build (CI, `pnpm build`, the docs tests) uses the small snapshot checked
+in at `apps/docs/src/catalog/fixture.json` and never touches the network. To
+refresh it from the published catalog:
+
+```sh
+pnpm --filter @appflare/schema build
+pnpm --filter @appflare/docs catalog:fixture
+```
+
+To build the site locally the way the deploy does:
+
+```sh
+CATALOG_SNAPSHOT=live pnpm exec turbo run build --filter=@appflare/docs... --force
+```
+
 ## The sandbox Worker
 
 The optional sandbox Worker (`apps/sandbox`, enabled from the manager's Settings) is released

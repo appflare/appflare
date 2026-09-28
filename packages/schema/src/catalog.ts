@@ -13,6 +13,7 @@ import {
   licenseProblem,
   licenseSchema,
 } from "./license.ts";
+import { CATALOG_SLUG_PATTERN } from "./links.ts";
 import {
   appTokenPermissions,
   catalogPipelinesSchema,
@@ -40,6 +41,8 @@ import { inlineConfigPathProblem, wranglerConfigInlineSchema } from "./wrangler-
 export const gitShaSchema = z
   .string()
   .regex(/^[0-9a-f]{40}$/, "must be a 40-character lowercase hex git SHA");
+
+export { CATALOG_SLUG_PATTERN };
 
 /** `owner/repo` GitHub slug. */
 export const ownerRepoSchema = z.string().regex(/^[^/\s]+\/[^/\s]+$/, 'must be "owner/repo"');

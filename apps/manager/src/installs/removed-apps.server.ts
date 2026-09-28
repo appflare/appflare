@@ -11,7 +11,7 @@ import {
   selfUpdateBusyMessage,
 } from "../jobs/self-update/guard";
 import type { UninstallJobParams } from "../jobs/uninstall";
-import { installLabel } from "./display-name";
+import { namedInstall, readInstallLabels } from "./install-names.server";
 import { DATA_RESOURCE_KINDS } from "./resource-kinds";
 
 /**
@@ -47,7 +47,7 @@ export interface RetainedResourceView {
 export interface RemovedAppView {
   id: string;
   slug: string;
-  /** What the UI calls the install (`installLabel`). */
+  /** What the UI calls the install (`distinctLabels`). */
   label: string;
   workerName: string;
   /** ISO 8601 */
@@ -147,7 +147,7 @@ export async function listRemovedAppsCore(d1: D1Database): Promise<RemovedAppVie
     .orderBy(desc(installs.uninstalled_at), desc(installs.id));
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
-  const [kept, jobRows] = await Promise.all([
+  const [kept, jobRows, labels] = await Promise.all([
     db
       .select()
       .from(resources)
@@ -171,6 +171,7 @@ export async function listRemovedAppsCore(d1: D1Database): Promise<RemovedAppVie
       .from(jobs)
       .where(inArray(jobs.install_id, ids))
       .orderBy(desc(jobs.id)),
+    readInstallLabels(d1, rows.map(namedInstall)),
   ]);
   return rows.map((row) => {
     const own = jobRows.filter((j) => j.installId === row.id);
@@ -180,7 +181,7 @@ export async function listRemovedAppsCore(d1: D1Database): Promise<RemovedAppVie
       id: row.id,
       // The app key, so a custom catalog's app is looked up in that catalog only.
       slug: installAppKey(row),
-      label: installLabel({ displayName: row.display_name, workerName: row.worker_name }),
+      label: labels.get(row.id) ?? row.worker_name,
       workerName: row.worker_name,
       uninstalledAt: row.uninstalled_at?.toISOString() ?? null,
       retained: kept

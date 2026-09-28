@@ -118,12 +118,20 @@ export function ScreenshotGallery({
   if (count === 0) return null;
   const shown = images[box.index] ?? images[0];
   return (
-    <section aria-label={`${appName} screenshots`} className="grid min-w-0 gap-2">
-      <div className="relative">
+    // One column no wider than the page's: the strip scrolls inside it, and
+    // its screenshots never widen the page (a grid item's minimum width is
+    // otherwise its content's).
+    <section
+      aria-label={`${appName} screenshots`}
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2"
+    >
+      <div className="relative min-w-0">
+        {/* Scroll padding as wide as the padding (room for the focus ring), so the
+            first snap point is the very start and "Previous" is hidden there. */}
         <ul
           ref={list}
           onScroll={measure}
-          className="relative m-0 flex list-none snap-x snap-mandatory gap-3 overflow-x-auto p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="relative m-0 flex list-none snap-x snap-mandatory gap-3 overflow-x-auto scroll-px-0.5 p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {images.map((image, i) => (
             <li
