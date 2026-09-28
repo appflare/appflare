@@ -1,3 +1,4 @@
+import { SITE_URL } from "@appflare/schema/links";
 import { dashboardUrl } from "../cloudflare/dashboard-links";
 import { COLOR_MODE_SCRIPT, COLOR_MODE_SCRIPT_SHA256 } from "../components/color-mode";
 import { messageSegments } from "../components/message-links";
@@ -125,7 +126,7 @@ export function removalStepLine(step: RemovalStep): string {
 }
 
 /** Where the installer and its instructions are documented. */
-export const INSTALL_DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/start/install/";
+export const INSTALL_DOCS_URL = `${SITE_URL}/start/install/`;
 
 export interface RemovalSummary {
   outcome: "complete" | "failed";

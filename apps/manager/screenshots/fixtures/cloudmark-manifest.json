@@ -1,0 +1,53 @@
+{
+  "catalog": {
+    "$schema": "https://appflare.github.io/catalog/schema/v1.json",
+    "slug": "cloudmark",
+    "name": "Cloudmark",
+    "summary": "Bookmarks without an account: create a collection with a write token, save pages with a bookmarklet or the Chrome extension, and open them from any device. On D1.",
+    "tagline": "Save bookmarks and open them from any device",
+    "homepage": "https://cloudmark.site",
+    "repo": "wesleyel/cloudmark",
+    "license": "AGPL-3.0-only",
+    "categories": ["productivity", "utilities"],
+    "authors": [
+      {
+        "name": "Wesley Yang",
+        "url": "https://wesleyel.github.io",
+        "github": "wesleyel"
+      }
+    ],
+    "maintainers": ["MendyLanda"],
+    "source": {
+      "ref": "main",
+      "sha": "7a3ee4782ab701aeb8b4edfb8288f876cb8bcb66"
+    },
+    "install": {
+      "packageManager": "pnpm",
+      "wranglerConfig": "wrangler.jsonc",
+      "health": {
+        "path": "/api/health"
+      },
+      "buildCommand": "pnpm run build"
+    },
+    "plan": "free",
+    "vars": [
+      {
+        "name": "BASE_URL",
+        "label": "Public URL",
+        "help": "The public address where visitors open this app.",
+        "default": "{{appUrl}}",
+        "optional": true
+      }
+    ],
+    "postInstall": [
+      {
+        "type": "markdown",
+        "content": "Open {{appUrl}}/doc, create a collection (its `mark`) and write token, and drag the bookmarklet to your bookmarks bar. Your bookmarks are at {{appUrl}}/<mark>. Keep the write token: anyone with it can change the collection."
+      },
+      {
+        "type": "markdown",
+        "content": "Anyone who can open {{appUrl}} can create collections of their own, and anyone who knows a `mark` can read that collection. Only the write token allows changes."
+      }
+    ]
+  }
+}

@@ -5,11 +5,13 @@
  */
 
 /**
- * The deployed site. Absolute URLs (OpenGraph, sitemap, llms.txt, and the
- * documentation links in the deploy repository's README) start here. Must be
- * the public docs domain by the first public release.
+ * The deployed site's address. Absolute URLs (OpenGraph, sitemap, llms.txt,
+ * and the documentation links in the deploy repository's README) start here.
+ * It is set once, in `@appflare/schema/links`, because the manager and the
+ * installer link to the same site. A preview deploy on another address still
+ * writes these URLs with the public address; its own pages link relatively.
  */
-export const siteUrl = "https://appflare-docs.appflare-dev.workers.dev";
+export { SITE_URL } from "@appflare/schema/links";
 
 export const siteName = "Appflare";
 

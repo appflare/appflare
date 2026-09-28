@@ -1,5 +1,11 @@
-import type { InstallTier, Plan } from "@appflare/schema";
-import { SERVICE_NAMES, serviceNeedWords } from "@appflare/schema/catalog-display";
+import type { InstallTier, Plan, ServiceId } from "@appflare/schema";
+import {
+  countOf,
+  listWords,
+  SERVICE_NAMES,
+  serviceCount,
+  serviceNeedWords,
+} from "@appflare/schema/catalog-display";
 import { type CapabilitiesView, PLAN_LABELS } from "../capabilities/capabilities";
 import {
   CAPABILITY_STATE_LABELS,
@@ -338,40 +344,54 @@ export function accountNeeds(
     .map(({ need }) => need);
 }
 
-/** "2 KV namespaces", "a D1 database": one kind of resource and how many. */
-function countOf(label: string, n: number): string {
-  if (n === 1) return `${/^(?:[AEIOU]|R2\b)/.test(label) ? "an" : "a"} ${label}`;
-  return `${n} ${label.endsWith("s") ? label : `${label}s`}`;
-}
+/**
+ * `resources.kind` values and the service each is counted as, so the
+ * sentence says "an R2 bucket" and "two queues" the way every page does.
+ */
+const RESOURCE_KIND_SERVICES: Readonly<Record<string, ServiceId>> = {
+  kv: "kv",
+  d1: "d1",
+  r2: "r2",
+  queue: "queues",
+  vectorize: "vectorize",
+  hyperdrive: "hyperdrive",
+  pipeline_stream: "pipelines",
+  durable_object: "durable-objects",
+  workflow: "workflows",
+  cron: "cron",
+};
 
-function listOf(items: readonly string[]): string {
-  if (items.length <= 1) return items.join("");
-  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+/** How many of one kind of resource: "a D1 database", "two KV namespaces". */
+function kindCount(kind: string, n: number): string {
+  return Object.hasOwn(RESOURCE_KIND_SERVICES, kind)
+    ? serviceCount(RESOURCE_KIND_SERVICES[kind] as ServiceId, n)
+    : countOf(resourceKindLabel(kind), n);
 }
 
 /**
  * What the install adds to the account, in one sentence ("The install adds
- * the app's Worker, 2 KV namespaces and a D1 database."), with the binding
- * names for the tooltip. Only for an app whose resources are known before
- * it installs: a build or an app's own installer decides them later.
+ * the app's Worker, two KV namespaces, a D1 database and a cron trigger."),
+ * with the binding names for the tooltip. Only for an app whose resources
+ * are known before it installs: a build or an app's own installer decides
+ * them later.
  */
 export function installAdds(
   creates: ReadonlyArray<{ kind: string; binding: string }>,
   durableObjects: readonly string[],
+  /** Cron triggers across the app's Workers. */
+  cronTriggers = 0,
 ): { sentence: string; detail: string | null } {
   const counts = new Map<string, number>();
   for (const c of creates) counts.set(c.kind, (counts.get(c.kind) ?? 0) + 1);
   if (durableObjects.length > 0) counts.set("durable_object", durableObjects.length);
-  const parts = [
-    "the app's Worker",
-    ...[...counts].map(([kind, n]) => countOf(resourceKindLabel(kind), n)),
-  ];
+  if (cronTriggers > 0) counts.set("cron", cronTriggers);
+  const parts = ["the app's Worker", ...[...counts].map(([kind, n]) => kindCount(kind, n))];
   const named = [
     ...creates.map((c) => `${c.binding} (${resourceKindLabel(c.kind)})`),
     ...durableObjects.map((d) => `${d} (${resourceKindLabel("durable_object")})`),
   ];
   return {
-    sentence: `The install adds ${listOf(parts)} to your account.`,
+    sentence: `The install adds ${listWords(parts)} to your account.`,
     detail: named.length === 0 ? null : `Named in the app: ${named.join(", ")}.`,
   };
 }

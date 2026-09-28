@@ -1,0 +1,7 @@
+# Manager screenshots
+
+Run `node apps/manager/screenshots/shoot.mjs` from the repository root. The command starts its own Vite server, opens the real manager routes in headless Chromium, and writes the PNGs to `apps/docs/public/screenshots/`. It tries `$CHROMIUM` first, then `chromium-browser`, `chromium`, `google-chrome`, and the usual macOS Chrome path. Set `CHROMIUM` to an executable path if none is found. ImageMagick's `magick` command must be on `PATH`. No account, token, database, or Worker is used.
+
+The Vite entry uses the manager's router and components. `route-tree.ts` includes the pages used in the docs and leaves out API routes. The Vite plugin replaces `*.functions.ts` calls with `fixtures/data.ts` and serves the catalog images from `fixtures/`. When a page adds a server call, add its fixture result there. The saved catalog entries and images came from the public Appflare catalog on 2026-09-28. Fixture names and domains are invented, with `example.com` addresses.
+
+The script captures a 1440 × 900 desktop viewport at device scale 2, with taller viewports where a whole form needs one, plus one 390 × 800 phone view at device scale 2. It crops each page to the relevant content without resizing, so every output remains at device scale 2. Desktop crops leave out the sidebar. Run `pnpm --filter @appflare/manager screenshots:check` to check the harness. Check every new PNG before using it in the docs.

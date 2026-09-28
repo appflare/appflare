@@ -2,11 +2,16 @@
   // The documentation site, served as static assets with no Worker code.
   // Build, then deploy from the repository root:
   //   pnpm --filter @appflare/docs build
-  //   pnpm wrangler -c apps/docs/wrangler.jsonc deploy
+  //   pnpm wrangler -c apps/docs/wrangler.jsonc deploy --env=""
+  // That deploys the preview on workers.dev. The public site, appflare.dev, is
+  // the `production` environment, deployed only by .github/workflows/docs.yml
+  // to the account that owns the appflare.dev zone (apps/docs/README.md).
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "appflare-docs",
   // Pinned to the Appflare Dev account so local wrangler commands cannot target
-  // another account.
+  // another account. The production deploy drops this line from a copy of the
+  // file at deploy time and names its account in CLOUDFLARE_ACCOUNT_ID, because
+  // wrangler prefers this value over the environment variable.
   "account_id": "e56348678f83352622c33faa66f43c13",
   "compatibility_date": "2026-09-21",
   "workers_dev": true,
@@ -18,5 +23,16 @@
     // page (`404.html`).
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
+  },
+  "env": {
+    // appflare.dev, in the account that owns the zone. Every other setting is
+    // inherited from above; the account comes from CLOUDFLARE_ACCOUNT_ID.
+    // www.appflare.dev is a Redirect Rule on the zone, not part of this Worker.
+    "production": {
+      "name": "appflare-docs",
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [{ "pattern": "appflare.dev", "custom_domain": true }]
+    }
   }
 }

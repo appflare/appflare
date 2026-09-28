@@ -5,7 +5,7 @@ import path from "node:path";
 import type { VerifiedArtifact } from "@appflare/cli";
 import { pack, parseJsonc } from "@appflare/pack";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { siteUrl } from "../apps/docs/src/lib/shared.ts";
+import { SITE_URL } from "../apps/docs/src/lib/shared.ts";
 import {
   buildDeployRepo,
   DEPLOY_BUTTON_URL,
@@ -163,12 +163,12 @@ describe("the deploy repository's npm project", () => {
 
   it("links the documentation on the docs site's own address", () => {
     const readme = deployRepoReadme("1.2.3");
-    expect(docsPage("start", "deploy-button")).toBe(`${siteUrl}/start/deploy-button/`);
-    expect(readme).toContain(`(${siteUrl}/start/deploy-button/)`);
-    expect(readme).toContain(`(${siteUrl}/start/install/)`);
+    expect(docsPage("start", "deploy-button")).toBe(`${SITE_URL}/start/deploy-button/`);
+    expect(readme).toContain(`(${SITE_URL}/start/deploy-button/)`);
+    expect(readme).toContain(`(${SITE_URL}/start/install/)`);
     const docsLinks = readme.match(/\]\((https:\/\/[^)]+)\)/g) ?? [];
     for (const link of docsLinks.filter((l) => !/github\.com|cloudflare\.com/.test(l))) {
-      expect(link).toContain(siteUrl);
+      expect(link).toContain(SITE_URL);
     }
   });
 

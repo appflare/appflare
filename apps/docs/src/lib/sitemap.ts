@@ -1,4 +1,4 @@
-import { siteUrl } from "./shared.ts";
+import { SITE_URL } from "./shared.ts";
 
 function escapeXml(text: string): string {
   return text
@@ -13,7 +13,7 @@ function escapeXml(text: string): string {
 export function renderSitemap(paths: readonly string[]): string {
   const urls = [...new Set(paths)]
     .sort()
-    .map((path) => `  <url><loc>${escapeXml(`${siteUrl}${path}`)}</loc></url>`);
+    .map((path) => `  <url><loc>${escapeXml(`${SITE_URL}${path}`)}</loc></url>`);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',

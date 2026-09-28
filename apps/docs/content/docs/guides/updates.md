@@ -16,6 +16,8 @@ nothing from you, **Update all** starts them together. An update that needs your
 approval (an app built in your account), or one that failed or was rolled back before,
 shows **Review** instead, which opens the app's page.
 
+![Home showing one update and one app to review](/screenshots/updates-needs-attention.png)
+
 ## Update an app
 
 Admins select **Update**. A dialog opens first when:
@@ -30,6 +32,8 @@ Admins select **Update**. A dialog opens first when:
   [Apps with Durable Objects](#apps-with-durable-objects) below). The dialog says
   which case applies. You confirm with **Update without checking the new version
   first**.
+
+![Update review asking for a new secret before the app changes](/screenshots/updates-review.png)
 
 The update job:
 

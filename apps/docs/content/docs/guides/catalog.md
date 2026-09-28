@@ -30,9 +30,15 @@ the words and every filter.
 Under the field, the categories show as cards with the number of apps in each.
 Select a card to show that category's apps, and select it again to show every app.
 
+![Catalog with categories and app cards that have icons](/screenshots/catalog-storefront.png)
+
 The search and filters are part of the page address, so you can bookmark or share a
 filtered view, for example `/catalog?category=email&plan=free` or
 `/catalog?installed=1`.
+
+On a phone, the same search field and app results fit in a single column.
+
+![Catalog search and results on a phone](/screenshots/catalog-phone.png)
 
 ## Rows and tiles
 
@@ -58,23 +64,27 @@ already installed.
 
 ## The app page
 
-Select an app, or **Get**, to open its page. It shows **Install checked** with a
+Select an app, or **Get**, to open its page. It shows **Last tested** with a
 date: the last time the catalog's nightly job reinstalled this exact version into a
-test account and got an answer from it. A new version shows **Not checked yet**
+test account and got an answer from it. A new version shows **Not yet** under **Last tested**
 until its first check passes. A check that fails keeps the previous date, so an old date means
 recent checks failed. This is about the catalog's test account, not your installs;
 their own health is shown as **Verified** on each app's page (see
 [Health checks](/guides/health/)).
 
+![EmDash catalog page with its description, version and pictures](/screenshots/catalog-app.png)
+
 The page
 shows the version, the source repository, homepage, license (with a line on what it
 allows), the app's authors with
 links to their website, GitHub, and X profiles, the catalog maintainers who package it
-under **Packaged by**, and the install check date under **Last checked**, and lists what the install will create: the Worker, plus each KV namespace, D1 database,
+under **Packaged for the catalog by**, and the install check date under **Last tested**, and lists what the install will create: the Worker, plus each KV namespace, D1 database,
 R2 bucket, queue, Vectorize index, and Durable Object class the app binds.
 
-If you already installed the app, **Installed in this account** lists each install
-with its Worker name and status.
+![Catalog page listing the storage and services the app uses](/screenshots/catalog-needs.png)
+
+If you already installed the app, **On your account** lists each install
+by its app name and status.
 
 ### Requirements
 

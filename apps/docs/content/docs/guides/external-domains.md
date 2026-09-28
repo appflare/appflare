@@ -15,6 +15,8 @@ External domains use
 custom hostnames on one domain of your account, the **gateway domain**. You set up
 the gateway once, then add external domains to any app.
 
+![Domains settings showing a ready gateway and an external domain](/screenshots/domains-external-list.png)
+
 ## What you need
 
 - One domain (a zone) on this Cloudflare account with the status **Active**, to be

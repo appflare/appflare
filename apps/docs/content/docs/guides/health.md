@@ -7,6 +7,8 @@ After an install, an update, or a rollback, the manager requests the app's URL t
 see whether it answers. Most apps are checked at `/`. An app can name another path
 in its catalog manifest (`install.health.path`), for example `/api/health`.
 
+![Finished install job with a log ending in a passed health check](/screenshots/jobs-install-log.png)
+
 ## How the check runs
 
 A new `workers.dev` route can take a little while to go live. The check therefore

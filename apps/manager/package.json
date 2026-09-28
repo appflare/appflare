@@ -9,6 +9,7 @@
     "build": "vite build && node scripts/release-wrangler-config.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "screenshots:check": "biome check screenshots && tsc --noEmit --project screenshots/tsconfig.json",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run && vitest run --config vitest.dom.config.ts",

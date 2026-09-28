@@ -21,6 +21,8 @@ this for the account** while installing or updating. A recorded plan applies onl
 Appflare cannot detect it; recording Workers Paid lets later installs skip the Workers
 Paid confirmation, so set it only when the account really is on Workers Paid.
 
+![Users list with two admins and one member](/screenshots/users-list.png)
+
 ## Add a user
 
 Appflare has no email provider, so there are no invitations. Instead:
@@ -72,6 +74,8 @@ They become the owner and you stay an admin. Only the new owner can give ownersh
 Every user, members included, can add passkeys to their own account. A passkey signs
 you in with your fingerprint, face, screen lock, or a security key instead of your
 password. Your password keeps working.
+
+![Passkey saved for a laptop and Cloudflare Access turned on](/screenshots/users-passkeys.png)
 
 1. Open **Settings > Users and sign-in** and find **Your passkeys**.
 2. Select **Add passkey**. Name it after the device or password manager that keeps

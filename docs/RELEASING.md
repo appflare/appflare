@@ -70,13 +70,22 @@ Organization Actions secrets of `appflare`:
 | `DOCKERHUB_USERNAME` | `sandbox-image.yml` | A Docker Hub account with push access to the `mendylanda` namespace |
 | `DOCKERHUB_TOKEN` | `sandbox-image.yml` | A Docker Hub access token of that account, Read & Write scope |
 | `DEPLOY_REPO_PUSH_KEY` | `deploy-repo` job of `release.yml` | Private key of a deploy key with write access to `appflare/deploy` (see below) |
-| `CLOUDFLARE_API_TOKEN` | later: CI installs into a test account | API token for that account |
-| `CLOUDFLARE_ACCOUNT_ID` | later: same | That account's id |
+| `CLOUDFLARE_API_TOKEN` | `docs.yml` preview deploy | API token for the development account |
+| `CLOUDFLARE_ACCOUNT_ID` | same | The development account's id |
+
+Repository Actions secrets of `appflare/appflare`, for the account that owns the
+`appflare.dev` zone (`apps/docs/README.md` lists the token's permissions):
+
+| Secret | Used by | Contents |
+|---|---|---|
+| `DOCS_CLOUDFLARE_API_TOKEN` | `docs.yml` production deploy | API token for that account |
+| `DOCS_CLOUDFLARE_ACCOUNT_ID` | same | That account's id |
 
 The release fails with a clear error if `APPFLARE_SIGNING_KEY` is not set, and the
 sandbox image workflow if either Docker Hub secret is not set. Without
-`DEPLOY_REPO_PUSH_KEY` the deploy repository is not updated; the run shows a notice
-and succeeds.
+`DEPLOY_REPO_PUSH_KEY` the deploy repository is not updated, and without either
+`DOCS_CLOUDFLARE_*` secret appflare.dev is not updated; each run shows a notice and
+succeeds.
 
 ## The deploy repository
 
@@ -119,9 +128,8 @@ whatever version it holds, logs a warning saying so, and adds "Replaces Appflare
 <old version> after a version reset." to the commit. Runs started by a push never
 reset.
 
-The README's documentation links start at the docs site's `siteUrl` in
-`apps/docs/src/lib/shared.ts`, the one place the site's address is set. It must be
-the public docs domain by the first public release.
+The README's documentation links start at `SITE_URL` in `@appflare/schema/links`,
+the one place the site's address is set.
 
 To set up the key once:
 
@@ -143,8 +151,14 @@ cd /tmp/appflare-deploy && npm ci && npx wrangler deploy --dry-run
 
 ## The documentation site and the catalog
 
-The docs site (`apps/docs`, deployed by `.github/workflows/docs.yml`) also lists
-the whole catalog: `/apps/`, one page per app and one per category. The pages are
+The docs site (`apps/docs`, deployed by `.github/workflows/docs.yml`) is built once
+per run and deployed twice: first as the preview in the development account
+(`https://appflare-docs.appflare-dev.workers.dev`), then, once the preview answers,
+to appflare.dev in the account that owns the zone. `gh workflow run docs.yml --ref
+main -f target=dev` deploys the preview only. `www.appflare.dev` is a Redirect Rule
+on the zone, not part of the deploy; `apps/docs/README.md` has the setup.
+
+The site also lists the whole catalog: `/apps/`, one page per app and one per category. The pages are
 built from the published catalog at build time, so the site changes only when it is
 rebuilt:
 
@@ -166,7 +180,7 @@ rebuilt:
   `DOCS_REBUILD_TOKEN` is a fine-grained token for `appflare/appflare` only, with
   **Actions: write** and nothing else. The job runs no code from either repository
   and takes no inputs; the docs workflow always builds `main` against whatever the
-  catalog has published.
+  catalog has published, and a run without inputs deploys appflare.dev.
 
 Only the deploy build reads the published catalog (`CATALOG_SNAPSHOT=live`). It
 fetches `index.json`, the `stats.json` the index names, and each app's catalog

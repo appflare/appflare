@@ -8,6 +8,14 @@
  */
 
 /**
+ * The public site: documentation, the catalog's pages, the install pages
+ * and the Install badge. Every absolute link to the site (the manager's,
+ * the installer's, the site's own OpenGraph, sitemap and llms.txt URLs)
+ * starts here, with no trailing slash.
+ */
+export const SITE_URL = "https://appflare.dev";
+
+/**
  * The strict form of a catalog slug: lowercase letters, digits and dashes,
  * starting with a letter or digit, at most 63 characters. Slugs become Worker
  * names, sandbox ids and page addresses, so every place that builds one of

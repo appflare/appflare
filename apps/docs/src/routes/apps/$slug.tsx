@@ -20,7 +20,7 @@ import {
 import { CatalogLayout } from "../../components/catalog/catalog-layout.tsx";
 import { AppIcon } from "../../components/catalog/tiles.tsx";
 import { pageHead } from "../../lib/meta.ts";
-import { ogImagePath, siteName, siteUrl } from "../../lib/shared.ts";
+import { ogImagePath, SITE_URL, siteName } from "../../lib/shared.ts";
 
 /**
  * `/apps/<slug>/`: one app, laid out as its page in Appflare: the header with
@@ -40,9 +40,9 @@ export const Route = createFileRoute("/apps/$slug")({
       ? pageHead({
           title: appPageTitle(loaderData.app, siteName),
           description: loaderData.app.summary,
-          url: `${siteUrl}${appPath(loaderData.app.slug)}`,
+          url: `${SITE_URL}${appPath(loaderData.app.slug)}`,
           // A cover is made to the OpenGraph size; without one the build draws a card.
-          image: loaderData.app.cover ?? `${siteUrl}${ogImagePath(["apps", loaderData.app.slug])}`,
+          image: loaderData.app.cover ?? `${SITE_URL}${ogImagePath(["apps", loaderData.app.slug])}`,
         })
       : {},
   component: AppPage,

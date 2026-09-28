@@ -88,11 +88,9 @@ describe("docs topics", () => {
   });
 
   it("builds absolute URLs with the site's trailing slash", () => {
-    expect(docsUrl("customDomains")).toBe(
-      "https://appflare-docs.appflare-dev.workers.dev/guides/custom-domains/",
-    );
+    expect(docsUrl("customDomains")).toBe("https://appflare.dev/guides/custom-domains/");
     expect(docsUrl("webhookSignature")).toBe(
-      "https://appflare-docs.appflare-dev.workers.dev/guides/notifications/#verify-the-signature",
+      "https://appflare.dev/guides/notifications/#verify-the-signature",
     );
   });
 

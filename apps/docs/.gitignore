@@ -3,3 +3,5 @@ dist/
 .tanstack/
 # Generated from @appflare/schema on every build; never edit by hand.
 content/docs/catalog/manifest-reference.md
+# The production deploy writes this copy of wrangler.jsonc next to it.
+wrangler.production.json

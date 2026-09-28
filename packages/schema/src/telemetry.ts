@@ -9,6 +9,8 @@
  * and carries only enums, counts, booleans, versions and durations.
  */
 
+import { SITE_URL } from "./links";
+
 /** PostHog Cloud EU ingestion host. */
 export const TELEMETRY_HOST = "https://eu.i.posthog.com";
 
@@ -19,7 +21,7 @@ export const TELEMETRY_BATCH_URL = `${TELEMETRY_HOST}/batch/`;
 export const TELEMETRY_PROJECT_KEY = "phc_ALESBsbeNDUPHQQN3KNbEYTrFJwBmJvqh28BGDXF9PUs";
 
 /** What is sent and how to turn it off. */
-export const TELEMETRY_DOCS_URL = "https://appflare-docs.appflare-dev.workers.dev/telemetry/";
+export const TELEMETRY_DOCS_URL = `${SITE_URL}/telemetry/`;
 
 /**
  * The manager Worker variable (and CLI environment variable) that turns

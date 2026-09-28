@@ -9,5 +9,6 @@ export * from "./license-badge";
 export * from "./pitch";
 export * from "./plan";
 export * from "./popularity";
+export * from "./service-words";
 export * from "./services";
 export * from "./versions";

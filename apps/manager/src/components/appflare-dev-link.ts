@@ -6,8 +6,10 @@
  * the origin is sent, never a path. Client-safe.
  */
 
+import { SITE_URL } from "@appflare/schema/links";
+
 /** The appflare.dev page that remembers a manager. */
-export const APPFLARE_DEV_MY_URL = "https://appflare.dev/my/";
+export const APPFLARE_DEV_MY_URL = `${SITE_URL}/my/`;
 
 /** The link for this manager, or null when its address is not a web origin. */
 export function appflareDevLink(managerUrl: string | null | undefined): string | null {
