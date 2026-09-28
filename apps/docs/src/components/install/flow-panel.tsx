@@ -1,5 +1,6 @@
 import { buttonVariants } from "@fumadocs/base-ui/components/ui/button";
 import { type FormEvent, type ReactNode, useId } from "react";
+import { PRIVATE_CLASS } from "../../analytics/analytics.ts";
 import { appsPath, installPath } from "../../catalog/urls.ts";
 import { EXAMPLE_ADDRESS } from "../../install/address.ts";
 import type { FlowAction, FlowState } from "../../install/flow.ts";
@@ -34,10 +35,18 @@ function Actions({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap items-center gap-2 pt-1">{children}</div>;
 }
 
-/** An address as the visitor should read it: whole, never cut. */
+/**
+ * An address as the visitor should read it: whole, never cut. It is the
+ * visitor's own, so analytics never record it (see `PRIVATE_CLASS`), as
+ * with every link to it and the field it is typed into.
+ */
 function Origin({ origin }: { origin: string }) {
   return (
-    <strong className="font-semibold text-fd-foreground [overflow-wrap:anywhere]">{origin}</strong>
+    <strong
+      className={`${PRIVATE_CLASS} font-semibold text-fd-foreground [overflow-wrap:anywhere]`}
+    >
+      {origin}
+    </strong>
   );
 }
 
@@ -279,7 +288,7 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
               The page this opens:{" "}
               <a
                 href={view.target}
-                className="font-mono text-fd-primary underline [overflow-wrap:anywhere]"
+                className={`${PRIVATE_CLASS} font-mono text-fd-primary underline [overflow-wrap:anywhere]`}
               >
                 {view.target}
               </a>
@@ -288,7 +297,7 @@ export function FlowPanel({ state, dispatch, apps, forwarding = true }: FlowPane
           {!canRemember && <CannotRememberNote />}
           <Actions>
             {!forwarding && (
-              <a href={view.target} className={primary}>
+              <a href={view.target} className={`${PRIVATE_CLASS} ${primary}`}>
                 Open in your Appflare
               </a>
             )}
@@ -423,7 +432,7 @@ function AddressForm({
           aria-invalid={error !== null}
           aria-describedby={error === null ? hintId : `${errorId} ${hintId}`}
           onChange={(event) => onEdit(event.target.value)}
-          className="h-11 w-full rounded-lg border border-fd-border bg-fd-background px-3 text-base outline-none placeholder:text-fd-muted-foreground focus-visible:ring-2 focus-visible:ring-fd-ring aria-invalid:border-red-500"
+          className={`${PRIVATE_CLASS} h-11 w-full rounded-lg border border-fd-border bg-fd-background px-3 text-base outline-none placeholder:text-fd-muted-foreground focus-visible:ring-2 focus-visible:ring-fd-ring aria-invalid:border-red-500`}
         />
         {error !== null && (
           <p id={errorId} role="alert" className="text-red-600 text-sm dark:text-red-400">

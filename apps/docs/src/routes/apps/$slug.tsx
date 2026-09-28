@@ -1,6 +1,8 @@
 import { buttonVariants } from "@fumadocs/base-ui/components/ui/button";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import Link from "fumadocs-core/link";
+import { useEffect } from "react";
+import { track } from "../../analytics/analytics.ts";
 import {
   accountNeeds,
   appCategories,
@@ -66,6 +68,13 @@ function AppPage() {
         ? []
         : [{ url: app.cover, alt: `${app.name} cover image` }];
   const authors = app.authors.map((author) => author.name);
+  useEffect(() => {
+    track("app_page_viewed", {
+      slug: app.slug,
+      category: app.categories[0] ?? null,
+      categories: app.categories,
+    });
+  }, [app.slug, app.categories]);
 
   return (
     <CatalogLayout>

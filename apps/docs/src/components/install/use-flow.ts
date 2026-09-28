@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { track } from "../../analytics/analytics.ts";
+import { installLinkEvent, registeredEvent } from "../../analytics/flow-events.ts";
 import {
   type FlowAction,
   type FlowPage,
@@ -33,9 +35,12 @@ export function useFlow(
   useEffect(() => {
     if (cameBack()) setForwarding(false);
     memory.current = browserMemory();
+    const hadManager = memory.current.manager() !== null;
     const first = start(memory.current);
     current.current = first;
     setState(first);
+    const arrival = installLinkEvent(first, hadManager);
+    if (arrival !== null) track("install_link_clicked", arrival);
     // A page restored from the back/forward cache does not run again.
     const onShow = (event: PageTransitionEvent) => {
       if (event.persisted) setForwarding(false);
@@ -49,6 +54,8 @@ export function useFlow(
   const dispatch = useCallback((action: FlowAction) => {
     const next = reduce(current.current, action, memory.current, new Date());
     if (next === current.current) return;
+    const registered = registeredEvent(action, next);
+    if (registered !== null) track("manager_registered", registered);
     current.current = next;
     setState(next);
     // A click is a fresh choice: whatever it leads to may send the visitor on.
