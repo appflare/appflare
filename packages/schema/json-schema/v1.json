@@ -10,15 +10,18 @@
     },
     "slug": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "The entry's permanent id, in lowercase letters, digits and hyphens, for example `open-seo`. It is also the entry's folder in the catalog, the first part of its release tags (`<slug>@<version>`) and the Worker name the install form suggests. It never changes once the entry is published."
     },
     "name": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "The app's name as the catalog and the manager show it, for example `Open SEO`."
     },
     "summary": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "What the app does and who it is for, in a few plain sentences, shown on the app's page (a blank line starts a new paragraph). The catalog search reads it too."
     },
     "tagline": {
       "type": "string",
@@ -138,18 +141,21 @@
       "items": {
         "type": "string",
         "minLength": 1
-      }
+      },
+      "description": "The GitHub usernames, without @, of the people who package the app for the catalog and look after this entry, shown as \"Packaged by\". Not the app's own authors (those are `authors`)."
     },
     "source": {
       "type": "object",
       "properties": {
         "ref": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "The tag or branch of the app's repository this entry is built from, for example `v1.4.2` or `main`. A tag that is a semver version is also the version the catalog shows. The catalog's bump bot moves it when upstream publishes a new release."
         },
         "sha": {
           "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The commit the entry is built from, as its full 40-character SHA in lower case: the commit `ref` pointed at when the entry was last updated. The build always uses this commit, so a moved tag or a new commit on the branch changes nothing until `sha` does."
         },
         "version": {
           "type": "string",
@@ -203,7 +209,7 @@
         "health": {
           "default": {
             "path": "/",
-            "mode": "default"
+            "mode": "no-server-errors"
           },
           "type": "object",
           "properties": {
@@ -214,13 +220,13 @@
               "pattern": "^\\/[^\\s?#]*$"
             },
             "mode": {
-              "default": "default",
+              "default": "no-server-errors",
               "type": "string",
               "enum": [
-                "default",
-                "status-only"
+                "no-server-errors",
+                "any-response"
               ],
-              "description": "How the health check reads the Worker's answer. `\"default\"` counts redirects and 4xx answers as verified and server errors (5xx) as unhealthy. `\"status-only\"` counts any answer from the Worker itself as verified, server errors included: use it for apps whose health path sits behind Cloudflare Access or the app's own sign-in. Either way, connection failures and Cloudflare's error pages (such as `error code: 1042` while the route goes live) are retried. Defaults to `\"default\"`."
+              "description": "Which answers of the Worker count as serving. `\"no-server-errors\"` (the default): any answer but a server error (5xx), so a redirect or a 404 passes and a 500 fails. `\"any-response\"`: any answer the Worker itself gives, server errors included; use it for an app whose health path sits behind Cloudflare Access or the app's own sign-in. Either way, connection failures and Cloudflare's own error pages (such as `error code: 1042` while the route goes live) are retried and never count as serving."
             }
           },
           "additionalProperties": false,
@@ -2657,7 +2663,8 @@
       "enum": [
         "free",
         "paid"
-      ]
+      ],
+      "description": "The Cloudflare Workers plan the app needs: `\"free\"` when it runs on Workers Free, `\"paid\"` when it needs Workers Paid. An entry with Pipelines, or with more than 3 Workers, must say `\"paid\"`."
     },
     "requires": {
       "default": [],
@@ -2684,14 +2691,17 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "The name the Worker reads the secret by, exactly as the app's code spells it, for example `ADMIN_PASSWORD`."
           },
           "label": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "What the install and settings forms call the secret, in plain words, for example `Admin password`."
           },
           "help": {
-            "type": "string"
+            "type": "string",
+            "description": "A sentence or two shown under the field: what the value is for, or where to find it."
           },
           "generate": {
             "type": "string",
@@ -2910,14 +2920,17 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "The name the Worker reads the setting by, exactly as the app's code and wrangler config spell it, for example `SITE_TITLE`."
           },
           "label": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "What the install and settings forms call the setting, in plain words, for example `Site title`."
           },
           "help": {
-            "type": "string"
+            "type": "string",
+            "description": "A sentence or two shown under the field: what the setting changes, or which values work."
           },
           "default": {
             "type": "string",
@@ -3091,18 +3104,21 @@
             "type": "string",
             "enum": [
               "markdown"
-            ]
+            ],
+            "description": "How `content` is written. Only `\"markdown\"` for now."
           },
           "content": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Markdown the manager shows once the app is installed, such as how to sign in the first time. These placeholders are filled in: `{{appUrl}}`, `{{appHostname}}`, `{{workerUrl}}`, `{{workerHostname}}`, `{{workerName}}`, `{{accountId}}`, `{{wildcardHostname}}`. For the address people open, use `{{appUrl}}`, which follows a custom domain. An entry of several Workers names one of them with `{{appUrl:<name>}}` and the like."
           }
         },
         "required": [
           "type",
           "content"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "A note the manager shows after the install."
       }
     },
     "tokenPermissions": {
@@ -3114,6 +3130,7 @@
         "properties": {
           "group": {
             "type": "string",
+            "minLength": 1,
             "enum": [
               "DNS",
               "Zone",
@@ -3881,7 +3898,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 1000000,
-      "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `tagline`, `homepage`, `license`, `licenseNote`, `categories`, `authors`, `maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving `source`: the released artifact stays as it is, and managers show the new form without an update. Anything else needs a new build, so move `source` instead."
+      "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving `source`: the released artifact stays as it is, and managers show the new form without an update. `tagline`, `licenseNote` and `authors` need no revision: the catalog shows them from the current manifest. Anything else needs a new build, so move `source` instead."
     }
   },
   "required": [

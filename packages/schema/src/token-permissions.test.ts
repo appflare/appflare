@@ -4,8 +4,12 @@ import {
   APP_TOKEN_PERMISSION_GROUPS,
   appTokenPermissionGroup,
   mergeTokenPermissions,
+  strictTokenPermissionSchema,
+  strictTokenPermissionsSchema,
   type TokenPermission,
   tokenPermissionGroupNames,
+  tokenPermissionGroupProblem,
+  tokenPermissionGroupProblems,
   tokenPermissionName,
   tokenPermissionSchema,
   tokenPermissionsSchema,
@@ -47,10 +51,16 @@ describe("tokenPermissionSchema", () => {
     ).toBe(true);
   });
 
-  it("refuses an unknown group, a group of the other scope, and a missing reason or access", () => {
+  it("takes any group name, so a manager reads a group added later", () => {
+    for (const group of ["Workers AI", "Zone.DNS:Edit"]) {
+      expect(tokenPermissionSchema.safeParse({ ...dns, group }).success, group).toBe(true);
+    }
+    expect(tokenPermissionSchema.safeParse({ ...dns, scope: "account" }).success).toBe(true);
+  });
+
+  it("refuses a missing group, scope, reason or access", () => {
     const cases: Array<[Record<string, unknown>, string]> = [
-      [{ ...dns, group: "Zone.DNS:Edit" }, "group"],
-      [{ ...dns, scope: "account" }, "is not a account permission group"],
+      [{ ...dns, group: "" }, "group"],
       [{ ...dns, scope: "user" }, "scope"],
       [{ ...dns, access: "write" }, "access"],
       [{ ...dns, reason: " " }, "reason"],
@@ -61,6 +71,29 @@ describe("tokenPermissionSchema", () => {
       expect(result.success, why).toBe(false);
       expect(JSON.stringify(result.error?.issues), why).toContain(why);
     }
+  });
+});
+
+describe("strictTokenPermissionSchema", () => {
+  it("refuses an unknown group and a group of the other scope", () => {
+    expect(strictTokenPermissionSchema.parse(dns)).toEqual(dns);
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ ...dns, group: "Zone.DNS:Edit" }, "is not a permission group Appflare can select"],
+      [{ ...dns, scope: "account" }, "is not a account permission group"],
+      [{ ...dns, access: "write" }, "access"],
+    ];
+    for (const [value, why] of cases) {
+      const result = strictTokenPermissionSchema.safeParse(value);
+      expect(result.success, why).toBe(false);
+      expect(JSON.stringify(result.error?.issues), why).toContain(why);
+    }
+  });
+
+  it("finds the groups of a list as written, leaving other shapes to the schema", () => {
+    expect(
+      tokenPermissionGroupProblems([dns, { ...dns, group: "Made Up" }, { name: "DNS" }, "x"]),
+    ).toEqual([{ path: [1, "group"], message: expect.stringContaining('"Made Up" is not') }]);
+    expect(tokenPermissionGroupProblem("user", "DNS")).toBeNull();
   });
 
   it("states the scope and group pairs in the JSON Schema", () => {
@@ -73,9 +106,14 @@ describe("tokenPermissionSchema", () => {
 
 describe("tokenPermissionsSchema", () => {
   it("refuses a scope and group listed twice", () => {
-    const result = tokenPermissionsSchema.safeParse([dns, { ...dns, access: "read" }]);
-    expect(result.success).toBe(false);
-    expect(result.error?.issues[0]?.path).toEqual([1, "group"]);
+    for (const schema of [tokenPermissionsSchema, strictTokenPermissionsSchema]) {
+      const result = schema.safeParse([dns, { ...dns, access: "read" }]);
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual([1, "group"]);
+    }
+    expect(strictTokenPermissionsSchema.safeParse([{ ...dns, group: "Made Up" }]).success).toBe(
+      false,
+    );
   });
 });
 

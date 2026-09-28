@@ -148,14 +148,19 @@ export interface StrictProblem {
 }
 
 /**
- * `schema`, refusing every key it would strip (the message names the key's
- * path), and whatever `extra` finds in the input, beside the schema's own
- * problems, so one run reports them all. The result is what `schema` gives.
- * For tools that write manifests; readers use `schema` itself.
+ * `schema`, refusing every key it would strip, and whatever `extra` finds in
+ * the input, beside the schema's own problems, so one run reports them all.
+ * The result is what `schema` gives. For tools that write manifests; readers
+ * use `schema` itself.
+ *
+ * An unknown key's message names its path and asks to check its spelling,
+ * unless `unknownKeyMessage` knows better for that path (a field that was
+ * renamed or removed says where it went).
  */
 export function strictSchema<T extends z.ZodType>(
   schema: T,
   extra?: (input: unknown) => StrictProblem[],
+  unknownKeyMessage?: (path: ReadonlyArray<string | number>) => string | null,
 ): z.ZodType<z.output<T>, unknown> {
   return z.unknown().transform((input, ctx) => {
     const result = schema.safeParse(input);
@@ -164,7 +169,9 @@ export function strictSchema<T extends z.ZodType>(
       ctx.addIssue({
         code: "custom",
         path,
-        message: `${formatPath(path)} is not a field here; check its spelling`,
+        message:
+          unknownKeyMessage?.(path) ??
+          `${formatPath(path)} is not a field here; check its spelling`,
       });
     }
     if (!result.success) {

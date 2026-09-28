@@ -85,6 +85,17 @@ describe("strictSchema", () => {
     expect(strict.safeParse({ name: "bad" }).error?.issues[0]?.message).toBe("name is bad");
   });
 
+  it("says where a renamed key went when it knows", () => {
+    const renamed = strictSchema(schema, undefined, (path) =>
+      path.join(".") === "nested.b" ? "nested.b is now nested.a" : null,
+    );
+    expect(
+      renamed
+        .safeParse({ name: "n", nested: { b: 1 }, nmae: 1 })
+        .error?.issues.map((i) => i.message),
+    ).toEqual(["nested.b is now nested.a", "nmae is not a field here; check its spelling"]);
+  });
+
   it("reports unknown keys beside the schema's own problems", () => {
     const result = strict.safeParse({ nmae: "n" });
     expect(result.error?.issues.map((i) => i.path.join("."))).toEqual(["nmae", "name"]);

@@ -4,6 +4,7 @@
 // targeted edit of the file's text, never a re-serialisation.
 //
 //   node scripts/codemod-manifest-v1.mjs [--write | --out <dir>] [--check] <appflare.jsonc>...
+//   node scripts/codemod-manifest-v1.mjs --help
 //
 //   --write        rewrite each file in place
 //   --out <dir>    write each result to <dir>/<entry folder>/appflare.jsonc instead
@@ -14,6 +15,22 @@
 // change. Lines marked TODO need a person: the codemod made its best guess
 // (or none) and says what to check.
 //
+// Running it again is safe: a file already in the v1 shape passes through
+// unchanged. A file counts as written before v1 when it uses a field or a
+// form v1 no longer has (`vars[].required`, a token permission `name`,
+// `install.healthPath`, a boolean `generate`, ...), or, failing that, when
+// it has no v1 field either and still lists `install.tier`, `requires`,
+// `secrets`, `vars` and `tokenPermissions`, which were all required then.
+//
+// Vars: before v1 a var needed a value only with `required: true`; in v1
+// every var needs one unless it sets `optional: true`. So each var without
+// `required: true` gets `optional: true`, even one with a `default`: the
+// admin could clear that default before, and still can. Remove the flag by
+// hand where the app cannot run without the value.
+//
+// Health check modes: `"default"` is now `"no-server-errors"` (the default,
+// so it is dropped) and `"status-only"` is now `"any-response"`.
+//
 // Needs Node 22.18 or later: it reads the schema's own TypeScript sources
 // (the permission groups, the licence rules, the strict schema) through
 // Node's type stripping, so it always agrees with this version of the schema.
@@ -22,7 +39,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { strictCatalogManifestSchema } from "../src/catalog.ts";
+import { DEFAULT_HEALTH_MODE, strictCatalogManifestSchema } from "../src/catalog.ts";
 import { CATALOG_CATEGORY_IDS } from "../src/categories.ts";
 import { catalogLicenseProblem } from "../src/license.ts";
 import { formatPath } from "../src/strict.ts";
@@ -43,6 +60,9 @@ const FOLDED_CATEGORIES = {
   blogging: "cms",
   gaming: "games",
 };
+
+/** The v1 names of the health check modes, by their names before v1. */
+const HEALTH_MODE_NAMES = { default: "no-server-errors", "status-only": "any-response" };
 
 /** Secret names apps give their own Cloudflare API token. */
 const TOKEN_SECRET_NAME = /(?:^|_)(?:CF|CLOUDFLARE)_(?:[A-Z0-9]+_)?TOKEN$/;
@@ -288,14 +308,104 @@ function convertPermission(old) {
   };
 }
 
+function isObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Whether a token permission entry is still in its form before v1. */
+function isOldPermission(p) {
+  return !isObject(p) || "name" in p || "description" in p;
+}
+
+/**
+ * What only a person can finish, which a rewrite therefore leaves in the
+ * file: token permissions of a group Appflare does not know, and a stage
+ * option other than the tool's own. A file with these and nothing else from
+ * before v1 gets no further changes, only the same TODO lines again.
+ */
+export function leftForAPerson(manifest) {
+  const left = [];
+  const permissions = Array.isArray(manifest.tokenPermissions) ? manifest.tokenPermissions : [];
+  permissions.forEach((p, i) => {
+    if (isOldPermission(p) && convertPermission(isObject(p) ? p : {}) === null) {
+      left.push(`tokenPermissions[${i}]`);
+    }
+  });
+  const stageArg = manifest.install?.selfDeploying?.stageArg;
+  if (stageArg !== undefined && stageArg !== "--stage") left.push("install.selfDeploying.stageArg");
+  return left;
+}
+
+/**
+ * What shows a parsed manifest is still in the shape before v1 and has
+ * something the rewrite converts, one line each; empty when it is in the v1
+ * shape (apart from {@link leftForAPerson}). See the header for the rule.
+ */
+export function preV1Signs(manifest) {
+  const signs = [];
+  const install = isObject(manifest.install) ? manifest.install : {};
+  const list = (key) => (Array.isArray(manifest[key]) ? manifest[key].filter(isObject) : []);
+  const vars = list("vars");
+  const secrets = list("secrets");
+  const permissions = Array.isArray(manifest.tokenPermissions) ? manifest.tokenPermissions : [];
+  if (vars.some((v) => "required" in v)) signs.push("vars[].required");
+  if (permissions.some((p) => isOldPermission(p) && convertPermission(isObject(p) ? p : {}))) {
+    signs.push("tokenPermissions[].name");
+  }
+  if (secrets.some((s) => typeof s.generate === "boolean")) signs.push("secrets[].generate: true");
+  for (const key of ["healthPath", "healthMode", "version", "sandbox", "wildcardReason"]) {
+    if (key in install) signs.push(`install.${key}`);
+  }
+  if (typeof install.wildcardHostname === "boolean") signs.push("install.wildcardHostname: true");
+  const selfDeploying = isObject(install.selfDeploying) ? install.selfDeploying : {};
+  for (const key of ["workers", "stateStore"]) {
+    if (key in selfDeploying) signs.push(`install.selfDeploying.${key}`);
+  }
+  if (selfDeploying.stageArg === "--stage") signs.push("install.selfDeploying.stageArg");
+  if (Array.isArray(manifest.resources?.hyperdrive)) signs.push("resources.hyperdrive as a list");
+  if (Object.values(manifest.resources?.d1 ?? {}).some((d) => isObject(d) && "migrations" in d)) {
+    signs.push("resources.d1[binding].migrations");
+  }
+  const categories = Array.isArray(manifest.categories) ? manifest.categories : [];
+  if (categories.some((id) => Object.hasOwn(FOLDED_CATEGORIES, id)))
+    signs.push("a folded category");
+  if (signs.length > 0) return signs;
+  // Nothing only the old shape has: a field only v1 has settles it.
+  const v1 =
+    vars.some((v) => "optional" in v) ||
+    permissions.some((p) => isObject(p) && "group" in p) ||
+    secrets.some((s) => "cloudflareToken" in s) ||
+    "health" in install ||
+    "container" in install ||
+    isObject(install.wildcardHostname) ||
+    "workerNames" in selfDeploying ||
+    (isObject(manifest.source) && "version" in manifest.source) ||
+    Object.values(manifest.resources?.d1 ?? {}).some((d) => isObject(d) && "migrationsGlob" in d);
+  if (v1) return [];
+  // Before v1 these were all required; the rewrite drops them where they state a default.
+  const required = ["requires", "secrets", "vars", "tokenPermissions"];
+  if ("tier" in install && required.every((key) => key in manifest)) {
+    signs.push("install.tier, requires, secrets, vars and tokenPermissions all present");
+  }
+  return signs;
+}
+
 /** Rewrites one manifest's text; returns the document with its record of changes. */
 export function migrate(text) {
   const doc = new Document(text);
   const manifest = doc.get([]);
-  if (manifest === null || typeof manifest !== "object") {
+  if (!isObject(manifest)) {
     doc.todos.push("not a JSON object; nothing done");
     return doc;
   }
+  const preV1 = preV1Signs(manifest).length > 0;
+  if (!preV1 && leftForAPerson(manifest).length === 0) {
+    doc.notes.push("already in the v1 shape; left as it is");
+    return doc;
+  }
+  // Only what a person must finish is left: every step below is then a no-op
+  // but for its TODO lines, except the vars, whose missing `optional` reads
+  // differently before v1 and must not be converted twice.
   const slug = manifest.slug;
 
   // Top level.
@@ -339,11 +449,35 @@ export function migrate(text) {
     doc.strip(["install", "fixedWorkerName"], "is the default");
   if (install.healthPath !== undefined || install.healthMode !== undefined) {
     // The first of the two becomes install.health, so a comment above it stays.
+    // A value that is now the default is dropped, as other defaults are,
+    // unless a comment explains it: then it stays, stated in the new shape.
     const health = {};
-    if (install.healthPath !== undefined && install.healthPath !== "/")
-      health.path = install.healthPath;
-    if (install.healthMode !== undefined && install.healthMode !== "default") {
-      health.mode = install.healthMode;
+    const keepsDefault = (key, why) => {
+      const comment = doc.commentOf(["install", key]);
+      if (comment === null) return false;
+      doc.notes.push(
+        `kept install.${why}, which is the default, because a comment explains it (${comment.slice(0, 70).trim()}); remove both if the comment no longer matters`,
+      );
+      return true;
+    };
+    if (install.healthPath !== undefined) {
+      if (install.healthPath !== "/" || keepsDefault("healthPath", 'health.path "/"')) {
+        health.path = install.healthPath;
+      }
+    }
+    if (install.healthMode !== undefined) {
+      const mode = HEALTH_MODE_NAMES[install.healthMode];
+      if (mode === undefined) {
+        health.mode = install.healthMode;
+        doc.todos.push(
+          `install.healthMode "${install.healthMode}" is not a mode; write "no-server-errors" or "any-response"`,
+        );
+      } else if (mode !== DEFAULT_HEALTH_MODE) {
+        health.mode = mode;
+        doc.changes.push(`install.healthMode "${install.healthMode}" is now "${mode}"`);
+      } else if (keepsDefault("healthMode", `health.mode "${mode}"`)) {
+        health.mode = mode;
+      }
     }
     const keys = Object.keys(install);
     const [first, second] =
@@ -357,7 +491,8 @@ export function migrate(text) {
       doc.set(["install", "health"], health);
       doc.changes.push("install.healthPath and healthMode are now install.health");
     } else {
-      doc.remove(["install", first], "the default health check");
+      // No comment explains it (else `health` would hold the value), so this removes it.
+      doc.strip(["install", first], "is the default health check");
     }
   }
   if (install.version !== undefined) {
@@ -426,7 +561,7 @@ export function migrate(text) {
   });
 
   // Vars: one `optional` flag instead of `required`.
-  (manifest.vars ?? []).forEach((v, i) => {
+  (preV1 ? (manifest.vars ?? []) : []).forEach((v, i) => {
     const at = ["vars", i];
     const keepsValue = v.derive !== undefined || v.seedOnly === true;
     if (v.required === true) {
@@ -434,6 +569,8 @@ export function migrate(text) {
     } else if (keepsValue) {
       if (v.required !== undefined)
         doc.remove([...at, "required"], "a derived or seed-only var always has a value");
+    } else if (v.required === undefined && v.optional !== undefined) {
+      // Already says whether it is optional, as v1 does.
     } else {
       if (v.required === false) {
         // Keep the property's place: rename it, then set its value.
@@ -452,6 +589,8 @@ export function migrate(text) {
   // Token permissions.
   let convertedCount = 0;
   (manifest.tokenPermissions ?? []).forEach((old, i) => {
+    // Already { group, scope, access, reason }: nothing to convert.
+    if (isObject(old) && !("name" in old) && !("description" in old) && "group" in old) return;
     const converted = convertPermission(old);
     const oldText = inline(old);
     if (converted === null) {
@@ -562,6 +701,21 @@ function main(argv) {
   let check = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === "--help" || arg === "-h") {
+      // The comment at the top of this file is the help.
+      const own = readFileSync(new URL(import.meta.url), "utf8").split("\n");
+      const help = own.slice(
+        1,
+        own.findIndex((line) => line.startsWith("import ")),
+      );
+      console.log(
+        help
+          .map((line) => line.replace(/^\/\/ ?/, ""))
+          .join("\n")
+          .trim(),
+      );
+      return;
+    }
     if (arg === "--write") write = true;
     else if (arg === "--check") check = true;
     else if (arg === "--out") out = argv[++i];
@@ -570,7 +724,7 @@ function main(argv) {
   }
   if (files.length === 0) {
     console.error(
-      "usage: codemod-manifest-v1.mjs [--write | --out <dir>] [--check] <appflare.jsonc>...",
+      "usage: codemod-manifest-v1.mjs [--write | --out <dir>] [--check] <appflare.jsonc>... (--help explains)",
     );
     process.exit(2);
   }

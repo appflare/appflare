@@ -9,5 +9,20 @@ export interface MigratedManifest {
   todos: string[];
 }
 
-/** Rewrites the text of one appflare.jsonc into the v1 shape, keeping comments and layout. */
+/**
+ * Rewrites the text of one appflare.jsonc into the v1 shape, keeping comments
+ * and layout. A manifest already in the v1 shape comes back unchanged.
+ */
 export function migrate(text: string): MigratedManifest;
+
+/**
+ * What shows a parsed manifest is still in the shape before v1, one line
+ * each; empty when it is in the v1 shape.
+ */
+export function preV1Signs(manifest: { [key: string]: unknown }): string[];
+
+/**
+ * What only a person can finish, which a rewrite leaves in the file (token
+ * permissions of an unknown group, a stage option other than the tool's own).
+ */
+export function leftForAPerson(manifest: { [key: string]: unknown }): string[];

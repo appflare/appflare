@@ -36,6 +36,7 @@ import {
   secretValueProblem,
   semverSchema,
   strictCatalogManifestSchema,
+  strictRepositoryBuildManifestSchema,
   WILDCARD_REASON_MAX_LENGTH,
 } from "./catalog";
 import { generateVapidPrivateKey } from "./vapid";
@@ -87,7 +88,7 @@ describe("catalogManifestSchema", () => {
       packageManager: "pnpm",
       wranglerConfig: "wrangler.jsonc",
       fixedWorkerName: false,
-      health: { path: "/", mode: "default" },
+      health: { path: "/", mode: "no-server-errors" },
     });
     expect(parsed.requires).toEqual([]);
     expect(parsed.vars).toEqual([]);
@@ -170,11 +171,11 @@ describe("catalogManifestSchema", () => {
       });
     expect(withHealth({ path: "/api/health" }).data?.install.health).toEqual({
       path: "/api/health",
-      mode: "default",
+      mode: "no-server-errors",
     });
-    expect(withHealth({ mode: "status-only" }).data?.install.health).toEqual({
+    expect(withHealth({ mode: "any-response" }).data?.install.health).toEqual({
       path: "/",
-      mode: "status-only",
+      mode: "any-response",
     });
     for (const health of [
       { path: "api/health" },
@@ -182,6 +183,8 @@ describe("catalogManifestSchema", () => {
       { path: "/x?y=1" },
       { path: "" },
       { mode: "status" },
+      { mode: "status-only" },
+      { mode: "default" },
       { mode: null },
       "/health",
     ]) {
@@ -207,19 +210,27 @@ describe("catalogManifestSchema", () => {
     }
   });
 
-  it("takes categories from the fixed list: one to three, each once", () => {
+  it("takes one to three categories of any name, so a later category never breaks a manager", () => {
     const withCategories = (categories: unknown) =>
       catalogManifestSchema.safeParse({ ...validManifest, categories });
-    expect(withCategories(["cms", "ai", "notes"]).success).toBe(true);
-    for (const categories of [
-      [],
-      ["blogging"],
-      ["utilities", "utilities"],
-      ["ai", "chat", "notes", "sync"],
-      "utilities",
-    ]) {
+    for (const categories of [["cms", "ai", "notes"], ["gardening"], ["ai", "robots"]]) {
+      expect(withCategories(categories).success, JSON.stringify(categories)).toBe(true);
+    }
+    for (const categories of [[], [""], ["ai", "chat", "notes", "sync"], "utilities"]) {
       expect(withCategories(categories).success, JSON.stringify(categories)).toBe(false);
     }
+  });
+
+  it("takes a token permission of any group, so a later group never breaks a manager", () => {
+    const parsed = catalogManifestSchema.safeParse({
+      ...validManifest,
+      secrets: [{ name: "CF_API_TOKEN", label: "API token", cloudflareToken: true }],
+      tokenPermissions: [
+        { group: "Workers AI", scope: "account", access: "read", reason: "Runs models." },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.tokenPermissions[0]?.group).toBe("Workers AI");
   });
 
   it("takes optional Vectorize index settings keyed by binding", () => {
@@ -1422,6 +1433,144 @@ describe("strictCatalogManifestSchema", () => {
       const strict = strictCatalogManifestSchema.safeParse({ ...validManifest, license });
       expect(strict.success, license).toBe(ok);
       if (!ok) expect(JSON.stringify(strict.error?.issues), license).toContain(why);
+    }
+  });
+
+  it("holds categories to the fixed list, each once", () => {
+    const cases: Array<[unknown, number, string]> = [
+      [["blogging"], 0, '"blogging" is not a category'],
+      [["utilities", "utilities"], 1, 'the category "utilities" is listed twice'],
+    ];
+    for (const [categories, at, why] of cases) {
+      const strict = strictCatalogManifestSchema.safeParse({ ...validManifest, categories });
+      expect(strict.success, why).toBe(false);
+      expect(strict.error?.issues[0]?.path).toEqual(["categories", at]);
+      expect(strict.error?.issues[0]?.message).toContain(why);
+    }
+  });
+
+  it("holds each token permission group to its scope's list", () => {
+    const withGroup = (group: string, scope: string) =>
+      strictCatalogManifestSchema.safeParse({
+        ...validManifest,
+        secrets: [{ name: "CF_API_TOKEN", label: "API token", cloudflareToken: true }],
+        tokenPermissions: [{ group, scope, access: "edit", reason: "Needs it." }],
+      });
+    expect(withGroup("DNS", "zone").success).toBe(true);
+    for (const [group, scope, why] of [
+      ["Zone.DNS:Edit", "zone", "is not a permission group Appflare can select"],
+      ["DNS", "account", "is not a account permission group"],
+    ] as const) {
+      const result = withGroup(group, scope);
+      expect(result.success, group).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(["tokenPermissions", 0, "group"]);
+      expect(result.error?.issues[0]?.message).toContain(why);
+    }
+  });
+
+  it("names where a field of the older shape went", () => {
+    const install = validManifest.install;
+    const cases: Array<[Record<string, unknown>, string, string]> = [
+      [
+        { ...validManifest, vars: [{ name: "A", label: "A", required: true }] },
+        "vars.0.required",
+        'unless it sets "optional": true',
+      ],
+      [
+        { ...validManifest, install: { ...install, healthPath: "/up" } },
+        "install.healthPath",
+        "is now install.health.path",
+      ],
+      [
+        { ...validManifest, install: { ...install, healthMode: "status-only" } },
+        "install.healthMode",
+        '"status-only" became "any-response"',
+      ],
+      [
+        {
+          ...validManifest,
+          install: { ...install, wildcardHostname: { reason: "x" }, wildcardReason: "x" },
+        },
+        "install.wildcardReason",
+        "is now install.wildcardHostname",
+      ],
+      [
+        { ...validManifest, install: { ...install, sandbox: {} } },
+        "install.sandbox",
+        "is now install.container",
+      ],
+      [
+        { ...validManifest, install: { ...install, version: "1.0.0" } },
+        "install.version",
+        "is now source.version",
+      ],
+      [
+        {
+          ...validManifest,
+          resources: { d1: { DB: { migrations: "prisma/migrations/*/migration.sql" } } },
+        },
+        "resources.d1.DB.migrations",
+        "is now migrationsGlob",
+      ],
+      [
+        {
+          ...validManifest,
+          install: {
+            ...install,
+            ...selfDeployingInstall,
+            selfDeploying: {
+              ...selfDeployingInstall.selfDeploying,
+              workers: ["x"],
+              stateStore: "account",
+              stageArg: "--stage",
+            },
+          },
+        },
+        "install.selfDeploying.workers",
+        "is now install.selfDeploying.workerNames",
+      ],
+      [
+        {
+          ...validManifest,
+          tokenPermissions: [
+            { group: "DNS", scope: "zone", access: "edit", reason: "x", description: "x" },
+          ],
+        },
+        "tokenPermissions.0.description",
+        "is now reason",
+      ],
+      [
+        { ...validManifest, tokenPermissions: [{ name: "Zone.DNS:Edit" }] },
+        "tokenPermissions.0.name",
+        "was replaced by group, scope and access",
+      ],
+    ];
+    for (const [manifest, path, why] of cases) {
+      const result = strictCatalogManifestSchema.safeParse(manifest);
+      const issue = result.error?.issues.find((i) => i.path.join(".") === path);
+      expect(issue?.message, path).toContain(why);
+    }
+    const selfDeploying = strictCatalogManifestSchema.safeParse(cases[7]?.[0]);
+    const messages = selfDeploying.error?.issues.map((i) => i.message) ?? [];
+    expect(messages).toContainEqual(expect.stringContaining("stateStore was removed"));
+    expect(messages).toContainEqual(expect.stringContaining("stageArg was removed"));
+  });
+});
+
+describe("strictRepositoryBuildManifestSchema", () => {
+  it("also takes NOASSERTION and SEE LICENSE IN, and checks everything else strictly", () => {
+    for (const license of ["NOASSERTION", "SEE LICENSE IN LICENSE.md", "MIT"]) {
+      expect(
+        strictRepositoryBuildManifestSchema.safeParse({ ...validManifest, license }).success,
+        license,
+      ).toBe(true);
+    }
+    for (const manifest of [
+      { ...validManifest, license: "GPL-3.0" },
+      { ...validManifest, categories: ["gardening"] },
+      { ...validManifest, instal: {} },
+    ]) {
+      expect(strictRepositoryBuildManifestSchema.safeParse(manifest).success).toBe(false);
     }
   });
 });

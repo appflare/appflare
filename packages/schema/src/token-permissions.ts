@@ -7,7 +7,9 @@ import type { ServiceId } from "./services";
  * Each names one Cloudflare permission group from a fixed list, its scope
  * (account or zone), the access level, and why the app needs it. The manager
  * prefills the dashboard's token form from the list, so a group is only on
- * the list when its template key is known.
+ * the list when its template key is known. The list binds the tools that
+ * write a manifest ({@link strictTokenPermissionSchema}); a manager reads
+ * any group name, so a group added later never makes it refuse a manifest.
  *
  * Template keys: Cloudflare's "API token template URLs" page
  * (developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/)
@@ -126,10 +128,7 @@ export function tokenPermissionGroupNames(scope: TokenPermissionScope): string[]
   return APP_TOKEN_PERMISSION_GROUPS.filter((g) => g.scope === scope).map((g) => g.group);
 }
 
-const GROUP_NAMES = [...new Set(APP_TOKEN_PERMISSION_GROUPS.map((g) => g.group))] as [
-  TokenPermissionGroupName,
-  ...TokenPermissionGroupName[],
-];
+const GROUP_NAMES: ReadonlySet<string> = new Set(APP_TOKEN_PERMISSION_GROUPS.map((g) => g.group));
 
 /** The list entry of a scope and group, or null when the scope has no such group. */
 export function appTokenPermissionGroup(
@@ -139,26 +138,74 @@ export function appTokenPermissionGroup(
   return APP_TOKEN_PERMISSION_GROUPS.find((g) => g.scope === scope && g.group === group) ?? null;
 }
 
+/**
+ * Why `group` is not a permission group of `scope` that Appflare can select
+ * in a token link, or null when it is (or when `scope` is neither `account`
+ * nor `zone`, which the schema refuses on its own).
+ */
+export function tokenPermissionGroupProblem(scope: string, group: string): string | null {
+  if (!(TOKEN_PERMISSION_SCOPES as readonly string[]).includes(scope)) return null;
+  if (appTokenPermissionGroup(scope, group) !== null) return null;
+  if (!GROUP_NAMES.has(group)) {
+    return (
+      `${JSON.stringify(group)} is not a permission group Appflare can select in a token link; ` +
+      'use the name the dashboard\'s token form shows, such as "DNS" or "Workers Scripts"'
+    );
+  }
+  return `"${group}" is not a ${scope} permission group; ${scope} groups are ${tokenPermissionGroupNames(scope as TokenPermissionScope).join(", ")}`;
+}
+
+/** A problem with a `tokenPermissions` list, with its path inside the list. */
+export interface TokenPermissionProblem {
+  path: Array<string | number>;
+  message: string;
+}
+
+/**
+ * The groups of a `tokenPermissions` list that are not on
+ * {@link APP_TOKEN_PERMISSION_GROUPS} for their scope, one problem each at
+ * `[i, "group"]`. Reads the list as written: entries of the wrong shape are
+ * left to {@link tokenPermissionsSchema}.
+ */
+export function tokenPermissionGroupProblems(permissions: unknown): TokenPermissionProblem[] {
+  if (!Array.isArray(permissions)) return [];
+  const problems: TokenPermissionProblem[] = [];
+  permissions.forEach((p: unknown, i) => {
+    if (typeof p !== "object" || p === null) return;
+    const { scope, group } = p as { scope?: unknown; group?: unknown };
+    if (typeof scope !== "string" || typeof group !== "string" || group.trim() === "") return;
+    const message = tokenPermissionGroupProblem(scope, group);
+    if (message !== null) problems.push({ path: [i, "group"], message });
+  });
+  return problems;
+}
+
 /** The longest `reason`. */
 export const MAX_TOKEN_PERMISSION_REASON_LENGTH = 300;
 
-/** One permission the app's own Cloudflare API token needs. */
+/**
+ * One permission the app's own Cloudflare API token needs, as a manager
+ * reads it: `group` is any name, so a manager never refuses an artifact or a
+ * revised manifest over a group added after its release (only, having no
+ * template key for it, it cannot prefill that group in the token link).
+ * {@link strictTokenPermissionSchema} holds `group` to the list.
+ */
 export const tokenPermissionSchema = z
   .object({
     group: z
-      .enum(GROUP_NAMES, {
-        error: (issue) =>
-          `${JSON.stringify(issue.input)} is not a permission group Appflare can select in a token link; ` +
-          'use the name the dashboard\'s token form shows, such as "DNS" or "Workers Scripts"',
-      })
-      .describe(
-        "The permission group, as the Cloudflare dashboard's token form names it, for example " +
+      .string()
+      .min(1)
+      // The JSON Schema describes what an author writes: a group of the list.
+      .meta({
+        enum: [...GROUP_NAMES],
+        description:
+          "The permission group, as the Cloudflare dashboard's token form names it, for example " +
           '`"DNS"` or `"Workers Scripts"`. Zone groups: ' +
           tokenPermissionGroupNames("zone").join(", ") +
           ". Account groups: " +
           tokenPermissionGroupNames("account").join(", ") +
           ".",
-      ),
+      }),
     scope: z
       .enum(TOKEN_PERMISSION_SCOPES)
       .describe('`"account"` or `"zone"`: where the group applies, as the token form groups it.'),
@@ -175,16 +222,8 @@ export const tokenPermissionSchema = z
           '"Lists your zones." Say "Optional:" first when the app works without it.',
       ),
   })
-  .superRefine((permission, ctx) => {
-    if (appTokenPermissionGroup(permission.scope, permission.group) === null) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["group"],
-        message: `"${permission.group}" is not a ${permission.scope} permission group; ${permission.scope} groups are ${tokenPermissionGroupNames(permission.scope).join(", ")}`,
-      });
-    }
-  })
-  // The refinement does not reach the JSON Schema; `anyOf` states the pairs there.
+  // The JSON Schema describes what an author writes: `anyOf` states the
+  // scope and group pairs of the list there.
   .meta({
     description:
       "A permission the app's own Cloudflare API token needs (never Appflare's). The manager " +
@@ -198,8 +237,17 @@ export const tokenPermissionSchema = z
   });
 export type TokenPermission = z.infer<typeof tokenPermissionSchema>;
 
-/** `tokenPermissions`: each scope and group once. */
-export const tokenPermissionsSchema = z.array(tokenPermissionSchema).superRefine((list, ctx) => {
+/**
+ * One permission as the tools that write a manifest check it: `group` must be
+ * a group of its scope on {@link APP_TOKEN_PERMISSION_GROUPS}.
+ */
+export const strictTokenPermissionSchema = tokenPermissionSchema.superRefine((permission, ctx) => {
+  const message = tokenPermissionGroupProblem(permission.scope, permission.group);
+  if (message !== null) ctx.addIssue({ code: "custom", path: ["group"], message });
+});
+
+/** Refuses a scope and group listed twice. */
+function listedOnce(list: readonly TokenPermission[], ctx: z.RefinementCtx): void {
   const seen = new Set<string>();
   list.forEach((p, i) => {
     const key = `${p.scope}\n${p.group}`;
@@ -212,7 +260,15 @@ export const tokenPermissionsSchema = z.array(tokenPermissionSchema).superRefine
     }
     seen.add(key);
   });
-});
+}
+
+/** `tokenPermissions` as a manager reads it: each scope and group once, any group name. */
+export const tokenPermissionsSchema = z.array(tokenPermissionSchema).superRefine(listedOnce);
+
+/** `tokenPermissions` as the tools that write a manifest check it: each group on the list, once. */
+export const strictTokenPermissionsSchema = z
+  .array(strictTokenPermissionSchema)
+  .superRefine(listedOnce);
 
 /** How the dashboard's token form words a permission: `Zone: DNS: Edit`. */
 export function tokenPermissionName(

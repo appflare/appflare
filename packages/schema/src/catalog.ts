@@ -2,7 +2,7 @@ import { z } from "zod";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
 import { buildEnvSchema } from "./build-env.ts";
-import { catalogCategoriesSchema } from "./categories.ts";
+import { catalogCategoriesSchema, catalogCategoryProblems } from "./categories.ts";
 import { configPatchSchema } from "./config-patch.ts";
 import { catalogD1Schema } from "./d1.ts";
 import { catalogHyperdriveBindingsSchema } from "./hyperdrive.ts";
@@ -18,14 +18,14 @@ import {
   catalogPipelinesSchema,
   pipelineManifestProblems,
 } from "./pipelines.ts";
-import { placeholderProblems } from "./placeholders.ts";
+import { PLACEHOLDER_FIELDS, placeholderProblems } from "./placeholders.ts";
 import { catalogR2Schema } from "./r2-lifecycle.ts";
 import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
 import { isSeedOnly, seedManifestProblems } from "./seed.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
-import { strictSchema } from "./strict.ts";
+import { formatPath, type StrictProblem, strictSchema } from "./strict.ts";
 import { taglineSchema } from "./tagline.ts";
-import { tokenPermissionsSchema } from "./token-permissions.ts";
+import { tokenPermissionGroupProblems, tokenPermissionsSchema } from "./token-permissions.ts";
 import { isVapidPrivateKey, VAPID_PRIVATE_KEY_LENGTH } from "./vapid.ts";
 import { inlineConfigPathProblem, wranglerConfigInlineSchema } from "./wrangler-config-inline.ts";
 
@@ -475,9 +475,26 @@ export type CatalogVarDerive = z.infer<typeof catalogVarDeriveSchema>;
  */
 export const catalogSecretSchema = z
   .object({
-    name: z.string().min(1),
-    label: z.string().min(1),
-    help: z.string().optional(),
+    name: z
+      .string()
+      .min(1)
+      .describe(
+        "The name the Worker reads the secret by, exactly as the app's code spells it, for " +
+          "example `ADMIN_PASSWORD`.",
+      ),
+    label: z
+      .string()
+      .min(1)
+      .describe(
+        "What the install and settings forms call the secret, in plain words, for example " +
+          "`Admin password`.",
+      ),
+    help: z
+      .string()
+      .describe(
+        "A sentence or two shown under the field: what the value is for, or where to find it.",
+      )
+      .optional(),
     generate: z
       .enum(SECRET_GENERATE_KINDS)
       .describe(
@@ -855,9 +872,26 @@ export function selectVarProblems(v: {
 
 export const catalogVarSchema = z
   .object({
-    name: z.string().min(1),
-    label: z.string().min(1),
-    help: z.string().optional(),
+    name: z
+      .string()
+      .min(1)
+      .describe(
+        "The name the Worker reads the setting by, exactly as the app's code and wrangler " +
+          "config spell it, for example `SITE_TITLE`.",
+      ),
+    label: z
+      .string()
+      .min(1)
+      .describe(
+        "What the install and settings forms call the setting, in plain words, for example " +
+          "`Site title`.",
+      ),
+    help: z
+      .string()
+      .describe(
+        "A sentence or two shown under the field: what the setting changes, or which values work.",
+      )
+      .optional(),
     default: z
       .string()
       .describe(
@@ -995,10 +1029,21 @@ export function catalogVarOptions(
  * A post-install instruction rendered after a successful install, with the
  * placeholders of `PLACEHOLDER_FIELDS.postInstall` filled in.
  */
-export const postInstallStepSchema = z.object({
-  type: z.enum(["markdown"]),
-  content: z.string().min(1),
-});
+export const postInstallStepSchema = z
+  .object({
+    type: z.enum(["markdown"]).describe('How `content` is written. Only `"markdown"` for now.'),
+    content: z
+      .string()
+      .min(1)
+      .describe(
+        "Markdown the manager shows once the app is installed, such as how to sign in the first " +
+          "time. These placeholders are filled in: " +
+          PLACEHOLDER_FIELDS.postInstall.map((name) => `\`{{${name}}}\``).join(", ") +
+          ". For the address people open, use `{{appUrl}}`, which follows a custom domain. An " +
+          "entry of several Workers names one of them with `{{appUrl:<name>}}` and the like.",
+      ),
+  })
+  .describe("A note the manager shows after the install.");
 export type PostInstallStep = z.infer<typeof postInstallStepSchema>;
 
 /** How a Vectorize index measures the distance between two vectors. */
@@ -1124,8 +1169,19 @@ export type CatalogResources = z.infer<typeof catalogResourcesSchema>;
 
 /** The pinned upstream source a version is built from; the bump bot edits it. */
 export const catalogSourceSchema = z.object({
-  ref: z.string().min(1),
-  sha: gitShaSchema,
+  ref: z
+    .string()
+    .min(1)
+    .describe(
+      "The tag or branch of the app's repository this entry is built from, for example " +
+        "`v1.4.2` or `main`. A tag that is a semver version is also the version the catalog " +
+        "shows. The catalog's bump bot moves it when upstream publishes a new release.",
+    ),
+  sha: gitShaSchema.describe(
+    "The commit the entry is built from, as its full 40-character SHA in lower case: the " +
+      "commit `ref` pointed at when the entry was last updated. The build always uses this " +
+      "commit, so a moved tag or a new commit on the branch changes nothing until `sha` does.",
+  ),
   /**
    * The version shown for this entry when the repository's tag does not
    * describe this app (monorepos); it must change whenever `sha` moves.
@@ -1146,24 +1202,33 @@ export type CatalogSource = z.infer<typeof catalogSourceSchema>;
  * How the health check after an install, update, or rollback reads the
  * Worker's answer.
  *
- * - `default`: a redirect or a 4xx counts as verified (the Worker answered),
- *   a server error (5xx) as unhealthy.
- * - `status-only`: any answer the Worker itself gives counts as verified,
+ * - `no-server-errors` (the default): any answer but a server error counts
+ *   as verified (a redirect or a 4xx still shows the Worker answered); a
+ *   server error (5xx) counts as unhealthy.
+ * - `any-response`: any answer the Worker itself gives counts as verified,
  *   server errors included, because an app behind Cloudflare Access or its
  *   own sign-in answers every unauthenticated request with a redirect, 401,
- *   403, or an error of its own. Connection failures and Cloudflare's own
- *   error pages (`error code: 1042` while the route goes live, or a Worker
- *   that crashed) are still retried or reported as before.
+ *   403, or an error of its own.
+ *
+ * Neither reads the body beyond the version check, and under both,
+ * connection failures and Cloudflare's own error pages (`error code: 1042`
+ * while the route goes live, or a Worker that crashed) are retried or
+ * reported, since they are not the Worker's answer.
  */
+export const HEALTH_MODES = ["no-server-errors", "any-response"] as const;
+
+/** The health mode of an entry that does not set one. */
+export const DEFAULT_HEALTH_MODE = "no-server-errors" satisfies (typeof HEALTH_MODES)[number];
+
 export const healthModeSchema = z
-  .enum(["default", "status-only"])
+  .enum(HEALTH_MODES)
   .describe(
-    'How the health check reads the Worker\'s answer. `"default"` counts redirects and 4xx ' +
-      'answers as verified and server errors (5xx) as unhealthy. `"status-only"` counts any ' +
-      "answer from the Worker itself as verified, server errors included: use it for apps whose " +
-      "health path sits behind Cloudflare Access or the app's own sign-in. Either way, " +
-      "connection failures and Cloudflare's error pages (such as `error code: 1042` while the " +
-      'route goes live) are retried. Defaults to `"default"`.',
+    'Which answers of the Worker count as serving. `"no-server-errors"` (the default): any ' +
+      "answer but a server error (5xx), so a redirect or a 404 passes and a 500 fails. " +
+      '`"any-response"`: any answer the Worker itself gives, server errors included; use it ' +
+      "for an app whose health path sits behind Cloudflare Access or the app's own sign-in. " +
+      "Either way, connection failures and Cloudflare's own error pages (such as " +
+      "`error code: 1042` while the route goes live) are retried and never count as serving.",
   );
 export type HealthMode = z.infer<typeof healthModeSchema>;
 
@@ -1181,7 +1246,7 @@ export const catalogHealthSchema = z
         "The path the manager probes, for example `/api/health`. When it answers JSON with a " +
           'string `version`, an update\'s check of the new version requires that version. Defaults to `"/"`.',
       ),
-    mode: healthModeSchema.default("default"),
+    mode: healthModeSchema.default(DEFAULT_HEALTH_MODE),
   })
   .describe("How the manager checks that the app serves after an install, update or rollback.");
 export type CatalogHealth = z.infer<typeof catalogHealthSchema>;
@@ -1536,7 +1601,7 @@ export const catalogInstallSchema = z
           "so it installs at most once per account.",
       ),
     /** How the manager checks that the app serves; see {@link catalogHealthSchema}. */
-    health: catalogHealthSchema.default({ path: "/", mode: "default" }),
+    health: catalogHealthSchema.default({ path: "/", mode: DEFAULT_HEALTH_MODE }),
     /**
      * The command, or the commands in order, the packer runs in the checkout
      * after installing dependencies and before bundling, for apps whose
@@ -1969,20 +2034,37 @@ export const catalogRevisionSchema = z
   .describe(
     "Which edit of this entry's form and copy the catalog publishes for the build its `source` " +
       "already released, starting at 1 (the default when omitted). Raise it by one to publish a " +
-      "change to `name`, `summary`, `tagline`, `homepage`, `license`, `licenseNote`, `categories`, " +
-      "`authors`, `maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving " +
-      "`source`: the released artifact stays as it is, and managers show the new form without " +
-      "an update. " +
-      "Anything else needs a new build, so move `source` instead.",
+      "change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, " +
+      "`secrets`, `vars`, `postInstall` or `bump` without moving `source`: the released artifact " +
+      "stays as it is, and managers show the new form without an update. `tagline`, " +
+      "`licenseNote` and `authors` need no revision: the catalog shows them from the current " +
+      "manifest. Anything else needs a new build, so move `source` instead.",
   );
 
 /** The full catalog manifest, `appflare.jsonc`. */
 export const catalogManifestSchema = z
   .object({
     $schema: z.url().optional(),
-    slug: z.string().min(1),
-    name: z.string().min(1),
-    summary: z.string().min(1),
+    slug: z
+      .string()
+      .min(1)
+      .describe(
+        "The entry's permanent id, in lowercase letters, digits and hyphens, for example " +
+          "`open-seo`. It is also the entry's folder in the catalog, the first part of its release " +
+          "tags (`<slug>@<version>`) and the Worker name the install form suggests. It never " +
+          "changes once the entry is published.",
+      ),
+    name: z
+      .string()
+      .min(1)
+      .describe("The app's name as the catalog and the manager show it, for example `Open SEO`."),
+    summary: z
+      .string()
+      .min(1)
+      .describe(
+        "What the app does and who it is for, in a few plain sentences, shown on the app's page " +
+          "(a blank line starts a new paragraph). The catalog search reads it too.",
+      ),
     /** The one-line pitch on catalog tiles. */
     tagline: taglineSchema,
     /**
@@ -2014,10 +2096,20 @@ export const catalogManifestSchema = z
       )
       .optional(),
     /** GitHub users who package the app for the catalog; shown as "Packaged by". */
-    maintainers: z.array(z.string().min(1)),
+    maintainers: z
+      .array(z.string().min(1))
+      .describe(
+        "The GitHub usernames, without @, of the people who package the app for the catalog and " +
+          'look after this entry, shown as "Packaged by". Not the app\'s own authors (those are ' +
+          "`authors`).",
+      ),
     source: catalogSourceSchema,
     install: catalogInstallSchema,
-    plan: planSchema,
+    plan: planSchema.describe(
+      'The Cloudflare Workers plan the app needs: `"free"` when it runs on Workers Free, ' +
+        '`"paid"` when it needs Workers Paid. An entry with Pipelines, or with more than ' +
+        `${MAX_FREE_PLAN_ENTRY_WORKERS} Workers, must say \`"paid"\`.`,
+    ),
     requires: z
       .array(requirementSchema)
       .default([])
@@ -2347,21 +2439,121 @@ export function cloudflareTokenProblems(manifest: {
 }
 
 /**
+ * Fields of catalog manifests written before this version, where each went.
+ * A path part of `null` stands for any index or key. The strict schemas name
+ * the new field instead of asking to check the spelling.
+ */
+const RENAMED_FIELDS: ReadonlyArray<{
+  path: ReadonlyArray<string | null>;
+  message: (at: string) => string;
+}> = [
+  {
+    path: ["vars", null, "required"],
+    message: (at) =>
+      `${at} was removed: every var needs a value (typed, or its default) unless it sets "optional": true`,
+  },
+  { path: ["install", "healthPath"], message: (at) => `${at} is now install.health.path` },
+  {
+    path: ["install", "healthMode"],
+    message: (at) =>
+      `${at} is now install.health.mode, whose values are "${HEALTH_MODES.join('" and "')}" ("status-only" became "any-response")`,
+  },
+  {
+    path: ["install", "wildcardReason"],
+    message: (at) => `${at} is now install.wildcardHostname: { "reason": "..." }`,
+  },
+  { path: ["install", "sandbox"], message: (at) => `${at} is now install.container` },
+  { path: ["install", "version"], message: (at) => `${at} is now source.version` },
+  {
+    path: ["resources", "d1", null, "migrations"],
+    message: (at) =>
+      `${at} is now migrationsGlob (a glob); a folder of migrations is migrationsDir`,
+  },
+  {
+    path: ["install", "selfDeploying", "workers"],
+    message: (at) => `${at} is now install.selfDeploying.workerNames`,
+  },
+  {
+    path: ["install", "selfDeploying", "stateStore"],
+    message: (at) => `${at} was removed: the installer always keeps its state in the account`,
+  },
+  {
+    path: ["install", "selfDeploying", "stageArg"],
+    message: (at) =>
+      `${at} was removed: the sandbox Worker always passes the tool's own stage option`,
+  },
+  {
+    path: ["tokenPermissions", null, "description"],
+    message: (at) => `${at} is now reason`,
+  },
+  {
+    path: ["tokenPermissions", null, "name"],
+    message: (at) =>
+      `${at} was replaced by group, scope and access, for example { "group": "DNS", "scope": "zone", "access": "edit" }`,
+  },
+];
+
+/** What the strict schemas say about an unknown key: where a renamed field went, or null. */
+function renamedFieldMessage(path: ReadonlyArray<string | number>): string | null {
+  const renamed = RENAMED_FIELDS.find(
+    (r) =>
+      r.path.length === path.length && r.path.every((part, i) => part === null || part === path[i]),
+  );
+  return renamed === undefined ? null : renamed.message(formatPath(path));
+}
+
+/**
+ * What the strict schemas check beyond the lenient one, from the manifest as
+ * written: `license` by {@link catalogLicenseProblem}, `categories` against
+ * the fixed list, and each `tokenPermissions[].group` against its scope's
+ * groups. A value of the wrong shape is the lenient schema's problem,
+ * reported once.
+ */
+function authoringProblems(input: unknown, repositoryBuild: boolean): StrictProblem[] {
+  if (typeof input !== "object" || input === null) return [];
+  const manifest = input as { license?: unknown; categories?: unknown; tokenPermissions?: unknown };
+  const problems: StrictProblem[] = [];
+  const license = manifest.license;
+  if (typeof license === "string" && licenseProblem(license) === null) {
+    const problem = catalogLicenseProblem(license, { repositoryBuild });
+    if (problem !== null) problems.push({ path: ["license"], message: `license ${problem}` });
+  }
+  for (const problem of catalogCategoryProblems(manifest.categories)) {
+    problems.push({ path: ["categories", ...problem.path], message: problem.message });
+  }
+  for (const problem of tokenPermissionGroupProblems(manifest.tokenPermissions)) {
+    problems.push({ path: ["tokenPermissions", ...problem.path], message: problem.message });
+  }
+  return problems;
+}
+
+/**
  * The catalog manifest as the tools that write it check it: the packer, the
  * catalog checks and the CLI. It refuses every key {@link catalogManifestSchema}
- * would strip (a misspelled field), naming its path, and holds `license` to
- * {@link catalogLicenseProblem}: SPDX ids of the current list, no
+ * would strip (a misspelled field, or one that was renamed, whose message
+ * names the new field), holds `categories` to `CATALOG_CATEGORIES` and
+ * `tokenPermissions[].group` to `APP_TOKEN_PERMISSION_GROUPS`, and holds
+ * `license` to {@link catalogLicenseProblem}: SPDX ids of the current list, no
  * `NOASSERTION` or `SEE LICENSE IN`, which only the manifest Appflare writes
- * for a repository build carries (that one is read with
- * {@link catalogManifestSchema}). Managers read manifests with
- * {@link catalogManifestSchema}, which strips unknown keys so a manifest
- * written for a later version still reads.
+ * for a repository build carries ({@link strictRepositoryBuildManifestSchema}).
+ * Managers read manifests with {@link catalogManifestSchema}, which strips
+ * unknown keys and takes any category or group name, so a manifest written
+ * for a later version still reads.
  */
-export const strictCatalogManifestSchema = strictSchema(catalogManifestSchema, (input) => {
-  const license =
-    typeof input === "object" && input !== null && "license" in input ? input.license : undefined;
-  // A license of the wrong shape is the lenient schema's problem, reported once.
-  if (typeof license !== "string" || licenseProblem(license) !== null) return [];
-  const problem = catalogLicenseProblem(license);
-  return problem === null ? [] : [{ path: ["license"], message: `license ${problem}` }];
-});
+export const strictCatalogManifestSchema = strictSchema(
+  catalogManifestSchema,
+  (input) => authoringProblems(input, false),
+  renamedFieldMessage,
+);
+
+/**
+ * {@link strictCatalogManifestSchema} for the manifest Appflare writes for an
+ * app built from a repository without a catalog entry: the same checks, but
+ * `license` may also be `NOASSERTION` (the repository states none) or
+ * `SEE LICENSE IN <file>`, as its `package.json` says.
+ */
+export const strictRepositoryBuildManifestSchema = strictSchema(
+  catalogManifestSchema,
+  (input) => authoringProblems(input, true),
+  renamedFieldMessage,
+);

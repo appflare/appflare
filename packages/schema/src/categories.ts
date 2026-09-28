@@ -3,9 +3,11 @@ import { z } from "zod";
 /**
  * The catalog's categories: a fixed list of ids, each with the label the
  * manager shows. A catalog manifest names one to {@link MAX_ENTRY_CATEGORIES}
- * of them. The published index keeps them as plain strings, so a manager
- * still reads a custom catalog that uses an id it does not know (it shows
- * such an entry under no category).
+ * of them. Only the tools that write a manifest hold it to the list
+ * ({@link strictCatalogCategoriesSchema}); a manager reads plain strings, in
+ * the catalog manifest and in the published index, so it still reads an
+ * entry that names an id added after its release, or a custom catalog's own
+ * id, and shows it under no category.
  *
  * This module imports nothing but zod: `catalog.ts` imports it, and the JSON
  * Schema export runs `catalog.ts` directly under Node's type stripping.
@@ -54,7 +56,7 @@ export const CATALOG_CATEGORY_IDS = CATALOG_CATEGORIES.map((c) => c.id) as [
 /** The most categories one entry may name. */
 export const MAX_ENTRY_CATEGORIES = 3;
 
-/** One category id. */
+/** One category id of the fixed list. */
 export const catalogCategorySchema = z.enum(CATALOG_CATEGORY_IDS);
 
 /** Whether `id` is a category this version knows. */
@@ -67,16 +69,63 @@ export function categoryLabel(id: string): string | null {
   return CATALOG_CATEGORIES.find((c) => c.id === id)?.label ?? null;
 }
 
-/** A catalog manifest's `categories`: one to three ids, each once. */
+/** A problem with a list of categories, with its path inside the list. */
+export interface CategoryProblem {
+  path: Array<string | number>;
+  message: string;
+}
+
+/**
+ * What is wrong with `categories` beyond what {@link catalogCategoriesSchema}
+ * checks: an id that is not on the list, or one listed twice. Values of the
+ * wrong type are left to that schema.
+ */
+export function catalogCategoryProblems(categories: unknown): CategoryProblem[] {
+  if (!Array.isArray(categories)) return [];
+  const problems: CategoryProblem[] = [];
+  const seen = new Set<string>();
+  categories.forEach((id: unknown, i) => {
+    if (typeof id !== "string" || id === "") return;
+    if (!isCatalogCategory(id)) {
+      problems.push({
+        path: [i],
+        message: `"${id}" is not a category; use one of ${CATALOG_CATEGORY_IDS.join(", ")}`,
+      });
+    }
+    if (seen.has(id)) problems.push({ path: [i], message: `the category "${id}" is listed twice` });
+    seen.add(id);
+  });
+  return problems;
+}
+
+/**
+ * A catalog manifest's `categories` as a manager reads it: one to
+ * {@link MAX_ENTRY_CATEGORIES} plain strings. A manager does not hold them to
+ * its own list, so it never refuses an artifact or a revised manifest over a
+ * category added after its release. The JSON Schema states the list, since
+ * it describes what an author writes.
+ */
 export const catalogCategoriesSchema = z
-  .array(catalogCategorySchema)
+  .array(z.string().min(1))
   .min(1)
   .max(MAX_ENTRY_CATEGORIES)
-  .refine((ids) => new Set(ids).size === ids.length, "a category is listed twice")
   .meta({
     uniqueItems: true,
+    items: { type: "string", enum: [...CATALOG_CATEGORY_IDS] },
     description:
       `One to ${MAX_ENTRY_CATEGORIES} categories the catalog lists the app under, each once: ` +
       CATALOG_CATEGORIES.map((c) => `\`${c.id}\` (${c.label})`).join(", ") +
       ".",
   });
+
+/**
+ * `categories` as the tools that write a manifest check it: one to
+ * {@link MAX_ENTRY_CATEGORIES} ids of {@link CATALOG_CATEGORIES}, each once.
+ */
+export const strictCatalogCategoriesSchema = catalogCategoriesSchema.superRefine(
+  (categories, ctx) => {
+    for (const problem of catalogCategoryProblems(categories)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
+  },
+);
