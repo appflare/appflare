@@ -1,3 +1,4 @@
+import { SITE_URL } from "@appflare/schema/links";
 import { z } from "zod";
 import { appLink } from "../components/app-links";
 import { settingsLink } from "../components/settings-links";
@@ -63,6 +64,16 @@ export const notificationFactsSchema = z.discriminatedUnion("type", [
     /** Appflare's own sentence for the state Cloudflare reports (never Cloudflare's error text). */
     reason: z.string(),
   }),
+  z.object({
+    type: z.literal("manager_address_lost"),
+    /** The custom domain Appflare was at. */
+    hostname: z.string(),
+    /**
+     * Cloudflare Access could not be moved back to workers.dev, so it still
+     * protects the lost hostname and Appflare refuses sign-in at workers.dev.
+     */
+    accessLeftBehind: z.boolean().optional(),
+  }),
   z.object({ type: z.literal("test") }),
 ]);
 export type NotificationFacts = z.infer<typeof notificationFactsSchema>;
@@ -81,6 +92,9 @@ export interface Message {
   /** Absolute link into the manager; null when its URL is not known. */
   url: string | null;
 }
+
+/** The docs' Access recovery steps ("If you are locked out"). */
+export const ACCESS_LOCKED_OUT_URL = `${SITE_URL}/security/#if-you-are-locked-out`;
 
 function managerLink(managerUrl: string | null, path: string): string | null {
   return managerUrl === null ? null : `${managerUrl.replace(/\/+$/, "")}${path}`;
@@ -167,6 +181,19 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
           `${facts.hostname}, an external domain of ${facts.app.instance}, does not serve the app. ${facts.reason}`,
         ],
         url: managerLink(managerUrl, appLink(facts.app.installId, "external-domains")),
+      };
+    case "manager_address_lost":
+      return {
+        title: "Appflare's address stopped working",
+        lines: [
+          `${facts.hostname} no longer serves Appflare, so Appflare is back at its workers.dev address. Sign in there with your password; passkeys added at ${facts.hostname} do not work there.`,
+          ...(facts.accessLeftBehind === true
+            ? [
+                `Cloudflare Access could not be moved back to workers.dev, so Appflare refuses sign-in there until you follow the Access recovery steps: ${ACCESS_LOCKED_OUT_URL}`,
+              ]
+            : []),
+        ],
+        url: managerLink(managerUrl, settingsLink("domains", "address")),
       };
     case "test":
       return {

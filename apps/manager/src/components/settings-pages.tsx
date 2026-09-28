@@ -93,14 +93,21 @@ export function AccountSettingsView({
   /** Null for everyone but the owner. */
   danger: DangerZoneState | null;
   viewer: Pick<Viewer, "role" | "isOwner">;
-  /** The address this browser uses for this manager, for the appflare.dev link. */
+  /**
+   * The address this browser uses for this manager, for the appflare.dev
+   * link when the server did not name one (`tokenStatus.managerOrigin`).
+   */
   managerUrl?: string | null;
 }) {
   const isAdmin = viewer.role === "admin";
   return (
     <>
       <SettingsPageHeader page="account" />
-      <CloudflareTokenCard status={tokenStatus} canRotate={isAdmin} managerUrl={managerUrl} />
+      <CloudflareTokenCard
+        status={tokenStatus}
+        canRotate={isAdmin}
+        managerUrl={tokenStatus.managerOrigin ?? managerUrl}
+      />
       <CapabilitiesSection data={capabilities} isAdmin={isAdmin} />
       {viewer.isOwner && danger !== null && <DangerZone state={danger} />}
     </>

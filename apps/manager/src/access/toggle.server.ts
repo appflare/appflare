@@ -107,6 +107,8 @@ export const ACCESS_MESSAGES = {
     "The Access application was created, but the team's signing keys could not be fetched, so protection was not turned on and the application was removed. Try again in a minute.",
   policyMissing:
     "The Access policy for the manager no longer exists. Turn protection off and on again to recreate it.",
+  appMissing:
+    "The Cloudflare Access application for the manager no longer exists. Turn protection off and on again to recreate it.",
 } as const;
 
 const LOCK_KEY = "access_lock";
@@ -388,6 +390,123 @@ async function deleteApps(client: CloudflareClient, ids: readonly string[]): Pro
       });
     }
   }
+}
+
+/**
+ * Before Appflare moves to `hostname`: the protection to move along, or null
+ * when it is off. Refuses (AccessToggleError), before anything changes, when
+ * the token cannot manage Access applications, when the manager's
+ * application is gone, or when another application already protects
+ * `hostname`. Reads one list of applications.
+ */
+export async function checkAccessMove(
+  deps: Pick<AccessToggleDeps, "db" | "client">,
+  hostname: string,
+): Promise<AccessConfig | null> {
+  const config = await readAccessConfig(deps.db);
+  if (config === null) return null;
+  let apps: Awaited<ReturnType<CloudflareClient["access"]["listApps"]>>;
+  try {
+    apps = await deps.client.access.listApps();
+  } catch (error) {
+    if (isForbidden(error)) throw new AccessToggleError(ACCESS_MESSAGES.appsPermission);
+    throw error;
+  }
+  if (!apps.some((app) => app.id === config.appId)) {
+    throw new AccessToggleError(ACCESS_MESSAGES.appMissing);
+  }
+  const ours = new Set([config.appId, config.healthAppId]);
+  const target = hostname.toLowerCase();
+  const taken = apps.find(
+    (app) =>
+      !ours.has(app.id) &&
+      ((app.domain ?? "").toLowerCase() === target ||
+        (app.domain ?? "").toLowerCase() === `${target}/api/health`),
+  );
+  if (taken !== undefined) {
+    throw new AccessToggleError(ACCESS_MESSAGES.appExists(taken.name ?? taken.id));
+  }
+  return config;
+}
+
+/**
+ * Points both Access applications at `hostname` (`PUT /access/apps/{id}`,
+ * each with every setting it was created with), and returns the protection
+ * as it then stands. Writes nothing: the caller stores the new `domain`
+ * (and `aud`, `policyId`) with the rest of the move. An application keeps
+ * its policies; one that answers with none gets its policy again. When the
+ * second application cannot be moved, the first is put back before the
+ * error is thrown, so both keep protecting the same hostname.
+ */
+export async function moveAccessApps(
+  deps: Pick<AccessToggleDeps, "db" | "client">,
+  config: AccessConfig,
+  hostname: string,
+): Promise<AccessConfig> {
+  const { client } = deps;
+  const mainApp = (host: string) => ({
+    type: "self_hosted" as const,
+    name: accessAppName(host),
+    domain: host,
+    session_duration: ACCESS_SESSION_DURATION,
+    app_launcher_visible: false,
+  });
+  const healthApp = (host: string) => ({
+    type: "self_hosted" as const,
+    name: `Appflare health check (${host})`,
+    domain: `${host}/api/health`,
+    app_launcher_visible: false,
+  });
+  const lostPolicies = (app: { policies?: unknown[] }) =>
+    Array.isArray(app.policies) && app.policies.length === 0;
+
+  let moved: Awaited<ReturnType<CloudflareClient["access"]["updateApp"]>>;
+  try {
+    moved = await client.access.updateApp(config.appId, mainApp(hostname));
+  } catch (error) {
+    if (isNotFound(error)) throw new AccessToggleError(ACCESS_MESSAGES.appMissing);
+    if (isForbidden(error)) throw new AccessToggleError(ACCESS_MESSAGES.appsPermission);
+    throw error;
+  }
+  let policyId = config.policyId;
+  const { healthAppId } = config;
+  try {
+    if (lostPolicies(moved)) {
+      policyId = (
+        await client.access.createPolicy(config.appId, adminPolicy(await allowList(deps)))
+      ).id;
+    }
+    if (healthAppId !== null) {
+      const health = await client.access.updateApp(healthAppId, healthApp(hostname));
+      if (lostPolicies(health)) await client.access.createPolicy(healthAppId, HEALTH_POLICY);
+    }
+  } catch (error) {
+    try {
+      await client.access.updateApp(config.appId, mainApp(config.domain));
+    } catch (putBack) {
+      console.error("access: could not put the manager's application back", {
+        appId: config.appId,
+        error: putBack instanceof Error ? putBack.message : String(putBack),
+      });
+    }
+    if (isForbidden(error)) throw new AccessToggleError(ACCESS_MESSAGES.appsPermission);
+    throw error;
+  }
+  return { ...config, domain: hostname, aud: moved.aud || config.aud, policyId };
+}
+
+/** The admins to allow; never empty, since an empty include list would lock everyone out. */
+async function allowList(deps: Pick<AccessToggleDeps, "db">): Promise<string[]> {
+  const emails = await listAdminEmails(deps.db);
+  if (emails.length === 0) {
+    throw new AccessToggleError("There are no admins to allow through Cloudflare Access.");
+  }
+  return emails;
+}
+
+/** Runs `run` while holding the lock every Access change takes, so two never interleave. */
+export function withAccessLock<T>(db: D1Database, run: () => Promise<T>): Promise<T> {
+  return withLock(db, run);
 }
 
 async function withLock<T>(db: D1Database, run: () => Promise<T>): Promise<T> {

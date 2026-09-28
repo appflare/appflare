@@ -25,6 +25,7 @@ const EXPECTED_TABLES = [
   "notification_deliveries",
   "notification_events",
   "passkey",
+  "passkey_host",
   "rate_limit",
   "resources",
   "session",
@@ -223,6 +224,54 @@ describe("ensure", () => {
       "SELECT repositories, for_builds, for_releases FROM github_tokens WHERE id = 'T3'",
     ).first();
     expect(added).toEqual({ repositories: null, for_builds: 1, for_releases: 0 });
+  });
+
+  it("adds passkey hosts, and the address event to channels that hear about Appflare's releases", async () => {
+    const before = migrations.findIndex((m) => m.tag === "0025_manager_address");
+    expect(before).toBeGreaterThan(0);
+    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
+    const channel = (id: string, events: string) =>
+      env.DB.prepare(
+        `INSERT INTO notification_channels (id, kind, label, target, config, events_json, created_at, updated_at)
+         VALUES (?1, 'webhook', ?1, 'example.com', 'v1.x.y', ?2, 1, 1)`,
+      ).bind(id, events);
+    await env.DB.batch([
+      channel("releases", '["update_available","manager_update_available"]'),
+      channel("jobs", '["install_finished"]'),
+      channel("both", '["manager_update_available","manager_address_lost"]'),
+      env.DB.prepare(
+        `INSERT INTO user (id, name, email, email_verified, created_at, updated_at)
+         VALUES ('u1', 'Ada', 'ada@example.com', 0, 1, 1)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO passkey (id, public_key, user_id, credential_id, counter, device_type, backed_up)
+         VALUES ('pk1', 'k', 'u1', 'c1', 0, 'singleDevice', 0)`,
+      ),
+    ]);
+    await createMigrator(migrations).ensure(env.DB);
+    const rows = await env.DB.prepare(
+      "SELECT id, events_json FROM notification_channels ORDER BY id",
+    ).all();
+    expect(rows.results).toEqual([
+      { id: "both", events_json: '["manager_update_available","manager_address_lost"]' },
+      { id: "jobs", events_json: '["install_finished"]' },
+      {
+        id: "releases",
+        events_json: '["update_available","manager_update_available","manager_address_lost"]',
+      },
+    ]);
+    expect(await columnNames(env.DB, "passkey_host")).toEqual([
+      "passkey_id",
+      "hostname",
+      "recorded_at",
+    ]);
+    // A passkey's host goes with it.
+    await env.DB.prepare(
+      "INSERT INTO passkey_host (passkey_id, hostname, recorded_at) VALUES ('pk1', 'a.example.com', 1)",
+    ).run();
+    await env.DB.prepare("DELETE FROM passkey WHERE id = 'pk1'").run();
+    const left = await env.DB.prepare("SELECT count(*) AS n FROM passkey_host").first();
+    expect(left).toEqual({ n: 0 });
   });
 
   it("is a no-op on the second call (no D1 access at all)", async () => {

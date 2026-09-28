@@ -8,6 +8,7 @@ import { createDb } from "../db/client";
 import { deleteSettings, SETTING, writeSettings } from "../db/settings";
 import { GATEWAY_WORKER_NAME, gatewayHostname } from "../gateway/gateway";
 import type { GatewayState } from "../gateway/gateway.server";
+import { detachCustomDomain } from "../installs/custom-domains.server";
 import {
   R2_MAX_LOCAL_PAGES_PER_RUN,
   R2_MAX_PAGES_PER_RUN,
@@ -355,16 +356,30 @@ export async function runRemoval(deps: RemovalDeps): Promise<RemovalOutcome> {
 
 /**
  * The last step, once the D1 database is gone and the final page was sent
- * (or could not be): the manager Worker, with its cron trigger and
- * workers.dev route, then its Workflow. Deleting a Worker leaves the
+ * (or could not be): the custom domain Appflare lives on, detached first
+ * (a failure is logged: deleting the Worker removes it too), then the
+ * manager Worker, with its cron trigger and workers.dev route, then its
+ * Workflow. Deleting a Worker leaves the
  * Workflow it ran (and that Workflow's instances) in the account, so it is
  * deleted by name afterwards. True when the Worker was deleted (or was
  * already gone); a Workflow that cannot be deleted is logged.
  */
 export async function deleteManagerWorker(
   api: CloudflareClient,
-  manager: Pick<ManagerTargets, "workerName" | "workflowName">,
+  manager: Pick<ManagerTargets, "workerName" | "workflowName" | "domain">,
 ): Promise<boolean> {
+  const domain = manager.domain ?? null;
+  if (domain !== null) {
+    try {
+      await detachCustomDomain(api, {
+        hostname: domain.hostname,
+        cfId: domain.domainId,
+        workerName: manager.workerName,
+      });
+    } catch (error) {
+      console.error(`removal: could not detach ${domain.hostname}`, { error: message(error) });
+    }
+  }
   try {
     await deleted(() => api.workers.deleteScript(manager.workerName, { force: true }));
   } catch (error) {

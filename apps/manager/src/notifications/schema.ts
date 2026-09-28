@@ -32,6 +32,7 @@ export const NOTIFICATION_EVENTS = [
   "manager_update_available",
   "domain_active",
   "domain_failed",
+  "manager_address_lost",
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 

@@ -344,6 +344,33 @@ describe("sendFailureReport", () => {
     });
   });
 
+  it("takes Appflare's own custom domain, and the ones it had before, out", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO user (id, name, email, email_verified, created_at, updated_at, role)
+         VALUES ('u1', 'Ada', 'ada@example.com', 0, 1, 1, 'admin')`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO passkey (id, name, public_key, user_id, credential_id, counter, device_type, backed_up)
+         VALUES ('pk1', NULL, 'k', 'u1', 'c1', 0, 'singleDevice', 0)`,
+      ),
+      env.DB.prepare(
+        "INSERT INTO passkey_host (passkey_id, hostname, recorded_at) VALUES ('pk1', 'first.ada.example', 1)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO job_logs (job_id, ts, level, message) VALUES ('j1', ?1, 'info', ?2)",
+      ).bind(NOW, "opened home.ada.example, then.ada.example and first.ada.example"),
+    ]);
+    await writeSettings(createDb(env.DB), {
+      [SETTING.managerHostname]: "home.ada.example",
+      [SETTING.managerPreviousHostname]: "then.ada.example",
+    });
+    const preview = await previewFailureReport(managerEnv(), "j1");
+    expect((preview.event.properties.log as string[]).at(-1)).toBe(
+      `${new Date(NOW).toISOString()} info opened [domain], [domain] and [domain]`,
+    );
+  });
+
   it("a report that cannot be built leaves the job unmarked", async () => {
     // A log line whose time is not a date makes building the report throw.
     await env.DB.prepare(

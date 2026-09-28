@@ -745,6 +745,30 @@ describe("access", () => {
     });
   });
 
+  it("updateApp -> PUT /access/apps/{id} with the whole self-hosted body", async () => {
+    const { fake, client } = make({
+      result: { id: "app1", aud: "aud1", domain: "appflare.example.com", policies: [{ id: "p1" }] },
+    });
+    const app = await client.access.updateApp("app1", {
+      type: "self_hosted",
+      name: "Appflare (appflare.example.com)",
+      domain: "appflare.example.com",
+      session_duration: "24h",
+      app_launcher_visible: false,
+    });
+    expect(app).toMatchObject({ aud: "aud1", policies: [{ id: "p1" }] });
+    const req = fake.last();
+    expect(req.method).toBe("PUT");
+    expect(req.url).toBe(`${A}/access/apps/app1`);
+    expect(await req.request.json()).toEqual({
+      type: "self_hosted",
+      name: "Appflare (appflare.example.com)",
+      domain: "appflare.example.com",
+      session_duration: "24h",
+      app_launcher_visible: false,
+    });
+  });
+
   it("deleteApp -> DELETE /access/apps/{id}", async () => {
     const { fake, client } = make({ result: { id: "app1" } });
     await client.access.deleteApp("app1");

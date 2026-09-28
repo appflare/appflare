@@ -1,0 +1,5 @@
+---
+"@appflare/manager": minor
+---
+
+Appflare can live on a domain of your account. An admin can move it to a hostname in one of the account's active zones: Appflare attaches the hostname to its own Worker (asking before it replaces DNS records there), waits until the new address answers as this Appflare, and only then switches, moving Cloudflare Access along when it is on. The workers.dev address stays and sends page requests to the new address with a temporary redirect, so bookmarks keep working. The sign-in page at the new address explains why to sign in again and that passkeys added at the old address work only there. Appflare can change its address or go back to workers.dev, and when the domain is removed in the Cloudflare dashboard it goes back to workers.dev by itself and sends a new notification, "Appflare's address stopped working". Notification links and the appflare.dev link use the current address, failure reports take Appflare's own domain out, and removing Appflare detaches the domain before deleting the Worker.

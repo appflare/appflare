@@ -1,7 +1,5 @@
 import { ulid } from "ulidx";
-import { createDb } from "../db/client";
-import { readSettings, SETTING } from "../db/settings";
-import { workersDevUrl } from "../installs/post-install";
+import { MANAGER_URL_KEY, managerOrigin } from "../domains/manager-origin.server";
 import { type NotificationFacts, notificationFactsSchema } from "./messages";
 import type { ChannelKind, NotificationEvent } from "./schema";
 import type { SendOutcome } from "./send";
@@ -31,7 +29,7 @@ export const JOB_EVENT_RETENTION_MS = 30 * 86_400_000;
  * they are not in `SETTING`): the manager's URL as an admin last used it,
  * and the cursor of the finished-jobs sweep.
  */
-export const MANAGER_URL_KEY = "notification_manager_url";
+export { MANAGER_URL_KEY };
 export const JOBS_CURSOR_KEY = "notification_jobs_cursor";
 /** `notification_health:<installId>`: when the install's current failing episode began (epoch ms). */
 export const HEALTH_EPISODE_PREFIX = "notification_health:";
@@ -74,22 +72,11 @@ export function wants(channels: readonly ChannelRow[], type: NotificationEvent):
 }
 
 /**
- * The manager's URL for links: the origin an admin last managed channels
- * from, else the Cloudflare Access hostname, else its workers.dev URL.
+ * The manager's URL for links in messages, which are sent without a request
+ * to take the address from: see `managerOrigin`.
  */
-export async function managerUrl(db: D1Database): Promise<string | null> {
-  const stored = await db
-    .prepare("SELECT value FROM settings WHERE key = ?1")
-    .bind(MANAGER_URL_KEY)
-    .first<{ value: string }>();
-  if (stored !== null) return stored.value;
-  const s = await readSettings(createDb(db), [
-    SETTING.accessDomain,
-    SETTING.workerName,
-    SETTING.accountSubdomain,
-  ]);
-  if (s.access_domain) return `https://${s.access_domain}`;
-  return s.worker_name ? workersDevUrl(s.worker_name, s.account_subdomain) : null;
+export function managerUrl(db: D1Database): Promise<string | null> {
+  return managerOrigin({ DB: db });
 }
 
 /** Remembers the origin an admin uses, so cron and job messages link to the same place. */

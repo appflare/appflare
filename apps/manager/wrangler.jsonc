@@ -61,10 +61,12 @@
     // (vite.config.ts), and every unknown navigation falls back to it.
     "not_found_handling": "single-page-application",
     // With SPA fallback, browser navigations (Sec-Fetch-Mode: navigate) that match
-    // no asset are answered with index.html WITHOUT invoking the Worker. Server
-    // routes (/api/auth/*, /api/health) and server functions (/_serverFn/*) must
-    // always reach the Worker, even when opened directly in a browser tab.
-    "run_worker_first": ["/api/*", "/_serverFn/*"]
+    // no asset are answered with index.html WITHOUT invoking the Worker. Every
+    // request except the hashed bundles under /assets/ reaches the Worker first:
+    // server routes (/api/*) and server functions (/_serverFn/*) must, and page
+    // requests must too, so that the workers.dev address can redirect them to
+    // Appflare's custom domain. The Worker serves pages from ASSETS (src/worker.ts).
+    "run_worker_first": ["/*", "!/assets/*"]
   },
   // The id of the version serving each request. Setup accepts an API token only
   // when the token's account holds this version, which proves the token is for

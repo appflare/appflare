@@ -1,7 +1,7 @@
 import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { AUTO_UPDATE_CHOICES } from "../auto-update/auto-update";
 import { WORKERS_DEV_CHOICES } from "../installs/workers-dev";
-import { user } from "./auth-schema";
+import { passkey, user } from "./auth-schema";
 
 /**
  * The manager's D1 schema. Better Auth's tables (`user`, `session`,
@@ -542,4 +542,20 @@ export const github_tokens = sqliteTable("github_tokens", {
   for_releases: integer("for_releases", { mode: "boolean" }).notNull().default(false),
   created_at: timestamp("created_at").notNull(),
   last_used_at: timestamp("last_used_at"),
+});
+
+/**
+ * The address a passkey works at, for passkeys added at an address Appflare
+ * has since left. A passkey belongs to the hostname it was added at, and the
+ * browser offers it nowhere else; a passkey with no row here was added at the
+ * current address. When the address changes, every passkey without a row is
+ * recorded against the address being left, and the rows of the address being
+ * returned to are deleted, since those passkeys work there again.
+ */
+export const passkey_host = sqliteTable("passkey_host", {
+  passkey_id: text("passkey_id")
+    .primaryKey()
+    .references(() => passkey.id, { onDelete: "cascade" }),
+  hostname: text("hostname").notNull(),
+  recorded_at: timestamp("recorded_at").notNull(),
 });

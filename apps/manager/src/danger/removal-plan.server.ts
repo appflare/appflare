@@ -12,6 +12,7 @@ import { settingsPlace } from "../components/settings-links";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { readManagerDomain } from "../domains/manager-address.server";
 import { type GatewayState, readGateway } from "../gateway/gateway.server";
 import { distinctLabels } from "../installs/display-name";
 import { namedInstall, readInstallLabels } from "../installs/install-names.server";
@@ -45,6 +46,11 @@ export interface ManagerTargets {
    * one that another Worker runs. Deleting the Worker leaves it in place.
    */
   workflowName: string | null;
+  /**
+   * The custom domain Appflare lives on (its address), detached right before
+   * the Worker is deleted; absent while it lives at workers.dev.
+   */
+  domain?: { hostname: string; domainId: string | null } | null;
 }
 
 export interface SandboxTargets {
@@ -184,6 +190,7 @@ export async function findRemovalTargets(
       d1Id: boundId(managerBindings, "d1", "DB", "id"),
       kvId: boundId(managerBindings, "kv_namespace", "KV", "namespace_id"),
       workflowName: ownWorkflow(managerBindings, workerName),
+      domain: await readManagerDomain(db),
     },
     gateway: await readGateway(orm),
     sandbox: {

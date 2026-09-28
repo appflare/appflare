@@ -8,6 +8,7 @@ import { logCfRequest } from "../cloudflare/client.server";
 import type { VerifyTokenResult } from "../cloudflare/verify-token";
 import { createDb } from "../db/client";
 import { readSettings, SETTING } from "../db/settings";
+import { managerOrigin } from "../domains/manager-origin.server";
 import { recordSetupFinished } from "../telemetry/state.server";
 import { requireRole, requireSession } from "./auth.server";
 import { cfTokenInput } from "./schemas";
@@ -132,6 +133,11 @@ export interface TokenStatus {
    * token and the manager's redeploy reaching this request.
    */
   hasSecret: boolean;
+  /**
+   * The address links to this manager use (`managerOrigin`): its custom
+   * domain when it has one, else the address this page was loaded from.
+   */
+  managerOrigin?: string | null;
 }
 
 /** Any signed-in user (members read everything): what the settings card shows. */
@@ -152,6 +158,7 @@ export const getTokenStatus = createServerFn({ method: "GET" }).handler(
       workerName: s.worker_name || null,
       verifiedAt: s.cf_token_verified_at || null,
       hasSecret: typeof env.CF_API_TOKEN === "string" && env.CF_API_TOKEN.length > 0,
+      managerOrigin: await managerOrigin(env, getRequest()),
     };
   },
 );
