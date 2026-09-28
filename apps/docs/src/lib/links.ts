@@ -1,4 +1,5 @@
 import { type FileObject, type ScanResult, type UrlMeta, validateFiles } from "next-validate-link";
+import { AGENT_PROMPTS } from "./agent-prompts.ts";
 import { markdownUrl, pageUrl, searchIndexPath } from "./shared.ts";
 
 /** What the link check needs to know about one page. */
@@ -10,6 +11,7 @@ export interface LinkTarget {
 
 /** Files the build writes besides the pages, which content may link to. */
 const staticFiles = [
+  ...Object.values(AGENT_PROMPTS).map((prompt) => prompt.path),
   "/llms.txt",
   "/llms-full.txt",
   "/sitemap.xml",

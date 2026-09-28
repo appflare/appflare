@@ -5,13 +5,14 @@ import { pageUrl } from "../lib/shared.ts";
 import { renderSitemap } from "../lib/sitemap.ts";
 import { source } from "../lib/source.ts";
 
-/** `sitemap.xml`: every docs page and every catalog page, by its canonical URL. */
+/** `sitemap.xml`: the front page, every docs page and every catalog page, by its canonical URL. */
 export const Route = createFileRoute("/sitemap.xml")({
   server: {
     handlers: {
       GET: () =>
         new Response(
           renderSitemap([
+            "/",
             ...source.getPages().map((page) => pageUrl(page.slugs)),
             ...catalogPagePaths(siteCatalog),
           ]),

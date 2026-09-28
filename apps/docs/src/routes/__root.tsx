@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import { startAnalytics } from "../analytics/analytics.ts";
 import { DocsLink } from "../components/link.tsx";
 import StaticSearchDialog from "../components/search.tsx";
-import { SiteFooter } from "../components/site-footer.tsx";
 import { faviconLinks, faviconMeta } from "../lib/favicons.ts";
 import { siteName } from "../lib/shared.ts";
 import appCss from "../styles/app.css?url";
@@ -40,7 +39,6 @@ function RootComponent() {
           components={{ Link: DocsLink }}
         >
           <Outlet />
-          <SiteFooter />
         </RootProvider>
         <Analytics />
         <Scripts />

@@ -1,0 +1,14 @@
+# Redirects for the static site (Workers static assets reads this file and
+# does not serve it). Each line is: source, destination, status.
+#
+# The prompts for coding agents were pages of their own; each is now a copy
+# button on the page it belongs to, and the steps an agent follows are
+# Markdown files under /agent/.
+/start/install-with-an-agent/ /start/install/ 301
+/start/install-with-an-agent /start/install/ 301
+/start/install-with-an-agent.md /agent/install.md 301
+/catalog/submit-with-an-agent/ /catalog/submit/ 301
+/catalog/submit-with-an-agent /catalog/submit/ 301
+/catalog/submit-with-an-agent.md /agent/submit.md 301
+# The documentation's index moved to the overview; `/` is the front page.
+/index.md /start/overview.md 301

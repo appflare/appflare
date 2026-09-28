@@ -5,8 +5,12 @@ import type { ReactNode } from "react";
 import { Logo } from "./logo";
 import { MessageText } from "./message-text";
 
-/** Where the footer's version line leads. */
-export const DOCS_URL = `${SITE_URL}/`;
+/**
+ * Where the documentation starts, which the footer's version line and the
+ * account menu's Documentation link lead to. The site's own `/` is its front
+ * page.
+ */
+export const DOCS_URL = `${SITE_URL}/start/overview/`;
 
 /**
  * Setup runs in three steps on one page, `/setup`: connect Cloudflare (paste

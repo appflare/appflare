@@ -1,3 +1,4 @@
+import { SITE_URL } from "@appflare/schema/links";
 import { DOCS_URL } from "./components/auth-layout";
 
 /**
@@ -47,7 +48,7 @@ export type DocsTopic = keyof typeof DOCS_TOPICS;
 /** The absolute URL of a topic on the docs site, with the site's trailing slash. */
 export function docsUrl(topic: DocsTopic): string {
   const [path = "", anchor] = DOCS_TOPICS[topic].split("#");
-  const page = path === "" ? DOCS_URL : `${DOCS_URL}${path}/`;
+  const page = path === "" ? DOCS_URL : `${SITE_URL}/${path}/`;
   return anchor === undefined ? page : `${page}#${anchor}`;
 }
 

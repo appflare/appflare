@@ -32,7 +32,8 @@ const SOURCE_CONDITION = "@appflare/source";
 
 /**
  * The site is prerendered in full and served as static assets: `vite build`
- * writes every page as `<path>/index.html` plus its `.md` Markdown, `llms.txt`,
+ * writes the front page, every docs page as `<path>/index.html` plus its `.md`
+ * Markdown, `llms.txt`,
  * `llms-full.txt`, the search index at `/api/search.json`, `sitemap.xml`, `404.html`,
  * the catalog's pages (`/apps/`, one per app, one per category), the pages
  * that pass a visitor on to their own Appflare (`/install/<slug>/`,
@@ -67,6 +68,7 @@ export default defineConfig(async () => {
           failOnError: true,
         },
         pages: [
+          { path: "/" },
           { path: "/404", prerender: { outputPath: "/404.html" } },
           { path: "/llms.txt" },
           { path: "/llms-full.txt" },

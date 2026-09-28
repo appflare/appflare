@@ -62,6 +62,8 @@ export interface SiteEvents {
   deploy_button_clicked: { path: string };
   /** A visitor told the site where their Appflare is. The address itself is never sent. */
   manager_registered: { has_manager: true; page: "my" | "install" };
+  /** A prompt for a coding agent was copied, on the page it was copied from. */
+  agent_prompt_copied: { page: string };
   /** A snippet on the Install badge page was copied. */
   badge_form_used: { badge: "app" | "repo"; via: "copy-button" | "selection" };
   /** A search on the apps page, once the field rests: what was searched for and what it found. */

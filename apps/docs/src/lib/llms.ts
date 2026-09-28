@@ -1,6 +1,7 @@
 import type * as PageTree from "fumadocs-core/page-tree";
 import { siteCatalog } from "../catalog/data.ts";
 import { type CatalogPageEntry, catalogPageEntries } from "../catalog/pages.ts";
+import { agentInstructionsUrl } from "./agent-prompts.ts";
 import { formatLlmsIndex, type LlmsLink, type LlmsSection } from "./llms-format.ts";
 import { markdownUrl, SITE_URL, siteDescription, siteName } from "./shared.ts";
 import { type DocsPage, source } from "./source.ts";
@@ -38,10 +39,33 @@ function sections(tree: PageTree.Root): LlmsSection[] {
   };
   visit(tree.children);
   if (current.links.length > 0) out.push(current);
-  // The home page is reached from the logo, not the sidebar; list it first.
-  const home = source.getPage([]);
-  if (home && out[0]) out[0].links.unshift(linkTo(home));
+  // Pages the sidebar leaves out, such as the privacy page, are still pages.
+  const listed = new Set(out.flatMap((section) => section.links.map((link) => link.url)));
+  const unlisted = source
+    .getPages()
+    .map(linkTo)
+    .filter((link) => !listed.has(link.url));
+  if (unlisted.length > 0) out.push({ title: "Other pages", links: unlisted });
   return out;
+}
+
+/** The step-by-step instructions the site's agent prompts point at. */
+function agentSection(): LlmsSection {
+  return {
+    title: "Instructions for coding agents",
+    links: [
+      {
+        title: "Install Appflare",
+        description: "Install Appflare into the user's Cloudflare account with the installer.",
+        url: agentInstructionsUrl("install"),
+      },
+      {
+        title: "Add an app to the catalog",
+        description: "Write an app's catalog manifest, check it, and open the pull request.",
+        url: agentInstructionsUrl("submit"),
+      },
+    ],
+  };
 }
 
 function catalogLink({ title, description, url }: CatalogPageEntry): LlmsLink {
@@ -58,14 +82,15 @@ function catalogSections(): LlmsSection[] {
 }
 
 /**
- * `llms.txt`: every page in sidebar order, linked to its Markdown file, then
- * the catalog's pages, and a pointer to `llms-full.txt`.
+ * `llms.txt`: the instructions for coding agents, every page in sidebar
+ * order, linked to its Markdown file, then the catalog's pages, and a pointer
+ * to `llms-full.txt`.
  */
 export function llmsIndex(): string {
   return formatLlmsIndex({
     title: siteName,
     summary: siteDescription,
-    sections: [...sections(source.getPageTree()), ...catalogSections()],
+    sections: [agentSection(), ...sections(source.getPageTree()), ...catalogSections()],
     optional: [
       {
         title: "Full text",

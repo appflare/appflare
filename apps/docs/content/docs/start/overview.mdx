@@ -6,14 +6,9 @@ description: A self-hosted app manager that runs as one Worker in your own Cloud
 Appflare is a self-hosted app manager for Cloudflare. It is a single Worker that you
 install into your own Cloudflare account. From its web UI you browse a catalog of
 apps built for Workers, install them into the same account, and keep them updated.
+Home shows your installed apps and the work that needs your attention.
 
 ![Home with updates to review and installed apps ready to open](/screenshots/home-dashboard.png)
-
-<Callout type="warning">
-
-Appflare is pre-release software. Expect rough edges and breaking changes.
-
-</Callout>
 
 ## Install it
 
@@ -31,14 +26,29 @@ copy.
   <Card title="Run the installer" href="/start/install/">
     Build the installer from a checkout of this repository and run it in a terminal.
   </Card>
-  <Card title="Ask an AI agent" href="/start/install-with-an-agent/">
-    Paste a prompt into a coding agent. It runs the installer and tells you the few
-    steps only you can do.
-  </Card>
 </Cards>
+
+The third way is a coding agent. The prompt points it at instructions on this site; it
+runs the installer and tells you the few steps only you can do.
+
+<AgentPrompt kind="install" />
 
 All three install the same signed release and end in the same
 [setup wizard](/start/install/#the-setup-wizard).
+
+## How it works
+
+The Deploy to Cloudflare button, or the installer, deploys one Worker, the manager, into
+your Cloudflare account. The manager has a web UI where you browse a catalog of apps
+that run on Workers.
+
+When you install an app, the manager creates what the app needs (KV namespaces, D1
+databases, R2 buckets, queues, Vectorize indexes, secrets, cron triggers) and records
+each one. Because it knows every resource it created, it can update the app later,
+roll it back, and remove it cleanly.
+
+Every app in the catalog is built from a pinned upstream commit, packed and signed by
+the catalog's CI. The manager installs nothing whose signature does not verify.
 
 ## Why it exists
 
@@ -94,5 +104,8 @@ releases. It starts update jobs on its own only when you turn on
 
 ## Next
 
-[Deploy with the button](/start/deploy-button/), or compare
-[the three ways to install](/start/install/).
+- [Deploy with the button](/start/deploy-button/), or compare
+  [the three ways to install](/start/install/).
+- [Install an app](/guides/install-apps/) from the catalog.
+- [Submit an app](/catalog/submit/) to the catalog.
+- [Security model](/security/): what the manager does with your API token.

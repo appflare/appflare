@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { siteCatalog } from "../catalog/data.ts";
 import { Route as PageRoute } from "../routes/$.tsx";
 import { Route as AppRoute } from "../routes/apps/$slug.tsx";
+import { Route as FrontRoute } from "../routes/index.tsx";
 import { Route as InstallRoute } from "../routes/install/$slug.tsx";
 import { pageHead } from "./meta.ts";
 import { SITE_URL } from "./shared.ts";
@@ -60,8 +61,9 @@ describe("the pages' OpenGraph tags", () => {
   if (app === undefined) throw new Error("The fixture has no apps");
 
   it("give the front page the site's card", async () => {
-    const meta = await headOf(PageRoute, { _splat: "" });
-    expect(tag(meta, "og:image")).toBe(`${SITE_URL}/og/image.png`);
+    const meta = await headOf(FrontRoute, {});
+    expect(tag(meta, "og:url")).toBe(`${SITE_URL}/`);
+    expectCard(meta, `${SITE_URL}/og/image.png`);
   });
 
   it("give a docs page its own card and address", async () => {

@@ -21,9 +21,16 @@ setup wizard. Afterwards Appflare updates itself, and you can remove the copy.
 
 | | The Deploy to Cloudflare button | The installer | An AI agent |
 | --- | --- | --- | --- |
-| How | Select the button in your browser: [Deploy with the button](/start/deploy-button/) | Build it [from a checkout](#from-a-checkout) and run it in a terminal | Paste [a prompt](/start/install-with-an-agent/) into a coding agent; it builds and runs the installer |
+| How | Select the button in your browser: [Deploy with the button](/start/deploy-button/) | Build it [from a checkout](#from-a-checkout) and run it in a terminal | Copy the prompt below into a coding agent; it builds and runs the installer |
 | You need | A GitHub or GitLab account | Node.js 22 and pnpm | Node.js 22 and a coding agent |
 | Leaves behind | A copy of Appflare in your Git account and a Workers Builds connection, which you remove afterwards | Nothing | Nothing |
+
+<AgentPrompt kind="install" />
+
+The agent checks your setup, runs the installer, and opens the setup page. What happens in
+your browser stays with you: approving the Cloudflare login, creating the API token and
+pasting it into the setup page, and creating the owner account. The prompt tells the
+agent never to ask for your token or password.
 
 The rest of this page covers the installer.
 

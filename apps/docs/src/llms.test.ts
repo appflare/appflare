@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { agentInstructionsUrl } from "./lib/agent-prompts.ts";
 import { llmsIndex } from "./lib/llms.ts";
 import { docsLlms, source } from "./lib/source.ts";
 
@@ -11,7 +12,7 @@ function page(...slugs: string[]) {
 describe("Markdown for agents", () => {
   it("contains no JSX from the site's components", async () => {
     const full = await docsLlms.full();
-    expect(full).not.toMatch(/<\/?(Callout|Cards|Card|Prompt)\b/);
+    expect(full).not.toMatch(/<\/?(Callout|Cards|Card|AgentPrompt)\b/);
   });
 
   it("leaves out MDX comments, which are notes for editors", async () => {
@@ -27,22 +28,33 @@ describe("Markdown for agents", () => {
   });
 
   it("writes Cards as a list of links", async () => {
-    const text = await docsLlms.page(page());
+    const text = await docsLlms.page(page("start", "overview"));
     expect(text).toContain(
-      "- [Install Appflare](/start/install/): The three ways to install, the installer, and the setup wizard.",
+      "- [Run the installer](/start/install/): Build the installer from a checkout of this repository and run it in a terminal.",
     );
   });
 
-  it("keeps a Prompt as its fenced code block", async () => {
-    const text = await docsLlms.page(page("start", "install-with-an-agent"));
-    expect(text).toMatch(/```text title="Prompt"\nHelp me install Appflare/);
+  it("writes an agent prompt as the address of the instructions it points at", async () => {
+    const install = await docsLlms.page(page("start", "install"));
+    expect(install).toContain(`its instructions are at ${agentInstructionsUrl("install")}.`);
+    const submit = await docsLlms.page(page("catalog", "submit"));
+    expect(submit).toContain(`its instructions are at ${agentInstructionsUrl("submit")}.`);
+    expect(install).not.toContain("Copy prompt");
   });
 
-  it("lists every page in llms.txt, linked to its Markdown file", () => {
+  it("lists every page in llms.txt, linked to its Markdown file, those the sidebar leaves out too", () => {
     const index = llmsIndex();
     for (const { slugs } of source.getPages()) {
-      const path = slugs.length === 0 ? "index" : slugs.join("/");
-      expect(index).toContain(`/${path}.md)`);
+      expect(index).toContain(`/${slugs.join("/")}.md)`);
     }
+    expect(index).toContain("/privacy.md)");
+  });
+
+  it("lists the instructions for coding agents first in llms.txt", () => {
+    const index = llmsIndex();
+    const first = index.indexOf("## ");
+    expect(index.slice(first)).toMatch(/^## Instructions for coding agents\n/);
+    expect(index).toContain(`(${agentInstructionsUrl("install")})`);
+    expect(index).toContain(`(${agentInstructionsUrl("submit")})`);
   });
 });

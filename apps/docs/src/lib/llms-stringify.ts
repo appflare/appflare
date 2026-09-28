@@ -1,4 +1,5 @@
 import type { LLMsOptions } from "fumadocs-core/mdx-plugins";
+import { AGENT_PROMPTS, type AgentPromptKind, agentInstructionsUrl } from "./agent-prompts.ts";
 
 type Stringify = NonNullable<LLMsOptions["stringify"]>;
 type Node = Parameters<Stringify>[0];
@@ -46,7 +47,7 @@ export const filterForAgents: Filter = (node) => {
     return !/^\s*\/\*[\s\S]*\*\/\s*$/.test(node.value);
   }
   if (isJsxElement(node)) {
-    return ["Callout", "Cards", "Card", "Prompt"].includes(node.name ?? "") || "children-only";
+    return ["Callout", "Cards", "Card", "AgentPrompt"].includes(node.name ?? "") || "children-only";
   }
   return true;
 };
@@ -54,8 +55,9 @@ export const filterForAgents: Filter = (node) => {
 /**
  * Writes the site's MDX components as plain Markdown in the text agents read
  * (each page's `.md`, `llms-full.txt`): a `Callout` becomes a blockquote led by
- * its title, `Cards` a list of links, and a `Prompt` just the code block it
- * wraps. Everything else keeps Fumadocs' default output.
+ * its title, `Cards` a list of links, and an `AgentPrompt` a pointer to the
+ * instructions its prompt names, which an agent reading the page can follow
+ * directly. Everything else keeps Fumadocs' default output.
  */
 export const stringifyForAgents: Stringify = (node, _parent, state, info) => {
   if (!isJsxElement(node)) return undefined;
@@ -76,8 +78,12 @@ export const stringifyForAgents: Stringify = (node, _parent, state, info) => {
           return text ? `- ${link}: ${text}` : `- ${link}`;
         })
         .join("\n");
-    case "Prompt":
-      return childrenMarkdown(node, state, info);
+    case "AgentPrompt": {
+      const kind = attribute(node, "kind");
+      if (kind === undefined || !Object.hasOwn(AGENT_PROMPTS, kind)) return undefined;
+      const url = agentInstructionsUrl(kind as AgentPromptKind);
+      return `A coding agent can do this for you: its instructions are at ${url}.`;
+    }
     default:
       return undefined;
   }
