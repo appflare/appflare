@@ -99,7 +99,11 @@ After each release of the current version, two jobs of `release.yml` update it:
   repository) replaces the files on `main` of `appflare/deploy` and pushes one
   commit, `chore(release): appflare <version>`. A repository that already holds this
   version or a newer one is left alone, so re-runs and older versions never add
-  commits.
+  commits. "Newer" follows semantic versioning precedence: major, minor and patch
+  compare as numbers, and a pre-release ranks below its release, so `0.1.0` replaces
+  `0.1.0-rc.1` and `0.1.0-rc.2` replaces `0.1.0-rc.1`, while `0.1.0-rc.1` never
+  replaces `0.1.0`. If the repository's `package.json` holds something that is not a
+  semantic version, the job fails until a run with **deploy_repo_reset** replaces it.
 
 After a version reset (every package set back to an earlier version, such as
 `0.1.0`), `appflare/deploy` still holds the higher version and would never be

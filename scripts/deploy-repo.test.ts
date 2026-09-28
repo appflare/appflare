@@ -219,7 +219,7 @@ describe("the deploy repository's npm project", () => {
  * release.yml: the job checks out nothing from this repository, so the
  * decision lives in the workflow and is tested from there.
  */
-function deployRepoAction(current: string, next: string, reset: boolean): string {
+function runDeployRepoAction(current: string, next: string, reset: boolean) {
   const workflow = readFileSync(
     path.join(REPO_ROOT, ".github", "workflows", "release.yml"),
     "utf8",
@@ -233,7 +233,7 @@ function deployRepoAction(current: string, next: string, reset: boolean): string
     .slice(start, end + 1)
     .map((line) => line.slice(indent.length))
     .join("\n");
-  const res = spawnSync(
+  return spawnSync(
     "bash",
     [
       "-euo",
@@ -247,6 +247,10 @@ function deployRepoAction(current: string, next: string, reset: boolean): string
     ],
     { encoding: "utf8" },
   );
+}
+
+function deployRepoAction(current: string, next: string, reset: boolean): string {
+  const res = runDeployRepoAction(current, next, reset);
   expect(res.status, res.stderr).toBe(0);
   return res.stdout.trim();
 }
@@ -268,6 +272,59 @@ describe("the push job's version decision", () => {
   it("replaces the same or a newer version only when a reset is asked for", () => {
     expect(deployRepoAction("0.4.2", "0.1.0", true)).toBe("reset");
     expect(deployRepoAction("0.1.0", "0.1.0", true)).toBe("reset");
+    expect(deployRepoAction("0.1.0", "0.1.0-rc.1", true)).toBe("reset");
+    expect(deployRepoAction("0.1.1", "0.1.0", true)).toBe("reset");
+  });
+
+  it("ranks versions by semantic versioning precedence", () => {
+    // A release ranks above its own pre-releases (sort -V says otherwise).
+    expect(deployRepoAction("0.1.0-rc.1", "0.1.0", false)).toBe("push");
+    expect(deployRepoAction("0.1.0-rc.1", "0.1.0-rc.2", false)).toBe("push");
+    expect(deployRepoAction("0.1.0", "0.1.0-rc.1", false)).toBe("skip");
+    expect(deployRepoAction("0.1.0", "0.2.0", false)).toBe("push");
+    expect(deployRepoAction("0.1.1", "0.1.0", false)).toBe("skip");
+    // Numeric identifiers compare as numbers, below words; more identifiers
+    // rank above fewer; build metadata does not count.
+    expect(deployRepoAction("1.0.0-rc.9", "1.0.0-rc.10", false)).toBe("push");
+    expect(deployRepoAction("1.0.0-alpha", "1.0.0-alpha.1", false)).toBe("push");
+    expect(deployRepoAction("1.0.0-alpha.1", "1.0.0-alpha.beta", false)).toBe("push");
+    expect(deployRepoAction("1.0.0-beta", "1.0.0-alpha", false)).toBe("skip");
+    expect(deployRepoAction("1.0.0-rc.1", "1.0.0-rc.1", false)).toBe("skip");
+    expect(deployRepoAction("1.0.0+a", "1.0.0+b", false)).toBe("skip");
+    expect(deployRepoAction("0.9.0", "0.10.0-rc.1", false)).toBe("push");
+    expect(deployRepoAction("99999999999999999999.0.0", "100000000000000000000.0.0", false)).toBe(
+      "push",
+    );
+  });
+
+  it("follows the precedence order of the semantic versioning specification", () => {
+    const ordered = [
+      "1.0.0-alpha",
+      "1.0.0-alpha.1",
+      "1.0.0-alpha.beta",
+      "1.0.0-beta",
+      "1.0.0-beta.2",
+      "1.0.0-beta.11",
+      "1.0.0-rc.1",
+      "1.0.0",
+    ];
+    for (const [i, lower] of ordered.entries()) {
+      for (const higher of ordered.slice(i + 1)) {
+        expect(deployRepoAction(lower, higher, false), `${higher} over ${lower}`).toBe("push");
+        expect(deployRepoAction(higher, lower, false), `${lower} over ${higher}`).toBe("skip");
+      }
+    }
+  });
+
+  it("fails on a version that is not a semantic version, unless a reset replaces it", () => {
+    const bad = runDeployRepoAction("0.1.0", "v0.2", false);
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr).toContain("'v0.2' is not a semantic version");
+    const held = runDeployRepoAction("latest", "0.1.0", false);
+    expect(held.status).not.toBe(0);
+    expect(held.stderr).toContain("deploy_repo_reset");
+    expect(deployRepoAction("latest", "0.1.0", true)).toBe("reset");
+    expect(runDeployRepoAction("0.1.0", "01.2.0", true).status).not.toBe(0);
   });
 
   it("never resets on a push", () => {

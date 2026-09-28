@@ -647,12 +647,90 @@ jobs:
           # when this run has version $2 and reset flag $3: "push" a newer
           # version; "skip" one it already holds, or an older one, so re-runs
           # and old versions never add commits; "reset" when $3 is "true" and it
-          # would otherwise skip, which replaces the contents anyway.
-          # scripts/deploy-repo.test.ts runs this function.
+          # would otherwise skip, which replaces the contents anyway. Versions
+          # rank by semantic versioning precedence, so 0.1.0-rc.1 ranks below
+          # 0.1.0 (sort -V ranks it above, which would skip the final release).
+          # A held version that is not a semantic version fails the run unless
+          # $3 is "true". scripts/deploy-repo.test.ts runs this function.
           deploy_repo_action() {
-            local current="$1" next="$2" reset="$3"
-            if [ -z "${current}" ] \
-              || [ "$(printf '%s\n%s\n' "${current}" "${next}" | sort -V | tail -n 1)" != "${current}" ]; then
+            local current="$1" next="$2" reset="$3" order
+            # Whether $1 is a semantic version (build metadata allowed).
+            is_semver() {
+              local id='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+              local re="^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-${id}(\.${id})*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?\$"
+              [[ "$1" =~ ${re} ]]
+            }
+            # -1, 0 or 1 as $1 sorts before, with or after $2, byte by byte.
+            compare_text() {
+              if [ "$1" = "$2" ]; then
+                echo 0
+              elif printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort -C; then
+                echo -1
+              else
+                echo 1
+              fi
+            }
+            # The same for two numbers without leading zeros, of any length.
+            compare_numbers() {
+              if [ "${#1}" -lt "${#2}" ]; then
+                echo -1
+              elif [ "${#1}" -gt "${#2}" ]; then
+                echo 1
+              else
+                compare_text "$1" "$2"
+              fi
+            }
+            # The same for two semantic versions: major, minor and patch
+            # numerically; then a version with a pre-release part ranks below
+            # the same version without one; then pre-release identifiers left
+            # to right, numbers numerically and below words, words byte by
+            # byte, and more identifiers above fewer. Build metadata is ignored.
+            compare_versions() {
+              local a="${1%%+*}" b="${2%%+*}" pa="" pb="" x y n i
+              case "${a}" in *-*) pa="${a#*-}" a="${a%%-*}" ;; esac
+              case "${b}" in *-*) pb="${b#*-}" b="${b%%-*}" ;; esac
+              for i in major minor patch; do
+                x="${a%%.*}" y="${b%%.*}" a="${a#*.}" b="${b#*.}"
+                n="$(compare_numbers "${x}" "${y}")"
+                if [ "${n}" != 0 ]; then echo "${n}"; return; fi
+              done
+              if [ -z "${pa}" ] || [ -z "${pb}" ]; then
+                if [ "${pa}" = "${pb}" ]; then echo 0; elif [ -z "${pa}" ]; then echo 1; else echo -1; fi
+                return
+              fi
+              while [ -n "${pa}" ] && [ -n "${pb}" ]; do
+                x="${pa%%.*}" y="${pb%%.*}"
+                case "${pa}" in *.*) pa="${pa#*.}" ;; *) pa="" ;; esac
+                case "${pb}" in *.*) pb="${pb#*.}" ;; *) pb="" ;; esac
+                case "${x}:${y}" in
+                  *[!0-9]*:*[!0-9]*) n="$(compare_text "${x}" "${y}")" ;;
+                  *[!0-9]*:*) n=1 ;;
+                  *:*[!0-9]*) n=-1 ;;
+                  *) n="$(compare_numbers "${x}" "${y}")" ;;
+                esac
+                if [ "${n}" != 0 ]; then echo "${n}"; return; fi
+              done
+              if [ -n "${pa}" ]; then echo 1; elif [ -n "${pb}" ]; then echo -1; else echo 0; fi
+            }
+
+            if ! is_semver "${next}"; then
+              echo "this release's version '${next}' is not a semantic version" >&2
+              return 1
+            fi
+            if [ -z "${current}" ]; then
+              echo push
+              return
+            fi
+            if ! is_semver "${current}"; then
+              if [ "${reset}" = "true" ]; then
+                echo reset
+                return
+              fi
+              echo "the deploy repository holds version '${current}', which is not a semantic version; run the release workflow by hand with deploy_repo_reset to replace it" >&2
+              return 1
+            fi
+            order="$(compare_versions "${next}" "${current}")"
+            if [ "${order}" = 1 ]; then
               echo push
             elif [ "${reset}" = "true" ]; then
               echo reset
