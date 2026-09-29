@@ -28,7 +28,7 @@ const FIXTURE_APPS = [
   "veet",
 ];
 
-const { snapshot } = await fetchCatalogSnapshot({ only: FIXTURE_APPS, ogIcons: false });
+const { snapshot } = await fetchCatalogSnapshot({ only: FIXTURE_APPS, ogMedia: false });
 const found = new Set(snapshot.index.apps.map((app) => app.slug));
 const missing = FIXTURE_APPS.filter((slug) => !found.has(slug));
 if (missing.length > 0) throw new Error(`Not in the catalog any more: ${missing.join(", ")}`);

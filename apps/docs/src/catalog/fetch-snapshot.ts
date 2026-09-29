@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { type IndexApp, type IndexJson, indexJsonSchema } from "@appflare/schema";
+import { type OgPicture, pngPicture } from "../og/picture.ts";
 import {
   type AppLinks,
   appLinksSchema,
@@ -36,8 +37,8 @@ export interface FetchSnapshotOptions {
    * for writing a small snapshot such as the checked-in fixture.
    */
   only?: readonly string[];
-  /** Whether to fetch the icons for OpenGraph cards; true by default. */
-  ogIcons?: boolean;
+  /** Whether to fetch the icons and first screenshots for OpenGraph cards; true by default. */
+  ogMedia?: boolean;
 }
 
 export interface FetchedCatalog {
@@ -47,10 +48,14 @@ export interface FetchedCatalog {
    * it: the cards are drawn during the build, which reads no network.
    */
   ogIcons: Record<string, string>;
+  /** The first screenshot of each app that has one (a PNG), for the same cards. */
+  ogScreenshots: Record<string, OgPicture>;
 }
 
 /** The largest icon drawn into an OpenGraph card. */
 const MAX_ICON_BYTES = 1024 * 1024;
+/** The largest screenshot drawn into an OpenGraph card. */
+const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -128,7 +133,7 @@ export async function fetchCatalogSnapshot(
     retryDelayMs = 500,
     now = () => new Date(),
     only,
-    ogIcons: withIcons = true,
+    ogMedia = true,
   } = options;
 
   async function bytesOf(url: string, digest?: string): Promise<Uint8Array> {
@@ -187,18 +192,33 @@ export async function fetchCatalogSnapshot(
     }
   });
 
-  // Only icons on the catalog's own site, as the pages show them.
+  // Only media on the catalog's own site, as the pages show them.
   const origin = new URL(baseUrl).origin;
-  const iconApps = withIcons
-    ? index.apps.filter((app) => catalogMediaUrl(app.media?.icon?.url, origin) !== null)
-    : [];
-  const icons = await mapLimit(iconApps, concurrency, async (app) => {
-    const icon = app.media?.icon;
-    if (icon === undefined) return null;
-    const bytes = await bytesOf(icon.url, icon.sha256);
-    if (bytes.byteLength > MAX_ICON_BYTES) return null;
-    return [app.slug, dataUri(bytes, icon.url)] as const;
-  });
+  const onSite = (url: string | undefined) => ogMedia && catalogMediaUrl(url, origin) !== null;
+  const icons = await mapLimit(
+    index.apps.filter((app) => onSite(app.media?.icon?.url)),
+    concurrency,
+    async (app) => {
+      const icon = app.media?.icon;
+      if (icon === undefined) return null;
+      const bytes = await bytesOf(icon.url, icon.sha256);
+      if (bytes.byteLength > MAX_ICON_BYTES) return null;
+      return [app.slug, dataUri(bytes, icon.url)] as const;
+    },
+  );
+  const screenshots = await mapLimit(
+    index.apps.filter((app) => onSite(app.media?.screenshots[0]?.url)),
+    concurrency,
+    async (app) => {
+      const screenshot = app.media?.screenshots[0];
+      if (screenshot === undefined) return null;
+      const bytes = await bytesOf(screenshot.url, screenshot.sha256);
+      if (bytes.byteLength > MAX_SCREENSHOT_BYTES) return null;
+      // The cards read a picture's size from its PNG header; anything else is left out.
+      const picture = pngPicture(bytes);
+      return picture === null ? null : ([app.slug, picture] as const);
+    },
+  );
 
   const snapshot = parseCatalogSnapshot(
     {
@@ -212,6 +232,7 @@ export async function fetchCatalogSnapshot(
   return {
     snapshot,
     ogIcons: Object.fromEntries(icons.filter((entry) => entry !== null)),
+    ogScreenshots: Object.fromEntries(screenshots.filter((entry) => entry !== null)),
   };
 }
 

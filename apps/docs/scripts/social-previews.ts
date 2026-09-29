@@ -12,12 +12,13 @@
 // has no API for a repository's social preview, so each image is uploaded by
 // hand (see docs/RELEASING.md). Needs @appflare/schema built
 // (`pnpm --filter @appflare/schema build`).
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { comparePopularity } from "@appflare/schema/catalog-display";
 import { render } from "takumi-js";
 import { createServer } from "vite";
 import { loadCatalog, snapshotMode } from "../src/catalog/plugin.ts";
+import { readDocsScreenshots } from "../src/og/plugin.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const assets = new URL("../../../docs/assets/", import.meta.url);
@@ -28,9 +29,8 @@ const apps = [...catalog.site.apps]
   .map((app) => ({ name: app.name, pitch: app.pitch, icon: catalog.ogIcons[app.slug] ?? null }))
   .sort((a, b) => Number(b.icon !== null) - Number(a.icon !== null));
 
-const screenshot = `data:image/png;base64,${readFileSync(
-  new URL("../public/screenshots/home-dashboard.png", import.meta.url),
-).toString("base64")}`;
+const screenshot = readDocsScreenshots()["/screenshots/home-dashboard.png"];
+if (screenshot === undefined) throw new Error("public/screenshots/home-dashboard.png is missing");
 
 // Vite compiles the card components (TSX, and the logos they import as text).
 const server = await createServer({

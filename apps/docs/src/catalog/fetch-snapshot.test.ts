@@ -4,7 +4,13 @@ import { fetchCatalogSnapshot, linksOf, mapLimit, narrowIndex } from "./fetch-sn
 
 const BASE = "https://catalog.test/";
 const AT = "2026-09-28T08:00:00.000Z";
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+const sha = (text: string | Uint8Array) => createHash("sha256").update(text).digest("hex");
+
+/** A 1x1 PNG. */
+const png = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
 
 /** A published catalog of two apps: one released, one with its own installer. */
 function catalog() {
@@ -38,7 +44,13 @@ function catalog() {
         lastVerified: AT,
         authors: [{ name: "acme", github: "acme" }],
         maintainers: ["acme"],
-        media: { icon: { url: `${BASE}cut/icon.svg`, sha256: sha(icon) }, screenshots: [] },
+        media: {
+          icon: { url: `${BASE}cut/icon.svg`, sha256: sha(icon) },
+          screenshots: [
+            { url: `${BASE}cut/01.png`, sha256: sha(png), alt: "Links" },
+            { url: `${BASE}cut/02.png`, sha256: sha(png), alt: "Stats" },
+          ],
+        },
         services: ["kv"],
         categories: ["utilities"],
         license: "MIT",
@@ -70,17 +82,21 @@ function catalog() {
     apps: { cut: { stars: { count: 5, fetchedAt: AT }, installs: null } },
     sources: { github: { ok: true, at: AT }, telemetry: { ok: true, at: AT } },
   };
-  return new Map<string, string>([
+  return new Map<string, string | Uint8Array<ArrayBuffer>>([
     [`${BASE}index.json`, JSON.stringify(index)],
     [`${BASE}stats.json`, JSON.stringify(stats)],
     [`${BASE}cut/manifest.json`, release],
     [`${BASE}seo.json`, installer],
     [`${BASE}cut/icon.svg`, icon],
+    [`${BASE}cut/01.png`, new Uint8Array(png)],
   ]);
 }
 
 /** A fetch over `files`; `failures` answers 503 that many times per URL first. */
-function fakeFetch(files: Map<string, string>, failures = new Map<string, number>()) {
+function fakeFetch(
+  files: Map<string, string | Uint8Array<ArrayBuffer>>,
+  failures = new Map<string, number>(),
+) {
   const calls: string[] = [];
   const fetchImpl = async (input: string | URL | Request) => {
     const url = String(input);
@@ -99,9 +115,9 @@ function fakeFetch(files: Map<string, string>, failures = new Map<string, number
 const options = { baseUrl: BASE, retryDelayMs: 0, now: () => new Date(AT) };
 
 describe("fetchCatalogSnapshot", () => {
-  it("takes the index, the stats, each app's links and the icons for cards", async () => {
-    const { fetch } = fakeFetch(catalog());
-    const { snapshot, ogIcons } = await fetchCatalogSnapshot({ ...options, fetch });
+  it("takes the index, the stats, each app's links, and the icons and first screenshots for cards", async () => {
+    const { fetch, calls } = fakeFetch(catalog());
+    const { snapshot, ogIcons, ogScreenshots } = await fetchCatalogSnapshot({ ...options, fetch });
     expect(snapshot.takenAt).toBe(AT);
     expect(snapshot.index.apps.map((app) => app.slug)).toEqual(["cut", "seo"]);
     expect(snapshot.stats?.apps.cut?.stars?.count).toBe(5);
@@ -111,6 +127,11 @@ describe("fetchCatalogSnapshot", () => {
       seo: { repo: "acme/seo", homepage: "https://github.com/acme/seo" },
     });
     expect(ogIcons.cut).toMatch(/^data:image\/svg\+xml;base64,/);
+    expect(ogScreenshots).toEqual({
+      cut: { src: `data:image/png;base64,${png.toString("base64")}`, width: 1, height: 1 },
+    });
+    // Only the first screenshot is drawn, so only it is fetched.
+    expect(calls).not.toContain(`${BASE}cut/02.png`);
   });
 
   it("tries again after a failed request", async () => {
@@ -136,7 +157,7 @@ describe("fetchCatalogSnapshot", () => {
 
   it("fails on an index the schema refuses", async () => {
     const files = catalog();
-    const index = JSON.parse(files.get(`${BASE}index.json`) ?? "{}");
+    const index = JSON.parse(String(files.get(`${BASE}index.json`) ?? "{}"));
     index.apps[0].slug = "Cut";
     files.set(`${BASE}index.json`, JSON.stringify(index));
     const { fetch } = fakeFetch(files);
@@ -147,15 +168,16 @@ describe("fetchCatalogSnapshot", () => {
 
   it("keeps only the named apps when asked, for the checked-in fixture", async () => {
     const { fetch, calls } = fakeFetch(catalog());
-    const { snapshot, ogIcons } = await fetchCatalogSnapshot({
+    const { snapshot, ogIcons, ogScreenshots } = await fetchCatalogSnapshot({
       ...options,
       fetch,
       only: ["seo"],
-      ogIcons: false,
+      ogMedia: false,
     });
     expect(snapshot.index.apps.map((app) => app.slug)).toEqual(["seo"]);
     expect(Object.keys(snapshot.stats?.apps ?? {})).toEqual([]);
     expect(ogIcons).toEqual({});
+    expect(ogScreenshots).toEqual({});
     expect(calls).not.toContain(`${BASE}cut/manifest.json`);
   });
 });

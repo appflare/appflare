@@ -9,6 +9,7 @@ import { ogImages } from "./src/build/og-images.ts";
 import { catalogData, loadCatalog, snapshotMode } from "./src/catalog/plugin.ts";
 import { catalogPagePaths, handoffPagePaths } from "./src/catalog/urls.ts";
 import { markdownUrl, pageUrl, SITE_URL, searchIndexPath } from "./src/lib/shared.ts";
+import { docsScreenshots } from "./src/og/plugin.ts";
 import { manifestReference, referencePage } from "./src/reference/integration.ts";
 
 /**
@@ -53,6 +54,7 @@ export default defineConfig(async () => {
     },
     plugins: [
       catalogData(catalog),
+      docsScreenshots(),
       manifestReference(),
       fumadocsMdx(),
       tailwindcss(),

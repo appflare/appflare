@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Plugin } from "vite";
+import type { OgPicture } from "../og/picture.ts";
 import { fetchCatalogSnapshot } from "./fetch-snapshot.ts";
 import { type SiteCatalog, siteCatalog } from "./site-catalog.ts";
 import { parseCatalogSnapshot } from "./snapshot.ts";
@@ -30,6 +31,8 @@ export interface LoadedCatalog {
   site: SiteCatalog;
   /** Icons drawn into the apps' OpenGraph cards, by slug; empty for the fixture. */
   ogIcons: Record<string, string>;
+  /** Each app's first screenshot for its OpenGraph cards, by slug; empty for the fixture. */
+  ogScreenshots: Record<string, OgPicture>;
 }
 
 /**
@@ -56,29 +59,32 @@ export function loadCatalog(mode: SnapshotMode): Promise<LoadedCatalog> {
 
 async function readCatalog(mode: SnapshotMode): Promise<LoadedCatalog> {
   if (mode === "live") {
-    const { snapshot, ogIcons } = await fetchCatalogSnapshot();
-    return { mode, site: siteCatalog(snapshot), ogIcons };
+    const { snapshot, ogIcons, ogScreenshots } = await fetchCatalogSnapshot();
+    return { mode, site: siteCatalog(snapshot), ogIcons, ogScreenshots };
   }
   const fixture: unknown = JSON.parse(readFileSync(fixtureUrl, "utf8"));
   const snapshot = parseCatalogSnapshot(fixture, "the checked-in fixture");
-  return { mode, site: siteCatalog(snapshot), ogIcons: {} };
+  return { mode, site: siteCatalog(snapshot), ogIcons: {}, ogScreenshots: {} };
 }
 
 /** The catalog, as the pages import it. */
 export const CATALOG_MODULE = "virtual:appflare-catalog";
 /** The OpenGraph icons, imported only by the route that draws the cards. */
 export const OG_ICONS_MODULE = "virtual:appflare-catalog-og-icons";
+/** The apps' first screenshots for the OpenGraph cards, imported by the same route. */
+export const OG_SCREENSHOTS_MODULE = "virtual:appflare-catalog-og-screenshots";
 
 /** A module whose default export is `value`, parsed from JSON (faster than an object literal). */
 function jsonModule(value: unknown): string {
   return `export default JSON.parse(${JSON.stringify(JSON.stringify(value))});\n`;
 }
 
-/** Serves the loaded catalog to the pages as two virtual modules. */
+/** Serves the loaded catalog to the pages as three virtual modules, each made when first loaded. */
 export function catalogData(catalog: LoadedCatalog): Plugin {
-  const modules = new Map<string, string>([
-    [`\0${CATALOG_MODULE}`, jsonModule(catalog.site)],
-    [`\0${OG_ICONS_MODULE}`, jsonModule(catalog.ogIcons)],
+  const modules = new Map<string, unknown>([
+    [`\0${CATALOG_MODULE}`, catalog.site],
+    [`\0${OG_ICONS_MODULE}`, catalog.ogIcons],
+    [`\0${OG_SCREENSHOTS_MODULE}`, catalog.ogScreenshots],
   ]);
   return {
     name: "appflare-catalog-data",
@@ -92,11 +98,10 @@ export function catalogData(catalog: LoadedCatalog): Plugin {
       );
     },
     resolveId(id) {
-      if (id === CATALOG_MODULE || id === OG_ICONS_MODULE) return `\0${id}`;
-      return null;
+      return modules.has(`\0${id}`) ? `\0${id}` : null;
     },
     load(id) {
-      return modules.get(id) ?? null;
+      return modules.has(id) ? jsonModule(modules.get(id)) : null;
     },
   };
 }

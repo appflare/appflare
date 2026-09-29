@@ -1,68 +1,57 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { ImageResponse } from "takumi-js/response";
-import fullLogo from "../../../../docs/assets/logo_full.svg?raw";
-import squareLogo from "../../../../docs/assets/logo_square.svg?raw";
-import squareLogoWhite from "../../../../docs/assets/logo_square_white.svg?raw";
-import { categoryIconUri } from "./category-icons.tsx";
-import { fitText } from "./fit.ts";
+import {
+  Address,
+  AppTile,
+  type CardApp,
+  Chip,
+  type Crop,
+  colors,
+  IconWall,
+  InstallPill,
+  MarkTile,
+  RepoAddress,
+  Split,
+  type SplitFrame,
+  Window,
+  YOUR_APPS_CROP,
+} from "./base.tsx";
+import type { OgPicture } from "./picture.ts";
 
 /**
- * The site's OpenGraph cards, one family in the site's own look: a light
- * neutral canvas, the Appflare logo, the orange of the cloud in the mark as
- * the one accent, a large title, and a quiet footer with the page's address.
+ * The site's OpenGraph cards, in the same system as the GitHub social
+ * previews (`base.tsx`): the logo top left, a large left-aligned headline
+ * and its sub-line, the page's address in the footer, and a picture of the
+ * product on the right.
  *
- * Each card is 1200x630 and centred on one column, as the front page's hero
- * is: the full card shows on X, Slack, LinkedIn and iMessage, and the square
- * thumbnails some apps cut from its middle still hold the icon and the title.
+ * Each card is 1200x630. Nothing runs closer than 64 pixels to the top and
+ * bottom or 80 to the left, so the 1.91:1 crops of X, LinkedIn and Slack
+ * lose nothing, and the square thumbnails some apps cut from the middle
+ * still hold most of the headline and the picture beside it.
  */
 
 export const OG_WIDTH = 1200;
 export const OG_HEIGHT = 630;
 
-const svgUri = (svg: string) => `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+export type { CardApp } from "./base.tsx";
 
-/** The mark and wordmark, black with the orange cloud. */
-export const LOGO = svgUri(fullLogo);
-export const LOGO_RATIO = 69.89 / 14.96;
-/** The square mark, black with the orange cloud. */
-export const MARK = svgUri(squareLogo);
-/** The square mark in white with the orange cloud, for a dark surface. */
-export const MARK_WHITE = svgUri(squareLogoWhite);
+/** The manager's Home screenshot, as the docs pages link it. */
+export const DASHBOARD = "/screenshots/home-dashboard.png";
 
-export const colors = {
-  ink: "#0a0a0a",
-  muted: "#525252",
-  soft: "#8a8a8a",
-  line: "#e5e5e5",
-  canvas: "#fafafa",
-  tile: "#f4f4f4",
-  flare: "#fb6b00",
-} as const;
-
-/**
- * The canvas: the soft orange light below the front page's hero, over a faint
- * dot grid that fades out behind the words.
- */
-export const GLOW = [
-  "radial-gradient(ellipse 62% 58% at 50% 112%, rgba(251,107,0,0.16), rgba(251,107,0,0) 100%)",
-  "radial-gradient(ellipse 58% 62% at 50% 48%, #fafafa 40%, rgba(250,250,250,0) 100%)",
-  "radial-gradient(circle, rgba(0,0,0,0.13) 1.5px, rgba(0,0,0,0) 2px)",
-].join(", ");
-
-/** The widest a line of text runs, leaving the sides clear. */
-const COLUMN = 960;
-
-/** An app as a card draws it. */
-export interface CardApp {
-  name: string;
-  /** The one line under the name. */
-  pitch: string;
-  /** The icon as a data URI; null draws the name's first letter instead. */
-  icon: string | null;
+/** A screenshot of the docs, with the address the pages use for it. */
+export interface DocsPicture {
+  path: string;
+  picture: OgPicture;
 }
 
 export type OgCard =
-  | { kind: "site"; title: string; description: string }
+  | {
+      kind: "site";
+      title: string;
+      description: string;
+      /** The manager's Home; null draws Appflare's mark instead. */
+      dashboard: OgPicture | null;
+    }
   | {
       kind: "docs";
       /** The heading of the part of the docs the page is in, if any. */
@@ -71,14 +60,23 @@ export type OgCard =
       description?: string | undefined;
       /** The page's path, shown after `appflare.dev` in the footer. */
       path: string;
+      /** The first screenshot the page shows, else the manager's Home; null draws the mark. */
+      screenshot: DocsPicture | null;
     }
-  | { kind: "app"; app: CardApp; categories: string[]; path: string }
-  | { kind: "install"; app: CardApp; path: string }
+  | {
+      kind: "app";
+      app: CardApp;
+      categories: string[];
+      path: string;
+      /** The app's first screenshot; null draws its icon large. */
+      screenshot: OgPicture | null;
+    }
+  | { kind: "install"; app: CardApp; path: string; screenshot: OgPicture | null }
   | {
       kind: "category";
-      id: string;
       title: string;
       description: string;
+      /** The category's apps, the ones the card shows first. */
       apps: CardApp[];
       path: string;
     }
@@ -93,239 +91,233 @@ export function renderOgCard(card: OgCard): Response {
   });
 }
 
+const FRAME: SplitFrame = {
+  padding: "64px 80px 58px",
+  logo: 46,
+  text: 540,
+  title: { lines: 3, max: 60, min: 42 },
+  line: { width: 500, lines: 3, max: 26, min: 21 },
+  gap: 22,
+  footer: { size: 22, gap: 20 },
+};
+
+/** The install page's headline is a sentence, so it is drawn a size down. */
+const INSTALL_FRAME: SplitFrame = {
+  ...FRAME,
+  title: { lines: 3, max: 54, min: 40 },
+  line: { ...FRAME.line, lines: 2 },
+};
+
+/** Where a window with a screenshot sits: right of the words, running off the right and bottom edges. */
+const WINDOW = { left: 652, top: 88, width: 640, height: 620 };
+/** The height of the window's title bar. */
+const BAR = 41;
+/** The part of the window's content inside the card. */
+const VIEW = { width: OG_WIDTH - WINDOW.left, height: OG_HEIGHT - WINDOW.top - BAR };
+/** The middle of the space right of the words. */
+const RIGHT_CENTRE = 915;
+
 export function ogCardElement(card: OgCard): ReactNode {
   switch (card.kind) {
     case "site":
-      return <SiteCard title={card.title} description={card.description} />;
+      return (
+        <Split
+          frame={FRAME}
+          title={card.title}
+          line={card.description}
+          footer={<RepoAddress repo="appflare/appflare" size={FRAME.footer.size} />}
+        >
+          {card.dashboard === null ? (
+            <MarkPicture />
+          ) : (
+            <Screenshot picture={card.dashboard} crop={YOUR_APPS_CROP} />
+          )}
+        </Split>
+      );
     case "docs":
-      return <DocsCard {...card} />;
+      return (
+        <Split
+          frame={FRAME}
+          eyebrow={card.section ?? "Docs"}
+          title={card.title}
+          line={firstSentence(card.description ?? "")}
+          footer={<Address path={card.path} size={FRAME.footer.size} />}
+        >
+          {card.screenshot === null ? (
+            <MarkPicture />
+          ) : (
+            <Screenshot
+              picture={card.screenshot.picture}
+              crop={
+                card.screenshot.path === DASHBOARD
+                  ? YOUR_APPS_CROP
+                  : docsCrop(card.screenshot.picture)
+              }
+            />
+          )}
+        </Split>
+      );
     case "app":
-      return <AppCard app={card.app} categories={card.categories} path={card.path} />;
+      return (
+        <Split
+          frame={FRAME}
+          title={card.app.name}
+          line={card.app.pitch}
+          extra={
+            <>
+              {card.categories.length > 0 && (
+                <Row gap={10}>
+                  {card.categories.slice(0, 3).map((label) => (
+                    <Chip key={label} size={20}>
+                      {label}
+                    </Chip>
+                  ))}
+                </Row>
+              )}
+              <Row gap={0} style={{ marginTop: 6 }}>
+                <InstallPill size={24} />
+              </Row>
+            </>
+          }
+          footer={<Address path={card.path} size={FRAME.footer.size} />}
+        >
+          {card.screenshot === null ? (
+            <IconPicture app={card.app} />
+          ) : (
+            <Screenshot picture={card.screenshot} crop={appCrop(card.screenshot)} />
+          )}
+        </Split>
+      );
     case "install":
-      return <InstallCard app={card.app} path={card.path} />;
+      return (
+        <Split
+          frame={INSTALL_FRAME}
+          title={`Install ${card.app.name}`}
+          tail="in your Cloudflare account"
+          line={card.app.pitch}
+          extra={
+            <Row gap={0} style={{ marginTop: 6 }}>
+              <InstallPill size={24} />
+            </Row>
+          }
+          footer={<Address path={card.path} size={FRAME.footer.size} />}
+        >
+          {card.screenshot === null ? (
+            <InstallPicture app={card.app} />
+          ) : (
+            <ScreenshotWithIcon picture={card.screenshot} app={card.app} />
+          )}
+        </Split>
+      );
     case "category":
       return (
-        <ListCard
-          badge={<img src={categoryIconUri(card.id, colors.ink)} width={60} height={60} alt="" />}
+        <Split
+          frame={FRAME}
+          eyebrow="Category"
           title={card.title}
-          description={card.description}
-          apps={card.apps}
-          path={card.path}
-        />
+          line={card.description}
+          footer={<Address path={card.path} size={FRAME.footer.size} />}
+        >
+          <IconGrid apps={card.apps} />
+        </Split>
       );
     case "apps":
       return (
-        <ListCard
-          badge={<img src={MARK} width={62} height={62} alt="" />}
+        <Split
+          frame={FRAME}
+          eyebrow="Catalog"
           title={card.title}
-          description={card.description}
-          apps={card.apps}
-          path={card.path}
-        />
+          line={card.description}
+          footer={<Address path={card.path} size={FRAME.footer.size} />}
+        >
+          <IconWall apps={card.apps} left={676} top={-44} size={108} gap={24} />
+        </Split>
       );
   }
 }
 
-/* Pieces the cards share. */
-
-export function Canvas({ children, style }: { children: ReactNode; style?: CSSProperties }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        position: "relative",
-        width: "100%",
-        height: "100%",
-        backgroundColor: colors.canvas,
-        backgroundImage: GLOW,
-        backgroundSize: "100% 100%, 100% 100%, 28px 28px",
-        backgroundPosition: "0 0, 0 0, 14px 14px",
-        color: colors.ink,
-        fontFamily: "Geist",
-        ...style,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-export function Logo({ height }: { height: number }) {
-  return <img src={LOGO} width={Math.round(height * LOGO_RATIO)} height={height} alt="" />;
+/** The first sentence of a description, which is what fits under a headline. */
+export function firstSentence(text: string): string {
+  const trimmed = text.trim();
+  const end = /[.!?](?=\s+[A-Z0-9"'`(])/.exec(trimmed);
+  return end === null ? trimmed : trimmed.slice(0, end.index + 1);
 }
 
 /**
- * A centred card: the logo at the top (unless the card draws the mark
- * itself), the content in the middle, and the page's address at the bottom.
+ * The docs' screenshots are taken at twice their size: at 0.62 their text
+ * reads as the page does, from the top-left corner. A narrow one (a phone)
+ * is widened to fill the window, never past its own size.
  */
-function Frame({
-  path,
-  logo = true,
-  footer,
+export function docsCrop(picture: OgPicture): Crop {
+  const scale = picture.width * 0.62 >= VIEW.width ? 0.62 : Math.min(1, VIEW.width / picture.width);
+  return { scale, x: 0, y: 0 };
+}
+
+/**
+ * An app's own screenshot, fitted to the window's width so the whole of its
+ * top shows, never scaled up past its own size.
+ */
+export function appCrop(picture: OgPicture): Crop {
+  return { scale: Math.min(1, WINDOW.width / picture.width), x: 0, y: 0 };
+}
+
+/**
+ * Where the window for a crop sits. A crop taller than the card shows runs
+ * off the bottom edge; a shorter one gets a window its own height, centred
+ * beside the words, rather than an empty one.
+ */
+export function windowFor(picture: OgPicture, crop: Crop) {
+  const shown = Math.round(picture.height * crop.scale) - crop.y;
+  if (shown >= VIEW.height - 24) return WINDOW;
+  const height = shown + BAR;
+  return { ...WINDOW, top: Math.round((OG_HEIGHT - height) / 2), height };
+}
+
+/** A screenshot in a window, placed by {@link windowFor}. */
+function Screenshot({ picture, crop }: { picture: OgPicture; crop: Crop }) {
+  return <Window picture={picture} crop={crop} {...windowFor(picture, crop)} />;
+}
+
+/** An app's screenshot, with its icon over the window's lower-left corner. */
+function ScreenshotWithIcon({ picture, app }: { picture: OgPicture; app: CardApp }) {
+  const crop = appCrop(picture);
+  const window = windowFor(picture, crop);
+  const size = 124;
+  const top = Math.min(window.top + window.height - size + 28, OG_HEIGHT - size - 48);
+  return (
+    <>
+      <Window picture={picture} crop={crop} {...window} />
+      <div style={{ display: "flex", position: "absolute", left: window.left - 40, top }}>
+        <AppTile app={app} size={size} />
+      </div>
+    </>
+  );
+}
+
+function Row({
+  gap,
+  style,
   children,
 }: {
-  path: string;
-  logo?: boolean;
-  /** What the bottom shows instead of the address. */
-  footer?: ReactNode;
+  gap: number;
+  style?: import("react").CSSProperties;
   children: ReactNode;
 }) {
-  return (
-    <Canvas style={{ alignItems: "center", padding: "52px 80px 48px" }}>
-      <div style={{ display: "flex", height: 34 }}>{logo && <Logo height={34} />}</div>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          flexGrow: 1,
-          width: "100%",
-        }}
-      >
-        {children}
-      </div>
-      <div style={{ display: "flex", alignItems: "center", height: 40 }}>
-        {footer ?? <Address path={path} />}
-      </div>
-    </Canvas>
-  );
+  return <div style={{ display: "flex", alignItems: "center", gap, ...style }}>{children}</div>;
 }
 
-/** `appflare.dev/start/install`: the site, then the page's path a shade darker. */
-export function Address({ path, size = 24 }: { path: string; size?: number }) {
-  const rest = path.replace(/\/$/, "");
-  return (
-    <div style={{ display: "flex", fontSize: size, color: colors.soft, letterSpacing: "-0.01em" }}>
-      <span>appflare.dev</span>
-      {rest !== "" && <span style={{ color: colors.muted }}>{rest}</span>}
-    </div>
-  );
-}
-
-/** A small caps label after the orange dot the front page puts before its own. */
-export function Eyebrow({ children }: { children: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-      <div style={{ width: 11, height: 11, borderRadius: 6, backgroundColor: colors.flare }} />
-      <span
-        style={{
-          fontSize: 21,
-          fontWeight: 600,
-          letterSpacing: "0.14em",
-          textTransform: "uppercase",
-          color: colors.muted,
-        }}
-      >
-        {children}
-      </span>
-    </div>
-  );
-}
-
-const clamp = (lines: number): CSSProperties => ({
-  display: "block",
-  lineClamp: lines,
-  textOverflow: "ellipsis",
-});
-
-/** A title fitted to at most `lines` lines of `width`, then clamped to them. */
-export function Title({
-  children,
-  width,
-  lines = 2,
-  max,
-  min,
-  style,
-}: {
-  children: string;
-  width: number;
-  lines?: number;
-  max: number;
-  min: number;
-  style?: CSSProperties;
-}) {
-  const size = fitText(children, { width, lines, max, min, bold: true });
-  return (
-    <div
-      style={{
-        ...clamp(lines),
-        maxWidth: width,
-        fontSize: size,
-        fontWeight: 700,
-        lineHeight: 1.06,
-        letterSpacing: "-0.035em",
-        textAlign: "center",
-        textWrap: "balance",
-        ...style,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-/** The sub-line under a title, fitted and clamped like it. */
-export function Subline({
-  children,
-  width,
-  lines = 2,
-  max = 30,
-  min = 24,
-  style,
-}: {
-  children: string;
-  width: number;
-  lines?: number;
-  max?: number;
-  min?: number;
-  style?: CSSProperties;
-}) {
-  const size = fitText(children, { width, lines, max, min });
-  return (
-    <div
-      style={{
-        ...clamp(lines),
-        maxWidth: width,
-        fontSize: size,
-        lineHeight: 1.34,
-        color: colors.muted,
-        letterSpacing: "-0.01em",
-        textAlign: "center",
-        textWrap: "balance",
-        ...style,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-/** A white rounded tile with a hairline and a soft shadow, as app icons sit on. */
-function Tile({
-  size,
-  dark = false,
-  children,
-}: {
-  size: number;
-  dark?: boolean;
-  children: ReactNode;
-}) {
+/** Something centred in the space right of the words. */
+function Right({ width, top, children }: { width: number; top: number; children: ReactNode }) {
   return (
     <div
       style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        flexShrink: 0,
-        width: size,
-        height: size,
-        borderRadius: Math.round(size * 0.24),
-        backgroundColor: dark ? colors.ink : "#ffffff",
-        border: dark ? "none" : `${Math.max(1, Math.round(size / 100))}px solid ${colors.line}`,
-        boxShadow: `0 ${Math.round(size / 12)}px ${Math.round(size / 4)}px -${Math.round(size / 10)}px rgba(0,0,0,${dark ? 0.3 : 0.16})`,
-        overflow: "hidden",
+        position: "absolute",
+        left: RIGHT_CENTRE - width / 2,
+        top,
+        width,
       }}
     >
       {children}
@@ -333,262 +325,103 @@ function Tile({
   );
 }
 
-/** An app's icon on a tile, or the first letter of its name when it has none. */
-export function AppTile({ app, size }: { app: CardApp; size: number }) {
-  if (app.icon === null) {
-    const letter = Array.from(app.name.trim())[0]?.toUpperCase() ?? "?";
-    return (
-      <Tile size={size}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "100%",
-            height: "100%",
-            backgroundColor: colors.tile,
-            fontSize: Math.round(size * 0.46),
-            fontWeight: 600,
-            color: colors.soft,
-          }}
-        >
-          {letter}
-        </div>
-      </Tile>
-    );
-  }
-  const inner = Math.round(size * 0.76);
+/** Appflare's mark, large, for a card without a screenshot. */
+function MarkPicture() {
   return (
-    <Tile size={size}>
-      <img
-        src={app.icon}
-        width={inner}
-        height={inner}
-        alt=""
-        style={{ objectFit: "contain", borderRadius: Math.round(size * 0.14) }}
-      />
-    </Tile>
+    <Right width={260} top={185}>
+      <MarkTile size={260} />
+    </Right>
   );
 }
 
-/** The dark "Install with Appflare" pill; the cloud in its mark is the card's accent. */
-export function InstallPill({ size = 24 }: { size?: number }) {
-  const unit = (n: number) => Math.round(size * n);
+/** An app's icon, large, on a soft tile of its own. */
+function IconPicture({ app }: { app: CardApp }) {
+  const size = 400;
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: unit(0.5),
-        padding: `${unit(0.5)}px ${unit(1)}px ${unit(0.5)}px ${unit(0.6)}px`,
-        borderRadius: 999,
-        backgroundColor: colors.ink,
-        color: "#ffffff",
-        fontSize: size,
-        fontWeight: 600,
-        letterSpacing: "-0.01em",
-      }}
-    >
-      <img src={MARK_WHITE} width={unit(1.3)} height={unit(1.3)} alt="" />
-      <span>Install with Appflare</span>
-    </div>
-  );
-}
-
-function Chip({ children }: { children: string }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        padding: "6px 18px",
-        borderRadius: 999,
-        border: `1px solid ${colors.line}`,
-        backgroundColor: "#ffffff",
-        fontSize: 21,
-        color: colors.muted,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-/* The kinds of card. */
-
-/** The front page, and any page without a card of its own. */
-function SiteCard({ title, description }: { title: string; description: string }) {
-  return (
-    <Canvas style={{ alignItems: "center", padding: "68px 80px 48px" }}>
-      <Logo height={54} />
+    <Right width={size} top={(OG_HEIGHT - size) / 2}>
       <div
         style={{
           display: "flex",
-          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          flexGrow: 1,
-          gap: 26,
+          width: size,
+          height: size,
+          borderRadius: 104,
+          border: `1px solid ${colors.line}`,
+          backgroundColor: "rgba(255,255,255,0.7)",
+          backgroundImage:
+            "radial-gradient(circle at 50% 40%, rgba(255,255,255,1) 0%, rgba(244,244,244,1) 100%)",
         }}
       >
-        <Title width={COLUMN} max={78} min={56}>
-          {title}
-        </Title>
-        <Subline width={820} max={30} min={24}>
-          {description}
-        </Subline>
+        <AppTile app={app} size={236} />
       </div>
-      <div style={{ display: "flex", alignItems: "center", height: 40 }}>
-        <Address path="" />
-      </div>
-    </Canvas>
+    </Right>
   );
 }
 
-function DocsCard({
-  section,
-  title,
-  description,
-  path,
-}: {
-  section: string | null;
-  title: string;
-  description?: string | undefined;
-  path: string;
-}) {
+/** The app, dots, and Appflare: what installing it does. */
+function InstallPicture({ app }: { app: CardApp }) {
   return (
-    <Frame path={path}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 24 }}>
-        <Eyebrow>{section ?? "Docs"}</Eyebrow>
-        <Title width={COLUMN} max={84} min={54}>
-          {title}
-        </Title>
-        {description !== undefined && description !== "" && (
-          <Subline width={860}>{description}</Subline>
-        )}
-      </div>
-    </Frame>
+    <Right width={500} top={225}>
+      <Row gap={22}>
+        <AppTile app={app} size={180} />
+        <Row gap={10}>
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 6,
+                backgroundColor: i === 2 ? colors.flare : "#d4d4d4",
+              }}
+            />
+          ))}
+        </Row>
+        <MarkTile size={180} />
+      </Row>
+    </Right>
   );
 }
 
-function AppCard({ app, categories, path }: { app: CardApp; categories: string[]; path: string }) {
+/**
+ * The first apps in a square grid: 3x3 for five apps or more, 2x2 for two to
+ * four, one large tile for one. A place the apps do not fill stays a faint tile.
+ */
+function IconGrid({ apps }: { apps: CardApp[] }) {
+  const cols = apps.length >= 5 ? 3 : apps.length >= 2 ? 2 : 1;
+  const size = [220, 168, 124][cols - 1] ?? 124;
+  const gap = cols === 3 ? 26 : 30;
+  const places = Array.from({ length: cols }, (_, i) => i);
+  const rows = places.map((row) => places.map((col) => apps[row * cols + col]));
+  const side = size * cols + gap * (cols - 1);
   return (
-    <Frame path={path} footer={<InstallPill size={23} />}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <AppTile app={app} size={156} />
-        <Title width={COLUMN} lines={1} max={76} min={52} style={{ marginTop: 30 }}>
-          {app.name}
-        </Title>
-        <Subline width={860} max={30} min={24} style={{ marginTop: 12 }}>
-          {app.pitch}
-        </Subline>
-        {categories.length > 0 && (
-          <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
-            {categories.slice(0, 3).map((label) => (
-              <Chip key={label}>{label}</Chip>
-            ))}
-          </div>
-        )}
-      </div>
-    </Frame>
-  );
-}
-
-function InstallCard({ app, path }: { app: CardApp; path: string }) {
-  const title = `Install ${app.name} in your Cloudflare account`;
-  const size = fitText(title, { width: COLUMN, lines: 2, max: 68, min: 48, bold: true });
-  return (
-    <Frame path={path} logo={false}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 34 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <AppTile app={app} size={124} />
-          <Connector />
-          <Tile size={124} dark>
-            <img src={MARK_WHITE} width={76} height={76} alt="" />
-          </Tile>
-        </div>
-        <div
-          style={{
-            ...clamp(2),
-            maxWidth: COLUMN,
-            fontSize: size,
-            fontWeight: 700,
-            lineHeight: 1.08,
-            letterSpacing: "-0.035em",
-            textAlign: "center",
-            textWrap: "balance",
-          }}
-        >
-          <span>Install {app.name} </span>
-          <span style={{ color: colors.soft }}>in your Cloudflare account</span>
-        </div>
-        <Subline width={860} lines={1} max={28} min={22}>
-          {app.pitch}
-        </Subline>
-      </div>
-    </Frame>
-  );
-}
-
-/** Dots from the app to Appflare, the last one orange. */
-function Connector() {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      {[0, 1, 2].map((i) => (
-        <div
-          key={i}
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: 5,
-            backgroundColor: i === 2 ? colors.flare : "#d4d4d4",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-/** The apps page and a category page: a badge, the title, and the first apps' icons. */
-function ListCard({
-  badge,
-  title,
-  description,
-  apps,
-  path,
-}: {
-  badge: ReactNode;
-  title: string;
-  description: string;
-  apps: CardApp[];
-  path: string;
-}) {
-  const shown = apps.slice(0, 7);
-  const more = apps.length - shown.length;
-  return (
-    <Frame path={path}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 26 }}>
-          <Tile size={96}>{badge}</Tile>
-          <Title width={COLUMN - 130} lines={1} max={72} min={48}>
-            {title}
-          </Title>
-        </div>
-        <Subline width={880} style={{ marginTop: 26 }}>
-          {description}
-        </Subline>
-        {shown.length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 34 }}>
-            {shown.map((app) => (
-              <AppTile key={app.name} app={app} size={72} />
-            ))}
-            {more > 0 && (
-              <span style={{ fontSize: 24, fontWeight: 600, color: colors.soft, marginLeft: 4 }}>
-                +{more}
-              </span>
+    <Right width={side} top={(OG_HEIGHT - side) / 2}>
+      <div style={{ display: "flex", flexDirection: "column", gap }}>
+        {rows.map((row, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the rows never reorder
+          <Row key={i} gap={gap}>
+            {row.map((app, j) =>
+              app === undefined ? (
+                <div
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the places never reorder
+                  key={j}
+                  style={{
+                    width: size,
+                    height: size,
+                    borderRadius: Math.round(size * 0.24),
+                    border: `1px dashed ${colors.line}`,
+                    backgroundColor: "rgba(255,255,255,0.5)",
+                  }}
+                />
+              ) : (
+                // biome-ignore lint/suspicious/noArrayIndexKey: two apps may share a name
+                <AppTile key={j} app={app} size={size} />
+              ),
             )}
-          </div>
-        )}
+          </Row>
+        ))}
       </div>
-    </Frame>
+    </Right>
   );
 }
