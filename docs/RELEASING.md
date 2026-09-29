@@ -27,9 +27,11 @@ Releases, tagged `manager@<version>`. The installer is published to npm as
      baked in, stamps the catalog manifest's `source` with the version and commit,
      packs `apps/manager` into an unsigned intermediate, and checks it.
    - **sign** (holds only `APPFLARE_SIGNING_KEY`, runs only the packer): checks
-     that `manifest.json` is `appflare@<version>` from the version commit with key id
-     `appflare-2026-09`, signs it, and verifies the signature against the public
-     keys embedded in `@appflare/schema`.
+     that `manifest.json` is format 1, `appflare@<version>` with key id
+     `appflare-2026-09`, and built from this repository's version commit (the
+     embedded catalog manifest's `repo`, `source.sha`, and `source.ref`), signs
+     it, and verifies the signature against the public keys embedded in
+     `@appflare/schema`.
    - **release**: verifies again and creates the GitHub Release `manager@<version>`
      with `appflare-<version>.zip`, `manifest.json`, and `manifest.sig` (or uploads
      them to a draft or partial release and publishes it); the notes are the
