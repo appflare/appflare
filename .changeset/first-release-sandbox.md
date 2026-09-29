@@ -1,5 +1,0 @@
----
-"@appflare/sandbox-worker": minor
----
-
-The first public release of the optional sandbox Worker, which you enable from Appflare's Settings on the Workers Paid plan. It builds apps from their source repository inside a Cloudflare Container, so Appflare can install apps that publish no prebuilt release and apps that deploy themselves. It reports each build's progress and log back to the manager.
