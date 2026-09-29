@@ -177,8 +177,9 @@ each release of the current manager version, three jobs of `release.yml` publish
   commit that set it (the version commit). It does nothing while the version is
   `0.0.0` or when `npm view create-appflare@<version> version` already answers with
   it. A version with a pre-release suffix goes out under the `next` dist-tag, so
-  `npx create-appflare` keeps running the latest release.
-- **npm-pack** (read-only, no secrets) checks out the version commit, installs
+  `npx create-appflare` keeps running the latest release. It publishes only when
+  the run's commit has the version commit's build inputs (see below).
+- **npm-pack** (read-only, no secrets) checks out the run's commit, installs
   without dependency scripts, builds the installer, runs
   `pnpm --filter create-appflare run test:dist`, and packs it with
   `node packages/cli/scripts/pack.mjs`: `pnpm pack` (workspace versions resolved,
@@ -207,16 +208,25 @@ each release of the current manager version, three jobs of `release.yml` publish
 npm matches a trusted publisher against the workflow file that started the run, so
 the publish jobs live in `release.yml` itself rather than in a workflow it calls.
 
-A provenance statement names the commit its workflow run is for, so only the run
-for the version commit publishes; any other run shows a notice naming that commit.
-Two consequences:
+A provenance statement names the commit its workflow run is for, and npm-pack builds
+that commit. So a run publishes only when its commit builds the same installer as
+the version commit: npm-plan compares the git tree (or blob) id of each build input
+at both commits (`git rev-parse <commit>:<path>`) and logs the paths it compared.
+The inputs are `packages/cli` and the workspace packages its build pulls in
+(`packages/schema`, `packages/pack`, `packages/cf-api`), `pnpm-lock.yaml`,
+`pnpm-workspace.yaml`, the root `package.json`, `turbo.json`, `.node-version`, and
+every root `tsconfig*.json`. A run for a later commit that changed only other files
+(a workflow, the docs, an app) publishes; if any input differs, the run shows a
+notice naming the version commit and the differing paths. Two consequences:
 
-- **Merge the version pull request with "Squash and merge" or "Rebase and merge".**
-  A merge commit is not the version commit, so no run would be for it.
-- **To catch up a failed or skipped publish**, open the release workflow run for the
+- **Prefer "Squash and merge" or "Rebase and merge" for the version pull request.**
+  The run for a merge commit publishes only if the merge left the installer's
+  build inputs as the version commit has them.
+- **To catch up a failed or skipped publish**, re-run the release workflow. A
+  manual run from `main` publishes while `main` still has the version commit's
+  build inputs; once they have changed, open the release workflow run for the
   version commit (Actions > release, the run whose commit is the one the notice
-  names) and select **Re-run all jobs**. A re-run keeps the run's commit; a new
-  push or a manual run from `main` does not publish.
+  names) and select **Re-run all jobs**. A re-run keeps the run's commit.
 
 To check what would be published, from a checkout:
 

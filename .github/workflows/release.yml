@@ -34,10 +34,11 @@ name: release
 #   npm-plan      read-only; for the current version only, after the release,
 #                 decides whether the installer (packages/cli, create-appflare)
 #                 is published: not at 0.0.0, not when npm already has its
-#                 version, and, with a notice, only by the run for the commit
-#                 that set that version (npm's provenance names the run's commit)
+#                 version, and, with a notice, only by a run whose commit has
+#                 the same build inputs (git tree ids) as the commit that set
+#                 that version (npm's provenance names the run's commit)
 #   npm-pack      read-only, no secrets; builds, checks and packs the installer
-#                 from that commit
+#                 from the run's commit
 #   npm-publish   id-token: write, and NPM_TOKEN when set; no checkout and no
 #                 build, only npm on the packed tarball. Publishes it with
 #                 provenance, with the token or, without it, through npm
@@ -831,8 +832,9 @@ jobs:
 
   # --------------------------------------------------------------------------
   # The installer on npm (packages/cli): `npx create-appflare` runs the version
-  # published here. Published after the manager's GitHub Release, from the
-  # commit that set packages/cli/package.json's version. npm's trusted
+  # published here. Published after the manager's GitHub Release, by a run
+  # whose commit builds the same installer as the commit that set
+  # packages/cli/package.json's version. npm's trusted
   # publisher names this file, release.yml, so the publish stays in this
   # workflow rather than in a called one.
   # --------------------------------------------------------------------------
@@ -929,14 +931,38 @@ jobs:
             echo "publish=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
-          # npm's provenance names the commit this run is for, so only a run for
-          # the version commit itself may build and publish it.
-          if [ "${sha}" != "${GITHUB_SHA}" ]; then
-            echo "::notice title=create-appflare was not published::${PACKAGE}@${version} was set by ${sha}, and this run is for ${GITHUB_SHA}. Re-run all jobs of the release workflow run for ${sha} to publish it (docs/RELEASING.md)."
+          # npm's provenance names the commit this run is for, and npm-pack
+          # builds that commit. That is honest only when the commit builds the
+          # same installer as the version commit: every build input, compared by
+          # its git tree (or blob) id, is identical in both. The inputs are the
+          # installer and the workspace packages it builds with (turbo's
+          # `--filter=create-appflare...`: @appflare/schema, @appflare/pack, and
+          # pack's @appflare/cf-api), the lockfile, the workspace, root and turbo
+          # manifests, the root tsconfig files, and the Node version.
+          inputs=(packages/cli packages/schema packages/pack packages/cf-api
+            pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json .node-version)
+          while read -r path; do
+            inputs+=("${path}")
+          done < <(for commit in "${sha}" "${GITHUB_SHA}"; do
+            git ls-tree --name-only "${commit}"
+          done | grep -E '^tsconfig[^/]*\.json$' | sort -u)
+          echo "comparing the build inputs of ${sha} and ${GITHUB_SHA}: ${inputs[*]}"
+          differ=()
+          for path in "${inputs[@]}"; do
+            ours="$(git rev-parse -q --verify "${GITHUB_SHA}:${path}" || echo missing)"
+            theirs="$(git rev-parse -q --verify "${sha}:${path}" || echo missing)"
+            if [ "${ours}" != "${theirs}" ]; then
+              differ+=("${path}")
+            fi
+          done
+          if [ "${#differ[@]}" -gt 0 ]; then
+            echo "build inputs that differ: ${differ[*]}"
+            echo "::notice title=create-appflare was not published::${PACKAGE}@${version} was set by ${sha}, and this run is for ${GITHUB_SHA}, which changes its build inputs (${differ[*]}). Re-run all jobs of the release workflow run for ${sha} to publish it (docs/RELEASING.md)."
             echo "publish=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
-          echo "::notice::publishing ${PACKAGE}@${version} from ${sha}"
+          echo "build inputs identical to those of the version commit ${sha}: publishing"
+          echo "::notice::publishing ${PACKAGE}@${version}, set by ${sha}, from ${GITHUB_SHA}"
           echo "publish=true" >> "${GITHUB_OUTPUT}"
 
   npm-pack:
@@ -952,7 +978,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.npm-plan.outputs.sha }}
+          # The commit the provenance statement names; npm-plan checked that it
+          # has the version commit's build inputs.
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
