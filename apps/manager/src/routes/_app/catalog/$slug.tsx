@@ -1,4 +1,3 @@
-import { appPitch } from "@appflare/schema/catalog-display";
 import { Banner, Button, Empty } from "@cloudflare/kumo";
 import { PlusIcon, StorefrontIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
@@ -165,7 +164,7 @@ function AppPage({
         <AppPageHeader
           name={app.name}
           iconSrc={detail.images.icon}
-          tagline={appPitch(app)}
+          tagline={app.tagline}
           authors={detail.authors}
           // Avatars come through the official catalog's proxy only; others get monograms.
           withAvatars={detail.source?.official !== false}
@@ -233,7 +232,11 @@ function AppPage({
 
       {catalog !== null && (
         <AppSection title="Links">
-          <LinksList links={appLinks(catalog, detail.appLicense)} maintainers={app.maintainers} />
+          <LinksList
+            links={appLinks(catalog, detail.appLicense)}
+            maintainers={app.maintainers}
+            licenseNote={detail.appLicense?.note ?? null}
+          />
         </AppSection>
       )}
 

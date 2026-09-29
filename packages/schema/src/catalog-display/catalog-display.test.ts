@@ -1,38 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { SERVICE_IDS } from "../services";
-import { CATEGORY_IDS, canonicalCategory, categoryLabel } from "./categories";
+import { CATALOG_CATEGORIES, categoryLabel } from "./categories";
 import { PLAN_STATS, PLAN_WORDS } from "./plan";
 import { declaredServices, SERVICE_NAMES, serviceName, serviceNeedWords } from "./services";
 import { dateBuildDay } from "./versions";
 
 describe("categories", () => {
-  it("maps each folded category to the one it became", () => {
-    expect(canonicalCategory("blogging")).toBe("cms");
-    expect(canonicalCategory("gaming")).toBe("games");
-    expect(canonicalCategory("social")).toBe("community");
-    expect(canonicalCategory("storage")).toBe("files");
-    expect(canonicalCategory("games")).toBe("games");
-    expect(canonicalCategory("something-new")).toBe("something-new");
-    // Not a property of every object.
-    expect(canonicalCategory("constructor")).toBe("constructor");
-  });
-
-  it("labels slugs in sentence case, keeping acronyms", () => {
-    expect(categoryLabel("ai")).toBe("AI");
-    expect(categoryLabel("email")).toBe("Email");
+  it("labels an id of the list with the catalog's own label", () => {
+    for (const { id, label } of CATALOG_CATEGORIES) expect(categoryLabel(id)).toBe(label);
     expect(categoryLabel("cms")).toBe("Websites and blogs");
-    expect(categoryLabel("blogging")).toBe("Websites and blogs");
-    expect(categoryLabel("link-shortener")).toBe("Link shortener");
-    expect(categoryLabel("dns-tools")).toBe("DNS tools");
-    expect(categoryLabel("toString")).toBe("ToString");
+    expect(categoryLabel("ecommerce")).toBe("E-commerce");
   });
 
-  it("lists every labelled category once, and none of the folded ones", () => {
-    expect(new Set(CATEGORY_IDS).size).toBe(CATEGORY_IDS.length);
-    for (const folded of ["blogging", "gaming", "social", "storage"]) {
-      expect(CATEGORY_IDS).not.toContain(folded);
-    }
-    for (const id of CATEGORY_IDS) expect(canonicalCategory(id)).toBe(id);
+  it("spells out an id it does not know in sentence case, keeping acronyms", () => {
+    expect(categoryLabel("dns-tools")).toBe("DNS tools");
+    expect(categoryLabel("something-new")).toBe("Something new");
+    // Ids that were folded into another before the list was fixed read as themselves.
+    expect(categoryLabel("gaming")).toBe("Gaming");
+    // Not a property of every object.
+    expect(categoryLabel("toString")).toBe("ToString");
+    expect(categoryLabel("constructor")).toBe("Constructor");
   });
 });
 

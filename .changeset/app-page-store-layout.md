@@ -1,5 +1,0 @@
----
-"@appflare/manager": minor
----
-
-An app's catalog page is laid out like an app store. The header shows a large icon, the name, a one-line tagline (the catalog's tagline when it has one, else the first part of the summary), who made the app, and one action at the right: "Get", which opens the install form, or "Manage" once the app is installed, with the version under it. Where the build comes from ("Catalog build", "Your build", or the name of an added catalog) is shown once, as a small badge in the header. Under it, a row of small facts: stars, plan, license, version, size of the app's code, the day the catalog last tested it, and category, each explained on hover. Screenshots sit in one strip at the same height, scroll sideways with arrows on wider screens, and open larger in a dialog with previous and next; an app without screenshots shows none. Below come the description, what the app needs on your account in plain words ("R2 storage · not turned on", "Email Routing · ready"), the settings the install will ask for (variable names on hover), links to the source code, website and license, and the app's installs on this account.

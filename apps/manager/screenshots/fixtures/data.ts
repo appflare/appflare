@@ -1,7 +1,27 @@
-import catalogIndex from "./catalog.json";
+import {
+  type CatalogManifest,
+  catalogManifestSchema,
+  type IndexApp,
+  type IndexJson,
+  indexJsonSchema,
+} from "@appflare/schema";
+import type { CatalogDetail } from "../../src/catalog/catalog.functions";
+import { installVarFields } from "../../src/installs/install-vars";
+import type { InstallSettings } from "../../src/installs/reconfigure.server";
+import type { StartUpdateResult } from "../../src/installs/versions.server";
+import catalogIndexJson from "./catalog.json";
 import cloudmarkManifest from "./cloudmark-manifest.json";
 import cutManifest from "./cut-manifest.json";
 import emdashManifest from "./emdash-manifest.json";
+
+// Parsed as the manager reads them, so a fixture in an outdated shape fails
+// here instead of rendering a page the manager would never show.
+const catalogIndex: IndexJson = indexJsonSchema.parse(catalogIndexJson);
+const manifests: Record<string, CatalogManifest> = {
+  cut: catalogManifestSchema.parse(cutManifest.catalog),
+  cloudmark: catalogManifestSchema.parse(cloudmarkManifest.catalog),
+  emdash: catalogManifestSchema.parse(emdashManifest.catalog),
+};
 
 const now = "2026-09-28T09:00:00.000Z";
 const source = { id: "official", label: "Appflare", colour: "orange", official: true };
@@ -15,17 +35,17 @@ const names: Record<string, string> = {
   formzero: "Contact forms",
 };
 const icons = new Map(
-  catalogIndex.apps.map((app) => [app.slug, `/api/catalog/media/${app.media.icon.sha256}`]),
+  catalogIndex.apps.map((app) => [app.slug, `/api/catalog/media/${app.media?.icon?.sha256}`]),
 );
 function first<T>(items: T[]): T {
   const item = items[0];
   if (item === undefined) throw new Error("Screenshot fixture has no matching entry");
   return item;
 }
-const media = (app: (typeof catalogIndex.apps)[number]) => ({
+const media = (app: IndexApp) => ({
   icon: icons.get(app.slug),
   cover: null,
-  screenshots: (app.media.screenshots ?? []).map((shot) => ({
+  screenshots: (app.media?.screenshots ?? []).map((shot) => ({
     src: `/api/catalog/media/${shot.sha256}`,
     alt: shot.alt,
   })),
@@ -128,35 +148,6 @@ const catalogApps = catalogIndex.apps.map((app) => ({
   appLicense: { expression: app.license, note: null },
   pitch: app.tagline,
 }));
-const manifests: Record<
-  string,
-  {
-    catalog: {
-      vars?: Array<{
-        name: string;
-        label?: string;
-        help?: string;
-        required?: boolean;
-        default?: string;
-      }>;
-    };
-  }
-> = {
-  cut: cutManifest,
-  cloudmark: cloudmarkManifest,
-  emdash: emdashManifest,
-};
-const fallbackManifest: {
-  catalog: {
-    vars?: Array<{
-      name: string;
-      label?: string;
-      help?: string;
-      required?: boolean;
-      default?: string;
-    }>;
-  };
-} = { catalog: cutManifest.catalog };
 const job = {
   id: "01K5Q3MGN7F6YP8T2RC9VJ4BXA",
   kind: "install",
@@ -214,30 +205,27 @@ function detail(slug: string) {
   const app = first(
     catalogIndex.apps.filter((entry) => entry.slug === slug).concat(catalogIndex.apps),
   );
-  const manifest = manifests[app.slug] ?? fallbackManifest;
-  return {
+  const catalog = manifests[app.slug] ?? manifests.cut ?? null;
+  // The fields the index row and the catalog manifest shape, typed as the page reads them.
+  const entry: Pick<CatalogDetail, "app" | "catalog" | "authors" | "varFields" | "categories"> = {
     app,
+    catalog,
+    authors: app.authors,
+    varFields: catalog === null ? [] : installVarFields({ catalog, worker: { bindings: [] } }),
+    categories: app.categories,
+  };
+  return {
+    ...entry,
     key: app.slug,
     source,
     images: media(app),
     popularity: popularityBySlug[app.slug],
-    catalog: manifest.catalog,
-    authors: app.authors,
     creates: app.services.map((kind) => ({ kind, binding: kind.toUpperCase() })),
     durableObjects: [],
     error: null,
     instances: catalogApps.find((entry) => entry.slug === app.slug)?.instances ?? [],
     suggestedWorkerName: app.slug === "cloudmark" ? "cloudmark-2" : app.slug,
     fixedWorkerName: false,
-    varFields: (manifest.catalog.vars ?? []).map((field) => ({
-      name: field.name,
-      label: field.label ?? field.name,
-      help: field.help,
-      required: field.required ?? false,
-      kind: "text",
-      shownDefault: field.default ?? "",
-      options: null,
-    })),
     subdomain: "example",
     createsKnown: true,
     sandboxConnected: true,
@@ -247,7 +235,6 @@ function detail(slug: string) {
     accountPlan: "paid",
     capabilities: view,
     primitives: { ids: app.services, keyValueDurableObjects: false, complete: true },
-    categories: app.categories,
     appLicense: { expression: app.license, note: null },
     sourceBuilds: true,
   };
@@ -401,7 +388,7 @@ export function fixture(name: string, args: unknown[]): unknown {
     getCatalogEntry: () => detail(argument(args, "slug")),
     getInstall: () => installDetail(argument(args, "installId")),
     listSnapshots: () => [],
-    getInstallSettings: () => ({
+    getInstallSettings: (): InstallSettings => ({
       slug: "cut",
       kind: "artifact",
       unavailable: null,
@@ -414,12 +401,13 @@ export function fixture(name: string, args: unknown[]): unknown {
           kind: "text",
           shownDefault: "default",
           options: null,
-          value: "default",
+          stored: null,
         },
       ],
       placeholders: {
         workerName: "links",
-        workerUrl: "https://links.example.com",
+        workerUrl: "https://links.example.workers.dev",
+        appUrl: "https://links.example.com",
         wildcardHostname: null,
       },
       secrets: [
@@ -427,7 +415,7 @@ export function fixture(name: string, args: unknown[]): unknown {
           name: "ADMIN_PASSWORD",
           label: "Admin password",
           help: "Used to sign in to the app.",
-          generate: true,
+          generate: "password",
           declared: true,
           optional: false,
           present: true,
@@ -440,15 +428,17 @@ export function fixture(name: string, args: unknown[]): unknown {
       installer: null,
       appToken: null,
     }),
-    startUpdate: () => ({
+    startUpdate: (): StartUpdateResult => ({
       version: "0.1.1",
       needsSecrets: [
         {
           name: "STATUS_API_TOKEN",
           label: "Status API token",
           help: "Lets the checker read status updates.",
-          generate: false,
           optional: false,
+          seedOnly: false,
+          multiline: false,
+          cloudflareToken: false,
         },
       ],
       heldSecrets: [],

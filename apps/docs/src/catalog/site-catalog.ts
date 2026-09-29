@@ -1,5 +1,4 @@
 import {
-  authorsFromRepo,
   type CatalogAuthor,
   type FeaturedItem,
   type InstallTier,
@@ -11,7 +10,6 @@ import {
   type AppPopularity,
   appPitch,
   appPopularity,
-  canonicalCategory,
   categoryLabel,
   freshStats,
 } from "@appflare/schema/catalog-display";
@@ -28,22 +26,22 @@ import { catalogMediaUrl } from "./urls.ts";
 export interface SiteApp {
   slug: string;
   name: string;
-  /** The one line under the name: the tagline, else the first clause of the summary. */
+  /** The one line under the name: the tagline. */
   pitch: string;
   summary: string;
   version: string;
   plan: Plan;
   tier: InstallTier;
   requires: string[];
-  /** The services the catalog worked out; null when the index row does not say. */
-  services: string[] | null;
+  /** The services the catalog worked out. */
+  services: string[];
   lastVerified: string | null;
-  addedAt: string | null;
+  addedAt: string;
   authors: CatalogAuthor[];
   maintainers: string[];
-  /** Category ids, folded categories as the one they became, each once. */
+  /** Category ids, each once. */
   categories: string[];
-  license: AppLicense | null;
+  license: AppLicense;
   icon: string | null;
   cover: string | null;
   screenshots: Array<{ url: string; alt: string }>;
@@ -103,16 +101,13 @@ export function siteCatalog(snapshot: CatalogSnapshot): SiteCatalog {
       plan: app.plan,
       tier: app.tier,
       requires: app.requires,
-      services: app.services ?? null,
+      services: app.services,
       lastVerified: app.lastVerified,
-      addedAt: app.addedAt ?? null,
-      authors: app.authors ?? authorsFromRepo(links.repo),
+      addedAt: app.addedAt,
+      authors: app.authors,
       maintainers: app.maintainers,
-      categories: [...new Set((app.categories ?? []).map(canonicalCategory))],
-      license:
-        app.license === undefined
-          ? null
-          : { expression: app.license, note: app.licenseNote ?? null },
+      categories: [...new Set(app.categories)],
+      license: { expression: app.license, note: app.licenseNote ?? null },
       icon: catalogMediaUrl(app.media?.icon?.url),
       cover: catalogMediaUrl(app.media?.cover?.url),
       screenshots: (app.media?.screenshots ?? []).flatMap(({ url, alt }) => {

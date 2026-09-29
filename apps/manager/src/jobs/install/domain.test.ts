@@ -73,7 +73,7 @@ async function run(
     installId: INSTALL_ID,
     workerName: "cut",
     domain,
-    health: { path: "/", mode: "default" },
+    health: { path: "/", mode: "no-server-errors" },
     settingsUseWorkerUrl: opts.settingsUseWorkerUrl ?? false,
   });
   const logs = (

@@ -124,7 +124,7 @@ describe("startInstallCore", () => {
   it("refuses an added catalog's sandbox or self-deploying entry", async () => {
     const f = await buildArtifactFixture();
     const h = harness(f);
-    const { artifacts: _a, digest: _d, ...rest } = f.index;
+    const { artifacts: _a, ...rest } = f.index;
     const build = {
       pin: "6056400d47530aa87e4ae5764b37ffca9d00e87f",
       manifest: "https://acme.test/apps/cut.json",
@@ -327,8 +327,8 @@ describe("startInstallCore", () => {
     const f = await buildArtifactFixture({
       catalog: {
         secrets: [
-          { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-          { name: "API_KEY", label: "API key", generate: false },
+          { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+          { name: "API_KEY", label: "API key" },
         ],
       },
     });
@@ -349,11 +349,10 @@ describe("startInstallCore", () => {
     const f = await buildArtifactFixture({
       catalog: {
         secrets: [
-          { name: "CF_PASSWORD", label: "Admin password", generate: false },
+          { name: "CF_PASSWORD", label: "Admin password" },
           {
             name: "CF_PASSWORD_HASH",
             label: "Admin password hash",
-            generate: false,
             derive: { from: "CF_PASSWORD", method: "bcrypt" },
           },
         ],
@@ -392,7 +391,6 @@ describe("startInstallCore", () => {
           {
             name: "VAPID_PUBLIC_KEY",
             label: "Push public key",
-            required: false,
             derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
           },
         ],
@@ -434,8 +432,8 @@ describe("startInstallCore", () => {
     const f = await buildArtifactFixture({
       catalog: {
         secrets: [
-          { name: "API_KEY", label: "API key", generate: false },
-          { name: "SMTP_PASSWORD", label: "SMTP password", generate: false, optional: true },
+          { name: "API_KEY", label: "API key" },
+          { name: "SMTP_PASSWORD", label: "SMTP password", optional: true },
         ],
       },
     });
@@ -459,7 +457,7 @@ describe("startInstallCore", () => {
           {
             name: "HOME_PAGE",
             label: "Home page",
-            required: false,
+            optional: true,
             type: "select",
             options: [
               { value: "default", label: "Landing page" },
@@ -481,7 +479,7 @@ describe("startInstallCore", () => {
     const f = await buildArtifactFixture({
       catalog: {
         plan: "paid",
-        vars: [{ name: "REGION", label: "Region", required: true }],
+        vars: [{ name: "REGION", label: "Region" }],
       },
     });
     expect(() => resolveInstallInput(f.manifest, input({ vars: { REGION: "eu" } }))).toThrow(
@@ -512,8 +510,8 @@ describe("startInstallCore", () => {
       ],
       catalog: {
         vars: [
-          { name: "ADDRESSES", label: "Addresses", required: true },
-          { name: "REGION", label: "Region", required: true },
+          { name: "ADDRESSES", label: "Addresses" },
+          { name: "REGION", label: "Region" },
         ],
       },
     });
@@ -733,9 +731,7 @@ describe("startInstallCore", () => {
             tier: "artifact" as const,
             packageManager: "pnpm" as const,
             wranglerConfig: "wrangler.jsonc",
-            workerName: "cut",
-            wildcardHostname: true,
-            wildcardReason: "Each tunnel gets its own address.",
+            wildcardHostname: { reason: "Each tunnel gets its own address." },
           },
         },
       };

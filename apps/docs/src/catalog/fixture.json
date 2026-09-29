@@ -13,9 +13,9 @@
         "artifacts": {
           "zip": "https://github.com/appflare/catalog/releases/download/2fa@1.9.0/2fa-1.9.0.zip",
           "manifest": "https://github.com/appflare/catalog/releases/download/2fa@1.9.0/manifest.json",
-          "sig": "https://github.com/appflare/catalog/releases/download/2fa@1.9.0/manifest.sig"
+          "sig": "https://github.com/appflare/catalog/releases/download/2fa@1.9.0/manifest.sig",
+          "digest": "2cff0e8de6c29b33ca3da41b5a372757e72bb0b0cad6398c50e1b39726aa4b64"
         },
-        "digest": "2cff0e8de6c29b33ca3da41b5a372757e72bb0b0cad6398c50e1b39726aa4b64",
         "tier": "artifact",
         "plan": "free",
         "requires": [],
@@ -49,9 +49,9 @@
         "artifacts": {
           "zip": "https://github.com/appflare/catalog/releases/download/agentic-inbox@0.0.0-20260417.48039bb/agentic-inbox-0.0.0-20260417.48039bb.zip",
           "manifest": "https://github.com/appflare/catalog/releases/download/agentic-inbox@0.0.0-20260417.48039bb/manifest.json",
-          "sig": "https://github.com/appflare/catalog/releases/download/agentic-inbox@0.0.0-20260417.48039bb/manifest.sig"
+          "sig": "https://github.com/appflare/catalog/releases/download/agentic-inbox@0.0.0-20260417.48039bb/manifest.sig",
+          "digest": "93a950b6d2cc2a1f8a4934d36af6dd84d39db8580d82ddbee554ae40652d631d"
         },
-        "digest": "93a950b6d2cc2a1f8a4934d36af6dd84d39db8580d82ddbee554ae40652d631d",
         "tier": "artifact",
         "plan": "free",
         "requires": ["zone", "email-routing", "r2", "workers-ai"],
@@ -92,9 +92,9 @@
         "artifacts": {
           "zip": "https://github.com/appflare/catalog/releases/download/cattopic@1.0.0/cattopic-1.0.0.zip",
           "manifest": "https://github.com/appflare/catalog/releases/download/cattopic@1.0.0/manifest.json",
-          "sig": "https://github.com/appflare/catalog/releases/download/cattopic@1.0.0/manifest.sig"
+          "sig": "https://github.com/appflare/catalog/releases/download/cattopic@1.0.0/manifest.sig",
+          "digest": "a41b4caf0d7334ed02b98eb4a232a61cdccaad406ef01cf32f9682c16af2b27b"
         },
-        "digest": "a41b4caf0d7334ed02b98eb4a232a61cdccaad406ef01cf32f9682c16af2b27b",
         "tier": "artifact",
         "plan": "free",
         "requires": ["r2"],
@@ -135,9 +135,9 @@
         "artifacts": {
           "zip": "https://github.com/appflare/catalog/releases/download/flaremo@0.20.1/flaremo-0.20.1.zip",
           "manifest": "https://github.com/appflare/catalog/releases/download/flaremo@0.20.1/manifest.json",
-          "sig": "https://github.com/appflare/catalog/releases/download/flaremo@0.20.1/manifest.sig"
+          "sig": "https://github.com/appflare/catalog/releases/download/flaremo@0.20.1/manifest.sig",
+          "digest": "5f70b5772b8bb3a38240e42e8273e95601a7e6a6c69fb045746cdf2e6ce6b2bc"
         },
-        "digest": "5f70b5772b8bb3a38240e42e8273e95601a7e6a6c69fb045746cdf2e6ce6b2bc",
         "tier": "artifact",
         "plan": "free",
         "requires": ["r2", "workers-ai"],
@@ -186,9 +186,9 @@
         "artifacts": {
           "zip": "https://github.com/appflare/catalog/releases/download/mailflare@0.0.0-20260920.1bf70d2/mailflare-0.0.0-20260920.1bf70d2.zip",
           "manifest": "https://github.com/appflare/catalog/releases/download/mailflare@0.0.0-20260920.1bf70d2/manifest.json",
-          "sig": "https://github.com/appflare/catalog/releases/download/mailflare@0.0.0-20260920.1bf70d2/manifest.sig"
+          "sig": "https://github.com/appflare/catalog/releases/download/mailflare@0.0.0-20260920.1bf70d2/manifest.sig",
+          "digest": "fbe601fe7065ec7cda3fb1b9c7e1aeb7e45838142c2825f0164de17ccdcc6803"
         },
-        "digest": "fbe601fe7065ec7cda3fb1b9c7e1aeb7e45838142c2825f0164de17ccdcc6803",
         "tier": "artifact",
         "plan": "paid",
         "requires": ["zone", "email-routing", "r2"],
@@ -303,9 +303,9 @@
         "artifacts": {
           "zip": "https://github.com/appflare/catalog/releases/download/resolvehq@0.3.3/resolvehq-0.3.3.zip",
           "manifest": "https://github.com/appflare/catalog/releases/download/resolvehq@0.3.3/manifest.json",
-          "sig": "https://github.com/appflare/catalog/releases/download/resolvehq@0.3.3/manifest.sig"
+          "sig": "https://github.com/appflare/catalog/releases/download/resolvehq@0.3.3/manifest.sig",
+          "digest": "5416969726a5f872641dab71a45c606f1878d7463166606cda6bbdec9094b9f5"
         },
-        "digest": "5416969726a5f872641dab71a45c606f1878d7463166606cda6bbdec9094b9f5",
         "tier": "artifact",
         "plan": "free",
         "requires": ["zone", "email-routing", "r2"],
@@ -346,9 +346,9 @@
         "artifacts": {
           "zip": "https://github.com/appflare/catalog/releases/download/veet@0.0.0-20260728.cca7b69/veet-0.0.0-20260728.cca7b69.zip",
           "manifest": "https://github.com/appflare/catalog/releases/download/veet@0.0.0-20260728.cca7b69/manifest.json",
-          "sig": "https://github.com/appflare/catalog/releases/download/veet@0.0.0-20260728.cca7b69/manifest.sig"
+          "sig": "https://github.com/appflare/catalog/releases/download/veet@0.0.0-20260728.cca7b69/manifest.sig",
+          "digest": "a68862c9416db557838d77eab7aaa143566b2f7afc3e630c0a322786a5b87654"
         },
-        "digest": "a68862c9416db557838d77eab7aaa143566b2f7afc3e630c0a322786a5b87654",
         "tier": "artifact",
         "plan": "free",
         "requires": [],

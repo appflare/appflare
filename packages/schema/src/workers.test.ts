@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   type ArtifactManifest,
-  artifactFormatFor,
   artifactManifestSchema,
   isEntryServiceBinding,
   serviceBindingProblem,
@@ -19,8 +18,6 @@ import {
   entryWorkerOrder,
   entryWorkerRef,
   entryWorkerRefName,
-  hasEntryWorkerPlaceholder,
-  renderEntryWorkerPlaceholders,
   secretTargets,
   varTargets,
   workerManifest,
@@ -32,6 +29,7 @@ const gitSha = "b".repeat(40);
 function worker(name: string, bindings: unknown[] = [], extra: Record<string, unknown> = {}) {
   return {
     name,
+    wranglerConfig: { declared: `${name}/wrangler.jsonc`, effective: `${name}/wrangler.jsonc` },
     mainModule: "index.js",
     compatibilityDate: "2026-06-01",
     compatibilityFlags: ["nodejs_compat"],
@@ -62,7 +60,7 @@ function catalog(install: Record<string, unknown> = {}, rest: Record<string, unk
     slug: "glance",
     name: "Glance",
     summary: "Share what your agents built.",
-    homepage: "https://github.com/plivo-labs/glance",
+    tagline: "Share what your agents built",
     repo: "plivo-labs/glance",
     license: "MIT",
     categories: ["developer-tools"],
@@ -91,10 +89,9 @@ function catalog(install: Record<string, unknown> = {}, rest: Record<string, unk
 
 function artifact(overrides: Record<string, unknown> = {}) {
   return {
-    format: 2,
+    format: 1,
     app: "glance",
     version: "0.0.0-20260926.bbbbbbb",
-    source: { repo: "plivo-labs/glance", sha: gitSha, ref: "main" },
     builtAt: "2026-09-26T12:00:00Z",
     builder: "@appflare/pack@0.5.0",
     keyId: "unsigned",
@@ -104,10 +101,12 @@ function artifact(overrides: Record<string, unknown> = {}) {
       { type: "plain_text", name: "APP_URL", text: "https://glance.example.workers.dev" },
     ]),
     assets: noAssets,
-    d1Migrations: {
-      GLANCE_DB: [
-        { name: "0000_init.sql", path: "d1/GLANCE_DB/0000_init.sql", size: 1, sha256, offset: 9 },
-      ],
+    d1: {
+      GLANCE_DB: {
+        migrations: [
+          { name: "0000_init.sql", path: "d1/GLANCE_DB/0000_init.sql", size: 1, sha256, offset: 9 },
+        ],
+      },
     },
     workers: [
       {
@@ -256,14 +255,16 @@ describe("install.workers in the catalog manifest", () => {
     const ok = catalog(
       {},
       {
-        secrets: [{ name: "SESSION_SECRET", label: "Session", generate: true, workers: ["app"] }],
+        secrets: [
+          { name: "SESSION_SECRET", label: "Session", generate: "password", workers: ["app"] },
+        ],
         vars: [{ name: "APP_URL", label: "App URL", workers: ["app", "content"] }],
       },
     );
     expect(catalogManifestSchema.safeParse(ok).success).toBe(true);
     const unknown = catalog(
       {},
-      { secrets: [{ name: "S", label: "S", generate: true, workers: ["web"] }] },
+      { secrets: [{ name: "S", label: "S", generate: "password", workers: ["web"] }] },
     );
     expect(JSON.stringify(catalogManifestSchema.safeParse(unknown).error?.issues)).toContain(
       'names the Worker \\"web\\"',
@@ -278,10 +279,10 @@ describe("install.workers in the catalog manifest", () => {
   });
 });
 
-describe("artifact manifest format 2", () => {
+describe("an artifact of several Workers", () => {
   it("parses an artifact of several Workers", () => {
     const manifest = parsed(artifact());
-    expect(manifest.format).toBe(2);
+    expect(manifest.format).toBe(1);
     expect(appWorkerCount(manifest)).toBe(2);
     expect(appWorkers(manifest).map((w) => [w.name, w.primary])).toEqual([
       ["app", true],
@@ -289,20 +290,21 @@ describe("artifact manifest format 2", () => {
     ]);
   });
 
-  it("refuses a format 1 artifact whose catalog manifest declares several Workers", () => {
+  it("refuses an artifact without workers whose catalog manifest declares several Workers", () => {
     const { workers: _w, ...rest } = artifact();
-    const result = artifactManifestSchema.safeParse({ ...rest, format: 1 });
-    expect(JSON.stringify(result.error?.issues)).toContain("must be format 2");
+    const result = artifactManifestSchema.safeParse(rest);
+    expect(JSON.stringify(result.error?.issues)).toContain(
+      "must list every Worker besides the primary one in workers",
+    );
   });
 
-  it("refuses a format 1 artifact with a binding to another Worker of an entry", () => {
+  it("refuses an artifact of one Worker with a binding to another Worker of an entry", () => {
     const { workers: _w, ...rest } = artifact();
     const result = artifactManifestSchema.safeParse({
       ...rest,
-      format: 1,
       catalog: catalog({ workers: undefined }),
       worker: worker("glance", [{ type: "service", name: "C", service: "{{workerName:content}}" }]),
-      d1Migrations: {},
+      d1: {},
     });
     expect(JSON.stringify(result.error?.issues)).toContain("names another Worker of the entry");
   });
@@ -351,7 +353,7 @@ describe("artifact manifest format 2", () => {
   it("refuses Workers that bind each other in a cycle", () => {
     const bad = artifact({
       worker: worker("glance", [{ type: "service", name: "C", service: "{{workerName:content}}" }]),
-      d1Migrations: {},
+      d1: {},
     });
     expect(JSON.stringify(artifactManifestSchema.safeParse(bad).error?.issues)).toContain(
       "name each other in a cycle",
@@ -362,7 +364,7 @@ describe("artifact manifest format 2", () => {
     const wf = { type: "workflow", name: "JOBS", workflow_name: "jobs", class_name: "Jobs" };
     const bad = artifact({
       worker: worker("glance", [wf]),
-      d1Migrations: {},
+      d1: {},
       workers: [{ name: "content", worker: worker("glance-content", [wf]), assets: noAssets }],
     });
     expect(JSON.stringify(artifactManifestSchema.safeParse(bad).error?.issues)).toContain(
@@ -375,7 +377,7 @@ describe("artifact manifest format 2", () => {
       worker: worker("glance", [
         { type: "durable_object_namespace", name: "ROOM", class_name: "Room" },
       ]),
-      d1Migrations: {},
+      d1: {},
       workers: [
         {
           name: "content",
@@ -400,7 +402,7 @@ describe("artifact manifest format 2", () => {
           migrations: [{ tag: "v1", new_sqlite_classes: ["Room"] }],
         },
       ),
-      d1Migrations: {},
+      d1: {},
       workers: [
         {
           name: "content",
@@ -518,8 +520,8 @@ describe("installed names, targets and placeholders", () => {
           {},
           {
             secrets: [
-              { name: "SESSION", label: "S", generate: true, workers: ["app"] },
-              { name: "SHARED", label: "S", generate: true },
+              { name: "SESSION", label: "S", generate: "password", workers: ["app"] },
+              { name: "SHARED", label: "S", generate: "password" },
             ],
             vars: [{ name: "APP_URL", label: "App URL" }],
           },
@@ -534,21 +536,33 @@ describe("installed names, targets and placeholders", () => {
     expect(own.catalog.vars).toEqual([]);
   });
 
-  it("fills in placeholders naming an entry Worker", () => {
-    const values = {
-      content: { workerName: "team-content", workerUrl: "https://team-content.acme.workers.dev" },
-      app: { workerName: "team", workerUrl: null },
-    };
+  it("gives each Worker its name, workers.dev URL and address for placeholders", () => {
+    const manifest = parsed(artifact());
+    expect(entryPlaceholderValues(manifest.catalog, "team", "acme")).toEqual({
+      app: {
+        workerName: "team",
+        workerUrl: "https://team.acme.workers.dev",
+        appUrl: "https://team.acme.workers.dev",
+      },
+      content: {
+        workerName: "team-content",
+        workerUrl: "https://team-content.acme.workers.dev",
+        appUrl: "https://team-content.acme.workers.dev",
+      },
+    });
+    // The primary Worker's address follows its custom domain; its workers.dev URL stays.
     expect(
-      renderEntryWorkerPlaceholders(
-        "{{workerUrl:content}}/x {{ workerName:content }} {{workerUrl:app}} {{workerUrl:nope}} {{workerUrl}}",
-        values,
-      ),
-    ).toBe(
-      "https://team-content.acme.workers.dev/x team-content {{workerUrl:app}} {{workerUrl:nope}} {{workerUrl}}",
-    );
-    expect(hasEntryWorkerPlaceholder("a {{workerUrl:content}}")).toBe(true);
-    expect(hasEntryWorkerPlaceholder("a {{workerUrl}}")).toBe(false);
+      entryPlaceholderValues(manifest.catalog, "team", "acme", "https://team.example.com")?.app,
+    ).toEqual({
+      workerName: "team",
+      workerUrl: "https://team.acme.workers.dev",
+      appUrl: "https://team.example.com",
+    });
+    expect(entryPlaceholderValues(manifest.catalog, "team", null)?.content).toEqual({
+      workerName: "team-content",
+      workerUrl: null,
+      appUrl: null,
+    });
   });
 
   it("combines every Worker's bindings for what the app uses", () => {
@@ -575,7 +589,7 @@ describe("a Worker kept off workers.dev", () => {
   });
 
   it("reads workersDev: false on a Worker other than the primary", () => {
-    const manifest = parsed(artifact({ format: 4, catalog: catalog({ workers: privateWorkers }) }));
+    const manifest = parsed(artifact({ catalog: catalog({ workers: privateWorkers }) }));
     expect(appWorkers(manifest).map((w) => [w.name, w.workersDev])).toEqual([
       ["app", true],
       ["content", false],
@@ -604,12 +618,12 @@ describe("a Worker kept off workers.dev", () => {
     ]);
   });
 
-  it("refuses {{workerUrl:<name>}} of a Worker without a URL", () => {
+  it("refuses an address placeholder of a Worker without an address", () => {
     const result = catalogManifestSchema.safeParse(
       catalog(
         { workers: privateWorkers },
         {
-          vars: [{ name: "CONTENT_URL", label: "Content URL", default: "{{workerUrl:content}}" }],
+          vars: [{ name: "CONTENT_URL", label: "Content URL", default: "{{appUrl:content}}" }],
           postInstall: [{ type: "markdown", content: "Files at {{ workerUrl:content }}/f." }],
         },
       ),
@@ -628,25 +642,14 @@ describe("a Worker kept off workers.dev", () => {
   });
 
   it("gives such a Worker no URL for placeholders", () => {
-    const manifest = parsed(artifact({ format: 4, catalog: catalog({ workers: privateWorkers }) }));
+    const manifest = parsed(artifact({ catalog: catalog({ workers: privateWorkers }) }));
     expect(entryPlaceholderValues(manifest.catalog, "team", "acme")).toEqual({
-      app: { workerName: "team", workerUrl: "https://team.acme.workers.dev" },
-      content: { workerName: "team-content", workerUrl: null },
+      app: {
+        workerName: "team",
+        workerUrl: "https://team.acme.workers.dev",
+        appUrl: "https://team.acme.workers.dev",
+      },
+      content: { workerName: "team-content", workerUrl: null, appUrl: null },
     });
-  });
-
-  it("needs artifact format 4, which older managers refuse", () => {
-    const withPrivate = catalog({ workers: privateWorkers });
-    expect(
-      artifactFormatFor({ workers: [{}], catalog: catalogManifestSchema.parse(withPrivate) }),
-    ).toBe(4);
-    expect(
-      artifactFormatFor({ workers: [{}], catalog: catalogManifestSchema.parse(catalog()) }),
-    ).toBe(2);
-    for (const format of [2, 3]) {
-      const result = artifactManifestSchema.safeParse(artifact({ format, catalog: withPrivate }));
-      expect(JSON.stringify(result.error?.issues)).toContain("needs format 4");
-    }
-    expect(parsed(artifact({ format: 4, catalog: withPrivate })).format).toBe(4);
   });
 });

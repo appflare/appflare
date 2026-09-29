@@ -9,28 +9,23 @@
   "slug": "appflare-sandbox",
   "name": "Appflare sandbox Worker",
   "summary": "Builds sandbox tier apps from their pinned source inside a Cloudflare Sandbox container in your own account.",
-  "homepage": "https://github.com/appflare/appflare",
+  "tagline": "Builds apps from source in your own account",
   "repo": "appflare/appflare",
   "license": "Apache-2.0",
-  "categories": ["platform"],
+  "categories": ["developer-tools"],
   "maintainers": ["MendyLanda"],
   // Placeholders. At build time `ref` becomes the release version and `sha` the
   // commit being built.
   "source": { "ref": "0.0.0-dev", "sha": "0000000000000000000000000000000000000000" },
   "install": {
-    "tier": "artifact",
     "packageManager": "pnpm",
     // wrangler.jsonc with the release version stamped into APPFLARE_VERSION and
     // the image tag, and no account id. `pnpm release:pack --app sandbox`
     // writes it (scripts/sandbox-release.ts).
     "wranglerConfig": "dist/wrangler.release.json",
-    "workerName": "appflare-sandbox",
     "fixedWorkerName": true
   },
   "plan": "paid",
   "requires": ["containers", "r2"],
-  "secrets": [],
-  "vars": [],
-  "postInstall": [],
-  "tokenPermissions": []
+  "postInstall": []
 }

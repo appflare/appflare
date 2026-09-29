@@ -2,8 +2,6 @@ import type { FetchLike } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
   artifactManifestSchema,
-  type IndexArtifacts,
-  indexArtifactsSchema,
   SANDBOX_BUCKET_BINDING,
   SANDBOX_CONTAINERS,
   SANDBOX_RELEASE_TAG_PREFIX,
@@ -16,6 +14,7 @@ import {
 import { z } from "zod";
 import sandboxPackage from "../../../sandbox/package.json";
 import { managerReleasesUrl } from "../catalog/manager-releases.server";
+import { type ReleaseAssets, releaseAssetsSchema } from "../catalog/release-assets";
 import { compareVersions } from "../catalog/versions";
 import { ArtifactError } from "../jobs/install/artifact";
 import { isManagerKeyId } from "../jobs/self-update/plan";
@@ -73,7 +72,7 @@ export function sandboxReleaseAssets(
   release: unknown,
   version: string,
   opts: { viaApi: boolean },
-): IndexArtifacts {
+): ReleaseAssets {
   const parsed = githubReleaseSchema.safeParse(release);
   const tag = `${SANDBOX_RELEASE_TAG_PREFIX}${version}`;
   if (!parsed.success || parsed.data.tag_name !== tag) {
@@ -91,7 +90,7 @@ export function sandboxReleaseAssets(
     if (url === undefined) throw new ArtifactError(`the release ${tag} has no ${name}`);
     return url;
   };
-  const assets = indexArtifactsSchema.safeParse({
+  const assets = releaseAssetsSchema.safeParse({
     zip: urlOf(`${SANDBOX_APP}-${version}.zip`),
     manifest: urlOf("manifest.json"),
     sig: urlOf("manifest.sig"),
@@ -110,7 +109,7 @@ export async function findSandboxRelease(
   env: { MANAGER_RELEASES_URL?: string },
   version: string,
   opts: { viaApi: boolean },
-): Promise<IndexArtifacts> {
+): Promise<ReleaseAssets> {
   const url = sandboxReleaseUrl(env, version);
   const response = await fetchImpl(url, {
     headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },

@@ -1,5 +1,9 @@
 import { NonRetryableError } from "cloudflare:workflows";
-import { type ArtifactManifest, artifactManifestSchema } from "@appflare/schema";
+import {
+  type ArtifactManifest,
+  artifactManifestSchema,
+  DEFAULT_HEALTH_MODE,
+} from "@appflare/schema";
 import { and, eq, inArray, isNull, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { effectiveAutoUpdate, settingOn } from "../auto-update/auto-update";
@@ -619,7 +623,12 @@ export async function runRollback(ctx: JobContext): Promise<void> {
     const url = `${appBaseUrl({ workerName, subdomain, workersDev: started.workersDev, domains: started.domains, served: started.servedDomain })}${started.healthPath}`;
     // Recorded rather than fatal: the snapshot's version already serves. A
     // job started before health modes existed has none recorded.
-    const health = await checkLiveHealthPhase(steps, step, url, started.healthMode ?? "default");
+    const health = await checkLiveHealthPhase(
+      steps,
+      step,
+      url,
+      started.healthMode ?? DEFAULT_HEALTH_MODE,
+    );
 
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());

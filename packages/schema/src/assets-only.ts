@@ -9,9 +9,7 @@ import type { CatalogSecret, CatalogVar } from "./catalog";
  * `compatibility_date`, `compatibility_flags` and, for a version,
  * `annotations`. Bindings, migrations and every other setting are not sent.
  *
- * The artifact records such a Worker with no modules and no `mainModule`, and
- * is written as format 5 so that a manager that does not know the shape
- * refuses it instead of failing at the upload.
+ * The artifact records such a Worker with no modules and no `mainModule`.
  *
  * Imports only types, so `artifact.ts` can use it without a cycle at load time.
  */

@@ -4,6 +4,12 @@
 // screenshots, an app with its own installer, a paid app, Email Routing,
 // a revised entry, and licenses of each kind.
 //
+// It expects the published index in the shape `@appflare/schema` reads: each
+// prebuilt row's manifest digest inside `artifacts` (`artifacts.digest`), and
+// `tagline`, `addedAt`, `authors`, `services`, `categories`, `license` and
+// `revision` on every row. An index in any other shape fails validation and
+// nothing is written.
+//
 //   pnpm --filter @appflare/docs catalog:fixture
 //
 // Needs @appflare/schema built (`pnpm --filter @appflare/schema build`).

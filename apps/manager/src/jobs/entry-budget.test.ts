@@ -32,8 +32,8 @@ async function appOf(count: number, files = 0) {
     })),
     catalog: {
       secrets: [
-        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-        { name: "API_KEY", label: "API key", generate: true },
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+        { name: "API_KEY", label: "API key", generate: "password" },
       ],
     },
   });

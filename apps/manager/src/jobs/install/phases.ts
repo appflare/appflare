@@ -10,12 +10,13 @@ import {
   type AssetFile,
   type CatalogD1Seed,
   type D1MigrationFile,
-  type IndexArtifacts,
+  DEFAULT_HEALTH_MODE,
   parseConnectionString,
   type SigningKey,
 } from "@appflare/schema";
 import { inArray } from "drizzle-orm";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../../catalog/app-manifest.server";
+import type { ReleaseAssets } from "../../catalog/release-assets";
 import { appPlace } from "../../components/app-links";
 import type { Database } from "../../db/client";
 import { type RESOURCE_KINDS, resources } from "../../db/schema";
@@ -60,7 +61,7 @@ export interface ArtifactRef {
   catalogId?: string;
   slug: string;
   version: string;
-  artifacts: IndexArtifacts;
+  artifacts: ReleaseAssets;
   digest: string;
 }
 
@@ -627,21 +628,22 @@ export function d1Targets(
   manifest: ArtifactManifest,
   databases: readonly CreatedResource[],
 ): D1Target[] {
-  const of = (lists: ArtifactManifest["d1Migrations"] | undefined, binding: string) =>
-    lists !== undefined && Object.hasOwn(lists, binding) ? (lists[binding] ?? []) : [];
   const layouts = manifest.catalog.resources?.d1 ?? {};
   return databases
     .filter((r) => r.type === "d1")
-    .map((r) => ({
-      binding: r.binding,
-      name: r.name,
-      cfId: r.cfId,
-      files: of(manifest.d1Migrations, r.binding),
-      schema: of(manifest.d1Schema, r.binding),
-      postDeploy: of(manifest.d1PostDeploy, r.binding),
-      seed: Object.hasOwn(layouts, r.binding) ? layouts[r.binding]?.seed : undefined,
-      baseline: of(manifest.d1Baseline, r.binding)[0] ?? null,
-    }))
+    .map((r) => {
+      const sql = Object.hasOwn(manifest.d1, r.binding) ? manifest.d1[r.binding] : undefined;
+      return {
+        binding: r.binding,
+        name: r.name,
+        cfId: r.cfId,
+        files: sql?.migrations ?? [],
+        schema: sql?.schema ?? [],
+        postDeploy: sql?.postDeploy ?? [],
+        seed: Object.hasOwn(layouts, r.binding) ? layouts[r.binding]?.seed : undefined,
+        baseline: sql?.baseline ?? null,
+      };
+    })
     .filter(
       (t) =>
         t.files.length + t.schema.length + t.postDeploy.length > 0 ||
@@ -675,7 +677,7 @@ export interface ProbePhaseOptions {
   maxAttempts?: number;
   /** When set, a JSON answer reporting another `version` fails (see `versionMismatch`). */
   expectVersion?: string;
-  /** How the default verdict reads an answer (the app's `install.healthMode`). */
+  /** How the default verdict reads an answer (the app's `install.health.mode`). */
   mode?: HealthMode;
   /** Replaces the default verdict (`classifyHealthProbe`, any non-5xx is healthy). */
   classify?: (
@@ -750,8 +752,8 @@ export async function checkLiveHealthPhase(
   steps: JobSteps,
   step: StepRunner,
   url: string,
-  /** How to read the answer (the app's `install.healthMode`). */
-  mode: HealthMode = "default",
+  /** How to read the answer (the app's `install.health.mode`). */
+  mode: HealthMode = DEFAULT_HEALTH_MODE,
   /**
    * `routeWasLive`: the URL was serving before the job, so a plain 404 is
    * the app's own answer and settles the check at once.

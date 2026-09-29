@@ -427,7 +427,11 @@ describe("removeCustomDomainCore", () => {
     world.domains.delete("cfd-2");
 
     const first = { installId: INSTALL_ID, resourceId: "i1:domain:id1" };
-    expect(await removeCustomDomainCore(d, first)).toEqual({ hostname: "cut.example.com" });
+    expect(await removeCustomDomainCore(d, first)).toEqual({
+      hostname: "cut.example.com",
+      settingsJobId: null,
+      settingsNote: null,
+    });
     expect(world.calls).toContain("DELETE /workers/domains/cfd-1");
     expect(world.domains.size).toBe(0);
     await expect(removeCustomDomainCore(d, first)).rejects.toThrow(
@@ -435,7 +439,11 @@ describe("removeCustomDomainCore", () => {
     );
 
     const second = { installId: INSTALL_ID, resourceId: "i1:domain:id2" };
-    expect(await removeCustomDomainCore(d, second)).toEqual({ hostname: "www.example.com" });
+    expect(await removeCustomDomainCore(d, second)).toEqual({
+      hostname: "www.example.com",
+      settingsJobId: null,
+      settingsNote: null,
+    });
     expect((await domainRows()).map((r) => r.deleted_at)).toEqual([NOW.getTime(), NOW.getTime()]);
 
     // Removed, then added again: a new resource row.
@@ -466,10 +474,42 @@ describe("removeCustomDomainCore", () => {
     ).first();
   }
 
+  it("deploys settings that use {{appUrl}} again when the domain that served the app goes, and only then", async () => {
+    const { d } = await twoLiveDomains("auto");
+    const changed: string[][] = [];
+    const withRefresh = {
+      ...d,
+      refreshVars: async (_installId: string, reasons: readonly string[]) => {
+        changed.push([...reasons]);
+        return { jobId: "settings-1" };
+      },
+    };
+    // www.example.com does not serve the app: nothing moves.
+    expect(
+      await removeCustomDomainCore(withRefresh, {
+        installId: INSTALL_ID,
+        resourceId: "i1:domain:id2",
+      }),
+    ).toEqual({ hostname: "www.example.com", settingsJobId: null, settingsNote: null });
+    expect(changed).toEqual([]);
+    // cut.example.com served it: workers.dev takes over, and the settings follow.
+    expect(
+      await removeCustomDomainCore(withRefresh, {
+        installId: INSTALL_ID,
+        resourceId: "i1:domain:id1",
+      }),
+    ).toEqual({ hostname: "cut.example.com", settingsJobId: "settings-1", settingsNote: null });
+    expect(changed).toEqual([["appUrl"]]);
+  });
+
   it("refuses to remove the last live domain while an admin turned workers.dev off", async () => {
     const { world, d } = await twoLiveDomains("manual");
     const first = { installId: INSTALL_ID, resourceId: "i1:domain:id1" };
-    expect(await removeCustomDomainCore(d, first)).toEqual({ hostname: "cut.example.com" });
+    expect(await removeCustomDomainCore(d, first)).toEqual({
+      hostname: "cut.example.com",
+      settingsJobId: null,
+      settingsNote: null,
+    });
     expect(world.subdomain).toEqual([]);
     const last = { installId: INSTALL_ID, resourceId: "i1:domain:id2" };
     await expect(removeCustomDomainCore(d, last)).rejects.toThrow(
@@ -482,13 +522,21 @@ describe("removeCustomDomainCore", () => {
   it("turns workers.dev back on before removing the last live domain when Appflare turned it off", async () => {
     const { world, d } = await twoLiveDomains("auto");
     const first = { installId: INSTALL_ID, resourceId: "i1:domain:id1" };
-    expect(await removeCustomDomainCore(d, first)).toEqual({ hostname: "cut.example.com" });
+    expect(await removeCustomDomainCore(d, first)).toEqual({
+      hostname: "cut.example.com",
+      settingsJobId: null,
+      settingsNote: null,
+    });
     // Another live domain remains: workers.dev stays off.
     expect(world.subdomain).toEqual([]);
     expect(await workersDev()).toMatchObject({ workers_dev_enabled: 0 });
 
     const last = { installId: INSTALL_ID, resourceId: "i1:domain:id2" };
-    expect(await removeCustomDomainCore(d, last)).toEqual({ hostname: "www.example.com" });
+    expect(await removeCustomDomainCore(d, last)).toEqual({
+      hostname: "www.example.com",
+      settingsJobId: null,
+      settingsNote: null,
+    });
     expect(world.subdomain).toEqual([{ script: "cut", enabled: true, previews_enabled: true }]);
     expect(await workersDev()).toEqual({
       workers_dev_enabled: 1,
@@ -531,7 +579,11 @@ describe("removeCustomDomainCore", () => {
       "UPDATE resources SET live_at = NULL WHERE name = 'www.example.com'",
     ).run();
     const first = { installId: INSTALL_ID, resourceId: "i1:domain:id1" };
-    expect(await removeCustomDomainCore(d, first)).toEqual({ hostname: "cut.example.com" });
+    expect(await removeCustomDomainCore(d, first)).toEqual({
+      hostname: "cut.example.com",
+      settingsJobId: null,
+      settingsNote: null,
+    });
     expect(world.subdomain).toEqual([{ script: "cut", enabled: true, previews_enabled: true }]);
   });
 
@@ -577,7 +629,7 @@ describe("checkCustomDomainCore", () => {
           packageManager: "pnpm",
           wranglerConfig: "wrangler.jsonc",
           workerName: "cut",
-          healthPath: "/api/health",
+          health: { path: "/api/health" },
         },
       },
     });
@@ -606,6 +658,8 @@ describe("checkCustomDomainCore", () => {
       detail: "404 error code: 1042 (route not live yet)",
       checkedAt: NOW.toISOString(),
       workersDevTurnedOff: false,
+      settingsJobId: null,
+      settingsNote: null,
     });
     const install = await env.DB.prepare(
       "SELECT health_status, workers_dev_enabled FROM installs",

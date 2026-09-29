@@ -90,8 +90,9 @@ export interface JobEnv {
   SANDBOX?: unknown;
   /**
    * The manager's job Workflow (`JOBS`), for a job that starts another one
-   * once it has finished: an install whose wildcard domain was not set up
-   * starts the settings change that fills `{{wildcardHostname}}` in again.
+   * once it has finished: an install whose wildcard domain was not set up,
+   * or whose domain took over from workers.dev, starts the settings change
+   * that fills `{{wildcardHostname}}` or `{{appUrl}}` in again.
    */
   JOBS?: { create(options: { id: string; params: JobParams }): Promise<{ id: string }> };
 }

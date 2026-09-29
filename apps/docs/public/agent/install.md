@@ -22,24 +22,11 @@ Background, if you need it:
 1. Run `node --version`. Appflare needs Node.js 22 or newer. If it is older, stop and tell the user.
 2. Run `npx wrangler whoami`. If it says they are not logged in, run `npx wrangler login`, tell them to approve the request on the page it opens in their browser, and wait until the command finishes.
 3. If `whoami` lists more than one account, show them the account names and ask which one to use. Set `CLOUDFLARE_ACCOUNT_ID` to that account's id for every command below.
-4. Build the installer from a checkout of the Appflare repository. It is not published to npm: never run `npx create-appflare`, `npx @appflare/cli`, or any npm package with a similar name, because whoever holds such a name on npm would run code with the user's Cloudflare login.
-   1. Clone the repository into the new directory:
-      ```sh
-      git clone https://github.com/appflare/appflare
-      cd appflare
-      ```
-      If the clone is refused, run `gh repo clone appflare/appflare` with the user's gh login instead. If that is refused too, stop and tell them.
-   2. Build the installer, in the clone:
-      ```sh
-      pnpm install
-      pnpm --filter "@appflare/cli..." build
-      ```
-      Without pnpm, use `npx pnpm@10` in its place.
-   3. The installer is `node packages/cli/bin/appflare.js`, run from the clone. It downloads the release from GitHub; if GitHub refuses or rate-limits the download, put `GITHUB_TOKEN="$(gh auth token)"` in front of the installer command, which keeps the token out of the output.
+4. The installer is the npm package `create-appflare`, run as `npx create-appflare`. Type the name exactly: never run an npm package with a similar name, because it would run with the user's Cloudflare login. It downloads the release from GitHub; if GitHub refuses or rate-limits the download, put `GITHUB_TOKEN="$(gh auth token)"` in front of the installer command, which keeps the token out of the output.
 5. Ask the user to confirm that the account already has a `workers.dev` subdomain. They can see it, or set one up, under Workers & Pages in the Cloudflare dashboard. Do not run the installer until they confirm: without a subdomain the deploy fails partway, leaves resources behind, and a second attempt is refused.
-6. Run the installer with `--yes`:
+6. Run the installer with `--yes` (the `--yes` before the package name is npx's own, so it does not ask before downloading the package):
    ```sh
-   node packages/cli/bin/appflare.js --yes
+   npx --yes create-appflare --yes
    ```
    Its standard output is the manager's address and nothing else; progress and errors go to the terminal, including `The manager is up (version ...)` once it answers. Keep the address and that version for your summary. If it fails:
    - A Worker, D1 database, or KV namespace named `appflare` (or `appflare-kv`) already exists: stop and ask the user. Do not delete it.

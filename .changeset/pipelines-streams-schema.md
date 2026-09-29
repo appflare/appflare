@@ -1,7 +1,0 @@
----
-"@appflare/schema": minor
----
-
-Catalog manifests can describe the Pipelines streams an app binds. `resources.pipelines` maps each Pipelines binding of the wrangler config to its stream's schema (flat fields: `int32`, `int64`, `float32`, `float64`, `bool`, `string`, `binary`, `timestamp` with an optional `unit`, `json`; omitted for an unstructured stream) and its sink: `{ "type": "r2_data_catalog", "bucket", "namespace", "table", "tokenSecret", "rollIntervalSeconds"?, "compression"?, "compaction"?, "snapshotExpiration"?: { "maxAge", "minSnapshotsToKeep"? } }`. `bucket` names an R2 binding of the app or a bucket of the install's own; `tokenSecret` names a secret the install form asks for (no `generate`, `optional`, `derive` or `seedOnly`), holding the R2 API token Cloudflare keeps as the sink's credential. Pipelines is only on Workers Paid, so an entry with streams must say `"plan": "paid"`, and `workersPaidBindingProblem` now refuses a `pipelines` binding on a free entry as it does a Worker Loader; self-deploying entries cannot declare streams. `pipelineDeclarationProblems` checks a Worker's Pipelines bindings against the descriptions. The services worked out for an app include `pipelines`, and R2 with it.
-
-`pipelineTokenPermissions` lists what each sink's token needs (Workers R2 Storage and R2 Data Catalog write, R2 SQL read), and `appTokenPermissions` adds them to a manifest's own `tokenPermissions`, so an app's page shows them with the token links.

@@ -1,31 +1,16 @@
-import {
-  type CatalogAuthor,
-  type CatalogManifest,
-  catalogAuthors,
-  type IndexApp,
-} from "@appflare/schema";
+import type { CatalogAuthor } from "@appflare/schema";
 
 /**
  * Who wrote an app and who packages it for the catalog. Authors come from the
- * catalog index, which lists them for every app; an index published before
- * authors existed falls back to the signed catalog manifest's `authors`, then
- * to the owner of its repository. Maintainers package the app for the catalog
- * and appear only on the app's own page, as "Packaged by".
+ * catalog index, which lists them for every app (the catalog manifest's
+ * `authors`, else the owner of its repository). Maintainers package the app
+ * for the catalog and appear only on the app's own page, as "Packaged by".
  */
 
 /** A link shown next to a name. */
 export interface ProfileLink {
   label: string;
   href: string;
-}
-
-/** The authors to show for `app`: the index's, else the catalog manifest's, else none. */
-export function appAuthors(
-  app: Pick<IndexApp, "authors">,
-  catalog: Pick<CatalogManifest, "authors" | "repo"> | null,
-): CatalogAuthor[] {
-  if (app.authors !== undefined) return app.authors;
-  return catalog === null ? [] : catalogAuthors(catalog);
 }
 
 const names = new Intl.ListFormat("en", { style: "long", type: "conjunction" });

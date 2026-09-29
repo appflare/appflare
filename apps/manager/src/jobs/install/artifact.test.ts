@@ -26,10 +26,11 @@ describe("verifyArtifactManifest", () => {
     expect(manifest.catalog.secrets[0]?.name).toBe("ADMIN_PASSWORD");
   });
 
-  it("reads formats 3 to 6 and asks to update Appflare for a format it does not know", async () => {
+  it("reads format 1, D1 SQL grouped by binding, and asks to update Appflare for a later format", async () => {
     const d1 = await buildArtifactFixture({
       bindings: [{ type: "d1", name: "DB" }],
-      d1Schema: { DB: [{ name: "schema.sql", content: "CREATE TABLE IF NOT EXISTS t (id);" }] },
+      d1: { DB: [{ name: "0001_init.sql", content: "CREATE TABLE t (id);" }] },
+      d1Schema: { DB: [{ name: "schema.sql", content: "CREATE TABLE IF NOT EXISTS u (id);" }] },
     });
     const manifest = await verifyArtifactManifest(
       d1.manifestBytes,
@@ -37,57 +38,34 @@ describe("verifyArtifactManifest", () => {
       expected(d1),
       d1.keys,
     );
-    expect(manifest.format).toBe(3);
-    expect(manifest.d1Schema?.DB?.[0]?.name).toBe("schema.sql");
-
-    const kept = await buildArtifactFixture({ otherWorkers: [{ name: "git", workersDev: false }] });
-    const four = await verifyArtifactManifest(
-      kept.manifestBytes,
-      kept.signature,
-      expected(kept),
-      kept.keys,
-    );
-    expect(four.format).toBe(4);
+    expect(manifest.format).toBe(1);
+    expect(manifest.d1.DB?.migrations.map((f) => f.name)).toEqual(["0001_init.sql"]);
+    expect(manifest.d1.DB?.schema.map((f) => f.name)).toEqual(["schema.sql"]);
+    expect(manifest.d1.DB?.postDeploy).toEqual([]);
 
     const baseline = await buildArtifactFixture({
       bindings: [{ type: "d1", name: "DB" }],
       d1Baseline: { DB: { name: "schema.sql", content: "CREATE TABLE t (id);" } },
     });
-    const five = await verifyArtifactManifest(
+    const withBaseline = await verifyArtifactManifest(
       baseline.manifestBytes,
       baseline.signature,
       expected(baseline),
       baseline.keys,
     );
-    expect(five.format).toBe(5);
-    expect(five.d1Baseline?.DB?.[0]?.name).toBe("schema.sql");
+    expect(withBaseline.d1.DB?.baseline?.name).toBe("schema.sql");
 
     const assetsOnly = await buildArtifactFixture({
       assetsOnly: true,
       assets: [{ route: "/index.html", content: "<h1>hi</h1>" }],
     });
-    const fiveAssets = await verifyArtifactManifest(
+    const files = await verifyArtifactManifest(
       assetsOnly.manifestBytes,
       assetsOnly.signature,
       expected(assetsOnly),
       assetsOnly.keys,
     );
-    expect(fiveAssets.format).toBe(5);
-    expect(fiveAssets.worker.mainModule).toBeUndefined();
-
-    const lifecycle = [{ id: "tmp", deleteAfterDays: 1 }];
-    const bucket = await buildArtifactFixture({
-      bindings: [{ type: "r2_bucket", name: "FILES", lifecycle }],
-      catalog: { resources: { r2: { FILES: { lifecycle } } } },
-    });
-    const six = await verifyArtifactManifest(
-      bucket.manifestBytes,
-      bucket.signature,
-      expected(bucket),
-      bucket.keys,
-    );
-    expect(six.format).toBe(6);
-    expect(six.worker.bindings).toContainEqual({ type: "r2_bucket", name: "FILES", lifecycle });
+    expect(files.worker.mainModule).toBeUndefined();
 
     const future = await buildArtifactFixture({
       tweak: (m) => {
@@ -97,8 +75,35 @@ describe("verifyArtifactManifest", () => {
     await expect(
       verifyArtifactManifest(future.manifestBytes, future.signature, expected(future), future.keys),
     ).rejects.toThrow(
-      "the artifact is format 7, and this version of Appflare reads formats 1 to 6; update Appflare in [Settings > Updates](/settings/updates#appflare), then try again",
+      "the artifact is format 7, and this version of Appflare reads format 1; update Appflare in [Settings > Updates](/settings/updates#appflare), then try again",
     );
+
+    const earlier = await buildArtifactFixture({
+      tweak: (m) => {
+        (m as { format: number }).format = 6;
+      },
+    });
+    await expect(
+      verifyArtifactManifest(
+        earlier.manifestBytes,
+        earlier.signature,
+        expected(earlier),
+        earlier.keys,
+      ),
+    ).rejects.toThrow(
+      "the artifact is format 6: the app's release was built for an earlier version of Appflare and needs to be packed again by its catalog",
+    );
+  });
+
+  it("refuses an artifact written in an earlier format, which no version reads now", async () => {
+    const old = await buildArtifactFixture({
+      tweak: (m) => {
+        (m as { format: number }).format = 0;
+      },
+    });
+    await expect(
+      verifyArtifactManifest(old.manifestBytes, old.signature, expected(old), old.keys),
+    ).rejects.toThrow("the artifact is format 0, which no version of Appflare reads");
   });
 
   it("rejects a digest that differs from the catalog index", async () => {

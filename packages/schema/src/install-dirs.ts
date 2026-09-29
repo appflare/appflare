@@ -151,17 +151,17 @@ export const catalogInstallDirSchema = z.object({
         "the lockfile it wrote in the pack log; use it only when upstream ships no lockfile " +
         "for this directory.",
     )
-    .optional(),
+    .default("required"),
   devDependencies: z
     .boolean()
+    .default(true)
     .describe(
       "`false` installs this directory's dependencies without its devDependencies (pnpm " +
         "`--prod`, npm `--omit=dev`, classic yarn and bun `--production`), for a project whose " +
         "devDependencies cannot be installed (one from a private registry, say) and are not " +
         "needed to bundle the Worker. Omitted or `true` installs them all. yarn 2 and later " +
         "have no such frozen install, so they refuse it.",
-    )
-    .optional(),
+    ),
 });
 export type CatalogInstallDir = z.infer<typeof catalogInstallDirSchema>;
 
@@ -187,7 +187,9 @@ export const catalogInstallDirsSchema = z
   });
 
 /** The install directories when an entry lists none: the root of the checkout. */
-export const DEFAULT_INSTALL_DIRS: readonly CatalogInstallDir[] = [{ path: "." }];
+export const DEFAULT_INSTALL_DIRS: readonly CatalogInstallDir[] = [
+  { path: ".", lockfile: "required", devDependencies: true },
+];
 
 /**
  * The directories the packer installs, in order: `installDirs`, or the root

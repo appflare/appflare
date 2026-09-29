@@ -293,13 +293,19 @@ const LINK_ICONS: Record<AppLink["kind"], Icon> = {
   license: ScalesIcon,
 };
 
-/** Source code, website, license, and who packages the app for the catalog. */
+/**
+ * Source code, website, license (with the catalog's note on it, when the
+ * entry has one), and who packages the app for the catalog.
+ */
 export function LinksList({
   links,
   maintainers,
+  licenseNote = null,
 }: {
   links: readonly AppLink[];
   maintainers: readonly string[];
+  /** The catalog manifest's `licenseNote`: what the license id does not say. */
+  licenseNote?: string | null;
 }) {
   return (
     <div className="grid gap-3">
@@ -320,6 +326,11 @@ export function LinksList({
           );
         })}
       </ul>
+      {licenseNote !== null && (
+        <Text as="p" variant="secondary" size="sm" data-license-note="">
+          {licenseNote}
+        </Text>
+      )}
       {maintainers.length > 0 && (
         <Text as="p" variant="secondary" size="sm">
           Packaged for the catalog by{" "}

@@ -2,13 +2,15 @@
  * An app's license as the app page shows it: each SPDX license id linked to
  * a plain-language explanation. choosealicense.com explains the common
  * licenses (its pages are named by the lower-case id without `-only` or
- * `-or-later`); any other id links to its SPDX page. Operators and
- * parentheses of an SPDX expression stay plain text. Client-safe. What kind
- * of license it is, and the badge's words, are shared with the public site in
+ * `-or-later`); any other id of the SPDX License List links to its SPDX
+ * page (the schema's copy of the list, `isSpdxLicenseId`). A `LicenseRef-`
+ * id, or a word that is not a current SPDX id, stays plain text, as do the
+ * operators and parentheses of an expression. Client-safe. What kind of
+ * license it is, and the badge's words, are shared with the public site in
  * `@appflare/schema/catalog-display`.
  */
 
-import { LICENSE_NOT_STATED, licenseFile, NO_LICENSE } from "@appflare/schema";
+import { isSpdxLicenseId, licenseFile, SPDX_DEPRECATED_LICENSE_IDS_TEXT } from "@appflare/schema";
 
 /** Licenses choosealicense.com has a page for, by lower-case SPDX id. */
 const CHOOSEALICENSE = new Set([
@@ -61,24 +63,28 @@ const CHOOSEALICENSE = new Set([
   "zlib",
 ]);
 
-/** An SPDX license id (or `LicenseRef-…`), as far as its characters go. */
-const SPDX_ID = /^[A-Za-z0-9][A-Za-z0-9.+-]*$/;
-const OPERATORS = new Set(["AND", "OR", "WITH"]);
+/**
+ * Ids the SPDX License List still has a page for but no longer recommends
+ * (`GPL-3.0`); a custom catalog's entry may carry one.
+ */
+const DEPRECATED_IDS: ReadonlySet<string> = new Set(SPDX_DEPRECATED_LICENSE_IDS_TEXT.split(" "));
 
-/** Values that say there is no license, or none stated: nothing to link. */
-const NOT_LICENSES = new Set([NO_LICENSE, LICENSE_NOT_STATED, "UNLICENSED"]);
+/** Whether `id` is on the SPDX License List, current or deprecated. */
+function isListedId(id: string): boolean {
+  return isSpdxLicenseId(id) || DEPRECATED_IDS.has(id);
+}
 
-/** Where `id` is explained, or null when it is not a license id at all. */
+/**
+ * Where `id` is explained, or null when it is not an id of the SPDX License
+ * List (an operator, `NONE`, a `LicenseRef-`, or an id SPDX does not list).
+ * A trailing `+` ("or later") links the id itself.
+ */
 export function licenseHref(id: string): string | null {
-  if (!SPDX_ID.test(id) || OPERATORS.has(id.toUpperCase())) return null;
-  if (NOT_LICENSES.has(id.toUpperCase())) return null;
-  const base = id
-    .toLowerCase()
-    .replace(/\+$/, "")
-    .replace(/-(only|or-later)$/, "");
+  const bare = id.endsWith("+") ? id.slice(0, -1) : id;
+  if (!isListedId(bare)) return null;
+  const base = bare.toLowerCase().replace(/-(only|or-later)$/, "");
   if (CHOOSEALICENSE.has(base)) return `https://choosealicense.com/licenses/${base}/`;
-  if (id.startsWith("LicenseRef-")) return null;
-  return `https://spdx.org/licenses/${encodeURIComponent(id)}.html`;
+  return `https://spdx.org/licenses/${encodeURIComponent(bare)}.html`;
 }
 
 export interface LicensePart {

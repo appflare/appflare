@@ -13,6 +13,8 @@ import {
   getDomainOptionsCore,
   removeCustomDomainCore,
 } from "./custom-domains.server";
+import { varsRefresher } from "./reconfigure.server";
+import type { VarsRefresh } from "./vars-refresh.server";
 
 /** Custom domains of an install: what can be added, add one, remove one, check one. All admin only. */
 
@@ -50,10 +52,13 @@ export const addCustomDomain = createServerFn({ method: "POST" })
 /** Detaches a custom domain and marks it deleted. */
 export const removeCustomDomain = createServerFn({ method: "POST" })
   .validator(customDomainInput)
-  .handler(async ({ data }): Promise<{ hostname: string }> => {
+  .handler(async ({ data }): Promise<{ hostname: string } & VarsRefresh> => {
     await requireRole("admin");
     return asUserError(async () =>
-      removeCustomDomainCore({ db: env.DB, api: await getCfClient(env) }, data),
+      removeCustomDomainCore(
+        { db: env.DB, api: await getCfClient(env), refreshVars: varsRefresher(env) },
+        data,
+      ),
     );
   });
 
@@ -67,7 +72,12 @@ export const checkCustomDomain = createServerFn({ method: "POST" })
     await requireRole("admin");
     return asUserError(() =>
       checkCustomDomainCore(
-        { db: env.DB, fetch: (input, init) => fetch(input, init), api: () => getCfClient(env) },
+        {
+          db: env.DB,
+          fetch: (input, init) => fetch(input, init),
+          api: () => getCfClient(env),
+          refreshVars: varsRefresher(env),
+        },
         data,
       ),
     );

@@ -8,8 +8,8 @@ The catalog is a public GitHub repository,
 `apps/<slug>/`, holding a hand-written manifest, `appflare.jsonc`, and an optional
 `README.md`. Everything else is produced by the catalog's CI.
 
-Appflare does not use an app's Deploy button: it installs a signed build of the
-pinned commit and keeps it updated.
+Appflare does not use an app's Deploy to Cloudflare button: it installs a signed
+build of the pinned commit and keeps it updated.
 
 ## An entry pins one commit
 
@@ -48,30 +48,29 @@ When a change to an app reaches the `main` branch, CI:
 
 An [app of several Workers](/catalog/submit/#apps-of-several-workers) is built and
 bundled one Worker at a time, in the order its entry lists them, and packed into one
-artifact. Its `manifest.json` is format 2: the primary Worker is `worker`, exactly
-as the only Worker of a one-Worker app is, and every other Worker is listed in
-`workers` with its own modules and static assets. D1 migrations are recorded once
-per binding, since Workers that share a binding share the database. Where a wrangler
-config names another Worker of the entry, the artifact records that Worker's name in
-the entry instead, and the manager fills in the name it installed that Worker under.
-One-Worker apps stay format 1. A manager older than format 2 refuses such an
-artifact rather than installing half the app.
+artifact. In its `manifest.json` the primary Worker is `worker`, exactly as the
+only Worker of a one-Worker app is, and every other Worker is listed in `workers`
+with its own modules and static assets. Where a wrangler config names another Worker
+of the entry, the artifact records that Worker's name in the entry instead, and the
+manager fills in the name it installed that Worker under.
 
-An artifact that carries D1 schema files or post-deploy migrations (from
-`resources.d1`) is format 3, whether it has one Worker or several: `d1Schema` and
-`d1PostDeploy` list those files by binding, beside `d1Migrations`. A manager older
-than format 3 refuses it rather than installing the app without them, and a
-manager that meets a format newer than it reads asks the admin to update Appflare.
-Every artifact is written in the oldest format that can carry it, so apps without
-these files stay format 1 or 2. A D1 baseline (`resources.d1[binding].baseline`) is
-recorded as `d1Baseline` and makes the artifact format 5, since a manager that did not
-run it would apply the migrations to an empty database.
+The artifact records each D1 binding's SQL once, under `d1`, keyed by the binding,
+since Workers that share a binding share the database: its `migrations`, the
+`schema` files and post-deploy migrations (`postDeploy`) that `resources.d1`
+declares, and its `baseline`, when it has one.
+
+`manifest.json` says which `format` it is written in, and there is one format, 1. A
+manager that meets a later format refuses the artifact and asks the admin to update
+Appflare, rather than install the app without something it cannot read. The packer
+and the catalog checks refuse a manifest field the schema does not know, so a
+misspelled field fails the build instead of being left out.
 
 Releases are immutable. A change to `appflare.jsonc` alone, without a new pin, cannot
 be published as a new release; re-pin `source` to ship it. Two exceptions need no
 release:
 
-- `authors`, which `index.json` reads from the current manifest.
+- `authors`, `tagline` and `licenseNote`, which `index.json` reads from the current
+  manifest.
 - A change to the app's form or copy (its `secrets`, `vars`, `postInstall`, name,
   summary, and similar) made together with a higher `revision`. CI builds nothing:
   the release stays as it is. The signing job signs the revised `appflare.jsonc`

@@ -10,8 +10,8 @@ refresh button at the top right to fetch it now. The line under the search field
 says how many apps there are and when the list was last updated; hover over the
 time for the exact date.
 
-Appflare does not use an app's Deploy button: it installs a signed build of the
-pinned commit and keeps it updated.
+Appflare does not use an app's Deploy to Cloudflare button: it installs a signed
+build of the pinned commit and keeps it updated.
 
 You can look through every app before you install Appflare, too: the
 [apps page](/apps/) of this site lists the whole catalog.
@@ -139,8 +139,8 @@ shows the license the app's own repository declares, so the choice is yours:
   badge to read it.
 - **No license** means the repository publishes none. You may run the app, but
   you have no license to modify or redistribute it.
-- **Custom license** means the app has a license of its own with no standard id;
-  its page links to the file.
+- **A license with no standard id** is shown by the name the catalog entry gives
+  it, such as `LicenseRef-Acme`, and the entry's note says what it allows.
 
 The license filter in the search field's filter menu narrows the list to
 open-source, source-available, or unlicensed apps.

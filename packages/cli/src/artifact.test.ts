@@ -100,12 +100,40 @@ describe("verifyArtifact", () => {
     const { dir } = await fixture({
       sign: key,
       mutate: (m) => {
-        (m as { format: number }).format = 2;
+        (m as { d1?: unknown }).d1 = undefined;
       },
     });
     await expect(verifyArtifact({ dir, keys: [key.key] })).rejects.toThrow(
       "not a valid artifact manifest",
     );
+  });
+
+  it("says to run the latest installer for a release of a later format", async () => {
+    const key = await makeTestKey();
+    const { dir } = await fixture({
+      sign: key,
+      mutate: (m) => {
+        (m as { format: number }).format = 7;
+      },
+    });
+    await expect(verifyArtifact({ dir, keys: [key.key] })).rejects.toThrow(
+      "the release is artifact format 7, and this installer reads format 1; run the latest installer (npx create-appflare@latest)",
+    );
+  });
+
+  it("says a release of format 2 to 6 needs to be packed again, since no installer reads it", async () => {
+    const key = await makeTestKey();
+    for (const format of [2, 6]) {
+      const { dir } = await fixture({
+        sign: key,
+        mutate: (m) => {
+          (m as { format: number }).format = format;
+        },
+      });
+      await expect(verifyArtifact({ dir, keys: [key.key] })).rejects.toThrow(
+        `the release is artifact format ${format}: it was built for an earlier version of Appflare and needs to be packed again by its catalog`,
+      );
+    }
   });
 });
 

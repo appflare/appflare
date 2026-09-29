@@ -4,23 +4,20 @@ import { KeyIcon } from "@phosphor-icons/react";
 import {
   type AppTokenPermission,
   appTokenTemplateUrl,
+  LEVEL_WORDS,
   r2ApiTokensUrl,
   resolveAppTokenPermissions,
-  unmappedPermissionReason,
+  UNMAPPED_PERMISSION_REASON,
   userTokenTemplateUrl,
 } from "../cloudflare/token-template";
 import { useAccountId } from "./use-account-id";
 
-const SCOPE_LABELS: Record<NonNullable<TokenPermission["scope"]>, string> = {
-  account: "Account",
-  zone: "Zone",
-  user: "User",
-};
-
-/** How a permission reads in the list: the dashboard's group and level, else the catalog's name. */
+/** How a permission reads in the list: the dashboard's scope, group and level. */
 export function permissionTitle(p: AppTokenPermission): string {
-  if (p.group === null) return p.name;
-  return `${p.group.label} · ${p.group.type === "edit" ? "Edit" : "Read"}`;
+  const scope = p.scope === "zone" ? "Zone" : "Account";
+  const label = p.group?.label ?? `${scope}: ${p.groupName}`;
+  // The template group's level (Purge for Cache Purge), else the access asked for.
+  return `${label} · ${LEVEL_WORDS[p.group?.type ?? p.access]}`;
 }
 
 /**
@@ -47,7 +44,7 @@ export function AppTokenHelp({
   // R2's own API token (Admin Read & Write) carries R2 storage, R2 Data
   // Catalog and R2 SQL together: the way wrangler's `pipelines setup` sends
   // people, and an alternative for a Pipelines sink's token.
-  const r2Token = resolved.some((p) => /\br2 data catalog\b/i.test(p.name));
+  const r2Token = resolved.some((p) => p.groupName === "Workers R2 Data Catalog");
   return (
     <div className="grid gap-2" data-app-token-help="">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -96,24 +93,16 @@ export function AppTokenHelp({
             </Text>
             <ul className="m-0 grid list-none gap-2 p-0">
               {resolved.map((p) => (
-                <li key={p.name} className="grid gap-0.5">
+                <li key={`${p.scope} ${p.groupName}`} className="grid gap-0.5">
                   <Text size="sm" bold>
                     {permissionTitle(p)}
-                    {p.group === null && p.scope !== null && (
-                      <span className="font-normal text-kumo-subtle">
-                        {" "}
-                        ({SCOPE_LABELS[p.scope]})
-                      </span>
-                    )}
                   </Text>
-                  {p.description !== null && (
-                    <Text variant="secondary" size="sm">
-                      {p.description}
-                    </Text>
-                  )}
+                  <Text variant="secondary" size="sm">
+                    {p.reason}
+                  </Text>
                   {p.group === null && (
                     <Text variant="secondary" size="sm">
-                      {unmappedPermissionReason(p)}
+                      {UNMAPPED_PERMISSION_REASON}
                     </Text>
                   )}
                 </li>

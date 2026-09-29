@@ -1,7 +1,6 @@
 import type { WorkerDeployment } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
-  type CatalogHyperdrive,
   type CatalogPipeline,
   type CatalogPipelines,
   type CatalogSecret,
@@ -9,6 +8,7 @@ import {
   catalogR2BucketSchema,
   type DoMigration,
   durableObjectExports,
+  type HyperdriveDeclaration,
   hasDurableObjectExports,
   isOptionalSecret,
   isSeedOnly,
@@ -287,7 +287,7 @@ export function diffBindings(
   recorded: readonly RecordedResource[],
   installedShapes: VectorizeShapes = {},
   /** The version's `resources.hyperdrive` (the catalog manifest's database declarations). */
-  databases: readonly CatalogHyperdrive[] = [],
+  databases: readonly HyperdriveDeclaration[] = [],
   /** The version's `resources.pipelines` (the catalog manifest's stream descriptions). */
   streams: CatalogPipelines = {},
   /** The installed version's `resources.pipelines` ({@link pipelineShapesOf}). */
@@ -663,10 +663,9 @@ export function updatePath(
  * Secrets the new version needs that the Worker does not have yet. An
  * optional secret is never asked for here; the app's settings can set it.
  */
-export function missingSecrets(
-  declared: readonly CatalogSecret[],
-  recordedNames: Iterable<string>,
-): CatalogSecret[] {
+export function missingSecrets<
+  T extends Pick<CatalogSecret, "name"> & Partial<Pick<CatalogSecret, "optional" | "seedOnly">>,
+>(declared: readonly T[], recordedNames: Iterable<string>): T[] {
   const have = new Set(recordedNames);
   // A seed-only secret is never on the Worker: the install used it once.
   return declared.filter((s) => !isOptionalSecret(s) && !isSeedOnly(s) && !have.has(s.name));

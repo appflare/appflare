@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MANAGER_APP, unpackArtifact, type VerifiedArtifact, verifyArtifact } from "@appflare/cli";
+import { MANAGER_APP, unpackArtifact, type VerifiedArtifact, verifyArtifact } from "create-appflare";
 import { parseJsonc } from "@appflare/pack";
 import { pageUrl, SITE_URL } from "../apps/docs/src/lib/shared.ts";
 import { findSecrets, repoSecrets, type Secret } from "./deploy-repo-guard.ts";

@@ -57,6 +57,10 @@ export interface ExternalDomainStatus {
   checkedAt: string;
   /** The app answered through the domain, so this read turned workers.dev off. */
   workersDevTurnedOff?: boolean;
+  /** The settings change that fills the app's new address in, when this read started one. */
+  settingsJobId?: string | null;
+  /** Why the settings could not be deployed again with the new address. */
+  settingsNote?: string | null;
 }
 
 /** Custom hostname states in which it will not serve without someone acting. */

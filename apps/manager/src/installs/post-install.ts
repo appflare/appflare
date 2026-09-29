@@ -6,11 +6,10 @@ import {
 } from "@appflare/schema";
 
 /**
- * Post-install notes: markdown from the
- * signed catalog manifest with `{{workerUrl}}`, `{{workerName}}` and
- * `{{accountId}}` filled in.
- * Unknown placeholders are left as written. Vars take the same placeholders
- * (install-vars.ts).
+ * Post-install notes: markdown from the signed catalog manifest with the
+ * install's placeholders (the schema's `PLACEHOLDER_FIELDS.postInstall`, such
+ * as `{{appUrl}}` and `{{workerName}}`) filled in. Unknown placeholders are
+ * left as written. Vars take the same placeholders (install-vars.ts).
  */
 
 export type PostInstallValues = PlaceholderValues;
@@ -24,7 +23,7 @@ export function workersDevUrl(
 
 /**
  * `content` with the install's placeholders filled in, and for an app of
- * several Workers `{{workerUrl:<name>}}` and `{{workerName:<name>}}` too.
+ * several Workers the per-Worker ones (`{{appUrl:<name>}}`) too.
  */
 export function renderPostInstall(
   content: string,

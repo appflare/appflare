@@ -1,3 +1,4 @@
+import { COVER_HEIGHT, COVER_WIDTH } from "@appflare/schema";
 import { cn } from "@cloudflare/kumo";
 import { monogram } from "../catalog/monogram";
 import { CatalogImage } from "./catalog-image";
@@ -59,7 +60,7 @@ export function AppIcon({
   );
 }
 
-/** An app's 1200x630 cover, full width. */
+/** An app's cover (the schema's cover size, 1200x630), full width. */
 export function AppCover({
   src,
   alt,
@@ -76,7 +77,7 @@ export function AppCover({
       alt={alt}
       fit="cover"
       eager={eager}
-      style={{ aspectRatio: "1200 / 630" }}
+      style={{ aspectRatio: `${COVER_WIDTH} / ${COVER_HEIGHT}` }}
       className="w-full rounded-lg ring ring-kumo-hairline"
     />
   );

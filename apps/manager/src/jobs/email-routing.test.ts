@@ -200,14 +200,14 @@ describe("install with Email Routing", () => {
   });
 
   it("leaves routing alone when it is already on", async () => {
-    const r = await install({ rules: ["inbox"] }, { routingEnabled: true });
+    const r = await install({ catchAll: false, rules: ["inbox"] }, { routingEnabled: true });
     expect(r.job?.status).toBe("succeeded");
     expect(r.routes.map((x) => x.name)).toEqual(["inbox@example.com"]);
     expect(r.email.world.calls).not.toContain(`POST /zones/${ZONE_ID}/email/routing/dns`);
   });
 
   it("records nothing when routing was turned on by something else after the check", async () => {
-    const r = await install({ rules: ["inbox"] }, {}, undefined, [], (w) => {
+    const r = await install({ catchAll: false, rules: ["inbox"] }, {}, undefined, [], (w) => {
       w.routingEnabled = true;
     });
     expect(r.job?.status).toBe("succeeded");
@@ -219,9 +219,15 @@ describe("install with Email Routing", () => {
   });
 
   it("turns routing on again, and records it, when it was turned off after the check", async () => {
-    const r = await install({ rules: ["inbox"] }, { routingEnabled: true }, undefined, [], (w) => {
-      w.routingEnabled = false;
-    });
+    const r = await install(
+      { catchAll: false, rules: ["inbox"] },
+      { routingEnabled: true },
+      undefined,
+      [],
+      (w) => {
+        w.routingEnabled = false;
+      },
+    );
     expect(r.job?.status).toBe("succeeded");
     expect(r.email.world.routingEnabled).toBe(true);
     expect(r.routes.map((x) => x.name)).toEqual(["example.com", "inbox@example.com"]);
@@ -230,7 +236,7 @@ describe("install with Email Routing", () => {
 
   it("stops before creating anything when the catch-all already delivers elsewhere", async () => {
     const r = await install(
-      { catchAll: true },
+      { rules: [], catchAll: true },
       {
         catchAll: {
           enabled: true,
@@ -250,7 +256,7 @@ describe("install with Email Routing", () => {
 
   it("names the permissions the token lacks and creates nothing", async () => {
     const r = await install(
-      { rules: ["inbox"] },
+      { catchAll: false, rules: ["inbox"] },
       { forbidden: [`/zones/${ZONE_ID}/email/routing/rules`] },
     );
     expect(r.job?.status).toBe("failed");
@@ -260,7 +266,7 @@ describe("install with Email Routing", () => {
 
   it("creates a rule once when a retry follows a lost answer", async () => {
     const r = await install(
-      { rules: ["inbox"] },
+      { catchAll: false, rules: ["inbox"] },
       { routingEnabled: true, failAfter: new Set([`POST /zones/${ZONE_ID}/email/routing/rules`]) },
     );
     expect(r.job?.status).toBe("succeeded");
@@ -271,7 +277,7 @@ describe("install with Email Routing", () => {
 
   it("forgets the routing record when Cloudflare refuses to turn routing on", async () => {
     const r = await install(
-      { catchAll: true },
+      { rules: [], catchAll: true },
       { forbidden: [`/zones/${ZONE_ID}/email/routing/dns`] },
     );
     expect(r.job?.status).toBe("failed");
@@ -282,7 +288,7 @@ describe("install with Email Routing", () => {
   });
 
   it("refuses to start without a zone, or with one for an app that takes none", async () => {
-    await expect(install({ catchAll: true }, {}, {})).rejects.toThrow(
+    await expect(install({ rules: [], catchAll: true }, {}, {})).rejects.toThrow(
       "Cut receives email. Choose the zone",
     );
     await expect(install(undefined)).rejects.toThrow(
@@ -364,7 +370,7 @@ describe("uninstall with Email Routing", () => {
   });
 
   it("leaves routing on when another rule uses it, and a changed catch-all alone", async () => {
-    const r = await uninstallAfterInstall({ catchAll: true }, {}, (w) => {
+    const r = await uninstallAfterInstall({ rules: [], catchAll: true }, {}, (w) => {
       w.rules.push({
         id: "someone-else",
         enabled: true,
@@ -395,7 +401,7 @@ describe("uninstall with Email Routing", () => {
       matchers: [{ type: "all" }],
       actions: [{ type: "forward", value: ["me@example.net"] }],
     };
-    const r = await uninstallAfterInstall({ catchAll: true }, { catchAll: found });
+    const r = await uninstallAfterInstall({ rules: [], catchAll: true }, { catchAll: found });
     expect(r.job?.status).toBe("succeeded");
     expect(r.email.world.catchAll).toEqual(found);
     expect(r.logs.join("\n")).toContain(
@@ -404,7 +410,10 @@ describe("uninstall with Email Routing", () => {
   });
 
   it("never turns off routing Appflare did not turn on", async () => {
-    const r = await uninstallAfterInstall({ rules: ["inbox"] }, { routingEnabled: true });
+    const r = await uninstallAfterInstall(
+      { catchAll: false, rules: ["inbox"] },
+      { routingEnabled: true },
+    );
     expect(r.job?.status).toBe("succeeded");
     expect(r.email.world.rules).toEqual([]);
     expect(r.email.world.routingEnabled).toBe(true);
@@ -412,9 +421,13 @@ describe("uninstall with Email Routing", () => {
   });
 
   it("counts a rule deleted by hand as removed", async () => {
-    const r = await uninstallAfterInstall({ rules: ["inbox"] }, { routingEnabled: true }, (w) => {
-      w.rules = [];
-    });
+    const r = await uninstallAfterInstall(
+      { catchAll: false, rules: ["inbox"] },
+      { routingEnabled: true },
+      (w) => {
+        w.rules = [];
+      },
+    );
     expect(r.job?.status).toBe("succeeded");
     expect(r.logs.join("\n")).toContain("The routing rule for inbox@example.com was already gone.");
   });

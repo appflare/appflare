@@ -8,12 +8,7 @@ import { catalogPageEntries } from "./pages.ts";
 import { fixtureUrl } from "./plugin.ts";
 import { siteCatalog as deriveSiteCatalog, type SiteApp } from "./site-catalog.ts";
 import { parseCatalogSnapshot } from "./snapshot.ts";
-import {
-  appsInCategory,
-  RECENTLY_TESTED_CAPTION,
-  searchApps,
-  storefrontRows,
-} from "./storefront.ts";
+import { appsInCategory, searchApps, storefrontRows } from "./storefront.ts";
 import { catalogMediaUrl, catalogPagePaths } from "./urls.ts";
 
 const snapshot = parseCatalogSnapshot(
@@ -32,11 +27,11 @@ function app(overrides: Partial<SiteApp> & { slug: string }): SiteApp {
     requires: [],
     services: [],
     lastVerified: null,
-    addedAt: null,
+    addedAt: "2026-01-01T00:00:00Z",
     authors: [],
     maintainers: [],
     categories: [],
-    license: null,
+    license: { expression: "MIT", note: null },
     icon: null,
     cover: null,
     screenshots: [],
@@ -57,9 +52,9 @@ describe("the catalog pages", () => {
     }
   });
 
-  it("give every category the apps list a page, folded categories as the one they became", () => {
+  it("give every category the apps list a page", () => {
     const paths = catalogPagePaths(siteCatalog);
-    const listed = new Set(snapshot.index.apps.flatMap((a) => a.categories ?? []));
+    const listed = new Set(snapshot.index.apps.flatMap((a) => a.categories));
     expect(listed.size).toBeGreaterThan(0);
     for (const id of listed) {
       expect(paths).toContain(`/categories/${id}/`);
@@ -97,16 +92,15 @@ describe("siteCatalog", () => {
     expect(stale.apps.every((a) => a.popularity === null)).toBe(true);
   });
 
-  it("keeps no release addresses, and lists the repository owner when an app names no authors", () => {
+  it("keeps no release addresses, and the authors the index lists", () => {
     const [first] = snapshot.index.apps;
     if (first === undefined) throw new Error("empty fixture");
     const derived = deriveSiteCatalog({
       ...snapshot,
-      index: { ...snapshot.index, apps: [{ ...first, authors: undefined }] },
+      index: { ...snapshot.index, apps: [first] },
     });
     const [only] = derived.apps;
-    const owner = snapshot.links[first.slug]?.repo.split("/")[0];
-    expect(only?.authors).toEqual([{ name: owner, github: owner }]);
+    expect(only?.authors).toEqual(first.authors);
     expect(JSON.stringify(derived)).not.toContain("releases/download");
   });
 });
@@ -190,18 +184,12 @@ describe("storefrontRows", () => {
     expect(rows[2]?.seeAll).toBe("/categories/email/");
   });
 
-  it("stands in the most recently tested apps while the catalog does not say when apps were added", () => {
+  it("shows no new row when no app joined the catalog this week", () => {
     const apps = [
-      app({ slug: "old", lastVerified: "2026-09-01T00:00:00Z" }),
-      app({ slug: "recent", lastVerified: "2026-09-27T00:00:00Z" }),
+      app({ slug: "old", addedAt: "2026-09-01T00:00:00Z" }),
+      app({ slug: "older", addedAt: "2026-08-01T00:00:00Z" }),
     ];
-    const [row] = storefrontRows(apps, [], now);
-    expect(row).toMatchObject({
-      id: "new",
-      title: "Recently tested",
-      caption: RECENTLY_TESTED_CAPTION,
-    });
-    expect(row?.apps.map((a) => a.slug)).toEqual(["recent", "old"]);
+    expect(storefrontRows(apps, [], now).map((r) => r.id)).not.toContain("new");
   });
 });
 
@@ -234,10 +222,10 @@ describe("an app page", () => {
     expect(needs.note).toBeNull();
   });
 
-  it("gives the plain list when the catalog does not say what the app uses", () => {
-    const needs = accountNeeds(app({ slug: "x", requires: ["zone"], services: null }));
-    expect(needs.items).toEqual([{ key: "zone", name: "A domain", words: null }]);
-    expect(needs.note).toMatch(/only what this app requires/);
+  it("lists a requirement that is not a service by its own name", () => {
+    const needs = accountNeeds(app({ slug: "x", requires: ["something-new"] }));
+    expect(needs.items).toEqual([{ key: "something-new", name: "Something new", words: null }]);
+    expect(needs.note).toBeNull();
     expect(accountNeeds(app({ slug: "x", tier: "self-deploying" })).note).toMatch(/installer/);
   });
 
@@ -270,6 +258,7 @@ describe("an app page", () => {
     expect(stats.find((s) => s.id === "license")?.tone).toBe("warning");
     expect(appStats(app({ slug: "y" }), now).map((s) => s.id)).toEqual([
       "plan",
+      "license",
       "version",
       "tested",
     ]);

@@ -1,8 +1,7 @@
 import {
-  appHealthMode,
-  appHealthPath,
   artifactManifestSchema,
   catalogManifestSchema,
+  DEFAULT_HEALTH_MODE,
   type HealthMode,
 } from "@appflare/schema";
 import type { HealthStatus } from "../../db/schema";
@@ -21,9 +20,9 @@ import type { HealthStatus } from "../../db/schema";
  * the app was created or promoted) is time-bounded and never fails its job;
  * it records a `HealthStatus`: `decideLiveHealth`.
  *
- * Both read the answer by the app's health mode (`install.healthMode`). The
- * default counts redirects and 4xx answers as serving and a 5xx as a failure.
- * `status-only` is for apps whose every route sits behind Cloudflare Access
+ * Both read the answer by the app's health mode (`install.health.mode`). The
+ * default, `no-server-errors`, counts redirects and 4xx answers as serving and a 5xx as a failure.
+ * `any-response` is for apps whose every route sits behind Cloudflare Access
  * or their own sign-in: no request without credentials can show whether such
  * an app is healthy, so any answer the Worker itself gives counts, a 5xx of
  * its own included. Cloudflare's error pages (`error code: <n>`, such as 1042
@@ -73,9 +72,9 @@ export function isEdgeErrorPage(probe: HealthProbe): boolean {
   return probe.kind === "response" && /^error code: \d+/.test(probe.bodyStart.trimStart());
 }
 
-/** Under `status-only`, whether this answer counts as the app serving. */
-function statusOnlyPass(probe: HealthProbe, mode: HealthMode): boolean {
-  return mode === "status-only" && probe.kind === "response" && !isEdgeErrorPage(probe);
+/** Under `any-response`, whether this answer counts as the app serving. */
+function anyResponsePass(probe: HealthProbe, mode: HealthMode): boolean {
+  return mode === "any-response" && probe.kind === "response" && !isEdgeErrorPage(probe);
 }
 
 function describe(probe: HealthProbe): string {
@@ -94,7 +93,7 @@ export function classifyHealthProbe(
   attempt: number,
   elapsedMs: number,
   maxAttempts: number = HEALTH_MAX_ATTEMPTS,
-  mode: HealthMode = "default",
+  mode: HealthMode = DEFAULT_HEALTH_MODE,
 ): HealthVerdict {
   const last = attempt >= maxAttempts;
   if (probe.kind === "error" || isEdge1042(probe)) {
@@ -102,7 +101,7 @@ export function classifyHealthProbe(
       ? { verdict: "unhealthy", reason: `${describe(probe)} after ${attempt} attempts` }
       : { verdict: "retry", reason: describe(probe) };
   }
-  if (statusOnlyPass(probe, mode)) return { verdict: "healthy", status: probe.status };
+  if (anyResponsePass(probe, mode)) return { verdict: "healthy", status: probe.status };
   if (probe.status >= 500) {
     return !last && elapsedMs < HEALTH_5XX_GRACE_MS
       ? { verdict: "retry", reason: describe(probe) }
@@ -143,12 +142,12 @@ export type LiveProbeClass = "pass" | "retry" | "soft-404";
 
 export function classifyLiveProbe(
   probe: HealthProbe,
-  mode: HealthMode = "default",
+  mode: HealthMode = DEFAULT_HEALTH_MODE,
   routeWasLive = false,
 ): LiveProbeClass {
   if (probe.kind === "error" || isEdge1042(probe)) return "retry";
   if (probe.status === 404) return routeWasLive && !isEdgeErrorPage(probe) ? "pass" : "soft-404";
-  if (statusOnlyPass(probe, mode)) return "pass";
+  if (anyResponsePass(probe, mode)) return "pass";
   if (probe.status >= 500) return "retry";
   return "pass";
 }
@@ -167,12 +166,12 @@ export interface HealthSettlement {
  */
 export function settleHealthProbe(
   probe: HealthProbe,
-  mode: HealthMode = "default",
+  mode: HealthMode = DEFAULT_HEALTH_MODE,
 ): HealthSettlement {
   if (probe.kind === "error" || isEdge1042(probe)) {
     return { status: "unverified", detail: describe(probe) };
   }
-  if (statusOnlyPass(probe, mode)) return { status: "verified", detail: describe(probe) };
+  if (anyResponsePass(probe, mode)) return { status: "verified", detail: describe(probe) };
   if (probe.status >= 500) return { status: "unhealthy", detail: describe(probe) };
   return { status: "verified", detail: describe(probe) };
 }
@@ -200,7 +199,7 @@ export function decideLiveHealth(
   attempt: number,
   elapsedMs: number,
   windowMs: number = LIVE_HEALTH_WINDOW_MS,
-  mode: HealthMode = "default",
+  mode: HealthMode = DEFAULT_HEALTH_MODE,
   /** The URL served before the job, so a plain 404 is the app's answer (see `classifyLiveProbe`). */
   routeWasLive = false,
 ): LiveHealthDecision {
@@ -226,21 +225,20 @@ export interface HealthCheck {
  * from its recorded manifest; `/` and the default mode when unknown.
  */
 export function healthCheckOfManifest(manifestJson: string | null): HealthCheck {
-  const fallback: HealthCheck = { path: "/", mode: "default" };
+  const fallback: HealthCheck = { path: "/", mode: DEFAULT_HEALTH_MODE };
   if (manifestJson === null) return fallback;
   try {
     const json: unknown = JSON.parse(manifestJson);
     const parsed = artifactManifestSchema.safeParse(json);
     if (!parsed.success) {
-      // A self-deploying install records its catalog manifest instead; its
-      // app usually sits behind Cloudflare Access, so status-only is its default.
+      // A self-deploying install records its catalog manifest instead.
       const catalog = catalogManifestSchema.safeParse(json);
       if (!catalog.success || catalog.data.install.tier !== "self-deploying") return fallback;
       const { install } = catalog.data;
-      return { path: appHealthPath(install), mode: install.healthMode ?? "status-only" };
+      return { path: install.health.path, mode: install.health.mode };
     }
     const { install } = parsed.data.catalog;
-    return { path: appHealthPath(install), mode: appHealthMode(install) };
+    return { path: install.health.path, mode: install.health.mode };
   } catch {
     return fallback;
   }

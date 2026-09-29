@@ -14,6 +14,7 @@ import {
 const MANIFEST: Pick<ArtifactManifest, "worker" | "assets"> = {
   worker: {
     name: "appflare",
+    wranglerConfig: { declared: "wrangler.jsonc", effective: "{}" },
     mainModule: "index.js",
     compatibilityDate: "2026-09-21",
     compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
@@ -26,6 +27,7 @@ const MANIFEST: Pick<ArtifactManifest, "worker" | "assets"> = {
     ],
     migrations: [],
     crons: ["*/30 * * * *"],
+    queueConsumers: [],
     observability: { enabled: true },
     placement: null,
     limits: null,

@@ -9,14 +9,12 @@ import {
   buildRequestSchema,
   type CatalogManifest,
   catalogManifestSchema,
-  catalogRevision,
   catalogRevisionSchema,
   DEFAULT_SANDBOX_INSTANCE_TYPE,
   githubRepositorySchema,
   gitRefSchema,
   gitShaSchema,
   type IndexApp,
-  type IndexArtifacts,
   type IndexBuild,
   indexAppArtifact,
   indexCatalogManifestSchema,
@@ -30,6 +28,7 @@ import {
 } from "@appflare/schema";
 import { z } from "zod";
 import { MANIFEST_TTL_SECONDS, manifestCacheKey } from "../../catalog/app-manifest.server";
+import type { ReleaseAssets } from "../../catalog/release-assets";
 import {
   recordCatalogRevision,
   recordedRevisionFor,
@@ -166,7 +165,7 @@ export type RevisedCatalogRef = z.infer<typeof revisedCatalogRef>;
 export function revisedCatalogOf(app: IndexApp): RevisedCatalogRef | null {
   return app.catalogManifest === undefined
     ? null
-    : { ...app.catalogManifest, revision: catalogRevision(app) };
+    : { ...app.catalogManifest, revision: app.revision };
 }
 
 /**
@@ -188,7 +187,7 @@ export function sourceManifest(
 export type ArtifactOrigin =
   | {
       kind: "release";
-      artifacts: IndexArtifacts;
+      artifacts: ReleaseAssets;
       digest: string;
       /** A revision of the release's catalog manifest to install with it. */
       revised?: RevisedCatalogRef;
@@ -221,7 +220,12 @@ export function artifactOriginOf(app: IndexApp, costConfirmed: boolean): Artifac
     throw new JobError(`Appflare cannot install ${app.tier} tier apps yet`);
   }
   const revised = revisedCatalogOf(app);
-  return { kind: "release", ...release, ...(revised === null ? {} : { revised }) };
+  return {
+    kind: "release",
+    artifacts: release,
+    digest: release.digest,
+    ...(revised === null ? {} : { revised }),
+  };
 }
 
 /**

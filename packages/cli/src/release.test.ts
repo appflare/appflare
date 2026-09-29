@@ -42,7 +42,7 @@ describe("release selection", () => {
 
   it("picks the newest published manager release", () => {
     const picked = pickLatestManagerRelease([
-      release("@appflare/cli@0.3.0"),
+      release("create-appflare@0.3.0"),
       release("manager@0.3.0", { draft: true }),
       release("manager@0.3.0-rc.1", { prerelease: true }),
       release("manager@0.2.0"),
@@ -127,7 +127,7 @@ describe("release selection", () => {
       url.includes("/assets")
         ? Response.json([asset("manifest.json")])
         : Response.json([
-            release("@appflare/cli@0.4.0"),
+            release("create-appflare@0.4.0"),
             release("manager@0.4.0", { draft: true }),
             fresh,
             release("manager@0.3.1-rc.1", { prerelease: true }),

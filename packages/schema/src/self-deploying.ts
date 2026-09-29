@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { STAGE_PLACEHOLDER } from "./placeholders.ts";
 
 /**
  * The catalog manifest's `install.selfDeploying` block, for apps of the
@@ -12,8 +13,13 @@ import { z } from "zod";
  * destroy command. Appflare records what the installer created and never
  * deletes any of it itself.
  *
- * This module imports nothing but zod: `catalog.ts` imports it, and the JSON
- * Schema export runs `catalog.ts` directly under Node's type stripping.
+ * The installer keeps its state in the account itself (for Alchemy, its
+ * `alchemy-state-store` Worker, which the first deploy creates), so every
+ * run in a fresh container sees what earlier runs deployed.
+ *
+ * This module imports nothing but zod and placeholders: `catalog.ts` imports
+ * it, and the JSON Schema export runs `catalog.ts` directly under Node's type
+ * stripping.
  */
 
 /** Installers Appflare knows how to run. */
@@ -28,7 +34,7 @@ export interface SelfDeployingToolConventions {
   tokenEnv: readonly string[];
   /** Environment variables the installer reads the Cloudflare account id from. */
   accountIdEnv: readonly string[];
-  /** The option that names the stage when the entry does not set `stageArg`. */
+  /** The option the sandbox Worker appends to both commands, before the install's stage. */
   stageArg: string;
 }
 
@@ -62,7 +68,13 @@ export const selfDeployingArgWordSchema = z
 
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
-/** An installer command as argv: the program first, then its arguments. */
+/**
+ * An installer command as argv: the program first, then its arguments. Not
+ * one string like `install.buildCommand`: the sandbox Worker appends the
+ * stage option and the stage as words of their own, and the words run
+ * exactly as listed, so a list says precisely what runs with the app's
+ * Cloudflare API token in its environment.
+ */
 export const selfDeployingCommandSchema = z
   .array(selfDeployingArgWordSchema)
   .min(1)
@@ -77,9 +89,6 @@ export type SelfDeployingCommand = z.infer<typeof selfDeployingCommandSchema>;
 
 /** The longest stage Appflare passes (see {@link selfDeployingStageSchema}). */
 export const MAX_STAGE_LENGTH = 24;
-
-/** The placeholder a Worker name template holds for the install's stage. */
-export const STAGE_PLACEHOLDER = "{{stage}}";
 
 /**
  * A Worker the installer creates, named with {@link STAGE_PLACEHOLDER} for the
@@ -144,29 +153,16 @@ export const catalogSelfDeployingSchema = z
       "The command that deploys (or updates) the app, as argv, run at the root of the " +
         "checkout after the dependency install and `install.buildCommand`, for example " +
         '`["pnpm", "alchemy", "deploy", "--yes"]`. The sandbox Worker appends the stage ' +
-        "option. It must not prompt: it runs without a terminal.",
+        "option and the stage (`--stage <stage>` for Alchemy). It must not prompt: it runs " +
+        "without a terminal. A list of words rather than one string, so the words run exactly " +
+        "as listed.",
     ),
     destroyCommand: selfDeployingCommandSchema.describe(
       "The command that deletes everything the deploy command created, as argv, for example " +
         '`["pnpm", "alchemy", "destroy", "--yes"]`. Uninstalling runs it; Appflare never ' +
         "deletes the app's resources itself.",
     ),
-    stageArg: z
-      .string()
-      .regex(/^--?[a-z][a-z0-9-]*$/, "must be an option such as --stage")
-      .describe(
-        "The option the sandbox Worker appends to both commands, followed by the install's " +
-          'stage. Defaults to the tool\'s own (`"--stage"` for Alchemy).',
-      )
-      .optional(),
-    stateStore: z
-      .literal("cloudflare")
-      .describe(
-        'Where the installer keeps its state. `"cloudflare"`: in the account itself (for ' +
-          "Alchemy, its `alchemy-state-store` Worker, which the first deploy creates), so " +
-          "every run in a fresh container sees what earlier runs deployed.",
-      ),
-    workers: z
+    workerNames: z
       .array(selfDeployingWorkerTemplateSchema)
       .min(1)
       .max(8)
@@ -178,7 +174,7 @@ export const catalogSelfDeployingSchema = z
       ),
   })
   .superRefine((block, ctx) => {
-    const stageArg = selfDeployingStageArg(block);
+    const stageArg = SELF_DEPLOYING_TOOLS[block.tool].stageArg;
     for (const key of ["deployCommand", "destroyCommand"] as const) {
       if (namesStage(block[key], stageArg)) {
         ctx.addIssue({
@@ -192,15 +188,15 @@ export const catalogSelfDeployingSchema = z
   .meta({
     description:
       "How the sandbox Worker runs the app's own installer (self-deploying tier only). The " +
-      "admin creates a Cloudflare API token from `tokenPermissions` for it.",
+      "admin creates a Cloudflare API token from `tokenPermissions` for it. The installer keeps " +
+      "its state in the account (for Alchemy, its `alchemy-state-store` Worker), so every run " +
+      "sees what earlier runs deployed.",
   });
 export type CatalogSelfDeploying = z.infer<typeof catalogSelfDeployingSchema>;
 
-/** The option that names the stage for this entry. */
-export function selfDeployingStageArg(
-  block: Pick<CatalogSelfDeploying, "tool" | "stageArg">,
-): string {
-  return block.stageArg ?? SELF_DEPLOYING_TOOLS[block.tool].stageArg;
+/** The option that names the stage for this entry: its tool's. */
+export function selfDeployingStageArg(block: Pick<CatalogSelfDeploying, "tool">): string {
+  return SELF_DEPLOYING_TOOLS[block.tool].stageArg;
 }
 
 /** Whether a command already names a stage (`--stage x` or `--stage=x`). */

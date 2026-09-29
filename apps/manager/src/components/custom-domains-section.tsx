@@ -1,12 +1,4 @@
-import {
-  Banner,
-  Button,
-  LayerDialog,
-  Select,
-  Table,
-  Text,
-  useKumoToastManager,
-} from "@cloudflare/kumo";
+import { Banner, Button, LayerDialog, Select, Table, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, PlusIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
@@ -34,8 +26,8 @@ import { DomainName } from "./domain-name";
 import { formatTime } from "./format";
 import { FLUSH_RING_CLASS } from "./hash-target";
 import { HealthBadge } from "./install-health";
-import { useJobStarted } from "./job-started";
 import { Section, SectionTable } from "./section";
+import { NEW_ADDRESS_SETTINGS, useSettingsRefresh } from "./settings-refresh";
 import { useAccountId } from "./use-account-id";
 import { WildcardNotes } from "./wildcard-notes";
 import { ZoneHostnameField } from "./zone-hostname-field";
@@ -140,6 +132,7 @@ function DomainCheck({
   enabled: boolean;
 }) {
   const router = useRouter();
+  const settingsRefresh = useSettingsRefresh();
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<CustomDomainCheck | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -168,11 +161,12 @@ function DomainCheck({
         (!domain.live || next.workersDevTurnedOff)
       ) {
         await router.invalidate();
+        await settingsRefresh(next, NEW_ADDRESS_SETTINGS, { follow: false });
         return true;
       }
       return false;
     },
-    [router, domain.live],
+    [router, domain.live, settingsRefresh],
   );
 
   useEffect(() => {
@@ -424,26 +418,8 @@ function AddDomainDialog({ install }: { install: InstallDetail }) {
   );
 }
 
-/**
- * After a wildcard domain was added or removed: the settings change that
- * fills `{{wildcardHostname}}` in again, when one started, is followed on its
- * job page; one that could not start is explained in a toast.
- */
-function useSettingsRefresh() {
-  const jobStarted = useJobStarted();
-  const toasts = useKumoToastManager();
-  return async (result: { settingsJobId: string | null; settingsNote: string | null }) => {
-    if (result.settingsJobId !== null) {
-      await jobStarted(result.settingsJobId, "Settings are being deployed with the new hostname");
-    } else if (result.settingsNote !== null) {
-      toasts.add({
-        title: "Settings not deployed again",
-        description: result.settingsNote,
-        variant: "warning",
-      });
-    }
-  };
-}
+/** The toast title when the app's settings follow its wildcard domain. */
+const NEW_HOSTNAME_SETTINGS = "Settings are being deployed with the new hostname";
 
 function RemoveDomainDialog({
   installId,
@@ -480,11 +456,12 @@ function RemoveDomainDialog({
         if (domain.wildcard) {
           const removed = await removeWildcardDomain({ data });
           await router.invalidate();
-          await settingsRefresh(removed);
+          await settingsRefresh(removed, NEW_HOSTNAME_SETTINGS);
           return;
         }
-        await removeCustomDomain({ data });
+        const removed = await removeCustomDomain({ data });
         await router.invalidate();
+        await settingsRefresh(removed, NEW_ADDRESS_SETTINGS);
       }}
     />
   );
@@ -558,7 +535,7 @@ function AddWildcardDomainDialog({ install, reason }: { install: InstallDetail; 
       });
       setOpen(false);
       await router.invalidate();
-      await settingsRefresh(added);
+      await settingsRefresh(added, NEW_HOSTNAME_SETTINGS);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add the domain.");
     }

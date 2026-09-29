@@ -49,19 +49,19 @@ describe("deriveVersion", () => {
     );
   });
 
-  it("prefers install.version over a semver tag and over the commit rule", () => {
+  it("prefers source.version over a semver tag and over the commit rule", () => {
     expect(
       deriveVersionWithOrigin({
-        installVersion: "1.1.10",
+        sourceVersion: "1.1.10",
         ref: "v11.0.0",
         sha,
         commitDate: "20260101",
         buildDate: "20260922",
       }),
-    ).toEqual({ version: "1.1.10", origin: "install.version" });
+    ).toEqual({ version: "1.1.10", origin: "source.version" });
     expect(
       deriveVersion({
-        installVersion: "0.3.0-beta.1",
+        sourceVersion: "0.3.0-beta.1",
         ref: "main",
         sha,
         commitDate: null,
@@ -74,16 +74,16 @@ describe("deriveVersion", () => {
     const base = { sha, commitDate: "20260101", buildDate: "20260922" };
     expect(deriveVersionWithOrigin({ ...base, ref: "v1.4.0" }).origin).toBe("tag");
     expect(deriveVersionWithOrigin({ ...base, ref: "main" }).origin).toBe("commit");
-    expect(
-      deriveVersionWithOrigin({ ...base, ref: "main", installVersion: undefined }).origin,
-    ).toBe("commit");
+    expect(deriveVersionWithOrigin({ ...base, ref: "main", sourceVersion: undefined }).origin).toBe(
+      "commit",
+    );
   });
 
-  it("rejects an install.version that is not semver without a leading v", () => {
-    for (const installVersion of ["v1.1.10", "1.1", "", "latest"]) {
+  it("rejects a source.version that is not semver without a leading v", () => {
+    for (const sourceVersion of ["v1.1.10", "1.1", "", "latest"]) {
       expect(() =>
         deriveVersion({
-          installVersion,
+          sourceVersion,
           ref: "v1.0.0",
           sha,
           commitDate: null,

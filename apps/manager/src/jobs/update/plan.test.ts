@@ -401,6 +401,7 @@ describe("updatePath", () => {
   const worker = (fields: Partial<ArtifactManifest["worker"]>) => ({
     worker: {
       name: "cut",
+      wranglerConfig: { declared: "wrangler.jsonc", effective: "{}" },
       mainModule: "worker.js",
       compatibilityDate: "2024-12-30",
       compatibilityFlags: [],
@@ -408,6 +409,7 @@ describe("updatePath", () => {
       bindings: [],
       migrations: [],
       crons: [],
+      queueConsumers: [],
       observability: null,
       placement: null,
       limits: null,
@@ -674,7 +676,6 @@ describe("missingSecrets", () => {
   const secret = (name: string, optional?: boolean) => ({
     name,
     label: name,
-    generate: false,
     ...(optional === undefined ? {} : { optional }),
   });
 

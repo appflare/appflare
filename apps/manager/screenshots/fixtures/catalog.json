@@ -11,9 +11,9 @@
       "artifacts": {
         "zip": "https://github.com/appflare/catalog/releases/download/cloudmark@0.0.0-20260810.7a3ee47/cloudmark-0.0.0-20260810.7a3ee47.zip",
         "manifest": "https://github.com/appflare/catalog/releases/download/cloudmark@0.0.0-20260810.7a3ee47/manifest.json",
-        "sig": "https://github.com/appflare/catalog/releases/download/cloudmark@0.0.0-20260810.7a3ee47/manifest.sig"
+        "sig": "https://github.com/appflare/catalog/releases/download/cloudmark@0.0.0-20260810.7a3ee47/manifest.sig",
+        "digest": "56a8b857077fd4873279469dc92856dee299aaff60454947a138b0e68f97b86f"
       },
-      "digest": "56a8b857077fd4873279469dc92856dee299aaff60454947a138b0e68f97b86f",
       "tier": "artifact",
       "plan": "free",
       "requires": [],
@@ -48,9 +48,9 @@
       "artifacts": {
         "zip": "https://github.com/appflare/catalog/releases/download/cut@0.1.0/cut-0.1.0.zip",
         "manifest": "https://github.com/appflare/catalog/releases/download/cut@0.1.0/manifest.json",
-        "sig": "https://github.com/appflare/catalog/releases/download/cut@0.1.0/manifest.sig"
+        "sig": "https://github.com/appflare/catalog/releases/download/cut@0.1.0/manifest.sig",
+        "digest": "86bbb3cbe1afbcff52c18a91a659b8f7876043a78f434a6a9c7eb274edb4a6c1"
       },
-      "digest": "86bbb3cbe1afbcff52c18a91a659b8f7876043a78f434a6a9c7eb274edb4a6c1",
       "tier": "artifact",
       "plan": "free",
       "requires": [],
@@ -90,9 +90,9 @@
       "artifacts": {
         "zip": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/emdash-0.0.0-20260926.e3b39ac.zip",
         "manifest": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/manifest.json",
-        "sig": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/manifest.sig"
+        "sig": "https://github.com/appflare/catalog/releases/download/emdash@0.0.0-20260926.e3b39ac/manifest.sig",
+        "digest": "ca924df42cbd11cecca9de7fb26a2cdd4fa16034cca69101f828a5dea9838a6e"
       },
-      "digest": "ca924df42cbd11cecca9de7fb26a2cdd4fa16034cca69101f828a5dea9838a6e",
       "tier": "artifact",
       "plan": "free",
       "requires": ["r2"],
@@ -144,9 +144,9 @@
       "artifacts": {
         "zip": "https://github.com/appflare/catalog/releases/download/formzero@0.0.0-20260426.a4ddde2/formzero-0.0.0-20260426.a4ddde2.zip",
         "manifest": "https://github.com/appflare/catalog/releases/download/formzero@0.0.0-20260426.a4ddde2/manifest.json",
-        "sig": "https://github.com/appflare/catalog/releases/download/formzero@0.0.0-20260426.a4ddde2/manifest.sig"
+        "sig": "https://github.com/appflare/catalog/releases/download/formzero@0.0.0-20260426.a4ddde2/manifest.sig",
+        "digest": "dbe643804779df8d1f78833e9162b6908fc06511c153020db7cbb2c3dd13a8df"
       },
-      "digest": "dbe643804779df8d1f78833e9162b6908fc06511c153020db7cbb2c3dd13a8df",
       "tier": "artifact",
       "plan": "free",
       "requires": [],
@@ -180,9 +180,9 @@
       "artifacts": {
         "zip": "https://github.com/appflare/catalog/releases/download/r2-explorer@1.1.10/r2-explorer-1.1.10.zip",
         "manifest": "https://github.com/appflare/catalog/releases/download/r2-explorer@1.1.10/manifest.json",
-        "sig": "https://github.com/appflare/catalog/releases/download/r2-explorer@1.1.10/manifest.sig"
+        "sig": "https://github.com/appflare/catalog/releases/download/r2-explorer@1.1.10/manifest.sig",
+        "digest": "c699b308a4f8a80f2a9d40a06bac0aef5f2f4ff13b953a55f1e845421c7ba71b"
       },
-      "digest": "c699b308a4f8a80f2a9d40a06bac0aef5f2f4ff13b953a55f1e845421c7ba71b",
       "tier": "artifact",
       "plan": "free",
       "requires": ["r2"],
@@ -229,9 +229,9 @@
       "artifacts": {
         "zip": "https://github.com/appflare/catalog/releases/download/statusbeam@0.1.1/statusbeam-0.1.1.zip",
         "manifest": "https://github.com/appflare/catalog/releases/download/statusbeam@0.1.1/manifest.json",
-        "sig": "https://github.com/appflare/catalog/releases/download/statusbeam@0.1.1/manifest.sig"
+        "sig": "https://github.com/appflare/catalog/releases/download/statusbeam@0.1.1/manifest.sig",
+        "digest": "035609fe8e3e266d8de0b1d79e8f66a1112962b935a5f44a57eb9ad30afec49b"
       },
-      "digest": "035609fe8e3e266d8de0b1d79e8f66a1112962b935a5f44a57eb9ad30afec49b",
       "tier": "artifact",
       "plan": "free",
       "requires": [],

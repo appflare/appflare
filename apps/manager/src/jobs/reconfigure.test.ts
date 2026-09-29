@@ -68,8 +68,8 @@ const APP: ArtifactFixtureOptions = {
   assets: [{ route: "/app.js", content: "console.log('v1')" }],
   catalog: {
     vars: [
-      { name: "HOME_PAGE", label: "Home page", help: "default", required: false },
-      { name: "TITLE", label: "Title", default: "Cut on {{workerName}}", required: true },
+      { name: "HOME_PAGE", label: "Home page", help: "default", optional: true },
+      { name: "TITLE", label: "Title", default: "Cut on {{workerName}}" },
     ],
   },
 };
@@ -78,7 +78,7 @@ const APP: ArtifactFixtureOptions = {
 const HOME_PAGE_SELECT = {
   name: "HOME_PAGE",
   label: "Home page",
-  required: false,
+  optional: true,
   type: "select" as const,
   options: [
     { value: "default", label: "Show the landing page" },
@@ -90,7 +90,6 @@ const TITLE_VAR = {
   name: "TITLE",
   label: "Title",
   default: "Cut on {{workerName}}",
-  required: true,
 };
 
 /** The fake Workflow engine, except that steps named `name` run a second time after they finished. */
@@ -537,8 +536,8 @@ describe("settings change job", () => {
         catalog: {
           ...APP.catalog,
           secrets: [
-            { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-            { name: "API_KEY", label: "API key", generate: false },
+            { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+            { name: "API_KEY", label: "API key" },
           ],
         },
       },
@@ -621,10 +620,7 @@ describe("a new token for a Pipelines sink", () => {
     catalog: {
       ...APP.catalog,
       plan: "paid",
-      secrets: [
-        ...baseCatalog().secrets,
-        { name: "CATALOG_TOKEN", label: "R2 API token", generate: false },
-      ],
+      secrets: [...baseCatalog().secrets, { name: "CATALOG_TOKEN", label: "R2 API token" }],
       resources: {
         pipelines: {
           EVENTS: {
@@ -707,7 +703,7 @@ describe("replacing a database's connection string", () => {
     catalog: {
       ...APP.catalog,
       resources: {
-        hyperdrive: [{ binding: "HYPERDRIVE", protocol: "postgres", label: "Main database" }],
+        hyperdrive: { HYPERDRIVE: { protocol: "postgres", label: "Main database" } },
       },
     },
   };
@@ -1189,7 +1185,6 @@ describe("a VAPID key pair in a settings change", () => {
         {
           name: "VAPID_PUBLIC_KEY",
           label: "Push public key",
-          required: false,
           derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
         },
       ],
@@ -1587,8 +1582,8 @@ describe("settings change job, an app of several Workers", () => {
     catalog: {
       ...APP.catalog,
       secrets: [
-        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true, workers: ["app"] },
-        { name: "JOBS_KEY", label: "Jobs key", generate: false, workers: ["jobs"] },
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password", workers: ["app"] },
+        { name: "JOBS_KEY", label: "Jobs key", workers: ["jobs"] },
       ],
     },
   };

@@ -4,10 +4,9 @@ import { categoryPath } from "./urls.ts";
 
 /**
  * What the apps page shows before anyone searches, by the same rules as the
- * catalog page in Appflare itself: apps added this week (or, while the
- * catalog does not say when apps were added, the most recently tested),
- * the most popular, and a row for each of the biggest categories. Also the
- * search over the whole list, which runs in the browser.
+ * catalog page in Appflare itself: apps added this week, the most popular,
+ * and a row for each of the biggest categories. Also the search over the
+ * whole list, which runs in the browser.
  */
 
 /** Apps in one row at most; the category page or the full list has the rest. */
@@ -32,10 +31,6 @@ export interface StorefrontRow {
   seeAll: string | null;
 }
 
-/** The caption of the "new" row while the catalog does not say when apps were added. */
-export const RECENTLY_TESTED_CAPTION =
-  "Newest test results first, until the catalog says when each app was added.";
-
 function time(iso: string | null): number {
   const value = iso === null ? Number.NaN : Date.parse(iso);
   return Number.isNaN(value) ? Number.NEGATIVE_INFINITY : value;
@@ -49,26 +44,16 @@ function compareNewest(a: SiteApp, b: SiteApp): number {
   return Number.isNaN(tested) ? 0 : tested;
 }
 
+/** Apps that joined the catalog in the last week, newest first; null when none did. */
 function newRow(apps: readonly SiteApp[], now: Date): StorefrontRow | null {
-  if (apps.some((app) => app.addedAt !== null)) {
-    const since = now.getTime() - NEW_WINDOW_MS;
-    const fresh = apps.filter((app) => time(app.addedAt) >= since);
-    if (fresh.length === 0) return null;
-    return {
-      id: "new",
-      title: "New this week",
-      caption: null,
-      apps: [...fresh].sort(compareNewest).slice(0, ROW_LIMIT),
-      seeAll: null,
-    };
-  }
-  const tested = apps.filter((app) => app.lastVerified !== null);
-  if (tested.length === 0) return null;
+  const since = now.getTime() - NEW_WINDOW_MS;
+  const fresh = apps.filter((app) => time(app.addedAt) >= since);
+  if (fresh.length === 0) return null;
   return {
     id: "new",
-    title: "Recently tested",
-    caption: RECENTLY_TESTED_CAPTION,
-    apps: [...tested].sort(compareNewest).slice(0, ROW_LIMIT),
+    title: "New this week",
+    caption: null,
+    apps: [...fresh].sort(compareNewest).slice(0, ROW_LIMIT),
     seeAll: null,
   };
 }
@@ -134,7 +119,7 @@ function fold(text: string): string {
 
 /** Everything one app can be found by: its name, what it does, who wrote it, what it runs on. */
 function haystack(app: SiteApp): string {
-  const services = (app.services ?? []).flatMap((id) => [id, serviceName(id) ?? ""]);
+  const services = app.services.flatMap((id) => [id, serviceName(id) ?? ""]);
   return fold(
     [
       app.name,

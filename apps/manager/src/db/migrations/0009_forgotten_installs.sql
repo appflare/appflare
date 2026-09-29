@@ -1,1 +1,0 @@
-ALTER TABLE `installs` ADD `forgotten_at` integer;

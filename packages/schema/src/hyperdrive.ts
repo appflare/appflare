@@ -25,12 +25,11 @@ export const MAX_CONNECTION_STRING_LENGTH = 4096;
  */
 const MAX_ORIGIN_FIELD_LENGTH = 2048;
 
-/** One Hyperdrive binding of the app's wrangler config, as the catalog manifest declares it. */
+/**
+ * One Hyperdrive binding of the app's wrangler config, as the catalog
+ * manifest declares it: `resources.hyperdrive[binding]`.
+ */
 export const catalogHyperdriveSchema = z.object({
-  binding: z
-    .string()
-    .min(1)
-    .describe("The Hyperdrive binding's name in the wrangler config, for example `HYPERDRIVE`."),
   protocol: z
     .enum(HYPERDRIVE_PROTOCOLS)
     .describe("The database the app expects behind the binding: `postgres` or `mysql`."),
@@ -46,6 +45,27 @@ export const catalogHyperdriveSchema = z.object({
     .optional(),
 });
 export type CatalogHyperdrive = z.infer<typeof catalogHyperdriveSchema>;
+
+/** `resources.hyperdrive`: every Hyperdrive binding, by its name, at most {@link MAX_HYPERDRIVE_BINDINGS}. */
+export const catalogHyperdriveBindingsSchema = z
+  .record(z.string().min(1), catalogHyperdriveSchema)
+  .refine((record) => Object.keys(record).length >= 1, "list at least one Hyperdrive binding")
+  .refine(
+    (record) => Object.keys(record).length <= MAX_HYPERDRIVE_BINDINGS,
+    `an app declares at most ${MAX_HYPERDRIVE_BINDINGS} Hyperdrive bindings`,
+  )
+  .meta({ minProperties: 1, maxProperties: MAX_HYPERDRIVE_BINDINGS });
+export type CatalogHyperdriveBindings = z.infer<typeof catalogHyperdriveBindingsSchema>;
+
+/** One declared Hyperdrive binding with its name, as the install form and checks use it. */
+export type HyperdriveDeclaration = CatalogHyperdrive & { binding: string };
+
+/** The declared Hyperdrive bindings of `resources.hyperdrive`, each with its name, in order. */
+export function hyperdriveDeclarations(
+  record: Readonly<Record<string, CatalogHyperdrive>> | undefined,
+): HyperdriveDeclaration[] {
+  return Object.entries(record ?? {}).map(([binding, decl]) => ({ ...decl, binding }));
+}
 
 /** The URL schemes a connection string of each protocol may start with. */
 const SCHEMES: Record<HyperdriveProtocol, readonly string[]> = {
@@ -76,7 +96,7 @@ export function connectionStringExample(protocol: HyperdriveProtocol): string {
 }
 
 /** The field label of a declared binding: its label, else the protocol's connection string. */
-export function hyperdriveFieldLabel(decl: CatalogHyperdrive): string {
+export function hyperdriveFieldLabel(decl: HyperdriveDeclaration): string {
   return `${decl.label ?? `${databaseProtocolName(decl.protocol)} connection string`} (${decl.binding})`;
 }
 
@@ -204,7 +224,7 @@ export function parseConnectionString(
  */
 export function hyperdriveDeclarationProblems(
   bindings: ReadonlyArray<{ type: string; name: string }>,
-  declared: readonly Pick<CatalogHyperdrive, "binding">[],
+  declared: readonly Pick<HyperdriveDeclaration, "binding">[],
 ): string[] {
   const names = new Set(declared.map((d) => d.binding));
   const bound = new Set<string>();
@@ -236,7 +256,7 @@ export function hyperdriveDeclarationProblems(
  * some or none).
  */
 export function connectionStringProblems(
-  declared: readonly CatalogHyperdrive[],
+  declared: readonly HyperdriveDeclaration[],
   entered: Readonly<Record<string, string>>,
   opts: { required: boolean } = { required: true },
 ): string[] {

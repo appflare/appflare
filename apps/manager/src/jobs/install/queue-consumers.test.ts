@@ -79,7 +79,7 @@ describe("planQueueConsumers", () => {
   });
 
   it("has nothing to do for an artifact without consumers", () => {
-    expect(planQueueConsumers("cut", { bindings })).toEqual({
+    expect(planQueueConsumers("cut", { bindings, queueConsumers: [] })).toEqual({
       queues: [],
       consumers: [],
       problems: [],

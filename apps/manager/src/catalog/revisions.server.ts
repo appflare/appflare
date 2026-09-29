@@ -2,7 +2,6 @@ import {
   type ArtifactManifest,
   type CatalogManifest,
   catalogManifestSchema,
-  catalogRevision,
   type IndexCatalogManifest,
   revisedArtifactProblem,
   type SigningKey,
@@ -95,9 +94,9 @@ export async function verifyRevisedCatalog(
       `the revised catalog manifest is for "${catalog.slug}", not "${artifact.app}"`,
     );
   }
-  if (expected.revision !== undefined && catalogRevision(catalog) !== expected.revision) {
+  if (expected.revision !== undefined && catalog.revision !== expected.revision) {
     throw new ArtifactError(
-      `the revised catalog manifest is revision ${catalogRevision(catalog)}, the catalog index lists revision ${expected.revision}`,
+      `the revised catalog manifest is revision ${catalog.revision}, the catalog index lists revision ${expected.revision}`,
     );
   }
   const problem = revisedArtifactProblem(artifact, catalog);
@@ -167,7 +166,7 @@ export async function recordCatalogRevision(
   revised: { text: string; file: IndexCatalogManifest; catalog: CatalogManifest },
   now: Date,
 ): Promise<boolean> {
-  const revision = catalogRevision(revised.catalog);
+  const revision = revised.catalog.revision;
   const { sha256, keyId, signature } = revised.file;
   const current = await readCatalogRevision(orm, artifactDigest);
   if (current !== null && current.revision > revision) return false;

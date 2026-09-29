@@ -9,7 +9,7 @@ import { readAppBaseUrl } from "./app-address.server";
 /**
  * "Check now" on an install's page: one GET of the app's address (its
  * workers.dev URL, or its primary custom domain while workers.dev is off) at its
- * health path (the catalog's `install.healthPath`, else `/`), recorded on the
+ * health path (the catalog's `install.health.path`, `/` by default), recorded on the
  * install the way the jobs' final health check records it. One probe, no
  * retries: the admin can press the button again.
  */

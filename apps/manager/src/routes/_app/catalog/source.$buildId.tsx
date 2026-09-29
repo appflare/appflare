@@ -1,4 +1,3 @@
-import { hasFixedWorkerName } from "@appflare/schema";
 import { Badge, Banner, Checkbox, Empty, Link, LinkButton, Table, Text } from "@cloudflare/kumo";
 import {
   ArrowCircleUpIcon,
@@ -317,7 +316,7 @@ function Review({
           subdomain={review.subdomain}
           canInstall={isAdmin}
           defaultWorkerName={review.suggestedWorkerName}
-          fixedWorkerName={hasFixedWorkerName(review.catalog.install)}
+          fixedWorkerName={review.catalog.install.fixedWorkerName}
           blockedReason={
             refused
               ? "This build cannot be installed; the problems are listed above."

@@ -79,7 +79,7 @@ export async function mapLimit<T, R>(
 
 /** Where an app's catalog manifest is, and the digest of its bytes. */
 export function manifestSource(
-  app: Pick<IndexApp, "catalogManifest" | "build" | "artifacts" | "digest">,
+  app: Pick<IndexApp, "catalogManifest" | "build" | "artifacts">,
 ): { url: string; sha256: string; inRelease: boolean } | null {
   // A revised entry's current manifest wins over the copy in its release.
   if (app.catalogManifest !== undefined) {
@@ -88,9 +88,9 @@ export function manifestSource(
   if (app.build !== undefined) {
     return { url: app.build.manifest, sha256: app.build.manifestDigest, inRelease: false };
   }
-  if (app.artifacts !== undefined && app.digest !== undefined) {
+  if (app.artifacts !== undefined) {
     // The release's `manifest.json` carries the catalog manifest as `catalog`.
-    return { url: app.artifacts.manifest, sha256: app.digest, inRelease: true };
+    return { url: app.artifacts.manifest, sha256: app.artifacts.digest, inRelease: true };
   }
   return null;
 }

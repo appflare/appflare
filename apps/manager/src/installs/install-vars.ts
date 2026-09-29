@@ -9,6 +9,7 @@ import {
   type JsonValue,
   jsonTextProblem,
   type PlaceholderValues,
+  renderEntryWorkerPlaceholders,
   renderJsonPlaceholders,
   renderPlaceholders,
 } from "@appflare/schema";
@@ -17,11 +18,13 @@ import {
  * The vars of an app: what the install form shows for each catalog var, and
  * what the Worker receives. A var is text (a `plain_text` binding) unless the
  * app's wrangler config gives it a value that is not a string; then it is
- * JSON (a `json` binding) and the form takes JSON text. `{{workerUrl}}`,
- * `{{workerName}}` and `{{accountId}}` are filled in wherever a value comes
- * from: the wrangler config, the catalog default, or what the admin entered,
- * on every install, update and settings change (the form, which does not know
- * the account id, shows `{{accountId}}` as written). Pure, so the form, the
+ * JSON (a `json` binding) and the form takes JSON text. The placeholders the
+ * schema lists for vars (`PLACEHOLDER_FIELDS.varDefault`: `{{appUrl}}`,
+ * `{{workerName}}`, `{{accountId}}` and the rest) are filled in wherever a
+ * value comes from: the wrangler config, the catalog default, or what the
+ * admin entered, on every install, update and settings change, and again
+ * when the app's served address changes (the form, which does not know the
+ * account id, shows `{{accountId}}` as written). Pure, so the form, the
  * server's input checks, and the jobs share it.
  */
 
@@ -156,7 +159,7 @@ export function installVarFields(
       name: v.name,
       label: v.label,
       ...(v.help === undefined ? {} : { help: v.help }),
-      required: v.required,
+      required: !v.optional,
       kind,
       // A derived var shows what the manager computed, never the wrangler config's own value.
       shownDefault:
@@ -272,29 +275,79 @@ export function resolveVars(
   };
 }
 
-/** Stands in for the Worker's URL while looking for where it ends up. */
-const WORKER_URL_MARKER = "https://worker-url.appflare.invalid";
+/**
+ * Stand-ins for the values a var may be filled in with, while looking for
+ * where they end up. Each is its own hostname, so a hostname placeholder
+ * (`{{appHostname}}`) is found as well as the URL one.
+ */
+const MARKER_HOSTS = {
+  workerUrl: "worker-url.appflare.invalid",
+  appUrl: "app-url.appflare.invalid",
+  wildcardHostname: "wildcard-hostname.appflare.invalid",
+} as const;
 
 /**
- * Whether any var the Worker gets is filled in with its URL
- * (`{{workerUrl}}`), from the wrangler config, a catalog default, or what the
- * admin entered.
+ * Whether any var the Worker gets holds `marker` once filled in, from the
+ * wrangler config, a catalog default, or what the admin entered. For an app
+ * of several Workers the per-Worker forms that name the primary Worker count
+ * too (`{{appUrl:web}}`): that Worker is the one the domains serve.
+ */
+function varsMention(
+  manifest: VarManifest,
+  userVars: Readonly<Record<string, string>>,
+  marker: keyof typeof MARKER_HOSTS,
+): boolean {
+  const host = MARKER_HOSTS[marker];
+  const url = (key: keyof typeof MARKER_HOSTS) =>
+    key === marker ? `https://${host}` : "https://other.appflare.invalid";
+  const { vars } = resolveVars(manifest, userVars, {
+    workerName: "",
+    workerUrl: url("workerUrl"),
+    appUrl: url("appUrl"),
+    wildcardHostname: marker === "wildcardHostname" ? host : "",
+  });
+  const declared = manifest.catalog.install.workers;
+  const entry =
+    declared === undefined
+      ? undefined
+      : Object.fromEntries(
+          declared.map((w) => [
+            w.name,
+            w.primary
+              ? { workerName: "", workerUrl: url("workerUrl"), appUrl: url("appUrl") }
+              : { workerName: "", workerUrl: null, appUrl: null },
+          ]),
+        );
+  return vars.some((v) => {
+    const text = v.type === "json" ? JSON.stringify(v.json) : v.text;
+    return (entry === undefined ? text : renderEntryWorkerPlaceholders(text, entry)).includes(host);
+  });
+}
+
+/**
+ * Whether any var the Worker gets is filled in with its workers.dev address
+ * (`{{workerUrl}}` or `{{workerHostname}}`), which stops answering once
+ * workers.dev is turned off.
  */
 export function varsUseWorkerUrl(
   manifest: VarManifest,
   userVars: Readonly<Record<string, string>>,
 ): boolean {
-  const { vars } = resolveVars(manifest, userVars, {
-    workerUrl: WORKER_URL_MARKER,
-    workerName: "",
-  });
-  return vars.some((v) =>
-    (v.type === "json" ? JSON.stringify(v.json) : v.text).includes(WORKER_URL_MARKER),
-  );
+  return varsMention(manifest, userVars, "workerUrl");
 }
 
-/** Stands in for the wildcard domain while looking for where it ends up. */
-const WILDCARD_HOSTNAME_MARKER = "wildcard-hostname.appflare.invalid";
+/**
+ * Whether any var the Worker gets is filled in with the address the app is
+ * served at (`{{appUrl}}` or `{{appHostname}}`), so a change of that address
+ * (a domain taking over from workers.dev, or workers.dev from a domain)
+ * deploys the settings again.
+ */
+export function varsUseAppUrl(
+  manifest: VarManifest,
+  userVars: Readonly<Record<string, string>>,
+): boolean {
+  return varsMention(manifest, userVars, "appUrl");
+}
 
 /**
  * Whether any var the Worker gets is filled in with the install's wildcard
@@ -305,12 +358,22 @@ export function varsUseWildcardHostname(
   manifest: VarManifest,
   userVars: Readonly<Record<string, string>>,
 ): boolean {
-  const { vars } = resolveVars(manifest, userVars, {
-    workerUrl: "",
-    workerName: "",
-    wildcardHostname: WILDCARD_HOSTNAME_MARKER,
-  });
-  return vars.some((v) =>
-    (v.type === "json" ? JSON.stringify(v.json) : v.text).includes(WILDCARD_HOSTNAME_MARKER),
-  );
+  return varsMention(manifest, userVars, "wildcardHostname");
+}
+
+/**
+ * The values an app's settings are filled in with that can change without a
+ * settings change: the wildcard domain (`{{wildcardHostname}}`) and the
+ * address the app is served at (`{{appUrl}}`, `{{appHostname}}`).
+ */
+export const VARS_REFRESH_REASONS = ["wildcardHostname", "appUrl"] as const;
+export type VarsRefreshReason = (typeof VARS_REFRESH_REASONS)[number];
+
+/** Whether any var the Worker gets is filled in with one of the values in `changed`. */
+export function varsNeedRefresh(
+  manifest: VarManifest,
+  userVars: Readonly<Record<string, string>>,
+  changed: readonly VarsRefreshReason[],
+): boolean {
+  return changed.some((reason) => varsMention(manifest, userVars, reason));
 }

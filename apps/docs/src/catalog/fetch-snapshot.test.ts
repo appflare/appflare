@@ -23,31 +23,45 @@ function catalog() {
         slug: "cut",
         name: "Cut",
         summary: "Short links on your own domain.",
+        tagline: "Short links on your own domain",
+        addedAt: AT,
         version: "1.0.0",
         artifacts: {
           zip: `${BASE}cut.zip`,
           manifest: `${BASE}cut/manifest.json`,
           sig: `${BASE}cut/manifest.sig`,
+          digest: sha(release),
         },
-        digest: sha(release),
         tier: "artifact",
         plan: "free",
         requires: [],
         lastVerified: AT,
+        authors: [{ name: "acme", github: "acme" }],
         maintainers: ["acme"],
         media: { icon: { url: `${BASE}cut/icon.svg`, sha256: sha(icon) }, screenshots: [] },
+        services: ["kv"],
+        categories: ["utilities"],
+        license: "MIT",
+        revision: 1,
       },
       {
         slug: "seo",
         name: "SEO",
         summary: "Search research.",
+        tagline: "Search research",
+        addedAt: AT,
         version: "0.1.0",
         tier: "self-deploying",
         plan: "paid",
         requires: ["containers"],
         lastVerified: null,
+        authors: [{ name: "acme", github: "acme" }],
         maintainers: ["acme"],
         build: { pin: "a".repeat(40), manifest: `${BASE}seo.json`, manifestDigest: sha(installer) },
+        services: ["containers"],
+        categories: ["marketing"],
+        license: "MIT",
+        revision: 1,
       },
     ],
   };
@@ -127,7 +141,7 @@ describe("fetchCatalogSnapshot", () => {
     files.set(`${BASE}index.json`, JSON.stringify(index));
     const { fetch } = fakeFetch(files);
     await expect(fetchCatalogSnapshot({ ...options, fetch })).rejects.toThrow(
-      /index\.apps\.0\.slug/,
+      /apps\.0\.slug: must be lowercase letters, digits and dashes/,
     );
   });
 

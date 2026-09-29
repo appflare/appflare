@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { mergeTokenPermissions, type TokenPermission } from "./token-permissions.ts";
 
 /**
  * Apps that stream events into R2 through Cloudflare Pipelines. The app's
@@ -214,13 +215,6 @@ export function pipelineDeclarationProblems(
   return problems;
 }
 
-/** A token permission as a catalog manifest's `tokenPermissions` lists it. */
-interface PermissionEntry {
-  name: string;
-  description?: string;
-  scope?: "account" | "zone" | "user";
-}
-
 /**
  * The permissions the token behind each sink's `tokenSecret` needs, in the
  * form of `tokenPermissions` entries, so the app's page lists them with the
@@ -231,47 +225,50 @@ interface PermissionEntry {
  */
 export function pipelineTokenPermissions(
   pipelines: CatalogPipelines | undefined,
-): PermissionEntry[] {
+): TokenPermission[] {
   const secrets = [...new Set(Object.values(pipelines ?? {}).map((p) => p.sink.tokenSecret))];
-  return secrets.flatMap((secret): PermissionEntry[] => [
+  return secrets.flatMap((secret): TokenPermission[] => [
     {
-      name: "Account.Workers R2 Storage:Edit",
-      description: `In ${secret}: the Pipelines sink writes its files to R2 with it.`,
+      group: "Workers R2 Storage",
+      scope: "account",
+      access: "edit",
+      reason: `In ${secret}: the Pipelines sink writes its files to R2 with it.`,
     },
     {
-      name: "Account.Workers R2 Data Catalog:Edit",
-      description: `In ${secret}: the sink writes its Iceberg table, and the catalog runs table maintenance, with it.`,
+      group: "Workers R2 Data Catalog",
+      scope: "account",
+      access: "edit",
+      reason: `In ${secret}: the sink writes its Iceberg table, and the catalog runs table maintenance, with it.`,
     },
     {
-      name: "Account.Workers R2 SQL:Read",
-      description: `In ${secret}: the app reads its tables with R2 SQL using the same token.`,
+      group: "Workers R2 SQL",
+      scope: "account",
+      access: "read",
+      reason: `In ${secret}: the app reads its tables with R2 SQL using the same token.`,
     },
   ]);
 }
 
 /**
- * Everything the app's page lists as the tokens an app needs: its catalog
- * manifest's `tokenPermissions`, then the permissions of each Pipelines sink
- * token ({@link pipelineTokenPermissions}) not already listed by name.
+ * Everything the app's page lists as the permissions of the tokens an app
+ * needs: its catalog manifest's `tokenPermissions`, then the permissions of
+ * each Pipelines sink token ({@link pipelineTokenPermissions}), each scope
+ * and group once with the stronger access ({@link mergeTokenPermissions}).
  */
-export function appTokenPermissions<T extends PermissionEntry>(catalog: {
-  tokenPermissions: readonly T[];
+export function appTokenPermissions(catalog: {
+  tokenPermissions: readonly TokenPermission[];
   resources?: { pipelines?: CatalogPipelines | undefined } | undefined;
-}): Array<T | PermissionEntry> {
-  const listed = new Set(catalog.tokenPermissions.map((p) => p.name.trim().toLowerCase()));
-  const extra = pipelineTokenPermissions(catalog.resources?.pipelines).filter((p) => {
-    const key = p.name.toLowerCase();
-    if (listed.has(key)) return false;
-    listed.add(key);
-    return true;
-  });
-  return [...catalog.tokenPermissions, ...extra];
+}): TokenPermission[] {
+  return mergeTokenPermissions([
+    ...catalog.tokenPermissions,
+    ...pipelineTokenPermissions(catalog.resources?.pipelines),
+  ]);
 }
 
 /** The parts of a catalog secret {@link pipelineManifestProblems} reads. */
 interface SecretFacts {
   name: string;
-  generate?: boolean | string | undefined;
+  generate?: string | undefined;
   optional?: boolean | undefined;
   derive?: unknown;
   seedOnly?: boolean | undefined;
@@ -316,7 +313,7 @@ export function pipelineManifestProblems(manifest: {
       continue;
     }
     if (
-      (secret.generate !== undefined && secret.generate !== false) ||
+      secret.generate !== undefined ||
       secret.optional === true ||
       secret.derive !== undefined ||
       secret.seedOnly === true

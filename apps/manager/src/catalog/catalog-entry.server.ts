@@ -3,7 +3,8 @@ import {
   appWorkers,
   type CatalogAuthor,
   type CatalogManifest,
-  hasFixedWorkerName,
+  catalogWorkerName,
+  hyperdriveDeclarations,
   type IndexApp,
   type IndexJson,
 } from "@appflare/schema";
@@ -32,10 +33,9 @@ import { entryBindings } from "../jobs/entry-workers";
 import { planBindings } from "../jobs/install/bindings";
 import { sandboxBinding } from "../sandbox/binding";
 import { type SandboxReadiness, sandboxReadinessOf } from "../sandbox/readiness";
-import { appFacts } from "./app-facts";
+import { appFacts, NO_APP_FACTS } from "./app-facts";
 import { getCatalogManifest } from "./app-manifest.server";
 import { moduleBytes } from "./app-page";
-import { appAuthors } from "./authors";
 import { cronTriggerCount } from "./cron-triggers";
 import { catalogIndexUrl } from "./index.server";
 import { type AppMediaView, appMediaView } from "./media";
@@ -156,7 +156,7 @@ export interface CatalogDetail {
   /** The install form's settings, one per catalog var. */
   varFields: InstallVarField[];
   /**
-   * The account's workers.dev subdomain, to show `{{workerUrl}}` filled in
+   * The account's workers.dev subdomain, to show `{{workerUrl}}` and `{{appUrl}}` filled in
    * on the form; null when it is not known (the install fills it in).
    */
   subdomain: string | null;
@@ -304,7 +304,7 @@ export async function readCatalogEntry(
     images: appMediaView(undefined, ""),
     popularity: null,
     sourceBuilds: false,
-    ...appFacts({ tier: "artifact", requires: [] }, null),
+    ...NO_APP_FACTS,
   };
   if (!read.ok) return { app: null, error: read.error, ...empty };
   if (read.listed === null) return { app: null, error: null, ...empty };
@@ -316,7 +316,7 @@ export async function readCatalogEntry(
     source,
     images: appMediaView(source.official ? app.media : undefined, catalogIndexUrl(env)),
     popularity: source.official ? appPopularity(stats, app.slug) : null,
-    ...appFacts(app, null),
+    ...appFacts(app),
   };
   // An added catalog's sandbox or self-deploying entry is trusted by its
   // unsigned index alone: shown, never read or installed.
@@ -326,7 +326,7 @@ export async function readCatalogEntry(
       ...empty,
       ...shown,
       app,
-      authors: appAuthors(app, null),
+      authors: app.authors,
       instances,
       error: unsigned,
     };
@@ -345,31 +345,32 @@ export async function readCatalogEntry(
       ...empty,
       ...shown,
       app,
-      authors: appAuthors(app, null),
+      authors: app.authors,
       instances,
       error: manifest.error,
     };
   }
   const { install } = manifest.catalog;
-  const fixed = hasFixedWorkerName(install);
+  const fixed = install.fixedWorkerName;
+  const catalogName = catalogWorkerName(manifest.catalog);
   const taken = fixed ? [] : [...active.workerNames, ...accountNames];
   const plan =
     manifest.manifest === null
       ? null
       : planBindings(
-          install.workerName,
+          catalogName,
           entryBindings(manifest.manifest),
-          manifest.catalog.resources?.hyperdrive ?? [],
+          hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
           manifest.catalog.resources?.pipelines,
         );
   return {
     ...empty,
     ...shown,
-    ...appFacts(app, manifest),
+    ...appFacts(app),
     app,
     catalog: manifest.catalog,
     sourceBuilds: app.tier !== "self-deploying" && sourceBuildsOffered(session.user.role, sandbox),
-    authors: appAuthors(app, manifest.catalog),
+    authors: app.authors,
     createsKnown: plan !== null,
     creates:
       plan?.resources.flatMap((r) => [
@@ -390,7 +391,7 @@ export async function readCatalogEntry(
         : moduleBytes(appWorkers(manifest.manifest).map((w) => w.worker)) || null,
     error: null,
     instances,
-    suggestedWorkerName: fixed ? install.workerName : suggestWorkerName(install.workerName, taken),
+    suggestedWorkerName: fixed ? catalogName : suggestWorkerName(catalogName, taken),
     fixedWorkerName: fixed,
     // A sandbox tier app's wrangler config is read only when it is built, so
     // before that every var is a text field.

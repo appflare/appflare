@@ -1,9 +1,8 @@
-import { env, waitUntil } from "cloudflare:workers";
+import { env } from "cloudflare:workers";
 import type { IndexApp } from "@appflare/schema";
 import {
   type AppLicense,
   type AppPopularity,
-  appPitch,
   appPopularity,
 } from "@appflare/schema/catalog-display";
 import { createServerFn } from "@tanstack/react-start";
@@ -17,7 +16,6 @@ import { sandboxBinding } from "../sandbox/binding";
 import { type SandboxReadiness, sandboxReadinessOf } from "../sandbox/readiness";
 import { requireRole, requireSession } from "../server/auth.server";
 import { appFacts } from "./app-facts";
-import { listAppFacts } from "./app-facts.server";
 import {
   type ActiveInstalls,
   activeInstalls,
@@ -60,9 +58,9 @@ export interface CatalogListItem extends IndexApp {
   primitives: AppPrimitives;
   /** The catalog manifest's categories; empty until it has been read. */
   categories: string[];
-  /** The license from the index row, else the catalog manifest; null until either states it. */
+  /** The license, from the index row. */
   appLicense: AppLicense | null;
-  /** The line under its name on a catalog tile: the tagline, else the summary's first clause. */
+  /** The line under its name on a catalog tile: the catalog's tagline. */
   pitch: string;
 }
 
@@ -97,8 +95,7 @@ export interface CatalogList {
 
 /**
  * The apps of one catalog's index as list items: an official app's images
- * and popularity, and for any app the facts its manifests give (verified
- * with that catalog's keys).
+ * and popularity, and for any app the facts its index row publishes.
  */
 async function listItems(
   read: Extract<CatalogIndexRead, { ok: true }>,
@@ -111,8 +108,6 @@ async function listItems(
   const apps = read.index.apps.filter(
     (app) => unsignedTierRefusal(read.source.id, app.tier) === null,
   );
-  // Manifests not cached yet are fetched after the response, for the next view.
-  const facts = await listAppFacts(env, apps, waitUntil, read.trust);
   return apps.map((app) => {
     const key = appKey(read.source.id, app.slug);
     return {
@@ -123,8 +118,8 @@ async function listItems(
       // Images, avatars and popularity come from the official catalog alone.
       images: appMediaView(official ? app.media : undefined, indexUrl),
       popularity: official ? appPopularity(stats, app.slug) : null,
-      pitch: appPitch(app),
-      ...(facts.get(app.slug) ?? appFacts(app, null)),
+      pitch: app.tagline,
+      ...appFacts(app),
     };
   });
 }

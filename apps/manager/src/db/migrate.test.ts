@@ -109,136 +109,25 @@ describe("ensure", () => {
     expect(await settingValue(env.DB, MIGRATION_LOCK_KEY)).toBeNull();
   });
 
-  it("adds the uninstall columns on top of a database at the previous version", async () => {
-    const before = migrations.findIndex((m) => m.tag === "0002_uninstall");
-    expect(before).toBeGreaterThan(0);
-    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
-    expect(await columnNames(env.DB, "installs")).not.toContain("uninstalled_at");
-    const outcome = await createMigrator(migrations).ensure(env.DB);
-    expect(outcome.applied).toEqual(migrations.slice(before).map((m) => m.tag));
-    expect(await columnNames(env.DB, "installs")).toContain("uninstalled_at");
-    expect(await columnNames(env.DB, "resources")).toContain("retained_at");
-    // Both are nullable: rows written before the upgrade stay valid.
-    await env.DB.prepare(
-      `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status, installed_at, updated_at)
-       VALUES ('i1', 'cut', 'cut', '1', 'u', 'installed', 1, 1)`,
-    ).run();
-    const row = await env.DB.prepare("SELECT uninstalled_at FROM installs WHERE id = 'i1'").first();
-    expect(row).toEqual({ uninstalled_at: null });
-  });
-
-  it("carries existing domains and workers.dev switches over to the automatic default", async () => {
-    const before = migrations.findIndex((m) => m.tag === "0018_workers_dev_choice");
-    expect(before).toBeGreaterThan(0);
-    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
-    const install = (id: string, workersDev: number, served: string | null) =>
-      env.DB.prepare(
-        `INSERT INTO installs (id, app_slug, worker_name, catalog_version, artifact_url, status,
-           workers_dev_enabled, served_domain, installed_at, updated_at)
-         VALUES (?1, 'cut', ?1, '1', 'u', 'installed', ?2, ?3, 1, 1)`,
-      ).bind(id, workersDev, served);
-    const domain = (
-      id: string,
-      installId: string,
-      kind: string,
-      name: string,
-      cfId: string | null,
-    ) =>
-      env.DB.prepare(
-        `INSERT INTO resources (id, install_id, kind, name, cf_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 7)`,
-      ).bind(id, installId, kind, name, cfId);
-    await env.DB.batch([
-      // No domain: Appflare decides from now on.
-      install("plain", 1, null),
-      // workers.dev on beside a domain: left as the admin has had it.
-      install("kept", 1, null),
-      domain("kept:d", "kept", "domain", "a.example.com", "cfd-1"),
-      domain("kept:x", "kept", "custom_hostname", "pending.customer.test", "z/ch-1"),
-      // Turned off with the switch: the admin's choice.
-      install("off", 0, "go.customer.test"),
-      domain("off:x", "off", "custom_hostname", "go.customer.test", "z/ch-2"),
-      domain("off:y", "off", "custom_hostname", "active.customer.test", "z/ch-3"),
-      env.DB.prepare(
-        `INSERT INTO settings (key, value, updated_at)
-         VALUES ('external_domain_state:off:y', '{"state":"active","since":5}', 5)`,
-      ),
-    ]);
+  it("gives a new GitHub access token no repositories and the build use by default", async () => {
     await createMigrator(migrations).ensure(env.DB);
-    const installs = await env.DB.prepare(
-      "SELECT id, workers_dev_choice FROM installs ORDER BY id",
-    ).all();
-    expect(installs.results).toEqual([
-      { id: "kept", workers_dev_choice: "manual" },
-      { id: "off", workers_dev_choice: "manual" },
-      { id: "plain", workers_dev_choice: "auto" },
-    ]);
-    const live = await env.DB.prepare("SELECT id, live_at FROM resources ORDER BY id").all();
-    expect(live.results).toEqual([
-      { id: "kept:d", live_at: 7 },
-      { id: "kept:x", live_at: null },
-      { id: "off:x", live_at: 7 },
-      { id: "off:y", live_at: 7 },
-    ]);
-  });
-
-  it("keeps existing GitHub access tokens' repositories and uses, and lets new ones name none", async () => {
-    const before = migrations.findIndex((m) => m.tag === "0024_github_token_uses");
-    expect(before).toBeGreaterThan(0);
-    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO github_tokens (id, label, repositories, for_releases, created_at, last_used_at)
-         VALUES ('T1', 'Acme', 'acme/*', 0, 1, NULL), ('T2', 'Updates', 'appflare/appflare', 1, 2, 5)`,
-      ),
-    ]);
-    await createMigrator(migrations).ensure(env.DB);
-    const rows = await env.DB.prepare(
-      "SELECT id, label, repositories, for_builds, for_releases, created_at, last_used_at FROM github_tokens ORDER BY id",
-    ).all();
-    // Every token was tried for builds before, so each keeps that use.
-    expect(rows.results).toEqual([
-      {
-        id: "T1",
-        label: "Acme",
-        repositories: "acme/*",
-        for_builds: 1,
-        for_releases: 0,
-        created_at: 1,
-        last_used_at: null,
-      },
-      {
-        id: "T2",
-        label: "Updates",
-        repositories: "appflare/appflare",
-        for_builds: 1,
-        for_releases: 1,
-        created_at: 2,
-        last_used_at: 5,
-      },
-    ]);
     await env.DB.prepare(
-      "INSERT INTO github_tokens (id, label, created_at) VALUES ('T3', 'Any', 3)",
+      "INSERT INTO github_tokens (id, label, created_at) VALUES ('T1', 'Any', 1)",
     ).run();
     const added = await env.DB.prepare(
-      "SELECT repositories, for_builds, for_releases FROM github_tokens WHERE id = 'T3'",
+      "SELECT repositories, for_builds, for_releases FROM github_tokens WHERE id = 'T1'",
     ).first();
     expect(added).toEqual({ repositories: null, for_builds: 1, for_releases: 0 });
   });
 
-  it("adds passkey hosts, and the address event to channels that hear about Appflare's releases", async () => {
-    const before = migrations.findIndex((m) => m.tag === "0025_manager_address");
-    expect(before).toBeGreaterThan(0);
-    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
-    const channel = (id: string, events: string) =>
-      env.DB.prepare(
-        `INSERT INTO notification_channels (id, kind, label, target, config, events_json, created_at, updated_at)
-         VALUES (?1, 'webhook', ?1, 'example.com', 'v1.x.y', ?2, 1, 1)`,
-      ).bind(id, events);
+  it("records passkey hosts, and drops a passkey's host with the passkey", async () => {
+    await createMigrator(migrations).ensure(env.DB);
+    expect(await columnNames(env.DB, "passkey_host")).toEqual([
+      "passkey_id",
+      "hostname",
+      "recorded_at",
+    ]);
     await env.DB.batch([
-      channel("releases", '["update_available","manager_update_available"]'),
-      channel("jobs", '["install_finished"]'),
-      channel("both", '["manager_update_available","manager_address_lost"]'),
       env.DB.prepare(
         `INSERT INTO user (id, name, email, email_verified, created_at, updated_at)
          VALUES ('u1', 'Ada', 'ada@example.com', 0, 1, 1)`,
@@ -247,56 +136,13 @@ describe("ensure", () => {
         `INSERT INTO passkey (id, public_key, user_id, credential_id, counter, device_type, backed_up)
          VALUES ('pk1', 'k', 'u1', 'c1', 0, 'singleDevice', 0)`,
       ),
+      env.DB.prepare(
+        "INSERT INTO passkey_host (passkey_id, hostname, recorded_at) VALUES ('pk1', 'a.example.com', 1)",
+      ),
     ]);
-    await createMigrator(migrations.slice(0, before + 1)).ensure(env.DB);
-    const rows = await env.DB.prepare(
-      "SELECT id, events_json FROM notification_channels ORDER BY id",
-    ).all();
-    expect(rows.results).toEqual([
-      { id: "both", events_json: '["manager_update_available","manager_address_lost"]' },
-      { id: "jobs", events_json: '["install_finished"]' },
-      {
-        id: "releases",
-        events_json: '["update_available","manager_update_available","manager_address_lost"]',
-      },
-    ]);
-    expect(await columnNames(env.DB, "passkey_host")).toEqual([
-      "passkey_id",
-      "hostname",
-      "recorded_at",
-    ]);
-    // A passkey's host goes with it.
-    await env.DB.prepare(
-      "INSERT INTO passkey_host (passkey_id, hostname, recorded_at) VALUES ('pk1', 'a.example.com', 1)",
-    ).run();
     await env.DB.prepare("DELETE FROM passkey WHERE id = 'pk1'").run();
     const left = await env.DB.prepare("SELECT count(*) AS n FROM passkey_host").first();
     expect(left).toEqual({ n: 0 });
-  });
-
-  it("adds the move event to channels that hear when Appflare's address stops working", async () => {
-    const before = migrations.findIndex((m) => m.tag === "0026_move_notifications");
-    expect(before).toBeGreaterThan(0);
-    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
-    const channel = (id: string, events: string) =>
-      env.DB.prepare(
-        `INSERT INTO notification_channels (id, kind, label, target, config, events_json, created_at, updated_at)
-         VALUES (?1, 'webhook', ?1, 'example.com', 'v1.x.y', ?2, 1, 1)`,
-      ).bind(id, events);
-    await env.DB.batch([
-      channel("address", '["manager_address_lost"]'),
-      channel("jobs", '["install_finished"]'),
-      channel("both", '["manager_address_lost","manager_move_finished"]'),
-    ]);
-    await createMigrator(migrations).ensure(env.DB);
-    const rows = await env.DB.prepare(
-      "SELECT id, events_json FROM notification_channels ORDER BY id",
-    ).all();
-    expect(rows.results).toEqual([
-      { id: "address", events_json: '["manager_address_lost","manager_move_finished"]' },
-      { id: "both", events_json: '["manager_address_lost","manager_move_finished"]' },
-      { id: "jobs", events_json: '["install_finished"]' },
-    ]);
   });
 
   it("is a no-op on the second call (no D1 access at all)", async () => {

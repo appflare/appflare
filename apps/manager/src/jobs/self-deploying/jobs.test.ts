@@ -73,14 +73,15 @@ function selfDeployingCatalog(over: { pin?: string; secrets?: CatalogManifest["s
         tool: "alchemy",
         deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
         destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-        stateStore: "cloudflare",
-        workers: ["cut-{{stage}}", "cut-{{stage}}-jobs"],
+        workerNames: ["cut-{{stage}}", "cut-{{stage}}-jobs"],
       },
     },
     plan: "paid",
     requires: ["containers"],
     secrets: over.secrets ?? base.secrets,
-    tokenPermissions: [{ name: "Workers Scripts", scope: "account" }],
+    tokenPermissions: [
+      { group: "Workers Scripts", scope: "account", access: "edit", reason: "Deploys the app." },
+    ],
   });
 }
 
@@ -89,10 +90,17 @@ async function indexApp(catalog: CatalogManifest, version = "1.0.0"): Promise<In
     slug: "cut",
     name: "Cut",
     summary: catalog.summary,
+    tagline: catalog.tagline,
+    addedAt: "2026-09-01T00:00:00Z",
     version,
+    revision: catalog.revision,
     tier: "self-deploying",
     plan: "paid",
     requires: ["containers"],
+    services: ["containers"],
+    categories: catalog.categories,
+    license: catalog.license,
+    authors: [{ name: "MendyLanda", github: "MendyLanda" }],
     lastVerified: null,
     maintainers: ["MendyLanda"],
     build: {
@@ -402,7 +410,7 @@ describe("installing a self-deploying app", () => {
       `d1 db-${STAGE} app`,
     ]);
 
-    // Health through Access: the Worker's own redirect counts (status-only).
+    // Health through Access: the Worker's own redirect counts (any-response).
     expect(s.w.probes).toEqual([`https://${MAIN}.acme.workers.dev/`]);
     const row = await installRow(r.installId);
     expect(row).toMatchObject({

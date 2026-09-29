@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type ArtifactManifest, appWorkers } from "@appflare/schema";
+import { type ArtifactManifest, appWorkers, artifactD1Files } from "@appflare/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type PackResult, pack } from "./pack.ts";
 import { verify } from "./verify.ts";
@@ -60,10 +60,10 @@ describe("pack an app of several Workers", () => {
     rmSync(outDir, { recursive: true, force: true });
   });
 
-  it("writes a format 2 manifest with the primary Worker first", () => {
-    expect(manifest.format).toBe(2);
+  it("writes a manifest with the primary Worker first", () => {
+    expect(manifest.format).toBe(1);
     expect(manifest.worker.name).toBe("duo-web");
-    expect(manifest.format === 2 && manifest.workers.map((w) => w.name)).toEqual(["jobs"]);
+    expect(manifest.workers?.map((w) => w.name)).toEqual(["jobs"]);
     expect(result.workers.map((w) => [w.name, w.primary, w.moduleCount])).toEqual([
       ["web", true, 1],
       ["jobs", false, 1],
@@ -100,8 +100,8 @@ describe("pack an app of several Workers", () => {
   });
 
   it("records the shared D1 migrations once and each Worker's files apart", () => {
-    expect(Object.keys(manifest.d1Migrations)).toEqual(["DB"]);
-    expect(manifest.d1Migrations.DB?.map((f) => f.name)).toEqual(["0001_init.sql"]);
+    expect(Object.keys(manifest.d1)).toEqual(["DB"]);
+    expect(manifest.d1.DB?.migrations.map((f) => f.name)).toEqual(["0001_init.sql"]);
     const jobs = appWorkers(manifest)[1];
     expect(jobs?.worker.modules[0]?.path).toBe("workers/jobs/worker/index.js");
     expect(manifest.worker.modules[0]?.path).toBe("worker/index.js");
@@ -113,7 +113,7 @@ describe("pack an app of several Workers", () => {
   it("records ranges that read back every Worker's files", () => {
     const entries = [
       ...appWorkers(manifest).flatMap((w) => [...w.worker.modules, ...w.assets.files]),
-      ...Object.values(manifest.d1Migrations).flat(),
+      ...artifactD1Files(manifest),
     ];
     for (const entry of entries) {
       const bytes = readRange(result.zipPath, entry.offset, entry.size);
@@ -130,7 +130,7 @@ describe("pack an app of several Workers", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "appflare-pack-duo-tamper-"));
     try {
       const copy = JSON.parse(readFileSync(result.manifestJsonPath, "utf8")) as ArtifactManifest;
-      const jobs = copy.format === 2 ? copy.workers[0] : undefined;
+      const jobs = copy.workers?.[0];
       const module = jobs?.worker.modules[0];
       if (module === undefined) throw new Error("no jobs module");
       module.sha256 = "0".repeat(64);

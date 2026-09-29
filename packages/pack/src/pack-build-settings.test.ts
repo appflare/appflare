@@ -10,6 +10,7 @@ function catalog(overrides: Record<string, unknown> = {}, install: Record<string
     slug: "settings",
     name: "Settings",
     summary: "A Worker that exercises the packer's settings.",
+    tagline: "A Worker that exercises the packer's settings",
     homepage: "https://github.com/appflare/appflare",
     repo: "appflare/appflare",
     license: "MIT",
@@ -131,7 +132,7 @@ describe("static assets", () => {
 });
 
 describe("resource settings", () => {
-  it("copy R2 lifecycle rules and Vectorize metadata indexes into the bindings, in format 6", async () => {
+  it("copy R2 lifecycle rules and Vectorize metadata indexes into the bindings", async () => {
     setUp(
       {
         ...WORKER,
@@ -152,7 +153,6 @@ describe("resource settings", () => {
       }),
     );
     const result = await run();
-    expect(result.manifest.format).toBe(6);
     expect(result.manifest.worker.bindings).toEqual(
       expect.arrayContaining([
         {

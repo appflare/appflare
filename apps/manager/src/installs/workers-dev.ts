@@ -112,7 +112,7 @@ export type WorkersDevKeptReason =
   | "off"
   /** The app's own installer decides where its Workers answer. */
   | "self-deploying"
-  /** The Worker's settings hold its workers.dev URL (`{{workerUrl}}`). */
+  /** The Worker's settings hold its workers.dev address (`{{workerUrl}}`, `{{workerHostname}}`). */
   | "settings"
   /** A job of the app is running; the next check through the domain tries again. */
   | "busy";
@@ -124,8 +124,9 @@ export type DomainLiveOutcome =
 /**
  * What a custom or external domain answering as the app does to workers.dev:
  * turned off while the choice is `auto`, unless the Worker's settings were
- * filled in with its workers.dev URL, which would then point nowhere until
- * the settings are saved again.
+ * filled in with its workers.dev URL (`{{workerUrl}}`), which would then
+ * point nowhere. Settings filled in with the app's address (`{{appUrl}}`)
+ * do not hold it on: they are deployed again with the domain.
  */
 export function workersDevWhenDomainLive(state: {
   choice: WorkersDevChoice;
@@ -181,7 +182,7 @@ export const WORKERS_DEV_COPY = {
   autoOff: "workers.dev turned off because a domain is live",
   /** Why a live domain left it on: the Worker's settings hold the URL. */
   settingsKeep:
-    "workers.dev stays on because the app's settings use its workers.dev URL. To turn it off, turn off this switch, then save the app's settings so they use the domain.",
+    "workers.dev stays on because the app's settings use its workers.dev URL. To turn it off, change those settings to use the app's address, then turn off this switch.",
   noDomain:
     "Add a custom or external domain and make sure it serves the app before you turn this off; the workers.dev URL is the app's only address until then.",
   /** The install form, once a domain is chosen. */

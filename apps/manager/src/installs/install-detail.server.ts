@@ -202,7 +202,7 @@ export interface InstallDetail extends InstallRow {
     startedBy: JobStarter;
   }>;
   /**
-   * Markdown with `{{workerUrl}}`/`{{workerName}}` filled in, then Appflare's
+   * Markdown with its placeholders (`{{appUrl}}`, `{{workerName}}`) filled in, then Appflare's
    * own notes (sending email); empty until installed.
    */
   postInstall: string[];
@@ -279,7 +279,8 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
   const primaryUrl = domain === null ? workerUrl : `https://${domain}`;
   // What the jobs fill in, so notes and vars show the values the Worker has.
   const placeholders = {
-    workerUrl: primaryUrl,
+    workerUrl,
+    appUrl: primaryUrl,
     workerName: row.worker_name,
     accountId: account,
     wildcardHostname: wildcardHostnameOf(resourceRows.filter((r) => r.retained_at === null)),
@@ -317,7 +318,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
       }
       const manifest = manifestWithRevision(parsed.data, recorded);
       name = manifest.catalog.name;
-      // An app of several Workers: `{{workerUrl:<name>}}` names one of them.
+      // An app of several Workers: `{{appUrl:<name>}}` names one of them.
       entryWorkers = entryPlaceholderValues(manifest.catalog, row.worker_name, sub, primaryUrl);
       otherWorkers = otherWorkerViews(manifest, row.worker_name, sub);
       const entry = entryWorkers;

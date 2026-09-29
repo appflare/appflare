@@ -18,17 +18,27 @@ import {
 } from "./plan";
 
 const DECLARED = [
-  { name: "ADMIN_PASSWORD", label: "Admin password", help: "Sign in.", generate: true },
-  { name: "API_KEY", label: "API key", generate: false },
-  { name: "SMTP_PASSWORD", label: "SMTP password", generate: false, optional: true },
+  {
+    name: "ADMIN_PASSWORD",
+    label: "Admin password",
+    help: "Sign in.",
+    generate: "password" as const,
+  },
+  { name: "API_KEY", label: "API key" },
+  { name: "SMTP_PASSWORD", label: "SMTP password", optional: true },
 ];
 
 describe("secret slots with a seed-only secret", () => {
   it("leaves it out: the install used it once and kept it nowhere", () => {
     const slots = secretSlots(
       [
-        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-        { name: "FIRST_ADMIN_PASSWORD", label: "First admin", generate: true, seedOnly: true },
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" },
+        {
+          name: "FIRST_ADMIN_PASSWORD",
+          label: "First admin",
+          generate: "password",
+          seedOnly: true,
+        },
       ],
       ["ADMIN_PASSWORD"],
     );
@@ -43,7 +53,7 @@ describe("secret slots", () => {
         name: "ADMIN_PASSWORD",
         label: "Admin password",
         help: "Sign in.",
-        generate: true,
+        generate: "password",
         declared: true,
         optional: false,
         present: true,
@@ -51,7 +61,6 @@ describe("secret slots", () => {
       {
         name: "API_KEY",
         label: "API key",
-        generate: false,
         declared: true,
         optional: false,
         present: false,
@@ -59,7 +68,6 @@ describe("secret slots", () => {
       {
         name: "SMTP_PASSWORD",
         label: "SMTP password",
-        generate: false,
         declared: true,
         optional: true,
         present: false,
@@ -67,7 +75,6 @@ describe("secret slots", () => {
       {
         name: "OLD_TOKEN",
         label: "OLD_TOKEN",
-        generate: false,
         declared: false,
         optional: true,
         present: true,
@@ -182,11 +189,10 @@ describe("secret change problems", () => {
 
 describe("derived secrets in a settings change", () => {
   const declared = [
-    { name: "CF_PASSWORD", label: "Admin password", generate: false },
+    { name: "CF_PASSWORD", label: "Admin password" },
     {
       name: "CF_PASSWORD_HASH",
       label: "Admin password hash",
-      generate: false,
       derive: { from: "CF_PASSWORD", method: "bcrypt" as const },
     },
   ];

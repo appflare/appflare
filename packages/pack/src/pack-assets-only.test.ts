@@ -19,6 +19,7 @@ function catalog(overrides: Record<string, unknown> = {}, install: Record<string
     slug: "static",
     name: "Static",
     summary: "A static site with no Worker code.",
+    tagline: "A static site with no Worker code",
     homepage: "https://github.com/appflare/appflare",
     repo: "appflare/appflare",
     license: "MIT",
@@ -91,11 +92,10 @@ const STATIC = {
 };
 
 describe("pack a Worker of static assets only", () => {
-  it("records its assets and no modules, as format 5", async () => {
+  it("records its assets and no modules", async () => {
     // A template's observability block is left out: wrangler does not send it for such a Worker.
     setUp({ ...STATIC, observability: { enabled: true } });
     const res = await run();
-    expect(res.manifest.format).toBe(5);
     expect(res.manifest.worker.mainModule).toBeUndefined();
     expect("mainModule" in res.manifest.worker).toBe(false);
     expect(res.manifest.worker.modules).toEqual([]);
@@ -132,7 +132,7 @@ describe("pack a Worker of static assets only", () => {
     setUp(
       { ...STATIC, vars: { MODE: "prod" }, triggers: { crons: ["0 0 * * *"] } },
       catalog({
-        secrets: [{ name: "TOKEN", label: "Token", help: "An API token.", generate: true }],
+        secrets: [{ name: "TOKEN", label: "Token", help: "An API token.", generate: "password" }],
       }),
     );
     await expect(run()).rejects.toThrow(
@@ -214,7 +214,6 @@ describe("pack a checkout without a package.json (installDirs: [])", () => {
     );
     setUp({ ...STATIC, main: "src/index.js" }, catalog({}, { buildCommand: "node gen.mjs" }));
     const res = await run();
-    expect(res.manifest.format).toBe(1);
     expect(res.manifest.worker.mainModule).toBe("index.js");
     expect(res.manifest.worker.modules.map((m) => m.name)).toEqual(["index.js"]);
     const [module] = res.manifest.worker.modules;

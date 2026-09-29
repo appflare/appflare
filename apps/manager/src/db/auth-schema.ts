@@ -2,33 +2,40 @@
 // (admin and passkey plugins, database rate limiting, the `isOwner` user field).
 // Do not edit by hand; regenerate with `pnpm auth:generate`, then `pnpm db:generate`.
 //
-// Not expressed here: the unique partial index `user_single_owner_idx` on
-// `user(is_owner) WHERE is_owner = true`, which keeps the owner to one user. It
-// lives only in migrations/0014_owner.sql (with the backfill), because the
-// generator cannot express a partial index; keep it when regenerating.
+// One addition by hand: the unique partial index `user_single_owner_idx` on
+// `user(is_owner) WHERE is_owner = true`, which keeps the owner to one user.
+// The generator cannot express a partial index; keep it when regenerating.
 
 import { relations, sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
-export const user = sqliteTable("user", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
-  emailVerified: integer("email_verified", { mode: "boolean" }).default(false).notNull(),
-  image: text("image"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-    .notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-    .$onUpdate(() => /* @__PURE__ */ new Date())
-    .notNull(),
-  role: text("role"),
-  banned: integer("banned", { mode: "boolean" }).default(false),
-  banReason: text("ban_reason"),
-  banExpires: integer("ban_expires", { mode: "timestamp_ms" }),
-  isOwner: integer("is_owner", { mode: "boolean" }).default(false),
-});
+export const user = sqliteTable(
+  "user",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    emailVerified: integer("email_verified", { mode: "boolean" }).default(false).notNull(),
+    image: text("image"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+    role: text("role"),
+    banned: integer("banned", { mode: "boolean" }).default(false),
+    banReason: text("ban_reason"),
+    banExpires: integer("ban_expires", { mode: "timestamp_ms" }),
+    isOwner: integer("is_owner", { mode: "boolean" }).default(false),
+  },
+  (table) => [
+    uniqueIndex("user_single_owner_idx")
+      .on(table.isOwner)
+      .where(sql`${sql.identifier("is_owner")} = true`),
+  ],
+);
 
 export const session = sqliteTable(
   "session",

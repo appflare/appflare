@@ -1,10 +1,5 @@
 import { NonRetryableError } from "cloudflare:workflows";
-import {
-  appHealthPath,
-  type CatalogManifest,
-  type HealthMode,
-  selfDeployingStage,
-} from "@appflare/schema";
+import { type CatalogManifest, type HealthMode, selfDeployingStage } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { z } from "zod";
 import { readCachedListing } from "../../catalog/merged.server";
@@ -54,8 +49,9 @@ import {
  * - Install: check the sandbox Worker and the catalog entry, store the token
  *   and secrets, wait for the sandbox Worker version they deployed to answer
  *   (sandbox-settle.ts), run the deploy, record everything it created as
- *   managed by the app, then check the app's own URL (status-only unless the entry says
- *   otherwise: these apps usually sit behind Cloudflare Access).
+ *   managed by the app, then check the app's own URL as the entry's
+ *   `install.health` says (an app behind Cloudflare Access sets `mode:
+ *   "any-response"`).
  * - Update: run the deploy again at the new pin; the installer converges on
  *   what it deployed before. There is no snapshot and no rollback.
  * - Uninstall: run the installer's destroy command, then delete the token
@@ -63,9 +59,9 @@ import {
  *   resources itself.
  */
 
-/** How the health check reads the app's answer: the entry's mode, else status-only. */
+/** How the health check reads the app's answer: the entry's `install.health.mode`. */
 export function selfDeployingHealthMode(catalog: CatalogManifest): HealthMode {
-  return catalog.install.healthMode ?? "status-only";
+  return catalog.install.health.mode;
 }
 
 function parseVars(json: string | null): Record<string, string> {
@@ -100,7 +96,7 @@ export async function checkAppHealthPhase(
   return checkLiveHealthPhase(
     steps,
     ctx.step,
-    `${url}${appHealthPath(catalog.install)}`,
+    `${url}${catalog.install.health.path}`,
     selfDeployingHealthMode(catalog),
   );
 }

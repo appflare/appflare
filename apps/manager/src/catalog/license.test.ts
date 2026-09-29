@@ -21,7 +21,10 @@ describe("licenseHref", () => {
 
   it("links any other id to its SPDX page, and refuses what is not an id", () => {
     expect(licenseHref("Elastic-2.0")).toBe("https://spdx.org/licenses/Elastic-2.0.html");
+    expect(licenseHref("GPL-3.0")).toBe("https://choosealicense.com/licenses/gpl-3.0/");
     expect(licenseHref("LicenseRef-Proprietary")).toBeNull();
+    // Only ids of the SPDX License List (the schema's copy) are linked.
+    expect(licenseHref("Acme-Proprietary-1.0")).toBeNull();
     expect(licenseHref("OR")).toBeNull();
     expect(licenseHref("see LICENSE")).toBeNull();
   });

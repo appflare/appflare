@@ -1,3 +1,4 @@
+import { CATALOG_CATEGORY_IDS } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import type { BrowsableApp } from "./browse";
 import {
@@ -138,7 +139,7 @@ describe("storefrontRows", () => {
   });
 
   it("gives the biggest categories a row each, most popular first, capped", () => {
-    const categories = Array.from({ length: CATEGORY_ROWS + 2 }, (_, i) => `cat-${i}`);
+    const categories = CATALOG_CATEGORY_IDS.slice(0, CATEGORY_ROWS + 2);
     const apps = categories.flatMap((category, i) =>
       Array.from({ length: 30 - i }, (_, n) =>
         app({ slug: `${category}-${n}`, categories: [category], popularity: stars(n) }),
@@ -149,8 +150,8 @@ describe("storefrontRows", () => {
       categories.slice(0, CATEGORY_ROWS).map((c) => `category-${c}`),
     );
     expect(rows[0]?.apps).toHaveLength(ROW_LIMIT);
-    expect(rows[0]?.apps[0]?.slug).toBe("cat-0-29");
-    expect(rows[0]?.seeAll).toEqual({ category: "cat-0" });
+    expect(rows[0]?.apps[0]?.slug).toBe(`${categories[0]}-29`);
+    expect(rows[0]?.seeAll).toEqual({ category: categories[0] });
   });
 });
 

@@ -1,8 +1,27 @@
 {
-  "name": "@appflare/cli",
-  "version": "0.1.0",
-  "private": true,
+  "name": "create-appflare",
+  "version": "0.0.0",
+  "private": false,
   "description": "Install Appflare, a self-hosted app manager for Cloudflare, into your own Cloudflare account.",
+  "keywords": [
+    "appflare",
+    "cloudflare",
+    "cloudflare-workers",
+    "workers",
+    "self-hosted",
+    "installer",
+    "create",
+    "wrangler"
+  ],
+  "homepage": "https://appflare.dev",
+  "bugs": {
+    "url": "https://github.com/appflare/appflare/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appflare/appflare.git",
+    "directory": "packages/cli"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -22,9 +41,12 @@
   "files": [
     "bin",
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
+    "access": "public",
+    "provenance": true,
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",

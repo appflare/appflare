@@ -17,7 +17,11 @@ import type { IndexJson, IndexMedia, IndexMediaFile } from "@appflare/schema";
 /** Where the manager serves a catalog image, followed by its sha256. */
 export const CATALOG_MEDIA_PATH = "/api/catalog/media/";
 
-/** The largest image the manager relays. Covers are 1200x630 PNGs, well below this. */
+/**
+ * The largest image the manager relays: room above the largest file a
+ * catalog may publish (the schema's `MAX_SCREENSHOT_BYTES`, 2 MiB), so a
+ * custom catalog a little over the limits still shows.
+ */
 export const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
 
 const CONTENT_TYPES: Record<string, string> = {

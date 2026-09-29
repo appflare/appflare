@@ -1,104 +1,51 @@
-import type { ArtifactManifest, CatalogManifest } from "@appflare/schema";
+import { INDEX_ONLY_CATALOG_FIELDS } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
-import { appFacts } from "./app-facts";
-
-const catalog = {
-  license: "BUSL-1.1",
-  licenseNote: "Production use restricted.",
-  requires: ["zone"],
-  categories: ["email", "bots"],
-  tokenPermissions: [],
-  install: { tier: "artifact", emailRouting: { catchAll: true } },
-} as unknown as CatalogManifest;
-
-const manifest = {
-  worker: {
-    bindings: [
-      { type: "d1", name: "DB" },
-      { type: "r2_bucket", name: "BUCKET" },
-      { type: "ai", name: "AI" },
-    ],
-    migrations: [],
-    crons: ["0 3 * * *"],
-  },
-} as unknown as ArtifactManifest;
+import { appFacts, NO_APP_FACTS } from "./app-facts";
 
 describe("appFacts", () => {
-  it("knows only the index's requirements before a manifest is read", () => {
-    expect(appFacts({ tier: "artifact", requires: ["r2"] }, null)).toEqual({
-      primitives: { ids: ["r2"], complete: false, keyValueDurableObjects: false },
-      categories: [],
-      appLicense: null,
-    });
-  });
+  const row: Parameters<typeof appFacts>[0] = {
+    tier: "artifact",
+    services: ["kv", "r2", "a-service-added-later"],
+    categories: ["utilities", "tabletop"],
+    license: "MIT",
+  };
 
-  it("reads bindings, crons, Email Routing and categories from an artifact (mail2telegram's shape)", () => {
-    expect(appFacts({ tier: "artifact", requires: ["r2"] }, { catalog, manifest })).toEqual({
-      primitives: {
-        ids: ["d1", "r2", "cron", "workers-ai", "email-routing", "zone"],
-        complete: true,
-        keyValueDurableObjects: false,
-      },
-      categories: ["email", "bots"],
-      appLicense: { expression: "BUSL-1.1", note: "Production use restricted." },
-    });
-  });
-
-  it("marks a list from a catalog manifest alone as incomplete", () => {
-    const facts = appFacts({ tier: "self-deploying", requires: [] }, { catalog, manifest: null });
-    expect(facts.primitives.complete).toBe(false);
-    expect(facts.primitives.ids).toEqual(["email-routing", "zone"]);
-  });
-
-  it("prefers what the index row publishes, with or without a manifest", () => {
-    const row: Parameters<typeof appFacts>[0] = {
-      tier: "artifact",
-      requires: ["r2"],
-      services: ["kv", "r2"],
-      categories: ["utilities"],
-      license: "MIT",
-    };
-    const expected = {
+  it("reads what the index row publishes", () => {
+    expect(appFacts(row)).toEqual({
       primitives: { ids: ["kv", "r2"], complete: true, keyValueDurableObjects: false },
-      categories: ["utilities"],
+      categories: ["utilities", "tabletop"],
       appLicense: { expression: "MIT", note: null },
-    };
-    expect(appFacts(row, null)).toEqual(expected);
-    expect(appFacts(row, { catalog, manifest })).toEqual(expected);
-  });
-
-  it("takes each fact the row lacks from the manifest", () => {
-    const facts = appFacts(
-      { tier: "artifact", requires: ["r2"], categories: ["storage"] },
-      { catalog, manifest },
-    );
-    expect(facts.categories).toEqual(["storage"]);
-    expect(facts.primitives.ids).toEqual([
-      "d1",
-      "r2",
-      "cron",
-      "workers-ai",
-      "email-routing",
-      "zone",
-    ]);
-    expect(
-      appFacts({ tier: "artifact", requires: [], services: [] }, { catalog, manifest }).categories,
-    ).toEqual(["email", "bots"]);
-  });
-
-  it("takes the license from the row, else from the catalog manifest", () => {
-    const row: Parameters<typeof appFacts>[0] = {
-      tier: "artifact",
-      requires: [],
-      license: "NONE",
-    };
-    expect(appFacts(row, { catalog, manifest }).appLicense).toEqual({
-      expression: "NONE",
-      note: null,
     });
-    expect(appFacts({ tier: "artifact", requires: [] }, { catalog, manifest }).appLicense).toEqual({
+  });
+
+  it("carries the license note, and marks a tier that builds in the account as incomplete", () => {
+    const facts = appFacts({
+      ...row,
+      tier: "sandbox",
+      license: "BUSL-1.1",
+      licenseNote: "Production use restricted.",
+      keyValueDurableObjects: true,
+    });
+    expect(facts.appLicense).toEqual({
       expression: "BUSL-1.1",
       note: "Production use restricted.",
+    });
+    expect(facts.primitives.complete).toBe(false);
+    expect(facts.primitives.keyValueDurableObjects).toBe(true);
+  });
+
+  it("covers every field only the index row carries", () => {
+    // The list and app pages read these from the row, never from a manifest:
+    // `authors` and `tagline` (the tile's line) directly, `licenseNote` here.
+    // A field the schema adds to the list needs reading from the row too.
+    expect([...INDEX_ONLY_CATALOG_FIELDS].sort()).toEqual(["authors", "licenseNote", "tagline"]);
+  });
+
+  it("knows nothing where no app is shown", () => {
+    expect(NO_APP_FACTS).toEqual({
+      primitives: { ids: [], complete: false, keyValueDurableObjects: false },
+      categories: [],
+      appLicense: null,
     });
   });
 });

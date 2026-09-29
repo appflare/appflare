@@ -150,9 +150,9 @@ It stays on, and the tab says why, when:
 
 - an admin has used the **Serve on workers.dev** switch on this app. From then on
   Appflare leaves the switch where the admin put it.
-- the app's settings use its `workers.dev` URL (`{{workerUrl}}`), which would then
-  lead nowhere. To turn it off anyway, turn off the switch, then save the app's
-  settings so they get the domain.
+- the app's settings use `{{workerUrl}}` or `{{workerHostname}}`, which always name
+  the `workers.dev` address and would then lead nowhere. Settings that use
+  `{{appUrl}}` do not hold it back: they follow the domain.
 - the app ships its own installer, which decides where its Workers answer.
 - a job of the app is running. The next check through the domain tries again.
 
@@ -162,11 +162,12 @@ off, Appflare sends one request to each of the app's domains and turns the
 setting, and their checks still work because Cloudflare keeps the Worker's preview
 URLs.
 
-While it is off, health checks, **Open app** and the `{{workerUrl}}` value an app's
+While it is off, health checks, **Open app** and the `{{appUrl}}` value an app's
 settings may use all point at the domain that answered (or, once that domain is
-removed, the next working one). A setting that uses `{{workerUrl}}` gets the new
-address with the app's next update or settings change, and gets the `workers.dev` URL
-back the same way once the switch is on again.
+removed, the next working one). When the app's address moves from `workers.dev` to
+a domain, or back, Appflare deploys the app's settings again, so a setting that uses
+`{{appUrl}}` follows at once. A setting that uses `{{workerUrl}}` always holds the
+`workers.dev` address.
 
 Removing the app's last working domain while the `workers.dev` URL is off turns the
 URL back on first when Appflare turned it off. When an admin turned it off with the

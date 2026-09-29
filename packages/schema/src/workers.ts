@@ -1,23 +1,24 @@
 import type {
   ArtifactAssets,
+  ArtifactD1,
   ArtifactManifest,
   ArtifactWorker,
-  D1Migrations,
   WorkerBinding,
 } from "./artifact";
 import type { CatalogManifest, CatalogSecret, CatalogVar } from "./catalog";
+import type { EntryWorkerPlaceholders } from "./placeholders";
 
 /**
  * Apps that install as several Workers deployed together (a catalog entry's
- * `install.workers`, an artifact manifest of `format: 2`).
+ * `install.workers`, an artifact manifest's `workers`).
  *
  * One Worker is primary: it runs under the install's own Worker name, answers
  * the app's address and health check, and is described by the manifest's
  * `worker` and `assets`, exactly as the only Worker of a one-Worker app is.
  * Every other Worker is listed in the manifest's `workers` and runs as
  * `<install Worker name>-<name>`. Resources are the entry's, shared by binding
- * name: two Workers that bind `DB` use one D1 database, whose migrations are
- * the manifest's `d1Migrations`.
+ * name: two Workers that bind `DB` use one D1 database, whose SQL is the
+ * manifest's `d1.DB`.
  *
  * Where a wrangler config names another Worker of the entry (a service
  * binding's `service`, a Durable Object binding's `script_name`), the packer
@@ -28,7 +29,7 @@ import type { CatalogManifest, CatalogSecret, CatalogVar } from "./catalog";
  * Imports only types, so `artifact.ts` can use it without a cycle at load time.
  */
 
-/** One Worker of an app, whatever the manifest's format. */
+/** One Worker of an app. */
 export interface AppWorker {
   /** The Worker's name within the entry (`install.workers[].name`); `null` for a one-Worker app. */
   name: string | null;
@@ -55,7 +56,7 @@ export function entryWorkerOnWorkersDev(
 ): boolean {
   if (name === null) return true;
   const declared = catalog.install.workers?.find((w) => w.name === name);
-  return declared === undefined || declared.primary === true || declared.workersDev !== false;
+  return declared === undefined || declared.primary || declared.workersDev;
 }
 
 /** Lowercase letters, digits and inner hyphens, as `ENTRY_WORKER_NAME_PATTERN` in catalog.ts. */
@@ -104,17 +105,17 @@ export function primaryEntryWorkerName(
     | Pick<CatalogManifest, "install">
     | { install: Pick<CatalogManifest["install"], "workers"> },
 ): string | null {
-  return catalog.install.workers?.find((w) => w.primary === true)?.name ?? null;
+  return catalog.install.workers?.find((w) => w.primary)?.name ?? null;
 }
 
 /** The Workers other than the primary one: the manifest's `workers`, empty for one Worker. */
-export function secondaryWorkers(
-  manifest: Pick<ArtifactManifest, "format"> & { workers?: readonly AppWorkerEntry[] },
-): readonly AppWorkerEntry[] {
-  return manifest.format === 1 ? [] : (manifest.workers ?? []);
+export function secondaryWorkers(manifest: {
+  workers?: readonly AppWorkerEntry[] | undefined;
+}): readonly AppWorkerEntry[] {
+  return manifest.workers ?? [];
 }
 
-/** One entry of a `format: 2` manifest's `workers`. */
+/** One entry of an artifact manifest's `workers`. */
 export interface AppWorkerEntry {
   name: string;
   worker: ArtifactWorker;
@@ -165,7 +166,7 @@ export function entryScriptNames(
 ): Record<string, string> {
   const names: Record<string, string> = {};
   for (const w of catalog.install.workers ?? []) {
-    names[w.name] = entryScriptName(installWorkerName, w.name, w.primary === true);
+    names[w.name] = entryScriptName(installWorkerName, w.name, w.primary);
   }
   return names;
 }
@@ -283,18 +284,15 @@ export function workerManifest(manifest: ArtifactManifest, worker: AppWorker): A
   return { ...manifest, worker: worker.worker, assets: worker.assets, catalog };
 }
 
-/** What the placeholders naming an entry's Workers are filled in with, by name within the entry. */
-export type EntryWorkerPlaceholders = Readonly<
-  Record<string, { workerName: string; workerUrl: string | null }>
->;
-
 /**
- * What `{{workerUrl:<name>}}` and `{{workerName:<name>}}` become for an
- * install under `installWorkerName`: each Worker's installed name and its
- * workers.dev URL (null while the account's subdomain is unknown, and for a
- * Worker kept off workers.dev, which has none). The primary Worker's URL is
- * `appUrl` when given (the app's address, as `{{workerUrl}}` is). Undefined
- * for an app of one Worker.
+ * What the per-Worker placeholders become for an install under
+ * `installWorkerName`, by each Worker's name within the entry: its installed
+ * name, its workers.dev URL (null while the account's subdomain is unknown,
+ * and for a Worker kept off workers.dev, which has none), and the address it
+ * is served at. The primary Worker's address is `appUrl` when given (its
+ * custom domain while workers.dev is off), else its workers.dev URL; every
+ * other Worker is served at its workers.dev URL. Undefined for an app of one
+ * Worker.
  */
 export function entryPlaceholderValues(
   catalog: Pick<CatalogManifest, "install">,
@@ -304,52 +302,23 @@ export function entryPlaceholderValues(
 ): EntryWorkerPlaceholders | undefined {
   const declared = catalog.install.workers;
   if (declared === undefined) return undefined;
-  const values: Record<string, { workerName: string; workerUrl: string | null }> = {};
+  const values: Record<
+    string,
+    { workerName: string; workerUrl: string | null; appUrl: string | null }
+  > = {};
   for (const w of declared) {
-    const primary = w.primary === true;
-    const scriptName = entryScriptName(installWorkerName, w.name, primary);
-    const workersDev =
+    const scriptName = entryScriptName(installWorkerName, w.name, w.primary);
+    const workerUrl =
       subdomain && entryWorkerOnWorkersDev(catalog, w.name)
         ? `https://${scriptName}.${subdomain}.workers.dev`
         : null;
     values[w.name] = {
       workerName: scriptName,
-      workerUrl: primary && appUrl != null ? appUrl : workersDev,
+      workerUrl,
+      appUrl: w.primary && appUrl != null ? appUrl : workerUrl,
     };
   }
   return values;
-}
-
-/**
- * The regular expression source of `{{workerUrl:<name>}}` and
- * `{{workerName:<name>}}` as written in a value: the placeholder's kind in
- * the first capture group, the entry Worker's name in the second. Exported as
- * source text, not a shared `RegExp`, so callers build their own.
- */
-export const ENTRY_WORKER_PLACEHOLDER_SOURCE = `\\{\\{\\s*(workerUrl|workerName):(${ENTRY_NAME})\\s*\\}\\}`;
-
-const ENTRY_PLACEHOLDER_PATTERN = new RegExp(ENTRY_WORKER_PLACEHOLDER_SOURCE, "g");
-
-/** Whether `text` holds `{{workerUrl:<name>}}` or `{{workerName:<name>}}`. */
-export function hasEntryWorkerPlaceholder(text: string): boolean {
-  return new RegExp(ENTRY_PLACEHOLDER_PATTERN.source).test(text);
-}
-
-/**
- * `text` with `{{workerUrl:<name>}}` and `{{workerName:<name>}}` filled in:
- * the workers.dev URL (no trailing slash) and the Worker name that entry
- * Worker was installed as. A placeholder naming a Worker the entry does not
- * have, or a URL not known yet, is left as written.
- */
-export function renderEntryWorkerPlaceholders(
-  text: string,
-  workers: EntryWorkerPlaceholders,
-): string {
-  return text.replace(ENTRY_PLACEHOLDER_PATTERN, (match, key: string, name: string) => {
-    const values = Object.hasOwn(workers, name) ? workers[name] : undefined;
-    if (values === undefined) return match;
-    return key === "workerName" ? values.workerName : (values.workerUrl ?? match);
-  });
 }
 
 /**
@@ -358,17 +327,15 @@ export function renderEntryWorkerPlaceholders(
  */
 export function combinedWorkerFacts(
   manifest: Pick<ArtifactManifest, "worker"> & {
-    format?: number;
-    workers?: readonly { worker: ArtifactWorker }[];
+    workers?: readonly { worker: ArtifactWorker }[] | undefined;
   },
 ): Pick<ArtifactWorker, "bindings" | "migrations" | "crons" | "queueConsumers"> {
-  const others = manifest.format === 1 ? [] : (manifest.workers ?? []);
-  const workers = [manifest.worker, ...others.map((w) => w.worker)];
+  const workers = [manifest.worker, ...(manifest.workers ?? []).map((w) => w.worker)];
   return {
     bindings: workers.flatMap((w) => w.bindings),
     migrations: workers.flatMap((w) => w.migrations),
     crons: workers.flatMap((w) => w.crons),
-    queueConsumers: workers.flatMap((w) => w.queueConsumers ?? []),
+    queueConsumers: workers.flatMap((w) => w.queueConsumers),
   };
 }
 
@@ -382,17 +349,14 @@ const SHARED_RESOURCE_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * What is wrong with the Workers of a `format: 2` manifest, as sentences;
+ * What is wrong with the Workers of an artifact of several, as sentences;
  * empty when nothing is. The packer, the manifest schema and the manager all
  * hold an artifact to these.
  */
 export function entryWorkerProblems(manifest: {
   worker: ArtifactWorker;
   workers: readonly AppWorkerEntry[];
-  d1Migrations: D1Migrations;
-  d1Schema?: D1Migrations | undefined;
-  d1PostDeploy?: D1Migrations | undefined;
-  d1Baseline?: D1Migrations | undefined;
+  d1: ArtifactD1;
   catalog: Pick<CatalogManifest, "install">;
 }): string[] {
   const problems: string[] = [];
@@ -400,8 +364,8 @@ export function entryWorkerProblems(manifest: {
   if (declared === undefined) {
     return ["The artifact lists several Workers, but its catalog manifest has no install.workers."];
   }
-  const primaryName = declared.find((w) => w.primary === true)?.name;
-  const others = declared.filter((w) => w.primary !== true).map((w) => w.name);
+  const primaryName = declared.find((w) => w.primary)?.name;
+  const others = declared.filter((w) => !w.primary).map((w) => w.name);
   const listed = manifest.workers.map((w) => w.name);
   if (primaryName === undefined || others.join("\n") !== listed.join("\n")) {
     problems.push(
@@ -469,21 +433,11 @@ export function entryWorkerProblems(manifest: {
       }
     }
   }
-  const d1Lists: ReadonlyArray<[string, D1Migrations | undefined]> = [
-    ["D1 migrations", manifest.d1Migrations],
-    ["D1 schema files", manifest.d1Schema],
-    ["Post-deploy D1 migrations", manifest.d1PostDeploy],
-    ["D1 baselines", manifest.d1Baseline],
-  ];
-  for (const [what, byBinding] of d1Lists) {
-    for (const binding of Object.keys(byBinding ?? {})) {
-      const bound = all.some((w) =>
-        w.worker.bindings.some((b) => b.type === "d1" && b.name === binding),
-      );
-      if (!bound) {
-        problems.push(`${what} are recorded for ${binding}, which no Worker binds.`);
-      }
-    }
+  for (const binding of Object.keys(manifest.d1)) {
+    const bound = all.some((w) =>
+      w.worker.bindings.some((b) => b.type === "d1" && b.name === binding),
+    );
+    if (!bound) problems.push(`D1 SQL is recorded for ${binding}, which no Worker binds.`);
   }
   const order = entryWorkerOrder(all);
   if (order.cycle !== null) {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { artifactFormatFor } from "./artifact";
 import { catalogManifestSchema, secretValueProblem } from "./catalog";
 import { generateBase64Key32, isBase64Key32 } from "./random-key";
 import {
@@ -18,10 +17,11 @@ const base = {
   slug: "edgechat",
   name: "EdgeChat",
   summary: "Encrypted chat on Workers.",
+  tagline: "An app on Workers",
   homepage: "https://github.com/aozorae/Edgechat",
   repo: "aozorae/Edgechat",
   license: "MIT",
-  categories: ["communication"],
+  categories: ["chat"],
   maintainers: ["MendyLanda"],
   source: { ref: "main", sha: "0".repeat(40) },
   install: {
@@ -46,7 +46,7 @@ const edgechat = {
     {
       name: "EDGECHAT_ADMIN_PASSWORD",
       label: "Admin password",
-      generate: true,
+      generate: "password",
       seedOnly: true,
     },
     { name: "EDGECHAT_ENCRYPTION_KEY_1", label: "Encryption key", generate: "base64-key-32" },
@@ -55,7 +55,6 @@ const edgechat = {
     {
       name: "EDGECHAT_ADMIN_USERNAME",
       label: "Admin user name",
-      required: true,
       seedOnly: true,
     },
     { name: "EDGECHAT_ENCRYPTION_ACTIVE_KEY_ID", label: "Active key", default: "auto-v1" },
@@ -97,7 +96,12 @@ const edgekey = {
   ...base,
   slug: "edgekey",
   secrets: [
-    { name: "EDGEKEY_ADMIN_PASSWORD", label: "Admin password", generate: true, seedOnly: true },
+    {
+      name: "EDGEKEY_ADMIN_PASSWORD",
+      label: "Admin password",
+      generate: "password",
+      seedOnly: true,
+    },
   ],
   vars: [],
   resources: {
@@ -255,11 +259,12 @@ describe("seed statements in the catalog manifest", () => {
 
   it("refuses a var that may be empty and hashes of optional or derived secrets", () => {
     const empty = parseEdited((m) => {
-      (m.vars[0] as { required: boolean }).required = false;
+      (m.vars[0] as { optional?: boolean }).optional = true;
     });
     expect(messages(empty)).toContain("EDGECHAT_ADMIN_USERNAME may be left empty");
     const withDefault = parseEdited((m) => {
-      (m.vars[0] as { required: boolean; default?: string }).required = false;
+      (m.vars[0] as { optional?: boolean }).optional = true;
+      (m.vars[0] as { seedOnly?: boolean }).seedOnly = undefined;
       (m.vars[0] as { default?: string }).default = "admin";
     });
     expect(messages(withDefault)).toBe("");
@@ -446,14 +451,5 @@ describe("base64-key-32", () => {
     const secret = { name: "K", label: "Key", generate: "base64-key-32" as const };
     expect(secretValueProblem(secret, key)).toBeNull();
     expect(secretValueProblem(secret, "not a key")).toContain("32 bytes as padded base64");
-  });
-});
-
-describe("artifact format", () => {
-  it("is 4 for an artifact whose catalog manifest carries a seed, whatever else it carries", () => {
-    const catalog = catalogManifestSchema.parse(edgekey);
-    expect(artifactFormatFor({ catalog })).toBe(4);
-    expect(artifactFormatFor({ catalog, d1Schema: { DB: [{}] }, workers: [{}] })).toBe(4);
-    expect(artifactFormatFor({ catalog: { resources: { d1: { DB: {} } } } })).toBe(1);
   });
 });

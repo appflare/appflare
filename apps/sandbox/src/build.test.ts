@@ -41,7 +41,7 @@ const catalogManifest = {
   slug: "widget",
   name: "Widget",
   summary: "A widget.",
-  homepage: "https://github.com/acme/widget",
+  tagline: "A widget",
   repo: "acme/widget",
   license: "MIT",
   categories: ["utilities"],
@@ -91,12 +91,12 @@ function packedManifest(overrides: Record<string, unknown> = {}): Uint8Array {
     format: 1,
     app: "widget",
     version: "1.2.3",
-    source: { repo: "acme/widget", sha: SHA, ref: "v1.2.3" },
     builtAt: "2026-09-23T12:00:00.000Z",
     builder: "@appflare/pack@0.2.0",
     keyId: "unsigned",
     worker: {
       name: "widget",
+      wranglerConfig: { declared: "wrangler.jsonc", effective: "wrangler.jsonc" },
       mainModule: "index.js",
       compatibilityDate: "2026-09-01",
       compatibilityFlags: [],
@@ -109,7 +109,7 @@ function packedManifest(overrides: Record<string, unknown> = {}): Uint8Array {
       limits: null,
     },
     assets: { config: {}, binding: null, files: [] },
-    d1Migrations: {},
+    d1: {},
     catalog: catalogManifest,
     ...overrides,
   };
@@ -290,9 +290,11 @@ describe("runBuild", () => {
     expect(sandbox.commands).toContain(pack);
     // The pack step gets the install step's time as well.
     expect(sandbox.timeouts.get(pack)).toBe(STAGE_TIMEOUTS.install + STAGE_TIMEOUTS.pack);
-    expect(JSON.parse(sandbox.written.get(MANIFEST_INPUT) ?? "null").install.installDirs).toEqual(
-      installDirs,
-    );
+    // As the request's schema reads them, defaults filled in.
+    expect(JSON.parse(sandbox.written.get(MANIFEST_INPUT) ?? "null").install.installDirs).toEqual([
+      { path: "templates/blog", lockfile: "none", devDependencies: true },
+      { path: ".", lockfile: "required", devDependencies: true },
+    ]);
     const progress = await readProgress(env.BUILDS, result.logKey as string);
     expect(progress?.log).toContain(
       "appflare-pack installs templates/blog, . in that order, install scripts disabled",
@@ -398,14 +400,14 @@ describe("runBuild", () => {
       sha256: "0".repeat(64),
     });
     for (const [field, dir, layout] of [
-      ["d1Schema", "d1-schema", { schema: ["schema.sql"] }],
-      ["d1PostDeploy", "d1-post-deploy", { postDeployMigrationsDir: "after" }],
-      ["d1Baseline", "d1-baseline", { baseline: "schema.sql" }],
+      ["schema", "d1-schema", { schema: ["schema.sql"] }],
+      ["postDeploy", "d1-post-deploy", { postDeployMigrationsDir: "after" }],
+      ["baseline", "d1-baseline", { baseline: "schema.sql" }],
     ] as const) {
-      const name = field === "d1PostDeploy" ? "0001_after.sql" : "schema.sql";
+      const name = field === "postDeploy" ? "0001_after.sql" : "schema.sql";
+      const file = d1File(dir, name);
       const manifest = packedManifest({
-        format: field === "d1Baseline" ? 5 : 3,
-        [field]: { DB: [d1File(dir, name)] },
+        d1: { DB: { migrations: [], [field]: field === "baseline" ? file : [file] } },
         catalog: { ...catalogManifest, resources: { d1: { DB: layout } } },
       });
       const sandbox = fake({ packOutput: { "widget-1.2.3.zip": ZIP, "manifest.json": manifest } });

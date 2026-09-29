@@ -3,7 +3,7 @@ import { semverSchema } from "@appflare/schema";
 /**
  * Artifact version derivation, first match wins:
  *
- * 1. `install.version` from the catalog manifest, when set. Used when the
+ * 1. `source.version` from the catalog manifest, when set. Used when the
  *    repository's tags do not describe the app (a monorepo of many apps).
  * 2. The `source.ref` semver tag (optionally `v`-prefixed) without the `v`.
  * 3. `0.0.0-<YYYYMMDD>.<first 7 of sha>`, where the date is the commit date
@@ -29,8 +29,8 @@ export function formatBuildDate(date: Date): string {
 }
 
 export interface DeriveVersionInput {
-  /** The catalog manifest's `install.version`, when set. */
-  installVersion?: string | undefined;
+  /** The catalog manifest's `source.version`, when set. */
+  sourceVersion?: string | undefined;
   ref: string;
   sha: string;
   /** `YYYYMMDD` commit date, or null when the checkout is not a git repo. */
@@ -40,27 +40,27 @@ export interface DeriveVersionInput {
 }
 
 /** Where a derived version came from, in the order the rules are tried. */
-export type VersionOrigin = "install.version" | "tag" | "commit";
+export type VersionOrigin = "source.version" | "tag" | "commit";
 
 /**
  * Derives the artifact `version` and says which rule produced it. Throws when
- * `installVersion` is set but is not semver without a leading `v`.
+ * `sourceVersion` is set but is not semver without a leading `v`.
  */
 export function deriveVersionWithOrigin({
-  installVersion,
+  sourceVersion,
   ref,
   sha,
   commitDate,
   buildDate,
 }: DeriveVersionInput): { version: string; origin: VersionOrigin } {
-  if (installVersion !== undefined) {
-    if (!semverSchema.safeParse(installVersion).success) {
+  if (sourceVersion !== undefined) {
+    if (!semverSchema.safeParse(sourceVersion).success) {
       throw new Error(
-        `install.version "${installVersion}" is not a semver version such as 1.2.3 ` +
+        `source.version "${sourceVersion}" is not a semver version such as 1.2.3 ` +
           "(no leading v)",
       );
     }
-    return { version: installVersion, origin: "install.version" };
+    return { version: sourceVersion, origin: "source.version" };
   }
   const semver = semverFromRef(ref);
   if (semver) {

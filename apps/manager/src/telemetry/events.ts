@@ -1,4 +1,5 @@
 import {
+  CATALOG_SLUG_PATTERN,
   commonTelemetryProperties,
   type TelemetryEvent,
   type TelemetryValue,
@@ -132,7 +133,7 @@ export function officialSlug(
   catalogVersions: ReadonlyMap<string, string> | null,
 ): string | null {
   if (!officialCatalog) return null;
-  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) return null;
+  if (!CATALOG_SLUG_PATTERN.test(slug)) return null;
   if (catalogVersions !== null && !catalogVersions.has(slug)) return null;
   return slug;
 }

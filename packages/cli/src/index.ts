@@ -1,5 +1,5 @@
 /**
- * `@appflare/cli` / `create-appflare`: installs the Appflare manager into a
+ * `create-appflare`: installs the Appflare manager into a
  * Cloudflare account from a signed release artifact. The bin is `dist/cli.js`;
  * this entry exposes the building blocks for tests and tooling (the release
  * scripts verify and unpack manager artifacts with the same code).

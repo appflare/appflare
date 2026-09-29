@@ -293,7 +293,7 @@ export async function runSelfManaged(
       if (found.missing.length > 0) {
         throw failure(
           "discover",
-          `the installer finished, but the account has no Worker ${found.missing.join(", ")}; the catalog entry's selfDeploying.workers does not match what it deploys`,
+          `the installer finished, but the account has no Worker ${found.missing.join(", ")}; the catalog entry's install.selfDeploying.workerNames does not match what it deploys`,
         );
       }
       for (const r of found.resources) log.line(`Found ${r.kind} ${r.name} (${r.worker}).`);

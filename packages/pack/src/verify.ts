@@ -6,21 +6,24 @@ import {
   type ArtifactManifest,
   appWorkers,
   artifactD1Files,
-  artifactManifestSchema,
   baselineFileProblems,
   catalogVarProblems,
   combinedWorkerFacts,
   type D1MigrationFile,
   hyperdriveDeclarationProblems,
+  hyperdriveDeclarations,
   isVectorizeBinding,
   pipelineDeclarationProblems,
   queueConsumerProblems,
   schemaFileProblems,
   serviceBindingProblem,
   signingKeys,
+  strictArtifactManifestSchema,
+  unknownArtifactFormatProblem,
   workerManifest,
   workerUploadProblem,
 } from "@appflare/schema";
+import { issueLines } from "./manifest.ts";
 import { UNSIGNED_KEY_ID } from "./signing.ts";
 
 /** Options for {@link verify}. */
@@ -122,7 +125,7 @@ function checkVectorizeBindings(manifest: ArtifactManifest): void {
 function checkHyperdriveBindings(manifest: ArtifactManifest): void {
   const problems = hyperdriveDeclarationProblems(
     appWorkers(manifest).flatMap((w) => w.worker.bindings),
-    manifest.catalog.resources?.hyperdrive ?? [],
+    hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
   );
   if (problems.length > 0) throw new Error(problems.join(" "));
 }
@@ -182,7 +185,18 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
     throw new Error(`manifest.json not found in ${dir}`);
   }
   const manifestBytes = readFileSync(manifestPath);
-  const manifest = artifactManifestSchema.parse(JSON.parse(manifestBytes.toString("utf8")));
+  const json: unknown = JSON.parse(manifestBytes.toString("utf8"));
+  const formatProblem = unknownArtifactFormatProblem(json);
+  if (formatProblem !== null) throw new Error(formatProblem);
+  // Strict: a field the schema does not know is a packer bug or a
+  // hand-edited manifest, and a manager would drop it without a word.
+  const parsed = strictArtifactManifestSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new Error(
+      `manifest.json is not a valid artifact manifest:\n${issueLines(parsed.error.issues)}`,
+    );
+  }
+  const manifest = parsed.data;
 
   const unsigned = manifest.keyId === UNSIGNED_KEY_ID;
   const sigPath = path.join(dir, "manifest.sig");
@@ -245,8 +259,10 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
     }
   }
 
-  const schemaFiles = new Set(Object.values(manifest.d1Schema ?? {}).flat());
-  const baselineFiles = new Set(Object.values(manifest.d1Baseline ?? {}).flat());
+  const schemaFiles = new Set(Object.values(manifest.d1).flatMap((d1) => d1.schema));
+  const baselineFiles = new Set(
+    Object.values(manifest.d1).flatMap((d1) => (d1.baseline === undefined ? [] : [d1.baseline])),
+  );
   const entries: Addressable[] = [
     ...workers.flatMap((w) => [...w.worker.modules, ...w.assets.files]),
     ...artifactD1Files(manifest),

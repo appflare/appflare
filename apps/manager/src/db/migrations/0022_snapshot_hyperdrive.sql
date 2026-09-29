@@ -1,1 +1,0 @@
-ALTER TABLE `snapshots` ADD `hyperdrive_json` text;

@@ -4,9 +4,13 @@ import { mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   type ArtifactManifest,
+  artifactD1Files,
   artifactManifestSchema,
+  LAST_EARLIER_ARTIFACT_FORMAT,
+  LATEST_ARTIFACT_FORMAT,
   type SigningKey,
   signingKeys,
+  unknownArtifactFormatProblem,
   verifyManifestSignature,
 } from "@appflare/schema";
 
@@ -87,6 +91,18 @@ export async function verifyArtifact(options: VerifyArtifactOptions): Promise<Ve
   } catch {
     throw new Error("manifest.json is not valid JSON");
   }
+  // A format above the earlier ones means a release newer than this
+  // installer knows; formats 2 to 6 are releases built for an earlier Appflare.
+  if (unknownArtifactFormatProblem(json) !== null) {
+    const format = (json as { format: number }).format;
+    throw new Error(
+      format > LAST_EARLIER_ARTIFACT_FORMAT
+        ? `the release is artifact format ${format}, and this installer reads format ${LATEST_ARTIFACT_FORMAT}; run the latest installer (npx create-appflare@latest)`
+        : format > LATEST_ARTIFACT_FORMAT
+          ? `the release is artifact format ${format}: it was built for an earlier version of Appflare and needs to be packed again by its catalog`
+          : `the release is artifact format ${format}, which this installer does not read`,
+    );
+  }
   const parsed = artifactManifestSchema.safeParse(json);
   if (!parsed.success) {
     throw new Error(`manifest.json is not a valid artifact manifest: ${parsed.error.message}`);
@@ -141,11 +157,11 @@ export function safeJoin(root: string, relative: string): string {
 }
 
 /**
- * Reads every file the manifest lists (Worker modules, assets, and D1
- * migrations) as the exact byte slice `[offset, offset + size)` of the STORE
+ * Reads every file the manifest lists (Worker modules, assets, and D1 SQL)
+ * as the exact byte slice `[offset, offset + size)` of the STORE
  * zip, checks its size and sha256 (like `appflare-pack verify`), and writes
  * the modules to `<outDir>/worker/<name>` and the assets to
- * `<outDir>/assets/<route>`. D1 migrations are only checked: the manager applies
+ * `<outDir>/assets/<route>`. D1 SQL is only checked: the manager applies
  * its own migrations at boot. Every file is checked before the
  * first one is written.
  */
@@ -199,8 +215,8 @@ export async function unpackArtifact(
       }
       writes.push({ target: safeJoin(assetsDir, asset.route.slice(1)), data: await read(asset) });
     }
-    for (const migration of Object.values(manifest.d1Migrations).flat()) {
-      await read(migration);
+    for (const file of artifactD1Files(manifest)) {
+      await read(file);
     }
   } finally {
     await zip.close();

@@ -634,8 +634,12 @@ describe("catalogNeeds", () => {
           plan: "paid",
           tier: "sandbox",
         },
-        // An older row without services: its `requires` stand in.
-        { requires: ["r2", "zone", "analytics-engine"], plan: "paid", tier: "self-deploying" },
+        {
+          services: ["r2", "zone", "analytics-engine"],
+          requires: [],
+          plan: "paid",
+          tier: "self-deploying",
+        },
       ]),
     ).toEqual({
       total: 4,

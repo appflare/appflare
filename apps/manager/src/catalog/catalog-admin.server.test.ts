@@ -14,7 +14,7 @@ import {
   setCatalogEnabledCore,
   updateCatalogCore,
 } from "./catalog-admin.server";
-import { listCatalogRecords, readCatalogRecord } from "./catalogs.server";
+import { listCatalogRecords, readCatalogRecord, recordCatalogRefresh } from "./catalogs.server";
 import {
   customCatalogIndexKey,
   DEFAULT_CATALOG_INDEX_URL,
@@ -193,7 +193,7 @@ describe("addCatalogCore", () => {
     );
     await expect(add({ hello: "world" })).rejects.toThrow("is not a catalog index");
     await expect(add(indexOf([]))).rejects.toThrow("lists no apps yet");
-    const { artifacts: _a, digest: _d, ...unreleased } = fixture.index;
+    const { artifacts: _a, ...unreleased } = fixture.index;
     await expect(
       add(
         indexOf([
@@ -298,6 +298,25 @@ describe("the official catalog", () => {
       "The official catalog cannot be changed or removed",
     );
     expect(await readCatalogRecord(createDb(env.DB), "official")).not.toBeNull();
+  });
+
+  it("stores its first refresh on a fresh database, and a later one on the same row", async () => {
+    const db = createDb(env.DB);
+    await recordCatalogRefresh(db, "official", { at: new Date(1_000), error: null });
+    await recordCatalogRefresh(db, "official", { at: new Date(2_000), error: "offline" });
+    const rows = await env.DB.prepare(
+      "SELECT id, kind, enabled, added_at, refreshed_at, refresh_error FROM catalogs",
+    ).all();
+    expect(rows.results).toEqual([
+      {
+        id: "official",
+        kind: "official",
+        enabled: 1,
+        added_at: 1_000,
+        refreshed_at: 1_000,
+        refresh_error: "offline",
+      },
+    ]);
   });
 });
 

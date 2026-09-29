@@ -1,5 +1,0 @@
----
-"@appflare/manager": patch
----
-
-Pages load faster. The server reads what a page needs in fewer round trips: an app's catalog page in two rounds instead of about eight, the signed-in layout in one, and an install's page in one request instead of three. A signed session cookie now answers most session checks for a minute without reading the database, and moving between pages no longer asks the server who is signed in on every click. Every change still checks the session in the database, so a revoked session, a ban or a role change stops changes at once and page reads within a minute. The account's Worker list, used to suggest a free Worker name, is kept for a minute and read again whenever a job starts or ends. A running job's page asks only for new log lines. The loading indicator shows after 300 ms instead of a second, inside the page with the sidebar kept, and the catalog and app pages show at once when you come back to them. Built scripts and styles are cached by browsers for a year, since their names change with every release.

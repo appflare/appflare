@@ -276,7 +276,7 @@ async function d1World(count: number) {
     artifact: { zipUrl: ZIP_URL, host: { kind: "catalog" } },
     databaseId: "d1-1",
     databaseName: "cut-db",
-    files: fixture.manifest.d1Migrations.DB ?? [],
+    files: fixture.manifest.d1.DB?.migrations ?? [],
   };
   const names = files.map((f) => f.name);
   /** How many queries ran `file` (its SQL and its d1_migrations row). */
@@ -425,7 +425,7 @@ async function baselineWorld(content: string = BASELINE_SQL) {
     return host.serve(input, init) ?? account.fetch(input, init);
   };
   const units = createJobUnits({ CF_API_TOKEN: TOKEN }, { fetch });
-  const file = fixture.manifest.d1Baseline?.DB?.[0];
+  const file = fixture.manifest.d1.DB?.baseline;
   if (file === undefined) throw new Error("the fixture has no baseline");
   const input: D1BaselineInput = {
     accountId: ACC,
@@ -433,7 +433,7 @@ async function baselineWorld(content: string = BASELINE_SQL) {
     databaseId: "d1-1",
     databaseName: "cut-db",
     file,
-    migrations: (fixture.manifest.d1Migrations.DB ?? []).map((f) => f.name),
+    migrations: (fixture.manifest.d1.DB?.migrations ?? []).map((f) => f.name),
   };
   return {
     fixture,
@@ -479,7 +479,7 @@ describe("applyD1Baseline", () => {
   it("leaves the migrations unit nothing to apply afterwards", async () => {
     const d = await baselineWorld();
     await d.units.applyD1Baseline(d.input);
-    const files = d.fixture.manifest.d1Migrations.DB ?? [];
+    const files = d.fixture.manifest.d1.DB?.migrations ?? [];
     const next = await d.units.applyD1Migrations({ ...d.input, files });
     expect(next).toMatchObject({ ok: true, value: { pending: 0, applied: 0 } });
   });
@@ -572,7 +572,7 @@ async function schemaWorld(count: number) {
     artifact: { zipUrl: ZIP_URL, host: { kind: "catalog" } },
     databaseId: "d1-1",
     databaseName: "cut-db",
-    files: fixture.manifest.d1Schema?.DB ?? [],
+    files: fixture.manifest.d1.DB?.schema ?? [],
   };
   return { account, host, units, input, files, failing };
 }

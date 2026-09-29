@@ -1,7 +1,7 @@
 import {
-  type CatalogHyperdrive,
   connectionStringExample,
   databaseProtocolName,
+  type HyperdriveDeclaration,
   parseConnectionString,
 } from "@appflare/schema";
 import { SensitiveInput, Text } from "@cloudflare/kumo";
@@ -18,7 +18,7 @@ import { FieldHelp, FieldLabel } from "./field-label";
  */
 
 /** The problem with an entered connection string, or null when it is usable (or still empty). */
-export function connectionFieldProblem(decl: CatalogHyperdrive, value: string): string | null {
+export function connectionFieldProblem(decl: HyperdriveDeclaration, value: string): string | null {
   if (value.trim().length === 0) return null;
   const parsed = parseConnectionString(value, decl.protocol);
   return parsed.ok ? null : parsed.problem;
@@ -26,7 +26,7 @@ export function connectionFieldProblem(decl: CatalogHyperdrive, value: string): 
 
 /** Whether every database has a usable connection string. */
 export function connectionsComplete(
-  databases: readonly CatalogHyperdrive[],
+  databases: readonly HyperdriveDeclaration[],
   values: Readonly<Record<string, string>>,
 ): boolean {
   return databases.every(
@@ -46,7 +46,7 @@ export function DatabaseField({
     />
   ),
 }: {
-  decl: CatalogHyperdrive;
+  decl: HyperdriveDeclaration;
   value: string;
   onChange(value: string): void;
   label?: ReactNode;
@@ -79,7 +79,7 @@ export function DatabaseFields({
   values,
   onChange,
 }: {
-  databases: readonly CatalogHyperdrive[];
+  databases: readonly HyperdriveDeclaration[];
   values: Readonly<Record<string, string>>;
   onChange(binding: string, value: string): void;
 }) {

@@ -71,7 +71,7 @@ describe("inspectEmailRouting", () => {
 
   it("skips the DNS read when routing is already on", async () => {
     const { api, world } = setup({ routingEnabled: true });
-    const got = await inspect(api, { rules: ["inbox"] });
+    const got = await inspect(api, { catchAll: false, rules: ["inbox"] });
     expect(got.routing?.enabled).toBe(true);
     expect(world.calls.some((c) => c.includes("dns_records"))).toBe(false);
     expect(world.calls.some((c) => c.includes("catch_all"))).toBe(false);
@@ -81,7 +81,7 @@ describe("inspectEmailRouting", () => {
     const { api } = setup({
       records: [{ id: "mx", type: "MX", name: ZONE_NAME, content: "aspmx.l.google.com" }],
     });
-    const got = await inspect(api, { catchAll: true });
+    const got = await inspect(api, { rules: [], catchAll: true });
     expect(got.foreignMx).toEqual(["aspmx.l.google.com"]);
     expect(got.problems.join(" ")).toContain("receives its mail elsewhere");
   });
@@ -104,7 +104,7 @@ describe("inspectEmailRouting", () => {
         },
       ],
     });
-    const got = await inspect(api, { rules: ["inbox", "bills"] });
+    const got = await inspect(api, { catchAll: false, rules: ["inbox", "bills"] });
     expect(got.addresses).toEqual([
       { address: "inbox@example.com", existingRuleId: null },
       { address: "bills@example.com", existingRuleId: "r-ours" },
@@ -122,11 +122,11 @@ describe("inspectEmailRouting", () => {
         actions: [{ type: "forward", value: ["me@example.net"] }],
       },
     });
-    expect((await inspect(taken.api, { catchAll: true })).catchAll?.state).toBe("taken");
+    expect((await inspect(taken.api, { rules: [], catchAll: true })).catchAll?.state).toBe("taken");
     const dropping = setup({
       catchAll: { enabled: true, matchers: [{ type: "all" }], actions: [{ type: "drop" }] },
     });
-    expect((await inspect(dropping.api, { catchAll: true })).problems).toEqual([]);
+    expect((await inspect(dropping.api, { rules: [], catchAll: true })).problems).toEqual([]);
     const ours = setup({
       catchAll: {
         enabled: true,
@@ -134,7 +134,7 @@ describe("inspectEmailRouting", () => {
         actions: [{ type: "worker", value: ["inbox"] }],
       },
     });
-    expect((await inspect(ours.api, { catchAll: true })).catchAll?.state).toBe("ours");
+    expect((await inspect(ours.api, { rules: [], catchAll: true })).catchAll?.state).toBe("ours");
   });
 
   it("refuses a zone of another account, a paused one, and one without Cloudflare DNS", async () => {
@@ -147,7 +147,7 @@ describe("inspectEmailRouting", () => {
         account: { id: "someone" },
       },
     });
-    expect((await inspect(other.api, { catchAll: true })).problems[0]).toContain(
+    expect((await inspect(other.api, { rules: [], catchAll: true })).problems[0]).toContain(
       "belongs to another Cloudflare account",
     );
     const partial = setup({
@@ -159,14 +159,14 @@ describe("inspectEmailRouting", () => {
         account: { id: ACC },
       },
     });
-    const problems = (await inspect(partial.api, { catchAll: true })).problems.join(" ");
+    const problems = (await inspect(partial.api, { rules: [], catchAll: true })).problems.join(" ");
     expect(problems).toContain("not active");
     expect(problems).toContain("does not use Cloudflare DNS");
   });
 
   it("refuses an address outside the chosen zone", async () => {
     const { api } = setup();
-    const got = await inspect(api, { rules: ["inbox@other.org"] });
+    const got = await inspect(api, { catchAll: false, rules: ["inbox@other.org"] });
     expect(got.problems[0]).toContain("not an address at example.com");
   });
 
@@ -177,7 +177,11 @@ describe("inspectEmailRouting", () => {
     const got = await inspect(api, { rules: ["inbox"], catchAll: true });
     expect(got.missing).toEqual(["Zone Settings: Edit", "Email Routing Rules: Edit"]);
     expect(got.addresses).toEqual([{ address: "inbox@example.com", existingRuleId: null }]);
-    const unseen = await inspect(api, { catchAll: true }, "ffffffffffffffffffffffffffffffff");
+    const unseen = await inspect(
+      api,
+      { rules: [], catchAll: true },
+      "ffffffffffffffffffffffffffffffff",
+    );
     expect(unseen.missing).toEqual(["Zone: Read"]);
     expect(unseen.problems).toEqual(["The Cloudflare token cannot see that zone."]);
   });
@@ -190,7 +194,7 @@ describe("inspectEmailRouting", () => {
       actions: [{ type: "drop" }],
     }));
     const { api, world } = setup({ routingEnabled: true, rules });
-    const got = await inspect(api, { rules: ["inbox"] });
+    const got = await inspect(api, { catchAll: false, rules: ["inbox"] });
     expect(got.problems[0]).toContain("limit of 200");
     // Every page of rules was read: four of 50, stopping at the reported total.
     expect(world.calls.filter((c) => c.endsWith("/rules")).length).toBe(4);

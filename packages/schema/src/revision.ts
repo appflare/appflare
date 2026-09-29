@@ -1,5 +1,5 @@
 import { type ArtifactManifest, catalogVarProblems } from "./artifact";
-import { type CatalogManifest, FIRST_CATALOG_REVISION } from "./catalog";
+import type { CatalogManifest } from "./catalog";
 
 /**
  * Catalog manifest revisions: an edit of an entry's form or copy for a build
@@ -62,11 +62,6 @@ export const REVISABLE_CATALOG_FIELDS: readonly string[] = [
   "revision",
 ];
 
-/** A catalog manifest's revision: `revision`, else 1. */
-export function catalogRevision(manifest: Pick<CatalogManifest, "revision">): number {
-  return manifest.revision ?? FIRST_CATALOG_REVISION;
-}
-
 function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (value !== null && typeof value === "object") {
@@ -103,8 +98,8 @@ export function catalogRevisionProblem(
   released: CatalogManifest,
   revised: CatalogManifest,
 ): string | null {
-  const from = catalogRevision(released);
-  const to = catalogRevision(revised);
+  const from = released.revision;
+  const to = revised.revision;
   if (to <= from) {
     return `its revision ${to} is not above revision ${from}, which the release was built with`;
   }

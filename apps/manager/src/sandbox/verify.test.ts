@@ -97,7 +97,7 @@ describe("getCatalogManifest for a sandbox entry", () => {
 
   it("explains an entry that has neither a release nor a catalog manifest", async () => {
     const fixture = await buildArtifactFixture();
-    const { artifacts: _a, digest: _d, ...rest } = fixture.index;
+    const { artifacts: _a, ...rest } = fixture.index;
     const read = await getCatalogManifest(env, { ...rest, tier: "self-deploying" });
     expect(read).toEqual({
       ok: false,

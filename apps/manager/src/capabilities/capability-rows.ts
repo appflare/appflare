@@ -1,5 +1,5 @@
 import type { CapabilityUnknown } from "@appflare/cf-api/capabilities";
-import { type IndexApp, isServiceId, requirementService, type ServiceId } from "@appflare/schema";
+import { type IndexApp, isServiceId, type ServiceId } from "@appflare/schema";
 import { listWords } from "@appflare/schema/catalog-display";
 import { dashboardLinks } from "../cloudflare/dashboard-links";
 import { settingsLink } from "../components/settings-links";
@@ -132,15 +132,9 @@ export interface CapabilityRowsInput {
   sandboxJobs?: SandboxJobState;
 }
 
-/** The services an index row names, falling back to its `requires` for older rows. */
-function servicesOf(app: Pick<IndexApp, "services" | "requires">): Set<ServiceId> {
-  if (app.services !== undefined) return new Set(app.services.filter(isServiceId));
-  const out = new Set<ServiceId>();
-  for (const r of app.requires) {
-    const id = requirementService(r);
-    if (id !== null) out.add(id);
-  }
-  return out;
+/** The services an index row names that this version knows. */
+function servicesOf(app: Pick<IndexApp, "services">): Set<ServiceId> {
+  return new Set(app.services.filter(isServiceId));
 }
 
 export function catalogNeeds(

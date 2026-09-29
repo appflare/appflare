@@ -175,8 +175,12 @@ export function managerArtifactProblems(
     `keyId is "${manifest.keyId}", expected "${expected.keyId}"`,
   );
   expect(
-    same(manifest.source, { repo: "appflare/appflare", sha: expected.sha, ref: expected.version }),
-    `source is ${JSON.stringify(manifest.source)}`,
+    manifest.catalog.repo === "appflare/appflare",
+    `catalog.repo is "${manifest.catalog.repo}", expected "appflare/appflare"`,
+  );
+  expect(
+    same(manifest.catalog.source, { ref: expected.version, sha: expected.sha }),
+    `catalog.source is ${JSON.stringify(manifest.catalog.source)}`,
   );
 
   const worker = manifest.worker;
@@ -245,9 +249,11 @@ export function managerArtifactProblems(
   const listed = new Set<string>([
     ...worker.modules.map((m) => m.path),
     ...assets.files.map((f) => f.path),
-    ...Object.values(manifest.d1Migrations)
-      .flat()
-      .map((f) => f.path),
+    ...Object.values(manifest.d1).flatMap((d1) =>
+      [...d1.migrations, ...d1.schema, ...d1.postDeploy, ...(d1.baseline ? [d1.baseline] : [])].map(
+        (f) => f.path,
+      ),
+    ),
     "manifest.json",
   ]);
   for (const name of zipNames) {

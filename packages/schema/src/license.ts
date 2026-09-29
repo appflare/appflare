@@ -1,28 +1,32 @@
 import { z } from "zod";
 // With their extensions: the JSON Schema export runs catalog.ts, which
 // imports this file, under Node's type stripping.
-import { MAX_LICENSE_NOTE_LENGTH } from "./license-expression.ts";
+import { licenseProblem, MAX_LICENSE_NOTE_LENGTH } from "./license-expression.ts";
 
-// The expression rules have no Zod in them, so client code (the catalog
-// display helpers) can import them without the schemas.
+// The license rules have no Zod in them, so client code (the catalog display
+// helpers) can import them without the schemas.
 export * from "./license-expression.ts";
 
 /**
- * The catalog manifest's `license`: any non-empty text, so every manifest
- * already stored keeps parsing. `licenseProblem` says whether it is one of
- * the forms license-expression.ts lists; the packer warns when it is not, and the manager
- * shows a value it cannot place as it is.
+ * The catalog manifest's `license` as a manager reads it: any of the forms
+ * above, checked for their shape ({@link licenseProblem}). The strict
+ * catalog manifest schema adds {@link catalogLicenseProblem}.
  */
 export const licenseSchema = z
   .string()
   .min(1)
+  .superRefine((value, ctx) => {
+    const problem = licenseProblem(value);
+    if (problem !== null) ctx.addIssue({ code: "custom", message: `license ${problem}` });
+  })
   .describe(
-    "The license the app's own repository declares, as an SPDX license expression: `MIT`, " +
-      "`Apache-2.0`, `MIT OR Apache-2.0`, or a source-available license such as `BUSL-1.1`, " +
-      "`FSL-1.1-MIT` or `Elastic-2.0`. Use `NONE` when the repository publishes no license, " +
-      "and `SEE LICENSE IN <file>` (a path in the repository) for a license with no SPDX id. " +
-      "The catalog shows the license on the app's card and page; it never decides whether an " +
-      "app is listed.",
+    "The license the app's own repository declares, as an SPDX license expression of current " +
+      "SPDX ids: `MIT`, `Apache-2.0`, `GPL-3.0-only`, `MIT OR Apache-2.0`, or a source-available " +
+      "license such as `BUSL-1.1`, `FSL-1.1-MIT` or `Elastic-2.0`. Deprecated ids such as " +
+      "`GPL-3.0` are refused: write `-only` or `-or-later`, as the project's license notice says. " +
+      "For a license without an SPDX id, write `LicenseRef-<name>` and describe it in " +
+      "`licenseNote`; write `NONE` when the repository publishes no license. The catalog shows " +
+      "the license on the app's card and page; it never decides whether an app is listed.",
   );
 
 /** The catalog manifest's `licenseNote`: one short line shown next to the license. */

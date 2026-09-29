@@ -2,10 +2,9 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
-  appHealthMode,
-  appHealthPath,
+  catalogWorkerName,
   connectionStringProblems,
-  hasFixedWorkerName,
+  hyperdriveDeclarations,
   indexArtifactsSchema,
   isOptionalSecret,
   isSeedOnly,
@@ -53,7 +52,7 @@ import {
 import { planBindings } from "./install/bindings";
 import { checkCronLimitPhase, putSchedulesChecked } from "./install/cron-limit";
 import { seedD1Phase, seedOnlyValuesSchema, seedValues } from "./install/d1-seed";
-import { installDomainPhase, unservedWildcardPhase } from "./install/domain";
+import { installDomainPhase, servedAddressPhase, unservedWildcardPhase } from "./install/domain";
 import {
   checkEmailRoutingPhase,
   emailRoutingJobInput,
@@ -263,7 +262,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const others = otherEntryWorkers(manifest, params.workerName);
     const entryNames = entryScriptNamesOf(manifest, params.workerName);
     // Resources are the app's, shared by binding name across its Workers.
-    const databases = manifest.catalog.resources?.hyperdrive ?? [];
+    const databases = hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive);
     const plan = planBindings(
       params.workerName,
       entryBindings(manifest),
@@ -330,11 +329,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       }
       // The Worker name is the unique key of an active install; an app whose
       // Worker name is fixed installs once.
-      const fixed = hasFixedWorkerName(manifest.catalog.install);
-      if (fixed && params.workerName !== manifest.catalog.install.workerName) {
-        throw new InstallError(
-          `this app only works as the Worker "${manifest.catalog.install.workerName}"`,
-        );
+      const fixed = manifest.catalog.install.fixedWorkerName;
+      const fixedName = catalogWorkerName(manifest.catalog);
+      if (fixed && params.workerName !== fixedName) {
+        throw new InstallError(`this app only works as the Worker "${fixedName}"`);
       }
       const clash = await orm
         .select({ id: installs.id, slug: installs.app_slug, worker: installs.worker_name })
@@ -571,7 +569,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       entryBindings(manifest),
     );
 
-    // Vars may name the Worker's URL (`{{workerUrl}}`), so the account's
+    // Vars may name the Worker's addresses (`{{workerUrl}}`, `{{appUrl}}`), so the account's
     // workers.dev subdomain is known before the upload.
     const subdomain = await lookupSubdomainPhase(steps);
     const workflowNames = Object.fromEntries(plan.workflows.map((w) => [w.binding, w.name]));
@@ -740,9 +738,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         }).vars,
         secrets: params.secrets,
         seedOnly: params.seed,
+        // The app is served on workers.dev while the install runs: a
+        // domain the form asked for goes live only after the seeds.
         placeholders: {
           workerName: params.workerName,
           workerUrl: workersDevUrl(params.workerName, subdomain),
+          appUrl: workersDevUrl(params.workerName, subdomain),
           accountId: steps.accountId(),
           wildcardHostname,
         },
@@ -862,8 +863,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     const health = await checkLiveHealthPhase(
       steps,
       step,
-      `https://${host}${appHealthPath(manifest.catalog.install)}`,
-      appHealthMode(manifest.catalog.install),
+      `https://${host}${manifest.catalog.install.health.path}`,
+      manifest.catalog.install.health.mode,
       { installId: params.installId },
     );
 
@@ -877,8 +878,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         workerName: params.workerName,
         domain: params.domain,
         health: {
-          path: appHealthPath(manifest.catalog.install),
-          mode: appHealthMode(manifest.catalog.install),
+          path: manifest.catalog.install.health.path,
+          mode: manifest.catalog.install.health.mode,
         },
         settingsUseWorkerUrl: varsUseWorkerUrl(manifest, params.vars),
       }));
@@ -924,6 +925,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         installId: params.installId,
         hostname: wildcardHostname,
       });
+    }
+    // The domain took over from workers.dev: settings that use the app's
+    // address (`{{appUrl}}`) are deployed again with it. Never throws.
+    if (servedBy !== null) {
+      await servedAddressPhase(steps, env, { installId: params.installId, hostname: servedBy });
     }
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;

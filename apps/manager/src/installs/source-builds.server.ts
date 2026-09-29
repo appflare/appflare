@@ -5,9 +5,9 @@ import {
   buildCommandChoiceSchema,
   type CatalogManifest,
   type CatalogSecret,
+  catalogWorkerName,
   githubRepositorySchema,
   gitRefSchema,
-  hasFixedWorkerName,
   type IndexApp,
   parseRepositoryInput,
   type RepositoryDetection,
@@ -465,9 +465,9 @@ export async function startSourceBuildCore(
     buildCommand: plan.buildCommand,
     ...(plan.baseline === undefined ? {} : { baseline: plan.baseline }),
     avoidVersions: plan.avoidVersions,
-    ...(plan.baseline?.install.sandbox?.instanceType === undefined
+    ...(plan.baseline?.install.container?.instanceType === undefined
       ? {}
-      : { instanceType: plan.baseline.install.sandbox.instanceType }),
+      : { instanceType: plan.baseline.install.container.instanceType }),
     costConfirmed: true,
     ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
     ...(githubToken === null ? {} : { githubToken }),
@@ -671,10 +671,11 @@ export async function installSourceBuildCore(
   const workerName = input.workerName;
   const review = reviewBuild(manifest, built.detected, workerName, prebuilt.origin);
   if (review.problems.length > 0) throw fail(review.problems.join(" "));
-  const fixed = hasFixedWorkerName(manifest.catalog.install);
-  if (fixed && workerName !== manifest.catalog.install.workerName) {
+  const fixed = manifest.catalog.install.fixedWorkerName;
+  const fixedName = catalogWorkerName(manifest.catalog);
+  if (fixed && workerName !== fixedName) {
     throw fail(
-      `${manifest.catalog.name} only works as the Worker "${manifest.catalog.install.workerName}"; its Worker name cannot be changed.`,
+      `${manifest.catalog.name} only works as the Worker "${fixedName}"; its Worker name cannot be changed.`,
     );
   }
   if (resolved.domain !== undefined) {

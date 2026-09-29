@@ -21,8 +21,8 @@ setup wizard. Afterwards Appflare updates itself, and you can remove the copy.
 
 | | The Deploy to Cloudflare button | The installer | An AI agent |
 | --- | --- | --- | --- |
-| How | Select the button in your browser: [Deploy with the button](/start/deploy-button/) | Build it [from a checkout](#from-a-checkout) and run it in a terminal | Copy the prompt below into a coding agent; it builds and runs the installer |
-| You need | A GitHub or GitLab account | Node.js 22 and pnpm | Node.js 22 and a coding agent |
+| How | Select the button in your browser: [Deploy with the button](/start/deploy-button/) | Run `npx create-appflare` in a terminal | Copy the prompt below into a coding agent; it runs the installer |
+| You need | A GitHub or GitLab account | Node.js 22 | Node.js 22 and a coding agent |
 | Leaves behind | A copy of Appflare in your Git account and a Workers Builds connection, which you remove afterwards | Nothing | Nothing |
 
 <AgentPrompt kind="install" />
@@ -47,25 +47,25 @@ The rest of this page covers the installer.
 
 ## Run the installer
 
-The installer is not published to npm yet: `npx create-appflare` comes with its first
-release there. Until then, build it from a checkout of this repository.
+```sh
+npx create-appflare
+```
 
 ### From a checkout
 
-You need Node.js 22 and pnpm.
+To run the installer from this repository's source instead, you need Node.js 22 and
+pnpm:
 
 ```sh
 git clone https://github.com/appflare/appflare
 cd appflare
 pnpm install
-pnpm --filter "@appflare/cli..." build
+pnpm --filter "create-appflare..." build
 node packages/cli/bin/appflare.js
 ```
 
-`node packages/cli/bin/appflare.js`, run from the checkout, is the installer command
-in the rest of these pages; add its options after it, such as
-`node packages/cli/bin/appflare.js --no-telemetry` or
-`node packages/cli/bin/appflare.js recover`.
+`node packages/cli/bin/appflare.js`, run from the checkout, takes the same options as
+`npx create-appflare`.
 
 ### What the installer does
 

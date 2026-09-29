@@ -1,6 +1,7 @@
 import { type CatalogSecret, type CatalogVar, generateVapidPrivateKey } from "@appflare/schema";
 import bcrypt from "bcryptjs";
 import { describe, expect, it } from "vitest";
+import { secretsOf, varsOf } from "../test/artifact-fixture";
 import {
   derivedVarValues,
   deriveSecretValue,
@@ -16,16 +17,15 @@ function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
 }
 
 // Counterscale's shape: a password the admin types, its bcrypt hash, and a generated key.
-const secrets: CatalogSecret[] = [
-  { name: "CF_PASSWORD", label: "Admin password", generate: false },
+const secrets: CatalogSecret[] = secretsOf([
+  { name: "CF_PASSWORD", label: "Admin password" },
   {
     name: "CF_PASSWORD_HASH",
     label: "Admin password hash",
-    generate: false,
     derive: { from: "CF_PASSWORD", method: "bcrypt" },
   },
-  { name: "CF_JWT_SECRET", label: "Session key", generate: true },
-];
+  { name: "CF_JWT_SECRET", label: "Session key", generate: "password" },
+]);
 const [password, hash, jwt] = secrets as [CatalogSecret, CatalogSecret, CatalogSecret];
 
 describe("bcrypt in the Workers runtime", () => {
@@ -91,19 +91,18 @@ describe("secretsToAskFor and secretsToSet", () => {
 
 // A push app's shape: a generated VAPID private key, and its public key as a var.
 const push: { secrets: CatalogSecret[]; vars: CatalogVar[] } = {
-  secrets: [
+  secrets: secretsOf([
     { name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" },
-    { name: "SESSION", label: "Session key", generate: true },
-  ],
-  vars: [
-    { name: "HOME", label: "Home", required: false },
+    { name: "SESSION", label: "Session key", generate: "password" },
+  ]),
+  vars: varsOf([
+    { name: "HOME", label: "Home", optional: true },
     {
       name: "VAPID_PUBLIC_KEY",
       label: "Push public key",
-      required: false,
       derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
     },
-  ],
+  ]),
 };
 
 describe("VAPID keys in the Workers runtime", () => {

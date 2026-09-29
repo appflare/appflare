@@ -72,11 +72,11 @@ function typeInto(input: HTMLInputElement, next: string) {
 
 describe("PlaceholderInput", () => {
   it("shows a placeholder as a chip and keeps the stored value as written", () => {
-    mount("{{ workerUrl }}/auth/callback");
-    expect(chips()).toEqual(["{{ workerUrl }}"]);
+    mount("{{ appUrl }}/auth/callback");
+    expect(chips()).toEqual(["{{ appUrl }}"]);
     expect(container.textContent).toContain("App address");
     expect(parts().map((p) => p.value)).toEqual(["", "/auth/callback"]);
-    expect(stored()).toBe("{{ workerUrl }}/auth/callback");
+    expect(stored()).toBe("{{ appUrl }}/auth/callback");
   });
 
   it("removes a chip whole with Backspace right after it", () => {
@@ -116,9 +116,9 @@ describe("PlaceholderInput", () => {
   });
 
   it("keeps unknown braces, and a Worker the app does not have, as text", () => {
-    mount("{{foo}} and {{workerUrl:web}}", ["api"]);
+    mount("{{foo}} and {{appUrl:web}}", ["api"]);
     expect(chips()).toEqual([]);
-    expect(parts().map((p) => p.value)).toEqual(["{{foo}} and {{workerUrl:web}}"]);
+    expect(parts().map((p) => p.value)).toEqual(["{{foo}} and {{appUrl:web}}"]);
     const only = parts()[0];
     if (only === undefined) throw new Error("no text part");
     typeInto(only, "{{foo}} {{bar}}");
@@ -127,18 +127,18 @@ describe("PlaceholderInput", () => {
   });
 
   it("removes a chip with its × button, the way that works on any keyboard", () => {
-    mount("{{workerUrl}}/a/{{accountId}}");
+    mount("{{appUrl}}/a/{{accountId}}");
     const remove = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Remove Account ID"]',
     );
     expect(remove).not.toBeNull();
     act(() => remove?.click());
-    expect(stored()).toBe("{{workerUrl}}/a/");
-    expect(chips()).toEqual(["{{workerUrl}}"]);
+    expect(stored()).toBe("{{appUrl}}/a/");
+    expect(chips()).toEqual(["{{appUrl}}"]);
   });
 
   it("gives the × a touch target of at least 24px and a named chip to open", () => {
-    mount("{{workerUrl}}");
+    mount("{{appUrl}}");
     const remove = container.querySelector('button[aria-label="Remove App address"]');
     expect(remove?.className).toContain("size-6");
     const name = [...container.querySelectorAll("button")].find(
@@ -148,7 +148,7 @@ describe("PlaceholderInput", () => {
   });
 
   it("says what a chip becomes on a click or tap, not only on hover", async () => {
-    mount("{{workerUrl}}");
+    mount("{{appUrl}}");
     const name = [...container.querySelectorAll("button")].find(
       (b) => b.textContent === "App address",
     );

@@ -20,7 +20,7 @@ export const releaseNoteSchema = z.object({
   /** `manager@<version>`. */
   tag: z.string().min(1),
   version: z.string().min(1),
-  /** The release title, such as "Appflare 0.4.0". */
+  /** The release title, such as "Appflare 0.1.0". */
   name: z.string(),
   /** ISO 8601; null when GitHub did not say. */
   publishedAt: z.string().nullable(),

@@ -1,22 +1,29 @@
 /**
- * The model behind a text field that shows install placeholders
- * (`{{workerUrl}}`, `{{workerName}}`, `{{accountId}}`, `{{wildcardHostname}}`,
- * `{{workerUrl:<name>}}`, `{{workerName:<name>}}`) as chips: the value is
- * split into text parts with one chip between each two, a chip is removed or
- * inserted whole, and the stored value keeps each placeholder exactly as it
- * was written. Positions are a part index and an offset in that part's text.
+ * The model behind a text field that shows install placeholders (the
+ * schema's `INSTALL_PLACEHOLDERS`, such as `{{appUrl}}` and `{{accountId}}`,
+ * and their per-Worker forms such as `{{appUrl:<name>}}`) as chips: the value
+ * is split into text parts with one chip between each two, a chip is removed
+ * or inserted whole, and the stored value keeps each placeholder exactly as
+ * it was written. Positions are a part index and an offset in that part's
+ * text.
  */
 
-import { ENTRY_WORKER_PLACEHOLDER_SOURCE, INSTALL_PLACEHOLDER_SOURCE } from "@appflare/schema";
+import {
+  ENTRY_WORKER_PLACEHOLDER_SOURCE,
+  type EntryWorkerPlaceholders,
+  INSTALL_PLACEHOLDER_SOURCE,
+  type InstallPlaceholder,
+  urlHostname,
+} from "@appflare/schema";
 
 /** The placeholders a chip can stand for. */
-export type PlaceholderKey = "workerUrl" | "workerName" | "accountId" | "wildcardHostname";
+export type PlaceholderKey = InstallPlaceholder;
 
 export interface Chip {
   /** The placeholder as the value holds it, spaces inside the braces kept. */
   raw: string;
   key: PlaceholderKey;
-  /** For `{{workerUrl:<name>}}` and `{{workerName:<name>}}`: the entry's Worker. */
+  /** For a per-Worker placeholder (`{{appUrl:<name>}}`): the entry's Worker. */
   worker: string | null;
 }
 
@@ -39,8 +46,8 @@ export interface Edit {
 }
 
 /**
- * The names of the app's Workers (an app of several Workers), for
- * `{{workerUrl:<name>}}` and `{{workerName:<name>}}`. A placeholder naming a
+ * The names of the app's Workers (an app of several Workers), for the
+ * per-Worker placeholders (`{{appUrl:<name>}}`). A placeholder naming a
  * Worker the app does not have is never filled in, so it stays text.
  */
 export type EntryWorkers = readonly string[];
@@ -178,35 +185,73 @@ export function chipKeyEdit(
 
 /** A placeholder the field's Insert menu offers. */
 export interface PlaceholderOption {
-  /** What the value holds, such as `{{workerUrl}}`. */
+  /** What the value holds, such as `{{appUrl}}`. */
   placeholder: string;
   label: string;
 }
 
+/** What a chip says, for the app as a whole. */
+const CHIP_LABELS: Readonly<Record<PlaceholderKey, string>> = {
+  appUrl: "App address",
+  appHostname: "App hostname",
+  workerUrl: "workers.dev address",
+  workerHostname: "workers.dev hostname",
+  workerName: "Worker name",
+  accountId: "Account ID",
+  wildcardHostname: "Wildcard domain",
+};
+
+/** What a chip says after the name of one of the app's Workers. */
+const WORKER_CHIP_LABELS: Readonly<Record<PlaceholderKey, string>> = {
+  ...CHIP_LABELS,
+  appUrl: "address",
+  appHostname: "hostname",
+};
+
+/** What a chip stands for, in words, for the app as a whole. */
+const CHIP_MEANINGS: Readonly<Record<PlaceholderKey, string>> = {
+  appUrl: "the app's address",
+  appHostname: "the app's hostname",
+  workerUrl: "the app's workers.dev address",
+  workerHostname: "the app's workers.dev hostname",
+  workerName: "the app's Worker name",
+  accountId: "your Cloudflare account ID",
+  wildcardHostname: "the app's wildcard domain",
+};
+
 /** What a chip says. */
 export function chipLabel(chip: Pick<Chip, "key" | "worker">): string {
-  if (chip.worker !== null) {
-    return chip.key === "workerUrl" ? `${chip.worker} address` : `${chip.worker} Worker name`;
-  }
-  switch (chip.key) {
-    case "workerUrl":
-      return "App address";
-    case "workerName":
-      return "Worker name";
-    case "accountId":
-      return "Account ID";
-    case "wildcardHostname":
-      return "Wildcard domain";
-  }
+  return chip.worker === null
+    ? CHIP_LABELS[chip.key]
+    : `${chip.worker} ${WORKER_CHIP_LABELS[chip.key]}`;
 }
 
-/** What the form knows a placeholder stands for; null or absent where it does not. */
-export interface KnownPlaceholders {
+/** The addresses and names a placeholder is filled in from. */
+interface PlaceholderSources {
+  /** The address the app is served at: its custom domain while workers.dev is off. */
+  appUrl?: string | null;
+  /** The Worker's workers.dev URL. */
   workerUrl?: string | null;
   workerName?: string | null;
   accountId?: string | null;
   wildcardHostname?: string | null;
-  entryWorkers?: Readonly<Record<string, { workerName: string; workerUrl: string | null }>>;
+}
+
+/** What the form knows a placeholder stands for; null or absent where it does not. */
+export interface KnownPlaceholders extends PlaceholderSources {
+  entryWorkers?: EntryWorkerPlaceholders;
+}
+
+/** The value `key` is filled in with, from what is known; null when it is not known. */
+function knownValue(key: PlaceholderKey, known: PlaceholderSources): string | null {
+  switch (key) {
+    case "appHostname":
+      return known.appUrl == null ? null : urlHostname(known.appUrl);
+    case "workerHostname":
+      return known.workerUrl == null ? null : urlHostname(known.workerUrl);
+    default:
+      return known[key] ?? null;
+  }
 }
 
 /**
@@ -219,32 +264,30 @@ export function describeChip(
   known: KnownPlaceholders,
   when: string,
 ): string {
-  const value =
-    chip.worker !== null
-      ? known.entryWorkers?.[chip.worker]?.[chip.key === "workerUrl" ? "workerUrl" : "workerName"]
-      : known[chip.key];
-  if (value !== undefined && value !== null && value !== "") return `Filled in with ${value}`;
+  const entry = known.entryWorkers;
+  const sources =
+    chip.worker === null
+      ? known
+      : entry !== undefined && Object.hasOwn(entry, chip.worker)
+        ? entry[chip.worker]
+        : undefined;
+  const value = sources === undefined ? null : knownValue(chip.key, sources);
+  if (value !== null && value !== "") return `Filled in with ${value}`;
+  if (chip.key === "wildcardHostname") {
+    return "Filled in with the app's wildcard domain once it has one";
+  }
   if (chip.worker !== null) {
-    return chip.key === "workerUrl"
-      ? `Filled in with the address of the app's ${chip.worker} Worker ${when}`
-      : `Filled in with the name of the app's ${chip.worker} Worker ${when}`;
+    return `Filled in with the ${WORKER_CHIP_LABELS[chip.key]} of the app's ${chip.worker} Worker ${when}`;
   }
-  switch (chip.key) {
-    case "workerUrl":
-      return `Filled in with the app's address ${when}`;
-    case "workerName":
-      return `Filled in with the app's Worker name ${when}`;
-    case "accountId":
-      return `Filled in with your Cloudflare account ID ${when}`;
-    case "wildcardHostname":
-      return "Filled in with the app's wildcard domain once it has one";
-  }
+  return `Filled in with ${CHIP_MEANINGS[chip.key]} ${when}`;
 }
 
 /**
- * The placeholders an app's fields can take: the app's address, its Worker
- * name and the account's id always; the wildcard domain for an app that has
- * one; each Worker's address and name for an app of several Workers.
+ * The placeholders the Insert menu offers: the app's address and hostname,
+ * its Worker name and the account's id always; the wildcard domain for an
+ * app that has one; each Worker's address and name for an app of several
+ * Workers. The workers.dev forms stay out of the menu: a setting almost
+ * always wants the address people use. Typed in, they show as chips too.
  */
 export function placeholderOptions({
   wildcard = false,
@@ -253,12 +296,12 @@ export function placeholderOptions({
   wildcard?: boolean;
   workers?: readonly string[];
 } = {}): PlaceholderOption[] {
-  const keys: PlaceholderKey[] = ["workerUrl", "workerName", "accountId"];
+  const keys: PlaceholderKey[] = ["appUrl", "appHostname", "workerName", "accountId"];
   if (wildcard) keys.push("wildcardHostname");
   return [
     ...keys.map((key) => ({ placeholder: `{{${key}}}`, label: chipLabel({ key, worker: null }) })),
     ...workers.flatMap((worker) =>
-      (["workerUrl", "workerName"] as const).map((key) => ({
+      (["appUrl", "workerName"] as const).map((key) => ({
         placeholder: `{{${key}:${worker}}}`,
         label: chipLabel({ key, worker }),
       })),

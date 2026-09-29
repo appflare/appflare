@@ -1,4 +1,4 @@
-import { canonicalCategory } from "@appflare/schema/catalog-display";
+import { type CatalogCategory, isCatalogCategory } from "@appflare/schema/catalog-display";
 import {
   ArrowsClockwiseIcon,
   BellIcon,
@@ -17,10 +17,8 @@ import {
   FilmStripIcon,
   FolderIcon,
   GameControllerIcon,
-  GlobeIcon,
   GraduationCapIcon,
   type Icon,
-  LinkIcon,
   MegaphoneIcon,
   NetworkIcon,
   NotepadIcon,
@@ -37,10 +35,10 @@ import {
 } from "@phosphor-icons/react";
 
 /**
- * An icon per catalog category, chosen to be recognised at a glance. Websites
- * and blogs (`cms`) are a browser window, since the globe is DNS.
+ * An icon per catalog category (the schema's `CATALOG_CATEGORIES`), chosen to
+ * be recognised at a glance. Websites and blogs (`cms`) are a browser window.
  */
-const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
+const CATEGORY_ICONS: Readonly<Record<CatalogCategory, Icon>> = {
   ai: SparkleIcon,
   analytics: ChartLineIcon,
   bots: RobotIcon,
@@ -49,7 +47,6 @@ const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
   cms: BrowserIcon,
   community: UsersThreeIcon,
   "developer-tools": CodeIcon,
-  dns: GlobeIcon,
   ecommerce: ShoppingCartIcon,
   education: GraduationCapIcon,
   email: EnvelopeSimpleIcon,
@@ -57,7 +54,6 @@ const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
   files: FolderIcon,
   finance: CurrencyDollarIcon,
   games: GameControllerIcon,
-  "link-shortener": LinkIcon,
   marketing: MegaphoneIcon,
   media: FilmStripIcon,
   monitoring: PulseIcon,
@@ -75,15 +71,12 @@ const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
   utilities: WrenchIcon,
 };
 
-/** The icon of a category the catalog adds before it has one of its own. */
+/** The icon of a category this version does not know (a custom catalog's). */
 export const FALLBACK_CATEGORY_ICON: Icon = CloudIcon;
 
-/**
- * The icon of a catalog category (a folded one shows the icon of the one it
- * became), or the fallback for one without its own.
- */
+/** The icon of a catalog category, or the fallback for an id this version does not know. */
 export function categoryIcon(category: string): Icon {
-  return CATEGORY_ICONS[canonicalCategory(category)] ?? FALLBACK_CATEGORY_ICON;
+  return isCatalogCategory(category) ? CATEGORY_ICONS[category] : FALLBACK_CATEGORY_ICON;
 }
 
 /** The icon of a catalog category, decorative (the category's name is always next to it). */

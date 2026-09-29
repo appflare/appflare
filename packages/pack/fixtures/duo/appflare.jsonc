@@ -3,29 +3,25 @@
   "slug": "duo",
   "name": "Duo",
   "summary": "Two Workers deployed together, used to exercise the packer.",
-  "homepage": "https://github.com/appflare/appflare",
+  "tagline": "A web Worker and a jobs Worker, installed together",
   "repo": "appflare/appflare",
   "license": "Apache-2.0",
   "categories": ["utilities"],
   "maintainers": ["appflare"],
   "source": { "ref": "v0.2.0", "sha": "0123456789abcdef0123456789abcdef01234567" },
   "install": {
-    "tier": "artifact",
     "packageManager": "pnpm",
     "wranglerConfig": "web/wrangler.jsonc",
-    "workerName": "duo",
     "workers": [
       { "name": "web", "wranglerConfig": "web/wrangler.jsonc", "primary": true },
       { "name": "jobs", "wranglerConfig": "jobs/wrangler.jsonc" }
     ]
   },
   "plan": "free",
-  "requires": [],
   "secrets": [
-    { "name": "SESSION_SECRET", "label": "Session secret", "generate": true, "workers": ["web"] },
-    { "name": "SHARED_KEY", "label": "Shared key", "generate": true }
+    { "name": "SESSION_SECRET", "label": "Session secret", "generate": "password", "workers": ["web"] },
+    { "name": "SHARED_KEY", "label": "Shared key", "generate": "password" }
   ],
-  "vars": [{ "name": "JOBS_URL", "label": "Jobs URL", "default": "{{workerUrl:jobs}}" }],
-  "postInstall": [],
-  "tokenPermissions": []
+  "vars": [{ "name": "JOBS_URL", "label": "Jobs URL", "default": "{{workerUrl:jobs}}", "optional": true }],
+  "postInstall": []
 }

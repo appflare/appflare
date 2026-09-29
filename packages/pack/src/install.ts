@@ -506,7 +506,7 @@ function planInstall(
 ): PlannedInstall {
   const abs = resolveInstallDir(checkoutDir, entry.path);
   const files = new Set(readdirSync(abs));
-  const lockfile = entry.lockfile ?? "required";
+  const lockfile = entry.lockfile;
   const packageManager =
     entry.packageManager ?? installDirPackageManager(files, entryPackageManager);
   if (lockfile === "none") {

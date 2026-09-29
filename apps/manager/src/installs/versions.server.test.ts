@@ -148,8 +148,8 @@ describe("startUpdateCore", () => {
 
 describe("startUpdateCore: what an update needs first", () => {
   const secrets = [
-    { name: "ADMIN_PASSWORD", label: "Admin password", generate: true },
-    { name: "API_KEY", label: "API key", generate: false },
+    { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" as const },
+    { name: "API_KEY", label: "API key" },
   ];
 
   async function start(
@@ -186,7 +186,7 @@ describe("startUpdateCore: what an update needs first", () => {
     const first = await start(fixture);
     expect(first.result).toEqual({
       version: "1.1.0",
-      needsSecrets: [{ name: "API_KEY", label: "API key", generate: false }],
+      needsSecrets: [expect.objectContaining({ name: "API_KEY", label: "API key" })],
       skipsPreview: null,
       build: null,
       cronTriggers: null,
@@ -228,12 +228,11 @@ describe("startUpdateCore: what an update needs first", () => {
     const fixture = await buildArtifactFixture({
       version: "1.1.0",
       catalog: {
-        secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password", generate: true }, vapid],
+        secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password", generate: "password" }, vapid],
         vars: [
           {
             name: "VAPID_PUBLIC_KEY",
             label: "Push public key",
-            required: false,
             derive: { from: "VAPID_PRIVATE_KEY", method: "vapid-public-key" },
           },
         ],

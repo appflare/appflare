@@ -48,21 +48,24 @@ describe("deriveServices", () => {
 
   it("reads what a token may touch: zone-scoped groups, DNS, Access, storage", () => {
     // unifi-ddns: no bindings, a token that edits DNS.
-    expect(deriveServices({ tokenPermissions: [{ name: "Zone.DNS", scope: "zone" }] }).ids).toEqual(
-      ["zone"],
-    );
+    expect(deriveServices({ tokenPermissions: [{ group: "DNS", scope: "zone" }] }).ids).toEqual([
+      "zone",
+    ]);
+    expect(
+      deriveServices({ tokenPermissions: [{ group: "Email Routing Rules", scope: "zone" }] }).ids,
+    ).toEqual(["email-routing", "zone"]);
     // OpenSEO's installer token.
     expect(
       deriveServices({
         requires: ["r2", "containers"],
         tokenPermissions: [
-          { name: "Workers Scripts", scope: "account" },
-          { name: "Workers KV Storage", scope: "account" },
-          { name: "D1", scope: "account" },
-          { name: "Workers R2 Storage", scope: "account" },
-          { name: "Secrets Store:Edit", scope: "account" },
-          { name: "Account Settings:Read", scope: "account" },
-          { name: "Access: Apps and Policies", scope: "account" },
+          { group: "Workers Scripts", scope: "account" },
+          { group: "Workers KV Storage", scope: "account" },
+          { group: "D1", scope: "account" },
+          { group: "Workers R2 Storage", scope: "account" },
+          { group: "Secrets Store", scope: "account" },
+          { group: "Account Settings", scope: "account" },
+          { group: "Access: Apps and Policies", scope: "account" },
         ],
       }).ids,
     ).toEqual(["kv", "d1", "r2", "containers", "access"]);

@@ -2,9 +2,9 @@ import { type CatalogAuthor, type Plan, planSchema } from "@appflare/schema";
 import {
   type AppLicense,
   type AppPopularity,
-  canonicalCategory,
   categoryLabel,
   comparePopularity,
+  isCatalogCategory,
   type LicenseFilter,
   licenseKind,
 } from "@appflare/schema/catalog-display";
@@ -25,7 +25,7 @@ export interface BrowsableApp {
   slug: string;
   name: string;
   summary: string;
-  /** The catalog's one-line pitch, when the entry has one. */
+  /** The catalog's one-line pitch. */
   tagline?: string | undefined;
   plan: Plan;
   lastVerified: string | null;
@@ -116,8 +116,8 @@ function haystack(app: BrowsableApp): string {
       app.summary,
       ...(app.authors ?? []).map((a) => a.name),
       ...app.primitives.ids.flatMap((id) => [PRIMITIVE_LABELS[id], id]),
-      // The old slug and the one it became, so either word finds the app.
-      ...app.categories.flatMap((c) => [c, canonicalCategory(c)]),
+      // The id and its label, so either finds the app.
+      ...app.categories.flatMap((c) => [c, categoryLabel(c)]),
     ].join("\n"),
   );
 }
@@ -196,15 +196,17 @@ export function showsResults(query: BrowseQuery): boolean {
 }
 
 /**
- * Every category the apps list with its number of apps: the most apps first,
- * then by label. A folded category counts toward the one it became.
+ * Every category of the catalog's list (`CATALOG_CATEGORIES`) the apps use,
+ * with its number of apps: the most apps first, then by label. An id a
+ * custom catalog uses that this version does not know gets no card or row
+ * of its own; the app is still found by search and shows the id on its page.
  */
 export function categoryCounts(
   apps: ReadonlyArray<Pick<BrowsableApp, "categories">>,
 ): Array<{ id: string; count: number }> {
   const counts = new Map<string, number>();
   for (const app of apps) {
-    for (const category of new Set(app.categories.map(canonicalCategory))) {
+    for (const category of new Set(app.categories.filter(isCatalogCategory))) {
       counts.set(category, (counts.get(category) ?? 0) + 1);
     }
   }
@@ -215,8 +217,7 @@ export function categoryCounts(
     );
 }
 
-/** Whether `app` is listed under `category`, counting the categories folded into it. */
+/** Whether `app` is listed under `category`. */
 export function inCategory(app: Pick<BrowsableApp, "categories">, category: string): boolean {
-  const target = canonicalCategory(category);
-  return app.categories.some((c) => canonicalCategory(c) === target);
+  return app.categories.includes(category);
 }

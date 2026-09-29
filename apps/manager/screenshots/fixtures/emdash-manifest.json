@@ -4,10 +4,11 @@
     "slug": "emdash",
     "name": "EmDash",
     "summary": "A full-stack TypeScript CMS built on Astro, the spiritual successor to WordPress: this is its blog template, with posts, pages, categories and tags, search, RSS and an admin editor, on D1 and R2.",
+    "tagline": "Create a blog with built-in search and an editor",
     "homepage": "https://emdashcms.com",
     "repo": "emdash-cms/templates",
     "license": "MIT",
-    "categories": ["cms", "blogging"],
+    "categories": ["cms"],
     "authors": [
       {
         "name": "EmDash",
@@ -21,10 +22,8 @@
       "sha": "e3b39ac4e205e05f01410bd8f3e27680cba189a0"
     },
     "install": {
-      "tier": "artifact",
       "packageManager": "pnpm",
       "wranglerConfig": "blog-cloudflare/wrangler.jsonc",
-      "workerName": "emdash",
       "buildCommand": "pnpm --dir blog-cloudflare run build",
       "installDirs": [
         {
@@ -35,14 +34,11 @@
     },
     "plan": "free",
     "requires": ["r2"],
-    "secrets": [],
-    "vars": [],
     "postInstall": [
       {
         "type": "markdown",
-        "content": "Open {{workerUrl}}/_emdash/admin right away to run the setup wizard and create the admin account; until then anyone who opens it can. The site itself is at {{workerUrl}}."
+        "content": "Open {{appUrl}}/_emdash/admin right away to run the setup wizard and create the admin account; until then anyone who opens it can. The site itself is at {{appUrl}}."
       }
-    ],
-    "tokenPermissions": []
+    ]
   }
 }

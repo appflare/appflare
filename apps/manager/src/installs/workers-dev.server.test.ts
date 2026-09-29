@@ -5,7 +5,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
-import { MAX_DOMAIN_PROBES, setWorkersDevCore } from "./workers-dev.server";
+import type { VarsRefreshReason } from "./install-vars";
+import {
+  applyDomainLive,
+  beforeDomainRemoval,
+  MAX_DOMAIN_PROBES,
+  setWorkersDevCore,
+} from "./workers-dev.server";
 
 /**
  * "Serve on workers.dev" against the local D1, a fake subdomain call, and
@@ -111,6 +117,8 @@ describe("setWorkersDevCore", () => {
     expect(await setWorkersDevCore(w.deps, { installId: INSTALL_ID, enabled: false })).toEqual({
       enabled: false,
       servedBy: "links.example.com",
+      settingsJobId: null,
+      settingsNote: null,
     });
     expect(w.probes).toEqual(["broken.example.com", "links.example.com"]);
     expect(w.subdomainCalls).toEqual([
@@ -131,6 +139,8 @@ describe("setWorkersDevCore", () => {
     expect(await setWorkersDevCore(again.deps, { installId: INSTALL_ID, enabled: true })).toEqual({
       enabled: true,
       servedBy: null,
+      settingsJobId: null,
+      settingsNote: null,
     });
     expect(again.probes).toEqual([]);
     expect(again.subdomainCalls).toEqual([
@@ -155,6 +165,8 @@ describe("setWorkersDevCore", () => {
     expect(await setWorkersDevCore(w.deps, { installId: INSTALL_ID, enabled: true })).toEqual({
       enabled: true,
       servedBy: null,
+      settingsJobId: null,
+      settingsNote: null,
     });
     expect(w.subdomainCalls).toEqual([]);
   });
@@ -176,5 +188,175 @@ describe("setWorkersDevCore", () => {
       setWorkersDevCore(w.deps, { installId: INSTALL_ID, enabled: false }),
     ).rejects.toThrow("The app's own installer decides");
     expect(w.subdomainCalls).toEqual([]);
+  });
+});
+
+/** A settings refresh that records what it was asked for and starts a job. */
+function refresher(outcome: { jobId: string } | Error = { jobId: "settings-1" }) {
+  const calls: Array<{ installId: string; changed: readonly VarsRefreshReason[] }> = [];
+  return {
+    calls,
+    refreshVars: async (installId: string, changed: readonly VarsRefreshReason[]) => {
+      calls.push({ installId, changed });
+      if (outcome instanceof Error) throw outcome;
+      return outcome;
+    },
+  };
+}
+
+async function markLive(id: string): Promise<void> {
+  await env.DB.prepare("UPDATE resources SET live_at = 1 WHERE id = ?1")
+    .bind(`${INSTALL_ID}:domain:${id}`)
+    .run();
+}
+
+describe("the app's address, for settings that use {{appUrl}}", () => {
+  it("deploys the settings again when the switch moves the address, either way", async () => {
+    await addDomain("01A", "links.example.com");
+    const r = refresher();
+    const off = world({ "links.example.com": { status: 200, body: "ok" } });
+    expect(
+      await setWorkersDevCore(
+        { ...off.deps, refreshVars: r.refreshVars },
+        { installId: INSTALL_ID, enabled: false },
+      ),
+    ).toMatchObject({ enabled: false, settingsJobId: "settings-1", settingsNote: null });
+    const on = world();
+    expect(
+      await setWorkersDevCore(
+        { ...on.deps, refreshVars: r.refreshVars },
+        { installId: INSTALL_ID, enabled: true },
+      ),
+    ).toMatchObject({ enabled: true, settingsJobId: "settings-1" });
+    expect(r.calls).toEqual([
+      { installId: INSTALL_ID, changed: ["appUrl"] },
+      { installId: INSTALL_ID, changed: ["appUrl"] },
+    ]);
+    // Nothing moves, nothing is deployed.
+    await setWorkersDevCore(
+      { ...on.deps, refreshVars: r.refreshVars },
+      { installId: INSTALL_ID, enabled: true },
+    );
+    expect(r.calls).toHaveLength(2);
+  });
+
+  it("says why the settings were not deployed again, and keeps the switch", async () => {
+    await addDomain("01A", "links.example.com");
+    const r = refresher(new Error("Another job of this install is queued or running"));
+    const w = world({ "links.example.com": { status: 200, body: "ok" } });
+    const result = await setWorkersDevCore(
+      { ...w.deps, refreshVars: r.refreshVars },
+      { installId: INSTALL_ID, enabled: false },
+    );
+    expect(result.enabled).toBe(false);
+    expect(result.settingsJobId).toBeNull();
+    expect(result.settingsNote).toContain("the app's address ({{appUrl}})");
+    expect(result.settingsNote).toContain("Another job of this install is queued or running");
+    expect(await stored()).toBe(0);
+  });
+
+  it("deploys the settings again once a live domain turns workers.dev off, but not from the install job", async () => {
+    await addDomain("01A", "links.example.com");
+    const r = refresher();
+    const w = world();
+    const result = await applyDomainLive(
+      { db: env.DB, api: w.deps.api, refreshVars: r.refreshVars },
+      {
+        installId: INSTALL_ID,
+        resourceId: `${INSTALL_ID}:domain:01A`,
+        hostname: "links.example.com",
+      },
+    );
+    expect(result).toEqual({
+      turnedOff: true,
+      kept: null,
+      settingsJobId: "settings-1",
+      settingsNote: null,
+    });
+    expect(r.calls).toEqual([{ installId: INSTALL_ID, changed: ["appUrl"] }]);
+    expect(await servedDomain()).toBe("links.example.com");
+
+    // The install job holds the install and deploys the settings itself once recorded.
+    await env.DB.prepare(
+      "UPDATE installs SET workers_dev_enabled = 1, served_domain = NULL, workers_dev_choice = 'auto'",
+    ).run();
+    const inJob = await applyDomainLive(
+      { db: env.DB, api: w.deps.api, refreshVars: r.refreshVars },
+      {
+        installId: INSTALL_ID,
+        resourceId: `${INSTALL_ID}:domain:01A`,
+        hostname: "links.example.com",
+        job: { settingsUseWorkerUrl: false },
+      },
+    );
+    expect(inJob.turnedOff).toBe(true);
+    expect(r.calls).toHaveLength(1);
+  });
+
+  it("keeps workers.dev on, and deploys nothing, while the settings use the workers.dev URL", async () => {
+    await addDomain("01A", "links.example.com");
+    const r = refresher();
+    const w = world();
+    const result = await applyDomainLive(
+      { db: env.DB, api: w.deps.api, refreshVars: r.refreshVars },
+      {
+        installId: INSTALL_ID,
+        resourceId: `${INSTALL_ID}:domain:01A`,
+        hostname: "links.example.com",
+        job: { settingsUseWorkerUrl: true },
+      },
+    );
+    expect(result).toMatchObject({ turnedOff: false, kept: "settings" });
+    expect(w.subdomainCalls).toEqual([]);
+    expect(r.calls).toEqual([]);
+  });
+
+  it("says the address moves when the domain that serves the app is removed", async () => {
+    await addDomain("01A", "links.example.com");
+    await addDomain("01B", "other.example.com");
+    await markLive("01A");
+    await markLive("01B");
+    const w = world();
+    // workers.dev on: the app is served there, whichever domain goes.
+    expect(
+      await beforeDomainRemoval(
+        { db: env.DB, api: w.deps.api },
+        { installId: INSTALL_ID, resourceId: `${INSTALL_ID}:domain:01B` },
+      ),
+    ).toEqual({ turnedOn: false, addressChanged: false });
+    await env.DB.prepare(
+      "UPDATE installs SET workers_dev_enabled = 0, served_domain = 'links.example.com'",
+    ).run();
+    // Another domain goes: the app stays on links.example.com.
+    expect(
+      await beforeDomainRemoval(
+        { db: env.DB, api: w.deps.api },
+        { installId: INSTALL_ID, resourceId: `${INSTALL_ID}:domain:01B` },
+      ),
+    ).toEqual({ turnedOn: false, addressChanged: false });
+    // The served one goes: the next live domain takes over.
+    expect(
+      await beforeDomainRemoval(
+        { db: env.DB, api: w.deps.api },
+        { installId: INSTALL_ID, resourceId: `${INSTALL_ID}:domain:01A` },
+      ),
+    ).toEqual({ turnedOn: false, addressChanged: true });
+    expect(await servedDomain()).toBe("other.example.com");
+  });
+
+  it("says the address moves when workers.dev is turned back on for the last live domain", async () => {
+    await addDomain("01A", "links.example.com");
+    await markLive("01A");
+    await env.DB.prepare(
+      "UPDATE installs SET workers_dev_enabled = 0, served_domain = 'links.example.com', workers_dev_choice = 'auto'",
+    ).run();
+    const w = world();
+    expect(
+      await beforeDomainRemoval(
+        { db: env.DB, api: w.deps.api },
+        { installId: INSTALL_ID, resourceId: `${INSTALL_ID}:domain:01A` },
+      ),
+    ).toEqual({ turnedOn: true, addressChanged: true });
+    expect(await stored()).toBe(1);
   });
 });

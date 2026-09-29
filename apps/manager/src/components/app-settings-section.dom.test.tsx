@@ -26,12 +26,17 @@ const SETTINGS: InstallSettings = {
   kind: "artifact",
   unavailable: null,
   fields: [],
-  placeholders: { workerName: "counterscale", workerUrl: null, wildcardHostname: null },
+  placeholders: {
+    workerName: "counterscale",
+    workerUrl: null,
+    appUrl: null,
+    wildcardHostname: null,
+  },
   secrets: [
     {
       name: "CF_BEARER_TOKEN",
       label: "Analytics API token",
-      generate: false,
+      generate: undefined,
       declared: true,
       optional: false,
       present: true,
@@ -52,7 +57,9 @@ const SETTINGS: InstallSettings = {
   installer: null,
   appToken: {
     secret: "CF_BEARER_TOKEN",
-    permissions: [{ name: "Account.Account Analytics:Read", scope: "account" }],
+    permissions: [
+      { group: "Account Analytics", scope: "account", access: "read", reason: "Reads visits." },
+    ],
   },
 };
 

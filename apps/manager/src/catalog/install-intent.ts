@@ -1,4 +1,4 @@
-import { githubRepositorySchema } from "@appflare/schema";
+import { CATALOG_SLUG_PATTERN, githubRepositorySchema } from "@appflare/schema";
 import { appKey, customCatalogIdSchema, OFFICIAL_CATALOG_ID } from "./sources";
 
 /**
@@ -11,19 +11,16 @@ import { appKey, customCatalogIdSchema, OFFICIAL_CATALOG_ID } from "./sources";
  * anything; an admin still confirms on the page it opens. Client-safe.
  */
 
-/** A catalog slug: lowercase letters, digits and dashes, starting with a letter or digit. */
-const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
-
 /**
  * The app key an install link names, or null when it cannot be one: a plain
  * slug (any enabled catalog), or `<catalog>:<slug>` for one catalog.
  */
 export function installLinkKey(raw: string): { key: string; plain: boolean } | null {
   const colon = raw.indexOf(":");
-  if (colon === -1) return SLUG.test(raw) ? { key: raw, plain: true } : null;
+  if (colon === -1) return CATALOG_SLUG_PATTERN.test(raw) ? { key: raw, plain: true } : null;
   const catalogId = raw.slice(0, colon);
   const slug = raw.slice(colon + 1);
-  if (!SLUG.test(slug)) return null;
+  if (!CATALOG_SLUG_PATTERN.test(slug)) return null;
   if (catalogId !== OFFICIAL_CATALOG_ID && !customCatalogIdSchema.safeParse(catalogId).success) {
     return null;
   }

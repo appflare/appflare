@@ -2,10 +2,9 @@ import { NonRetryableError } from "cloudflare:workflows";
 import type { VersionMetadata } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
-  appHealthMode,
-  appHealthPath,
   artifactManifestSchema,
   connectionStringProblems,
+  hyperdriveDeclarations,
   withRevisedCatalog,
   workerUploadProblem,
 } from "@appflare/schema";
@@ -16,7 +15,7 @@ import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { varsUseWildcardHostname } from "../installs/install-vars";
+import { VARS_REFRESH_REASONS, varsNeedRefresh } from "../installs/install-vars";
 import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND } from "../installs/resource-kinds";
 import { wildcardHostnameOf } from "../installs/wildcard-domain-input";
 import { appBaseUrl, domainHostnames, workersDevSubdomain } from "../installs/workers-dev";
@@ -174,11 +173,13 @@ export const reconfigureJobParams = z.object({
   /** The admin accepted that the new settings cannot be checked on a preview first. */
   confirmNoPreview: z.boolean().optional(),
   /**
-   * Deploy the settings again although none changed: a value they are filled
-   * in with changed (the wildcard domain behind `{{wildcardHostname}}` was
-   * assigned or removed). `vars` are the stored settings, unchanged.
+   * Deploy the settings again although none changed: the values they are
+   * filled in with that changed (`wildcardHostname`: the wildcard domain was
+   * assigned or removed; `appUrl`: the address the app is served at moved
+   * between workers.dev and a domain). `vars` are the stored settings,
+   * unchanged.
    */
-  refreshVars: z.boolean().optional(),
+  refreshVars: z.array(z.enum(VARS_REFRESH_REASONS)).min(1).optional(),
   /**
    * A self-deploying tier app: its own installer runs again with the new
    * settings (see ./self-deploying/reconfigure.ts); none of the steps below apply.
@@ -441,7 +442,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     if (primary === undefined) throw new JobError("the artifact has no primary Worker");
     const primaryManifest = primary.manifest;
     const entryNames = entryScriptNamesOf(manifest, workerName);
-    const databases = manifest.catalog.resources?.hyperdrive ?? [];
+    const databases = hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive);
     const diff = diffBindings(
       workerName,
       entryBindings(manifest),
@@ -481,7 +482,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
      * Only settings, secrets and database connections need a new version;
      * Email Routing names the Worker, not a version.
      */
-    const refresh = params.refreshVars === true;
+    const refreshed = params.refreshVars ?? [];
+    const refresh = refreshed.length > 0;
     const redeploy = changedVars.length > 0 || secretsChange || replacing.length > 0 || refresh;
     // Each Worker gets the secret changes of the secrets that go to it; a
     // secret the catalog no longer declares is the primary Worker's.
@@ -501,7 +503,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     const affectedOthers = workers.filter(
       (w) =>
         !w.primary &&
-        ((refresh && varsUseWildcardHostname(w.manifest, params.vars)) ||
+        (varsNeedRefresh(w.manifest, params.vars, refreshed) ||
           changedVars.some((n) => w.manifest.catalog.vars.some((v) => v.name === n)) ||
           changedSecrets.some((n) => w.manifest.catalog.secrets.some((s) => s.name === n))),
     );
@@ -518,8 +520,8 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       workerName,
       changes: primaryChanges,
     };
-    const healthPath = appHealthPath(manifest.catalog.install);
-    const healthMode = appHealthMode(manifest.catalog.install);
+    const healthPath = manifest.catalog.install.health.path;
+    const healthMode = manifest.catalog.install.health.mode;
 
     await run("plan settings change", async ({ log }) => {
       const problems = [
@@ -576,9 +578,14 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
       }
       if (problems.length > 0) throw new JobError(problems.join(" "));
       if (changedVars.length > 0) log.info(`Settings changed: ${changedVars.join(", ")}.`);
-      if (refresh) {
+      if (refreshed.includes("wildcardHostname")) {
         log.info(
           `Settings that use {{wildcardHostname}} are filled in again: ${started.wildcardHostname ? started.wildcardHostname : "empty, since the app has no wildcard domain now"}.`,
+        );
+      }
+      if (refreshed.includes("appUrl")) {
+        log.info(
+          `Settings that use the app's address ({{appUrl}}) are filled in again with ${started.workersDev ? "its workers.dev URL, since workers.dev serves it now" : "the domain that serves it now"}.`,
         );
       }
       const set = Object.keys(params.secrets.set).sort();
@@ -623,7 +630,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           });
 
     const subdomain = await lookupSubdomainPhase(steps);
-    // Where the app is reached, for `{{workerUrl}}` and the health check.
+    // Where the app is served, for `{{appUrl}}` and the health check.
     const appBase = appBaseUrl({
       workerName,
       subdomain,
@@ -695,7 +702,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
         workerName,
         subdomain,
         accountId: steps.accountId(),
-        workerUrl: appBase,
+        appUrl: appBase,
         wildcardHostname: started.wildcardHostname ?? null,
         ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });

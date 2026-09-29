@@ -2,18 +2,31 @@ import { z } from "zod";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
 import { buildEnvSchema } from "./build-env.ts";
+import { catalogCategoriesSchema, catalogCategoryProblems } from "./categories.ts";
 import { configPatchSchema } from "./config-patch.ts";
 import { catalogD1Schema } from "./d1.ts";
-import { catalogHyperdriveSchema, MAX_HYPERDRIVE_BINDINGS } from "./hyperdrive.ts";
+import { catalogHyperdriveBindingsSchema } from "./hyperdrive.ts";
 import { catalogInstallDirsSchema, packageManagerSchema } from "./install-dirs.ts";
-import { licenseNoteSchema, licenseSchema } from "./license.ts";
+import {
+  catalogLicenseProblem,
+  licenseNoteSchema,
+  licenseProblem,
+  licenseSchema,
+} from "./license.ts";
 import { CATALOG_SLUG_PATTERN } from "./links.ts";
-import { catalogPipelinesSchema, pipelineManifestProblems } from "./pipelines.ts";
+import {
+  appTokenPermissions,
+  catalogPipelinesSchema,
+  pipelineManifestProblems,
+} from "./pipelines.ts";
+import { PLACEHOLDER_FIELDS, placeholderProblems } from "./placeholders.ts";
 import { catalogR2Schema } from "./r2-lifecycle.ts";
 import { BASE64_KEY_32_LENGTH, isBase64Key32 } from "./random-key.ts";
 import { isSeedOnly, seedManifestProblems } from "./seed.ts";
 import { catalogSelfDeployingSchema, selfDeployingTierProblem } from "./self-deploying.ts";
+import { formatPath, type StrictProblem, strictSchema } from "./strict.ts";
 import { taglineSchema } from "./tagline.ts";
+import { tokenPermissionGroupProblems, tokenPermissionsSchema } from "./token-permissions.ts";
 import { isVapidPrivateKey, VAPID_PRIVATE_KEY_LENGTH } from "./vapid.ts";
 import { inlineConfigPathProblem, wranglerConfigInlineSchema } from "./wrangler-config-inline.ts";
 
@@ -201,7 +214,8 @@ export const catalogEntryWorkerSchema = z
     name: entryWorkerNameSchema.describe(
       "The Worker's name within the entry, for example `api`. The primary Worker installs " +
         "under the install's Worker name; every other one as `<install Worker name>-<name>`. " +
-        "Placeholders name it too: `{{workerUrl:<name>}}` and `{{workerName:<name>}}`.",
+        "Placeholders name it too: `{{appUrl:<name>}}`, `{{workerUrl:<name>}}`, " +
+        "`{{workerName:<name>}}` and the hostname forms.",
     ),
     wranglerConfig: z
       .string()
@@ -231,18 +245,19 @@ export const catalogEntryWorkerSchema = z
       )
       .optional(),
     primary: z
-      .literal(true)
+      .boolean()
+      .default(false)
       .describe(
         "The Worker that answers the app's address and its health check. Exactly one Worker " +
           "is primary, and its `wranglerConfig` is `install.wranglerConfig`.",
-      )
-      .optional(),
+      ),
     /**
      * Whether the Worker answers on its workers.dev URL. On unless set to
      * false; only a Worker other than the primary may turn it off.
      */
     workersDev: z
       .boolean()
+      .default(true)
       .describe(
         "Whether this Worker answers on its workers.dev URL (on unless set to `false`). Set " +
           "`false` for a Worker only the entry's other Workers call, through a service binding " +
@@ -251,8 +266,7 @@ export const catalogEntryWorkerSchema = z
           "public URL and no version previews, and updates skip its preview check. The primary " +
           "Worker always keeps its workers.dev URL: it is the app's address and health check " +
           "until a custom domain takes over.",
-      )
-      .optional(),
+      ),
   })
   .describe("One Worker of an entry that installs as several Workers.");
 export type CatalogEntryWorker = z.infer<typeof catalogEntryWorkerSchema>;
@@ -270,7 +284,9 @@ export interface EntryWorkersProblem {
 export function entryWorkersProblems(install: {
   tier: string;
   wranglerConfig: string;
-  workers?: readonly CatalogEntryWorker[] | undefined;
+  workers?:
+    | ReadonlyArray<Pick<CatalogEntryWorker, "name" | "wranglerConfig" | "primary" | "workersDev">>
+    | undefined;
 }): EntryWorkersProblem[] {
   const workers = install.workers;
   if (workers === undefined) return [];
@@ -281,7 +297,7 @@ export function entryWorkersProblems(install: {
       message: `install.workers is only for the artifact tier; this entry's tier is ${install.tier}`,
     });
   }
-  const primaries = workers.filter((w) => w.primary === true);
+  const primaries = workers.filter((w) => w.primary);
   const primary = primaries[0];
   if (primaries.length !== 1 || primary === undefined) {
     problems.push({
@@ -297,7 +313,7 @@ export function entryWorkersProblems(install: {
   const names = new Set<string>();
   const configs = new Set<string>();
   workers.forEach((w, i) => {
-    if (w.primary === true && w.workersDev === false) {
+    if (w.primary && !w.workersDev) {
       problems.push({
         path: ["workers", i, "workersDev"],
         message:
@@ -344,14 +360,14 @@ export const requirementSchema = z.enum([
 export type Requirement = z.infer<typeof requirementSchema>;
 
 /**
- * What kind of value the install form generates for a secret, besides the
- * random password of `generate: true`. `vapid-private-key`: a Web Push
- * (VAPID) private key, a P-256 private key as the unpadded base64url of its
- * raw 32 bytes, the form web-push libraries take (see ./vapid.ts).
- * `base64-key-32`: 32 random bytes as padded base64, 44 characters, for apps
- * that read a raw 256-bit key (see ./random-key.ts).
+ * What kind of value the install form generates for a secret. `password`: a
+ * random password the admin can copy, regenerate or replace.
+ * `vapid-private-key`: a Web Push (VAPID) private key, a P-256 private key
+ * as the unpadded base64url of its raw 32 bytes, the form web-push libraries
+ * take (see ./vapid.ts). `base64-key-32`: 32 random bytes as padded base64,
+ * 44 characters, for apps that read a raw 256-bit key (see ./random-key.ts).
  */
-export const SECRET_GENERATE_KINDS = ["vapid-private-key", "base64-key-32"] as const;
+export const SECRET_GENERATE_KINDS = ["password", "vapid-private-key", "base64-key-32"] as const;
 export type SecretGenerateKind = (typeof SECRET_GENERATE_KINDS)[number];
 
 /**
@@ -435,16 +451,13 @@ export const catalogVarDeriveSchema = z
     "Computes this var from a secret instead of asking for it: the install and settings forms " +
       "show it read-only, and the manager sets it at install, and again whenever the source " +
       "secret gets a new value in the app's settings or an update. Not allowed with `default`, " +
-      "`required: true`, `type` or `options`, nor on self-deploying entries.",
+      '`optional: true`, `type: "select"` or `options`, nor on self-deploying entries.',
   );
 export type CatalogVarDerive = z.infer<typeof catalogVarDeriveSchema>;
 
 /**
- * A secret the installer prompts for. `generate: true` means the form fills
- * in a random value instead of asking the user; `generate: "vapid-private-key"`
- * fills in a new Web Push (VAPID) private key ({@link SECRET_GENERATE_KINDS}).
- * Defaults are seeded by catalog CI from `.dev.vars.example` when the
- * manifest omits them.
+ * A secret the installer prompts for. `generate` makes the form fill in a
+ * value instead of asking the user ({@link SECRET_GENERATE_KINDS}).
  *
  * `derive` makes the manager compute the secret from another secret's value
  * instead of asking for it ({@link catalogSecretDeriveSchema}); the manifest's
@@ -452,103 +465,118 @@ export type CatalogVarDerive = z.infer<typeof catalogVarDeriveSchema>;
  *
  * `optional: true` marks a secret the app works without: the install form
  * leaves it unset unless the admin chooses to set it, updates never ask for
- * it, and the app's settings can remove it. Optional rather than defaulted so
- * manifests and artifacts written before the field existed keep the same
- * parsed shape (catalog CI compares a published release's manifest with the
- * current one field by field). Refused on `self-deploying` entries, whose
- * installer run expects every declared secret ({@link catalogManifestSchema}).
+ * it, and the app's settings can remove it. Refused on `self-deploying`
+ * entries, whose installer run expects every declared secret.
  *
  * `multiline: true` asks for a value of several lines (a PEM private key) in
  * a multi-line field; the value reaches the Worker with its line breaks
  * ({@link multilineSecretProblems} refuses it next to `generate` or `derive`).
+ *
+ * `cloudflareToken: true` marks the secret that takes the Cloudflare API
+ * token the admin creates for the app from `tokenPermissions`; the forms show
+ * how to create that token next to its field. At most one per entry.
  */
 export const catalogSecretSchema = z
   .object({
-    name: z.string().min(1),
-    label: z.string().min(1),
-    help: z.string().optional(),
-    generate: z
-      .union([z.boolean(), z.enum(SECRET_GENERATE_KINDS)])
-      .default(false)
+    name: z
+      .string()
+      .min(1)
       .describe(
-        "`true`: the install form fills in a random value the admin can copy, regenerate, or " +
-          'replace. `"vapid-private-key"`: it fills in a new Web Push (VAPID) private key, a ' +
+        "The name the Worker reads the secret by, exactly as the app's code spells it, for " +
+          "example `ADMIN_PASSWORD`.",
+      ),
+    label: z
+      .string()
+      .min(1)
+      .describe(
+        "What the install and settings forms call the secret, in plain words, for example " +
+          "`Admin password`.",
+      ),
+    help: z
+      .string()
+      .describe(
+        "A sentence or two shown under the field: what the value is for, or where to find it.",
+      )
+      .optional(),
+    generate: z
+      .enum(SECRET_GENERATE_KINDS)
+      .describe(
+        'The install form fills in a value instead of asking for one. `"password"`: a random ' +
+          'value the admin can copy, regenerate, or replace. `"vapid-private-key"`: a new Web Push (VAPID) private key, a ' +
           "P-256 private key as the unpadded base64url of its raw 32 bytes (the form web-push " +
           "libraries take), and the manager refuses a value that is not one. Pair it with a " +
           '`derive: { method: "vapid-public-key" }` var for the public key. `"base64-key-32"`: 32 ' +
           "random bytes as padded base64 (44 characters), for an app that reads a raw 256-bit key; " +
           "the manager refuses a value that does not decode to 32 bytes.",
-      ),
+      )
+      .optional(),
     optional: z
       .boolean()
+      .default(false)
       .describe(
         "The app works without this secret. The install form leaves it unset unless the admin " +
           'chooses "Set now", updates never ask for it, and the app\'s settings can remove it. ' +
           "Not allowed on self-deploying entries.",
-      )
-      .optional(),
-    /**
-     * Computed from another secret instead of asked for. Optional rather than
-     * defaulted for the same reason as `optional`.
-     */
+      ),
+    /** Computed from another secret instead of asked for. */
     derive: catalogSecretDeriveSchema.optional(),
     /**
      * For an entry with `install.workers`: the Workers that get the secret.
      * Omitted means every Worker of the entry.
      */
     workers: entryWorkerTargetsSchema.optional(),
-    /**
-     * Only for seed statements. Optional rather than defaulted for the same
-     * reason as `optional`.
-     */
+    /** Only for seed statements. */
     seedOnly: z
       .boolean()
+      .default(false)
       .describe(
         "The secret exists only for `resources.d1[binding].seed`: the install form asks for it once, " +
           "the seed uses it (as a param or the source of a hash), and it is never set on the Worker, " +
           "stored, or asked for again by updates or settings. For a first admin's password, so the " +
           "plaintext never sits in the app's environment. Not allowed with `optional`, `derive` or " +
           "`workers`, nor on self-deploying entries.",
-      )
-      .optional(),
-    /**
-     * Asked for in a multi-line field. Optional rather than defaulted for the
-     * same reason as `optional`.
-     */
+      ),
+    /** Asked for in a multi-line field. */
     multiline: z
       .boolean()
+      .default(false)
       .describe(
         "The value spans several lines, such as a PEM private key: the install, update and " +
           "settings forms ask for it in a multi-line field that keeps every line break, and the " +
           "Worker gets the value as entered (Windows line endings become `\\n`, and spaces or " +
           "tabs at the end of the last line are dropped). Not allowed with `generate` or `derive`.",
-      )
-      .optional(),
+      ),
+    cloudflareToken: z
+      .boolean()
+      .default(false)
+      .describe(
+        "This secret takes the Cloudflare API token the admin creates for the app from " +
+          "`tokenPermissions`: the install and settings forms show how to create that token next " +
+          "to its field. At most one secret per entry. Not allowed with `generate`, `derive` or " +
+          "`seedOnly`, and only when the entry lists `tokenPermissions` (or a Pipelines sink, " +
+          "whose token permissions Appflare adds).",
+      ),
   })
   // The manifest-level refinement does not reach the JSON Schema; this states
-  // its per-secret half there (no `generate` but false and no `optional: true`
-  // next to `derive`; no `optional: true`, `derive` or `workers` next to
-  // `seedOnly: true`; no `generate` but false and no `derive` next to
-  // `multiline: true`), so editors refuse the same secrets.
+  // its per-secret half there (no `generate` and no `optional: true` next to
+  // `derive`; no `optional: true`, `derive` or `workers` next to
+  // `seedOnly: true`; no `generate` and no `derive` next to
+  // `multiline: true`; no `generate`, `derive` or `seedOnly: true` next to
+  // `cloudflareToken: true`), so editors refuse the same secrets.
   .meta({
     allOf: [
       {
         anyOf: [
           { not: { required: ["multiline"], properties: { multiline: { const: true } } } },
-          {
-            not: { required: ["derive"] },
-            properties: { generate: { const: false } },
-          },
+          { not: { anyOf: [{ required: ["derive"] }, { required: ["generate"] }] } },
         ],
       },
       {
         anyOf: [
           { not: { required: ["derive"] } },
           {
-            properties: {
-              generate: { const: false },
-              optional: { not: { const: true } },
-            },
+            not: { required: ["generate"] },
+            properties: { optional: { not: { const: true } } },
           },
         ],
       },
@@ -561,18 +589,42 @@ export const catalogSecretSchema = z
           },
         ],
       },
+      {
+        anyOf: [
+          {
+            not: {
+              required: ["cloudflareToken"],
+              properties: { cloudflareToken: { const: true } },
+            },
+          },
+          {
+            not: { anyOf: [{ required: ["derive"] }, { required: ["generate"] }] },
+            properties: { seedOnly: { not: { const: true } } },
+          },
+        ],
+      },
     ],
   });
 export type CatalogSecret = z.infer<typeof catalogSecretSchema>;
 
 /** Whether the app works without the secret (`optional: true`). */
-export function isOptionalSecret(secret: Pick<CatalogSecret, "optional">): boolean {
+export function isOptionalSecret(secret: { optional?: boolean | undefined }): boolean {
   return secret.optional === true;
 }
 
 /** Whether the forms ask for the secret in a multi-line field (`multiline: true`). */
-export function isMultilineSecret(secret: Pick<CatalogSecret, "multiline">): boolean {
+export function isMultilineSecret(secret: { multiline?: boolean | undefined }): boolean {
   return secret.multiline === true;
+}
+
+/**
+ * The secret that takes the app's own Cloudflare API token
+ * (`cloudflareToken: true`), or null when none does.
+ */
+export function cloudflareTokenSecret<
+  T extends { name: string; cloudflareToken?: boolean | undefined },
+>(secrets: readonly T[]): T | null {
+  return secrets.find((s) => s.cloudflareToken === true) ?? null;
 }
 
 /**
@@ -581,12 +633,14 @@ export function isMultilineSecret(secret: Pick<CatalogSecret, "multiline">): boo
  * is one line, and a derived secret is never entered.
  */
 export function multilineSecretProblems(
-  secrets: readonly Pick<CatalogSecret, "name" | "generate" | "derive" | "multiline">[],
+  secrets: ReadonlyArray<
+    Pick<CatalogSecret, "name" | "generate" | "derive"> & { multiline?: boolean | undefined }
+  >,
 ): Array<{ path: Array<string | number>; message: string }> {
   const problems: Array<{ path: Array<string | number>; message: string }> = [];
   secrets.forEach((secret, i) => {
     if (!isMultilineSecret(secret)) return;
-    if (secret.generate) {
+    if (secret.generate !== undefined) {
       problems.push({
         path: [i, "multiline"],
         message: `${secret.name} is multiline; it cannot also be generated, since a generated value is one line`,
@@ -640,14 +694,16 @@ export function enteredSecrets<T extends Pick<CatalogSecret, "derive">>(
  * secret may not also be generated or optional.
  */
 export function derivedSecretProblems(
-  secrets: readonly Pick<CatalogSecret, "name" | "generate" | "optional" | "derive">[],
+  secrets: ReadonlyArray<
+    Pick<CatalogSecret, "name" | "generate" | "derive"> & { optional?: boolean | undefined }
+  >,
 ): Array<{ path: Array<string | number>; message: string }> {
   const byName = new Map(secrets.map((s) => [s.name, s]));
   const problems: Array<{ path: Array<string | number>; message: string }> = [];
   secrets.forEach((secret, i) => {
     const derive = secret.derive;
     if (derive === undefined) return;
-    if (secret.generate) {
+    if (secret.generate !== undefined) {
       problems.push({
         path: [i, "generate"],
         message: `${secret.name} is derived from ${derive.from}; it cannot also be generated`,
@@ -706,7 +762,9 @@ function sourceKindProblem(
  * of value the method reads.
  */
 export function derivedVarProblems(
-  secrets: readonly Pick<CatalogSecret, "name" | "generate" | "optional" | "derive">[],
+  secrets: ReadonlyArray<
+    Pick<CatalogSecret, "name" | "generate" | "derive"> & { optional?: boolean | undefined }
+  >,
   vars: ReadonlyArray<{ name: string; derive?: CatalogVarDerive | undefined }>,
 ): Array<{ path: Array<string | number>; message: string }> {
   const byName = new Map(secrets.map((s) => [s.name, s]));
@@ -740,131 +798,19 @@ export function derivedVarProblems(
 }
 
 /**
- * Placeholders the manager fills in with the install's own values: in
- * `postInstall` markdown, in `vars[].default`, and in the values of the
- * wrangler config's `vars` (strings, and strings inside JSON values).
- *
- * - `{{workerUrl}}`: the install's workers.dev URL,
- *   `https://<worker name>.<account subdomain>.workers.dev`, without a
- *   trailing slash. Always the workers.dev address, even when a custom
- *   domain is attached to the install.
- * - `{{workerName}}`: the install's Worker name.
- * - `{{accountId}}`: the id of the Cloudflare account the app is installed
- *   in, for apps that call the Cloudflare API about their own account (the
- *   Analytics Engine SQL API, for example).
- * - `{{wildcardHostname}}`: for an app with `install.wildcardHostname`, the
- *   base hostname of its wildcard domain (`tunnels.example.com`, no scheme);
- *   empty while none is assigned. Assigning or removing the domain fills the
- *   Worker's vars in again.
- *
- * Vars are rendered on every install, update and settings change, so they
- * follow the Worker name the admin chose. Whitespace inside the braces is
- * allowed (`{{ workerUrl }}`); anything else in double braces is left as
- * written.
- */
-export const INSTALL_PLACEHOLDERS = [
-  "workerUrl",
-  "workerName",
-  "accountId",
-  "wildcardHostname",
-] as const;
-export type InstallPlaceholder = (typeof INSTALL_PLACEHOLDERS)[number];
-
-/** The values {@link renderPlaceholders} fills in. */
-export interface PlaceholderValues {
-  /** Null while the account's workers.dev subdomain is unknown; `{{workerUrl}}` is then kept. */
-  workerUrl: string | null;
-  workerName: string;
-  /**
-   * The account's id. Absent or null where it is not known (a form rendering
-   * a default before the install runs); `{{accountId}}` is then kept.
-   */
-  accountId?: string | null;
-  /**
-   * The base hostname of the install's wildcard domain; null or empty when
-   * it has none, which fills in an empty string. Absent where it is not
-   * known (a form showing a default); `{{wildcardHostname}}` is then kept.
-   */
-  wildcardHostname?: string | null;
-}
-
-/**
- * The regular expression source of one {@link INSTALL_PLACEHOLDERS} entry as
- * written in a value (`{{ workerUrl }}`), its name in the one capture group.
- * Exported as source text, not a shared `RegExp`, so callers build their own
- * and no `lastIndex` leaks between them.
- */
-export const INSTALL_PLACEHOLDER_SOURCE = `\\{\\{\\s*(${INSTALL_PLACEHOLDERS.join("|")})\\s*\\}\\}`;
-
-const PLACEHOLDER_PATTERN = new RegExp(INSTALL_PLACEHOLDER_SOURCE, "g");
-
-/** Whether `text` holds a placeholder the manager fills in. */
-export function hasPlaceholder(text: string): boolean {
-  return new RegExp(PLACEHOLDER_PATTERN.source).test(text);
-}
-
-/** `text` with every {@link INSTALL_PLACEHOLDERS} entry filled in. */
-export function renderPlaceholders(text: string, values: PlaceholderValues): string {
-  return text.replace(PLACEHOLDER_PATTERN, (match, key: InstallPlaceholder) => {
-    switch (key) {
-      case "workerName":
-        return values.workerName;
-      case "workerUrl":
-        return values.workerUrl ?? match;
-      case "accountId":
-        return values.accountId ?? match;
-      case "wildcardHostname":
-        return values.wildcardHostname === undefined ? match : (values.wildcardHostname ?? "");
-    }
-  });
-}
-
-/** A JSON value: what a wrangler config var holds when it is not a string. */
-export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
-
-/**
- * `value` with placeholders filled in inside every string it holds (keys
- * excepted). Every key is copied as an own property, `__proto__` included,
- * so the value round-trips through `JSON.stringify` unchanged.
- */
-export function renderJsonPlaceholders(value: JsonValue, values: PlaceholderValues): JsonValue {
-  if (typeof value === "string") return renderPlaceholders(value, values);
-  if (Array.isArray(value)) return value.map((item) => renderJsonPlaceholders(item, values));
-  if (value !== null && typeof value === "object") {
-    const out: { [key: string]: JsonValue } = {};
-    for (const [key, item] of Object.entries(value)) {
-      // Plain assignment of `__proto__` would set the prototype instead.
-      Object.defineProperty(out, key, {
-        value: renderJsonPlaceholders(item, values),
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    }
-    return out;
-  }
-  return value;
-}
-
-/**
  * A plain (non-secret) var the install form asks for. It reaches the Worker
  * as a `plain_text` binding, or as a `json` binding when the app's wrangler
  * config gives the var a value that is not a string (an array, object,
  * number, or boolean): the form then takes JSON and `default` must be JSON
- * text. `default` may hold `{{workerUrl}}`, `{{workerName}}` and
- * `{{accountId}}` ({@link INSTALL_PLACEHOLDERS}).
+ * text. `default` may hold the placeholders of `PLACEHOLDER_FIELDS.varDefault`
+ * (`{{appUrl}}`, `{{workerName}}`, `{{accountId}}` and the others).
+ *
+ * `optional: true` marks a var the admin may leave empty; every other var
+ * needs a value (typed, or its `default`) before the install runs.
  *
  * `type: "select"` with `options` limits the var to a fixed set of values,
  * shown as choices instead of a text field; `default`, when given, must be one
- * of them. `type` and `options` are optional rather than defaulted so
- * manifests and artifacts written before they existed keep the same parsed
- * shape.
+ * of them.
  */
 export const CATALOG_VAR_TYPES = ["text", "select"] as const;
 export type CatalogVarType = (typeof CATALOG_VAR_TYPES)[number];
@@ -890,7 +836,7 @@ export type CatalogVarOption = z.infer<typeof catalogVarOptionSchema>;
  * issue each (the Zod refinement and catalog tooling share it).
  */
 export function selectVarProblems(v: {
-  type?: CatalogVarType | undefined;
+  type: CatalogVarType;
   options?: readonly CatalogVarOption[] | undefined;
   default?: string | undefined;
 }): Array<{ path: Array<string | number>; message: string }> {
@@ -929,34 +875,59 @@ export function selectVarProblems(v: {
 
 export const catalogVarSchema = z
   .object({
-    name: z.string().min(1),
-    label: z.string().min(1),
-    help: z.string().optional(),
+    name: z
+      .string()
+      .min(1)
+      .describe(
+        "The name the Worker reads the setting by, exactly as the app's code and wrangler " +
+          "config spell it, for example `SITE_TITLE`.",
+      ),
+    label: z
+      .string()
+      .min(1)
+      .describe(
+        "What the install and settings forms call the setting, in plain words, for example " +
+          "`Site title`.",
+      ),
+    help: z
+      .string()
+      .describe(
+        "A sentence or two shown under the field: what the setting changes, or which values work.",
+      )
+      .optional(),
     default: z
       .string()
       .describe(
-        "Value the form starts with. `{{workerUrl}}` becomes the install's workers.dev URL " +
-          "(`https://<worker name>.<account subdomain>.workers.dev`, no trailing slash) and " +
-          "`{{workerName}}` its Worker name, and `{{accountId}}` the id of the Cloudflare account it " +
-          "is installed in, filled in on every install, update and settings change. `{{workerUrl}}` is " +
-          "always the workers.dev address, even when a custom domain is attached. " +
-          "`{{wildcardHostname}}` becomes the hostname of the app's wildcard domain (for an entry with " +
-          "`install.wildcardHostname`), empty until one is assigned, and follows it when it is " +
-          "assigned or removed. When the app's " +
-          "wrangler config gives this var a value that is not a string (an array, object, number, or " +
-          "boolean), the var reaches the Worker as JSON and `default` must be JSON text, for " +
-          'example `["{{workerUrl}}"]`. Without `default`, the form starts with the wrangler config\'s value. ' +
-          'For a `type: "select"` var, `default` must be one of the `options` values.',
+        "Value the form starts with, filled in on every install, update and settings change. " +
+          "`{{appUrl}}` becomes the address the app is served at (its custom domain while " +
+          "workers.dev is off for it, else its workers.dev URL; no trailing slash) and " +
+          "`{{appHostname}}` that address's hostname; `{{workerUrl}}` and `{{workerHostname}}` are " +
+          "always the workers.dev address (`https://<worker name>.<account subdomain>.workers.dev`); " +
+          "`{{workerName}}` is the installed Worker's name and `{{accountId}}` the id of the " +
+          "Cloudflare account. `{{wildcardHostname}}` becomes the hostname of the app's wildcard " +
+          "domain (for an entry with `install.wildcardHostname`), empty until one is assigned. " +
+          "An entry of several Workers names one with `{{appUrl:<name>}}` and the like. When " +
+          "the app's wrangler config gives this var a value that is not a string (an array, " +
+          "object, number, or boolean), the var reaches the Worker as JSON and `default` must be " +
+          'JSON text, for example `["{{appUrl}}"]`. Without `default`, the form starts with the ' +
+          'wrangler config\'s value. For a `type: "select"` var, `default` must be one of the ' +
+          "`options` values.",
       )
       .optional(),
-    required: z.boolean().default(false),
+    optional: z
+      .boolean()
+      .default(false)
+      .describe(
+        "The admin may leave this var empty. Every other var needs a value, typed or from " +
+          "`default`, before the install runs.",
+      ),
     type: z
       .enum(CATALOG_VAR_TYPES)
+      .default("text")
       .describe(
         '`"text"` (the default) takes any value; `"select"` takes one of `options`, shown as ' +
           "choices (cards for up to 4, a dropdown beyond).",
-      )
-      .optional(),
+      ),
     options: z
       .array(catalogVarOptionSchema)
       .min(2)
@@ -966,26 +937,23 @@ export const catalogVarSchema = z
           "for, and only allowed with, `select`. Values must be distinct.",
       )
       .optional(),
-    /**
-     * Computed from a secret instead of asked for. Optional rather than
-     * defaulted for the same reason as `type`.
-     */
+    /** Computed from a secret instead of asked for. */
     derive: catalogVarDeriveSchema.optional(),
     /**
      * For an entry with `install.workers`: the Workers that get the var.
      * Omitted means the Workers whose wrangler config declares it, else every Worker.
      */
     workers: entryWorkerTargetsSchema.optional(),
-    /** Only for seed statements. Optional rather than defaulted for the same reason as `type`. */
+    /** Only for seed statements. */
     seedOnly: z
       .boolean()
+      .default(false)
       .describe(
         "The var exists only for `resources.d1[binding].seed`, such as a first admin's user name: " +
           "the install form asks for it once, a seed statement binds it, and it is never set on the " +
-          "Worker, stored, or shown in settings. Must be required or have a default. Not allowed " +
-          "with `derive` or `workers`, nor on self-deploying entries.",
-      )
-      .optional(),
+          "Worker, stored, or shown in settings. Must not be optional, or must have a default. " +
+          "Not allowed with `derive` or `workers`, nor on self-deploying entries.",
+      ),
   })
   .superRefine((v, ctx) => {
     for (const problem of selectVarProblems(v)) {
@@ -993,7 +961,7 @@ export const catalogVarSchema = z
     }
     if (v.derive === undefined) return;
     // The manager sets a derived var itself: nothing for the form to start with or ask.
-    for (const field of ["default", "type", "options"] as const) {
+    for (const field of ["default", "options"] as const) {
       if (v[field] !== undefined) {
         ctx.addIssue({
           code: "custom",
@@ -1002,18 +970,25 @@ export const catalogVarSchema = z
         });
       }
     }
-    if (v.required) {
+    if (v.type === "select") {
       ctx.addIssue({
         code: "custom",
-        path: ["required"],
-        message: `${v.name} is derived from ${v.derive.from}, which every install has; it cannot be required`,
+        path: ["type"],
+        message: `${v.name} is derived from ${v.derive.from}; it cannot also be a select`,
+      });
+    }
+    if (v.optional) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["optional"],
+        message: `${v.name} is derived from ${v.derive.from}, which every install has; it cannot be optional`,
       });
     }
   })
   // The refinements do not reach the JSON Schema; `allOf` states the pairing
   // of `type: "select"` and `options` there, and that a derived var has no
-  // `default`, `type`, `options` or `required: true`, so editors refuse the
-  // same vars.
+  // `default`, `options`, `type: "select"` or `optional: true`, so editors
+  // refuse the same vars.
   .meta({
     allOf: [
       {
@@ -1029,8 +1004,11 @@ export const catalogVarSchema = z
         anyOf: [
           { not: { required: ["derive"] } },
           {
-            not: { anyOf: [{ required: ["default"] }, { required: ["type"] }] },
-            properties: { required: { const: false } },
+            not: { anyOf: [{ required: ["default"] }, { required: ["options"] }] },
+            properties: {
+              type: { not: { const: "select" } },
+              optional: { not: { const: true } },
+            },
           },
         ],
       },
@@ -1051,27 +1029,25 @@ export function catalogVarOptions(
 }
 
 /**
- * A post-install instruction rendered after a successful install, with
- * {@link INSTALL_PLACEHOLDERS} filled in.
+ * A post-install instruction rendered after a successful install, with the
+ * placeholders of `PLACEHOLDER_FIELDS.postInstall` filled in.
  */
-export const postInstallStepSchema = z.object({
-  type: z.enum(["markdown"]),
-  content: z.string().min(1),
-});
+export const postInstallStepSchema = z
+  .object({
+    type: z.enum(["markdown"]).describe('How `content` is written. Only `"markdown"` for now.'),
+    content: z
+      .string()
+      .min(1)
+      .describe(
+        "Markdown the manager shows once the app is installed, such as how to sign in the first " +
+          "time. These placeholders are filled in: " +
+          PLACEHOLDER_FIELDS.postInstall.map((name) => `\`{{${name}}}\``).join(", ") +
+          ". For the address people open, use `{{appUrl}}`, which follows a custom domain. An " +
+          "entry of several Workers names one of them with `{{appUrl:<name>}}` and the like.",
+      ),
+  })
+  .describe("A note the manager shows after the install.");
 export type PostInstallStep = z.infer<typeof postInstallStepSchema>;
-
-/**
- * A Cloudflare API-token permission an app needs for ITS OWN token (never the
- * manager's). Shown to the user so they can mint a scoped token at
- * install time. Kept descriptive rather than tied to Cloudflare's internal
- * permission-group ids, which can be added later if the UI needs them.
- */
-export const tokenPermissionSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  scope: z.enum(["account", "zone", "user"]).optional(),
-});
-export type TokenPermission = z.infer<typeof tokenPermissionSchema>;
 
 /** How a Vectorize index measures the distance between two vectors. */
 export const vectorizeMetricSchema = z.enum(["cosine", "euclidean", "dot-product"]);
@@ -1135,8 +1111,8 @@ export const vectorizeMetadataIndexesSchema = z
 
 /**
  * `resources.vectorize[binding]`: the index's fixed shape, and the metadata
- * indexes the manager creates on it right after the index. Optional so
- * manifests written before metadata indexes keep the same parsed shape.
+ * indexes the manager creates on it right after the index, when the app's
+ * queries filter on metadata.
  */
 export const catalogVectorizeIndexSchema = vectorizeIndexConfigSchema.extend({
   metadataIndexes: vectorizeMetadataIndexesSchema
@@ -1153,14 +1129,14 @@ export type CatalogVectorizeIndex = z.infer<typeof catalogVectorizeIndexSchema>;
  * Settings for resources the app's wrangler config binds but cannot fully
  * describe. `vectorize` is keyed by binding name and must cover every
  * Vectorize binding in the wrangler config; the packer refuses one without it.
- * `hyperdrive` lists every Hyperdrive binding with the database protocol
- * behind it: the database lives outside Cloudflare, so the install form asks
- * for its connection string, and the packer refuses a Hyperdrive binding the
- * list does not declare. `d1` says where a D1 binding's SQL lives when the
+ * `hyperdrive` declares every Hyperdrive binding, by name, with the database
+ * protocol behind it: the database lives outside Cloudflare, so the install
+ * form asks for its connection string, and the packer refuses a Hyperdrive
+ * binding it does not declare. `d1` says where a D1 binding's SQL lives when the
  * wrangler config's migrations folder does not (see `d1.ts`). `pipelines`
  * describes the stream behind each Pipelines binding and the Iceberg table
- * its events land in (see `pipelines.ts`). All optional so manifests written
- * before them keep the same parsed shape.
+ * its events land in (see `pipelines.ts`). Each is optional: most apps need
+ * none of them.
  */
 export const catalogResourcesSchema = z.object({
   vectorize: z.record(z.string().min(1), catalogVectorizeIndexSchema).optional(),
@@ -1172,16 +1148,13 @@ export const catalogResourcesSchema = z.object({
         "wrangler config. Not allowed on self-deploying entries.",
     )
     .optional(),
-  hyperdrive: z
-    .array(catalogHyperdriveSchema)
-    .min(1)
-    .max(MAX_HYPERDRIVE_BINDINGS)
+  hyperdrive: catalogHyperdriveBindingsSchema
     .describe(
-      "The Hyperdrive bindings of the wrangler config, each with the database it connects to " +
-        "(`postgres` or `mysql`). The database runs outside Cloudflare: the install form asks for " +
-        "its connection string, and Appflare creates a Hyperdrive configuration of the install's " +
-        "own from it. Every Hyperdrive binding must be listed, each once. Not allowed on " +
-        "self-deploying entries.",
+      "The Hyperdrive bindings of the wrangler config, keyed by the binding's name, each with the " +
+        "database it connects to (`postgres` or `mysql`). The database runs outside Cloudflare: the " +
+        "install form asks for its connection string, and Appflare creates a Hyperdrive " +
+        "configuration of the install's own from it. Every Hyperdrive binding must be listed. Not " +
+        "allowed on self-deploying entries.",
     )
     .optional(),
   pipelines: catalogPipelinesSchema.optional(),
@@ -1199,8 +1172,32 @@ export type CatalogResources = z.infer<typeof catalogResourcesSchema>;
 
 /** The pinned upstream source a version is built from; the bump bot edits it. */
 export const catalogSourceSchema = z.object({
-  ref: z.string().min(1),
-  sha: gitShaSchema,
+  ref: z
+    .string()
+    .min(1)
+    .describe(
+      "The tag or branch of the app's repository this entry is built from, for example " +
+        "`v1.4.2` or `main`. A tag that is a semver version is also the version the catalog " +
+        "shows. The catalog's bump bot moves it when upstream publishes a new release.",
+    ),
+  sha: gitShaSchema.describe(
+    "The commit the entry is built from, as its full 40-character SHA in lower case: the " +
+      "commit `ref` pointed at when the entry was last updated. The build always uses this " +
+      "commit, so a moved tag or a new commit on the branch changes nothing until `sha` does.",
+  ),
+  /**
+   * The version shown for this entry when the repository's tag does not
+   * describe this app (monorepos); it must change whenever `sha` moves.
+   * Omitted means the version comes from `ref` when it is a semver tag, else
+   * from the pinned commit's date and SHA.
+   */
+  version: semverSchema
+    .describe(
+      "The version shown for this entry when the repository's tag does not describe this app " +
+        "(monorepos); it must change whenever `sha` moves. Omitted, the version comes from `ref` " +
+        "when it is a semver tag, else from the pinned commit's date and SHA.",
+    )
+    .optional(),
 });
 export type CatalogSource = z.infer<typeof catalogSourceSchema>;
 
@@ -1208,26 +1205,54 @@ export type CatalogSource = z.infer<typeof catalogSourceSchema>;
  * How the health check after an install, update, or rollback reads the
  * Worker's answer.
  *
- * - `default`: a redirect or a 4xx counts as verified (the Worker answered),
- *   a server error (5xx) as unhealthy.
- * - `status-only`: any answer the Worker itself gives counts as verified,
+ * - `no-server-errors` (the default): any answer but a server error counts
+ *   as verified (a redirect or a 4xx still shows the Worker answered); a
+ *   server error (5xx) counts as unhealthy.
+ * - `any-response`: any answer the Worker itself gives counts as verified,
  *   server errors included, because an app behind Cloudflare Access or its
  *   own sign-in answers every unauthenticated request with a redirect, 401,
- *   403, or an error of its own. Connection failures and Cloudflare's own
- *   error pages (`error code: 1042` while the route goes live, or a Worker
- *   that crashed) are still retried or reported as before.
+ *   403, or an error of its own.
+ *
+ * Neither reads the body beyond the version check, and under both,
+ * connection failures and Cloudflare's own error pages (`error code: 1042`
+ * while the route goes live, or a Worker that crashed) are retried or
+ * reported, since they are not the Worker's answer.
  */
+export const HEALTH_MODES = ["no-server-errors", "any-response"] as const;
+
+/** The health mode of an entry that does not set one. */
+export const DEFAULT_HEALTH_MODE = "no-server-errors" satisfies (typeof HEALTH_MODES)[number];
+
 export const healthModeSchema = z
-  .enum(["default", "status-only"])
+  .enum(HEALTH_MODES)
   .describe(
-    'How the health check reads the Worker\'s answer. `"default"` counts redirects and 4xx ' +
-      'answers as verified and server errors (5xx) as unhealthy. `"status-only"` counts any ' +
-      "answer from the Worker itself as verified, server errors included: use it for apps whose " +
-      "health path sits behind Cloudflare Access or the app's own sign-in. Either way, " +
-      "connection failures and Cloudflare's error pages (such as `error code: 1042` while the " +
-      'route goes live) are retried. Defaults to `"default"`.',
+    'Which answers of the Worker count as serving. `"no-server-errors"` (the default): any ' +
+      "answer but a server error (5xx), so a redirect or a 404 passes and a 500 fails. " +
+      '`"any-response"`: any answer the Worker itself gives, server errors included; use it ' +
+      "for an app whose health path sits behind Cloudflare Access or the app's own sign-in. " +
+      "Either way, connection failures and Cloudflare's own error pages (such as " +
+      "`error code: 1042` while the route goes live) are retried and never count as serving.",
   );
 export type HealthMode = z.infer<typeof healthModeSchema>;
+
+/**
+ * How the manager checks that the app serves, after an install, update or
+ * rollback: the path it probes and how it reads the answer.
+ */
+export const catalogHealthSchema = z
+  .object({
+    path: z
+      .string()
+      .regex(/^\/[^\s?#]*$/, "health.path is a URL path starting with /, without query or fragment")
+      .default("/")
+      .describe(
+        "The path the manager probes, for example `/api/health`. When it answers JSON with a " +
+          'string `version`, an update\'s check of the new version requires that version. Defaults to `"/"`.',
+      ),
+    mode: healthModeSchema.default(DEFAULT_HEALTH_MODE),
+  })
+  .describe("How the manager checks that the app serves after an install, update or rollback.");
+export type CatalogHealth = z.infer<typeof catalogHealthSchema>;
 /** Most addresses one entry may ask Email Routing to deliver to its Worker. */
 export const EMAIL_ROUTING_MAX_RULES = 10;
 
@@ -1255,11 +1280,11 @@ export const catalogEmailRoutingSchema = z
   .object({
     catchAll: z
       .boolean()
+      .default(false)
       .describe(
         "Send every address of the zone that no other rule matches to the app (the zone's " +
           "catch-all rule). The install refuses when the catch-all already sends mail somewhere else.",
-      )
-      .optional(),
+      ),
     rules: z
       .array(
         z
@@ -1278,12 +1303,12 @@ export const catalogEmailRoutingSchema = z
           "address that already has a rule.",
         uniqueItems: true,
       })
-      .optional(),
+      .default([]),
   })
-  .refine((v) => v.catchAll === true || (v.rules?.length ?? 0) > 0, {
+  .refine((v) => v.catchAll || v.rules.length > 0, {
     message: "set catchAll to true or list at least one address in rules",
   })
-  .refine((v) => new Set(v.rules ?? []).size === (v.rules?.length ?? 0), {
+  .refine((v) => new Set(v.rules).size === v.rules.length, {
     message: "rules must not list an address twice",
     path: ["rules"],
   })
@@ -1345,9 +1370,8 @@ export function runsInSandbox(tier: InstallTier): tier is (typeof SANDBOX_RUN_TI
  * `expectedMinutes` changes nothing about the run itself. Catalog CI copies
  * both into the index entry's `build` block, where the manager reads them.
  * Refused on `artifact` entries, which never run in the user's account.
- * Optional for the same reason as `fixedWorkerName`.
  */
-export const catalogSandboxSchema = z
+export const catalogContainerSchema = z
   .object({
     expectedMinutes: expectedBuildMinutesSchema
       .describe(
@@ -1357,7 +1381,7 @@ export const catalogSandboxSchema = z
           "rates to show what each install or update costs before the admin confirms it. Whole minutes, " +
           `1 to ${MAX_EXPECTED_BUILD_MINUTES}; defaults to ${DEFAULT_EXPECTED_BUILD_MINUTES}.`,
       )
-      .optional(),
+      .default(DEFAULT_EXPECTED_BUILD_MINUTES),
     instanceType: sandboxInstanceTypeSchema
       .describe(
         "The container the run uses: `standard-1` (1/2 vCPU, 4 GiB memory, 8 GB disk) or " +
@@ -1365,14 +1389,14 @@ export const catalogSandboxSchema = z
           "smaller one. The larger container costs more per minute, which the manager's cost " +
           'estimate reflects. Defaults to `"standard-1"`.',
       )
-      .optional(),
+      .default(DEFAULT_SANDBOX_INSTANCE_TYPE),
   })
   .describe(
     "How a run of this app in the user's sandbox Worker is sized: the build of a `sandbox` tier " +
       "entry or the installer of a `self-deploying` one (not allowed on `artifact` entries). Both " +
       "fields feed the cost the manager shows before each install and update.",
   );
-export type CatalogSandbox = z.infer<typeof catalogSandboxSchema>;
+export type CatalogContainer = z.infer<typeof catalogContainerSchema>;
 
 /** The size of a run in the sandbox Worker, defaults filled in. */
 export interface SandboxBuildSettings {
@@ -1380,13 +1404,13 @@ export interface SandboxBuildSettings {
   instanceType: SandboxInstanceType;
 }
 
-/** `install.sandbox` with {@link DEFAULT_EXPECTED_BUILD_MINUTES} and {@link DEFAULT_SANDBOX_INSTANCE_TYPE} filled in. */
+/** `install.container`, or {@link DEFAULT_EXPECTED_BUILD_MINUTES} on {@link DEFAULT_SANDBOX_INSTANCE_TYPE} when the entry sets none. */
 export function sandboxBuildSettings(
-  install: Pick<CatalogInstall, "sandbox">,
+  install: Pick<CatalogInstall, "container">,
 ): SandboxBuildSettings {
   return {
-    expectedMinutes: install.sandbox?.expectedMinutes ?? DEFAULT_EXPECTED_BUILD_MINUTES,
-    instanceType: install.sandbox?.instanceType ?? DEFAULT_SANDBOX_INSTANCE_TYPE,
+    expectedMinutes: install.container?.expectedMinutes ?? DEFAULT_EXPECTED_BUILD_MINUTES,
+    instanceType: install.container?.instanceType ?? DEFAULT_SANDBOX_INSTANCE_TYPE,
   };
 }
 
@@ -1487,47 +1511,64 @@ interface InlineConfigTarget {
   wranglerConfigInline?: unknown;
 }
 
-/** How the packer builds and names the app. */
-/** The longest `install.wildcardReason`. */
+/** The longest `install.wildcardHostname.reason`. */
 export const WILDCARD_REASON_MAX_LENGTH = 200;
 
 /**
- * What is wrong with an entry's `wildcardHostname` and `wildcardReason`;
- * empty when nothing is. The reason goes with the flag and only with it, and
- * a self-deploying entry's own installer decides where its Workers answer.
+ * `install.wildcardHostname`: the app needs every name under one hostname
+ * (`*.<base>`), not one exact hostname, and says why in one short sentence
+ * shown where the admin assigns the base.
+ */
+export const catalogWildcardHostnameSchema = z
+  .object({
+    reason: z
+      .string()
+      .trim()
+      .min(1)
+      .max(WILDCARD_REASON_MAX_LENGTH)
+      .describe(
+        "One short sentence, shown where the admin assigns the hostname, on why the app needs every " +
+          'name under it, for example "Each tunnel gets its own address under this hostname." ' +
+          `At most ${WILDCARD_REASON_MAX_LENGTH} characters.`,
+      ),
+  })
+  .describe(
+    "The app needs every name under one hostname (`*.<base>`) rather than one exact hostname, " +
+      "for example a tunnel that gives each session a name of its own. The admin assigns the base " +
+      "(`tunnels.example.com`) in one of the account's domains; the manager then serves the " +
+      "primary Worker on the base and every name under it (a proxied wildcard DNS record and " +
+      "Workers routes). Not for the self-deploying tier.",
+  );
+export type CatalogWildcardHostname = z.infer<typeof catalogWildcardHostnameSchema>;
+
+/**
+ * What is wrong with an entry's `wildcardHostname`; empty when nothing is. A
+ * self-deploying entry's own installer decides where its Workers answer.
  */
 export function wildcardHostnameProblems(install: {
   tier: InstallTier;
-  wildcardHostname?: boolean | undefined;
-  wildcardReason?: string | undefined;
-}): Array<{ path: "wildcardHostname" | "wildcardReason"; message: string }> {
-  const problems: Array<{ path: "wildcardHostname" | "wildcardReason"; message: string }> = [];
-  if (install.wildcardHostname === true && install.tier === "self-deploying") {
-    problems.push({
+  wildcardHostname?: unknown;
+}): Array<{ path: "wildcardHostname"; message: string }> {
+  if (install.wildcardHostname === undefined || install.tier !== "self-deploying") return [];
+  return [
+    {
       path: "wildcardHostname",
       message:
         "install.wildcardHostname is not allowed for the self-deploying tier: the app's own installer decides where its Workers answer",
-    });
-  }
-  if (install.wildcardHostname === true && install.wildcardReason === undefined) {
-    problems.push({
-      path: "wildcardReason",
-      message:
-        "install.wildcardHostname needs install.wildcardReason: one short sentence the admin sees on why the app needs every name under its hostname",
-    });
-  }
-  if (install.wildcardHostname !== true && install.wildcardReason !== undefined) {
-    problems.push({
-      path: "wildcardReason",
-      message: "install.wildcardReason is only for an entry with install.wildcardHostname: true",
-    });
-  }
-  return problems;
+    },
+  ];
 }
 
+/** How the packer builds and names the app. */
 export const catalogInstallSchema = z
   .object({
-    tier: installTierSchema,
+    tier: installTierSchema
+      .default("artifact")
+      .describe(
+        'How the app is built: `"artifact"` (the default: a signed release catalog CI builds), ' +
+          '`"sandbox"` (built from the pinned commit in the account\'s sandbox Worker) or ' +
+          '`"self-deploying"` (the app\'s own installer, run in the sandbox Worker).',
+      ),
     packageManager: packageManagerSchema,
     wranglerConfig: z
       .string()
@@ -1538,38 +1579,37 @@ export const catalogInstallSchema = z
           "(`wrangler.toml.example`, `wrangler.jsonc.template`) is copied to its real name " +
           "(`wrangler.toml`) before it is read.",
       ),
-    /** The default Worker name; the installer may change it unless `fixedWorkerName` is set. */
-    workerName: z.string().min(1),
     /**
-     * The app only works under `workerName` (for example, it hard-codes its own
-     * hostname), so it installs at most once per account. Omitted means false.
-     * Optional rather than defaulted so manifests and artifacts written before the
-     * field existed keep the same parsed shape.
+     * The Worker name the install form suggests; the installer may change it
+     * unless `fixedWorkerName` is set. Omitted means the entry's slug; read
+     * it with {@link catalogWorkerName}.
      */
-    fixedWorkerName: z.boolean().optional(),
-    /**
-     * The path the manager probes to tell whether the app serves, for example
-     * `/api/health`. When it answers JSON with a string `version`, an update's
-     * check of the new version requires that version. Omitted means `/`;
-     * optional for the same reason as `fixedWorkerName`.
-     */
-    healthPath: z
+    workerName: z
       .string()
-      .regex(/^\/[^\s?#]*$/, "healthPath is a URL path starting with /, without query or fragment")
+      .min(1)
+      .describe(
+        "The Worker name the install form suggests; the admin may change it unless " +
+          "`fixedWorkerName` is set. Defaults to the entry's `slug`.",
+      )
       .optional(),
     /**
-     * How the health check reads the Worker's answer. Omitted means `"default"`.
-     * `"status-only"` is for apps whose every route sits behind Cloudflare
-     * Access or the app's own sign-in, so no unauthenticated request can show
-     * whether the app is healthy.
+     * The app only works under `workerName` (for example, it hard-codes its own
+     * hostname), so it installs at most once per account.
      */
-    healthMode: healthModeSchema.optional(),
+    fixedWorkerName: z
+      .boolean()
+      .default(false)
+      .describe(
+        "The app only works under `workerName` (for example, it hard-codes its own hostname), " +
+          "so it installs at most once per account.",
+      ),
+    /** How the manager checks that the app serves; see {@link catalogHealthSchema}. */
+    health: catalogHealthSchema.default({ path: "/", mode: DEFAULT_HEALTH_MODE }),
     /**
      * The command, or the commands in order, the packer runs in the checkout
      * after installing dependencies and before bundling, for apps whose
      * wrangler config has no `build.command` (Vite, React Router, OpenNext).
-     * Optional for the same reason as `fixedWorkerName`; read it with
-     * {@link buildCommandList}.
+     * Read it with {@link buildCommandList}.
      */
     buildCommand: z
       .union([
@@ -1592,8 +1632,8 @@ export const catalogInstallSchema = z
     /**
      * Build-time constants the packer sets in the environment of every build
      * command and of wrangler's bundling; see {@link buildEnvSchema}.
-     * Optional for the same reason as `fixedWorkerName`. Refused on
-     * `self-deploying` entries, whose installer runs without the packer.
+     * Refused on `self-deploying` entries, whose installer runs without the
+     * packer.
      */
     buildEnv: buildEnvSchema
       .describe(
@@ -1616,8 +1656,7 @@ export const catalogInstallSchema = z
     /**
      * The directories whose dependencies the packer installs, in order; see
      * {@link catalogInstallDirsSchema}. Omitted means the root alone; read it
-     * with `installDirList`. Optional for the same reason as
-     * `fixedWorkerName`. Refused on `self-deploying` entries, whose installer
+     * with `installDirList`. Refused on `self-deploying` entries, whose installer
      * runs without the packer. An entry of several Workers lists them once
      * for all its Workers.
      */
@@ -1634,65 +1673,26 @@ export const catalogInstallSchema = z
       )
       .optional(),
     /**
-     * The version shown for this entry when the repository's tag does not
-     * describe this app (monorepos); it must change whenever `source` moves.
-     * Omitted means the version comes from `source.ref` when it is a semver tag,
-     * else from the pinned commit's date and SHA.
-     */
-    version: semverSchema
-      .describe(
-        "The version shown for this entry when the repository's tag does not describe this app " +
-          "(monorepos); it must change whenever `source` moves.",
-      )
-      .optional(),
-    /**
      * Email the app receives through Email Routing; see
-     * {@link catalogEmailRoutingSchema}. Optional for the same reason as
-     * `fixedWorkerName`. Refused on `self-deploying` entries: their own
+     * {@link catalogEmailRoutingSchema}. Refused on `self-deploying` entries: their own
      * installer deploys the app, and Appflare sets up no routing for it.
      */
     emailRouting: catalogEmailRoutingSchema.optional(),
     /**
-     * The app needs every name under one hostname (`*.<base>`), not one
-     * exact hostname: a tunnel that gives each session a name of its own,
-     * for example. The admin assigns the base, and the manager serves the
-     * primary Worker on the base and every name under it. Optional for the
-     * same reason as `fixedWorkerName`; requires `wildcardReason`, and a
-     * `self-deploying` entry cannot set it (its installer deploys the app
-     * and decides where it answers).
+     * The app needs every name under one hostname; see
+     * {@link catalogWildcardHostnameSchema}. A `self-deploying` entry cannot
+     * set it: its installer deploys the app and decides where it answers.
      */
-    wildcardHostname: z
-      .boolean()
-      .describe(
-        "`true` when the app needs every name under one hostname (`*.<base>`) rather than one " +
-          "exact hostname, for example a tunnel that gives each session a name of its own. The admin " +
-          "assigns the base (`tunnels.example.com`) in one of the account's domains; the manager then " +
-          "serves the primary Worker on the base and every name under it (a proxied wildcard DNS " +
-          "record and Workers routes). Needs `wildcardReason`. Not for the self-deploying tier.",
-      )
-      .optional(),
-    /** Why the app needs `wildcardHostname`, one short sentence shown where the admin assigns the base. */
-    wildcardReason: z
-      .string()
-      .trim()
-      .min(1)
-      .max(WILDCARD_REASON_MAX_LENGTH)
-      .describe(
-        "One short sentence, shown where the admin assigns the hostname, on why the app needs every " +
-          'name under it, for example "Each tunnel gets its own address under this hostname." ' +
-          `Required with \`wildcardHostname: true\`, not allowed otherwise. At most ${WILDCARD_REASON_MAX_LENGTH} characters.`,
-      )
-      .optional(),
+    wildcardHostname: catalogWildcardHostnameSchema.optional(),
     /**
      * The size of a run in the sandbox Worker (a `sandbox` entry's build or a
-     * `self-deploying` entry's installer); see {@link catalogSandboxSchema}.
+     * `self-deploying` entry's installer); see {@link catalogContainerSchema}.
      * Refused on `artifact` entries, which never run in the user's account.
      */
-    sandbox: catalogSandboxSchema.optional(),
+    container: catalogContainerSchema.optional(),
     /**
      * Changes to the wrangler config the packer applies before wrangler reads
-     * it; see {@link configPatchSchema}. Optional for the same reason as
-     * `fixedWorkerName`. An entry of several Workers sets it per Worker
+     * it; see {@link configPatchSchema}. An entry of several Workers sets it per Worker
      * instead, and a `self-deploying` entry cannot set it: its installer
      * runs without the packer.
      */
@@ -1701,8 +1701,7 @@ export const catalogInstallSchema = z
      * The wrangler config of an app whose repository ships none; see
      * {@link wranglerConfigInlineSchema}. `wranglerConfig` then names where
      * the packer writes it (`.appflare.wrangler.jsonc`, in a directory of
-     * the repository or at its root). Optional for the same reason as
-     * `fixedWorkerName`. Not beside `configPatch` (change the inline config
+     * the repository or at its root). Not beside `configPatch` (change the inline config
      * instead), nor beside `workers` (set it per Worker), nor on a
      * `self-deploying` entry, whose installer runs without the packer.
      */
@@ -1718,8 +1717,7 @@ export const catalogInstallSchema = z
     /**
      * Toolchains beyond Node.js the build needs; see {@link CATALOG_TOOLCHAINS}.
      * The packer records them (the artifact carries the catalog manifest) and
-     * installs nothing itself. Optional for the same reason as
-     * `fixedWorkerName`; read it with {@link installToolchains}. Refused on
+     * installs nothing itself. Read it with {@link installToolchains}. Refused on
      * the tiers that build in the sandbox Worker, whose image has none.
      */
     toolchains: z
@@ -1745,7 +1743,7 @@ export const catalogInstallSchema = z
     /**
      * An app that installs as several Workers deployed together; see
      * {@link catalogEntryWorkerSchema}. Omitted for an app of one Worker
-     * (`wranglerConfig`). Optional for the same reason as `fixedWorkerName`.
+     * (`wranglerConfig`).
      */
     workers: z
       .array(catalogEntryWorkerSchema)
@@ -1769,11 +1767,11 @@ export const catalogInstallSchema = z
     for (const problem of entryWorkersProblems(install)) {
       ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
     }
-    if (install.sandbox !== undefined && !runsInSandbox(install.tier)) {
+    if (install.container !== undefined && !runsInSandbox(install.tier)) {
       ctx.addIssue({
         code: "custom",
-        path: ["sandbox"],
-        message: `install.sandbox is only for the sandbox and self-deploying tiers, which run in the sandbox Worker; this entry's tier is ${install.tier}`,
+        path: ["container"],
+        message: `install.container is only for the sandbox and self-deploying tiers, which run in the sandbox Worker; this entry's tier is ${install.tier}`,
       });
     }
     const problem = selfDeployingTierProblem(install);
@@ -1835,7 +1833,7 @@ export const catalogInstallSchema = z
     }
   })
   // The refinements do not reach the JSON Schema; `allOf` states them there
-  // (no `sandbox`, or a tier that runs in the sandbox Worker; `selfDeploying`
+  // (no `container`, or a tier that runs in the sandbox Worker; `selfDeploying`
   // exactly when the tier is `self-deploying`; no `emailRouting` or
   // `installDirs` on a `self-deploying` entry; `workers` and `toolchains`
   // only on the `artifact` tier; `configPatch` neither beside `workers` nor
@@ -1846,14 +1844,14 @@ export const catalogInstallSchema = z
     allOf: [
       {
         anyOf: [
-          { not: { required: ["sandbox"] } },
-          { properties: { tier: { enum: [...SANDBOX_RUN_TIERS] } } },
+          { not: { required: ["container"] } },
+          { required: ["tier"], properties: { tier: { enum: [...SANDBOX_RUN_TIERS] } } },
         ],
       },
       {
         anyOf: [
           {
-            required: ["selfDeploying"],
+            required: ["tier", "selfDeploying"],
             properties: { tier: { const: "self-deploying" } },
           },
           {
@@ -1904,21 +1902,11 @@ export const catalogInstallSchema = z
           { properties: { tier: { const: "artifact" } } },
         ],
       },
-      // `wildcardReason` exactly when `wildcardHostname` is true, and neither
-      // on a self-deploying entry.
+      // No wildcard hostname on a self-deploying entry.
       {
         anyOf: [
-          {
-            required: ["wildcardHostname", "wildcardReason"],
-            properties: {
-              wildcardHostname: { const: true },
-              tier: { not: { const: "self-deploying" } },
-            },
-          },
-          {
-            not: { required: ["wildcardReason"] },
-            properties: { wildcardHostname: { const: false } },
-          },
+          { not: { required: ["wildcardHostname"] } },
+          { properties: { tier: { not: { const: "self-deploying" } } } },
         ],
       },
       // No build-time constants on a self-deploying entry.
@@ -1934,22 +1922,20 @@ export type CatalogInstall = z.infer<typeof catalogInstallSchema>;
 
 /** Whether the app needs every name under one hostname (`install.wildcardHostname`). */
 export function needsWildcardHostname(install: Pick<CatalogInstall, "wildcardHostname">): boolean {
-  return install.wildcardHostname === true;
+  return install.wildcardHostname !== undefined;
 }
 
-/** Whether the app must run under its catalog `workerName` (and so installs once). */
-export function hasFixedWorkerName(install: Pick<CatalogInstall, "fixedWorkerName">): boolean {
-  return install.fixedWorkerName === true;
+/** The Worker name the install form suggests: `install.workerName`, else the slug. */
+export function catalogWorkerName(manifest: {
+  slug: string;
+  install: Pick<CatalogInstall, "workerName">;
+}): string {
+  return manifest.install.workerName ?? manifest.slug;
 }
 
-/** The path health checks probe: `install.healthPath`, else `/`. */
-export function appHealthPath(install: Pick<CatalogInstall, "healthPath">): string {
-  return install.healthPath ?? "/";
-}
-
-/** How the health check reads the Worker's answer: `install.healthMode`, else `default`. */
-export function appHealthMode(install: Pick<CatalogInstall, "healthMode">): HealthMode {
-  return install.healthMode ?? "default";
+/** The app's homepage: `homepage`, else its repository on GitHub. */
+export function catalogHomepage(manifest: Pick<CatalogManifest, "homepage" | "repo">): string {
+  return manifest.homepage ?? `https://github.com/${manifest.repo}`;
 }
 
 /**
@@ -1959,13 +1945,14 @@ export function appHealthMode(install: Pick<CatalogInstall, "healthMode">): Heal
  * required checks, the full install check included, pass. Without it, or with
  * `false`, a maintainer reviews and merges each bump. Set it for entries whose
  * maintainers trust upstream's tags to be releasable as they are. The bot does
- * not auto-merge an entry that sets `install.version`, because a person has to
+ * not auto-merge an entry that sets `source.version`, because a person has to
  * update that version with each bump.
  */
 export const catalogBumpSchema = z
   .object({
     autoMerge: z
       .boolean()
+      .default(false)
       .describe(
         "Let the bump bot's pull request merge itself once the required checks, including " +
           "the install check, pass. For entries whose maintainers trust upstream's tags to be " +
@@ -2035,7 +2022,7 @@ export function catalogAuthors(
   return manifest.authors ?? authorsFromRepo(manifest.repo);
 }
 
-/** What an omitted catalog manifest `revision` means. */
+/** A catalog manifest's first `revision`, and what an omitted one means. */
 export const FIRST_CATALOG_REVISION = 1;
 
 /**
@@ -2050,44 +2037,66 @@ export const catalogRevisionSchema = z
   .describe(
     "Which edit of this entry's form and copy the catalog publishes for the build its `source` " +
       "already released, starting at 1 (the default when omitted). Raise it by one to publish a " +
-      "change to `name`, `summary`, `tagline`, `homepage`, `license`, `licenseNote`, `categories`, " +
-      "`authors`, `maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving " +
-      "`source`: the released artifact stays as it is, and managers show the new form without " +
-      "an update. " +
-      "Anything else needs a new build, so move `source` instead.",
+      "change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, " +
+      "`secrets`, `vars`, `postInstall` or `bump` without moving `source`: the released artifact " +
+      "stays as it is, and managers show the new form without an update. `tagline`, " +
+      "`licenseNote` and `authors` need no revision: the catalog shows them from the current " +
+      "manifest. Anything else needs a new build, so move `source` instead.",
+  );
+
+/**
+ * A catalog slug, held to {@link CATALOG_SLUG_PATTERN} wherever it is read:
+ * it becomes a Worker name, a folder and a page address, so a manifest or an
+ * index row with any other slug could never be installed.
+ */
+export const catalogSlugSchema = z
+  .string()
+  .regex(
+    CATALOG_SLUG_PATTERN,
+    "must be lowercase letters, digits and dashes, starting with a letter or digit, at most 63 characters",
   );
 
 /** The full catalog manifest, `appflare.jsonc`. */
 export const catalogManifestSchema = z
   .object({
     $schema: z.url().optional(),
-    slug: z.string().min(1),
-    name: z.string().min(1),
-    summary: z.string().min(1),
+    slug: catalogSlugSchema.describe(
+      "The entry's permanent id, in lowercase letters, digits and hyphens, for example " +
+        "`open-seo`. It is also the entry's folder in the catalog, the first part of its release " +
+        "tags (`<slug>@<version>`) and the Worker name the install form suggests. It never " +
+        "changes once the entry is published.",
+    ),
+    name: z
+      .string()
+      .min(1)
+      .describe("The app's name as the catalog and the manager show it, for example `Open SEO`."),
+    summary: z
+      .string()
+      .min(1)
+      .describe(
+        "What the app does and who it is for, in a few plain sentences, shown on the app's page " +
+          "(a blank line starts a new paragraph). The catalog search reads it too.",
+      ),
+    /** The one-line pitch on catalog tiles. */
+    tagline: taglineSchema,
     /**
-     * The one-line pitch on catalog tiles. Optional rather than defaulted so
-     * manifests and artifacts written before the field existed keep the same
-     * parsed shape.
+     * Shown as a link in the manager; https only (the regex also lands in the
+     * JSON Schema). Omitted means the repository on GitHub; read it with
+     * {@link catalogHomepage}.
      */
-    tagline: taglineSchema.optional(),
-    /** Shown as a link in the manager; https only (the regex also lands in the JSON Schema). */
     homepage: z
       .url({ protocol: /^https$/, error: "must be an https:// URL" })
-      .regex(/^https:\/\//, "must be an https:// URL"),
+      .regex(/^https:\/\//, "must be an https:// URL")
+      .describe("The app's website, as an https:// URL. Defaults to its repository on GitHub.")
+      .optional(),
     repo: ownerRepoSchema,
     license: licenseSchema,
-    /**
-     * A short line shown next to the license. Optional rather than defaulted
-     * so manifests and artifacts written before the field existed keep the
-     * same parsed shape.
-     */
+    /** A short line shown next to the license. */
     licenseNote: licenseNoteSchema.optional(),
-    categories: z.array(z.string().min(1)),
+    categories: catalogCategoriesSchema,
     /**
-     * Who wrote the app upstream, as the catalog shows them. Optional rather
-     * than defaulted so manifests and artifacts written before the field existed
-     * keep the same parsed shape; the catalog index lists the owner of `repo`
-     * when it is omitted ({@link catalogAuthors}).
+     * Who wrote the app upstream, as the catalog shows them. The catalog
+     * index lists the owner of `repo` when it is omitted ({@link catalogAuthors}).
      */
     authors: z
       .array(catalogAuthorSchema)
@@ -2099,34 +2108,46 @@ export const catalogManifestSchema = z
       )
       .optional(),
     /** GitHub users who package the app for the catalog; shown as "Packaged by". */
-    maintainers: z.array(z.string().min(1)),
+    maintainers: z
+      .array(z.string().min(1))
+      .default([])
+      .describe(
+        "The GitHub usernames, without @, of the people who package the app for the catalog and " +
+          'look after this entry, shown as "Packaged by". Not the app\'s own authors (those are ' +
+          "`authors`).",
+      ),
     source: catalogSourceSchema,
     install: catalogInstallSchema,
-    plan: planSchema,
-    requires: z.array(requirementSchema),
-    secrets: z.array(catalogSecretSchema),
-    vars: z.array(catalogVarSchema),
-    postInstall: z.array(postInstallStepSchema),
-    tokenPermissions: z.array(tokenPermissionSchema),
+    plan: planSchema.describe(
+      'The Cloudflare Workers plan the app needs: `"free"` when it runs on Workers Free, ' +
+        '`"paid"` when it needs Workers Paid. An entry with Pipelines, or with more than ' +
+        `${MAX_FREE_PLAN_ENTRY_WORKERS} Workers, must say \`"paid"\`.`,
+    ),
+    requires: z
+      .array(requirementSchema)
+      .default([])
+      .describe("Account capabilities the app needs beyond the free Workers baseline."),
+    secrets: z.array(catalogSecretSchema).default([]),
+    vars: z.array(catalogVarSchema).default([]),
+    postInstall: z
+      .array(postInstallStepSchema)
+      .default([])
+      .describe("Instructions shown after a successful install, in order."),
+    tokenPermissions: tokenPermissionsSchema
+      .default([])
+      .describe(
+        "The permissions of the Cloudflare API token the admin creates for the app itself " +
+          "(never Appflare's own). The secret that takes the token sets `cloudflareToken: true`.",
+      ),
     /**
      * Resource settings the wrangler config cannot express, such as a Vectorize
-     * index's dimensions and metric. Optional so manifests and artifacts written
-     * before the field existed keep the same parsed shape.
+     * index's dimensions and metric.
      */
     resources: catalogResourcesSchema.optional(),
-    /**
-     * How the catalog's bump bot treats this entry. Optional for the same reason
-     * as `resources`; omitted means a maintainer merges every bump.
-     */
-    bump: catalogBumpSchema.optional(),
-    /**
-     * Which edit of the entry's form and copy this is, for one build. Optional
-     * rather than defaulted for the same reason as `resources`: a default would
-     * change the parsed shape, and so the published bytes and digest, of every
-     * manifest and artifact written before the field existed. Omitted means
-     * {@link FIRST_CATALOG_REVISION}; read it with `catalogRevision()`.
-     */
-    revision: catalogRevisionSchema.optional(),
+    /** How the catalog's bump bot treats this entry; by default a maintainer merges every bump. */
+    bump: catalogBumpSchema.default({ autoMerge: false }),
+    /** Which edit of the entry's form and copy this is, for one build. */
+    revision: catalogRevisionSchema.default(FIRST_CATALOG_REVISION),
   })
   .superRefine((manifest, ctx) => {
     for (const problem of seedManifestProblems(manifest)) {
@@ -2202,28 +2223,22 @@ export const catalogManifestSchema = z
     };
     check("secrets", manifest.secrets);
     check("vars", manifest.vars);
-    // `{{workerUrl:<name>}}` of a Worker kept off workers.dev names a URL
-    // that never answers.
-    const offWorkersDev = (declared ?? []).filter((w) => w.workersDev === false).map((w) => w.name);
-    const texts: Array<{ path: Array<string | number>; text: string }> = [
-      ...manifest.postInstall.map((step, i) => ({
-        path: ["postInstall", i, "content"],
-        text: step.content,
-      })),
-      ...manifest.vars.flatMap((v, i) =>
-        typeof v.default === "string" ? [{ path: ["vars", i, "default"], text: v.default }] : [],
-      ),
-    ];
-    for (const { path, text } of texts) {
-      for (const name of offWorkersDev) {
-        if (new RegExp(`\\{\\{\\s*workerUrl:${name}\\s*\\}\\}`).test(text)) {
-          ctx.addIssue({
-            code: "custom",
-            path,
-            message: `{{workerUrl:${name}}} names the Worker "${name}", which sets workersDev to false and so has no URL`,
-          });
-        }
+    // Placeholders a field does not take, or that name a Worker the entry
+    // does not have (or one with no address).
+    const entry = { workers: declared };
+    manifest.postInstall.forEach((step, i) => {
+      for (const message of placeholderProblems(step.content, "postInstall", entry)) {
+        ctx.addIssue({ code: "custom", path: ["postInstall", i, "content"], message });
       }
+    });
+    manifest.vars.forEach((v, i) => {
+      if (v.default === undefined) return;
+      for (const message of placeholderProblems(v.default, "varDefault", entry)) {
+        ctx.addIssue({ code: "custom", path: ["vars", i, "default"], message });
+      }
+    });
+    for (const problem of cloudflareTokenProblems(manifest)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
     }
   })
   .superRefine((manifest, ctx) => {
@@ -2232,20 +2247,8 @@ export const catalogManifestSchema = z
     }
   })
   .superRefine((manifest, ctx) => {
-    const hyperdrive = manifest.resources?.hyperdrive ?? [];
-    const seen = new Set<string>();
-    hyperdrive.forEach((decl, i) => {
-      if (seen.has(decl.binding)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["resources", "hyperdrive", i, "binding"],
-          message: `the Hyperdrive binding ${decl.binding} is declared twice`,
-        });
-      }
-      seen.add(decl.binding);
-    });
     if (manifest.install.tier !== "self-deploying") return;
-    if (hyperdrive.length > 0) {
+    if (manifest.resources?.hyperdrive !== undefined) {
       ctx.addIssue({
         code: "custom",
         path: ["resources", "hyperdrive"],
@@ -2329,9 +2332,8 @@ export const catalogManifestSchema = z
   // self-deploying ones there (no optional, derived or seed-only secrets, no
   // derived or seed-only vars, no Hyperdrive declarations, no D1 layout, no
   // Pipelines), and that Pipelines needs `plan: "paid"`. Whether a
-  // `derive.from` names another secret, a Hyperdrive binding is declared
-  // twice, or a sink's `tokenSecret` names a secret the install form asks
-  // for, cannot be said in JSON Schema.
+  // `derive.from` names another secret, or a sink's `tokenSecret` names a
+  // secret the install form asks for, cannot be said in JSON Schema.
   .meta({
     allOf: [
       {
@@ -2407,3 +2409,167 @@ export const catalogManifestSchema = z
     ],
   });
 export type CatalogManifest = z.infer<typeof catalogManifestSchema>;
+
+/**
+ * What is wrong with an entry's `cloudflareToken` secret, one issue each with
+ * its path from the manifest's root: at most one secret takes the app's
+ * token, the admin enters it (not generated, derived or seed-only), and the
+ * entry lists the permissions the token needs.
+ */
+export function cloudflareTokenProblems(manifest: {
+  secrets: ReadonlyArray<
+    Pick<CatalogSecret, "name" | "generate" | "derive"> & {
+      cloudflareToken?: boolean | undefined;
+      seedOnly?: boolean | undefined;
+    }
+  >;
+  tokenPermissions: CatalogManifest["tokenPermissions"];
+  resources?: Pick<NonNullable<CatalogManifest["resources"]>, "pipelines"> | undefined;
+}): Array<{ path: Array<string | number>; message: string }> {
+  const problems: Array<{ path: Array<string | number>; message: string }> = [];
+  const flagged = manifest.secrets.flatMap((s, i) => (s.cloudflareToken === true ? [i] : []));
+  for (const i of flagged.slice(1)) {
+    problems.push({
+      path: ["secrets", i, "cloudflareToken"],
+      message: `only one secret takes the app's Cloudflare API token; ${manifest.secrets[flagged[0] ?? 0]?.name} already does`,
+    });
+  }
+  for (const i of flagged) {
+    const secret = manifest.secrets[i];
+    if (secret === undefined) continue;
+    if (secret.generate !== undefined || secret.derive !== undefined || secret.seedOnly === true) {
+      problems.push({
+        path: ["secrets", i, "cloudflareToken"],
+        message: `${secret.name} takes the app's Cloudflare API token, which the admin creates and enters; it cannot be generated, derived or seed-only`,
+      });
+    }
+  }
+  if (flagged.length > 0 && appTokenPermissions(manifest).length === 0) {
+    problems.push({
+      path: ["secrets", flagged[0] ?? 0, "cloudflareToken"],
+      message:
+        "a secret takes the app's Cloudflare API token, but tokenPermissions lists no permission for that token",
+    });
+  }
+  return problems;
+}
+
+/**
+ * Fields of catalog manifests written before this version, where each went.
+ * A path part of `null` stands for any index or key. The strict schemas name
+ * the new field instead of asking to check the spelling.
+ */
+const RENAMED_FIELDS: ReadonlyArray<{
+  path: ReadonlyArray<string | null>;
+  message: (at: string) => string;
+}> = [
+  {
+    path: ["vars", null, "required"],
+    message: (at) =>
+      `${at} was removed: every var needs a value (typed, or its default) unless it sets "optional": true`,
+  },
+  { path: ["install", "healthPath"], message: (at) => `${at} is now install.health.path` },
+  {
+    path: ["install", "healthMode"],
+    message: (at) =>
+      `${at} is now install.health.mode, whose values are "${HEALTH_MODES.join('" and "')}" ("status-only" became "any-response")`,
+  },
+  {
+    path: ["install", "wildcardReason"],
+    message: (at) => `${at} is now install.wildcardHostname: { "reason": "..." }`,
+  },
+  { path: ["install", "sandbox"], message: (at) => `${at} is now install.container` },
+  { path: ["install", "version"], message: (at) => `${at} is now source.version` },
+  {
+    path: ["resources", "d1", null, "migrations"],
+    message: (at) =>
+      `${at} is now migrationsGlob (a glob); a folder of migrations is migrationsDir`,
+  },
+  {
+    path: ["install", "selfDeploying", "workers"],
+    message: (at) => `${at} is now install.selfDeploying.workerNames`,
+  },
+  {
+    path: ["install", "selfDeploying", "stateStore"],
+    message: (at) => `${at} was removed: the installer always keeps its state in the account`,
+  },
+  {
+    path: ["install", "selfDeploying", "stageArg"],
+    message: (at) =>
+      `${at} was removed: the sandbox Worker always passes the tool's own stage option`,
+  },
+  {
+    path: ["tokenPermissions", null, "description"],
+    message: (at) => `${at} is now reason`,
+  },
+  {
+    path: ["tokenPermissions", null, "name"],
+    message: (at) =>
+      `${at} was replaced by group, scope and access, for example { "group": "DNS", "scope": "zone", "access": "edit" }`,
+  },
+];
+
+/** What the strict schemas say about an unknown key: where a renamed field went, or null. */
+function renamedFieldMessage(path: ReadonlyArray<string | number>): string | null {
+  const renamed = RENAMED_FIELDS.find(
+    (r) =>
+      r.path.length === path.length && r.path.every((part, i) => part === null || part === path[i]),
+  );
+  return renamed === undefined ? null : renamed.message(formatPath(path));
+}
+
+/**
+ * What the strict schemas check beyond the lenient one, from the manifest as
+ * written: `license` by {@link catalogLicenseProblem}, `categories` against
+ * the fixed list, and each `tokenPermissions[].group` against its scope's
+ * groups. A value of the wrong shape is the lenient schema's problem,
+ * reported once.
+ */
+function authoringProblems(input: unknown, repositoryBuild: boolean): StrictProblem[] {
+  if (typeof input !== "object" || input === null) return [];
+  const manifest = input as { license?: unknown; categories?: unknown; tokenPermissions?: unknown };
+  const problems: StrictProblem[] = [];
+  const license = manifest.license;
+  if (typeof license === "string" && licenseProblem(license) === null) {
+    const problem = catalogLicenseProblem(license, { repositoryBuild });
+    if (problem !== null) problems.push({ path: ["license"], message: `license ${problem}` });
+  }
+  for (const problem of catalogCategoryProblems(manifest.categories)) {
+    problems.push({ path: ["categories", ...problem.path], message: problem.message });
+  }
+  for (const problem of tokenPermissionGroupProblems(manifest.tokenPermissions)) {
+    problems.push({ path: ["tokenPermissions", ...problem.path], message: problem.message });
+  }
+  return problems;
+}
+
+/**
+ * The catalog manifest as the tools that write it check it: the packer, the
+ * catalog checks and the CLI. It refuses every key {@link catalogManifestSchema}
+ * would strip (a misspelled field, or one that was renamed, whose message
+ * names the new field), holds `categories` to `CATALOG_CATEGORIES` and
+ * `tokenPermissions[].group` to `APP_TOKEN_PERMISSION_GROUPS`, and holds
+ * `license` to {@link catalogLicenseProblem}: SPDX ids of the current list, no
+ * `NOASSERTION` or `SEE LICENSE IN`, which only the manifest Appflare writes
+ * for a repository build carries ({@link strictRepositoryBuildManifestSchema}).
+ * Managers read manifests with {@link catalogManifestSchema}, which strips
+ * unknown keys and takes any category or group name, so a manifest written
+ * for a later version still reads.
+ */
+export const strictCatalogManifestSchema = strictSchema(
+  catalogManifestSchema,
+  (input) => authoringProblems(input, false),
+  renamedFieldMessage,
+);
+
+/**
+ * {@link strictCatalogManifestSchema} for the manifest Appflare writes for an
+ * app built from a repository without a catalog entry: the same checks, but
+ * `license` may also be `NOASSERTION` (the repository states none) or
+ * `SEE LICENSE IN <file>`, as its `package.json` says.
+ */
+export const strictRepositoryBuildManifestSchema = strictSchema(
+  catalogManifestSchema,
+  (input) => authoringProblems(input, true),
+  renamedFieldMessage,
+);

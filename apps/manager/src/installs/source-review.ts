@@ -3,6 +3,7 @@ import {
   appServices,
   boundToWorker,
   combinedWorkerFacts,
+  hyperdriveDeclarations,
   type RepositoryDetection,
   UNSUPPORTED_WRANGLER_SECTION_LABELS,
   workerUploadProblem,
@@ -83,7 +84,7 @@ export function reviewBuild(
   const plan = planBindings(
     workerName,
     entryBindings(manifest),
-    manifest.catalog.resources?.hyperdrive ?? [],
+    hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
     manifest.catalog.resources?.pipelines,
   );
   const queues = planEntryQueueConsumers(workerName, manifest, workers);

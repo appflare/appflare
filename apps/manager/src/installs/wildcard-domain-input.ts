@@ -150,8 +150,7 @@ export const WILDCARD_EXPLAINER =
 const wildcardManifest = z.object({
   catalog: z.object({
     install: z.object({
-      wildcardHostname: z.boolean().optional(),
-      wildcardReason: z.string().optional(),
+      wildcardHostname: z.object({ reason: z.string() }).optional(),
     }),
   }),
 });
@@ -165,8 +164,8 @@ export function wildcardOfManifest(manifestJson: string | null): { reason: strin
   if (manifestJson === null) return null;
   try {
     const parsed = wildcardManifest.safeParse(JSON.parse(manifestJson));
-    if (!parsed.success || parsed.data.catalog.install.wildcardHostname !== true) return null;
-    return { reason: parsed.data.catalog.install.wildcardReason ?? "" };
+    const wildcard = parsed.success ? parsed.data.catalog.install.wildcardHostname : undefined;
+    return wildcard === undefined ? null : { reason: wildcard.reason };
   } catch {
     return null;
   }

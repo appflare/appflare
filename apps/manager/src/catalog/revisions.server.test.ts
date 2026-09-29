@@ -26,7 +26,8 @@ import {
 const homePage = {
   name: "HOME_PAGE",
   label: "Home page",
-  required: false,
+  optional: false,
+  seedOnly: false,
   type: "select" as const,
   options: [
     { value: "default", label: "Show the landing page" },
@@ -241,7 +242,7 @@ describe("getAppManifest with a revision", () => {
       },
       new Date(),
     );
-    for (const app of [f.index, { ...f.index, catalogManifest: undefined, revision: undefined }]) {
+    for (const app of [f.index, { ...f.index, catalogManifest: undefined, revision: 1 }]) {
       const read = await getAppManifest({ KV: kv, DB: env.DB }, app, {
         fetch,
         signingKeys: f.keys,

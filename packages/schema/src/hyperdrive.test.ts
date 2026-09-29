@@ -4,7 +4,9 @@ import { catalogManifestSchema, wranglerConfigFromTemplate } from "./catalog";
 import {
   connectionStringExample,
   connectionStringProblems,
+  hyperdriveDeclarations,
   hyperdriveFieldLabel,
+  MAX_HYPERDRIVE_BINDINGS,
   parseConnectionString,
 } from "./hyperdrive";
 import { appServices, deriveServices } from "./services";
@@ -13,6 +15,7 @@ const validManifest = {
   slug: "feedlog",
   name: "Feedlog",
   summary: "Feedback boards on Workers.",
+  tagline: "An app on Workers",
   homepage: "https://github.com/linkcraftstudio/feedlog",
   repo: "linkcraftstudio/feedlog",
   license: "MIT",
@@ -42,12 +45,19 @@ describe("resources.hyperdrive", () => {
       resources: { hyperdrive },
     });
 
-  it("is optional, so manifests without it keep their parsed shape", () => {
+  it("is optional", () => {
     expect(catalogManifestSchema.parse(validManifest).resources).toBeUndefined();
   });
 
-  it("declares each binding with its protocol, and an optional label and help", () => {
-    const declared = [
+  it("declares each binding by name with its protocol, and an optional label and help", () => {
+    const declared = {
+      HYPERDRIVE: { protocol: "postgres", label: "Main database", help: "Postgres 15+." },
+      LEGACY: { protocol: "mysql" },
+    };
+    const parsed = withHyperdrive(declared);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.resources?.hyperdrive).toEqual(declared);
+    expect(hyperdriveDeclarations(parsed.data?.resources?.hyperdrive)).toEqual([
       {
         binding: "HYPERDRIVE",
         protocol: "postgres",
@@ -55,34 +65,36 @@ describe("resources.hyperdrive", () => {
         help: "Postgres 15+.",
       },
       { binding: "LEGACY", protocol: "mysql" },
-    ];
-    const parsed = withHyperdrive(declared);
-    expect(parsed.success).toBe(true);
-    expect(parsed.data?.resources?.hyperdrive).toEqual(declared);
+    ]);
+    expect(hyperdriveDeclarations(undefined)).toEqual([]);
   });
 
-  it("refuses unknown protocols, an empty list, and a binding declared twice", () => {
-    expect(withHyperdrive([{ binding: "DB", protocol: "sqlserver" }]).success).toBe(false);
-    expect(withHyperdrive([]).success).toBe(false);
-    const twice = withHyperdrive([
-      { binding: "DB", protocol: "postgres" },
-      { binding: "DB", protocol: "mysql" },
-    ]);
-    expect(twice.success).toBe(false);
-    expect(twice.error?.issues[0]?.path).toEqual(["resources", "hyperdrive", 1, "binding"]);
+  it("refuses unknown protocols, an empty record, too many bindings, and a list", () => {
+    expect(withHyperdrive({ DB: { protocol: "sqlserver" } }).success).toBe(false);
+    expect(withHyperdrive({}).success).toBe(false);
+    expect(withHyperdrive([{ binding: "DB", protocol: "postgres" }]).success).toBe(false);
+    const many = Object.fromEntries(
+      Array.from({ length: MAX_HYPERDRIVE_BINDINGS + 1 }, (_, i) => [
+        `DB${i}`,
+        { protocol: "mysql" },
+      ]),
+    );
+    expect(withHyperdrive(many).success).toBe(false);
   });
 
   it("is refused on self-deploying entries, whose installer creates its own", () => {
-    const refused = withHyperdrive([{ binding: "DB", protocol: "postgres" }], {
-      tier: "self-deploying",
-      selfDeploying: {
-        tool: "alchemy",
-        deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
-        destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-        stateStore: "cloudflare",
-        workers: ["app-{{stage}}"],
+    const refused = withHyperdrive(
+      { DB: { protocol: "postgres" } },
+      {
+        tier: "self-deploying",
+        selfDeploying: {
+          tool: "alchemy",
+          deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
+          destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
+          workerNames: ["app-{{stage}}"],
+        },
       },
-    });
+    );
     expect(refused.success).toBe(false);
     expect(refused.error?.issues[0]?.path).toEqual(["resources", "hyperdrive"]);
   });
@@ -100,7 +112,7 @@ describe("resources.hyperdrive", () => {
           requires: [],
           tokenPermissions: [],
           install: {},
-          resources: { hyperdrive: [{ binding: "DB", protocol: "postgres" }] },
+          resources: { hyperdrive: { DB: { protocol: "postgres" } } },
         },
         null,
       ).ids,

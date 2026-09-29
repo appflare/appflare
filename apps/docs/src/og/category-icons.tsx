@@ -1,4 +1,4 @@
-import { canonicalCategory } from "@appflare/schema/catalog-display";
+import { type CatalogCategory, isCatalogCategory } from "@appflare/schema/catalog-display";
 import {
   ArrowsClockwiseIcon,
   BellIcon,
@@ -17,10 +17,8 @@ import {
   FilmStripIcon,
   FolderIcon,
   GameControllerIcon,
-  GlobeIcon,
   GraduationCapIcon,
   type Icon,
-  LinkIcon,
   MegaphoneIcon,
   NetworkIcon,
   NotepadIcon,
@@ -41,7 +39,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  * The icon of each catalog category, the same ones the manager's category
  * cards show, so a shared category link looks like the category in Appflare.
  */
-const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
+const CATEGORY_ICONS: Readonly<Record<CatalogCategory, Icon>> = {
   ai: SparkleIcon,
   analytics: ChartLineIcon,
   bots: RobotIcon,
@@ -50,7 +48,6 @@ const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
   cms: BrowserIcon,
   community: UsersThreeIcon,
   "developer-tools": CodeIcon,
-  dns: GlobeIcon,
   ecommerce: ShoppingCartIcon,
   education: GraduationCapIcon,
   email: EnvelopeSimpleIcon,
@@ -58,7 +55,6 @@ const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
   files: FolderIcon,
   finance: CurrencyDollarIcon,
   games: GameControllerIcon,
-  "link-shortener": LinkIcon,
   marketing: MegaphoneIcon,
   media: FilmStripIcon,
   monitoring: PulseIcon,
@@ -83,7 +79,7 @@ const CATEGORY_ICONS: Readonly<Record<string, Icon>> = {
  * markup first.
  */
 export function categoryIconUri(category: string, color: string): string {
-  const Glyph = CATEGORY_ICONS[canonicalCategory(category)] ?? CloudIcon;
+  const Glyph = isCatalogCategory(category) ? CATEGORY_ICONS[category] : CloudIcon;
   const svg = renderToStaticMarkup(
     <Glyph size={256} color={color} weight="duotone" xmlns="http://www.w3.org/2000/svg" />,
   );

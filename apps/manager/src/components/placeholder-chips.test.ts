@@ -1,3 +1,4 @@
+import { INSTALL_PLACEHOLDERS, PER_WORKER_PLACEHOLDER_NAMES } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import {
   caretAt,
@@ -12,14 +13,14 @@ import {
   toSegments,
 } from "./placeholder-chips";
 
-const URL_VALUE = "{{workerUrl}}/auth/callback?account={{ accountId }}";
+const URL_VALUE = "{{appUrl}}/auth/callback?account={{ accountId }}";
 
 describe("placeholder chips", () => {
   it("split a value into text parts with one chip between each two", () => {
     expect(toSegments(URL_VALUE)).toEqual({
       texts: ["", "/auth/callback?account=", ""],
       chips: [
-        { raw: "{{workerUrl}}", key: "workerUrl", worker: null },
+        { raw: "{{appUrl}}", key: "appUrl", worker: null },
         { raw: "{{ accountId }}", key: "accountId", worker: null },
       ],
     });
@@ -56,9 +57,14 @@ describe("placeholder chips", () => {
 
   it("show a label for each chip, not the placeholder", () => {
     expect(toSegments(URL_VALUE).chips.map(chipLabel)).toEqual(["App address", "Account ID"]);
+    expect(chipLabel({ key: "appHostname", worker: null })).toBe("App hostname");
+    expect(chipLabel({ key: "workerUrl", worker: null })).toBe("workers.dev address");
+    expect(chipLabel({ key: "workerHostname", worker: null })).toBe("workers.dev hostname");
     expect(chipLabel({ key: "workerName", worker: null })).toBe("Worker name");
     expect(chipLabel({ key: "wildcardHostname", worker: null })).toBe("Wildcard domain");
-    expect(chipLabel({ key: "workerUrl", worker: "api" })).toBe("api address");
+    expect(chipLabel({ key: "appUrl", worker: "api" })).toBe("api address");
+    expect(chipLabel({ key: "workerUrl", worker: "api" })).toBe("api workers.dev address");
+    expect(chipLabel({ key: "workerName", worker: "api" })).toBe("api Worker name");
   });
 
   it("delete a chip whole with Backspace at the start of the text after it", () => {
@@ -72,7 +78,7 @@ describe("placeholder chips", () => {
 
   it("delete a chip whole with Delete at the end of the text before it", () => {
     const edit = chipKeyEdit(URL_VALUE, { part: 1, offset: 23 }, "Delete");
-    expect(edit?.value).toBe("{{workerUrl}}/auth/callback?account=");
+    expect(edit?.value).toBe("{{appUrl}}/auth/callback?account=");
     expect(edit?.caret).toEqual({ part: 1, offset: 23 });
   });
 
@@ -104,7 +110,7 @@ describe("placeholder chips", () => {
 
   it("edit one text part and keep the caret where it was", () => {
     const edit = setPart(URL_VALUE, 1, "/login", 6);
-    expect(edit.value).toBe("{{workerUrl}}/login{{ accountId }}");
+    expect(edit.value).toBe("{{appUrl}}/login{{ accountId }}");
     expect(edit.caret).toEqual({ part: 1, offset: 6 });
   });
 
@@ -119,25 +125,52 @@ describe("placeholder chips", () => {
   it("offer the app's placeholders, the wildcard domain and each Worker only where they apply", () => {
     expect(placeholderOptions().map((o) => o.label)).toEqual([
       "App address",
+      "App hostname",
       "Worker name",
       "Account ID",
     ]);
     expect(
       placeholderOptions({ wildcard: true, workers: ["api"] }).map((o) => o.placeholder),
     ).toEqual([
-      "{{workerUrl}}",
+      "{{appUrl}}",
+      "{{appHostname}}",
       "{{workerName}}",
       "{{accountId}}",
       "{{wildcardHostname}}",
-      "{{workerUrl:api}}",
+      "{{appUrl:api}}",
       "{{workerName:api}}",
     ]);
   });
 
+  it("show every placeholder the schema fills in as a chip", () => {
+    const every = INSTALL_PLACEHOLDERS.map((name) => `{{${name}}}`).join(" ");
+    expect(toSegments(every).chips.map((c) => c.key)).toEqual([...INSTALL_PLACEHOLDERS]);
+    const perWorker = PER_WORKER_PLACEHOLDER_NAMES.map((name) => `{{${name}:api}}`).join(" ");
+    expect(toSegments(perWorker, ["api"]).chips.map((c) => c.key)).toEqual([
+      ...PER_WORKER_PLACEHOLDER_NAMES,
+    ]);
+  });
+
   it("say what a chip is filled in with", () => {
-    const known = { workerUrl: "https://cut.acme.workers.dev", workerName: "cut" };
+    const known = {
+      workerUrl: "https://cut.acme.workers.dev",
+      appUrl: "https://links.example.com",
+      workerName: "cut",
+    };
     expect(describeChip({ key: "workerUrl", worker: null }, known, "when it installs")).toBe(
       "Filled in with https://cut.acme.workers.dev",
+    );
+    expect(describeChip({ key: "workerHostname", worker: null }, known, "when it installs")).toBe(
+      "Filled in with cut.acme.workers.dev",
+    );
+    expect(describeChip({ key: "appUrl", worker: null }, known, "when it installs")).toBe(
+      "Filled in with https://links.example.com",
+    );
+    expect(describeChip({ key: "appHostname", worker: null }, known, "when it installs")).toBe(
+      "Filled in with links.example.com",
+    );
+    expect(describeChip({ key: "appUrl", worker: null }, {}, "when it installs")).toBe(
+      "Filled in with the app's address when it installs",
     );
     expect(describeChip({ key: "accountId", worker: null }, known, "when it installs")).toBe(
       "Filled in with your Cloudflare account ID when it installs",
@@ -145,9 +178,16 @@ describe("placeholder chips", () => {
     expect(
       describeChip(
         { key: "workerName", worker: "api" },
-        { entryWorkers: { api: { workerName: "cut-api", workerUrl: null } } },
+        { entryWorkers: { api: { workerName: "cut-api", workerUrl: null, appUrl: null } } },
         "when it installs",
       ),
     ).toBe("Filled in with cut-api");
+    expect(
+      describeChip(
+        { key: "appHostname", worker: "api" },
+        { entryWorkers: { api: { workerName: "cut-api", workerUrl: null, appUrl: null } } },
+        "when it installs",
+      ),
+    ).toBe("Filled in with the hostname of the app's api Worker when it installs");
   });
 });

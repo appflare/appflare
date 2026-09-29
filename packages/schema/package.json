@@ -1,6 +1,6 @@
 {
   "name": "@appflare/schema",
-  "version": "0.3.0",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -50,9 +50,14 @@
     "format": "biome format --write .",
     "test": "vitest run",
     "export-json-schema": "node scripts/export-json-schema.ts",
-    "keygen": "node scripts/keygen.ts"
+    "keygen": "node scripts/keygen.ts",
+    "update-spdx-ids": "node scripts/update-spdx-ids.mjs",
+    "codemod-manifest-v1": "node scripts/codemod-manifest-v1.mjs"
   },
   "dependencies": {
     "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "jsonc-parser": "3.3.1"
   }
 }

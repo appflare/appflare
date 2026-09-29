@@ -1,3 +1,4 @@
+import { APP_TOKEN_PERMISSION_GROUPS, type TokenPermission } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import {
   ACCESS_FEATURE,
@@ -9,6 +10,7 @@ import {
   EMAIL_ROUTING_FEATURE,
   EXTERNAL_DOMAINS_FEATURE,
   optionalGroupsByFeature,
+  type PermissionGroup,
   PIPELINES_FEATURE,
   PLAN_DETECTION_FEATURE,
   permissionName,
@@ -17,7 +19,7 @@ import {
   SANDBOX_BUILDS_FEATURE,
   splitPermissionGroups,
   TOKEN_PERMISSION_GROUPS,
-  unmappedPermissionReason,
+  UNMAPPED_PERMISSION_REASON,
   userTokenTemplateUrl,
 } from "./token-template";
 
@@ -178,7 +180,9 @@ describe("token template URLs", () => {
     expect(own).not.toContain("data_catalog");
     expect(own).not.toContain("r2_catalog");
     expect(
-      resolveAppTokenPermissions([{ name: "Account.Pipelines:Edit" }]).map((p) => p.group?.key),
+      resolveAppTokenPermissions([
+        { group: "Pipelines", scope: "account", access: "edit", reason: "Streams events." },
+      ]).map((p) => p.group?.key),
     ).toEqual(["pipelines"]);
   });
 
@@ -221,143 +225,86 @@ describe("token template URLs", () => {
 });
 
 describe("app token permissions", () => {
-  function keysOf(names: Array<{ name: string; scope?: "account" | "zone" | "user" }>) {
-    return resolveAppTokenPermissions(names).map((p) =>
+  const perm = (
+    scope: TokenPermission["scope"],
+    group: string,
+    access: TokenPermission["access"] = "edit",
+    reason = "Needed.",
+  ): TokenPermission => ({ scope, group, access, reason });
+
+  function keysOf(permissions: TokenPermission[]) {
+    return resolveAppTokenPermissions(permissions).map((p) =>
       p.group === null ? null : { key: p.group.key, type: p.group.type },
     );
   }
 
-  it("maps <Scope>.<Group> names to template keys, Edit unless :Read is given", () => {
+  it("takes each group's template key from the schema's list, at the access asked for", () => {
     expect(
       keysOf([
-        { name: "Zone.DNS", scope: "zone" },
-        { name: "zone.dns:read" },
-        { name: "Account.Workers KV Storage:Edit" },
-        { name: "Account.Workers  R2 Storage" },
+        perm("zone", "DNS"),
+        perm("zone", "DNS", "read"),
+        perm("account", "Workers KV Storage"),
+        perm("account", "Hyperdrive", "read"),
+        perm("account", "Access: Organizations, Identity Providers, and Groups", "read"),
       ]),
     ).toEqual([
       { key: "dns", type: "edit" },
       { key: "dns", type: "read" },
       { key: "workers_kv_storage", type: "edit" },
-      { key: "workers_r2", type: "edit" },
-    ]);
-  });
-
-  it("qualifies a bare group name with its scope", () => {
-    expect(keysOf([{ name: "DNS", scope: "zone" }])).toEqual([{ key: "dns", type: "edit" }]);
-  });
-
-  it("maps the Access groups an app that creates its own Access application needs", () => {
-    expect(
-      keysOf([
-        { name: "Access: Apps and Policies", scope: "account" },
-        { name: "Access: Organizations, Identity Providers, and Groups:Read", scope: "account" },
-      ]),
-    ).toEqual([
-      { key: "access", type: "edit" },
+      { key: "query_cache", type: "read" },
       { key: "access_acct", type: "read" },
     ]);
   });
 
-  it("maps nothing for unknown names, bare names without a scope, or a contradicting scope", () => {
-    expect(
-      keysOf([
-        { name: "Zone.Email Routing Addresses" },
-        { name: "DNS" },
-        { name: "Zone.DNS", scope: "account" },
-        { name: "User.Memberships", scope: "user" },
-      ]),
-    ).toEqual([null, null, null, null]);
+  it("selects Cache Purge at its one level, Purge, and names it so", () => {
+    const [purge] = resolveAppTokenPermissions([perm("zone", "Cache Purge")]);
+    expect(purge?.group).toEqual({ key: "cache", type: "purge", label: "Zone: Cache Purge" });
+    expect(permissionName(purge?.group as PermissionGroup)).toBe("Zone: Cache Purge: Purge");
+    const url = appTokenTemplateUrl("Statusbeam", [purge as AppTokenPermission]);
+    expect(decodeURIComponent(url ?? "")).toContain('[{"key":"cache","type":"purge"}]');
   });
 
-  it("says in one line why the link cannot select a permission", () => {
-    const [unknown, bare] = resolveAppTokenPermissions([
-      { name: "User.Memberships", scope: "user" },
-      { name: "DNS" },
+  it("finds a template key for every group the schema lets an app ask for", () => {
+    const resolved = resolveAppTokenPermissions(
+      APP_TOKEN_PERMISSION_GROUPS.map((g) => perm(g.scope, g.group)),
+    );
+    expect(resolved.filter((p) => p.group === null)).toEqual([]);
+    expect(resolved.map((p) => p.group?.key)).toEqual(
+      APP_TOKEN_PERMISSION_GROUPS.map((g) => g.templateKey),
+    );
+  });
+
+  it("maps nothing for a group this version does not know, or one of the other scope", () => {
+    expect(keysOf([perm("account", "Workers Quantum Storage"), perm("account", "DNS")])).toEqual([
+      null,
+      null,
     ]);
-    expect(unmappedPermissionReason(unknown as AppTokenPermission)).toBe(
+    expect(UNMAPPED_PERMISSION_REASON).toBe(
       "Not selected for you: Cloudflare's token link has no way to select it. Add it in the form.",
     );
-    expect(unmappedPermissionReason(bare as AppTokenPermission)).toContain(
-      "does not say whether it is an account or a zone permission",
-    );
   });
 
-  it("finds a template key for every permission the catalog's apps ask for", () => {
-    // Every tokenPermissions name in the published catalog, plus the Pipelines
-    // sink token's, so none of them is left out of an app's token link.
-    const names: Array<{ name: string; scope?: "account" | "zone" }> = [
-      { name: "Zone.DNS", scope: "zone" },
-      { name: "Zone.Zone:Read", scope: "zone" },
-      { name: "Zone.DNS:Edit", scope: "zone" },
-      { name: "Zone.Zone Settings:Edit", scope: "zone" },
-      { name: "Zone.Zone Settings:Read", scope: "zone" },
-      { name: "Zone.Email Routing Rules:Edit", scope: "zone" },
-      { name: "Account.Email Sending:Edit", scope: "account" },
-      { name: "Account.Email Routing Addresses:Read", scope: "account" },
-      { name: "Workers Scripts", scope: "account" },
-      { name: "Workers KV Storage", scope: "account" },
-      { name: "D1", scope: "account" },
-      { name: "Workers R2 Storage", scope: "account" },
-      { name: "Secrets Store:Edit", scope: "account" },
-      { name: "Account Settings:Read", scope: "account" },
-      { name: "Access: Apps and Policies", scope: "account" },
-      { name: "Access: Organizations, Identity Providers, and Groups", scope: "account" },
-      { name: "Account.Account Analytics:Read", scope: "account" },
-      { name: "Zone.SSL and Certificates:Edit", scope: "zone" },
-      { name: "Zone.Analytics:Read", scope: "zone" },
-      { name: "Account.Workers Scripts:Read", scope: "account" },
-      { name: "Zone.SSL and Certificates:Read", scope: "zone" },
-      { name: "Zone.Firewall Services:Read", scope: "zone" },
-      { name: "Zone.Load Balancers:Read", scope: "zone" },
-      { name: "Account.Logs:Read", scope: "account" },
-      { name: "Account.Magic Transit:Read", scope: "account" },
-      { name: "Account.Workers R2 Storage:Edit" },
-      { name: "Account.Workers R2 Data Catalog:Edit" },
-      { name: "Account.Workers R2 SQL:Read" },
-    ];
-    const resolved = resolveAppTokenPermissions(names);
-    expect(resolved.filter((p) => p.group === null).map((p) => p.name)).toEqual([]);
-    expect(
-      resolved.slice(-9).map((p) => p.group && { key: p.group.key, type: p.group.type }),
-    ).toEqual([
-      { key: "workers_scripts", type: "read" },
-      { key: "ssl_and_certificates", type: "read" },
-      { key: "firewall_services", type: "read" },
-      { key: "load_balancers", type: "read" },
-      { key: "account_logs", type: "read" },
-      { key: "magic_transit", type: "read" },
-      { key: "workers_r2", type: "edit" },
-      { key: "r2_catalog", type: "edit" },
-      { key: "r2_catalog_sql", type: "read" },
+  it("keeps the scope, group, access and reason for display, labelled as the dashboard shows it", () => {
+    const [dns, access] = resolveAppTokenPermissions([
+      perm("zone", "DNS", "edit", "Updates the record for your home address."),
+      perm("account", "Access: Apps and Policies", "read"),
     ]);
-    expect(keysOf([{ name: "Zone.Email Routing Rules:Edit" }])).toEqual([
-      { key: "email_routing_rule", type: "edit" },
-    ]);
-    expect(keysOf([{ name: "Account.Email Sending:Edit" }])).toEqual([
-      { key: "email_sending", type: "edit" },
-    ]);
-    expect(keysOf([{ name: "Secrets Store:Edit", scope: "account" }])).toEqual([
-      { key: "secrets_store", type: "edit" },
-    ]);
-  });
-
-  it("keeps the manifest's name, description, and scope for display", () => {
-    const [p] = resolveAppTokenPermissions([
-      { name: "Zone.DNS", description: "Edit DNS records", scope: "zone" },
-    ]);
-    expect(p).toMatchObject({ name: "Zone.DNS", description: "Edit DNS records", scope: "zone" });
-    const [bare] = resolveAppTokenPermissions([{ name: "Something" }]);
-    expect(bare).toEqual({ name: "Something", description: null, scope: null, group: null });
+    expect(dns).toEqual({
+      scope: "zone",
+      groupName: "DNS",
+      access: "edit",
+      reason: "Updates the record for your home address.",
+      group: { key: "dns", type: "edit", label: "Zone: DNS" },
+    });
+    expect(access?.group?.label).toBe("Access: Apps and Policies");
+    const [unknown] = resolveAppTokenPermissions([perm("zone", "Something New")]);
+    expect(unknown).toMatchObject({ groupName: "Something New", group: null });
   });
 
   it("prefills a user token form named after the app with the mapped groups only", () => {
     const url = appTokenTemplateUrl(
       "UniFi DDNS",
-      resolveAppTokenPermissions([
-        { name: "Zone.DNS", scope: "zone" },
-        { name: "Zone.Email Routing Addresses", scope: "zone" },
-      ]),
+      resolveAppTokenPermissions([perm("zone", "DNS"), perm("zone", "Something New")]),
     );
     expect(url?.startsWith("https://dash.cloudflare.com/profile/api-tokens?")).toBe(true);
     const params = new URL(url ?? "").searchParams;
@@ -370,10 +317,10 @@ describe("app token permissions", () => {
     const url = appTokenTemplateUrl(
       "App",
       resolveAppTokenPermissions([
-        { name: "Zone.DNS:Read" },
-        { name: "Zone.DNS" },
-        { name: "Zone.Zone:Read" },
-        { name: "Zone.Zone:Read" },
+        perm("zone", "DNS", "read"),
+        perm("zone", "DNS"),
+        perm("zone", "Zone", "read"),
+        perm("zone", "Zone", "read"),
       ]),
     );
     expect(groupsOf(url ?? "")).toEqual([
@@ -383,7 +330,7 @@ describe("app token permissions", () => {
   });
 
   it("gives no link when no permission maps", () => {
-    expect(appTokenTemplateUrl("App", resolveAppTokenPermissions([{ name: "Unknown" }]))).toBe(
+    expect(appTokenTemplateUrl("App", resolveAppTokenPermissions([perm("zone", "Unknown")]))).toBe(
       null,
     );
     expect(appTokenTemplateUrl("App", [])).toBe(null);

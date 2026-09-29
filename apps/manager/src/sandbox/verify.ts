@@ -3,6 +3,7 @@ import {
   artifactManifestSchema,
   type CatalogManifest,
   catalogManifestSchema,
+  catalogWorkerName,
   type InstallTier,
 } from "@appflare/schema";
 import { ArtifactError, sha256Hex } from "../jobs/install/artifact";
@@ -140,9 +141,9 @@ export async function verifyBuiltManifest(
       `the build is version ${manifest.version}, the catalog lists ${expected.version}`,
     );
   }
-  if (manifest.source.sha !== expected.pin) {
+  if (manifest.catalog.source.sha !== expected.pin) {
     throw new ArtifactError(
-      `the build is from commit ${manifest.source.sha}, not the pinned ${expected.pin}`,
+      `the build is from commit ${manifest.catalog.source.sha}, not the pinned ${expected.pin}`,
     );
   }
   if (manifest.catalog.install.tier !== "sandbox") {
@@ -192,11 +193,10 @@ export function catalogTerms(catalog: CatalogManifest): string {
     slug: catalog.slug,
     repo: catalog.repo,
     secrets: catalog.secrets.map((s) => [s.name, s.generate]),
-    workerName: catalog.install.workerName,
-    fixedWorkerName: catalog.install.fixedWorkerName ?? false,
+    workerName: catalogWorkerName(catalog),
+    fixedWorkerName: catalog.install.fixedWorkerName,
     emailRouting: catalog.install.emailRouting ?? null,
-    healthPath: catalog.install.healthPath ?? null,
-    healthMode: catalog.install.healthMode ?? null,
+    health: catalog.install.health,
     tokenPermissions: catalog.tokenPermissions,
     postInstall: catalog.postInstall,
     plan: catalog.plan,
@@ -246,8 +246,9 @@ export async function verifySourceBuildManifest(
       ? null
       : `it is "${manifest.app}", not "${expected.slug}"`,
     manifest.version === expected.version ? null : `it is version ${manifest.version}`,
-    manifest.source.repo === expected.repo ? null : `it is from ${manifest.source.repo}`,
-    manifest.source.sha === expected.commit ? null : `it is from ${manifest.source.sha}`,
+    manifest.catalog.source.sha === expected.commit
+      ? null
+      : `it is from ${manifest.catalog.source.sha}`,
     manifest.catalog.repo === expected.repo
       ? null
       : `its catalog manifest names ${manifest.catalog.repo}`,

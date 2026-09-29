@@ -295,7 +295,7 @@ export interface SeedSecretFacts {
 /** What the seed checks read of a var. */
 export interface SeedVarFacts {
   name: string;
-  required: boolean;
+  optional: boolean;
   default?: string | undefined;
   derive?: { from: string } | undefined;
   seedOnly?: boolean | undefined;
@@ -327,7 +327,7 @@ export function manifestSeeds(resources: {
  * What is wrong with how a manifest's seeds and its secrets and vars fit
  * together, one issue each with its path from the manifest's root:
  *
- * - a `{ var }` names a declared var that always has a value (required, with
+ * - a `{ var }` names a declared var that always has a value (not optional, with
  *   a default, or derived); a `{ secret }` a declared secret that is not
  *   optional; a hash's `from` a declared secret neither optional nor derived;
  * - a seed-only secret or var is used by a seed, is not optional, derived or
@@ -377,10 +377,10 @@ export function seedManifestProblems(manifest: {
           const v = vars.get(param.var);
           if (v === undefined) {
             problems.push({ path, message: `${param.var} is not a var of this manifest` });
-          } else if (!v.required && v.default === undefined && v.derive === undefined) {
+          } else if (v.optional && v.default === undefined && v.derive === undefined) {
             problems.push({
               path,
-              message: `${param.var} may be left empty; a var a seed uses must be required, have a default, or be derived`,
+              message: `${param.var} may be left empty; a var a seed uses must not be optional, or must have a default or be derived`,
             });
           }
         } else if ("secret" in param) {
@@ -412,7 +412,7 @@ export function seedManifestProblems(manifest: {
           message: `${item.name} is seed-only, but no seed statement or hash uses it; a seed-only value is asked for only to seed the database`,
         });
       }
-      if ("optional" in item && item.optional === true) {
+      if (item.optional === true) {
         problems.push({ path, message: `${item.name} is seed-only; it cannot also be optional` });
       }
       if (item.derive !== undefined) {

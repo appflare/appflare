@@ -39,14 +39,15 @@ export interface CreatedResource {
 }
 
 /**
- * Every var the install's Worker gets (`resolveVars`), with `{{workerUrl}}`
- * and `{{workerName}}` filled in from its Worker name and the account's
- * workers.dev subdomain, or from `workerUrl` when the app is reached
- * elsewhere (its custom domain while workers.dev is off), `{{accountId}}`
- * from the account the job works in, and `{{wildcardHostname}}` from the
- * install's wildcard domain (empty without one). The job logs the warnings: a stored
- * value the app can no longer read falls back to the default instead of
- * failing the job.
+ * Every var the install's Worker gets (`resolveVars`), with the placeholders
+ * filled in: `{{workerName}}` from its Worker name, `{{workerUrl}}` and
+ * `{{workerHostname}}` from its workers.dev URL, `{{appUrl}}` and
+ * `{{appHostname}}` from `appUrl`, where the app is served (its custom domain
+ * while workers.dev is off, `appBaseUrl`; the workers.dev URL when absent),
+ * `{{accountId}}` from the account the job works in, and
+ * `{{wildcardHostname}}` from the install's wildcard domain (empty without
+ * one). The job logs the warnings: a stored value the app can no longer read
+ * falls back to the default instead of failing the job.
  */
 export function installVars(
   manifest: Pick<ArtifactManifest, "catalog" | "worker">,
@@ -55,22 +56,26 @@ export function installVars(
     workerName: string;
     subdomain: string;
     accountId: string;
-    workerUrl?: string;
+    /** Where the app is served (`appBaseUrl`); absent means its workers.dev URL. */
+    appUrl?: string;
     /**
      * The base hostname of the install's wildcard domain, for
      * `{{wildcardHostname}}`; null or absent when it has none (filled in empty).
      */
     wildcardHostname?: string | null;
     /**
-     * For an app of several Workers: what `{{workerUrl:<name>}}` and
-     * `{{workerName:<name>}}` are filled in with (`entryPlaceholders`).
+     * For an app of several Workers: what the per-Worker placeholders
+     * (`{{appUrl:<name>}}`, `{{workerName:<name>}}`) are filled in with
+     * (`entryPlaceholders`).
      */
     entryWorkers?: EntryWorkerPlaceholders;
   },
 ): ResolvedVars {
+  const workerUrl = workersDevUrl(worker.workerName, worker.subdomain);
   const placeholders: PlaceholderValues = {
     workerName: worker.workerName,
-    workerUrl: worker.workerUrl ?? workersDevUrl(worker.workerName, worker.subdomain),
+    workerUrl,
+    appUrl: worker.appUrl ?? workerUrl,
     accountId: worker.accountId,
     wildcardHostname: worker.wildcardHostname ?? null,
   };
@@ -80,7 +85,7 @@ export function installVars(
   return { ...resolved, vars: resolved.vars.map((v) => renderEntryVar(v, entry)) };
 }
 
-/** A var with `{{workerUrl:<name>}}` and `{{workerName:<name>}}` filled in. */
+/** A var with the per-Worker placeholders (`{{appUrl:<name>}}`) filled in. */
 function renderEntryVar(v: VarBinding, entry: EntryWorkerPlaceholders): VarBinding {
   const render = (value: JsonValue): JsonValue => {
     if (typeof value === "string") return renderEntryWorkerPlaceholders(value, entry);

@@ -22,14 +22,14 @@ const selfDeploying = {
   tool: "alchemy" as const,
   deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
   destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-  stateStore: "cloudflare",
-  workers: ["open-seo-{{stage}}", "open-seo-{{stage}}-audit"],
+  workerNames: ["open-seo-{{stage}}", "open-seo-{{stage}}-audit"],
 };
 
 const manifest = {
   slug: "open-seo",
   name: "OpenSEO",
   summary: "Self-hosted SEO research.",
+  tagline: "An app on Workers",
   homepage: "https://github.com/every-app/open-seo",
   repo: "every-app/open-seo",
   license: "MIT",
@@ -47,9 +47,16 @@ const manifest = {
   plan: "paid",
   requires: ["r2", "containers"],
   secrets: [{ name: "DATAFORSEO_API_KEY", label: "DataForSEO API key" }],
-  vars: [{ name: "ACCESS_ALLOWED_EMAILS", label: "Allowed emails", required: true }],
+  vars: [{ name: "ACCESS_ALLOWED_EMAILS", label: "Allowed emails" }],
   postInstall: [],
-  tokenPermissions: [{ name: "Workers Scripts", scope: "account" }],
+  tokenPermissions: [
+    {
+      group: "Workers Scripts",
+      scope: "account",
+      access: "edit",
+      reason: "Deploys the app's Workers.",
+    },
+  ],
 };
 
 function withInstall(install: Record<string, unknown>) {
@@ -111,7 +118,7 @@ describe("install.selfDeploying in the catalog manifest", () => {
   });
 
   it("requires exactly one {{stage}} in each Worker template, and a Worker name once filled in", () => {
-    for (const workers of [
+    for (const workerNames of [
       ["open-seo"],
       ["Open-Seo-{{stage}}"],
       ["open-seo-{{stage}}-{{stage}}"],
@@ -120,17 +127,15 @@ describe("install.selfDeploying in the catalog manifest", () => {
     ]) {
       expect(
         catalogManifestSchema.safeParse(
-          withInstall({ selfDeploying: { ...selfDeploying, workers } }),
+          withInstall({ selfDeploying: { ...selfDeploying, workerNames } }),
         ).success,
       ).toBe(false);
     }
   });
 
-  it("accepts only the Cloudflare state store and known tools", () => {
+  it("accepts only known tools, whose own stage option the sandbox Worker appends", () => {
     for (const block of [
-      { ...selfDeploying, stateStore: "local" },
       { ...selfDeploying, tool: "terraform" },
-      { ...selfDeploying, stageArg: "stage" },
       // The sandbox Worker appends the stage; the entry may not name one.
       { ...selfDeploying, deployCommand: ["pnpm", "alchemy", "deploy", "--stage=prod"] },
       { ...selfDeploying, destroyCommand: ["pnpm", "alchemy", "destroy", "--stage", "prod"] },
@@ -164,12 +169,19 @@ describe("the index entry of a self-deploying app", () => {
     slug: "open-seo",
     name: "OpenSEO",
     summary: "Self-hosted SEO research.",
+    tagline: "An app on Workers",
     version: "0.1.9",
     tier: "self-deploying",
     plan: "paid",
     requires: [],
     lastVerified: null,
     maintainers: ["every-app"],
+    addedAt: "2026-09-21T10:00:00Z",
+    license: "MIT",
+    revision: 1,
+    services: [],
+    authors: [{ name: "every-app", github: "every-app" }],
+    categories: ["marketing"],
     build: {
       pin: PIN,
       manifest: "https://appflare.github.io/catalog/apps/open-seo/appflare.json",

@@ -99,10 +99,11 @@ describe("repositoryBuildRequestSchema", () => {
           slug: "cut",
           name: "Cut",
           summary: "s",
+          tagline: "An app on Workers",
           homepage: "https://example.com",
           repo: "someone/else",
           license: "MIT",
-          categories: [],
+          categories: ["utilities"],
           maintainers: [],
           source: { ref: "main", sha: SHA },
           install: {

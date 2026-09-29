@@ -2,6 +2,7 @@ import { type CatalogSecret, isVapidPrivateKey } from "@appflare/schema";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { secretsOf } from "../test/artifact-fixture";
 import {
   derivedNote,
   heldSecretNote,
@@ -19,13 +20,14 @@ const PEM = [
 ].join("\n");
 
 describe("multiline secrets", () => {
-  const key: CatalogSecret = {
-    name: "GITHUB_APP_PRIVATE_KEY",
-    label: "GitHub App private key",
-    help: "The .pem file GitHub gave you.",
-    generate: false,
-    multiline: true,
-  };
+  const [key] = secretsOf([
+    {
+      name: "GITHUB_APP_PRIVATE_KEY",
+      label: "GitHub App private key",
+      help: "The .pem file GitHub gave you.",
+      multiline: true,
+    },
+  ]) as [CatalogSecret];
 
   it("keep every line break, and drop only Windows line endings and spaces after the last line", () => {
     expect(normaliseMultilineSecret(PEM)).toBe(PEM);
@@ -60,10 +62,10 @@ describe("multiline secrets", () => {
   });
 });
 
-const secrets: CatalogSecret[] = [
+const secrets: CatalogSecret[] = secretsOf([
   { name: "VAPID_PRIVATE_KEY", label: "Push signing key", generate: "vapid-private-key" },
-  { name: "SESSION", label: "Session key", generate: true },
-];
+  { name: "SESSION", label: "Session key", generate: "password" },
+]);
 
 describe("initialSecretValues", () => {
   it("fills in a VAPID private key for a new install", () => {

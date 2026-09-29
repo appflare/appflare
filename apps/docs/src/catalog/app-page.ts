@@ -103,17 +103,15 @@ export function appStats(app: SiteApp, now: Date): AppStat[] {
     tone: "default",
     ...PLAN_STATS[app.plan],
   });
-  if (app.license !== null) {
-    const copy = licenseBadgeCopy(app.license);
-    stats.push({
-      id: "license",
-      label: "License",
-      value: copy.label,
-      caption: copy.prefix,
-      tooltip: copy.tooltip,
-      tone: copy.variant === "warning" ? "warning" : "default",
-    });
-  }
+  const copy = licenseBadgeCopy(app.license);
+  stats.push({
+    id: "license",
+    label: "License",
+    value: copy.label,
+    caption: copy.prefix,
+    tooltip: copy.tooltip,
+    tone: copy.variant === "warning" ? "warning" : "default",
+  });
   const day = dateBuildDay(app.version);
   stats.push({
     id: "version",
@@ -179,23 +177,17 @@ export function accountNeeds(app: SiteApp): AccountNeeds {
   if (app.plan === "paid") {
     items.push({ key: "plan", name: "Workers Paid plan", words: serviceNeedWords(true) });
   }
-  if (app.services === null) {
-    for (const requirement of app.requires) {
-      items.push({ key: requirement, name: requirementName(requirement), words: null });
-    }
-  } else {
-    const declared: ReadonlySet<string> = declaredServices(app.requires);
-    // A requirement the services leave out still gets its line.
-    const ids = [...new Set([...app.services, ...declared])];
-    for (const id of ids) {
-      const name = serviceName(id);
-      if (name === null) continue;
-      items.push({ key: id, name, words: serviceNeedWords(declared.has(id)) });
-    }
-    for (const requirement of app.requires) {
-      if (serviceName(requirement) !== null) continue;
-      items.push({ key: requirement, name: requirementName(requirement), words: null });
-    }
+  const declared: ReadonlySet<string> = declaredServices(app.requires);
+  // A requirement the services leave out still gets its line.
+  const ids = [...new Set([...app.services, ...declared])];
+  for (const id of ids) {
+    const name = serviceName(id);
+    if (name === null) continue;
+    items.push({ key: id, name, words: serviceNeedWords(declared.has(id)) });
+  }
+  for (const requirement of app.requires) {
+    if (serviceName(requirement) !== null) continue;
+    items.push({ key: requirement, name: requirementName(requirement), words: null });
   }
   return { items, note: needsNote(app) };
 }
@@ -205,7 +197,6 @@ function needsNote(app: SiteApp): string | null {
     return "Its own installer creates what it needs; this is what its token allows.";
   }
   if (app.tier === "sandbox") return "It is built in your account, so the rest is known then.";
-  if (app.services === null) return "The catalog lists only what this app requires.";
   return null;
 }
 

@@ -24,7 +24,7 @@ export function generatedSeedCredentials(
 ): SeedCredential[] {
   return secrets.flatMap((s) => {
     const value = values[s.name];
-    return isSeedOnly(s) && s.generate !== false && value !== undefined && value.length > 0
+    return isSeedOnly(s) && s.generate !== undefined && value !== undefined && value.length > 0
       ? [{ name: s.name, label: s.label, value }]
       : [];
   });

@@ -27,7 +27,7 @@ Then it compares the target with the current pin:
 When the pin should move, the bot opens a pull request that changes `source` and
 nothing else. The branch is `bump/<slug>/<sha7>` and the title is
 `chore(<slug>): bump to <ref>`. The description links to the upstream comparison and
-lists the new commits. For apps that set `install.version`, it adds a reminder
+lists the new commits. For apps that set `source.version`, it adds a reminder
 to change it.
 
 The pull request runs the same checks as a new submission, including the install
@@ -65,7 +65,7 @@ Maintainers are still asked to review and can step in until the checks finish:
 
 A bump still waits for a maintainer when:
 
-- the app also sets `install.version`, since someone has to set the new version
+- the app also sets `source.version`, since someone has to set the new version
   first;
 - `verify passed` is not a required check on the catalog's `main` branch, so nothing
   would hold the merge until the install check finished;

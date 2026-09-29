@@ -61,7 +61,7 @@ export interface EntryUploadContext {
   userVars: Readonly<Record<string, string>>;
   subdomain: string;
   accountId: string;
-  /** The app's address, for `{{workerUrl}}`; its workers.dev URL when unset. */
+  /** Where the app is served, for `{{appUrl}}`; its workers.dev URL when unset. */
   appUrl?: string;
   /** The install's wildcard domain, for `{{wildcardHostname}}`; null or absent without one. */
   wildcardHostname?: string | null;
@@ -80,7 +80,7 @@ function workerMetadata(
     workerName: ctx.installWorkerName,
     subdomain: ctx.subdomain,
     accountId: ctx.accountId,
-    ...(ctx.appUrl === undefined ? {} : { workerUrl: ctx.appUrl }),
+    ...(ctx.appUrl === undefined ? {} : { appUrl: ctx.appUrl }),
     wildcardHostname: ctx.wildcardHostname ?? null,
     ...(ctx.placeholders === undefined ? {} : { entryWorkers: ctx.placeholders }),
   });

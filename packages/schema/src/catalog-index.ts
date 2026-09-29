@@ -3,6 +3,7 @@ import { sha256Schema } from "./artifact";
 import {
   catalogAuthorSchema,
   catalogRevisionSchema,
+  catalogSlugSchema,
   expectedBuildMinutesSchema,
   gitShaSchema,
   installTierSchema,
@@ -10,7 +11,9 @@ import {
   requirementSchema,
   sandboxInstanceTypeSchema,
 } from "./catalog";
+import { MAX_ENTRY_CATEGORIES } from "./category-list";
 import { licenseNoteSchema, licenseSchema } from "./license";
+import { MAX_SCREENSHOTS } from "./media";
 import { taglineSchema } from "./tagline";
 
 /**
@@ -35,9 +38,6 @@ export const indexMediaFileSchema = z.object({
 });
 export type IndexMediaFile = z.infer<typeof indexMediaFileSchema>;
 
-/** Most screenshots one entry lists. */
-export const MAX_SCREENSHOTS = 8;
-
 /** A screenshot, with the text a screen reader reads for it. */
 export const indexScreenshotSchema = indexMediaFileSchema.extend({
   alt: z.string().min(1).max(200),
@@ -55,11 +55,13 @@ export const indexMediaSchema = z.object({
 });
 export type IndexMedia = z.infer<typeof indexMediaSchema>;
 
-/** Release-asset URLs for one app version. */
+/** Release-asset URLs for one app version, and the digest of its manifest. */
 export const indexArtifactsSchema = z.object({
   zip: z.url(),
   manifest: z.url(),
   sig: z.url(),
+  /** sha256 of the exact bytes of the release's `manifest.json`. */
+  digest: sha256Schema,
 });
 export type IndexArtifacts = z.infer<typeof indexArtifactsSchema>;
 
@@ -70,7 +72,7 @@ export type IndexArtifacts = z.infer<typeof indexArtifactsSchema>;
  * app's own installer there (`self-deploying`). The entry's catalog manifest
  * is published next to the index, addressed by its sha256, because the
  * request carries it verbatim and the install form is generated from it.
- * `expectedMinutes` and `instanceType` are the entry's `install.sandbox`,
+ * `expectedMinutes` and `instanceType` are the entry's `install.container`,
  * copied for the cost estimate the manager shows before each run.
  */
 export const indexBuildSchema = z.object({
@@ -112,7 +114,7 @@ export type IndexCatalogManifest = z.infer<typeof indexCatalogManifestSchema>;
 
 /**
  * One app entry in the published catalog index. `artifact` tier entries
- * carry the release URLs and the manifest digest; `sandbox` and
+ * carry the release URLs and the manifest digest (`artifacts`); `sandbox` and
  * `self-deploying` tier entries carry `build` instead and may omit both (a
  * self-deploying entry's `build` points at the catalog manifest that holds
  * its installer's commands; `expectedMinutes` and `instanceType` size the
@@ -120,38 +122,31 @@ export type IndexCatalogManifest = z.infer<typeof indexCatalogManifestSchema>;
  */
 export const indexAppSchema = z
   .object({
-    slug: z.string().min(1),
+    slug: catalogSlugSchema,
     name: z.string().min(1),
     summary: z.string().min(1),
-    /**
-     * The catalog manifest's `tagline`, the pitch on catalog tiles. Optional
-     * so an index published before the field existed still parses; a manager
-     * without it shortens `summary`.
-     */
-    tagline: taglineSchema.optional(),
+    /** The catalog manifest's `tagline`, the pitch on catalog tiles. */
+    tagline: taglineSchema,
     /**
      * When the entry first appeared in the catalog (the commit that added its
-     * manifest), for "New this week". Optional so an index published before
-     * the field existed still parses.
+     * manifest), for "New this week".
      */
-    addedAt: z.iso.datetime({ offset: true }).optional(),
+    addedAt: z.iso.datetime({ offset: true }),
     version: z.string().min(1),
     artifacts: indexArtifactsSchema.optional(),
-    digest: sha256Schema.optional(),
     tier: installTierSchema,
     plan: planSchema,
     requires: z.array(requirementSchema),
     lastVerified: z.iso.datetime().nullable(),
     /**
      * Who wrote the app: the catalog manifest's `authors`, or the owner of its
-     * `repo` when it lists none. Catalog CI always writes it; optional so an
-     * index published before the field existed still parses.
+     * `repo` when it lists none.
      */
-    authors: z.array(catalogAuthorSchema).min(1).optional(),
+    authors: z.array(catalogAuthorSchema).min(1),
     /** Who packages the app for the catalog. */
     maintainers: z.array(z.string().min(1)),
     build: indexBuildSchema.optional(),
-    /** The entry's images; optional so an index published before they existed still parses. */
+    /** The entry's images, when it has any. */
     media: indexMediaSchema.optional(),
     /**
      * The Cloudflare services the app uses (`SERVICE_IDS`), as
@@ -159,31 +154,26 @@ export const indexAppSchema = z
      * catalog manifest for an `artifact` tier entry, from the catalog
      * manifest alone for the others. Plain strings, not the enum, so a manager
      * still reads rows naming services added after it was released (it skips
-     * those). Optional so an index published before the field existed still
-     * parses; a manager without it reads the app's manifests instead.
+     * those).
      */
-    services: z.array(z.string().min(1)).optional(),
+    services: z.array(z.string().min(1)),
     /**
      * The app declares key-value backed Durable Objects, which need Workers
      * Paid. Written only when true.
      */
     keyValueDurableObjects: z.boolean().optional(),
-    /** The catalog manifest's `categories`; optional for the same reason as `services`. */
-    categories: z.array(z.string().min(1)).optional(),
     /**
-     * The catalog manifest's `license` and `licenseNote`, for the catalog
-     * card. Optional so an index published before the fields existed still
-     * parses; a manager without them shows the license from the app's catalog
-     * manifest once it has read it.
+     * The catalog manifest's `categories`. Plain strings, not the list's ids,
+     * so a manager still reads a custom catalog's row that names a category
+     * it does not know (it lists that row under no category). At most
+     * {@link MAX_ENTRY_CATEGORIES}, as in the manifest.
      */
-    license: licenseSchema.optional(),
+    categories: z.array(z.string().min(1)).min(1).max(MAX_ENTRY_CATEGORIES),
+    /** The catalog manifest's `license` and `licenseNote`, for the catalog card. */
+    license: licenseSchema,
     licenseNote: licenseNoteSchema.optional(),
-    /**
-     * The catalog manifest's `revision`: with `version`, which edit of the
-     * entry this row describes. Optional so an index published before the
-     * field existed still parses; omitted means 1.
-     */
-    revision: catalogRevisionSchema.optional(),
+    /** The catalog manifest's `revision`: with `version`, which edit of the entry this row describes. */
+    revision: catalogRevisionSchema,
     /**
      * For an `artifact` tier entry whose `revision` is above the one its
      * release was built with: the revised catalog manifest, which replaces the
@@ -193,13 +183,6 @@ export const indexAppSchema = z
     catalogManifest: indexCatalogManifestSchema.optional(),
   })
   .superRefine((app, ctx) => {
-    if ((app.artifacts === undefined) !== (app.digest === undefined)) {
-      ctx.addIssue({
-        code: "custom",
-        path: [app.artifacts === undefined ? "artifacts" : "digest"],
-        message: "artifacts and digest come together",
-      });
-    }
     if (app.tier === "artifact" && app.artifacts === undefined) {
       ctx.addIssue({
         code: "custom",
@@ -218,7 +201,7 @@ export const indexAppSchema = z
     // publish their current catalog manifest in `build` on every edit.
     if (
       app.catalogManifest !== undefined &&
-      (app.tier !== "artifact" || app.digest === undefined)
+      (app.tier !== "artifact" || app.artifacts === undefined)
     ) {
       ctx.addIssue({
         code: "custom",
@@ -239,13 +222,22 @@ export const indexAppSchema = z
 export type IndexApp = z.infer<typeof indexAppSchema>;
 
 /** The prebuilt artifact of an entry, or null when it has none (a sandbox tier entry). */
-export function indexAppArtifact(
-  app: Pick<IndexApp, "artifacts" | "digest">,
-): { artifacts: IndexArtifacts; digest: string } | null {
-  return app.artifacts === undefined || app.digest === undefined
-    ? null
-    : { artifacts: app.artifacts, digest: app.digest };
+export function indexAppArtifact(app: Pick<IndexApp, "artifacts">): IndexArtifacts | null {
+  return app.artifacts ?? null;
 }
+
+/**
+ * Catalog manifest fields that change only what the index shows, never what
+ * an artifact installs: a catalog builds its index from the current
+ * manifest, so an edit to these alone needs no new release and no revision.
+ *
+ * - `authors`: the catalog card and app page.
+ * - `tagline`: the line under the name on a catalog tile; managers read it
+ *   from the index row only.
+ * - `licenseNote`: shown next to the license; managers read it from the
+ *   index row, and an installed app does not use it.
+ */
+export const INDEX_ONLY_CATALOG_FIELDS: readonly string[] = ["authors", "tagline", "licenseNote"];
 
 /**
  * One item of the catalog's sponsored slot. It can promote anything, an app

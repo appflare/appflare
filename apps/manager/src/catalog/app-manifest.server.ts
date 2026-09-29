@@ -4,7 +4,6 @@ import {
   artifactManifestSchema,
   type CatalogManifest,
   catalogManifestSchema,
-  catalogRevision,
   type IndexApp,
   type IndexCatalogManifest,
   indexAppArtifact,
@@ -111,7 +110,7 @@ export async function getAppManifest(
   if (!signed.ok || release === null) return signed;
   const recorded = held !== null && revisionApplies(signed.manifest, held) ? held : null;
   const listed = app.catalogManifest;
-  if (listed === undefined || (recorded !== null && recorded.revision >= catalogRevision(app))) {
+  if (listed === undefined || (recorded !== null && recorded.revision >= app.revision)) {
     return recorded === null
       ? signed
       : { ok: true, manifest: withRevisedCatalog(signed.manifest, recorded.catalog) };
@@ -130,12 +129,12 @@ export async function getAppManifest(
     console.warn("revised catalog manifest refused", {
       slug: app.slug,
       version: app.version,
-      revision: catalogRevision(app),
+      revision: app.revision,
       error: reason,
     });
     return {
       ok: false,
-      error: `Could not load revision ${catalogRevision(app)} of the catalog manifest for ${app.slug} ${app.version}: ${reason}`,
+      error: `Could not load revision ${app.revision} of the catalog manifest for ${app.slug} ${app.version}: ${reason}`,
     };
   }
 }
@@ -161,7 +160,7 @@ async function loadRevisedCatalog(
   const expected = {
     file,
     artifact: release.artifact,
-    ...(app.revision === undefined ? {} : { revision: app.revision }),
+    revision: app.revision,
     ...(release.signingKeys === undefined ? {} : { keys: release.signingKeys }),
   };
   const cached = await env.KV.get(key);
@@ -209,8 +208,8 @@ async function getSignedAppManifest(
   const fetchImpl: FetchLike = opts.fetch ?? ((input, init) => fetch(input, init));
   try {
     const [manifestFile, sigFile] = await Promise.all([
-      fetchWhole(fetchImpl, release.artifacts.manifest),
-      fetchWhole(fetchImpl, release.artifacts.sig),
+      fetchWhole(fetchImpl, release.manifest),
+      fetchWhole(fetchImpl, release.sig),
     ]);
     const manifest = await verifyArtifactManifest(
       manifestFile.bytes,
@@ -386,7 +385,7 @@ export async function refreshInstalledRevision(
     file === undefined ||
     install.artifact_digest === null ||
     listed.version !== install.catalog_version ||
-    listed.digest !== install.artifact_digest
+    listed.artifacts?.digest !== install.artifact_digest
   ) {
     return false;
   }
@@ -394,7 +393,7 @@ export async function refreshInstalledRevision(
     recorded === undefined
       ? await readCatalogRevision(createDb(env.DB), install.artifact_digest)
       : recorded;
-  if (held !== null && held.revision >= catalogRevision(listed)) return false;
+  if (held !== null && held.revision >= listed.revision) return false;
   // Verifies and records it; a refusal is logged there and leaves the recorded form.
   await getAppManifest(env, listed, opts);
   return true;

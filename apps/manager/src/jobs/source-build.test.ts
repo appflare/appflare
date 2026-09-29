@@ -1,7 +1,7 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createClient } from "@appflare/cf-api";
-import type { CatalogManifest, SandboxInfo } from "@appflare/schema";
+import { type CatalogManifest, catalogManifestSchema, type SandboxInfo } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import { planAppUpdates } from "../auto-update/auto-update";
 import { readCandidateRows, updateCandidates } from "../auto-update/cron.server";
@@ -24,7 +24,12 @@ import {
 import { sandboxInfo } from "../sandbox/binding";
 import { PINNED_SANDBOX_VERSION, sandboxReleaseProblem } from "../sandbox/release";
 import { jobProperties } from "../telemetry/events";
-import { type ArtifactFixture, baseCatalog, buildArtifactFixture } from "../test/artifact-fixture";
+import {
+  type ArtifactFixture,
+  baseCatalog,
+  buildArtifactFixture,
+  type CatalogInput,
+} from "../test/artifact-fixture";
 import { ACC, fakeAccount, SUBDOMAIN, TOKEN } from "../test/fake-account";
 import { type FakeSandbox, type FakeSandboxOptions, fakeSandbox } from "../test/fake-sandbox";
 import { fakeSandboxAccount, sandboxRelease } from "../test/fake-sandbox-account";
@@ -59,18 +64,16 @@ function repositoryBuild(commit: string, version: string): Promise<ArtifactFixtu
     catalog: {
       name: "cut",
       summary: "Self-hosted link shortener.",
-      categories: [],
+      tagline: "Built from MendyLanda/cut",
+      categories: ["utilities"],
       maintainers: [],
-      source: { ref: "main", sha: commit },
-      install: { ...catalog.install, tier: "sandbox", version },
+      source: { ref: "main", sha: commit, version },
+      install: { ...catalog.install, tier: "sandbox" },
       plan: "paid",
       requires: ["containers"],
-      secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password", generate: false }],
+      secrets: [{ name: "ADMIN_PASSWORD", label: "Admin password" }],
       vars: [],
       postInstall: [],
-    },
-    tweak: (m) => {
-      m.source = { repo: "MendyLanda/cut", sha: commit, ref: "main" };
     },
   });
 }
@@ -703,14 +706,16 @@ describe("installing a reviewed build", () => {
 describe("building a catalog app from source", () => {
   /** The catalog's Cut, and a build of it at `commit` that keeps (or changes) its manifest. */
   async function fromSource(
-    change?: (catalog: CatalogManifest) => CatalogManifest,
+    change?: (catalog: CatalogManifest) => CatalogInput,
     options: {
-      catalog?: (catalog: CatalogManifest) => CatalogManifest;
+      catalog?: (catalog: CatalogManifest) => CatalogInput;
       sandbox?: FakeSandboxOptions;
     } = {},
   ) {
     const released = await buildArtifactFixture();
-    const listed = options.catalog?.(released.manifest.catalog) ?? released.manifest.catalog;
+    const listed = catalogManifestSchema.parse(
+      options.catalog?.(released.manifest.catalog) ?? released.manifest.catalog,
+    );
     catalogApp = { app: released.index, catalog: listed };
     const kept = released.manifest.catalog;
     const built = change === undefined ? kept : change(kept);
@@ -719,11 +724,8 @@ describe("building a catalog app from source", () => {
       version: VERSION,
       catalog: {
         ...built,
-        source: { ref: "main", sha: COMMIT },
-        install: { ...built.install, tier: "sandbox", version: VERSION },
-      },
-      tweak: (m) => {
-        m.source = { repo: "MendyLanda/cut", sha: COMMIT, ref: "main" };
+        source: { ref: "main", sha: COMMIT, version: VERSION },
+        install: { ...built.install, tier: "sandbox" },
       },
     });
     return build({
@@ -796,7 +798,7 @@ describe("building a catalog app from source", () => {
   it("refuses a build whose manifest asks for more than the catalog's does", async () => {
     const r = await fromSource((c) => ({
       ...c,
-      secrets: [...c.secrets, { name: "EXTRA", label: "Extra", generate: false }],
+      secrets: [...c.secrets, { name: "EXTRA", label: "Extra" }],
     }));
     expect(r.job).toMatchObject({ status: "failed" });
     expect(String(r.job?.error)).toContain("its catalog manifest is not the catalog's");

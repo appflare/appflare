@@ -327,7 +327,7 @@ export function fakeSandbox(
         size: fixture.zip.byteLength,
         manifestKey: keys.manifest,
         artifactKey: keys.artifact,
-        commit: fixture.manifest.source.sha,
+        commit: fixture.manifest.catalog.source.sha,
         ref: request.ref ?? "main",
         committedAt: "2026-09-20T10:00:00+00:00",
         detected: {
@@ -383,7 +383,7 @@ export async function sandboxIndexApp(
   fixture: ArtifactFixture,
   over: Partial<NonNullable<IndexApp["build"]>> = {},
 ): Promise<IndexApp> {
-  const { artifacts: _artifacts, digest: _digest, ...rest } = fixture.index;
+  const { artifacts: _artifacts, ...rest } = fixture.index;
   const published = await publishedCatalog(fixture.manifest.catalog);
   return {
     ...rest,

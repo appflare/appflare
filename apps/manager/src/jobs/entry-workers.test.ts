@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildArtifactFixture } from "../test/artifact-fixture";
+import { buildArtifactFixture, varsOf } from "../test/artifact-fixture";
 import {
   durableObjectExportsDiffer,
   entryBindings,
@@ -44,9 +44,9 @@ async function app() {
     ],
     catalog: {
       secrets: [
-        { name: "ADMIN_PASSWORD", label: "Admin password", generate: true, workers: ["app"] },
+        { name: "ADMIN_PASSWORD", label: "Admin password", generate: "password", workers: ["app"] },
       ],
-      vars: [{ name: "APP_URL", label: "App URL", default: "{{workerUrl}}", required: false }],
+      vars: [{ name: "APP_URL", label: "App URL", default: "{{appUrl}}", optional: true }],
     },
   });
 }
@@ -84,12 +84,24 @@ describe("entry workers", () => {
     });
   });
 
-  it("fills in other Workers' names and URLs, the primary's URL being the app's", async () => {
+  it("fills in each Worker's name, workers.dev URL and address, the primary's address being the app's", async () => {
     const { manifest } = await app();
     expect(entryPlaceholders(manifest, "links", "acme", "https://links.example.com")).toEqual({
-      app: { workerName: "links", workerUrl: "https://links.example.com" },
-      jobs: { workerName: "links-jobs", workerUrl: "https://links-jobs.acme.workers.dev" },
-      hooks: { workerName: "links-hooks", workerUrl: "https://links-hooks.acme.workers.dev" },
+      app: {
+        workerName: "links",
+        workerUrl: "https://links.acme.workers.dev",
+        appUrl: "https://links.example.com",
+      },
+      jobs: {
+        workerName: "links-jobs",
+        workerUrl: "https://links-jobs.acme.workers.dev",
+        appUrl: "https://links-jobs.acme.workers.dev",
+      },
+      hooks: {
+        workerName: "links-hooks",
+        workerUrl: "https://links-hooks.acme.workers.dev",
+        appUrl: "https://links-hooks.acme.workers.dev",
+      },
     });
     const single = await buildArtifactFixture();
     expect(entryPlaceholders(single.manifest, "links", "acme")).toBeUndefined();
@@ -141,25 +153,37 @@ describe("entry workers", () => {
     ).toThrow(/names a Worker the app does not have/);
   });
 
-  it("gives every Worker the app's URL for {{workerUrl}} and its own for {{workerUrl:<name>}}", async () => {
+  it("gives every Worker the app's address for {{appUrl}} and each Worker's own for the per-Worker forms", async () => {
     const { manifest } = await app();
     const jobs = entryWorkers(manifest, "links").find((w) => w.name === "jobs");
     if (jobs === undefined) throw new Error("no jobs Worker");
-    const vars = installVars(
-      {
-        ...jobs.manifest,
-        catalog: {
-          ...jobs.manifest.catalog,
-          vars: [
-            {
-              name: "APP_URL",
-              label: "App URL",
-              default: "{{workerUrl}} {{workerUrl:hooks}}",
-              required: false,
-            },
-          ],
-        },
+    const withDefault = (text: string) => ({
+      ...jobs.manifest,
+      catalog: {
+        ...jobs.manifest.catalog,
+        vars: varsOf([{ name: "APP_URL", label: "App URL", default: text, optional: true }]),
       },
+    });
+    const served = "https://links.example.com";
+    const vars = installVars(
+      withDefault("{{appUrl}} {{appUrl:hooks}} {{workerUrl}} {{appHostname:app}}"),
+      {},
+      {
+        workerName: "links",
+        subdomain: "acme",
+        accountId: "acc",
+        appUrl: served,
+        entryWorkers: entryPlaceholders(manifest, "links", "acme", served),
+      },
+    );
+    expect(vars.vars).toContainEqual({
+      type: "plain_text",
+      name: "APP_URL",
+      text: "https://links.example.com https://links-hooks.acme.workers.dev https://links.acme.workers.dev links.example.com",
+    });
+    // Without a domain, the app is served on its workers.dev URL.
+    const plain = installVars(
+      withDefault("{{appUrl}} {{workerHostname:hooks}}"),
       {},
       {
         workerName: "links",
@@ -168,10 +192,10 @@ describe("entry workers", () => {
         entryWorkers: entryPlaceholders(manifest, "links", "acme"),
       },
     );
-    expect(vars.vars).toContainEqual({
+    expect(plain.vars).toContainEqual({
       type: "plain_text",
       name: "APP_URL",
-      text: "https://links.acme.workers.dev https://links-hooks.acme.workers.dev",
+      text: "https://links.acme.workers.dev links-hooks.acme.workers.dev",
     });
   });
 

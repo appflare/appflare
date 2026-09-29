@@ -1,12 +1,12 @@
-<!-- Relative paths render on GitHub. npm does not resolve them, so publishing to npm needs absolute image URLs here. -->
+<!-- Absolute image URLs: npm shows this README too and does not resolve relative paths. -->
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/logo_full_white.svg">
-    <img alt="Appflare" src="../../docs/assets/logo_full.svg" width="160">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/appflare/appflare/main/docs/assets/logo_full_white.svg">
+    <img alt="Appflare" src="https://raw.githubusercontent.com/appflare/appflare/main/docs/assets/logo_full.svg" width="160">
   </picture>
 </p>
 
-# create-appflare / @appflare/cli
+# create-appflare
 
 Installs [Appflare](https://github.com/appflare/appflare), a self-hosted app manager
 for Cloudflare, into your own Cloudflare account. Once it runs, you manage it from its

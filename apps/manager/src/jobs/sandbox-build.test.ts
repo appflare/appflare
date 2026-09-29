@@ -108,6 +108,8 @@ async function install(opts: {
   const fixture = opts.fixture ?? (await sandboxApp());
   const catalog = opts.catalog ?? fixture.manifest.catalog;
   const app = await sandboxIndexApp(fixture, {
+    // The index pins what the catalog publishes, whatever the build carries.
+    pin: catalog.source.sha,
     manifestDigest: (await publishedCatalog(catalog)).digest,
   });
   await writeSettings(createDb(env.DB), {
@@ -349,7 +351,9 @@ describe("installing a sandbox tier app", () => {
         catalog: { install: { ...baseCatalog().install, tier: "sandbox", installDirs } },
       });
     const r = await install({
-      fixture: await withDirs([{ path: "templates/blog", lockfile: "none" }]),
+      fixture: await withDirs([
+        { path: "templates/blog", lockfile: "none", devDependencies: true },
+      ]),
       sandbox: {
         info: {
           protocol: 1,
@@ -405,9 +409,7 @@ describe("installing a sandbox tier app", () => {
       fixture: await sandboxApp({
         catalog: {
           install: { ...baseCatalog().install, tier: "sandbox" },
-          secrets: [
-            { name: "ADMIN_PASSWORD", label: "Admin key", generate: false, multiline: true },
-          ],
+          secrets: [{ name: "ADMIN_PASSWORD", label: "Admin key", multiline: true }],
         },
       }),
       sandbox: {
@@ -580,7 +582,7 @@ describe("installing a sandbox tier app", () => {
     await createMigrator(migrations).ensure(env.DB);
     expect(
       await refused((m) => {
-        m.source.sha = "f".repeat(40);
+        m.catalog.source.sha = "f".repeat(40);
       }),
     ).toMatch(/verify built manifest: .*not the pinned/);
     await reset();

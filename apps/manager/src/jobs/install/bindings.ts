@@ -1,8 +1,8 @@
 import {
-  type CatalogHyperdrive,
   type CatalogPipeline,
   type CatalogPipelines,
   entryWorkerRefName,
+  type HyperdriveDeclaration,
   type HyperdriveProtocol,
   hyperdriveDeclarationProblems,
   isR2BucketBinding,
@@ -219,7 +219,7 @@ function isNamedResourceType(
 export function planBindings(
   workerName: string,
   bindings: readonly WorkerBinding[],
-  databases: readonly CatalogHyperdrive[] = [],
+  databases: readonly HyperdriveDeclaration[] = [],
   streams: CatalogPipelines = {},
 ): BindingPlan {
   const plan: BindingPlan = { resources: [], durableObjects: [], workflows: [], problems: [] };

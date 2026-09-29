@@ -410,6 +410,7 @@ export async function unservedWildcardPhase(
             startedBy: "schedule",
           },
           request.installId,
+          ["wildcardHostname"],
         );
         if (started !== null) {
           log.info(
@@ -434,6 +435,56 @@ export async function unservedWildcardPhase(
   }
 }
 
+/**
+ * After the install is recorded, for an install whose domain step turned
+ * workers.dev off: the Worker was uploaded with `{{appUrl}}` filled in with
+ * its workers.dev URL, where it was served then, so this starts the settings
+ * change the app page starts when the app's address moves: it deploys the
+ * settings again, filled in with the domain. Nothing starts when no setting
+ * uses the address. It never fails the install; a refusal is logged with
+ * what to do.
+ */
+export async function servedAddressPhase(
+  steps: JobSteps,
+  env: Pick<JobEnv, "DB" | "JOBS" | "SANDBOX">,
+  request: { installId: string; hostname: string },
+): Promise<void> {
+  const later = `Save ${appPlace(request.installId, "settings", "the app's settings")} once to fill in https://${request.hostname}.`;
+  await steps
+    .run(`settings for https://${request.hostname}`, async ({ log }) => {
+      const jobs = env.JOBS;
+      // Without the job Workflow binding no job can start; the app page's
+      // settings refresh then follows the address instead.
+      if (jobs === undefined) return {};
+      try {
+        const started = await startVarsRefreshCore(
+          {
+            db: env.DB,
+            sandboxConnected: sandboxBinding(env) !== undefined,
+            createJob: (id, params) => jobs.create({ id, params }),
+            now: () => new Date(steps.now()),
+            // Nobody clicked: the jobs list shows it as automatic.
+            startedBy: "schedule",
+          },
+          request.installId,
+          ["appUrl"],
+        );
+        if (started !== null) {
+          log.info(
+            `The app's settings use its address, which is https://${request.hostname} now, so a settings change (job ${started.jobId}) deploys them again with it.`,
+          );
+        }
+      } catch (error) {
+        log.warn(
+          `The app's settings use its address and could not be deployed again with https://${request.hostname} (${errorMessage(error)}). ${later}`,
+        );
+      }
+      return {};
+    })
+    // Only the log line is lost; the install is recorded either way.
+    .catch(() => undefined);
+}
+
 /** The job log line for what a domain going live did to workers.dev. */
 export function domainLiveMessage(
   installId: string,
@@ -446,7 +497,7 @@ export function domainLiveMessage(
   }
   switch (result.kept) {
     case "settings":
-      return `https://${hostname} serves the app. The workers.dev URL stays on because the app's settings use it; turn off ${workersDev}, then save ${appPlace(installId, "settings", "the app's settings")}.`;
+      return `https://${hostname} serves the app. The workers.dev URL stays on because the app's settings use it; change ${appPlace(installId, "settings", "the app's settings")} to use the app's address, then turn off ${workersDev}.`;
     case "manual":
       return `https://${hostname} serves the app. The workers.dev URL stays as an admin set it.`;
     default:

@@ -62,7 +62,7 @@ describe("licenseBadgeCopy", () => {
     });
     expect(licenseBadgeCopy(plain("LicenseRef-Acme"))).toMatchObject({
       kind: "unknown",
-      label: "LicenseRef-Acme",
+      label: "Custom license",
       variant: "neutral",
     });
     expect(licenseBadgeCopy(plain("MIT License"))).toMatchObject({
@@ -87,5 +87,23 @@ describe("licenseKind", () => {
     ["GPL-2.0-or-later WITH Classpath-exception-2.0", "open-source"],
   ])("%s is %s", (expression, kind) => {
     expect(licenseKind(plain(expression))).toBe(kind);
+  });
+});
+
+describe("licenseBadgeCopy for a license of the app's own", () => {
+  it("shows Custom license, not the LicenseRef id, and the note as what it allows", () => {
+    const copy = licenseBadgeCopy({
+      expression: "LicenseRef-Ledger-Source-Available",
+      note: "Source-available: free for personal use; see the license",
+    });
+    expect(copy).toMatchObject({
+      kind: "source-available",
+      prefix: "Source-available",
+      label: "Custom license",
+      tooltip: "Source-available: free for personal use; see the license",
+    });
+    expect(licenseBadgeCopy({ expression: "MIT OR LicenseRef-Acme", note: null }).label).toBe(
+      "MIT OR LicenseRef-Acme",
+    );
   });
 });

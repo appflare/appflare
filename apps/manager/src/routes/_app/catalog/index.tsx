@@ -1,4 +1,3 @@
-import { canonicalCategory } from "@appflare/schema/catalog-display";
 import { Banner, Button, Empty, Link, Text, useKumoToastManager } from "@cloudflare/kumo";
 import {
   ArrowsClockwiseIcon,
@@ -243,7 +242,7 @@ function Storefront({ catalog }: { catalog: CatalogList }) {
         </div>
         <CategoryCards
           categories={categories}
-          selected={query.category === undefined ? undefined : canonicalCategory(query.category)}
+          selected={query.category}
           onSelect={(category) => update({ category })}
         />
       </div>

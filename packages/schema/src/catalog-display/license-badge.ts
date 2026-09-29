@@ -92,7 +92,14 @@ export interface LicenseBadgeCopy {
 export function licenseBadgeCopy(license: AppLicense): LicenseBadgeCopy {
   const kind = licenseKind(license);
   const file = licenseFile(license.expression);
-  const label = file !== null ? "Custom license" : license.expression;
+  // A license of the app's own has no SPDX id to show: `SEE LICENSE IN
+  // <file>`, or `LicenseRef-<name>` ids only (the note says what it allows).
+  const own =
+    file !== null ||
+    (licenseProblem(license.expression) === null &&
+      licenseIds(license.expression).length > 0 &&
+      licenseIds(license.expression).every((id) => id.includes("LicenseRef-")));
+  const label = own ? "Custom license" : license.expression;
   const neutral = { kind, prefix: null, label, variant: "neutral" } as const;
   switch (kind) {
     case "none":

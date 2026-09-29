@@ -1,6 +1,7 @@
 import {
   type CatalogManifest,
   type CatalogSecret,
+  catalogHomepage,
   type InstallTier,
   licenseFile,
   type Plan,
@@ -8,7 +9,6 @@ import {
 import {
   type AppLicense,
   type AppPopularity,
-  canonicalCategory,
   categoryLabel,
   dateBuildDay,
   formatCount,
@@ -287,8 +287,7 @@ export function appStats(input: AppStatsInput, options: DateOptions = {}): AppSt
           tone: "default",
         },
   );
-  // An index that lists a folded category next to the one it became names it once.
-  const [category, ...more] = [...new Set(input.categories.map(canonicalCategory))];
+  const [category, ...more] = [...new Set(input.categories)];
   if (category !== undefined) {
     stats.push({
       id: "category",
@@ -339,7 +338,7 @@ export function settingsToChoose(
       label: secret.label,
       name: secret.name,
       hint:
-        secret.generate !== false
+        secret.generate !== undefined
           ? "Filled in for you"
           : secret.optional === true
             ? "Optional"
@@ -399,12 +398,13 @@ export function appLinks(
       detail: `github.com/${catalog.repo}`,
     },
   ];
-  if (catalog.homepage.replace(/\/$/, "") !== repoUrl) {
+  const homepage = catalogHomepage(catalog);
+  if (homepage.replace(/\/$/, "") !== repoUrl) {
     links.push({
       kind: "website",
       label: "Website",
-      href: catalog.homepage,
-      detail: hostOf(catalog.homepage),
+      href: homepage,
+      detail: hostOf(homepage),
     });
   }
   if (license !== null) {

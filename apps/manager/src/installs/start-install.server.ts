@@ -3,9 +3,10 @@ import {
   bcryptInputProblem,
   bcryptSeedSources,
   type CatalogManifest,
+  catalogWorkerName,
   connectionStringProblems,
   enteredSecrets,
-  hasFixedWorkerName,
+  hyperdriveDeclarations,
   type IndexApp,
   indexAppArtifact,
   isOptionalSecret,
@@ -95,7 +96,7 @@ export interface CatalogEntry {
 }
 
 /** What starting an install needs of a manifest. */
-export type EntryManifest = Pick<ArtifactManifest, "catalog" | "source"> & {
+export type EntryManifest = Pick<ArtifactManifest, "catalog"> & {
   worker: Pick<ArtifactManifest["worker"], "bindings">;
 };
 
@@ -103,7 +104,6 @@ export type EntryManifest = Pick<ArtifactManifest, "catalog" | "source"> & {
 export function catalogOnlyManifest(catalog: CatalogManifest): EntryManifest {
   return {
     catalog,
-    source: { repo: catalog.repo, sha: catalog.source.sha, ref: catalog.source.ref },
     worker: { bindings: [] },
   };
 }
@@ -161,7 +161,7 @@ export interface ResolvedInstallInput {
 /**
  * Checks the form against the signed catalog manifest. Names the manifest does
  * not declare are rejected, not dropped. Every secret but an optional one
- * needs a value: the form prefills `generate: true` secrets, so an empty one
+ * needs a value: the form prefills generated secrets, so an empty one
  * means a broken client. An optional secret without a value is left unset.
  * A derived secret is not taken from the form at all: the caller computes it
  * from its source with `withDerivedSecrets`. Seed-only secrets and vars are
@@ -214,7 +214,7 @@ export function resolveInstallInput(
   }
   // One connection string per database the app reaches through Hyperdrive.
   // Problems name the binding and the part at fault, never the string.
-  const databases = catalog.resources?.hyperdrive ?? [];
+  const databases = hyperdriveDeclarations(catalog.resources?.hyperdrive);
   const hyperdrive: Record<string, string> = {};
   for (const [binding, value] of Object.entries(input.hyperdrive ?? {})) {
     hyperdrive[binding] = value.trim();
@@ -420,8 +420,8 @@ export async function startInstallCore(
   // install's stage; the first one serves the app and is the install's name.
   const installerWorkers = earlyIds === null ? [] : expectedWorkers(manifest.catalog, earlyIds[0]);
   const workerName = installerWorkers[0] ?? input.workerName;
-  const fixed = installer === null && hasFixedWorkerName(manifest.catalog.install);
-  const fixedName = manifest.catalog.install.workerName;
+  const fixed = installer === null && manifest.catalog.install.fixedWorkerName;
+  const fixedName = catalogWorkerName(manifest.catalog);
   if (fixed && workerName !== fixedName) {
     throw new StartInstallError(
       `${manifest.catalog.name} only works as the Worker "${fixedName}"; its Worker name cannot be changed.`,
@@ -536,9 +536,9 @@ export async function startInstallCore(
           // A sandbox build's artifact exists only once the job built it; until
           // then the install points at the catalog manifest it is built from. A
           // self-deploying app never has one: it points at its catalog manifest.
-          release?.artifacts.zip ?? build?.manifest ?? installer?.manifest ?? "",
+          release?.zip ?? build?.manifest ?? installer?.manifest ?? "",
           release?.digest ?? installer?.manifestDigest ?? null,
-          manifest.source.sha,
+          manifest.catalog.source.sha,
           JSON.stringify(resolved.vars),
           now.getTime(),
           displayName,
@@ -627,7 +627,7 @@ export async function startInstallCore(
         ? { build: sandboxBuildOf(build, true) }
         : release !== null
           ? {
-              artifacts: release.artifacts,
+              artifacts: release,
               digest: release.digest,
               // The form above came from this revision; the job installs with it.
               ...(revised === null ? {} : { revisedCatalog: revised }),

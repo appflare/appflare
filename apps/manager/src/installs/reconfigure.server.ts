@@ -5,6 +5,7 @@ import {
   type CatalogManifest,
   type EntryWorkerPlaceholders,
   entryPlaceholderValues,
+  hyperdriveDeclarations,
   type SandboxInstanceType,
   type TokenPermission,
 } from "@appflare/schema";
@@ -13,6 +14,7 @@ import { ulid } from "ulidx";
 import { effectiveManifest } from "../catalog/revisions.server";
 import { createDb, type Database } from "../db/client";
 import { type BuildKind, installs, resources } from "../db/schema";
+import { jobCreator } from "../jobs/create-job.server";
 import { entryWorkers, parseStoredManifest } from "../jobs/entry-workers";
 import type { ReconfigureJobParams } from "../jobs/reconfigure";
 import {
@@ -31,6 +33,7 @@ import {
 } from "../jobs/reconfigure/plan";
 import { recordedCatalog, settingsRunId } from "../jobs/self-deploying/phases";
 import { lastDurableObjectTagOf, updatePath } from "../jobs/update/plan";
+import { sandboxBinding } from "../sandbox/binding";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
 import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
 import { readAppBaseUrl } from "./app-address.server";
@@ -43,12 +46,14 @@ import {
   installVarFields,
   missingRequiredVar,
   settingsVarFields,
-  varsUseWildcardHostname,
+  type VarsRefreshReason,
+  varsNeedRefresh,
   varValueProblem,
 } from "./install-vars";
 import type { StartReconfigureInput } from "./reconfigure-input";
 import { EMAIL_ROUTE_KIND, HYPERDRIVE_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
 import { catalogOnlyManifest } from "./start-install.server";
+import type { RefreshVars } from "./vars-refresh.server";
 import {
   claim,
   readInstall,
@@ -57,6 +62,7 @@ import {
   VersionActionError,
 } from "./versions.server";
 import { wildcardHostnameOf } from "./wildcard-domain-input";
+import { workersDevBase } from "./workers-dev";
 
 /**
  * Changing an installed app's settings: what the app page's Settings section
@@ -82,13 +88,16 @@ export interface InstallSettings {
   unavailable: string | null;
   /** One per setting the installed version declares, in the catalog's order. */
   fields: SettingField[];
-  /** What `{{workerName}}`, `{{workerUrl}}` and `{{wildcardHostname}}` stand for in this install. */
+  /** What the placeholders (`{{appUrl}}`, `{{workerName}}`, …) stand for in this install. */
   placeholders: {
     workerName: string;
+    /** The workers.dev URL, for `{{workerUrl}}`; null while the subdomain is unknown. */
     workerUrl: string | null;
+    /** Where the app is served, for `{{appUrl}}`: its custom domain while workers.dev is off. */
+    appUrl: string | null;
     /** The wildcard domain's base hostname; null (filled in empty) without one. */
     wildcardHostname: string | null;
-    /** An app of several Workers: what `{{workerUrl:<name>}}` and `{{workerName:<name>}}` become. */
+    /** An app of several Workers: what the per-Worker forms (`{{appUrl:<name>}}`) become. */
     entryWorkers?: EntryWorkerPlaceholders;
   };
   /** Names and labels only; values are never read back. */
@@ -184,7 +193,7 @@ async function settingsContext(
   if (install.build_kind === "self-deploying") {
     const catalog = recordedCatalog(install.manifest_json);
     if (catalog === null || install.pin_sha === null) return null;
-    const sandbox = catalog.install.sandbox;
+    const container = catalog.install.container;
     return {
       catalog,
       fields: settingsVarFields(installVarFields(catalogOnlyManifest(catalog))),
@@ -195,10 +204,10 @@ async function settingsContext(
       skipsPreview: null,
       installer: {
         pin: install.pin_sha,
-        ...(sandbox?.expectedMinutes === undefined
+        ...(container?.expectedMinutes === undefined
           ? {}
-          : { expectedMinutes: sandbox.expectedMinutes }),
-        ...(sandbox?.instanceType === undefined ? {} : { instanceType: sandbox.instanceType }),
+          : { expectedMinutes: container.expectedMinutes }),
+        ...(container?.instanceType === undefined ? {} : { instanceType: container.instanceType }),
       },
       problem: sandboxConnected
         ? null
@@ -232,7 +241,7 @@ async function settingsContext(
     fields: settingsVarFields(installVarFields(manifest)),
     slots: secretSlots(manifest.catalog.secrets, secretNames, manifest.catalog.vars),
     databases: databaseSlots(
-      manifest.catalog.resources?.hyperdrive ?? [],
+      hyperdriveDeclarations(manifest.catalog.resources?.hyperdrive),
       rows.filter((r) => r.kind === HYPERDRIVE_KIND),
     ),
     email:
@@ -255,7 +264,7 @@ async function settingsPlaceholders(
   install: InstallRow,
   subdomain: string | null,
 ): Promise<InstallSettings["placeholders"]> {
-  const [workerUrl, wildcard] = await Promise.all([
+  const [appUrl, wildcard] = await Promise.all([
     // Where the app is reached: its custom domain while workers.dev is off.
     readAppBaseUrl(orm, install, subdomain),
     orm
@@ -274,10 +283,11 @@ async function settingsPlaceholders(
   const entryWorkers =
     catalog === undefined
       ? undefined
-      : entryPlaceholderValues(catalog, install.worker_name, subdomain, workerUrl);
+      : entryPlaceholderValues(catalog, install.worker_name, subdomain, appUrl);
   return {
     workerName: install.worker_name,
-    workerUrl,
+    workerUrl: subdomain ? workersDevBase(install.worker_name, subdomain) : null,
+    appUrl,
     wildcardHostname: wildcardHostnameOf(wildcard),
     ...(entryWorkers === undefined ? {} : { entryWorkers }),
   };
@@ -476,17 +486,21 @@ export async function startReconfigureCore(
 }
 
 /**
- * After the install's wildcard domain was assigned or removed: when any var
- * the Worker gets is filled in with it (`{{wildcardHostname}}`), starts the
- * `reconfigure` job with the stored settings unchanged and `refreshVars`, so
- * the serving version is deployed again with the new value, as a settings
- * change deploys it. Returns the job id; null when no var uses it (or the
- * app is not one Appflare deploys itself), so nothing needs deploying.
- * Refused like any settings change while another job of the app runs.
+ * After a value the app's settings are filled in with changed (`changed`:
+ * the wildcard domain was assigned or removed, or the address the app is
+ * served at moved between workers.dev and a domain): when any var the
+ * Worker gets uses it (`{{wildcardHostname}}`, `{{appUrl}}`,
+ * `{{appHostname}}`), starts the `reconfigure` job with the stored settings
+ * unchanged and `refreshVars`, so the serving version is deployed again with
+ * the new value, as a settings change deploys it. Returns the job id; null
+ * when no var uses it (or the app is not one Appflare deploys itself), so
+ * nothing needs deploying. Refused like any settings change while another
+ * job of the app runs.
  */
 export async function startVarsRefreshCore(
   deps: StartReconfigureDeps,
   installId: string,
+  changed: readonly VarsRefreshReason[],
 ): Promise<{ jobId: string } | null> {
   const install = await readInstall(deps.db, installId);
   if (install.build_kind === "self-deploying") return null;
@@ -501,7 +515,7 @@ export async function startVarsRefreshCore(
   // be the one that names it (the settings change job deploys each Worker
   // whose vars use it).
   const workers = entryWorkers({ ...signed, catalog: ctx.catalog }, install.worker_name);
-  if (!workers.some((w) => varsUseWildcardHostname(w.manifest, stored))) return null;
+  if (!workers.some((w) => varsNeedRefresh(w.manifest, stored, changed))) return null;
   if (ctx.problem !== null) throw new VersionActionError(ctx.problem);
   const jobId = (deps.newId ?? (() => ulid()))();
   return claim(deps, {
@@ -512,7 +526,7 @@ export async function startVarsRefreshCore(
       version: install.catalog_version,
       vars: [],
       secrets: { set: [], unset: [] },
-      refreshVars: true,
+      refreshVars: changed,
     }),
     params: {
       kind: "reconfigure",
@@ -520,9 +534,28 @@ export async function startVarsRefreshCore(
       installId: install.id,
       vars: stored,
       secrets: { set: {}, unset: [] },
-      refreshVars: true,
+      refreshVars: [...changed],
       // Nothing the admin entered changes; the value it follows already did.
       ...(ctx.skipsPreview !== null ? { confirmNoPreview: true } : {}),
     },
   });
+}
+
+/**
+ * The settings refresh (`startVarsRefreshCore`) of this manager, for the
+ * domain and workers.dev actions that change a value the settings are
+ * filled in with.
+ */
+export function varsRefresher(env: Pick<Env, "DB" | "JOBS"> & { SANDBOX?: unknown }): RefreshVars {
+  return (installId, changed) =>
+    startVarsRefreshCore(
+      {
+        db: env.DB,
+        workflows: env.JOBS,
+        sandboxConnected: sandboxBinding(env) !== undefined,
+        createJob: jobCreator(env.JOBS),
+      },
+      installId,
+      changed,
+    );
 }

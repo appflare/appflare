@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import {
-  artifactD1Files,
-  artifactD1Problems,
-  artifactFormatFor,
-  artifactManifestSchema,
-  LATEST_ARTIFACT_FORMAT,
-  unknownArtifactFormatProblem,
-} from "./artifact";
+import { artifactD1Files, artifactD1Problems, artifactManifestSchema } from "./artifact";
 import { catalogManifestSchema } from "./catalog";
 import {
   checkoutRelativePathSchema,
@@ -45,7 +38,7 @@ const validManifest = {
   slug: "tempik",
   name: "Tempik",
   summary: "Disposable inboxes on Workers.",
-  homepage: "https://github.com/hirotomasato/tempik",
+  tagline: "Disposable inboxes",
   repo: "hirotomasato/tempik",
   license: "MIT",
   categories: ["email"],
@@ -74,14 +67,14 @@ const withD1 = (d1: unknown, install: Record<string, unknown> = {}) =>
   });
 
 describe("resources.d1", () => {
-  it("is optional, so manifests without it keep their parsed shape", () => {
+  it("is optional", () => {
     expect(catalogManifestSchema.parse(validManifest).resources).toBeUndefined();
   });
 
   it("takes a migrations folder or glob, schema files, and a post-deploy folder per binding", () => {
     const d1 = {
       DB: {
-        migrations: "prisma/migrations/*/migration.sql",
+        migrationsGlob: "prisma/migrations/*/migration.sql",
         schema: ["src/db/schema.sql", "src/db/indexes.sql"],
         postDeployMigrationsDir: "migrations-after-deploy",
       },
@@ -93,9 +86,9 @@ describe("resources.d1", () => {
   });
 
   it("refuses both a folder and a glob, an empty entry, and a schema file listed twice", () => {
-    const both = withD1({ DB: { migrationsDir: "migrations", migrations: "db/*.sql" } });
+    const both = withD1({ DB: { migrationsDir: "migrations", migrationsGlob: "db/*.sql" } });
     expect(both.success).toBe(false);
-    expect(both.error?.issues[0]?.path).toEqual(["resources", "d1", "DB", "migrations"]);
+    expect(both.error?.issues[0]?.path).toEqual(["resources", "d1", "DB", "migrationsGlob"]);
     expect(withD1({ DB: {} }).success).toBe(false);
     const twice = withD1({ DB: { schema: ["schema.sql", "schema.sql"] } });
     expect(twice.success).toBe(false);
@@ -148,7 +141,7 @@ describe("resources.d1", () => {
     ]) {
       expect(migrationsGlobProblem(glob as string), glob).toBeNull();
       expect(migrationsGlobBase(glob as string)).toBe(base);
-      expect(withD1({ DB: { migrations: glob } }).success, glob).toBe(true);
+      expect(withD1({ DB: { migrationsGlob: glob } }).success, glob).toBe(true);
     }
     for (const glob of [
       "prisma/migrations/migration.sql",
@@ -161,7 +154,7 @@ describe("resources.d1", () => {
       "/db/*.sql",
     ]) {
       expect(migrationsGlobProblem(glob), glob).not.toBeNull();
-      expect(withD1({ DB: { migrations: glob } }).success, glob).toBe(false);
+      expect(withD1({ DB: { migrationsGlob: glob } }).success, glob).toBe(false);
     }
   });
 
@@ -174,8 +167,7 @@ describe("resources.d1", () => {
           tool: "alchemy",
           deployCommand: ["pnpm", "alchemy", "deploy", "--yes"],
           destroyCommand: ["pnpm", "alchemy", "destroy", "--yes"],
-          stateStore: "cloudflare",
-          workers: ["app-{{stage}}"],
+          workerNames: ["app-{{stage}}"],
         },
       },
     );
@@ -196,19 +188,19 @@ const file = (dir: string, binding: string, name: string, offset = 0) => ({
 });
 
 const artifact = (
-  over: Record<string, unknown>,
+  sql: Record<string, unknown>,
   d1?: unknown,
   install: Record<string, unknown> = {},
 ) => ({
   format: 1,
   app: "tempik",
   version: "0.0.0-20260927.0000000",
-  source: { repo: "hirotomasato/tempik", sha: "0".repeat(40), ref: "main" },
   builtAt: "2026-09-27T12:00:00Z",
   builder: "@appflare/pack@0.1.0",
   keyId: "unsigned",
   worker: {
     name: "tempik",
+    wranglerConfig: { declared: "wrangler.toml", effective: "wrangler.toml" },
     mainModule: "index.js",
     compatibilityDate: "2024-12-30",
     compatibilityFlags: [],
@@ -223,22 +215,33 @@ const artifact = (
     limits: null,
   },
   assets: { config: {}, binding: null, files: [] },
-  d1Migrations: { DB: [file("d1", "DB", "0001_init.sql")] },
+  d1: { DB: { migrations: [file("d1", "DB", "0001_init.sql")], ...sql } },
   catalog: {
     ...validManifest,
     install: { ...validManifest.install, ...install },
     ...(d1 === undefined ? {} : { resources: { d1 } }),
   },
-  ...over,
 });
 
-describe("artifact D1 lists", () => {
+/** The problems of an artifact as the check reads it, defaults filled in. */
+const problems = (sql: Record<string, unknown>, d1?: unknown) => {
+  const raw = artifact(sql, d1);
+  return artifactD1Problems({
+    d1: { DB: { schema: [], postDeploy: [], ...raw.d1.DB } },
+    catalog: catalogManifestSchema.parse(raw.catalog),
+  } as Parameters<typeof artifactD1Problems>[0]);
+};
+
+describe("artifact D1 SQL", () => {
   const layout = { DB: { schema: ["src/db/schema.sql"], postDeployMigrationsDir: "after" } };
 
-  it("reads artifacts without them as before, and lists every D1 file", () => {
+  it("records each binding's SQL together, and lists every D1 file", () => {
     const parsed = artifactManifestSchema.parse(artifact({}));
-    expect(parsed.d1Schema).toBeUndefined();
-    expect(parsed.d1PostDeploy).toBeUndefined();
+    expect(parsed.d1.DB).toEqual({
+      migrations: [file("d1", "DB", "0001_init.sql")],
+      schema: [],
+      postDeploy: [],
+    });
     expect(artifactD1Files(parsed).map((f) => f.name)).toEqual(["0001_init.sql"]);
   });
 
@@ -246,9 +249,8 @@ describe("artifact D1 lists", () => {
     const parsed = artifactManifestSchema.parse(
       artifact(
         {
-          format: 3,
-          d1Schema: { DB: [file("d1-schema", "DB", "src/db/schema.sql")] },
-          d1PostDeploy: { DB: [file("d1-post-deploy", "DB", "0001_finalize.sql")] },
+          schema: [file("d1-schema", "DB", "src/db/schema.sql")],
+          postDeploy: [file("d1-post-deploy", "DB", "0001_finalize.sql")],
         },
         layout,
       ),
@@ -261,46 +263,33 @@ describe("artifact D1 lists", () => {
   });
 
   it("refuses lists the catalog manifest does not declare, or declares differently", () => {
-    // The raw object has the shape the check reads; parsing it would run the check itself.
-    const problems = (over: Record<string, unknown>, d1?: unknown) =>
-      artifactD1Problems(artifact(over, d1) as unknown as Parameters<typeof artifactD1Problems>[0]);
-    expect(
-      problems({ d1Schema: { DB: [file("d1-schema", "DB", "schema.sql")] } }, undefined),
-    ).toEqual([
+    expect(problems({ schema: [file("d1-schema", "DB", "schema.sql")] })).toEqual([
       "D1 schema files are recorded for DB, but the catalog manifest declares none in resources.d1.DB.schema.",
     ]);
-    expect(problems({ d1Schema: { DB: [file("d1-schema", "DB", "other.sql")] } }, layout)).toEqual([
+    expect(problems({ schema: [file("d1-schema", "DB", "other.sql")] }, layout)).toEqual([
       "The D1 schema files recorded for DB are not the ones resources.d1.DB.schema lists, in its order.",
     ]);
     expect(problems({}, { DB: { schema: ["schema.sql"] } })).toEqual([
       "resources.d1.DB.schema lists schema files, but the artifact records none for DB.",
     ]);
-    expect(
-      problems({ d1PostDeploy: { DB: [file("d1-post-deploy", "DB", "0002.sql")] } }, undefined),
-    ).toEqual([
+    expect(problems({ postDeploy: [file("d1-post-deploy", "DB", "0002.sql")] })).toEqual([
       "Post-deploy D1 migrations are recorded for DB, but the catalog manifest declares no resources.d1.DB.postDeployMigrationsDir.",
     ]);
   });
 
   it("takes the one baseline the catalog manifest names, and refuses any other", () => {
     const baselineLayout = { DB: { baseline: "db/schema.sql" } };
-    const baseline = { DB: [file("d1-baseline", "DB", "db/schema.sql")] };
-    const parsed = artifactManifestSchema.parse(
-      artifact({ format: 5, d1Baseline: baseline }, baselineLayout),
-    );
+    const baseline = file("d1-baseline", "DB", "db/schema.sql");
+    const parsed = artifactManifestSchema.parse(artifact({ baseline }, baselineLayout));
     expect(artifactD1Files(parsed).map((f) => f.path)).toEqual([
       "d1/DB/0001_init.sql",
       "d1-baseline/DB/db/schema.sql",
     ]);
-    const problems = (over: Record<string, unknown>, d1?: unknown) =>
-      artifactD1Problems(artifact(over, d1) as unknown as Parameters<typeof artifactD1Problems>[0]);
-    expect(problems({ d1Baseline: baseline }, undefined)).toEqual([
+    expect(problems({ baseline })).toEqual([
       "A D1 baseline is recorded for DB, but the catalog manifest declares no resources.d1.DB.baseline.",
     ]);
-    expect(
-      problems({ d1Baseline: { DB: [file("d1-baseline", "DB", "other.sql")] } }, baselineLayout),
-    ).toEqual([
-      "The D1 baseline recorded for DB is not the one file resources.d1.DB.baseline names.",
+    expect(problems({ baseline: file("d1-baseline", "DB", "other.sql") }, baselineLayout)).toEqual([
+      "The D1 baseline recorded for DB is not the file resources.d1.DB.baseline names.",
     ]);
     expect(problems({}, baselineLayout)).toEqual([
       "resources.d1.DB.baseline names a baseline, but the artifact records none for DB.",
@@ -311,65 +300,22 @@ describe("artifact D1 lists", () => {
     const result = artifactManifestSchema.safeParse(
       artifact(
         {
-          format: 3,
-          d1Schema: { DB: [file("d1-schema", "DB", "src/db/schema.sql")] },
-          d1PostDeploy: { DB: [file("d1-post-deploy", "DB", "0001_init.sql")] },
+          schema: [file("d1-schema", "DB", "src/db/schema.sql")],
+          postDeploy: [file("d1-post-deploy", "DB", "0001_init.sql")],
         },
         layout,
       ),
     );
     expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["d1"]);
     expect(result.error?.issues[0]?.message).toMatch(
       /0001_init\.sql of DB is both a migration and a post-deploy migration/,
     );
   });
-});
 
-describe("artifact formats", () => {
-  const schemaFile = { d1Schema: { DB: [file("d1-schema", "DB", "schema.sql")] } };
-  const layout = { DB: { schema: ["schema.sql"] } };
-
-  it("picks the oldest format that carries the artifact", () => {
-    expect(artifactFormatFor({})).toBe(1);
-    expect(artifactFormatFor({ d1Schema: {}, d1PostDeploy: { DB: [] } })).toBe(1);
-    expect(artifactFormatFor({ workers: [{}] })).toBe(2);
-    expect(artifactFormatFor(schemaFile)).toBe(3);
-    expect(artifactFormatFor({ workers: [{}], d1PostDeploy: { DB: [{}] } })).toBe(3);
-    expect(artifactFormatFor({ d1Baseline: { DB: [{}] } })).toBe(5);
-    expect(
-      artifactFormatFor({
-        d1Baseline: { DB: [{}] },
-        catalog: { resources: { d1: { DB: { seed: {} } } } },
-      }),
-    ).toBe(5);
-    expect(artifactFormatFor({ d1Baseline: { DB: [] } })).toBe(1);
-  });
-
-  it("refuses a D1 baseline in formats before 5", () => {
+  it("holds an artifact of one Worker to the one-Worker rules", () => {
     const result = artifactManifestSchema.safeParse(
-      artifact(
-        { format: 4, d1Baseline: { DB: [file("d1-baseline", "DB", "schema.sql")] } },
-        { DB: { baseline: "schema.sql" } },
-      ),
-    );
-    expect(result.success).toBe(false);
-    expect(result.error?.issues[0]?.message).toMatch(/^the artifact needs format 5 /);
-  });
-
-  it("refuses D1 schema files or post-deploy migrations in formats 1 and 2", () => {
-    const result = artifactManifestSchema.safeParse(artifact({ format: 1, ...schemaFile }, layout));
-    expect(result.success).toBe(false);
-    expect(result.error?.issues.map((i) => i.message)).toContain(
-      "the artifact needs format 3 for what it carries (D1 schema files, post-deploy migrations, a Worker's exports or cache block, a Worker kept off workers.dev, D1 seed statements, a D1 baseline, a Worker of static assets only, a multiline secret, Vectorize metadata indexes, R2 lifecycle rules); a manager that reads only format 1 would install it without them",
-    );
-    expect(
-      artifactManifestSchema.safeParse(artifact({ format: 3, ...schemaFile }, layout)).success,
-    ).toBe(true);
-  });
-
-  it("holds a format 3 artifact of one Worker to the one-Worker rules", () => {
-    const result = artifactManifestSchema.safeParse(
-      artifact({ format: 3, ...schemaFile }, layout, {
+      artifact({}, undefined, {
         workers: [
           { name: "app", wranglerConfig: "wrangler.toml", primary: true },
           { name: "api", wranglerConfig: "api/wrangler.jsonc" },
@@ -378,19 +324,7 @@ describe("artifact formats", () => {
     );
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toMatch(
-      /must be format 2 or later with a workers list/,
+      /must list every Worker besides the primary one in workers/,
     );
-  });
-
-  it("says to update Appflare for a newer format and nothing for a known one", () => {
-    expect(unknownArtifactFormatProblem({ format: 3 })).toBeNull();
-    expect(unknownArtifactFormatProblem({ format: "3" })).toBeNull();
-    expect(unknownArtifactFormatProblem({ format: 4 })).toBeNull();
-    expect(unknownArtifactFormatProblem({ format: 5 })).toBeNull();
-    expect(unknownArtifactFormatProblem({ format: 6 })).toBeNull();
-    expect(unknownArtifactFormatProblem({ format: 7 })).toBe(
-      `the artifact is format 7, and this version of Appflare reads formats 1 to ${LATEST_ARTIFACT_FORMAT}; update Appflare in Settings > Updates, then try again`,
-    );
-    expect(unknownArtifactFormatProblem({ format: 0 })).toMatch(/no version of Appflare reads/);
   });
 });

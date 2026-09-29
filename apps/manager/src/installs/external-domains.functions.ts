@@ -18,6 +18,8 @@ import {
   getExternalDomainOptionsCore,
   removeExternalDomainCore,
 } from "./external-domains.server";
+import { varsRefresher } from "./reconfigure.server";
+import type { VarsRefresh } from "./vars-refresh.server";
 
 /**
  * External domains of an install: what the add dialog checks against, add,
@@ -73,7 +75,12 @@ export const getExternalDomainStatus = createServerFn({ method: "POST" })
     const session = await requireSession();
     return asUserError(async () =>
       externalDomainStatusCore(
-        { db: env.DB, api: await getCfClient(env), fetch: managerFetch },
+        {
+          db: env.DB,
+          api: await getCfClient(env),
+          fetch: managerFetch,
+          refreshVars: varsRefresher(env),
+        },
         { ...data, applyDefaults: hasRole(session.user.role, "admin") },
       ),
     );
@@ -82,9 +89,12 @@ export const getExternalDomainStatus = createServerFn({ method: "POST" })
 /** Removes the domain at Cloudflare and marks it deleted. */
 export const removeExternalDomain = createServerFn({ method: "POST" })
   .validator(externalDomainInput)
-  .handler(async ({ data }): Promise<{ hostname: string }> => {
+  .handler(async ({ data }): Promise<{ hostname: string } & VarsRefresh> => {
     await requireRole("admin");
     return asUserError(async () =>
-      removeExternalDomainCore({ db: env.DB, api: await getCfClient(env) }, data),
+      removeExternalDomainCore(
+        { db: env.DB, api: await getCfClient(env), refreshVars: varsRefresher(env) },
+        data,
+      ),
     );
   });

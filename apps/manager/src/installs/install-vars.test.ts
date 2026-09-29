@@ -14,6 +14,8 @@ import {
   missingRequiredVar,
   resolveVars,
   settingsVarFields,
+  varsNeedRefresh,
+  varsUseAppUrl,
   varsUseWildcardHostname,
   varsUseWorkerUrl,
   varValueProblem,
@@ -27,8 +29,9 @@ function manifest(
   return {
     worker: { bindings } as ArtifactManifest["worker"],
     catalog: {
+      install: {},
       vars,
-      secrets: secrets.map((name) => ({ name, label: name, generate: false })),
+      secrets: secrets.map((name) => ({ name, label: name })),
     } as ArtifactManifest["catalog"],
   };
 }
@@ -36,7 +39,9 @@ function manifest(
 const v = (name: string, extra: Partial<CatalogVar> = {}): CatalogVar => ({
   name,
   label: name.toLowerCase(),
-  required: false,
+  optional: true,
+  type: "text",
+  seedOnly: false,
   ...extra,
 });
 
@@ -73,7 +78,7 @@ describe("a derived var", () => {
       [{ type: "plain_text", name: "VAPID_PUBLIC_KEY", text: "dev-key" }],
       [publicKey],
     );
-    const placeholders = { workerUrl: null, workerName: "app" };
+    const placeholders = { workerUrl: null, appUrl: null, workerName: "app" };
     expect(resolveVars(m, { VAPID_PUBLIC_KEY: "BPub" }, placeholders).vars).toEqual([
       { type: "plain_text", name: "VAPID_PUBLIC_KEY", text: "BPub" },
     ]);
@@ -93,7 +98,7 @@ describe("installVarFields", () => {
           v("REGION", { help: "Where it runs." }),
           v("ADDRESSES"),
           v("LIMITS", { default: '{"max":5}' }),
-          v("PUBLIC_URL", { default: "{{workerUrl}}", required: true }),
+          v("PUBLIC_URL", { default: "{{workerUrl}}", optional: false }),
         ],
       ),
     );
@@ -168,17 +173,26 @@ describe("resolveVars", () => {
       ["PASSWORD", "TOKENS"],
     );
     expect(
-      resolveVars(m, { PASSWORD: "entered" }, { workerUrl: null, workerName: "app" }).vars,
+      resolveVars(m, { PASSWORD: "entered" }, { workerUrl: null, appUrl: null, workerName: "app" })
+        .vars,
     ).toEqual([{ type: "plain_text", name: "GREETING", text: "hi" }]);
   });
 
   it("never sends a seed-only var, nor drops a config var for a seed-only secret", () => {
     const m = manifest(
       [{ type: "plain_text", name: "SITE_NAME", text: "Chat" }],
-      [v("ADMIN_NAME", { required: true, seedOnly: true }), v("GREETING", { default: "hi" })],
+      [v("ADMIN_NAME", { optional: false, seedOnly: true }), v("GREETING", { default: "hi" })],
     );
-    m.catalog.secrets.push({ name: "SITE_NAME", label: "x", generate: true, seedOnly: true });
-    const placeholders = { workerUrl: null, workerName: "app" };
+    m.catalog.secrets.push({
+      name: "SITE_NAME",
+      label: "x",
+      generate: "password",
+      seedOnly: true,
+      optional: false,
+      multiline: false,
+      cloudflareToken: false,
+    });
+    const placeholders = { workerUrl: null, appUrl: null, workerName: "app" };
     expect(resolveVars(m, { ADMIN_NAME: "root", GREETING: "hello" }, placeholders).vars).toEqual([
       { type: "plain_text", name: "SITE_NAME", text: "Chat" },
       { type: "plain_text", name: "GREETING", text: "hello" },
@@ -193,7 +207,7 @@ describe("resolveVars", () => {
 
   it("leaves {{workerUrl}} as written while the URL is unknown", () => {
     const m = manifest([{ type: "plain_text", name: "URL", text: "{{workerUrl}}/x" }], []);
-    expect(resolveVars(m, {}, { workerUrl: null, workerName: "app" }).vars).toEqual([
+    expect(resolveVars(m, {}, { workerUrl: null, appUrl: null, workerName: "app" }).vars).toEqual([
       { type: "plain_text", name: "URL", text: "{{workerUrl}}/x" },
     ]);
   });
@@ -203,7 +217,11 @@ describe("{{wildcardHostname}}", () => {
   const m = manifest([], [v("TUNNEL_DOMAIN", { default: "{{wildcardHostname}}" })]);
 
   it("is filled in with the wildcard domain, and empty without one", () => {
-    const values = { workerUrl: "https://cut.acme.workers.dev", workerName: "cut" };
+    const values = {
+      workerUrl: "https://cut.acme.workers.dev",
+      appUrl: "https://cut.acme.workers.dev",
+      workerName: "cut",
+    };
     expect(resolveVars(m, {}, { ...values, wildcardHostname: "tunnels.example.com" }).vars).toEqual(
       [{ type: "plain_text", name: "TUNNEL_DOMAIN", text: "tunnels.example.com" }],
     );
@@ -237,9 +255,94 @@ describe("varsUseWorkerUrl", () => {
     expect(varsUseWorkerUrl(plain, { BASE: "{{workerUrl}}/api" })).toBe(true);
   });
 
-  it("does not count {{workerName}}", () => {
+  it("counts {{workerHostname}}, and not {{workerName}} or the app's address", () => {
+    const host = manifest([{ type: "plain_text", name: "HOST", text: "{{workerHostname}}" }], []);
+    expect(varsUseWorkerUrl(host, {})).toBe(true);
     const m = manifest([{ type: "plain_text", name: "NAME", text: "{{workerName}}" }], []);
     expect(varsUseWorkerUrl(m, {})).toBe(false);
+    const app = manifest([], [v("BASE", { default: "{{appUrl}}" })]);
+    expect(varsUseWorkerUrl(app, {})).toBe(false);
+  });
+});
+
+describe("the app's address", () => {
+  const served = {
+    workerName: "cut",
+    workerUrl: "https://cut.acme.workers.dev",
+    appUrl: "https://links.example.com",
+    accountId: "0123456789abcdef0123456789abcdef",
+  };
+
+  it("fills {{appUrl}} and {{appHostname}} with where the app is served, {{workerUrl}} and {{workerHostname}} with workers.dev", () => {
+    const m = manifest(
+      [],
+      [
+        v("APP_URL", { default: "{{appUrl}}/auth" }),
+        v("APP_HOST", { default: "{{appHostname}}" }),
+        v("DEV_URL", { default: "{{workerUrl}}" }),
+        v("DEV_HOST", { default: "{{ workerHostname }}" }),
+        v("ACCOUNT", { default: "{{accountId}}" }),
+        v("NAME", { default: "{{workerName}}" }),
+      ],
+    );
+    expect(resolveVars(m, {}, served).vars).toEqual([
+      { type: "plain_text", name: "APP_URL", text: "https://links.example.com/auth" },
+      { type: "plain_text", name: "APP_HOST", text: "links.example.com" },
+      { type: "plain_text", name: "DEV_URL", text: "https://cut.acme.workers.dev" },
+      { type: "plain_text", name: "DEV_HOST", text: "cut.acme.workers.dev" },
+      { type: "plain_text", name: "ACCOUNT", text: "0123456789abcdef0123456789abcdef" },
+      { type: "plain_text", name: "NAME", text: "cut" },
+    ]);
+  });
+
+  it("fills JSON vars inside every string", () => {
+    const m = manifest(
+      [{ type: "json", name: "ORIGINS", json: ["{{appUrl}}", "{{workerUrl}}"] }],
+      [],
+    );
+    expect(resolveVars(m, {}, served).vars).toEqual([
+      {
+        type: "json",
+        name: "ORIGINS",
+        json: ["https://links.example.com", "https://cut.acme.workers.dev"],
+      },
+    ]);
+  });
+
+  it("is found by varsUseAppUrl in a default, the wrangler config or an entered value", () => {
+    expect(varsUseAppUrl(manifest([], [v("BASE", { default: "{{appUrl}}" })]), {})).toBe(true);
+    expect(varsUseAppUrl(manifest([], [v("HOST", { default: "{{appHostname}}" })]), {})).toBe(true);
+    const own = manifest([{ type: "json", name: "CFG", json: { base: "{{appUrl}}" } }], []);
+    expect(varsUseAppUrl(own, {})).toBe(true);
+    const plain = manifest([], [v("BASE")]);
+    expect(varsUseAppUrl(plain, {})).toBe(false);
+    expect(varsUseAppUrl(plain, { BASE: "{{appUrl}}/api" })).toBe(true);
+    // The workers.dev address does not follow a domain.
+    expect(varsUseAppUrl(manifest([], [v("BASE", { default: "{{workerUrl}}" })]), {})).toBe(false);
+  });
+
+  it("is found in the per-Worker form that names the primary Worker only", () => {
+    const entry = (text: string) => {
+      const m = manifest([], [v("BASE", { default: text })]);
+      m.catalog.install.workers = [
+        { name: "web", wranglerConfig: "web/wrangler.jsonc", primary: true, workersDev: true },
+        { name: "api", wranglerConfig: "api/wrangler.jsonc", primary: false, workersDev: true },
+      ];
+      return m;
+    };
+    expect(varsUseAppUrl(entry("{{appUrl:web}}"), {})).toBe(true);
+    expect(varsUseAppUrl(entry("{{appHostname:web}}"), {})).toBe(true);
+    expect(varsUseAppUrl(entry("{{appUrl:api}}"), {})).toBe(false);
+    expect(varsUseWorkerUrl(entry("{{workerUrl:web}}"), {})).toBe(true);
+    expect(varsUseWorkerUrl(entry("{{workerUrl:api}}"), {})).toBe(false);
+  });
+
+  it("asks for a refresh only for the values that changed", () => {
+    const m = manifest([], [v("BASE", { default: "{{appUrl}}" })]);
+    expect(varsNeedRefresh(m, {}, ["appUrl"])).toBe(true);
+    expect(varsNeedRefresh(m, {}, ["wildcardHostname"])).toBe(false);
+    expect(varsNeedRefresh(m, {}, ["wildcardHostname", "appUrl"])).toBe(true);
+    expect(varsNeedRefresh(m, {}, [])).toBe(false);
   });
 });
 
@@ -251,7 +354,7 @@ describe("select vars", () => {
   ];
   const home = (extra: Partial<CatalogVar> = {}) =>
     v("HOME_PAGE", { type: "select", options, ...extra });
-  const placeholders = { workerUrl: null, workerName: "cut" };
+  const placeholders = { workerUrl: null, appUrl: null, workerName: "cut" };
 
   it("carry their choices, and start with the wrangler config's value only when it is one", () => {
     const fields = installVarFields(
@@ -271,7 +374,7 @@ describe("select vars", () => {
   });
 
   it("refuse a value that is not one of the choices", () => {
-    const [field] = installVarFields(manifest([], [home({ required: true })]));
+    const [field] = installVarFields(manifest([], [home({ optional: false })]));
     if (field === undefined) throw new Error("no field");
     expect(varValueProblem(field, "404")).toBeNull();
     expect(varValueProblem(field, "home")).toBe(
@@ -331,11 +434,11 @@ describe("resolveVars for an app of several Workers", () => {
             { name: "jobs", wranglerConfig: "jobs/wrangler.jsonc" },
           ],
         },
-        secrets: [{ name: "SESSION", label: "Session", generate: true, workers: ["web"] }],
+        secrets: [{ name: "SESSION", label: "Session", generate: "password", workers: ["web"] }],
         vars: [],
       },
     } as unknown as ArtifactManifest;
-    const placeholders = { workerUrl: null, workerName: "duo" };
+    const placeholders = { workerUrl: null, appUrl: null, workerName: "duo" };
     const [web, jobs] = appWorkers(app);
     if (web === undefined || jobs === undefined) throw new Error("two Workers expected");
     expect(resolveVars(workerManifest(app, web), {}, placeholders).vars).toEqual([]);

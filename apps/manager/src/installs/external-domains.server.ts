@@ -34,6 +34,12 @@ import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/i
 import { listAccountZones } from "./custom-domains.server";
 import type { ExternalDomainOptions, ExternalDomainStatus } from "./external-domain-input";
 import { ADDRESS_KINDS, CUSTOM_HOSTNAME_KIND } from "./resource-kinds";
+import {
+  NO_VARS_REFRESH,
+  type RefreshVars,
+  refreshSettings,
+  type VarsRefresh,
+} from "./vars-refresh.server";
 import { WILDCARD_EXTERNAL_REFUSAL, wildcardOfManifest } from "./wildcard-domain-input";
 import {
   applyDomainLive,
@@ -66,6 +72,8 @@ export interface ExternalDomainDeps {
   fetch?: FetchLike;
   now?: () => Date;
   newId?: () => string;
+  /** Deploys the settings again when they use the app's address; without it nothing is. */
+  refreshVars?: RefreshVars;
 }
 
 /** `cf_id` of an external domain: which zone the custom hostname is on, and its id. */
@@ -690,11 +698,14 @@ export async function externalDomainStatusCore(
               db: deps.db,
               api: async () => deps.api,
               ...(deps.now === undefined ? {} : { now: deps.now }),
+              ...(deps.refreshVars === undefined ? {} : { refreshVars: deps.refreshVars }),
             },
             { installId: install.id, resourceId: domain.id, hostname: domain.name },
           ),
         );
         status.workersDevTurnedOff = applied.turnedOff;
+        status.settingsJobId = applied.settingsJobId;
+        status.settingsNote = applied.settingsNote;
       } else {
         await recordDomainLive(deps.db, domain.id, deps.now);
       }
@@ -711,7 +722,7 @@ export async function externalDomainStatusCore(
 export async function removeExternalDomainCore(
   deps: ExternalDomainDeps,
   request: { installId: string; resourceId: string },
-): Promise<{ hostname: string }> {
+): Promise<{ hostname: string } & VarsRefresh> {
   const orm = createDb(deps.db);
   const install = await readInstall(deps.db, request.installId);
   if (install.status === "uninstalling" || install.status === "uninstalled") {
@@ -730,7 +741,7 @@ export async function removeExternalDomainCore(
       ),
     );
   // With workers.dev off, the last live domain is the app's only address.
-  await asExternalDomainError(() =>
+  const removal = await asExternalDomainError(() =>
     beforeDomainRemoval(
       { db: deps.db, api: async () => deps.api },
       { installId: request.installId, resourceId: domain.id },
@@ -751,5 +762,9 @@ export async function removeExternalDomainCore(
     .update(resources)
     .set({ deleted_at: (deps.now ?? (() => new Date()))() })
     .where(eq(resources.id, domain.id));
-  return { hostname: domain.name };
+  // The app's address moved: settings that use `{{appUrl}}` follow it.
+  const refresh = removal.addressChanged
+    ? await refreshSettings(deps.refreshVars, request.installId, ["appUrl"])
+    : NO_VARS_REFRESH;
+  return { hostname: domain.name, ...refresh };
 }
