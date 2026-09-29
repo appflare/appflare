@@ -1,6 +1,6 @@
 {
   "name": "create-appflare",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
   "description": "Install Appflare, a self-hosted app manager for Cloudflare, into your own Cloudflare account.",
   "keywords": [
