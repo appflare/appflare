@@ -1,12 +1,13 @@
 # Releasing Appflare
 
 Appflare's manager is released as a signed artifact on this repository's GitHub
-Releases, tagged `manager@<version>`. Nothing is published to npm yet.
+Releases, tagged `manager@<version>`. The installer is published to npm as
+[`create-appflare`](#the-installer-on-npm), so `npx create-appflare` runs it.
 
 ## How a release happens
 
 1. Every change that should ship adds a changeset: `pnpm changeset`, pick
-   `@appflare/manager`, describe the change. Commit the file under `.changeset/`.
+   `@appflare/manager` (or `create-appflare` for the installer), describe the change. Commit the file under `.changeset/`.
 2. On every push to `main`, the `release` workflow (`.github/workflows/release.yml`)
    runs `changesets/action`. While changesets are pending it opens or updates the
    **chore: version packages** pull request (`pnpm changeset version`: bumps
@@ -86,10 +87,18 @@ Repository Actions secrets of `appflare/appflare`, for the account that owns the
 | `DOCS_CLOUDFLARE_API_TOKEN` | `docs.yml` production deploy | API token for that account |
 | `DOCS_CLOUDFLARE_ACCOUNT_ID` | same | That account's id |
 
+Repository Actions secret of `appflare/appflare` for npm, only until the installer
+publishes through npm trusted publishing (see [The installer on npm](#the-installer-on-npm)):
+
+| Secret | Used by | Contents |
+|---|---|---|
+| `NPM_TOKEN` | `npm-publish` job of `release.yml` | npm granular access token, read and write, that can publish `create-appflare` |
+
 The release fails with a clear error if `APPFLARE_SIGNING_KEY` is not set, and the
 sandbox image workflow if either Docker Hub secret is not set. Without
 `DEPLOY_REPO_PUSH_KEY` the deploy repository is not updated, and without either
-`DOCS_CLOUDFLARE_*` secret appflare.dev is not updated; each run shows a notice and
+`DOCS_CLOUDFLARE_*` secret appflare.dev is not updated, and without `NPM_TOKEN` or a
+trusted publisher the installer is not published to npm; each run shows a notice and
 succeeds.
 
 ## The deploy repository
@@ -149,10 +158,120 @@ To generate the repository locally from a release directory (a downloaded
 `manager@<version>` release, or `pnpm release:pack` output with `--allow-unsigned`):
 
 ```sh
-pnpm exec turbo run build --filter=@appflare/cli...
+pnpm exec turbo run build --filter=create-appflare...
 pnpm deploy-repo --artifact-dir /tmp/manager-release --out /tmp/appflare-deploy --allow-unsigned
 cd /tmp/appflare-deploy && npm ci && npx wrangler deploy --dry-run
 ```
+
+## The installer on npm
+
+The installer (`packages/cli`) is the public npm package
+[`create-appflare`](https://www.npmjs.com/package/create-appflare); every other
+workspace package is private. Changesets for `create-appflare` bump
+`packages/cli/package.json` in the version pull request like the manager's. After
+each release of the current manager version, three jobs of `release.yml` publish it:
+
+- **npm-plan** (read-only, no secrets) reads the installer's version and finds the
+  commit that set it (the version commit). It does nothing while the version is
+  `0.0.0` or when `npm view create-appflare@<version> version` already answers with
+  it. A version with a pre-release suffix goes out under the `next` dist-tag, so
+  `npx create-appflare` keeps running the latest release.
+- **npm-pack** (read-only, no secrets) checks out the version commit, installs
+  without dependency scripts, builds the installer, runs
+  `pnpm --filter create-appflare run test:dist`, and packs it with
+  `node packages/cli/scripts/pack.mjs`: `pnpm pack` (workspace versions resolved,
+  `publishConfig.exports` applied) from a manifest without `devDependencies`, which
+  name unpublished workspace packages. The script fails if the packed
+  `package.json` still names one. The tarball becomes a workflow artifact.
+- **npm-publish** (`id-token: write` only, and `NPM_TOKEN` in its last step) runs no
+  code from this repository: no checkout, no install, no build. It downloads the
+  tarball, installs npm 11.20.0, and runs
+  `npm publish <tarball> --provenance --access public`. It authenticates one of two
+  ways:
+  - **With `NPM_TOKEN` set**, npm publishes with that token, passed as
+    `NODE_AUTH_TOKEN` and never written to disk or printed. The first version needs
+    this: npm lets a package name a trusted publisher only once the package exists.
+  - **Without it**, npm publishes through
+    [trusted publishing](https://docs.npmjs.com/trusted-publishers): it exchanges the
+    job's GitHub OIDC token for a short-lived publish token, which needs npm 11.5.1
+    or newer. If npm refuses the exchange (no trusted publisher yet), it stops
+    before uploading anything (`ENEEDAUTH`), and the job shows a notice and
+    succeeds.
+
+  Provenance is recorded both ways. With trusted publishing npm adds it on its own
+  for a public repository; `--provenance` and `publishConfig.provenance` ask for it
+  with the token too.
+
+npm matches a trusted publisher against the workflow file that started the run, so
+the publish jobs live in `release.yml` itself rather than in a workflow it calls.
+
+A provenance statement names the commit its workflow run is for, so only the run
+for the version commit publishes; any other run shows a notice naming that commit.
+Two consequences:
+
+- **Merge the version pull request with "Squash and merge" or "Rebase and merge".**
+  A merge commit is not the version commit, so no run would be for it.
+- **To catch up a failed or skipped publish**, open the release workflow run for the
+  version commit (Actions > release, the run whose commit is the one the notice
+  names) and select **Re-run all jobs**. A re-run keeps the run's commit; a new
+  push or a manual run from `main` does not publish.
+
+To check what would be published, from a checkout:
+
+```sh
+pnpm exec turbo run build --filter=create-appflare...
+node packages/cli/scripts/pack.mjs /tmp/create-appflare
+tar -tzf /tmp/create-appflare/create-appflare-<version>.tgz
+```
+
+### The first publish, with a token
+
+1. Sign in to [npmjs.com](https://www.npmjs.com) with the maintainer's account, with
+   two-factor authentication on.
+2. Open your avatar > **Access Tokens** > **Generate New Token** (a granular access
+   token; the CLI cannot create one).
+3. Name it `appflare release` and tick **Bypass two-factor authentication**, so the
+   workflow can publish without a one-time password.
+4. Under **Packages and scopes**, choose **Read and write** for **All packages** (a
+   package that does not exist yet cannot be selected). Give it no organization
+   access.
+5. Set a short expiration (7 days is enough for the first release; npm allows at most
+   90 days for a token that can publish).
+6. Generate the token and store it without it touching the shell history:
+   `gh secret set NPM_TOKEN --repo appflare/appflare`, then paste it when asked.
+7. Squash-merge the version pull request. `npm-publish` publishes the first version with the
+   token.
+
+### After the first publish: trusted publishing
+
+1. On npmjs.com, open the package `create-appflare` > **Settings** > **Trusted
+   Publishing**, and choose **GitHub Actions**.
+2. Enter organization `appflare`, repository `appflare`, and workflow filename
+   `release.yml` (the file name only, not its path and not the job name; every field
+   is case-sensitive). Leave the environment empty: the publish job uses none.
+3. Delete the granular token on npmjs.com (avatar > **Access Tokens**), then delete
+   the secret: `gh secret delete NPM_TOKEN --repo appflare/appflare`. From now on
+   `npm-publish` publishes through trusted publishing, and npm records provenance on
+   its own.
+4. Once a version has been published that way, set the package's **Publishing
+   access** (its **Settings** page) to require two-factor authentication and
+   disallow tokens, as npm recommends.
+
+### Publishing by hand
+
+If the workflow cannot publish, publish from a clean checkout of the commit that set
+the version. Provenance can only be recorded in CI, so turn it off for this one:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm exec turbo run build --filter=create-appflare...
+pnpm --filter create-appflare run test:dist
+node packages/cli/scripts/pack.mjs /tmp/create-appflare
+npm login
+npm publish /tmp/create-appflare/create-appflare-<version>.tgz --access public --provenance=false
+```
+
+The workflow's next run sees the version on npm and leaves it alone.
 
 ## The documentation site and the catalog
 

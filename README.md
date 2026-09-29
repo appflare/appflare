@@ -22,7 +22,7 @@ and you can remove the copy. See [Deploy with the button](https://appflare.dev/s
 
 Two other ways to install:
 
-- **The installer:** build it from a checkout of this repository and run it in a terminal. It is not on npm yet; `npx create-appflare` comes with its first release there. See [Install Appflare](https://appflare.dev/start/install/#from-a-checkout).
+- **The installer:** run `npx create-appflare` in a terminal. See [Install Appflare](https://appflare.dev/start/install/).
 - **An AI agent:** paste a two-sentence prompt into a coding agent, and it runs the installer for you by following [these instructions](https://appflare.dev/agent/install.md). The prompt is on [Install Appflare](https://appflare.dev/start/install/).
 
 ## Documentation

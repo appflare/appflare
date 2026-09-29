@@ -30,6 +30,18 @@ name: release
 #   deploy-repo   DEPLOY_REPO_PUSH_KEY only; replaces appflare/deploy's files and
 #                 pushes one commit named after the version. Skipped, with a
 #                 notice, while that secret is not set.
+#   npm-plan      read-only; for the current version only, after the release,
+#                 decides whether the installer (packages/cli, create-appflare)
+#                 is published: not at 0.0.0, not when npm already has its
+#                 version, and, with a notice, only by the run for the commit
+#                 that set that version (npm's provenance names the run's commit)
+#   npm-pack      read-only, no secrets; builds, checks and packs the installer
+#                 from that commit
+#   npm-publish   id-token: write, and NPM_TOKEN when set; no checkout and no
+#                 build, only npm on the packed tarball. Publishes it with
+#                 provenance, with the token or, without it, through npm
+#                 trusted publishing. Skipped, with a notice, when there is no
+#                 token and npm refuses the trusted publishing exchange.
 #
 # Manual runs (workflow_dispatch) may name a `version` to (re)release that exact
 # version from the commit that set it; without it they behave like a push.
@@ -46,7 +58,8 @@ name: release
 # image; its digest goes into the release notes. A manual run may name a
 # `sandbox_version` to (re)release that version.
 #
-# Nothing is published to npm in v1.
+# Only the installer, create-appflare, is published to npm; every other
+# workspace package is private.
 
 on:
   push:
@@ -597,7 +610,7 @@ jobs:
             --pattern "appflare-${VERSION}.zip" --pattern manifest.json --pattern manifest.sig
           # The generator verifies the release with the CLI's own code (signature
           # against the embedded keys, every file's sha256) before unpacking it.
-          pnpm exec turbo run build --filter=@appflare/cli...
+          pnpm exec turbo run build --filter=create-appflare...
           out="${RUNNER_TEMP}/deploy-repo"
           node scripts/build-deploy-repo.ts \
             --artifact-dir "${RUNNER_TEMP}/release" \
@@ -811,6 +824,222 @@ jobs:
             commit -q "${message[@]}"
           git push -q origin main
           echo "${DEPLOY_REPOSITORY} now holds Appflare ${VERSION}: $(git rev-parse HEAD)"
+
+  # --------------------------------------------------------------------------
+  # The installer on npm (packages/cli): `npx create-appflare` runs the version
+  # published here. Published after the manager's GitHub Release, from the
+  # commit that set packages/cli/package.json's version. npm's trusted
+  # publisher names this file, release.yml, so the publish stays in this
+  # workflow rather than in a called one.
+  # --------------------------------------------------------------------------
+
+  npm-plan:
+    name: npm plan
+    needs: [plan, release]
+    # After the manager's release, or when it was already published (release
+    # skipped), so an installer version that missed npm is published on the
+    # next run. Only for the current manager version: re-releasing an older
+    # manager never publishes the installer.
+    if: >-
+      always()
+      && needs.plan.result == 'success'
+      && (needs.release.result == 'success'
+        || (needs.release.result == 'skipped' && needs.plan.outputs.release == 'false'))
+      && needs.plan.outputs.latest == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Reads git history and the public npm registry; no secrets.
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.npm.outputs.publish }}
+      version: ${{ steps.npm.outputs.version }}
+      sha: ${{ steps.npm.outputs.sha }}
+      dist-tag: ${{ steps.npm.outputs.dist-tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, to find the commit that set the version.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - id: npm
+        env:
+          PACKAGE: create-appflare
+        run: |
+          set -euo pipefail
+          manifest=packages/cli/package.json
+          if [ "$(jq -r .name "${manifest}")" != "${PACKAGE}" ]; then
+            echo "::error::${manifest} is not the ${PACKAGE} package"
+            exit 1
+          fi
+          version="$(jq -r .version "${manifest}")"
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::${PACKAGE} version ${version} is not semver (no leading v)"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          if [ "${version}" = "0.0.0" ]; then
+            echo "::notice::${PACKAGE} is still 0.0.0; nothing to publish"
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          # A pre-release goes out under "next", so `npx create-appflare` keeps
+          # running the latest release.
+          case "${version}" in
+            *-*) echo "dist-tag=next" >> "${GITHUB_OUTPUT}" ;;
+            *) echo "dist-tag=latest" >> "${GITHUB_OUTPUT}" ;;
+          esac
+
+          # The version commit: the newest commit that set the "version" line of
+          # packages/cli/package.json to this version, as for the manager.
+          sha=""
+          while read -r commit; do
+            if [ "$(git show "${commit}:${manifest}" | jq -r .version)" = "${version}" ]; then
+              sha="${commit}"
+              break
+            fi
+          done < <(git log --format=%H -G'"version"[[:space:]]*:' -- "${manifest}")
+          if [ -z "${sha}" ]; then
+            echo "::error::no commit set ${manifest} to version ${version}"
+            exit 1
+          fi
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+          # Whether npm already has this version. E404 means the package or the
+          # version does not exist; any other failure stops the run.
+          err="${RUNNER_TEMP}/npm-view.err"
+          if published="$(npm view "${PACKAGE}@${version}" version 2> "${err}")"; then
+            :
+          elif grep -q E404 "${err}"; then
+            published=""
+          else
+            cat "${err}" >&2
+            echo "::error::could not ask the npm registry whether ${PACKAGE}@${version} exists"
+            exit 1
+          fi
+          if [ "${published}" = "${version}" ]; then
+            echo "::notice::${PACKAGE}@${version} is already on npm"
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          # npm's provenance names the commit this run is for, so only a run for
+          # the version commit itself may build and publish it.
+          if [ "${sha}" != "${GITHUB_SHA}" ]; then
+            echo "::notice title=create-appflare was not published::${PACKAGE}@${version} was set by ${sha}, and this run is for ${GITHUB_SHA}. Re-run all jobs of the release workflow run for ${sha} to publish it (docs/RELEASING.md)."
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "::notice::publishing ${PACKAGE}@${version} from ${sha}"
+          echo "publish=true" >> "${GITHUB_OUTPUT}"
+
+  npm-pack:
+    name: build and pack create-appflare
+    needs: npm-plan
+    if: always() && needs.npm-plan.result == 'success' && needs.npm-plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Runs the installer's build and its dependencies' code: no secrets,
+    # read-only token, no persisted credentials, and no id-token.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.npm-plan.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build, check and pack the package
+        env:
+          VERSION: ${{ needs.npm-plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          pnpm exec turbo run build --filter=create-appflare...
+          # Runs the built bin and library entry the way an installed package does.
+          pnpm --filter create-appflare run test:dist
+          # Workspace versions resolved, publishConfig applied, devDependencies
+          # dropped; fails if the packed manifest names a workspace package.
+          tarball="$(node packages/cli/scripts/pack.mjs "${RUNNER_TEMP}/npm-package")"
+          if [ "${tarball}" != "${RUNNER_TEMP}/npm-package/create-appflare-${VERSION}.tgz" ]; then
+            echo "::error::packed ${tarball}, expected create-appflare-${VERSION}.tgz"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/npm-package/create-appflare-${{ needs.npm-plan.outputs.version }}.tgz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  npm-publish:
+    name: publish create-appflare to npm
+    needs: [npm-plan, npm-pack]
+    if: always() && needs.npm-pack.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Can mint a GitHub OIDC token, so it runs no code from this repository:
+    # no checkout, no dependency install, no build; only npm on the packed
+    # tarball. Two ways to authenticate. With the NPM_TOKEN secret set (needed
+    # for the first version: npm configures a trusted publisher only on an
+    # existing package), npm publishes with that token, which reaches the
+    # publish step only. Without it, npm exchanges this job's OIDC token for a
+    # short-lived publish token, which works once create-appflare names this
+    # repository and release.yml as its trusted publisher. The OIDC token also
+    # signs the provenance statement tying the package to this run's commit.
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/npm-package
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      # Trusted publishing needs npm 11.5.1 or newer; Node 22 comes with npm 10.
+      - run: npm install --global npm@11.20.0
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.npm-plan.outputs.version }}
+          DIST_TAG: ${{ needs.npm-plan.outputs.dist-tag }}
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}"
+          tarball="${RUNNER_TEMP}/npm-package/create-appflare-${VERSION}.tgz"
+          if [ -n "${NODE_AUTH_TOKEN}" ]; then
+            # npm expands ${NODE_AUTH_TOKEN} when it reads this file, so the
+            # token is never written to disk.
+            npmrc="${RUNNER_TEMP}/publish.npmrc"
+            # shellcheck disable=SC2016 # the single quotes keep it unexpanded
+            printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "${npmrc}"
+            export NPM_CONFIG_USERCONFIG="${npmrc}"
+            echo "publishing with the NPM_TOKEN secret"
+          else
+            echo "NPM_TOKEN is not set; publishing through npm trusted publishing"
+          fi
+          log="${RUNNER_TEMP}/npm-publish.log"
+          status=0
+          npm publish "${tarball}" --provenance --access public --tag "${DIST_TAG}" \
+            --ignore-scripts 2>&1 | tee "${log}" || status=$?
+          if [ "${status}" -ne 0 ]; then
+            # ENEEDAUTH: npm had no token and the OIDC exchange was refused, so
+            # it stopped before uploading anything.
+            if [ -z "${NODE_AUTH_TOKEN}" ] && grep -q ENEEDAUTH "${log}"; then
+              echo "::notice title=create-appflare was not published::npm refused this workflow's trusted publishing exchange and NPM_TOKEN is not set, so create-appflare@${VERSION} is not on npm. Name appflare/appflare and release.yml as the package's trusted publisher, or set NPM_TOKEN for a first version (docs/RELEASING.md), then re-run this workflow run."
+              exit 0
+            fi
+            exit "${status}"
+          fi
+          echo "create-appflare@${VERSION} is published under the ${DIST_TAG} tag"
 
   # --------------------------------------------------------------------------
   # The sandbox Worker (apps/sandbox, `appflare sandbox enable`): released the

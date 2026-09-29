@@ -46,7 +46,7 @@ describe("pickLatestManagerRelease", () => {
         githubRelease("0.1.0"),
         githubRelease("0.5.0", { draft: true }),
         githubRelease("0.4.0", { prerelease: true }),
-        githubRelease("9.0.0", { tag: "@appflare/cli@9.0.0" }),
+        githubRelease("9.0.0", { tag: "create-appflare@9.0.0" }),
         githubRelease("0.3.0", { tag: "manager@v0.3.0" }),
         githubRelease("0.2.0", { without: ["manifest.sig"] }),
         { tag_name: 42 },

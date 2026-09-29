@@ -30,7 +30,7 @@ describe("Markdown for agents", () => {
   it("writes Cards as a list of links", async () => {
     const text = await docsLlms.page(page("start", "overview"));
     expect(text).toContain(
-      "- [Run the installer](/start/install/): Build the installer from a checkout of this repository and run it in a terminal.",
+      "- [Run the installer](/start/install/): Run `npx create-appflare` in a terminal on your computer.",
     );
   });
 

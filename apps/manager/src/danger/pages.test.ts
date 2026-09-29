@@ -64,7 +64,7 @@ describe("danger-zone pages", () => {
     expect(complete).toContain("keep running, unmanaged");
     expect(complete).toContain("Revoke the Appflare API token");
     expect(complete).toContain("Access applications that protected the manager are deleted");
-    // Nothing is published to npm yet: the page points at the install guide instead.
+    // The page points at the install guide, which compares every way to install.
     expect(complete).not.toContain("npx");
     expect(complete).toContain("/start/install/");
   });

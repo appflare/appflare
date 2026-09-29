@@ -11,9 +11,6 @@ importers:
 
   .:
     devDependencies:
-      '@appflare/cli':
-        specifier: workspace:*
-        version: link:packages/cli
       '@appflare/pack':
         specifier: workspace:*
         version: link:packages/pack
@@ -38,6 +35,9 @@ importers:
       '@types/node':
         specifier: 22.20.4
         version: 22.20.4
+      create-appflare:
+        specifier: workspace:*
+        version: link:packages/cli
       dotenv-cli:
         specifier: 11.0.0
         version: 11.0.0

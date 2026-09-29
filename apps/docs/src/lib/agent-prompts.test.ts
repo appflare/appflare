@@ -53,6 +53,7 @@ describe("the instructions the prompts point at", () => {
   it("tell the agent never to take secrets in the chat", () => {
     const install = readFileSync(publicFile(AGENT_PROMPTS.install.path), "utf8");
     expect(install).toContain("never accept one in the chat");
-    expect(install).toContain("never run `npx create-appflare`");
+    expect(install).toContain("npx --yes create-appflare --yes");
+    expect(install).toContain("never run an npm package with a similar name");
   });
 });

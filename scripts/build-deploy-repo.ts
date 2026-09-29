@@ -24,8 +24,8 @@ import { buildDeployRepo, parseDeployRepository } from "./deploy-repo.ts";
  * wrangler configs, or a value from its `.env`, is deleted and the run fails
  * (scripts/deploy-repo-guard.ts).
  *
- * Needs @appflare/cli and @appflare/pack built (`pnpm exec turbo run build
- * --filter=@appflare/cli...`), since Node runs this file without the
+ * Needs create-appflare and @appflare/pack built (`pnpm exec turbo run build
+ * --filter=create-appflare...`), since Node runs this file without the
  * workspace's source resolution.
  */
 

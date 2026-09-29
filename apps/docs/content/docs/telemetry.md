@@ -169,8 +169,7 @@ Any one of these stops everything:
 
 - The **Send anonymous usage data** switch in **Settings > Usage data**
   (admins).
-- The installer's flag: `node packages/cli/bin/appflare.js --no-telemetry`, run
-  [from a checkout](/start/install/#from-a-checkout).
+- The installer's flag: `npx create-appflare --no-telemetry`.
 - `APPFLARE_TELEMETRY=off` (`0` and `false` work too) or `DO_NOT_TRACK=1` in the
   installer's environment.
 - The same variables on the manager's Worker, set in the Cloudflare dashboard under

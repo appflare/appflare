@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Launcher for the `create-appflare` bin (also what `npx @appflare/cli`
-// runs). Plain JavaScript that any Node version parses, so an old Node gets a
+// Launcher for the `create-appflare` bin, what `npx create-appflare` runs.
+// Plain JavaScript that any Node version parses, so an old Node gets a
 // clear message instead of a syntax error; the same check lives in
 // src/node-version.ts.
 const major = Number.parseInt(process.versions.node.split(".")[0], 10);
