@@ -90,3 +90,6 @@ To sign in with a passkey, select **Sign in with a passkey** on the login page.
 
 A passkey belongs to the manager's address. One added while you used
 `https://appflare.<your-subdomain>.workers.dev` does not work on another hostname.
+After Appflare [moves to a domain](/guides/appflare-address/), the list marks each
+passkey added at an address Appflare has left with **Works at** and that address.
+Your browser offers it only there; add a new passkey at the current address.

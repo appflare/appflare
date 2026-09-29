@@ -121,8 +121,8 @@ settings pages. The installer prints each address with your manager's address in
 ## The setup wizard
 
 Open the manager's address. Until setup is finished, every page of the manager
-leads to the setup wizard: one page with three steps, each shown in place of the one
-before.
+leads to the setup wizard: one page with three steps (four when the account has an
+active domain), each shown in place of the one before.
 
 ### 1. Connect Cloudflare
 
@@ -153,6 +153,11 @@ The page allows 20 tries per network address in 10 minutes.
 Enter a name, an email, and a password of at least 12 characters. This first user is
 the owner: an admin who is also the only one who can change roles, delete users, or
 hand ownership over. You are signed in right away.
+
+When the account has an active domain, a step comes next that asks **Where should
+Appflare live?**: keep the `workers.dev` address, or move Appflare to a name in one of
+your domains. **Later** skips it. See
+[Give Appflare its own address](/guides/appflare-address/).
 
 Only the browser that saved the token can do this step, for 30 minutes. Anyone else
 who opens the manager in the meantime sees only step 1, and once the owner exists

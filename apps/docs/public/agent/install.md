@@ -57,6 +57,10 @@ These steps happen in the setup page you opened, and only the user can do them.
 5. Optional: to put the manager behind Cloudflare Access (Protect with Cloudflare Access, in Settings > Users and sign-in > Cloudflare Access), create a Zero Trust organization in the Cloudflare dashboard first. Its Free plan covers up to 50 users.
 6. Optional: to serve apps on domains whose DNS is managed outside this account (external domains), turn on Cloudflare for SaaS for one domain of the account in the Cloudflare dashboard (that domain, SSL/TLS, Custom Hostnames, Enable), then set up the gateway in Settings > Domains > External domains. Cloudflare asks for a payment method first; 100 external domains are included, then each costs $0.10 a month.
 
+## If setup asks where Appflare should live
+
+When the account has an active domain, setup shows "Where should Appflare live?" after the owner account. Tell the user to keep the workers.dev address (the default; select Continue) unless they asked you for Appflare on a domain. If they did, they choose "Use a domain of yours", pick the domain and name, and select Continue. The move can take a few minutes while Cloudflare issues the certificate (up to 15); the page shows its progress. Then they sign in again at the new address, where setup goes on. They can also choose a domain later in Settings > Domains > Appflare's address. Guide: https://appflare.dev/guides/appflare-address.md
+
 ## End with
 
 The manager's URL, the version the installer reported (or that the manager had not answered yet), and anything that did not work. After setup, everything else happens in the manager: updates in Settings > Updates (`/settings/updates#appflare` on the manager's address), sandbox builds in Settings > Building apps (`/settings/building#sandbox`), and removal in Settings > Your account > Danger zone (`/settings/account#danger-zone`).

@@ -144,6 +144,11 @@ app, never the manager's.
   public sign-up; admins create users. Session cookies are `HttpOnly`, `Secure`, and
   `SameSite=Lax`, and only the manager's own URL is a trusted origin. Sign-in
   attempts are rate limited, with the counters in the manager's D1 database.
+- **The address is part of sign-in.** Sessions and passkeys belong to the address
+  the manager is opened at: its `workers.dev` address, or a domain of the account
+  once an admin [gives it its own address](/guides/appflare-address/). After a move,
+  everyone signs in again at the new address, and passkeys added at the old one work
+  only there. The `workers.dev` address then sends page visits to the new one.
 - **Roles.** Admins change things; members read everything and change nothing but
   their own passkeys. One admin, the owner, is the only one who can change roles,
   delete users, or transfer ownership; Better Auth's own admin endpoints give admins
@@ -191,6 +196,11 @@ What turning it on does:
 
 Turning it off deletes both applications and stops the checks. The manager's own
 sign-in keeps protecting it either way.
+
+Access protects one hostname. When an admin
+[moves Appflare to a domain](/guides/appflare-address/), changes it, or goes back to
+`workers.dev`, Access moves with the address: both applications then protect the
+new hostname.
 
 ### Before you turn it on
 

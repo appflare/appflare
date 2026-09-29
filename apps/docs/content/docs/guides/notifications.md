@@ -41,6 +41,8 @@ A new channel receives every event. Untick the ones you do not want.
 | **Appflare update available** | Once per release, when a newer Appflare release is published. | `manager_update_available` |
 | **Domain active** | When an external domain starts serving its app. | `domain_active` |
 | **Domain failed** | When an external domain stops serving or cannot be validated, for example its custom hostname was deleted or its certificate expired. | `domain_failed` |
+| **Appflare's address stopped working** | When the domain [Appflare lives on](/guides/appflare-address/) no longer serves it, for example it was removed in the Cloudflare dashboard. Appflare goes back to its `workers.dev` address. | `manager_address_lost` |
+| **Appflare's move finished** | When [moving Appflare to a new address](/guides/appflare-address/#what-happens-during-a-move) succeeds, with a link to it, or fails, with a link to the job. | `manager_move_finished` |
 
 The end of a job is usually sent right away (without the manager's own service binding it waits for the next scheduled run). Everything else is noticed by the scheduled run
 every 30 minutes. Rollbacks, database restores, settings changes, deleting a removed
@@ -170,8 +172,10 @@ The body:
 into the manager and is `null` when Appflare does not know its own address yet.
 `data` holds the event's facts: `app` for every event about an app; `from` and `to`
 for updates and Appflare releases; `version` for an install; `outcome`
-(`succeeded` or `failed`) for installs and uninstalls; `jobId` for a finished job;
-`hostname` for the domain events, and `reason` for a failed domain. A
+(`succeeded` or `failed`) for installs, uninstalls and Appflare's move; `jobId` for a
+finished job; `hostname` for the domain events, a lost address and a move (the
+address Appflare was moving to), `reason` for a failed domain,
+and `accessLeftBehind` when a lost address left Cloudflare Access on that hostname. A
 test message has `"event": "test"`, `"test": true` and an empty `data`.
 
 ### Verify the signature
