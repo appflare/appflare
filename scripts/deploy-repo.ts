@@ -10,8 +10,13 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MANAGER_APP, unpackArtifact, type VerifiedArtifact, verifyArtifact } from "create-appflare";
 import { parseJsonc } from "@appflare/pack";
+import {
+  MANAGER_APP,
+  unpackArtifact,
+  type VerifiedArtifact,
+  verifyArtifact,
+} from "create-appflare";
 import { pageUrl, SITE_URL } from "../apps/docs/src/lib/shared.ts";
 import { findSecrets, repoSecrets, type Secret } from "./deploy-repo-guard.ts";
 
@@ -81,6 +86,7 @@ export const ASSETS_DIR = "assets";
 
 type ArtifactManifest = VerifiedArtifact["manifest"];
 type WorkerBinding = ArtifactManifest["worker"]["bindings"][number];
+type DurableObjectMigration = ArtifactManifest["worker"]["migrations"][number];
 
 /** Wrangler module rule types for the artifact's module types. */
 const RULE_TYPES: Record<string, string> = {
@@ -204,7 +210,7 @@ export function deployRepoWranglerConfig(
     version_metadata: { binding: versionMetadata },
     vars,
     ...(worker.migrations.length > 0
-      ? { migrations: worker.migrations.map((m) => ({ ...m })) }
+      ? { migrations: worker.migrations.map((m: DurableObjectMigration) => ({ ...m })) }
       : {}),
     ...(worker.placement ? { placement: { ...worker.placement } } : {}),
     ...(worker.limits ? { limits: { ...worker.limits } } : {}),

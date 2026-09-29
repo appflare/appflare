@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { VerifiedArtifact } from "create-appflare";
 import { pack, parseJsonc } from "@appflare/pack";
+import type { VerifiedArtifact } from "create-appflare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SITE_URL } from "../apps/docs/src/lib/shared.ts";
 import {
