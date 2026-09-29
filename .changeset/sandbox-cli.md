@@ -1,5 +1,0 @@
----
-"@appflare/cli": minor
----
-
-Add `appflare sandbox enable` and `appflare sandbox disable`. `sandbox enable` deploys, or updates, the optional sandbox Worker `appflare-sandbox`, which builds sandbox tier apps in Cloudflare Containers in your account: it downloads the newest signed `sandbox@<version>` release (or `--version`, or `--artifact-dir`), verifies it like the manager's, and deploys it with wrangler from a temporary directory, creating two container applications that run `docker.io/mendylanda/appflare-sandbox:<version>` and the R2 bucket `appflare-builds`. The Worker has no public URL; the manager's support for it comes in a following release. On an account without Workers Paid it stops with "Sandbox builds need Workers Paid", and on one without R2 it says how to enable R2. `sandbox disable --yes` deletes the Worker and its container applications and keeps the bucket; `--purge` also empties and deletes the bucket after you type the sandbox Worker's name. Both refuse a Worker by that name that is not an Appflare sandbox Worker.

@@ -1,5 +1,0 @@
----
-"@appflare/manager": minor
----
-
-Install apps that receive email. For an app whose catalog entry sets `install.emailRouting`, the install form asks for one of the account's zones and previews what the install will set up there. The install checks the zone before creating anything and refuses when an address already has a routing rule elsewhere, the catch-all already delivers elsewhere, or the zone's mail goes to another provider; then, after the Worker is uploaded, it turns Email Routing on if it is off, creates a routing rule per address, and points the catch-all at the Worker when asked. Each is recorded, shown under Email on the app's page, and undone by the uninstall before the Worker is deleted; Email Routing is turned off again only if Appflare turned it on and no other rule or catch-all uses it. The token link adds three optional permissions for this (Zone Settings: Edit, Email Routing Rules: Edit, Email Routing Addresses: Read). Apps with a `send_email` binding get a note on sending to verified destination addresses, and the catalog page says Appflare sets up Email Routing for apps that ask for it.

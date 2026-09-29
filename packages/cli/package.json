@@ -1,6 +1,6 @@
 {
   "name": "@appflare/cli",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Install Appflare, a self-hosted app manager for Cloudflare, into your own Cloudflare account.",
   "license": "Apache-2.0",

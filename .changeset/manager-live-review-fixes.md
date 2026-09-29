@@ -1,5 +1,0 @@
----
-"@appflare/manager": patch
----
-
-Fixes from a round of use. Renaming an app opens with its current name already selected, so typing replaces it, and saving it unchanged changes nothing. The sidebar's Your apps list scrolls with a thin scrollbar that only shows while the pointer is on it, and the folded sidebar now shows every app as its icon, with its name on hover, its status dot, and the open app highlighted. The pages no longer scroll past their content or sideways: an app's screenshots scroll within their own strip, and the whole window no longer gets a second scrollbar. A setting with a few choices shows its label and help above the choices, laid out in two columns (one on a phone). The install form starts with the address, the Worker name and where the app answers, and checks the Worker name as you type: a spinner while it checks, a check mark when the name is free, and the reason when it is taken or not allowed. On the Catalog page, a "+" button opens a menu with "From a repository…" and "Add a catalog".
