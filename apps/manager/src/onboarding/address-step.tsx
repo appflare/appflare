@@ -18,8 +18,9 @@ import { ADDRESS_UNREADABLE_NOTE } from "./wizard";
  * Setup's "Where should Appflare live?", shown only when the account has an
  * active zone: keep the workers.dev address (the default), or move Appflare
  * to a domain of the account now. The move is the one Domains settings
- * runs; once it is done the browser goes to the sign-in page at the new
- * address, whose return path (`returnTo`) resumes setup at its last step.
+ * runs, a job whose progress shows here; once it has succeeded the browser
+ * goes to the sign-in page at the new address, whose return path
+ * (`returnTo`) resumes setup at its last step.
  * Keeping the address, or Later, goes on to the last step here.
  */
 export function AddressStep({
@@ -41,7 +42,7 @@ export function AddressStep({
 }) {
   const [choice, setChoice] = useState<"keep" | "domain">("keep");
   const fields = useAddressFields(options.zones);
-  const move = useAddressMove({ kind: "move", returnTo });
+  const move = useAddressMove({ kind: "move", returnTo, onMoved: (movedTo) => go(movedTo.url) });
   const here = typeof window === "undefined" ? null : window.location.host;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -52,15 +53,20 @@ export function AddressStep({
     }
     fields.touch();
     if (fields.target === null) return;
-    const done = await move.run(fields.target);
-    if (done !== null) go(done.url);
+    await move.run(fields.target);
   }
 
-  if ((move.moving || move.movedTo !== null) && fields.target !== null) {
+  if (move.movedTo !== null) {
+    return <MoveProgress hostname={move.movedTo.hostname} jobId={null} done />;
+  }
+  const following = move.following;
+  if (following !== null || (move.starting && fields.target !== null)) {
     return (
       <MoveProgress
-        hostname={move.movedTo?.hostname ?? fields.target.hostname}
-        done={move.movedTo !== null}
+        hostname={following?.hostname ?? fields.target?.hostname ?? ""}
+        jobId={following?.jobId ?? null}
+        job={move.job}
+        refused={move.refused}
       />
     );
   }

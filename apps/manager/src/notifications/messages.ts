@@ -74,6 +74,15 @@ export const notificationFactsSchema = z.discriminatedUnion("type", [
      */
     accessLeftBehind: z.boolean().optional(),
   }),
+  z.object({
+    type: z.literal("manager_move_finished"),
+    /** The custom domain Appflare was moving to. */
+    hostname: z.string(),
+    outcome,
+    jobId: z.string(),
+    /** A failed job whose switch had committed: Appflare lives at `hostname` anyway. */
+    moved: z.boolean().optional(),
+  }),
   z.object({ type: z.literal("test") }),
 ]);
 export type NotificationFacts = z.infer<typeof notificationFactsSchema>;
@@ -195,6 +204,31 @@ export function renderMessage(facts: NotificationFacts, managerUrl: string | nul
         ],
         url: managerLink(managerUrl, settingsLink("domains", "address")),
       };
+    case "manager_move_finished":
+      if (facts.outcome === "failed" && facts.moved === true) {
+        return {
+          title: `Appflare moved to ${facts.hostname}; its job failed afterwards`,
+          lines: [
+            `Appflare now lives at ${facts.hostname}. Sign in again there; the job log says what did not finish.`,
+          ],
+          url: `https://${facts.hostname}/jobs/${facts.jobId}`,
+        };
+      }
+      return facts.outcome === "succeeded"
+        ? {
+            title: `Appflare moved to ${facts.hostname}`,
+            lines: [
+              `Appflare now lives at ${facts.hostname}. Sign in again there; passkeys added at the old address work only there.`,
+            ],
+            url: `https://${facts.hostname}/`,
+          }
+        : {
+            title: `Moving Appflare to ${facts.hostname} failed`,
+            lines: [
+              `Appflare stays at its current address. The job log says why; start the move again from the Domains settings.`,
+            ],
+            url: managerLink(managerUrl, `/jobs/${facts.jobId}`),
+          };
     case "test":
       return {
         title: "Test message from Appflare",

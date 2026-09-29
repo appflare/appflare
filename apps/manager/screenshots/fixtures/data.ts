@@ -172,6 +172,7 @@ const job = {
   reportedAt: null,
   install: apps[0],
   sourceBuild: null,
+  addressMove: null,
   build: null,
   logs: [
     {
@@ -336,6 +337,8 @@ const managerAddress =
         workersDevHostname: "appflare.example.workers.dev",
         serving: true,
         attachedByHand: [],
+        movingJobId: null,
+        movingTo: null,
       }
     : {
         hostname: null,
@@ -345,6 +348,8 @@ const managerAddress =
         workersDevHostname: "appflare.example.workers.dev",
         serving: null,
         attachedByHand: [],
+        movingJobId: null,
+        movingTo: null,
       };
 
 function argument(args: unknown[], key: string): string {

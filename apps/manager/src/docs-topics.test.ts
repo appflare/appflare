@@ -106,5 +106,6 @@ describe("docs topics", () => {
     expect(jobFailureTopic({ kind: "rollback", restore: true })).toBe("databaseRestore");
     expect(jobFailureTopic({ kind: "uninstall", deleteRetained: true })).toBe("removedApps");
     expect(jobFailureTopic({ kind: "reconfigure" })).toBe("settingsChange");
+    expect(jobFailureTopic({ kind: "move_address" })).toBe("appflareAddressMove");
   });
 });

@@ -248,7 +248,7 @@ describe("ensure", () => {
          VALUES ('pk1', 'k', 'u1', 'c1', 0, 'singleDevice', 0)`,
       ),
     ]);
-    await createMigrator(migrations).ensure(env.DB);
+    await createMigrator(migrations.slice(0, before + 1)).ensure(env.DB);
     const rows = await env.DB.prepare(
       "SELECT id, events_json FROM notification_channels ORDER BY id",
     ).all();
@@ -272,6 +272,31 @@ describe("ensure", () => {
     await env.DB.prepare("DELETE FROM passkey WHERE id = 'pk1'").run();
     const left = await env.DB.prepare("SELECT count(*) AS n FROM passkey_host").first();
     expect(left).toEqual({ n: 0 });
+  });
+
+  it("adds the move event to channels that hear when Appflare's address stops working", async () => {
+    const before = migrations.findIndex((m) => m.tag === "0026_move_notifications");
+    expect(before).toBeGreaterThan(0);
+    await createMigrator(migrations.slice(0, before)).ensure(env.DB);
+    const channel = (id: string, events: string) =>
+      env.DB.prepare(
+        `INSERT INTO notification_channels (id, kind, label, target, config, events_json, created_at, updated_at)
+         VALUES (?1, 'webhook', ?1, 'example.com', 'v1.x.y', ?2, 1, 1)`,
+      ).bind(id, events);
+    await env.DB.batch([
+      channel("address", '["manager_address_lost"]'),
+      channel("jobs", '["install_finished"]'),
+      channel("both", '["manager_address_lost","manager_move_finished"]'),
+    ]);
+    await createMigrator(migrations).ensure(env.DB);
+    const rows = await env.DB.prepare(
+      "SELECT id, events_json FROM notification_channels ORDER BY id",
+    ).all();
+    expect(rows.results).toEqual([
+      { id: "address", events_json: '["manager_address_lost","manager_move_finished"]' },
+      { id: "both", events_json: '["manager_address_lost","manager_move_finished"]' },
+      { id: "jobs", events_json: '["install_finished"]' },
+    ]);
   });
 
   it("is a no-op on the second call (no D1 access at all)", async () => {

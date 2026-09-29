@@ -105,6 +105,8 @@ export const RESOURCE_MANAGERS = ["appflare", "app"] as const;
  * instance (like a database restore). `source_build` builds a repository (or
  * a catalog app at another commit) in the sandbox Worker for an admin to
  * review; installing or updating from the build is a job of its own.
+ * `move_address` moves Appflare to a custom domain of the account (or from
+ * one to another): it waits for the new address to answer, then switches.
  */
 export const JOB_KINDS = [
   "install",
@@ -118,6 +120,7 @@ export const JOB_KINDS = [
   "sandbox_disable",
   "self_rollback",
   "source_build",
+  "move_address",
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 

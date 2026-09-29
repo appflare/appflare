@@ -351,6 +351,8 @@ describe("DomainsSettingsView", () => {
         workersDevHostname: "appflare.acme.workers.dev",
         serving: true,
         attachedByHand: [],
+        movingJobId: null,
+        movingTo: null,
       },
       options: {
         zones: [{ id: "z1", name: "example.com", suggestedHostname: "appflare.example.com" }],

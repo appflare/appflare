@@ -263,8 +263,15 @@ const SANDBOX_WORKER_JOB_KINDS: ReadonlySet<string> = new Set([
   "sandbox_disable",
 ]);
 
+/** Jobs about Appflare itself: its version, and its address. */
+const MANAGER_JOB_KINDS: ReadonlySet<string> = new Set([
+  "self_update",
+  "self_rollback",
+  "move_address",
+]);
+
 function jobTier(row: JobRow, input: Record<string, unknown>): string | null {
-  if (row.kind === "self_update" || row.kind === "self_rollback") return null;
+  if (MANAGER_JOB_KINDS.has(row.kind)) return null;
   if (SANDBOX_WORKER_JOB_KINDS.has(row.kind)) return null;
   if (input.selfDeploying === true) return "self_deploying";
   if (input.sandboxBuild === true || input.runKind === "build") return "sandbox";
@@ -280,7 +287,7 @@ export function jobProperties(
   const input = parseInput(row.inputJson);
   const kind = jobKind(row);
   let slug: string;
-  if (row.kind === "self_update" || row.kind === "self_rollback") slug = "appflare";
+  if (MANAGER_JOB_KINDS.has(row.kind)) slug = "appflare";
   else if (SANDBOX_WORKER_JOB_KINDS.has(row.kind)) slug = "appflare-sandbox";
   else slug = officialSlug(row.appSlug ?? "", officialCatalog, catalogVersions) ?? "custom";
   let version: string | null;
@@ -298,7 +305,9 @@ export function jobProperties(
       from = str(input.fromVersion);
       break;
     case "self_rollback":
-      // Only the kind: which versions an admin moved Appflare between stays in the manager.
+    case "move_address":
+      // Only the kind: which versions an admin moved Appflare between, and
+      // where Appflare lives, stay in the manager.
       version = null;
       break;
     case "rollback":

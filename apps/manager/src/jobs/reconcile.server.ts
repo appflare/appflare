@@ -24,11 +24,14 @@ import { StepLog } from "./step-log";
  * failed.
  *
  * An install or build that turns sandbox builds on first claims a
- * `sandbox_enable` job in its own batch, then creates its Workflow instance.
- * A request that died in between leaves a queued enable job with no
- * instance, which would keep every later job from starting; one older than
- * {@link STRANDED_ENABLE_MS} whose instance the engine does not know is
- * removed (it never ran, so nothing of it exists in the account).
+ * `sandbox_enable` job in its own batch, then creates its Workflow instance;
+ * a move of Appflare's address claims its `move_address` job the same way.
+ * A request that died in between leaves a queued job with no instance,
+ * which would keep every later job (or every later move and self-update)
+ * from starting; one older than {@link STRANDED_ENABLE_MS} whose instance
+ * the engine does not know is removed (it never ran, so nothing of it
+ * exists in the account; a move's domain stays attached, as after any
+ * move that did not complete).
  */
 
 /** The part of a Workflow binding this reads (`env.JOBS`). */
@@ -51,9 +54,12 @@ const DEAD = new Set(["errored", "terminated", "unknown"]);
 /** A queued enable job without a Workflow instance after this long never gets one. */
 export const STRANDED_ENABLE_MS = 5 * 60 * 1000;
 
-/** Whether `row` is an enable job whose start died before creating its instance. */
+/** Job kinds whose row is claimed before their Workflow instance is created. */
+const CLAIMED_FIRST: ReadonlySet<string> = new Set(["sandbox_enable", "move_address"]);
+
+/** Whether `row` is such a job whose start died before creating its instance. */
 function isStrandedEnable(row: ActiveJobRow, at: Date): boolean {
-  if (row.kind !== "sandbox_enable" || row.status !== "queued") return false;
+  if (!CLAIMED_FIRST.has(row.kind) || row.status !== "queued") return false;
   if (row.workflow_instance_id !== null) return false;
   let created: number;
   try {
@@ -191,7 +197,7 @@ async function reconcileJob(
         )
         .returning({ id: jobs.id });
       if (removed.length > 0) {
-        console.warn("removed an enable job whose start never created it", { jobId: row.id });
+        console.warn("removed a job whose start never created it", { jobId: row.id });
         return true;
       }
       return false;

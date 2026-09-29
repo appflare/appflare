@@ -183,6 +183,13 @@
       "when": 1790627739362,
       "tag": "0025_manager_address",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1790638721587,
+      "tag": "0026_move_notifications",
+      "breakpoints": true
     }
   ]
 }

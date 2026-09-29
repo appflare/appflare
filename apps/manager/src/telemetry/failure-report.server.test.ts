@@ -371,6 +371,22 @@ describe("sendFailureReport", () => {
     );
   });
 
+  it("takes out the domains a move of Appflare's address named", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO jobs (id, kind, status, input_json) VALUES ('m1', 'move_address', 'failed', ?1)`,
+      ).bind(JSON.stringify({ hostname: "next.ada.example", from: "old.ada.example" })),
+      env.DB.prepare(
+        "INSERT INTO job_logs (job_id, ts, level, message) VALUES ('m1', ?1, 'error', ?2)",
+      ).bind(NOW, "next.ada.example never answered; old.ada.example stays"),
+    ]);
+    const preview = await previewFailureReport(managerEnv(), "m1");
+    expect((preview.event.properties.log as string[]).at(-1)).toBe(
+      `${new Date(NOW).toISOString()} error [domain] never answered; [domain] stays`,
+    );
+    expect(preview.event.properties.slug).toBe("appflare");
+  });
+
   it("a report that cannot be built leaves the job unmarked", async () => {
     // A log line whose time is not a date makes building the report throw.
     await env.DB.prepare(

@@ -19,7 +19,8 @@ import type { NotificationEvent } from "./schema";
  *
  * - A job's end (job-end.ts, and the cron's sweep of finished jobs that
  *   catches any the job itself could not record): install finished, update
- *   applied or failed, uninstall finished. Once per job.
+ *   applied or failed, uninstall finished, Appflare's move to a new address
+ *   finished. Once per job.
  * - Conditions the cron sees: an update available (once per install and
  *   version), a newer Appflare release (once per version), an install whose
  *   health check answers with a server error (once per episode: it opens
@@ -89,9 +90,11 @@ export interface JobEvent {
 /**
  * The event a finished job makes, or null: the job has not finished, it is
  * a kind nobody is told about (rollback, self-update, deleting kept data),
- * or its install is gone.
+ * or its install is gone. A move of Appflare's address has no install.
  */
 export async function jobEventOf(db: D1Database, jobId: string): Promise<JobEvent | null> {
+  const move = await moveEventOf(db, jobId);
+  if (move !== undefined) return move;
   const row = await db
     .prepare(
       `SELECT j.kind, j.status, j.input_json, j.finished_at,
@@ -148,8 +151,50 @@ export async function jobEventOf(db: D1Database, jobId: string): Promise<JobEven
   }
 }
 
+/**
+ * The event a finished move of Appflare's address makes; null while it has
+ * not finished, undefined when the job is not such a move.
+ */
+async function moveEventOf(db: D1Database, jobId: string): Promise<JobEvent | null | undefined> {
+  const row = await db
+    .prepare(
+      "SELECT status, input_json, finished_at FROM jobs WHERE id = ?1 AND kind = 'move_address'",
+    )
+    .bind(jobId)
+    .first<{ status: string; input_json: string | null; finished_at: number | null }>();
+  if (row === null) return undefined;
+  if (row.status !== "succeeded" && row.status !== "failed") return null;
+  const hostname = str(parseInput(row.input_json).hostname);
+  if (hostname === null) return null;
+  // A job can fail after its switch: Appflare then lives at the new address anyway.
+  const current =
+    row.status === "failed"
+      ? await db
+          .prepare("SELECT value FROM settings WHERE key = 'manager_hostname'")
+          .first<{ value: string }>()
+      : null;
+  const moved = current?.value === hostname;
+  return {
+    type: "manager_move_finished",
+    facts: {
+      type: "manager_move_finished",
+      hostname,
+      outcome: row.status,
+      jobId,
+      ...(moved ? { moved: true } : {}),
+    },
+    occurredAt: row.finished_at ?? Date.now(),
+    dedupeKey: `job:${jobId}`,
+  };
+}
+
 /** Kinds whose end may make an event (job-end.ts checks this before anything else). */
-export const NOTIFIED_JOB_KINDS: ReadonlySet<string> = new Set(["install", "update", "uninstall"]);
+export const NOTIFIED_JOB_KINDS: ReadonlySet<string> = new Set([
+  "install",
+  "update",
+  "uninstall",
+  "move_address",
+]);
 
 export interface DetectEnv {
   DB: D1Database;
@@ -183,7 +228,8 @@ export async function sweepFinishedJobs(
     const { results } = await db
       .prepare(
         `SELECT id, finished_at FROM jobs
-         WHERE kind IN ('install', 'update', 'uninstall') AND status IN ('succeeded', 'failed')
+         WHERE kind IN (${[...NOTIFIED_JOB_KINDS].map((k) => `'${k}'`).join(", ")})
+           AND status IN ('succeeded', 'failed')
            AND finished_at > ?1 AND finished_at <= ?2
          ORDER BY finished_at LIMIT ?3`,
       )

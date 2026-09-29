@@ -33,12 +33,22 @@ export function isActive(job: Pick<JobView, "status"> | null | undefined): boole
  * read at once. A failed poll (for example a 5xx or 404 while Appflare
  * switches versions) is retried on the next tick; an answer without the job
  * never replaces the job already shown. Returns `undefined` until the first
- * read, and null when there is no such job.
+ * read, and null when there is no such job. `onPollError` hears each failed
+ * poll, for a page that can tell what a failure means. `refreshAfter` says
+ * whether a job's end reads the page's data again (see below; default yes).
  */
 export function useLiveJob(
   jobId: string | null,
   initial?: JobView | null,
+  options: {
+    onPollError?: (error: unknown) => void;
+    refreshAfter?: (job: JobView) => boolean;
+  } = {},
 ): JobView | null | undefined {
+  const onPollError = useRef(options.onPollError);
+  onPollError.current = options.onPollError;
+  const refreshAfter = useRef(options.refreshAfter);
+  refreshAfter.current = options.refreshAfter;
   const [stored, setStored] = useState<LiveJobState>({ jobId, job: initial });
   // A new read handed in (the job page's loader) replaces what is shown.
   useEffect(() => setStored({ jobId, job: initial }), [jobId, initial]);
@@ -64,8 +74,9 @@ export function useLiveJob(
           data: afterLogId === undefined ? { jobId: id } : { jobId: id, afterLogId },
         });
         if (!cancelled) setStored((s) => acceptPoll(s, id, next));
-      } catch {
+      } catch (error) {
         // A missed poll is retried on the next tick.
+        if (!cancelled) onPollError.current?.(error);
       }
     }
     if (unread) void poll();
@@ -86,7 +97,7 @@ export function useLiveJob(
       sawRunning.current = true;
     } else if (sawRunning.current) {
       sawRunning.current = false;
-      void router.invalidate();
+      if (refreshAfter.current?.(job) !== false) void router.invalidate();
     }
   }, [job, router]);
   return job;

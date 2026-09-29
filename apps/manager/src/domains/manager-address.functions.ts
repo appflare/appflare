@@ -1,7 +1,9 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
+import { accessGate } from "../access/gate";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { CustomDomainError } from "../installs/custom-domains.server";
+import { jobCreator } from "../jobs/create-job.server";
 import { requireRole } from "../server/auth.server";
 import { runningVersion } from "../server/build-version";
 import {
@@ -50,12 +52,17 @@ async function deps() {
   return {
     db: env.DB,
     api: await getCfClient(env),
-    fetch: (input: string, init?: RequestInit) => fetch(input, init),
     version: runningVersion(env),
+    createJob: jobCreator(env.JOBS),
+    workflows: env.JOBS,
+    invalidateAccessGate: () => accessGate.invalidate(),
   };
 }
 
-/** Where Appflare lives, and custom domains attached to its Worker by hand. */
+/**
+ * Where Appflare lives, custom domains attached to its Worker by hand, and
+ * the move job running, if any.
+ */
 export const getManagerAddress = createServerFn({ method: "GET" }).handler(
   async (): Promise<ManagerAddress> => {
     await requireRole("admin");
@@ -72,9 +79,10 @@ export const getManagerAddressOptions = createServerFn({ method: "GET" }).handle
 );
 
 /**
- * Moves Appflare from workers.dev to a custom domain, or reports the DNS
- * records the domain would replace. On success, `url` is the sign-in page
- * at the new address, where the browser goes next.
+ * Starts moving Appflare from workers.dev to a custom domain, or reports the
+ * DNS records the domain would replace. On success, `jobId` is the job that
+ * waits for the new address and switches, and `url` the sign-in page at the
+ * new address, where the browser goes once the job succeeded.
  */
 export const moveManagerAddress = createServerFn({ method: "POST" })
   .validator(moveAddressInput)
@@ -83,7 +91,7 @@ export const moveManagerAddress = createServerFn({ method: "POST" })
     return asUserError(async () => moveCore(await deps(), data));
   });
 
-/** Moves Appflare from its custom domain to another, then detaches the one it left. */
+/** Starts moving Appflare from its custom domain to another; the job detaches the one it left. */
 export const changeManagerAddress = createServerFn({ method: "POST" })
   .validator(moveAddressInput)
   .handler(async ({ data }): Promise<MoveAddressResult> => {
