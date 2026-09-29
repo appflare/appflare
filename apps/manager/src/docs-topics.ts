@@ -14,6 +14,7 @@ export const DOCS_TOPICS = {
   requirements: "guides/catalog#requirements",
   customCatalogs: "guides/custom-catalogs#add-a-catalog",
   customDomains: "guides/custom-domains",
+  appflareAddressMove: "guides/appflare-address#if-it-takes-long",
   externalDomains: "guides/external-domains#add-a-domain-to-an-app",
   gateway: "guides/external-domains#what-you-need",
   sandboxBuilds: "guides/builds",
@@ -85,6 +86,8 @@ export function jobFailureTopic(job: {
       return "sandboxBuilds";
     case "source_build":
       return "sourceBuildJob";
+    case "move_address":
+      return "appflareAddressMove";
     default:
       return null;
   }

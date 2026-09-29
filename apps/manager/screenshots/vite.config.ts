@@ -30,6 +30,18 @@ function fixtureServerCalls(): Plugin {
       return `import { fixture } from ${JSON.stringify(fixturePath)};\n${names.map((name) => `export const ${name} = (...args) => fixture(${JSON.stringify(name)}, args);`).join("\n")}`;
     },
     configureServer(server) {
+      // Setup signs the new owner in through Better Auth's own endpoint, not
+      // a server function; this stands in for it so the wizard moves on.
+      server.middlewares.use("/api/auth/sign-in/email", (_request, response) => {
+        response.setHeader("Content-Type", "application/json");
+        response.end(
+          JSON.stringify({
+            redirect: false,
+            token: "screenshot",
+            user: { id: "user-ada", name: "Ada Lovelace", email: "ada@example.com" },
+          }),
+        );
+      });
       const media = new Map(
         catalog.apps.flatMap((app) =>
           [app.media.icon, ...(app.media.screenshots ?? [])]

@@ -4,6 +4,7 @@ import type { SigningKey } from "@appflare/schema";
 import { z } from "zod";
 import { invalidateScriptsCache } from "../cloudflare/scripts-cache.server";
 import { JOB_KINDS, type JobKind } from "../db/schema";
+import { runMoveAddress } from "../domains/move-address-job";
 import { notifyJobEnd } from "../notifications/job-end";
 import { runSandboxDisable } from "../sandbox/disable-job";
 import { runSandboxEnable } from "../sandbox/enable-job";
@@ -125,6 +126,7 @@ export const JOB_HANDLERS: Record<JobKind, JobHandler> = {
   sandbox_update: runSandboxEnable,
   sandbox_disable: runSandboxDisable,
   source_build: runSourceBuild,
+  move_address: runMoveAddress,
   // Runs inside the admin's request (./self-update/rollback.server.ts), never as a Workflow.
   self_rollback: async () => {
     throw new NonRetryableError("a rollback of Appflare is never run as a Workflow job");

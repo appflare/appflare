@@ -113,13 +113,17 @@ async function readFailedJob(db: D1Database, jobId: string): Promise<FailedJob |
     db
       .prepare("SELECT ts, level, message, data_json FROM job_logs WHERE job_id = ?1 ORDER BY id")
       .bind(jobId),
+    // D1 allows at most five terms in a compound SELECT; the moves' hostnames share one.
     db.prepare(
       `SELECT name FROM resources WHERE kind IN (${HOSTNAME_KINDS.map((k) => `'${k}'`).join(", ")})
        UNION SELECT served_domain FROM installs WHERE served_domain IS NOT NULL
        UNION SELECT value FROM settings
          WHERE key IN ('manager_hostname', 'manager_previous_hostname')
            AND value NOT LIKE '%.workers.dev'
-       UNION SELECT hostname FROM passkey_host WHERE hostname NOT LIKE '%.workers.dev'`,
+       UNION SELECT hostname FROM passkey_host WHERE hostname NOT LIKE '%.workers.dev'
+       UNION SELECT h.value FROM jobs j,
+           json_each(json_array(json_extract(j.input_json, '$.hostname'), json_extract(j.input_json, '$.from'))) h
+         WHERE j.kind = 'move_address' AND json_valid(j.input_json)`,
     ),
     db.prepare(
       `SELECT worker_name AS name FROM installs

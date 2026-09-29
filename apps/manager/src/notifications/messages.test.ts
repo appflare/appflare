@@ -86,6 +86,40 @@ describe("renderMessage", () => {
       "appflare.example.com no longer serves Appflare, so Appflare is back at its workers.dev address. Sign in there with your password; passkeys added at appflare.example.com do not work there.",
       `${M}/settings/domains#address`,
     ],
+    [
+      {
+        type: "manager_move_finished",
+        hostname: "appflare.example.com",
+        outcome: "succeeded",
+        jobId: "j9",
+      },
+      "Appflare moved to appflare.example.com",
+      "Appflare now lives at appflare.example.com. Sign in again there; passkeys added at the old address work only there.",
+      "https://appflare.example.com/",
+    ],
+    [
+      {
+        type: "manager_move_finished",
+        hostname: "appflare.example.com",
+        outcome: "failed",
+        jobId: "j9",
+      },
+      "Moving Appflare to appflare.example.com failed",
+      "Appflare stays at its current address. The job log says why; start the move again from the Domains settings.",
+      `${M}/jobs/j9`,
+    ],
+    [
+      {
+        type: "manager_move_finished",
+        hostname: "appflare.example.com",
+        outcome: "failed",
+        jobId: "j9",
+        moved: true,
+      },
+      "Appflare moved to appflare.example.com; its job failed afterwards",
+      "Appflare now lives at appflare.example.com. Sign in again there; the job log says what did not finish.",
+      "https://appflare.example.com/jobs/j9",
+    ],
   ];
 
   it.each(cases)("renders %j", (facts, title, line, url) => {

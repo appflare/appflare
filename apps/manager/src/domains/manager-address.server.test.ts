@@ -1,303 +1,82 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { createClient } from "@appflare/cf-api";
+import { ulid } from "ulidx";
 import { beforeEach, describe, expect, it } from "vitest";
-import { writeAccessConfig } from "../access/config";
-import { createDb } from "../db/client";
-import { createMigrator } from "../db/migrate";
-import { migrations } from "../db/migrations/index";
-import { SETTING, writeSettings } from "../db/settings";
-import { ACC, TOKEN } from "../test/fake-account";
+import { SETTING } from "../db/settings";
+import {
+  accessOn,
+  addPasskey,
+  addressRows,
+  deps,
+  fakeWorld,
+  HOST,
+  movedTo,
+  NOW,
+  passkeyHosts,
+  seedAddressWorld,
+  setting,
+  VERSION,
+  WORKER,
+  WORKERS_DEV,
+} from "../test/fake-address-world";
 import {
   changeManagerAddress,
+  completeAddressMove,
   listAddressOptions,
-  type ManagerAddressDeps,
   moveManagerAddress,
   readManagerAddress,
   readPasskeyHosts,
   reconcileManagerAddress,
   revertManagerAddress,
-  waitForManager,
 } from "./manager-address.server";
 
 /**
  * Appflare's address against the local D1 and a stateful fake of the zones,
- * DNS records, Workers custom domains and Access applications API, with the
- * new hostname's health endpoint answered from what is attached.
+ * DNS records, Workers custom domains and Access applications API. A move
+ * here is its start: the checks, the attach, and the job it starts; the job
+ * itself is tested in move-address-job.test.ts.
  */
-
-const NOW = new Date("2026-09-28T12:00:00.000Z");
-const VERSION = "1.4.0";
-const WORKER = "appflare";
-const WORKERS_DEV = "appflare.ada.workers.dev";
-const HOST = "appflare.example.com";
-
-interface Domain {
-  hostname: string;
-  service: string;
-  zone_id: string;
-  zone_name: string;
-}
-
-interface AccessAppRow {
-  id: string;
-  aud: string;
-  name: string;
-  domain: string;
-  policies: Array<{ id: string }>;
-}
-
-interface World {
-  domains: Map<string, Domain>;
-  records: Record<string, Array<{ id: string; type: string; name: string; content: string }>>;
-  apps: AccessAppRow[];
-  /** `METHOD /path` answered with this status and code 10000. */
-  refuse: Map<string, number>;
-  /** How the health endpoint answers: `serve` answers as the manager whose version is given. */
-  health: { kind: "serve"; version: string } | { kind: "down" } | { kind: "edge-1042" };
-  /** PUT /access/apps answers with no policies (a policy must be made again). */
-  dropPolicies: boolean;
-  calls: string[];
-  bodies: Array<{ key: string; body: unknown }>;
-  probes: string[];
-}
-
-function fakeWorld(over: Partial<World> = {}) {
-  const world: World = {
-    domains: new Map(),
-    records: {},
-    apps: [],
-    refuse: new Map(),
-    health: { kind: "serve", version: VERSION },
-    dropPolicies: false,
-    calls: [],
-    bodies: [],
-    probes: [],
-    ...over,
-  };
-  const ok = (result: unknown, extra: Record<string, unknown> = {}) =>
-    Response.json({ success: true, errors: [], messages: [], result, ...extra });
-  const fail = (status: number, code: number, message: string) =>
-    Response.json({ success: false, errors: [{ code, message }], messages: [] }, { status });
-  const zones = [
-    { id: "z-a", name: "example.com", status: "active", account: { id: ACC } },
-    { id: "z-b", name: "beta.dev", status: "active", account: { id: ACC } },
-  ];
-
-  const api = async (input: string, init?: RequestInit): Promise<Response> => {
-    const request = new Request(input, init);
-    const url = new URL(request.url);
-    const path = url.pathname.replace("/client/v4", "").replace(`/accounts/${ACC}`, "");
-    const key = `${request.method} ${path}`;
-    world.calls.push(`${key}${url.search}`);
-    const refused = world.refuse.get(key);
-    if (refused !== undefined) return fail(refused, 10000, "Authentication error");
-    if (request.method === "PUT" || request.method === "POST") {
-      world.bodies.push({ key, body: await request.clone().json() });
-    }
-    if (key === "GET /zones") {
-      return ok(zones, { result_info: { page: 1, per_page: 50, total_pages: 1 } });
-    }
-    let m = /^GET \/zones\/([^/]+)$/.exec(key);
-    if (m?.[1]) {
-      const zone = zones.find((z) => z.id === m?.[1]);
-      return zone === undefined ? fail(404, 1001, "Invalid zone") : ok(zone);
-    }
-    m = /^GET \/zones\/([^/]+)\/dns_records$/.exec(key);
-    if (m?.[1]) {
-      const name = url.searchParams.get("name.exact");
-      return ok(
-        (world.records[m[1]] ?? []).filter((r) => r.name === name),
-        { result_info: { page: 1, total_pages: 1 } },
-      );
-    }
-    if (/^GET \/zones\/[^/]+\/workers\/routes$/.test(key)) return ok([]);
-    if (key === "GET /workers/subdomain") return ok({ subdomain: "ada" });
-    if (key === "GET /workers/domains") {
-      const hostname = url.searchParams.get("hostname");
-      const service = url.searchParams.get("service");
-      return ok(
-        [...world.domains]
-          .filter(([, d]) => hostname === null || d.hostname === hostname)
-          .filter(([, d]) => service === null || d.service === service)
-          .map(([id, d]) => ({ id, ...d, environment: "production" })),
-      );
-    }
-    if (key === "PUT /workers/domains") {
-      const body = (await request.json()) as { hostname: string; service: string; zone_id: string };
-      const id = `dom-${world.domains.size + 1}`;
-      world.domains.set(id, { ...body, zone_name: "example.com" });
-      return ok({ id, ...body, zone_name: "example.com" });
-    }
-    m = /^DELETE \/workers\/domains\/([^/]+)$/.exec(key);
-    if (m?.[1]) return world.domains.delete(m[1]) ? ok(null) : fail(404, 100114, "not found");
-    if (key === "GET /access/apps") {
-      return ok(world.apps, { result_info: { page: 1, per_page: 50, total_pages: 1 } });
-    }
-    m = /^PUT \/access\/apps\/([^/]+)$/.exec(key);
-    if (m?.[1]) {
-      const app = world.apps.find((a) => a.id === m?.[1]);
-      if (app === undefined) return fail(404, 12130, "not found");
-      const body = (await request.json()) as { name: string; domain: string };
-      app.name = body.name;
-      app.domain = body.domain;
-      if (world.dropPolicies) app.policies = [];
-      return ok(app);
-    }
-    m = /^POST \/access\/apps\/([^/]+)\/policies$/.exec(key);
-    if (m?.[1]) {
-      const app = world.apps.find((a) => a.id === m?.[1]);
-      const policy = { id: `pol-new-${world.calls.length}` };
-      app?.policies.push(policy);
-      return ok(policy);
-    }
-    return fail(404, 7003, `no route ${key}`);
-  };
-
-  /** The new hostname's `/api/health`. */
-  const fetch = async (input: string): Promise<Response> => {
-    const url = new URL(input);
-    world.probes.push(url.href);
-    const attached = [...world.domains.values()].some(
-      (d) => d.hostname === url.hostname && d.service === WORKER,
-    );
-    if (!attached || world.health.kind === "down") throw new Error("connection refused");
-    if (world.health.kind === "edge-1042") {
-      return new Response("error code: 1042", { status: 404 });
-    }
-    return Response.json({ version: world.health.version, db: "ok" });
-  };
-
-  const client = createClient({ accountId: ACC, token: TOKEN, fetch: api });
-  return { world, api: client, fetch };
-}
-
-function deps(w: ReturnType<typeof fakeWorld>): ManagerAddressDeps & { slept: number[] } {
-  let clock = NOW.getTime();
-  const slept: number[] = [];
-  return {
-    db: env.DB,
-    api: w.api,
-    fetch: w.fetch,
-    version: VERSION,
-    now: () => new Date(clock),
-    sleep: async (ms) => {
-      slept.push(ms);
-      clock += ms;
-    },
-    slept,
-  };
-}
-
-async function setting(key: string): Promise<string | null> {
-  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = ?1")
-    .bind(key)
-    .first<{ value: string }>();
-  return row?.value ?? null;
-}
-
-async function addressRows() {
-  const { results } = await env.DB.prepare(
-    `SELECT key, value FROM settings WHERE key LIKE 'manager_%' AND key <> 'manager_version_history'
-     AND key NOT LIKE 'manager_domain_attached_by:%' ORDER BY key`,
-  ).all<{ key: string; value: string }>();
-  return Object.fromEntries(results.map((r) => [r.key, r.value]));
-}
-
-async function passkeyHosts() {
-  const { results } = await env.DB.prepare(
-    "SELECT passkey_id, hostname FROM passkey_host ORDER BY passkey_id",
-  ).all();
-  return results;
-}
-
-async function addPasskey(id: string) {
-  await env.DB.prepare(
-    `INSERT INTO passkey (id, public_key, user_id, credential_id, counter, device_type, backed_up)
-     VALUES (?1, 'k', 'u1', ?1, 0, 'singleDevice', 0)`,
-  )
-    .bind(id)
-    .run();
-}
-
-/** Access on for `domain`, with its two applications in the fake account. */
-async function accessOn(world: World, domain: string) {
-  world.apps.push(
-    {
-      id: "app-main",
-      aud: "aud-1",
-      name: `Appflare (${domain})`,
-      domain,
-      policies: [{ id: "pol-1" }],
-    },
-    {
-      id: "app-health",
-      aud: "aud-h",
-      name: `Appflare health check (${domain})`,
-      domain: `${domain}/api/health`,
-      policies: [{ id: "pol-h" }],
-    },
-  );
-  await writeAccessConfig(env.DB, {
-    appId: "app-main",
-    policyId: "pol-1",
-    healthAppId: "app-health",
-    aud: "aud-1",
-    teamDomain: "ada.cloudflareaccess.com",
-    domain,
-    enabledAt: NOW.toISOString(),
-  });
-}
-
-/** Appflare already at `hostname`, attached as `dom-0`. */
-async function movedTo(world: World, hostname: string) {
-  world.domains.set("dom-0", {
-    hostname,
-    service: WORKER,
-    zone_id: "z-a",
-    zone_name: "example.com",
-  });
-  await writeSettings(createDb(env.DB), {
-    [SETTING.managerHostname]: hostname,
-    [SETTING.managerDomainId]: "dom-0",
-    [SETTING.managerZoneId]: "z-a",
-    [SETTING.managerPreviousHostname]: WORKERS_DEV,
-    [SETTING.managerMovedAt]: "2026-09-01T00:00:00.000Z",
-  });
-}
 
 beforeEach(async () => {
   await reset();
-  await createMigrator(migrations).ensure(env.DB);
-  await writeSettings(createDb(env.DB), {
-    [SETTING.accountId]: ACC,
-    [SETTING.workerName]: WORKER,
-    [SETTING.accountSubdomain]: "ada",
-  });
-  await env.DB.prepare(
-    `INSERT INTO user (id, name, email, email_verified, role, created_at, updated_at)
-     VALUES ('u1', 'Ada', 'ada@example.com', 0, 'admin', 0, 0)`,
-  ).run();
-  await env.DB.prepare(
-    "INSERT INTO settings (key, value, updated_at) VALUES ('notification_manager_url', 'https://appflare.ada.workers.dev', 0)",
-  ).run();
+  await seedAddressWorld();
 });
 
+async function jobRow(id: string) {
+  return env.DB.prepare(
+    "SELECT kind, status, input_json, started_by, workflow_instance_id, error FROM jobs WHERE id = ?1",
+  )
+    .bind(id)
+    .first<{
+      kind: string;
+      status: string;
+      input_json: string;
+      started_by: string;
+      workflow_instance_id: string | null;
+      error: string | null;
+    }>();
+}
+
+/** A job of `kind` queued or running, as another request left it. */
+async function activeJob(id: string, kind: string, input: object = {}) {
+  await env.DB.prepare(
+    "INSERT INTO jobs (id, kind, status, input_json, workflow_instance_id) VALUES (?1, ?2, 'running', ?3, ?1)",
+  )
+    .bind(id, kind, JSON.stringify(input))
+    .run();
+}
+
 describe("moveManagerAddress", () => {
-  it("attaches the hostname, waits for this version there, then switches", async () => {
+  it("checks and attaches the hostname, then starts the job that waits and switches", async () => {
     const w = fakeWorld();
-    await addPasskey("pk1");
     const d = deps(w);
     const result = await moveManagerAddress(d, {
       zoneId: "z-a",
       hostname: " Appflare.Example.com ",
       returnTo: "/settings/domains#address",
     });
-    expect(result).toEqual({
-      ok: true,
-      hostname: HOST,
-      url: `https://${HOST}/login?returnTo=%2Fsettings%2Fdomains%23address&moved=1`,
-    });
+    const url = `https://${HOST}/login?returnTo=%2Fsettings%2Fdomains%23address&moved=1`;
+    expect(result).toEqual({ ok: true, hostname: HOST, jobId: "01MOVEJOB00000000000000001", url });
     expect(w.world.calls).toEqual([
       "GET /zones/z-a",
       `GET /workers/domains?hostname=${HOST}`,
@@ -311,24 +90,43 @@ describe("moveManagerAddress", () => {
       service: WORKER,
       environment: "production",
     });
-    expect(w.world.probes).toEqual([`https://${HOST}/api/health`]);
-    expect(await addressRows()).toEqual({
-      manager_domain_id: "dom-1",
-      manager_hostname: HOST,
-      manager_moved_at: NOW.toISOString(),
-      manager_previous_hostname: WORKERS_DEV,
-      manager_zone_id: "z-a",
+    // Nothing waits in the request, and nothing switches before the job does.
+    expect(w.world.probes).toEqual([]);
+    expect(await addressRows()).toEqual({});
+    expect(await setting("notification_manager_url")).toBe("https://appflare.ada.workers.dev");
+    expect(await setting(`manager_domain_attached_by:${HOST}`)).toBe("appflare");
+    expect(d.started).toEqual([
+      {
+        kind: "move_address",
+        jobId: "01MOVEJOB00000000000000001",
+        hostname: HOST,
+        zoneId: "z-a",
+        domainId: "dom-1",
+        version: VERSION,
+        from: null,
+      },
+    ]);
+    const job = await jobRow("01MOVEJOB00000000000000001");
+    expect(job).toMatchObject({
+      kind: "move_address",
+      status: "queued",
+      started_by: "admin",
+      workflow_instance_id: "instance-01MOVEJOB00000000000000001",
     });
-    // Links no longer point at the old address, and the passkey is marked as the old address's.
-    expect(await setting("notification_manager_url")).toBeNull();
-    expect(await passkeyHosts()).toEqual([{ passkey_id: "pk1", hostname: WORKERS_DEV }]);
+    expect(JSON.parse(job?.input_json ?? "{}")).toEqual({
+      hostname: HOST,
+      zoneId: "z-a",
+      from: null,
+      url,
+    });
   });
 
   it("answers dns-conflict with the records, and replaces them only when asked", async () => {
     const w = fakeWorld({
       records: { "z-a": [{ id: "r1", type: "A", name: HOST, content: "192.0.2.1" }] },
     });
-    const conflict = await moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST });
+    const d = deps(w);
+    const conflict = await moveManagerAddress(d, { zoneId: "z-a", hostname: HOST });
     expect(conflict).toEqual({
       ok: false,
       reason: "dns-conflict",
@@ -336,223 +134,132 @@ describe("moveManagerAddress", () => {
       records: [{ type: "A", content: "192.0.2.1" }],
     });
     expect(w.world.calls).not.toContain("PUT /workers/domains");
-    expect(await addressRows()).toEqual({});
+    expect(d.started).toEqual([]);
 
-    const moved = await moveManagerAddress(deps(w), {
+    const moved = await moveManagerAddress(d, {
       zoneId: "z-a",
       hostname: HOST,
       overrideExistingDnsRecord: true,
     });
     expect(moved.ok).toBe(true);
     expect(w.world.bodies.at(-1)?.body).toMatchObject({ override_existing_dns_record: true });
+    expect(await setting(`manager_domain_attached_by:${HOST}`)).toBe("appflare-replaced-records");
   });
 
-  it("detaches the domain again and changes nothing when it never answers as this manager", async () => {
-    const w = fakeWorld({ health: { kind: "edge-1042" } });
-    await addPasskey("pk1");
+  it("adopts a domain attached by hand without attaching it again", async () => {
+    const w = fakeWorld();
+    w.world.domains.set("dom-hand", {
+      hostname: HOST,
+      service: WORKER,
+      zone_id: "z-a",
+      zone_name: "example.com",
+    });
     const d = deps(w);
-    await expect(moveManagerAddress(d, { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
-      `${HOST} did not answer as this Appflare within 90 seconds (last answer: HTTP 404, error code 1042). Appflare stays at ${WORKERS_DEV}. Appflare removed the domain again.`,
-    );
-    // The install's live-check backoff, within its window.
-    expect(d.slept).toEqual([
-      2000, 3000, 5000, 8000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000,
-    ]);
-    expect(w.world.calls.at(-1)).toBe("DELETE /workers/domains/dom-1");
-    expect(w.world.domains.size).toBe(0);
-    expect(await addressRows()).toEqual({});
-    expect(await setting("notification_manager_url")).toBe("https://appflare.ada.workers.dev");
-    expect(await passkeyHosts()).toEqual([]);
-  });
-
-  it("does not count another version's answer as this manager", async () => {
-    const w = fakeWorld({ health: { kind: "serve", version: "1.3.9" } });
-    await expect(moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
-      "last answer: Appflare 1.3.9, not 1.4.0",
-    );
-    expect(await addressRows()).toEqual({});
-  });
-
-  it("adopts a domain attached by hand, and leaves it attached when the move fails", async () => {
-    const w = fakeWorld({ health: { kind: "down" } });
-    w.world.domains.set("dom-hand", {
-      hostname: HOST,
-      service: WORKER,
-      zone_id: "z-a",
-      zone_name: "example.com",
-    });
-    await expect(moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
-      "did not answer as this Appflare",
-    );
-    expect(w.world.domains.has("dom-hand")).toBe(true);
-    expect(w.world.calls.filter((c) => c.startsWith("DELETE"))).toEqual([]);
-
-    w.world.health = { kind: "serve", version: VERSION };
-    const moved = await moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST });
-    expect(moved.ok).toBe(true);
+    expect((await moveManagerAddress(d, { zoneId: "z-a", hostname: HOST })).ok).toBe(true);
     expect(w.world.calls).not.toContain("PUT /workers/domains");
-    expect(await setting(SETTING.managerDomainId)).toBe("dom-hand");
+    expect(d.started[0]?.domainId).toBe("dom-hand");
+    expect(await setting(`manager_domain_attached_by:${HOST}`)).toBe("hand");
   });
 
-  it("records passkeys against the address people used before an adoption", async () => {
-    const w = fakeWorld();
-    w.world.domains.set("dom-hand", {
-      hostname: HOST,
-      service: WORKER,
-      zone_id: "z-a",
-      zone_name: "example.com",
-    });
-    // The admins used the hand-attached domain: their passkeys belong to it.
-    await env.DB.prepare("UPDATE settings SET value = ?1 WHERE key = 'notification_manager_url'")
-      .bind(`https://${HOST}`)
-      .run();
-    await addPasskey("pk1");
-    expect((await moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).ok).toBe(true);
-    expect(await passkeyHosts()).toEqual([]);
-    expect(await setting(SETTING.managerPreviousHostname)).toBeNull();
-  });
-
-  it("records passkeys against the Access hostname on a first move", async () => {
-    const w = fakeWorld();
-    await accessOn(w.world, "gate.example.com");
-    await addPasskey("pk1");
-    expect((await moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).ok).toBe(true);
-    expect(await passkeyHosts()).toEqual([{ passkey_id: "pk1", hostname: "gate.example.com" }]);
-    expect(await setting(SETTING.managerPreviousHostname)).toBe("gate.example.com");
-  });
-
-  it("keeps a domain that replaced DNS records attached when it never answers", async () => {
+  it("uses the domain an earlier move left attached, still as Appflare's own", async () => {
     const w = fakeWorld({
-      health: { kind: "down" },
       records: { "z-a": [{ id: "r1", type: "A", name: HOST, content: "192.0.2.1" }] },
     });
-    await expect(
-      moveManagerAddress(deps(w), {
-        zoneId: "z-a",
-        hostname: HOST,
-        overrideExistingDnsRecord: true,
-      }),
-    ).rejects.toThrow(
-      `Appflare stays at ${WORKERS_DEV}. ${HOST} stays attached to Appflare so you can try again: the DNS records it replaced are gone, and Appflare cannot put them back.`,
+    const first = deps(w);
+    await moveManagerAddress(first, {
+      zoneId: "z-a",
+      hostname: HOST,
+      overrideExistingDnsRecord: true,
+    });
+    // That job failed and left the domain attached.
+    await env.DB.prepare("UPDATE jobs SET status = 'failed'").run();
+    const again = await moveManagerAddress(
+      { ...deps(w), newId: () => "01MOVEJOBAGAIN" },
+      { zoneId: "z-a", hostname: HOST },
     );
-    expect(w.world.domains.has("dom-1")).toBe(true);
-    expect(w.world.calls.filter((c) => c.startsWith("DELETE"))).toEqual([]);
-    expect(await addressRows()).toEqual({});
+    expect(again.ok).toBe(true);
+    expect(w.world.calls.filter((c) => c === "PUT /workers/domains")).toHaveLength(1);
     expect(await setting(`manager_domain_attached_by:${HOST}`)).toBe("appflare-replaced-records");
-
-    // A later try without the override still never detaches it, and completes.
-    await expect(moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
-      "stays attached to Appflare so you can try again",
-    );
-    expect(w.world.domains.has("dom-1")).toBe(true);
-    w.world.health = { kind: "serve", version: VERSION };
-    expect((await moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).ok).toBe(true);
-    expect(await setting(`manager_domain_attached_by:${HOST}`)).toBeNull();
   });
 
-  it("detaches on a later try a domain it attached but could not detach", async () => {
-    const w = fakeWorld({
-      health: { kind: "down" },
-      refuse: new Map([["DELETE /workers/domains/dom-1", 500]]),
-    });
-    await expect(moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
-      `Appflare could not remove ${HOST} again; it stays attached, and trying again uses it.`,
-    );
-    expect(w.world.domains.has("dom-1")).toBe(true);
-    expect(await setting(`manager_domain_attached_by:${HOST}`)).toBe("appflare");
-
-    // The domain now serves the manager, but Appflare attached it: not adopted.
-    w.world.refuse.clear();
-    await expect(moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
-      "Appflare removed the domain again.",
-    );
-    expect(w.world.domains.size).toBe(0);
-    expect(await setting(`manager_domain_attached_by:${HOST}`)).toBeNull();
-  });
-
-  it("moves Access back and detaches when the switch cannot be written", async () => {
+  it("refuses a second move while one runs, before attaching anything", async () => {
     const w = fakeWorld();
-    await accessOn(w.world, WORKERS_DEV);
-    let failBatch = true;
-    const db = new Proxy(env.DB, {
-      get(target, prop, receiver) {
-        if (prop === "batch") {
-          return async (statements: D1PreparedStatement[]) => {
-            if (failBatch) {
-              failBatch = false;
-              throw new Error("D1 batch failed");
-            }
-            return target.batch(statements);
-          };
-        }
-        const value = Reflect.get(target, prop, receiver);
-        return typeof value === "function" ? value.bind(target) : value;
+    await activeJob("01RUNNING", "move_address", { hostname: "other.example.com", zoneId: "z-a" });
+    await expect(moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
+      "Appflare is moving to other.example.com (job 01RUNNING). Wait for it to finish, then try again.",
+    );
+    expect(w.world.calls).toEqual([]);
+  });
+
+  it("settles a move whose Workflow instance is gone, then starts", async () => {
+    const w = fakeWorld();
+    await activeJob("01DEAD", "move_address", { hostname: "other.example.com", zoneId: "z-a" });
+    const d = {
+      ...deps(w),
+      workflows: {
+        get: async () => ({ status: async () => ({ status: "terminated" }) }),
       },
-    });
+    };
+    expect((await moveManagerAddress(d, { zoneId: "z-a", hostname: HOST })).ok).toBe(true);
+    expect((await jobRow("01DEAD"))?.status).toBe("failed");
+  });
+
+  it("removes a move whose start never created its Workflow instance, after five minutes", async () => {
+    const w = fakeWorld();
+    const notFound = {
+      get: async (id: string): Promise<never> => {
+        throw new Error(`instance.not_found: ${id}`);
+      },
+    };
+    const claim = (id: string) =>
+      env.DB.prepare(
+        "INSERT INTO jobs (id, kind, status, input_json) VALUES (?1, 'move_address', 'queued', ?2)",
+      )
+        .bind(id, JSON.stringify({ hostname: "other.example.com", zoneId: "z-a" }))
+        .run();
+    // A claim from a minute ago may still get its instance: it blocks.
+    const fresh = ulid(Date.now() - 60_000);
+    await claim(fresh);
     await expect(
-      moveManagerAddress({ ...deps(w), db }, { zoneId: "z-a", hostname: HOST }),
-    ).rejects.toThrow("D1 batch failed");
-    expect(w.world.apps.map((a) => a.domain)).toEqual([WORKERS_DEV, `${WORKERS_DEV}/api/health`]);
-    expect(w.world.calls.filter((c) => c.startsWith("PUT /access/apps/"))).toEqual([
-      "PUT /access/apps/app-main",
-      "PUT /access/apps/app-health",
-      "PUT /access/apps/app-main",
-      "PUT /access/apps/app-health",
-    ]);
-    expect(w.world.domains.size).toBe(0);
-    expect(await addressRows()).toEqual({});
-    expect(await setting(SETTING.accessDomain)).toBe(WORKERS_DEV);
-  });
-
-  it("moves both Access applications and the protected hostname along when Access is on", async () => {
-    const w = fakeWorld();
-    await accessOn(w.world, WORKERS_DEV);
-    expect((await moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).ok).toBe(true);
-    const puts = w.world.bodies.filter((b) => b.key.startsWith("PUT /access/apps/"));
-    expect(puts).toEqual([
-      {
-        key: "PUT /access/apps/app-main",
-        body: {
-          type: "self_hosted",
-          name: `Appflare (${HOST})`,
-          domain: HOST,
-          session_duration: "24h",
-          app_launcher_visible: false,
-        },
-      },
-      {
-        key: "PUT /access/apps/app-health",
-        body: {
-          type: "self_hosted",
-          name: `Appflare health check (${HOST})`,
-          domain: `${HOST}/api/health`,
-          app_launcher_visible: false,
-        },
-      },
-    ]);
-    expect(await setting(SETTING.accessDomain)).toBe(HOST);
-    expect(await setting(SETTING.accessAud)).toBe("aud-1");
-    expect(await setting(SETTING.accessPolicyId)).toBe("pol-1");
-    // Nothing moves before the hostname is checked and attached.
-    expect(w.world.calls.indexOf("PUT /workers/domains")).toBeLessThan(
-      w.world.calls.indexOf("PUT /access/apps/app-main"),
+      moveManagerAddress({ ...deps(w), workflows: notFound }, { zoneId: "z-a", hostname: HOST }),
+    ).rejects.toThrow(`Appflare is moving to other.example.com (job ${fresh}).`);
+    // One from ten minutes ago never will: it goes, and the move starts.
+    await env.DB.prepare("DELETE FROM jobs").run();
+    const stranded = ulid(Date.now() - 10 * 60_000);
+    await claim(stranded);
+    const moved = await moveManagerAddress(
+      { ...deps(w), workflows: notFound },
+      { zoneId: "z-a", hostname: HOST },
     );
+    expect(moved.ok).toBe(true);
+    expect(await jobRow(stranded)).toBeNull();
   });
 
-  it("makes an Access policy again when an application answers without one", async () => {
-    const w = fakeWorld({ dropPolicies: true });
-    await accessOn(w.world, WORKERS_DEV);
-    expect((await moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).ok).toBe(true);
-    const posts = w.world.bodies.filter((b) => b.key.includes("/policies"));
-    expect(posts.map((p) => p.key)).toEqual([
-      "POST /access/apps/app-main/policies",
-      "POST /access/apps/app-health/policies",
-    ]);
-    expect(posts[0]?.body).toMatchObject({
-      decision: "allow",
-      include: [{ email: { email: "ada@example.com" } }],
-    });
-    expect(await setting(SETTING.accessPolicyId)).not.toBe("pol-1");
+  it("refuses while Appflare updates itself", async () => {
+    const w = fakeWorld();
+    await activeJob("01SELF", "self_update", { version: "1.5.0" });
+    await expect(moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
+      "Appflare is updating itself (job 01SELF).",
+    );
+    expect(w.world.calls).toEqual([]);
+  });
+
+  it("fails the job and keeps the domain when its Workflow cannot be created", async () => {
+    const w = fakeWorld();
+    const d = {
+      ...deps(w),
+      createJob: async () => {
+        throw new Error("Workflows unavailable");
+      },
+    };
+    await expect(moveManagerAddress(d, { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
+      `Appflare could not start the move: could not create the job: Workflows unavailable. ${HOST} stays attached to Appflare's Worker; try again.`,
+    );
+    expect((await jobRow("01MOVEJOB00000000000000001"))?.status).toBe("failed");
+    expect(w.world.domains.has("dom-1")).toBe(true);
+    // Not held up by the job that never started.
+    const again = { ...deps(w), newId: () => "01MOVEJOBAGAIN" };
+    expect((await moveManagerAddress(again, { zoneId: "z-a", hostname: HOST })).ok).toBe(true);
   });
 
   it("refuses before attaching anything when the token cannot manage Access", async () => {
@@ -619,32 +326,16 @@ describe("moveManagerAddress", () => {
 });
 
 describe("changeManagerAddress", () => {
-  it("moves to the new hostname, then detaches the old one", async () => {
+  it("starts a job that knows the domain it leaves", async () => {
     const w = fakeWorld();
     await movedTo(w.world, "old.example.com");
-    await addPasskey("pk-dev");
-    await addPasskey("pk-old");
-    await addPasskey("pk-new");
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO passkey_host (passkey_id, hostname, recorded_at) VALUES ('pk-dev', ?1, 1)",
-      ).bind(WORKERS_DEV),
-      env.DB.prepare(
-        "INSERT INTO passkey_host (passkey_id, hostname, recorded_at) VALUES ('pk-new', ?1, 1)",
-      ).bind(HOST),
-    ]);
-    const result = await changeManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST });
-    expect(result).toMatchObject({ ok: true, hostname: HOST, previousDomain: "detached" });
-    expect(w.world.calls.at(-1)).toBe("DELETE /workers/domains/dom-0");
-    expect(await addressRows()).toMatchObject({
-      manager_hostname: HOST,
-      manager_previous_hostname: "old.example.com",
-    });
-    // Passkeys keep the address they were added at; those added at the new one work again.
-    expect(await passkeyHosts()).toEqual([
-      { passkey_id: "pk-dev", hostname: WORKERS_DEV },
-      { passkey_id: "pk-old", hostname: "old.example.com" },
-    ]);
+    const d = deps(w);
+    const result = await changeManagerAddress(d, { zoneId: "z-a", hostname: HOST });
+    expect(result).toMatchObject({ ok: true, hostname: HOST });
+    expect(d.started[0]?.from).toEqual({ hostname: "old.example.com", domainId: "dom-0" });
+    // The old domain serves until the job has switched.
+    expect(w.world.domains.has("dom-0")).toBe(true);
+    expect(await setting(SETTING.managerHostname)).toBe("old.example.com");
   });
 
   it("refuses without an address to change, and the same address", async () => {
@@ -656,6 +347,31 @@ describe("changeManagerAddress", () => {
     await expect(changeManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST })).rejects.toThrow(
       `Appflare already lives at ${HOST}.`,
     );
+  });
+});
+
+describe("completeAddressMove", () => {
+  it("does nothing more when run again after its switch committed", async () => {
+    const w = fakeWorld();
+    await accessOn(w.world, WORKERS_DEV);
+    await addPasskey("pk1");
+    await moveManagerAddress(deps(w), { zoneId: "z-a", hostname: HOST });
+    const move = { hostname: HOST, domainId: "dom-1", zoneId: "z-a", workerName: WORKER };
+    const first = await completeAddressMove(deps(w), move);
+    expect(first).toEqual({ from: WORKERS_DEV, accessMoved: true });
+    const accessCalls = w.world.calls.filter((c) => c.includes("/access/")).length;
+    const hosts = await passkeyHosts();
+    // As if the first run's record delete had not happened.
+    await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?1, 'appflare', 0)")
+      .bind(`manager_domain_attached_by:${HOST}`)
+      .run();
+
+    const second = await completeAddressMove(deps(w), move);
+    expect(second.accessMoved).toBe(false);
+    expect(w.world.calls.filter((c) => c.includes("/access/")).length).toBe(accessCalls);
+    expect(await passkeyHosts()).toEqual(hosts);
+    expect(await setting(`manager_domain_attached_by:${HOST}`)).toBeNull();
+    expect(await setting(SETTING.managerHostname)).toBe(HOST);
   });
 });
 
@@ -715,6 +431,22 @@ describe("revertManagerAddress", () => {
       url: null,
       previousDomain: null,
     });
+    expect(w.world.calls).toEqual([]);
+  });
+
+  it("is refused while a move job runs", async () => {
+    const w = fakeWorld();
+    await movedTo(w.world, HOST);
+    await env.DB.prepare(
+      `INSERT INTO jobs (id, kind, status, input_json, workflow_instance_id)
+       VALUES ('01RUNNING', 'move_address', 'running', ?1, '01RUNNING')`,
+    )
+      .bind(JSON.stringify({ hostname: "next.example.com", zoneId: "z-a" }))
+      .run();
+    await expect(revertManagerAddress(deps(w), {})).rejects.toThrow(
+      "Appflare is moving to next.example.com (job 01RUNNING).",
+    );
+    expect(await setting(SETTING.managerHostname)).toBe(HOST);
     expect(w.world.calls).toEqual([]);
   });
 });
@@ -823,10 +555,40 @@ describe("readManagerAddress", () => {
       movedAt: "2026-09-01T00:00:00.000Z",
       workersDevHostname: WORKERS_DEV,
       serving: true,
-      attachedByHand: [{ hostname: "manage.beta.dev", zoneId: "z-b", zoneName: "beta.dev" }],
+      attachedByHand: [
+        { hostname: "manage.beta.dev", zoneId: "z-b", zoneName: "beta.dev", leftByMove: false },
+      ],
+      movingJobId: null,
+      movingTo: null,
     });
     w.world.domains.delete("dom-0");
     expect((await readManagerAddress(deps(w))).serving).toBe(false);
+  });
+
+  it("names the move job running, and a domain an earlier move left attached", async () => {
+    const w = fakeWorld();
+    const d = deps(w);
+    await moveManagerAddress(d, { zoneId: "z-a", hostname: HOST });
+    const moving = await readManagerAddress(d);
+    expect(moving.movingJobId).toBe("01MOVEJOB00000000000000001");
+    expect(moving.movingTo).toEqual({ hostname: HOST, zoneId: "z-a" });
+    expect(moving.attachedByHand).toEqual([
+      { hostname: HOST, zoneId: "z-a", zoneName: "example.com", leftByMove: true },
+    ]);
+
+    // Its Workflow instance failed without recording the end: settled, and no longer running.
+    const settled = await readManagerAddress({
+      ...d,
+      workflows: {
+        get: async () => ({
+          status: async () => ({ status: "errored", error: { message: "engine failure" } }),
+        }),
+      },
+    });
+    expect(settled.movingJobId).toBeNull();
+    expect(settled.movingTo).toBeNull();
+    const job = await env.DB.prepare("SELECT status FROM jobs").first<{ status: string }>();
+    expect(job?.status).toBe("failed");
   });
 });
 
@@ -837,16 +599,6 @@ describe("listAddressOptions", () => {
       { id: "z-b", name: "beta.dev", suggestedHostname: "appflare.beta.dev" },
       { id: "z-a", name: "example.com", suggestedHostname: "appflare.example.com" },
     ]);
-  });
-});
-
-describe("waitForManager", () => {
-  it("answers at once when the first probe reports this version", async () => {
-    const w = fakeWorld();
-    w.world.domains.set("d", { hostname: HOST, service: WORKER, zone_id: "z-a", zone_name: "x" });
-    const d = deps(w);
-    expect(await waitForManager(d, HOST)).toEqual({ ok: true });
-    expect(d.slept).toEqual([]);
   });
 });
 

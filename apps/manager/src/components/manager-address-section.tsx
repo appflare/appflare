@@ -22,9 +22,11 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { TokenPermissionsBanner } from "./domain-dialog-parts";
 import {
   AddressFields,
+  type AddressTarget,
   type AddressZone,
   MovedNotice,
   type MovedTo,
+  type MoveJobRef,
   MoveProgress,
   moveActionLabel,
   useAddressFields,
@@ -76,7 +78,16 @@ export function ManagerAddressSection({ view }: { view: AddressView }) {
   const kind = onDomain ? "change" : "move";
   // Without a usable zone the dialog could only explain; the lines below do that.
   const canMove = address !== null && (options === null || options.zones.length > 0);
-  const handDomains = address?.attachedByHand.filter((d) => d.hostname !== address.hostname) ?? [];
+  // A move job running when the page loaded: its dialog opens on its progress.
+  const moving: ResumedMove | null =
+    address?.movingJobId != null && address.movingTo !== null
+      ? { jobId: address.movingJobId, ...address.movingTo }
+      : null;
+  // The domain a running move attached is not one to offer.
+  const handDomains =
+    address?.attachedByHand.filter(
+      (d) => d.hostname !== address.hostname && d.hostname !== moving?.hostname,
+    ) ?? [];
 
   return (
     <Section
@@ -84,11 +95,12 @@ export function ManagerAddressSection({ view }: { view: AddressView }) {
       description="Where you and your users open Appflare: its workers.dev address, or a domain of yours."
       error={"error" in view.address ? view.address.error : null}
       action={
-        canMove ? (
+        canMove || moving !== null ? (
           <MoveAddressDialog
             kind={kind}
             label={onDomain ? "Change" : "Use a domain"}
             accountId={view.accountId}
+            {...(moving === null ? {} : { resume: moving })}
             onMoved={setMovedTo}
           />
         ) : null
@@ -111,7 +123,11 @@ export function ManagerAddressSection({ view }: { view: AddressView }) {
             <SectionRow
               key={domain.hostname}
               title={`A domain already points at Appflare: ${domain.hostname}`}
-              description="It was attached to Appflare's Worker in the Cloudflare dashboard."
+              description={
+                domain.leftByMove
+                  ? "An earlier move of Appflare attached it and did not finish. Use it to start the move again."
+                  : "It was attached to Appflare's Worker in the Cloudflare dashboard."
+              }
               action={
                 <MoveAddressDialog
                   kind={kind}
@@ -258,28 +274,42 @@ function RevertDialog({
   );
 }
 
+/** A move job running when the section loaded. */
+interface ResumedMove extends MoveJobRef {
+  zoneId: string;
+}
+
+/** Where a dialog starts: a domain attached to the Worker, or the one a running move goes to. */
+type InitialDomain = AddressTarget & { zoneName?: string };
+
 /**
  * Pick a zone and a name, then move: to a domain from workers.dev
- * (`move`), or from one domain to another (`change`). The dialog stays open
- * through the whole move, showing its steps, and cannot be closed meanwhile.
- * `initial` starts on a domain already attached by hand. Each opening starts
- * clean and reads the zones again.
+ * (`move`), or from one domain to another (`change`). The move runs as a
+ * job; the dialog shows its progress until it ends and cannot be closed
+ * meanwhile, though the page can: the job goes on, and `resume` opens the
+ * dialog on its progress when the page is opened again. `initial` starts on
+ * a domain already attached. Each opening starts clean and reads the zones
+ * again.
  */
 function MoveAddressDialog({
   kind,
   label,
   initial,
+  resume,
   accountId,
   onMoved,
 }: {
   kind: "move" | "change";
   label: string;
   initial?: HandDomain;
+  resume?: ResumedMove;
   accountId: string | null;
   onMoved: (movedTo: MovedTo) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // A running move is followed once, from the first opening.
+  const [resumed] = useState(resume);
+  const [open, setOpen] = useState(resumed !== undefined);
+  const [busy, setBusy] = useState(resumed !== undefined);
   const [session, setSession] = useState(0);
   // Where Appflare moved, handed on once this dialog has finished closing,
   // so the notice that follows takes the focus this dialog gives back.
@@ -291,6 +321,9 @@ function MoveAddressDialog({
     if (next) setSession((n) => n + 1);
   }
 
+  const following = session === 0 ? resumed : undefined;
+  const start: InitialDomain | undefined =
+    following !== undefined ? { zoneId: following.zoneId, hostname: following.hostname } : initial;
   return (
     <LayerDialog.Root
       open={open}
@@ -313,7 +346,8 @@ function MoveAddressDialog({
       <MoveAddressContent
         key={session}
         kind={kind}
-        {...(initial === undefined ? {} : { initial })}
+        {...(start === undefined ? {} : { initial: start })}
+        {...(following === undefined ? {} : { resume: following })}
         accountId={accountId}
         onBusy={setBusy}
         onMoved={(movedTo) => {
@@ -329,9 +363,15 @@ function MoveAddressDialog({
 /** The zones to offer, with the zone of a hand-attached domain even when the list lacks it. */
 function withInitialZone(
   zones: readonly AddressZone[],
-  initial: HandDomain | undefined,
+  initial: InitialDomain | undefined,
 ): AddressZone[] {
-  if (initial === undefined || zones.some((z) => z.id === initial.zoneId)) return [...zones];
+  if (
+    initial === undefined ||
+    initial.zoneName === undefined ||
+    zones.some((z) => z.id === initial.zoneId)
+  ) {
+    return [...zones];
+  }
   return [
     ...zones,
     {
@@ -347,12 +387,14 @@ const NO_ZONES: AddressZone[] = [];
 function MoveAddressContent({
   kind,
   initial,
+  resume,
   accountId,
   onBusy,
   onMoved,
 }: {
   kind: "move" | "change";
-  initial?: HandDomain;
+  initial?: InitialDomain;
+  resume?: MoveJobRef;
   accountId: string | null;
   onBusy: (busy: boolean) => void;
   onMoved: (movedTo: MovedTo) => void;
@@ -383,18 +425,27 @@ function MoveAddressContent({
     zones,
     initial === undefined ? undefined : { zoneId: initial.zoneId, hostname: initial.hostname },
   );
-  const move = useAddressMove({ kind });
+  const move = useAddressMove({
+    kind,
+    ...(resume === undefined ? {} : { resume }),
+    onMoved,
+  });
   useEffect(() => onBusy(move.moving), [move.moving, onBusy]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     fields.touch();
     if (fields.target === null) return;
-    const done = await move.run(fields.target);
-    if (done !== null) onMoved(done);
+    await move.run(fields.target);
   }
 
   const ready = options !== null && zones.length > 0;
+  const progress =
+    move.following !== null
+      ? { hostname: move.following.hostname, jobId: move.following.jobId }
+      : move.starting && fields.target !== null
+        ? { hostname: fields.target.hostname, jobId: null }
+        : null;
   return (
     <LayerDialog.Content size="lg">
       <LayerDialog.Title>
@@ -406,7 +457,14 @@ function MoveAddressContent({
         sends visits there. Everyone signs in again at the new address.
       </LayerDialog.Description>
       <LayerDialog.Body>
-        {options === null ? (
+        {progress !== null ? (
+          <MoveProgress
+            hostname={progress.hostname}
+            jobId={progress.jobId}
+            job={move.job}
+            refused={move.refused}
+          />
+        ) : options === null ? (
           loadError === null ? (
             <div className="flex items-center gap-2">
               <AppflareLoader size="sm" />
@@ -415,8 +473,6 @@ function MoveAddressContent({
           ) : (
             <Banner variant="error" icon={<WarningCircleIcon weight="fill" />} title={loadError} />
           )
-        ) : move.moving && fields.target !== null ? (
-          <MoveProgress hostname={fields.target.hostname} />
         ) : (
           <form id={formId} className="grid gap-4" onSubmit={onSubmit}>
             {options.missing.length > 0 && (
@@ -435,7 +491,7 @@ function MoveAddressContent({
           </form>
         )}
       </LayerDialog.Body>
-      {ready && (
+      {ready && progress === null && (
         <LayerDialog.Actions dismissLabel="Cancel">
           <LayerDialog.Actions.Primary
             type="submit"

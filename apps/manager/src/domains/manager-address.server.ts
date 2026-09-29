@@ -1,6 +1,6 @@
-import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
+import type { CloudflareClient } from "@appflare/cf-api";
+import { ulid } from "ulidx";
 import { type AccessConfig, readAccessConfig } from "../access/config";
-import { accessGate } from "../access/gate";
 import {
   AccessToggleError,
   checkAccessMove,
@@ -9,6 +9,7 @@ import {
 } from "../access/toggle.server";
 import { safeReturnPath } from "../components/internal-path";
 import { settingsLink } from "../components/settings-links";
+import { REMOVAL_IN_PROGRESS_MESSAGE, removalInProgress } from "../danger/removal-flag";
 import { createDb } from "../db/client";
 import { readSettings, SETTING, type SettingKey } from "../db/settings";
 import { releaseSettingsLock, tryAcquireSettingsLock } from "../db/settings-lock";
@@ -26,16 +27,18 @@ import {
 } from "../installs/custom-domains.server";
 import { distinctLabels } from "../installs/display-name";
 import { readInstallNames } from "../installs/install-names.server";
+import type { HealthProbe } from "../jobs/install/health";
+import { reconcileJobs, type WorkflowLookup } from "../jobs/reconcile.server";
 import {
-  type HealthProbe,
-  LIVE_HEALTH_WINDOW_MS,
-  liveHealthDelaySeconds,
-  liveHealthScheduledMs,
-  probeHealth,
-} from "../jobs/install/health";
+  activeSelfJob,
+  NO_ACTIVE_SELF_UPDATE_SQL,
+  selfUpdateBusyMessage,
+} from "../jobs/self-update/guard";
 import { emitEvent, readChannels } from "../notifications/outbox.server";
 import { addressRedirect } from "./address-redirect";
 import { MANAGER_URL_KEY } from "./manager-origin.server";
+import type { MoveAddressJobParams } from "./move-address-job";
+import { type MoveJobInput, moveInputOf } from "./move-address-lines";
 
 /**
  * Appflare's own address: the custom domain the manager lives on, or its
@@ -47,9 +50,13 @@ import { MANAGER_URL_KEY } from "./manager-origin.server";
  * to the custom domain (address-redirect.ts), and links in notifications
  * use it (manager-origin.server.ts).
  *
- * Each operation runs in the request, like an app's custom domains: a
- * handful of Cloudflare API calls and a bounded wait for the new hostname.
- * One runs at a time (a `settings` lock).
+ * The request that moves does the quick part: every check, the attach, and
+ * the start of a `move_address` job, which waits for the new address (a new
+ * domain's certificate commonly takes minutes) and then switches
+ * (./move-address-job.ts). Going back to workers.dev, and the cron's check
+ * that the domain still serves, run in their request. Each operation holds
+ * a `settings` lock while it changes anything, and only one move job runs
+ * at a time.
  */
 
 export class ManagerAddressError extends Error {
@@ -59,12 +66,20 @@ export class ManagerAddressError extends Error {
 export interface ManagerAddressDeps {
   db: D1Database;
   api: CloudflareClient;
-  /** Fetches the new hostname's health endpoint. */
-  fetch: FetchLike;
   /** The version this manager runs, which the new hostname must report. */
   version: string;
+  /** Starts the move's Workflow instance (`jobCreator(env.JOBS)`). */
+  createJob(id: string, params: MoveAddressJobParams): Promise<{ id: string }>;
+  /** For settling jobs whose Workflow instance died, so they do not block a move. */
+  workflows?: WorkflowLookup;
+  /**
+   * Drops this isolate's cached Access protection after a switch
+   * (`accessGate.invalidate`); other isolates follow within its 15 seconds.
+   * Handed in, so the move job never loads the gate and its refusal page.
+   */
+  invalidateAccessGate?: () => void;
   now?: () => Date;
-  sleep?: (ms: number) => Promise<void>;
+  newId?: () => string;
 }
 
 const ADDRESS_KEYS = [
@@ -76,7 +91,7 @@ const ADDRESS_KEYS = [
 ] as const satisfies readonly SettingKey[];
 
 const LOCK_KEY = "manager_address_lock";
-/** Longer than the wait for the new hostname plus the calls around it. */
+/** Longer than the calls a start, a switch, or a way back makes while holding it. */
 const LOCK_TTL_MS = 5 * 60_000;
 
 export const ADDRESS_MESSAGES = {
@@ -93,44 +108,28 @@ export const ADDRESS_MESSAGES = {
     `${hostname} already serves the app ${app}. Remove it from that app first, or choose another name.`,
   noSubdomain:
     "Appflare could not find this account's workers.dev subdomain, so it cannot tell its workers.dev address.",
-  notServing: (
-    hostname: string,
-    seconds: number,
-    last: string,
-    stays: string,
-    domain: UndoOutcome,
-  ) =>
-    `${hostname} did not answer as this Appflare within ${seconds} seconds (last answer: ${last}). Appflare stays at ${stays}. ${UNDO_SENTENCES[domain](hostname)} A new domain's certificate can take a few minutes; try again shortly.`,
+  moving: (hostname: string, jobId: string) =>
+    `Appflare is moving to ${hostname} (job ${jobId}). Wait for it to finish, then try again. Follow it at /jobs/${jobId}.`,
+  notStarted: (hostname: string, reason: string) =>
+    `Appflare could not start the move: ${reason}. ${hostname} stays attached to Appflare's Worker; try again.`,
 } as const;
-
-/** What became of the new domain after a move that did not complete. */
-export type UndoOutcome = "detached" | "detach-failed" | "kept-replaced-records" | "kept-by-hand";
-
-const UNDO_SENTENCES: Record<UndoOutcome, (hostname: string) => string> = {
-  detached: () => "Appflare removed the domain again.",
-  "detach-failed": (hostname) =>
-    `Appflare could not remove ${hostname} again; it stays attached, and trying again uses it.`,
-  "kept-replaced-records": (hostname) =>
-    `${hostname} stays attached to Appflare so you can try again: the DNS records it replaced are gone, and Appflare cannot put them back.`,
-  "kept-by-hand": (hostname) =>
-    `${hostname} stays attached to Appflare's Worker, as it was before.`,
-};
 
 /**
  * `manager_domain_attached_by:<hostname>`: who attached a custom domain that
  * Appflare is moving to, written as soon as it is attached and deleted once
- * the move completes or the domain is detached again. A move that does not
- * complete reads it to decide whether to detach the domain, also on a later
- * try after a detach that failed or a request that was cancelled:
- * - `appflare`: Appflare attached it, so it detaches it again;
+ * the move completes. A move that does not complete leaves the domain
+ * attached (detaching could not bring back DNS records it replaced, and a
+ * later try needs the domain again), and a later try reads the record to
+ * know the domain was not attached by hand:
+ * - `appflare`: Appflare attached it;
  * - `appflare-replaced-records`: Appflare attached it in place of DNS
- *   records, which detaching cannot restore, so it stays attached;
- * - `hand`: it served Appflare's Worker before, so it stays attached.
+ *   records, which are gone for good;
+ * - `hand`: it served Appflare's Worker before the move started.
  */
 const ATTACHED_BY_PREFIX = "manager_domain_attached_by:";
-type AttachedBy = "appflare" | "appflare-replaced-records" | "hand";
+export type AttachedBy = "appflare" | "appflare-replaced-records" | "hand";
 
-async function readAttachedBy(db: D1Database, hostname: string): Promise<AttachedBy | null> {
+export async function readAttachedBy(db: D1Database, hostname: string): Promise<AttachedBy | null> {
   const row = await db
     .prepare("SELECT value FROM settings WHERE key = ?1")
     .bind(`${ATTACHED_BY_PREFIX}${hostname}`)
@@ -207,6 +206,8 @@ export interface ServingDomain {
   hostname: string;
   zoneId: string;
   zoneName: string;
+  /** An earlier move of Appflare attached it and did not complete; not attached by hand. */
+  leftByMove: boolean;
 }
 
 export interface ManagerAddress {
@@ -226,25 +227,95 @@ export interface ManagerAddress {
   serving: boolean | null;
   /**
    * Custom domains that serve the manager's Worker but are not its address:
-   * attached by hand in the Cloudflare dashboard. Any of them can become
-   * Appflare's address.
+   * attached by hand in the Cloudflare dashboard, or left attached by a move
+   * that did not complete. Any of them can become Appflare's address.
    */
   attachedByHand: ServingDomain[];
+  /** The move job queued or running, which the page follows; null when none is. */
+  movingJobId: string | null;
+  /** Where that job moves Appflare; null when no move runs. */
+  movingTo: { hostname: string; zoneId: string } | null;
 }
 
-/** Appflare's address as stored, checked against Cloudflare's list of the Worker's domains. One call. */
+/** A move job queued or running. */
+interface ActiveMove {
+  id: string;
+  hostname: string;
+  zoneId: string;
+}
+
+interface MoveJobRow {
+  id: string;
+  kind: string;
+  status: string;
+  install_id: string | null;
+  workflow_instance_id: string | null;
+  input_json: string | null;
+  started_at: number | null;
+}
+
+/**
+ * The `move_address` job queued or running, if any. With `workflows`, a job
+ * whose Workflow instance ended is settled first, so a dead instance never
+ * blocks the next move.
+ */
+export async function activeMoveJob(
+  db: D1Database,
+  workflows?: WorkflowLookup,
+): Promise<ActiveMove | null> {
+  const read = async () =>
+    (
+      await db
+        .prepare(
+          `SELECT id, kind, status, install_id, workflow_instance_id, input_json, started_at
+           FROM jobs WHERE kind = 'move_address' AND status IN ('queued', 'running')
+           ORDER BY id DESC`,
+        )
+        .all<MoveJobRow>()
+    ).results;
+  let rows = await read();
+  if (rows.length > 0 && workflows !== undefined) {
+    const active = rows.map((r) => ({
+      ...r,
+      started_at: r.started_at === null ? null : new Date(r.started_at),
+    }));
+    if (await reconcileJobs(db, workflows, active)) rows = await read();
+  }
+  const [row] = rows;
+  if (row === undefined) return null;
+  const input = moveInputOf(row.input_json);
+  return { id: row.id, hostname: input.hostname, zoneId: input.zoneId };
+}
+
+/**
+ * Appflare's address as stored, checked against Cloudflare's list of the
+ * Worker's domains (one call), and the move job running, if any.
+ */
 export async function readManagerAddress(
-  deps: Pick<ManagerAddressDeps, "db" | "api">,
+  deps: Pick<ManagerAddressDeps, "db" | "api" | "workflows">,
 ): Promise<ManagerAddress> {
   const workerName = await readWorkerName(deps.db);
   const rows = await readAddressRows(deps.db);
   const { account_subdomain: subdomain } = await readSettings(createDb(deps.db), [
     SETTING.accountSubdomain,
   ]);
-  const domains = await deps.api.workerDomains.listDomains({ service: workerName });
+  const [domains, attachedBy, moving] = await Promise.all([
+    deps.api.workerDomains.listDomains({ service: workerName }),
+    readAllAttachedBy(deps.db),
+    activeMoveJob(deps.db, deps.workflows),
+  ]);
   const serving = domains
     .filter((d) => d.service === workerName)
-    .map((d) => ({ hostname: d.hostname.toLowerCase(), zoneId: d.zone_id, zoneName: d.zone_name }));
+    .map((d) => {
+      const hostname = d.hostname.toLowerCase();
+      const by = attachedBy.get(hostname);
+      return {
+        hostname,
+        zoneId: d.zone_id,
+        zoneName: d.zone_name,
+        leftByMove: by === "appflare" || by === "appflare-replaced-records",
+      };
+    });
   return {
     hostname: rows.hostname,
     zoneId: rows.zoneId,
@@ -253,7 +324,18 @@ export async function readManagerAddress(
     workersDevHostname: subdomain ? `${workerName}.${subdomain}.workers.dev`.toLowerCase() : null,
     serving: rows.hostname === null ? null : serving.some((d) => d.hostname === rows.hostname),
     attachedByHand: serving.filter((d) => d.hostname !== rows.hostname),
+    movingJobId: moving?.id ?? null,
+    movingTo: moving === null ? null : { hostname: moving.hostname, zoneId: moving.zoneId },
   };
+}
+
+/** Every `manager_domain_attached_by:` record, by hostname. */
+async function readAllAttachedBy(db: D1Database): Promise<Map<string, string>> {
+  const { results } = await db
+    .prepare("SELECT key, value FROM settings WHERE key LIKE ?1")
+    .bind(`${ATTACHED_BY_PREFIX}%`)
+    .all<{ key: string; value: string }>();
+  return new Map(results.map((r) => [r.key.slice(ATTACHED_BY_PREFIX.length), r.value]));
 }
 
 export interface AddressOptions extends Omit<DomainOptions, "zones"> {
@@ -285,10 +367,10 @@ export type MoveAddressResult =
   | {
       ok: true;
       hostname: string;
-      /** Where to send the browser: the sign-in page at the new address. */
+      /** The `move_address` job that waits for the new address and switches. */
+      jobId: string;
+      /** Where to send the browser once the job succeeded: the sign-in page at the new address. */
       url: string;
-      /** A change only: what happened to the domain Appflare left. */
-      previousDomain?: DetachOutcome | "failed";
     }
   | {
       ok: false;
@@ -307,7 +389,10 @@ export function signInAtUrl(hostname: string, returnTo: string | undefined): str
   return `https://${hostname}/login?${params.toString()}`;
 }
 
-/** Moves Appflare from its workers.dev address to a custom domain. */
+/**
+ * Moves Appflare from its workers.dev address to a custom domain: checks,
+ * attaches, and starts the job that waits for the new address and switches.
+ */
 export function moveManagerAddress(
   deps: ManagerAddressDeps,
   request: MoveAddressRequest,
@@ -315,7 +400,10 @@ export function moveManagerAddress(
   return withAddressLock(deps.db, () => move(deps, request, "move"));
 }
 
-/** Moves Appflare from its custom domain to another one, then detaches the one it left. */
+/**
+ * Moves Appflare from its custom domain to another one; the job detaches the
+ * one it left once it has switched.
+ */
 export function changeManagerAddress(
   deps: ManagerAddressDeps,
   request: MoveAddressRequest,
@@ -337,6 +425,17 @@ async function move(
   if (kind === "change" && current.hostname === null) {
     throw new ManagerAddressError(ADDRESS_MESSAGES.notMoved);
   }
+  // One move at a time, none while Appflare replaces its own version (the
+  // job waits for the version running now), and none during a removal.
+  if ((await removalInProgress(deps.db)) !== null) {
+    throw new ManagerAddressError(REMOVAL_IN_PROGRESS_MESSAGE);
+  }
+  const running = await activeMoveJob(deps.db, deps.workflows);
+  if (running !== null) {
+    throw new ManagerAddressError(ADDRESS_MESSAGES.moving(running.hostname, running.id));
+  }
+  const selfJob = await activeSelfJob(deps.db, deps.workflows);
+  if (selfJob !== null) throw new ManagerAddressError(selfUpdateBusyMessage(selfJob));
 
   // 1. The hostname, and everything that could refuse it, before anything changes.
   const zone = await asAddressError(() => readZone(api, request.zoneId));
@@ -362,7 +461,6 @@ async function move(
   // Attached to the manager already: by hand (adopted), or by an earlier try
   // that did not complete, which recorded that.
   const recorded = await readAttachedBy(deps.db, hostname);
-  const leaving = current.hostname ?? (await addressInUse(deps, workerName));
   const now = (deps.now ?? (() => new Date()))();
 
   // 2. Attach it to the manager's own Worker (Cloudflare creates the DNS record).
@@ -381,75 +479,94 @@ async function move(
       ? "appflare-replaced-records"
       : "appflare";
   if (recorded !== by) await writeAttachedBy(deps.db, hostname, by, now);
-  /**
-   * Detaches the new domain when Appflare attached it and nothing was lost
-   * by attaching it; else it stays attached. The record goes with the domain.
-   */
-  const undo = async (): Promise<UndoOutcome> => {
-    if (by === "hand") return "kept-by-hand";
-    if (by === "appflare-replaced-records") return "kept-replaced-records";
-    try {
-      await detachCustomDomain(api, { hostname, cfId: attached.domainId, workerName });
-    } catch (error) {
-      console.error("address: could not detach the new domain again", {
-        hostname,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return "detach-failed";
-    }
-    await deleteAttachedBy(deps.db, hostname);
-    return "detached";
+
+  // 3. The job that waits for the new address and switches. Its row is the
+  // claim: inserted only while no other move and no self-update runs.
+  const jobId = (deps.newId ?? (() => ulid()))();
+  const url = signInAtUrl(hostname, request.returnTo);
+  const from =
+    kind === "change" && current.hostname !== null
+      ? { hostname: current.hostname, domainId: current.domainId }
+      : null;
+  const params: MoveAddressJobParams = {
+    kind: "move_address",
+    jobId,
+    hostname,
+    zoneId: zone.id,
+    domainId: attached.domainId,
+    version: deps.version,
+    from,
   };
-
-  // 3. Wait until it answers as this manager; the old address serves meanwhile.
-  const wait = await waitForManager(deps, hostname);
-  if (!wait.ok) {
-    const domain = await undo();
-    throw new ManagerAddressError(
-      ADDRESS_MESSAGES.notServing(
-        hostname,
-        Math.round(LIVE_HEALTH_WINDOW_MS / 1000),
-        wait.last,
-        leaving,
-        domain,
-      ),
-    );
-  }
-
-  // 4. Switch.
+  const input: MoveJobInput = { hostname, zoneId: zone.id, from: from?.hostname ?? null, url };
+  const claimed = await deps.db
+    .prepare(
+      `INSERT INTO jobs (id, install_id, kind, status, input_json, started_by)
+       SELECT ?1, NULL, 'move_address', 'queued', ?2, 'admin'
+       WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE kind = 'move_address' AND status IN ('queued', 'running'))
+         AND ${NO_ACTIVE_SELF_UPDATE_SQL}`,
+    )
+    .bind(jobId, JSON.stringify(input))
+    .run();
+  if (claimed.meta.changes !== 1) throw new ManagerAddressError(ADDRESS_MESSAGES.busy);
+  let instanceId: string;
   try {
-    await switchAddress(deps, {
+    instanceId = (await deps.createJob(jobId, params)).id;
+  } catch (error) {
+    const reason = `could not create the job: ${error instanceof Error ? error.message : String(error)}`;
+    await deps.db
+      .prepare("UPDATE jobs SET status = 'failed', error = ?2, finished_at = ?3 WHERE id = ?1")
+      .bind(jobId, `start: ${reason}`, now.getTime())
+      .run();
+    throw new ManagerAddressError(ADDRESS_MESSAGES.notStarted(hostname, reason));
+  }
+  await deps.db
+    .prepare("UPDATE jobs SET workflow_instance_id = ?2 WHERE id = ?1")
+    .bind(jobId, instanceId)
+    .run();
+  return { ok: true, hostname, jobId, url };
+}
+
+/** What the switch at the end of a move did. */
+export interface CompletedMove {
+  /** The hostname Appflare left (its passkeys were recorded against it). */
+  from: string;
+  /** Cloudflare Access moved along. */
+  accessMoved: boolean;
+}
+
+/**
+ * The switch at the end of a move job, once the new address answers: under
+ * the address lock, the rows, Cloudflare Access and the passkey bookkeeping
+ * in one go (`switchAddress`), then the attach record goes. Safe to run
+ * again: when the rows already name `hostname`, an earlier run switched.
+ */
+export async function completeAddressMove(
+  deps: Pick<ManagerAddressDeps, "db" | "api" | "now">,
+  move: { hostname: string; domainId: string; zoneId: string; workerName: string },
+): Promise<CompletedMove> {
+  return withAddressLock(deps.db, async () => {
+    const current = await readAddressRows(deps.db);
+    if (current.hostname === move.hostname) {
+      await deleteAttachedBy(deps.db, move.hostname);
+      return { from: current.previousHostname ?? move.hostname, accessMoved: false };
+    }
+    const leaving = current.hostname ?? (await addressInUse(deps, move.workerName));
+    const now = (deps.now ?? (() => new Date()))();
+    const accessMoved = await switchAddress(deps, {
       from: leaving,
-      to: hostname,
+      to: move.hostname,
       rows: {
-        hostname,
-        domainId: attached.domainId,
-        zoneId: zone.id,
+        hostname: move.hostname,
+        domainId: move.domainId,
+        zoneId: move.zoneId,
         // Adopting the domain people already use leaves nothing behind.
-        previousHostname: leaving === hostname ? null : leaving,
+        previousHostname: leaving === move.hostname ? null : leaving,
         movedAt: now.toISOString(),
       },
     });
-  } catch (error) {
-    await undo();
-    if (error instanceof AccessToggleError) throw new ManagerAddressError(error.message);
-    throw error;
-  }
-
-  await deleteAttachedBy(deps.db, hostname);
-  const result: MoveAddressResult = {
-    ok: true,
-    hostname,
-    url: signInAtUrl(hostname, request.returnTo),
-  };
-  if (kind === "change" && current.hostname !== null) {
-    result.previousDomain = await detachQuietly(api, {
-      hostname: current.hostname,
-      cfId: current.domainId,
-      workerName,
-    });
-  }
-  return result;
+    await deleteAttachedBy(deps.db, move.hostname);
+    return { from: leaving, accessMoved };
+  });
 }
 
 /**
@@ -488,36 +605,11 @@ async function appServedBy(db: D1Database, workerName: string): Promise<string |
   return distinctLabels(named).get(install.id) ?? install.name;
 }
 
-export type WaitResult = { ok: true } | { ok: false; last: string };
-
 /**
- * Probes `https://<hostname>/api/health` until it answers as this manager
- * (200 with this `version`), with the install's live-check backoff (2, 3, 5,
- * 8, then 10 seconds) for at most its window.
+ * Null when the answer is this manager's health report (200 with this
+ * `version`); else what it was instead.
  */
-export async function waitForManager(
-  deps: Pick<ManagerAddressDeps, "fetch" | "version" | "now" | "sleep">,
-  hostname: string,
-): Promise<WaitResult> {
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const clock = () => (deps.now ?? (() => new Date()))().getTime();
-  const url = `https://${hostname}/api/health`;
-  const started = clock();
-  let last = "no answer";
-  for (let attempt = 1; ; attempt++) {
-    const probe = await probeHealth(deps.fetch, url);
-    const verdict = managerVerdict(probe, deps.version);
-    if (verdict === null) return { ok: true };
-    last = verdict;
-    const delayMs = liveHealthDelaySeconds(attempt) * 1000;
-    const elapsed = Math.max(clock() - started, liveHealthScheduledMs(attempt));
-    if (elapsed + delayMs > LIVE_HEALTH_WINDOW_MS) return { ok: false, last };
-    await sleep(delayMs);
-  }
-}
-
-/** Null when the answer is this manager's health report; else what it was instead. */
-function managerVerdict(probe: HealthProbe, version: string): string | null {
+export function managerVerdict(probe: HealthProbe, version: string): string | null {
   if (probe.kind === "error") return `no connection (${probe.message})`;
   if (probe.status !== 200) {
     const edge = /^error code: (\d+)/.exec(probe.bodyStart.trimStart());
@@ -550,14 +642,15 @@ interface AddressSwitch {
  * when Access moved along, the passkey bookkeeping, and the remembered
  * manager URL (deleted, since it named the address being left). Access is
  * moved first, under its lock; if the batch then fails, it is moved back.
+ * True when Access moved along.
  */
 async function switchAddress(
-  deps: Pick<ManagerAddressDeps, "db" | "api" | "now">,
+  deps: Pick<ManagerAddressDeps, "db" | "api" | "now" | "invalidateAccessGate">,
   change: AddressSwitch,
-): Promise<void> {
+): Promise<boolean> {
   const { db, api } = deps;
   const now = (deps.now ?? (() => new Date()))();
-  const run = async (access: AccessConfig | null) => {
+  const run = async (access: AccessConfig | null): Promise<boolean> => {
     const moved =
       access !== null && access.domain !== change.to
         ? await moveAccessApps({ db, client: api }, access, change.to)
@@ -595,15 +688,18 @@ async function switchAddress(
       }
       throw error;
     }
+    return moved !== null;
   };
+  let accessMoved: boolean;
   if (change.moveAccess === false || (await readAccessConfig(db)) === null) {
-    await run(null);
+    accessMoved = await run(null);
   } else {
     // Read again under the Access lock: protection may have changed during the wait.
-    await withAccessLock(db, async () => run(await readAccessConfig(db)));
+    accessMoved = await withAccessLock(db, async () => run(await readAccessConfig(db)));
   }
-  accessGate.invalidate();
+  deps.invalidateAccessGate?.();
   addressRedirect.invalidate();
+  return accessMoved;
 }
 
 function upsertStatement(db: D1Database, key: string, value: string, now: Date) {
@@ -654,13 +750,18 @@ export interface RevertResult {
 /**
  * Back to workers.dev: Access moves back first (a refusal leaves everything
  * as it was), then the rows are cleared (the redirect stops), then the
- * custom domain is detached from the manager's Worker.
+ * custom domain is detached from the manager's Worker. Refused while a move
+ * job runs, which would switch again once its address answers.
  */
 export function revertManagerAddress(
-  deps: Pick<ManagerAddressDeps, "db" | "api" | "now">,
+  deps: Pick<ManagerAddressDeps, "db" | "api" | "now" | "workflows" | "invalidateAccessGate">,
   request: { returnTo?: string } = {},
 ): Promise<RevertResult> {
   return withAddressLock(deps.db, async () => {
+    const running = await activeMoveJob(deps.db, deps.workflows);
+    if (running !== null) {
+      throw new ManagerAddressError(ADDRESS_MESSAGES.moving(running.hostname, running.id));
+    }
     const current = await readAddressRows(deps.db);
     if (current.hostname === null) return { wasMoved: false, url: null, previousDomain: null };
     const workerName = await readWorkerName(deps.db);
@@ -701,7 +802,7 @@ export type ReconcileResult =
  * either way), the rows are cleared, and a notification goes out.
  */
 export async function reconcileManagerAddress(
-  lazy: Pick<ManagerAddressDeps, "db" | "now"> & {
+  lazy: Pick<ManagerAddressDeps, "db" | "now" | "invalidateAccessGate"> & {
     /** The API client, made only when Appflare has a custom domain to check. */
     api: () => Promise<CloudflareClient>;
   },
@@ -756,7 +857,7 @@ export async function reconcileManagerAddress(
 }
 
 /** Detaches a custom domain of the manager; a failure is logged and reported, never thrown. */
-async function detachQuietly(
+export async function detachQuietly(
   api: CloudflareClient,
   domain: { hostname: string; cfId: string | null; workerName: string },
 ): Promise<DetachOutcome | "failed"> {

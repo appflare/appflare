@@ -163,7 +163,11 @@ export default {
     // Appflare's address: when its custom domain no longer serves it, back to
     // workers.dev, with a notification delivered just below; never fails the run.
     try {
-      const address = await reconcileManagerAddress({ db: env.DB, api: () => getCfClient(env) });
+      const address = await reconcileManagerAddress({
+        db: env.DB,
+        api: () => getCfClient(env),
+        invalidateAccessGate: () => accessGate.invalidate(),
+      });
       if (address.status === "lost") {
         console.warn(`address: ${address.hostname} no longer serves Appflare; back at workers.dev`);
       }

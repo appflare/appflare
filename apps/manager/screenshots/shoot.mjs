@@ -173,6 +173,52 @@ async function click(page, label) {
   await new Promise((done) => setTimeout(done, 350));
 }
 
+/** Types into the inputs of a form, by their `name`, the way React notices. */
+async function fill(page, values) {
+  const missing = await page.evaluate(`(() => {
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    for (const [name, value] of Object.entries(${JSON.stringify(values)})) {
+      const input = document.querySelector('input[name="' + name + '"]');
+      if (!input) return name;
+      setValue.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    return null;
+  })()`);
+  if (missing) throw new Error(`Input missing: ${missing}`);
+}
+
+/** Picks the choice (a radio card) whose label starts with `label`. */
+async function choose(page, label) {
+  const found = await page.evaluate(`(() => {
+    const item = [...document.querySelectorAll('label')].find((element) => element.textContent.trim().startsWith(${JSON.stringify(label)}));
+    if (!item) return false;
+    item.click();
+    return true;
+  })()`);
+  if (!found) throw new Error(`Choice missing: ${label}`);
+  await new Promise((done) => setTimeout(done, 350));
+}
+
+/**
+ * Replaces text on the page, for words the harness cannot give the page
+ * itself: the address it runs at is localhost, not the manager's own.
+ */
+async function replaceText(page, from, to) {
+  const count = await page.evaluate(`(() => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let count = 0;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!node.nodeValue.includes(${JSON.stringify(from)})) continue;
+      node.nodeValue = node.nodeValue.replaceAll(${JSON.stringify(from)}, ${JSON.stringify(to)});
+      count++;
+    }
+    return count;
+  })()`);
+  if (count === 0) throw new Error(`Text missing: ${from}`);
+}
+
 const shots = [
   {
     name: "home-dashboard",
@@ -244,6 +290,52 @@ const shots = [
     path: "/settings/domains",
     expected: "External domains",
     cropBottomSelector: "#external-domains",
+  },
+  {
+    name: "address-workers-dev",
+    path: "/settings/domains",
+    expected: "Appflare lives at its workers.dev address.",
+    cropSelector: "#address",
+  },
+  {
+    name: "address-dialog",
+    path: "/settings/domains",
+    expected: "Appflare lives at its workers.dev address.",
+    prepare: async (page) => {
+      await click(page, "Use a domain");
+      await settle(page, "Move Appflare");
+    },
+    wait: 600,
+    cropSelector: '[role="dialog"]',
+    // The page behind the dialog is dimmed but readable; no margin keeps its words out.
+    cropMargin: 0,
+  },
+  {
+    name: "address-on-domain",
+    path: "/settings/domains?fixture=address-on-domain",
+    expected: "sends page visits here.",
+    cropSelector: "#address",
+  },
+  {
+    // Setup from the owner step on: the owner is created (the fixtures
+    // stand in for the server), then the address step, with a domain chosen.
+    name: "setup-address-step",
+    path: "/setup",
+    expected: "Create the owner account",
+    viewportHeight: 1100,
+    prepare: async (page) => {
+      await fill(page, {
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+        password: "correct horse battery staple",
+      });
+      await click(page, "Create owner account");
+      await settle(page, "Where should Appflare live?");
+      await choose(page, "Use a domain of yours");
+      await replaceText(page, "localhost:5388", "appflare.example.workers.dev");
+    },
+    wait: 400,
+    cropSelector: "main > div > :last-child",
   },
   {
     name: "domains-custom-form",
@@ -319,6 +411,7 @@ try {
         );
       if (shot.scroll) await scrollTo(page, shot.scroll);
       if (shot.click) await click(page, shot.click);
+      if (shot.prepare) await shot.prepare(page);
       if (shot.resetScroll) {
         await page.evaluate("document.querySelector('main')?.scrollTo(0, 0)");
         await new Promise((done) => setTimeout(done, 350));
@@ -354,7 +447,7 @@ try {
           return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
         })()`);
         if (!box) throw new Error(`${shot.name}: crop element missing`);
-        const margin = 16;
+        const margin = shot.cropMargin ?? 16;
         const left = Math.max(0, Math.floor(box.left - margin));
         const top = Math.max(0, Math.floor(box.top - margin));
         crop = {

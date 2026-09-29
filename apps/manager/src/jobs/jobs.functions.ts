@@ -6,6 +6,7 @@ import { invalidateScriptsCache, SCRIPTS_CACHE_MS } from "../cloudflare/scripts-
 import { createDb } from "../db/client";
 import { installs, type JobStarter, jobs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { moveInputOf } from "../domains/move-address-lines";
 import { appAddress } from "../installs/app-address";
 import { readAddressDomains } from "../installs/app-address.server";
 import { installLabel } from "../installs/display-name";
@@ -91,6 +92,11 @@ export interface JobView {
    */
   sourceBuild: { purpose: string; origin: string } | null;
   /**
+   * A move of Appflare's address: where to, and the sign-in page there,
+   * where the browser goes once the job succeeded. Null for other jobs.
+   */
+  addressMove: { hostname: string; zoneId: string; url: string } | null;
+  /**
    * The sandbox build the job is waiting on, read live from the sandbox
    * Worker while it runs (the job log gets its output when it ends); null
    * otherwise.
@@ -135,6 +141,12 @@ function sourceBuildOfInput(inputJson: string | null): { purpose: string; origin
   } catch {
     return { purpose: "install", origin: "repository" };
   }
+}
+
+/** Where a move of Appflare's address goes, from its input. */
+function addressMoveOf(inputJson: string | null): JobView["addressMove"] {
+  const { hostname, zoneId, url } = moveInputOf(inputJson);
+  return { hostname, zoneId, url };
 }
 
 /**
@@ -230,6 +242,7 @@ export const getJob = createServerFn({ method: "GET" })
       kind: job.kind,
       build,
       sourceBuild: job.kind === "source_build" ? sourceBuildOfInput(job.input_json) : null,
+      addressMove: job.kind === "move_address" ? addressMoveOf(job.input_json) : null,
       restore: isRestoreJob(job),
       deleteRetained: isDeleteRetainedJob(job),
       status: job.status,

@@ -163,6 +163,7 @@ const job = {
   reportedAt: null,
   install: apps[0],
   sourceBuild: null,
+  addressMove: null,
   build: null,
   logs: [
     {
@@ -304,6 +305,40 @@ function installDetail(id: string) {
   };
 }
 
+/**
+ * The fixtures' variant for one picture, named in the page's address
+ * (`?fixture=address-on-domain`), so a page can be shot in another state.
+ * Read once, when the page loads.
+ */
+const variant =
+  typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("fixture");
+
+/** Appflare's address: its workers.dev address, or a domain of the account since the 25th. */
+const managerAddress =
+  variant === "address-on-domain"
+    ? {
+        hostname: "appflare.example.com",
+        zoneId: "zone-example",
+        previousHostname: "appflare.example.workers.dev",
+        movedAt: "2026-09-25T10:00:00.000Z",
+        workersDevHostname: "appflare.example.workers.dev",
+        serving: true,
+        attachedByHand: [],
+        movingJobId: null,
+        movingTo: null,
+      }
+    : {
+        hostname: null,
+        zoneId: null,
+        previousHostname: null,
+        movedAt: null,
+        workersDevHostname: "appflare.example.workers.dev",
+        serving: null,
+        attachedByHand: [],
+        movingJobId: null,
+        movingTo: null,
+      };
+
 function argument(args: unknown[], key: string): string {
   const first = args[0] as { data?: Record<string, string> } | undefined;
   return first?.data?.[key] ?? "";
@@ -311,6 +346,10 @@ function argument(args: unknown[], key: string): string {
 
 export function fixture(name: string, args: unknown[]): unknown {
   const result: Record<string, () => unknown> = {
+    // Setup at the owner step: the token is saved, and nobody exists yet.
+    enterSetup: () => ({ step: "create-owner" }),
+    loadAppflareVersion: () => "0.1.0",
+    createOwner: () => ({ ok: true }),
     enterApp: () => ({
       viewer: {
         id: "user-ada",
@@ -572,15 +611,7 @@ export function fixture(name: string, args: unknown[]): unknown {
       missing: [],
       noZones: false,
     }),
-    getManagerAddress: () => ({
-      hostname: null,
-      zoneId: null,
-      previousHostname: null,
-      movedAt: null,
-      workersDevHostname: "appflare.example.workers.dev",
-      serving: null,
-      attachedByHand: [],
-    }),
+    getManagerAddress: () => managerAddress,
     getManagerAddressOptions: () => ({
       zones: [
         { id: "zone-example", name: "example.com", suggestedHostname: "appflare.example.com" },

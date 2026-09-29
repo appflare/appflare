@@ -1,13 +1,17 @@
-import { Banner, LayerDialog, LinkButton, Select, Text } from "@cloudflare/kumo";
-import { CheckCircleIcon, CircleIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { Banner, Button, LayerDialog, Link, LinkButton, Select, Text } from "@cloudflare/kumo";
+import { CircleIcon, WarningCircleIcon, WarningIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
+import { isAccessDenied } from "../access/denied";
 import {
   type AddressOptions,
   changeManagerAddress,
   moveManagerAddress,
 } from "../domains/manager-address.functions";
+import { MOVE_STEPS } from "../domains/move-address-lines";
 import { MOVED_PASSKEY_NOTE } from "../domains/moved-note";
 import { checkSubdomainInZone, type HostnameCheck } from "../installs/custom-domain-input";
+import type { JobView } from "../jobs/jobs.functions";
+import { useLiveJob } from "../jobs/live-job";
 import { AppflareLoader } from "./appflare-loader";
 import { type DnsConflict, DnsConflictNotice } from "./domain-dialog-parts";
 import { MessageText } from "./message-text";
@@ -16,8 +20,8 @@ import { ZoneHostnameField } from "./zone-hostname-field";
 /**
  * Moving Appflare to a domain of the account, as the Domains settings and
  * the setup wizard both do it: the zone picker and host field, the DNS
- * records warning, the steps shown while the one long request runs, and the
- * page shown once Appflare lives at the new address.
+ * records warning, the progress of the job that waits for the new address
+ * and switches, and the page shown once Appflare lives at the new address.
  */
 
 export type AddressZone = AddressOptions["zones"][number];
@@ -32,6 +36,12 @@ export interface AddressTarget {
 export interface MovedTo {
   hostname: string;
   url: string;
+}
+
+/** A move job the page follows. */
+export interface MoveJobRef {
+  jobId: string;
+  hostname: string;
 }
 
 /** The part of `hostname` before `.<zone>`; empty for the zone itself. */
@@ -95,29 +105,114 @@ export function useAddressFields(zones: readonly AddressZone[], initial?: Addres
 export type AddressFieldsState = ReturnType<typeof useAddressFields>;
 
 /**
- * One move (or change) of the address: the call, the DNS records it would
- * replace (asked about before replacing them), and its error. `returnTo` is
- * the page to open at the new address once signed in there.
+ * The move's job was last seen running in its wait for the new address or
+ * after it: from then on it may switch, which moves Cloudflare Access away
+ * from this address. Before the wait nothing has moved Access.
  */
-export function useAddressMove({ kind, returnTo }: { kind: "move" | "change"; returnTo?: string }) {
-  const [phase, setPhase] = useState<"idle" | "moving" | "moved">("idle");
+export function waitStarted(job: JobView | null | undefined): boolean {
+  if (job == null || job.status !== "running") return false;
+  return job.logs.some((l) => l.message.startsWith(MOVE_STEPS.wait));
+}
+
+/** Consecutive refusals after which the page suggests a reload. */
+export const REFUSALS_BEFORE_HINT = 3;
+
+/**
+ * One move (or change) of the address: the call that checks and attaches
+ * the domain and starts the job, the DNS records it would replace (asked
+ * about before replacing them), then the job, followed live until it ends.
+ * `onMoved` runs once it has succeeded; a failure shows the job's message.
+ * Closing the page loses nothing: the job goes on, and `resume` follows a
+ * job already running when the page opened. `returnTo` is the page to open
+ * at the new address once signed in there.
+ */
+export function useAddressMove({
+  kind,
+  returnTo,
+  resume,
+  onMoved,
+}: {
+  kind: "move" | "change";
+  returnTo?: string;
+  resume?: MoveJobRef;
+  onMoved?: (movedTo: MovedTo) => void;
+}) {
+  const [starting, setStarting] = useState(false);
+  const [following, setFollowing] = useState<(MoveJobRef & { url: string | null }) | null>(
+    resume === undefined ? null : { ...resume, url: null },
+  );
   const [movedTo, setMovedTo] = useState<MovedTo | null>(null);
   const [conflict, setConflict] = useState<DnsConflict | null>(null);
   const [replace, setReplace] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const moved = useRef(onMoved);
+  moved.current = onMoved;
+
+  function arrive(to: MovedTo) {
+    setMovedTo(to);
+    setFollowing(null);
+    moved.current?.(to);
+  }
+
+  const latest = useRef<{ job: JobView | null | undefined; following: typeof following }>({
+    job: undefined,
+    following,
+  });
+  // Access refusals in a row that could not be read as the switch.
+  const [refusals, setRefusals] = useState(0);
+  const job = useLiveJob(following?.jobId ?? null, undefined, {
+    // After a move, this address has nothing more to show (with Access on it
+    // refuses every read by then); after a failure the page reads its rows again.
+    refreshAfter: (ended) => ended.status === "failed",
+    // With Cloudflare Access on, the switch moves Access to the new address,
+    // and this page's address then refuses every call: the job has switched.
+    onPollError(err) {
+      const { job: seen, following: now } = latest.current;
+      if (now === null || !isAccessDenied(err)) return;
+      if (!waitStarted(seen)) {
+        setRefusals((n) => n + 1);
+        return;
+      }
+      arrive({
+        hostname: now.hostname,
+        url: seen?.addressMove?.url || now.url || `https://${now.hostname}/login?moved=1`,
+      });
+    },
+  });
+  latest.current = { job, following };
+  // A poll that answered ends a run of refusals.
+  useEffect(() => {
+    if (job !== undefined) setRefusals(0);
+  }, [job]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `arrive` only sets state and calls the latest `onMoved`
+  useEffect(() => {
+    if (following === null || job === undefined) return;
+    if (job === null) {
+      setError("The move's job could not be found. Reload the page.");
+      setFollowing(null);
+      return;
+    }
+    if (job.id !== following.jobId) return;
+    if (job.status === "succeeded") {
+      const hostname = job.addressMove?.hostname || following.hostname;
+      arrive({
+        hostname,
+        url: job.addressMove?.url || following.url || `https://${hostname}/login?moved=1`,
+      });
+    } else if (job.status === "failed") {
+      setError(job.error ?? "The move stopped. Open its job to see why.");
+      setFollowing(null);
+    }
+  }, [job, following]);
 
   const blocked = conflict !== null && !replace;
+  const moving = starting || following !== null;
 
-  // Leaving the page while the request runs would leave the move unfinished.
-  // The guard goes as soon as the call settles, before a caller navigates on.
-  const guard = useRef<(() => void) | null>(null);
-  useEffect(() => () => guard.current?.(), []);
-
-  async function run(target: AddressTarget): Promise<MovedTo | null> {
-    if (phase !== "idle" || blocked) return null;
-    setPhase("moving");
+  async function run(target: AddressTarget): Promise<void> {
+    if (moving || movedTo !== null || blocked) return;
+    setStarting(true);
     setError(null);
-    guard.current = guardUnload();
     const call = kind === "move" ? moveManagerAddress : changeManagerAddress;
     try {
       const result = await call({
@@ -129,25 +224,27 @@ export function useAddressMove({ kind, returnTo }: { kind: "move" | "change"; re
         },
       });
       if (result.ok) {
-        const done = { hostname: result.hostname, url: result.url };
-        setMovedTo(done);
-        setPhase("moved");
-        return done;
+        setFollowing({ jobId: result.jobId, hostname: result.hostname, url: result.url });
+      } else {
+        setConflict({ hostname: result.hostname, records: result.records });
+        setReplace(false);
       }
-      setConflict({ hostname: result.hostname, records: result.records });
-      setReplace(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not move Appflare. Try again.");
     } finally {
-      guard.current?.();
-      guard.current = null;
+      setStarting(false);
     }
-    setPhase("idle");
-    return null;
   }
 
   return {
-    moving: phase === "moving",
+    /** The start call runs, or its job does. */
+    moving,
+    starting,
+    /** The job being followed, while it runs. */
+    following,
+    job: following === null ? undefined : job,
+    /** Access refused several polls in a row before the wait began: a reload tells more. */
+    refused: following !== null && refusals >= REFUSALS_BEFORE_HINT,
     movedTo,
     conflict,
     replace,
@@ -164,21 +261,6 @@ export function useAddressMove({ kind, returnTo }: { kind: "move" | "change"; re
   };
 }
 
-/**
- * Asks the browser to confirm before the page is left or reloaded; returns
- * the function that stops asking.
- */
-function guardUnload(): () => void {
-  if (typeof window === "undefined") return () => {};
-  const ask = (event: BeforeUnloadEvent) => {
-    event.preventDefault();
-    // Older browsers ask only when `returnValue` is set.
-    event.returnValue = "";
-  };
-  window.addEventListener("beforeunload", ask);
-  return () => window.removeEventListener("beforeunload", ask);
-}
-
 export type AddressMoveState = ReturnType<typeof useAddressMove>;
 
 /** The primary button's words for the move's state. */
@@ -189,7 +271,7 @@ export function moveActionLabel(move: AddressMoveState, idle: string): string {
 
 /**
  * The zone picker, the host field, the DNS records warning, and the move's
- * error (the server's words, which say what became of the domain).
+ * error (the server's or the job's words, which say what became of the domain).
  */
 export function AddressFields({
   zones,
@@ -245,7 +327,7 @@ export function AddressFields({
   );
 }
 
-/** A move that did not complete, in the server's words: they say what became of the domain. */
+/** A move that did not complete, in the server's or the job's words: they say what became of the domain. */
 export function MoveError({ message }: { message: string }) {
   return (
     <div role="alert">
@@ -258,78 +340,83 @@ export function MoveError({ message }: { message: string }) {
   );
 }
 
-/** What a move does, in order. The one request does them all; the page can only estimate which runs. */
-export const MOVE_STEPS = [
-  "Attaching the domain",
-  "Waiting for the new address to answer",
-  "Switching",
-] as const;
-
-/** About how long attaching takes (a handful of Cloudflare calls) before the wait begins. */
-export const ATTACH_ESTIMATE_MS = 5000;
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
+const LEVEL_COLOR: Record<string, string> = {
+  warn: "text-kumo-warning",
+  error: "text-kumo-danger",
+};
 
 /**
- * The steps of a move while its request runs: the first until attaching
- * has most likely finished, then the wait for the new address, which takes
- * the longest. `done` marks every step finished. When the system asks for
- * reduced motion, the steps are a still list under one indicator.
+ * A move while its job runs: the job's log lines as they arrive (the same
+ * lines as its page, which "Open the job" leads to), and that the page may
+ * be closed. Without `jobId` the request that starts the job still runs.
+ * `done` says Appflare has moved, while the browser goes there.
  */
-export function MoveProgress({ hostname, done = false }: { hostname: string; done?: boolean }) {
-  const [reduced] = useState(prefersReducedMotion);
-  const [current, setCurrent] = useState(0);
-  useEffect(() => {
-    if (reduced || done) return;
-    const timer = setTimeout(() => setCurrent(1), ATTACH_ESTIMATE_MS);
-    return () => clearTimeout(timer);
-  }, [reduced, done]);
-
+export function MoveProgress({
+  hostname,
+  jobId,
+  job,
+  done = false,
+  refused = false,
+}: {
+  hostname: string;
+  jobId: string | null;
+  job?: JobView | null | undefined;
+  done?: boolean;
+  /** Cloudflare Access refused several checks of the job in a row. */
+  refused?: boolean;
+}) {
+  const lines = job?.logs ?? [];
   return (
     <div className="grid gap-3" role="status" aria-live="polite">
       <div className="flex items-center gap-2">
-        {reduced && !done && <AppflareLoader size="sm" aria-hidden />}
+        {!done && <AppflareLoader size="sm" aria-hidden />}
         <Text bold>
           {done ? `Appflare moved to ${hostname}` : `Moving Appflare to ${hostname}`}
         </Text>
       </div>
-      {!done && (
-        <Text variant="secondary">
-          This can take a few minutes while Cloudflare issues the certificate. Keep this page open.
-        </Text>
-      )}
-      <ol className={reduced ? "grid list-inside list-decimal gap-1.5" : "grid gap-2"}>
-        {MOVE_STEPS.map((label, index) => {
-          if (reduced) {
-            return (
-              <li key={label}>
-                <Text as="span">{label}</Text>
-              </li>
-            );
-          }
-          const state = done || index < current ? "done" : index === current ? "current" : "next";
-          return (
-            <li key={label} className="flex items-center gap-2" data-step={state}>
-              {state === "done" ? (
-                <CheckCircleIcon weight="fill" className="shrink-0 text-kumo-success" />
-              ) : state === "current" ? (
-                <AppflareLoader size="sm" aria-hidden />
-              ) : (
-                <CircleIcon className="shrink-0 text-kumo-inactive" />
-              )}
-              <Text as="span" variant={state === "next" ? "secondary" : "body"}>
-                {label}
+      {!done &&
+        (jobId === null ? (
+          <Text variant="secondary">Checking the name and attaching the domain…</Text>
+        ) : (
+          <Text variant="secondary">
+            This can take a few minutes while Cloudflare issues the certificate. You can close this
+            page; the move continues.
+          </Text>
+        ))}
+      {lines.length > 0 && (
+        <ol className="grid max-h-64 gap-1.5 overflow-y-auto" aria-label="The move's log">
+          {lines.map((line) => (
+            <li key={line.id} className="flex items-start gap-2" data-level={line.level}>
+              <CircleIcon
+                weight="fill"
+                size={8}
+                className={`mt-1.5 shrink-0 ${LEVEL_COLOR[line.level] ?? "text-kumo-inactive"}`}
+                aria-hidden
+              />
+              <Text as="span" size="sm">
+                <MessageText message={line.message} />
               </Text>
             </li>
-          );
-        })}
-      </ol>
+          ))}
+        </ol>
+      )}
+      {refused && !done && (
+        <Banner
+          variant="alert"
+          icon={<WarningIcon weight="fill" />}
+          description="Cloudflare Access refused the last few checks of the move, so this page cannot tell where it stands. Reload the page, or open Appflare at its new address."
+          action={
+            <Button variant="secondary" onClick={() => window.location.reload()}>
+              Reload
+            </Button>
+          }
+        />
+      )}
+      {jobId !== null && (
+        <div>
+          <Link href={`/jobs/${jobId}`}>Open the job</Link>
+        </div>
+      )}
     </div>
   );
 }

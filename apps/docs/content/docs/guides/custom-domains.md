@@ -12,6 +12,9 @@ and the certificate. Once the app answers on the domain, Appflare turns the
 For a hostname whose DNS is managed somewhere else, see
 [Domains held outside this account](#domains-held-outside-this-account).
 
+Appflare itself can have a domain too: see
+[Give Appflare its own address](/guides/appflare-address/).
+
 ## What you need
 
 - A domain (a zone) on this Cloudflare account, with the status **Active**.

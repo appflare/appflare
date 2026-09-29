@@ -12,9 +12,16 @@ import { Route as domains } from "../src/routes/_app/settings/domains";
 import { Route as notifications } from "../src/routes/_app/settings/notifications";
 import { Route as updates } from "../src/routes/_app/settings/updates";
 import { Route as users } from "../src/routes/_app/settings/users";
+import { Route as setupRoute } from "../src/routes/setup";
 
 const app = appRoute.update({ id: "/_app", getParentRoute: () => rootRoute } as any);
+const setup = setupRoute.update({
+  id: "/setup",
+  path: "/setup",
+  getParentRoute: () => rootRoute,
+} as any);
 export const routeTree = rootRoute.addChildren([
+  setup,
   app.addChildren([
     home.update({ id: "/", path: "/", getParentRoute: () => app } as any),
     catalog.update({ id: "/catalog/", path: "/catalog/", getParentRoute: () => app } as any),

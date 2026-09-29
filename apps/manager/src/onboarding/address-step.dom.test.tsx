@@ -2,16 +2,22 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddressOptions, MoveAddressResult } from "../domains/manager-address.functions";
+import type { JobView } from "../jobs/jobs.functions";
 
 /**
- * Setup's "Where should Appflare live?" step, with the move call standing
- * in: nothing here touches an account.
+ * Setup's "Where should Appflare live?" step, with the move call and its
+ * job standing in: nothing here touches an account.
  */
 const calls = vi.hoisted(() => ({
   moveManagerAddress: vi.fn(),
   changeManagerAddress: vi.fn(),
+  getJob: vi.fn(),
 }));
-vi.mock("../domains/manager-address.functions", () => calls);
+vi.mock("../domains/manager-address.functions", () => ({
+  moveManagerAddress: calls.moveManagerAddress,
+  changeManagerAddress: calls.changeManagerAddress,
+}));
+vi.mock("../jobs/jobs.functions", () => ({ getJob: calls.getJob }));
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ invalidate: async () => {}, navigate: async () => {} }),
 }));
@@ -21,13 +27,47 @@ const { MoveProgress } = await import("../components/manager-address-move");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const HOST = "appflare.example.com";
 const OPTIONS: AddressOptions = {
-  zones: [{ id: "z1", name: "example.com", suggestedHostname: "appflare.example.com" }],
+  zones: [{ id: "z1", name: "example.com", suggestedHostname: HOST }],
   inactiveZones: [],
   missing: [],
   noZones: false,
 };
 const RESUME = "/setup?checklist=true&address=true";
+const SIGN_IN = `https://${HOST}/login?returnTo=%2Fsetup%3Fchecklist%3Dtrue&moved=1`;
+const JOB = "01MOVEJOB00000000000000001";
+const STARTED = { ok: true, hostname: HOST, jobId: JOB, url: SIGN_IN } satisfies MoveAddressResult;
+
+function moveJob(status: JobView["status"], messages: string[], error: string | null = null) {
+  return {
+    id: JOB,
+    kind: "move_address",
+    restore: false,
+    deleteRetained: false,
+    status,
+    error,
+    workerVersionId: null,
+    targetVersion: null,
+    startedBy: "admin",
+    startedAt: "2026-09-28T12:00:00.000Z",
+    finishedAt: null,
+    reportedAt: null,
+    install: null,
+    logs: messages.map((message, i) => ({
+      id: i + 1,
+      ts: "2026-09-28T12:00:00.000Z",
+      level: "info",
+      message,
+      requests: [],
+      detail: null,
+    })),
+    logsAfter: null,
+    sourceBuild: null,
+    addressMove: { hostname: HOST, zoneId: "z1", url: SIGN_IN },
+    build: null,
+  } satisfies JobView;
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -38,9 +78,10 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  calls.moveManagerAddress.mockReset();
+  for (const call of Object.values(calls)) call.mockReset();
   onDone.mockReset();
   go.mockReset();
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
 });
 
 afterEach(() => {
@@ -48,6 +89,7 @@ afterEach(() => {
   container.remove();
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
@@ -78,9 +120,13 @@ function button(label: string): HTMLButtonElement {
   return found;
 }
 
+async function settle() {
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+}
+
 async function click(target: HTMLElement) {
   await act(async () => target.click());
-  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  await settle();
 }
 
 function choice(value: "keep" | "domain"): HTMLElement {
@@ -111,39 +157,60 @@ describe("the address step", () => {
     expect(calls.moveManagerAddress).not.toHaveBeenCalled();
   });
 
-  it("moves to a domain and opens the sign-in page there, which resumes setup", async () => {
-    calls.moveManagerAddress.mockResolvedValue({
-      ok: true,
-      hostname: "appflare.example.com",
-      url: "https://appflare.example.com/login?returnTo=%2Fsetup%3Fchecklist%3Dtrue&moved=1",
-    } satisfies MoveAddressResult);
+  it("follows the move's job, then opens the sign-in page there, which resumes setup", async () => {
+    calls.moveManagerAddress.mockResolvedValue(STARTED);
+    calls.getJob.mockResolvedValue(moveJob("running", [`Moving Appflare to ${HOST}.`]));
     show();
     await click(choice("domain"));
     const field = document.querySelector<HTMLInputElement>('input[aria-label="Subdomain"]');
     expect(field?.value).toBe("appflare");
     await click(button("Continue"));
     expect(calls.moveManagerAddress).toHaveBeenCalledWith({
-      data: { zoneId: "z1", hostname: "appflare.example.com", returnTo: RESUME },
+      data: { zoneId: "z1", hostname: HOST, returnTo: RESUME },
     });
-    expect(go).toHaveBeenCalledWith(
-      "https://appflare.example.com/login?returnTo=%2Fsetup%3Fchecklist%3Dtrue&moved=1",
-    );
+    await settle();
+    expect(page()).toContain(`Moving Appflare to ${HOST}`);
+    expect(page()).toContain("You can close this page; the move continues.");
+    expect([...document.querySelectorAll("li[data-level]")].map((li) => li.textContent)).toEqual([
+      `Moving Appflare to ${HOST}.`,
+    ]);
+    expect(go).not.toHaveBeenCalled();
+
+    calls.getJob.mockResolvedValue(moveJob("succeeded", [`Moving Appflare to ${HOST}.`]));
+    await act(async () => vi.advanceTimersByTime(2000));
+    await settle();
+    expect(go).toHaveBeenCalledWith(SIGN_IN);
     expect(onDone).not.toHaveBeenCalled();
-    expect(page()).toContain("Appflare moved to appflare.example.com");
+    expect(page()).toContain(`Appflare moved to ${HOST}`);
   });
 
-  it("shows the server's words and Try again when the move did not complete", async () => {
+  it("shows the job's words and Try again when the move did not complete", async () => {
+    calls.moveManagerAddress.mockResolvedValue(STARTED);
+    calls.getJob.mockResolvedValue(
+      moveJob("failed", [], `${HOST} never answered as this Appflare within 15 minutes.`),
+    );
+    show();
+    await click(choice("domain"));
+    await click(button("Continue"));
+    await settle();
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      `${HOST} never answered as this Appflare within 15 minutes.`,
+    );
+    expect(button("Try again").disabled).toBe(false);
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("shows the server's words when the move cannot start", async () => {
     calls.moveManagerAddress.mockRejectedValue(
-      new Error("appflare.example.com did not answer as this Appflare within 90 seconds."),
+      new Error("The Cloudflare token cannot list zones."),
     );
     show();
     await click(choice("domain"));
     await click(button("Continue"));
     expect(document.querySelector('[role="alert"]')?.textContent).toBe(
-      "appflare.example.com did not answer as this Appflare within 90 seconds.",
+      "The Cloudflare token cannot list zones.",
     );
-    expect(button("Try again").disabled).toBe(false);
-    expect(go).not.toHaveBeenCalled();
+    expect(calls.getJob).not.toHaveBeenCalled();
   });
 });
 
@@ -168,37 +235,23 @@ describe("the address step's other lines", () => {
   });
 });
 
-describe("the move's steps", () => {
-  it("are a still list when the system asks for reduced motion", () => {
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query === "(prefers-reduced-motion: reduce)",
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
-    act(() => root.render(<MoveProgress hostname="appflare.example.com" />));
-    expect([...document.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
-      "Attaching the domain",
-      "Waiting for the new address to answer",
-      "Switching",
-    ]);
-    // No step is marked as running: nothing moves from one to the next.
-    expect(document.querySelectorAll("li[data-step]")).toHaveLength(0);
+describe("the move's progress", () => {
+  it("links to the job, and says the move goes on without the page", () => {
+    act(() => root.render(<MoveProgress hostname={HOST} jobId={JOB} />));
+    const open = [...document.querySelectorAll("a")].find((a) => a.textContent === "Open the job");
+    expect(open?.getAttribute("href")).toBe(`/jobs/${JOB}`);
+    expect(page()).toContain("You can close this page; the move continues.");
   });
 
-  it("go on to the wait once attaching has most likely finished", async () => {
-    vi.useFakeTimers();
-    try {
-      act(() => root.render(<MoveProgress hostname="appflare.example.com" />));
-      expect(document.querySelector('li[data-step="current"]')?.textContent).toBe(
-        "Attaching the domain",
-      );
-      await act(async () => vi.advanceTimersByTime(5000));
-      expect(document.querySelector('li[data-step="current"]')?.textContent).toBe(
-        "Waiting for the new address to answer",
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+  it("says what the request does before the job exists", () => {
+    act(() => root.render(<MoveProgress hostname={HOST} jobId={null} />));
+    expect(page()).toContain("Checking the name and attaching the domain…");
+    expect(page()).not.toContain("You can close this page");
+    expect(document.querySelector("a")).toBeNull();
+  });
+
+  it("says only where Appflare moved once it has", () => {
+    act(() => root.render(<MoveProgress hostname={HOST} jobId={null} done />));
+    expect(page()).toBe(`Appflare moved to ${HOST}`);
   });
 });

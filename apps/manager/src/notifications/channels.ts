@@ -40,6 +40,7 @@ export const EVENT_LABELS: Record<NotificationEvent, string> = {
   domain_active: "Domain active",
   domain_failed: "Domain failed",
   manager_address_lost: "Appflare's address stopped working",
+  manager_move_finished: "Appflare's move finished",
 };
 
 export const EVENT_DESCRIPTIONS: Record<NotificationEvent, string> = {
@@ -57,6 +58,8 @@ export const EVENT_DESCRIPTIONS: Record<NotificationEvent, string> = {
     "When an external domain stops serving or cannot be validated, for example its custom hostname was deleted in the dashboard or its certificate timed out or expired.",
   manager_address_lost:
     "When the domain Appflare lives on no longer serves it, for example it was removed in the Cloudflare dashboard. Appflare goes back to its workers.dev address.",
+  manager_move_finished:
+    "When moving Appflare to a new address succeeds, with a link to it, or fails.",
 };
 
 /** Events a new channel starts with. */
