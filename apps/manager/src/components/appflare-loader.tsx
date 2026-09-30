@@ -110,7 +110,13 @@ export function MorphMark({
   useEffect(() => {
     const turn = turnRef.current;
     if (!turn || motion === "rest") return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     if (motion === "pass") {
+      // A pass ends at once, on the plain mark, when reduced motion is asked for.
+      if (reduce.matches) {
+        onPassEndRef.current?.();
+        return;
+      }
       let start: number | undefined;
       const stop = onEveryFrame((now) => {
         start ??= now;
@@ -123,12 +129,19 @@ export function MorphMark({
         onPassEndRef.current?.();
         return true;
       });
+      const cutShort = () => {
+        if (!reduce.matches) return;
+        stop();
+        paint(turn, null);
+        onPassEndRef.current?.();
+      };
+      reduce.addEventListener?.("change", cutShort);
       return () => {
+        reduce.removeEventListener?.("change", cutShort);
         stop();
         paint(turn, null);
       };
     }
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     let stop: (() => void) | undefined;
     const follow = () => {
       stop?.();

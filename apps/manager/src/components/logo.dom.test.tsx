@@ -9,16 +9,31 @@ import { MARK_SHAPES } from "./logo-morph";
 let container: HTMLDivElement;
 let root: Root;
 let reducedMotion = false;
+const motionListeners = new Set<() => void>();
+
+/** Turns reduced motion on or off, telling any listening media query. */
+function setReducedMotion(reduce: boolean) {
+  reducedMotion = reduce;
+  act(() => {
+    for (const listener of motionListeners) listener();
+  });
+}
 
 beforeEach(() => {
   reducedMotion = false;
+  motionListeners.clear();
   vi.useFakeTimers({ now: 0, toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
   vi.spyOn(window, "matchMedia").mockImplementation(
     (query: string) =>
       ({
-        matches: query === "(prefers-reduced-motion: reduce)" && reducedMotion,
+        get matches() {
+          return query === "(prefers-reduced-motion: reduce)" && reducedMotion;
+        },
         media: query,
-      }) as MediaQueryList,
+        addEventListener: (_type: string, listener: () => void) => motionListeners.add(listener),
+        removeEventListener: (_type: string, listener: () => void) =>
+          motionListeners.delete(listener),
+      }) as unknown as MediaQueryList,
   );
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -114,5 +129,24 @@ describe("Logo", () => {
     enter("mouse");
     advance(300);
     expect(morphing()).toBe(false);
+  });
+
+  it("cuts a pass short when reduced motion is asked for, and plays again once it is not", () => {
+    act(() => root.render(<Logo height={24} morphOnHover />));
+    enter("mouse");
+    advance(300);
+    expect(morphing()).toBe(true);
+
+    setReducedMotion(true);
+    expect(morphing()).toBe(false);
+    advance(300);
+    expect(morphing()).toBe(false);
+
+    // The pass has ended, so the next entry plays a new one.
+    setReducedMotion(false);
+    leave();
+    enter("mouse");
+    advance(300);
+    expect(morphing()).toBe(true);
   });
 });
