@@ -23,7 +23,8 @@ import {
   WildcardDomainError,
   type WildcardPart,
 } from "../../installs/wildcard-domains.server";
-import { domainServesApp } from "../../installs/workers-dev.server";
+import { ACCESS_DOMAIN_NOTE } from "../../installs/workers-dev";
+import { domainIsLive } from "../../installs/workers-dev.server";
 import { isNotFound, JobError } from "../errors";
 import {
   type HealthMode,
@@ -257,14 +258,20 @@ export type WaitForExternalDomainInput = z.infer<typeof waitForExternalDomainInp
 export interface WaitForExternalDomainResult {
   status: ExternalDomainStatus;
   polls: number;
-  /** The app itself answered through the domain (not an edge error page). */
+  /**
+   * The domain is live (`domainIsLive`): the app answered through it, or
+   * Cloudflare Access answered on it (then `health.access` is set).
+   */
   serves: boolean;
 }
 
 /**
- * Probes `url` until the app answers through it (`domainServesApp`), every
- * `gapMs`, at most `max` times. A new domain answers with a TLS failure or an
- * edge error page until its certificate and record are live.
+ * Probes `url` until the domain is live (`domainIsLive`: the app answers
+ * through it, or Cloudflare Access answers on it), every `gapMs`, at most
+ * `max` times. A new domain answers with a TLS failure or an edge error page
+ * until its certificate and record are live. When Access answered,
+ * `settled.access` says so: the domain is live, but the app itself was not
+ * checked.
  */
 async function probeUntilServed(
   fetch: FetchLike,
@@ -273,7 +280,7 @@ async function probeUntilServed(
 ): Promise<{ settled: HealthSettlement; serves: boolean; probes: number }> {
   for (let probes = 1; ; probes++) {
     const probe = await probeHealth(fetch, input.url);
-    const serves = domainServesApp(probe, input.mode);
+    const serves = domainIsLive(probe, input.mode);
     if (serves || probes >= input.max) {
       return { settled: settleHealthProbe(probe, input.mode), serves, probes };
     }
@@ -313,7 +320,9 @@ export function runWaitForExternalDomain(
         });
         status.health = { ...settled, url: input.healthUrl };
         log.info(
-          `${status.hostname} is active with its certificate; the app answered ${settled.detail}.`,
+          settled.access === true
+            ? `${status.hostname} is active with its certificate. ${ACCESS_DOMAIN_NOTE}`
+            : `${status.hostname} is active with its certificate; the app answered ${settled.detail}.`,
         );
         return { status, polls: poll, serves };
       }
@@ -345,7 +354,10 @@ export type WaitForCustomDomainInput = z.infer<typeof waitForCustomDomainInputSc
 export interface WaitForCustomDomainResult {
   health: HealthSettlement & { url: string };
   probes: number;
-  /** The app itself answered through the domain (not an edge error page). */
+  /**
+   * The domain is live (`domainIsLive`): the app answered through it, or
+   * Cloudflare Access answered on it (then `health.access` is set).
+   */
   serves: boolean;
 }
 
@@ -365,7 +377,9 @@ export function runWaitForCustomDomain(
     });
     log.info(
       serves
-        ? `${input.healthUrl} reached the app (${settled.detail}).`
+        ? settled.access === true
+          ? `${input.healthUrl}: ${ACCESS_DOMAIN_NOTE}`
+          : `${input.healthUrl} reached the app (${settled.detail}).`
         : `${input.healthUrl} did not reach the app after ${probes} probe(s) (${settled.detail}).`,
     );
     return { health: { ...settled, url: input.healthUrl }, probes, serves };

@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vitest";
+import { accessChallenge, accessLoginUrl } from "../../test/access-sign-in";
 import { buildArtifactFixture } from "../../test/artifact-fixture";
 import {
+  ACCESS_CHALLENGE_DETAIL,
   classifyHealthProbe,
   classifyLiveProbe,
   decideLiveHealth,
   type HealthProbe,
+  healthBehindAccess,
   healthCheckOfManifest,
+  healthColumns,
   healthPathOfManifest,
+  isAccessChallenge,
   isEdge1042,
   isEdgeErrorPage,
   LIVE_HEALTH_WINDOW_MS,
   liveHealthDelaySeconds,
+  probeHealth,
   settleHealthProbe,
   versionMismatch,
 } from "./health";
@@ -237,5 +243,159 @@ describe("healthPathOfManifest", () => {
     expect(healthPathOfManifest(null)).toBe("/");
     expect(healthPathOfManifest("not json")).toBe("/");
     expect(healthPathOfManifest('{"version":"1.0.0"}')).toBe("/");
+  });
+});
+
+describe("Cloudflare Access's sign-in redirect", () => {
+  const HOST = "cut.appflare-dev.workers.dev";
+  const PREVIEW = "0a1b2c3d-cut.appflare-dev.workers.dev";
+  const redirect = (location: string, status = 302): HealthProbe => ({
+    kind: "response",
+    status,
+    bodyStart: "",
+    location,
+  });
+  const access = redirect(accessLoginUrl(HOST));
+  const edge = res(404, "error code: 1042");
+
+  it("records the Location of an answer, and nothing when there is none", async () => {
+    const inits: Array<RequestInit | undefined> = [];
+    const probe = await probeHealth(async (_url, init) => {
+      inits.push(init);
+      return accessChallenge(HOST);
+    }, `https://${HOST}/`);
+    expect(inits[0]?.redirect).toBe("manual");
+    expect(probe).toEqual({
+      kind: "response",
+      status: 302,
+      bodyStart: "",
+      body: "",
+      location: accessLoginUrl(HOST),
+    });
+    expect(isAccessChallenge(probe)).toBe(true);
+    const plain = await probeHealth(async () => new Response("ok"), `https://${HOST}/`);
+    expect(plain).not.toHaveProperty("location");
+  });
+
+  it("is a redirect to the sign-in path of a cloudflareaccess.com team domain, on either URL", () => {
+    expect(isAccessChallenge(access)).toBe(true);
+    expect(isAccessChallenge(redirect(accessLoginUrl(PREVIEW, "/api/health")))).toBe(true);
+    expect(isAccessChallenge(redirect(accessLoginUrl(HOST), 307))).toBe(true);
+  });
+
+  it("is nothing else", () => {
+    const login = new URL(accessLoginUrl(HOST));
+    const at = (change: (u: URL) => void) => {
+      const u = new URL(login);
+      change(u);
+      return redirect(u.toString());
+    };
+    for (const probe of [
+      // Not a redirect.
+      { ...access, status: 200 },
+      { ...access, status: 403 },
+      // An app's own redirect, to its own sign-in page or anywhere else.
+      redirect("/login"),
+      redirect(`https://${HOST}/cdn-cgi/access/login/${HOST}`),
+      at((u) => {
+        u.hostname = "login.example.com";
+      }),
+      at((u) => {
+        u.hostname = "team.cloudflareaccess.com.evil.example";
+      }),
+      at((u) => {
+        u.hostname = "a.b.cloudflareaccess.com";
+      }),
+      at((u) => {
+        u.protocol = "http:";
+      }),
+      at((u) => {
+        u.port = "8443";
+      }),
+      at((u) => {
+        u.pathname = "/login";
+      }),
+      redirect("not a url"),
+      res(302),
+      // The app's own refusal, when it checks the Access token itself.
+      res(403, "Missing required CF Access JWT"),
+      { kind: "error", message: "connection refused" } satisfies HealthProbe,
+    ]) {
+      expect(isAccessChallenge(probe)).toBe(false);
+    }
+  });
+
+  it("never counts as a live check's pass, in either mode, and settles it at once as not verified", () => {
+    for (const mode of ["no-server-errors", "any-response"] as const) {
+      expect(classifyLiveProbe(access, mode)).toBe("blocked");
+      expect(classifyLiveProbe(access, mode, true)).toBe("blocked");
+      expect(settleHealthProbe(access, mode)).toEqual({
+        status: "unverified",
+        detail: ACCESS_CHALLENGE_DETAIL,
+        access: true,
+      });
+      expect(decideLiveHealth(access, 1, 0, undefined, mode)).toEqual({
+        done: true,
+        status: "unverified",
+        detail: "Cloudflare Access asked for a sign-in",
+        access: true,
+      });
+    }
+  });
+
+  it("ends the live check at the first Access answer, also after the route went live", () => {
+    // 1042 while the route goes live, then Access: three probes, not the 90 s window.
+    const answers = [edge, edge, access, res(200)];
+    let clock = 0;
+    for (let attempt = 1; ; attempt++) {
+      const decision = decideLiveHealth(answers[attempt - 1] ?? edge, attempt, clock);
+      if (decision.done) {
+        expect({ attempt, clock, decision }).toEqual({
+          attempt: 3,
+          clock: 5_000,
+          decision: {
+            done: true,
+            status: "unverified",
+            detail: ACCESS_CHALLENGE_DETAIL,
+            access: true,
+          },
+        });
+        break;
+      }
+      clock += decision.delaySeconds * 1000;
+    }
+  });
+
+  it("is written to the install with its own flag, which a check that reaches the app clears", () => {
+    const at = new Date(0);
+    expect(healthColumns(settleHealthProbe(access), at)).toEqual({
+      health_status: "unverified",
+      health_access: true,
+      health_checked_at: at,
+    });
+    expect(healthColumns(settleHealthProbe(res(200)), at)).toMatchObject({
+      health_status: "verified",
+      health_access: false,
+    });
+    expect(healthColumns(settleHealthProbe(edge), at).health_access).toBe(false);
+    expect(healthBehindAccess("unverified", true)).toBe(true);
+    // A manager from before the flag rewrites the status and leaves the flag.
+    expect(healthBehindAccess("verified", true)).toBe(false);
+    expect(healthBehindAccess("unhealthy", true)).toBe(false);
+    expect(healthBehindAccess("unverified", null)).toBe(false);
+    expect(healthBehindAccess(null, true)).toBe(false);
+  });
+
+  it("is blocked for a canary, in either mode and on any attempt, never healthy or a failure", () => {
+    for (const mode of ["no-server-errors", "any-response"] as const) {
+      for (const attempt of [1, 6]) {
+        expect(classifyHealthProbe(access, attempt, attempt * 2000, 6, mode)).toEqual({
+          verdict: "blocked",
+          reason: ACCESS_CHALLENGE_DETAIL,
+        });
+      }
+    }
+    // A redirect that is not Access's is still the Worker's answer.
+    expect(classifyHealthProbe(redirect("/login"), 1, 0).verdict).toBe("healthy");
   });
 });

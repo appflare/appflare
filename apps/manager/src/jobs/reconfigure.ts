@@ -45,7 +45,7 @@ import {
   reconfigureOtherWorkerPhase,
   secretChangesFor,
 } from "./install/entry-worker-phases";
-import { healthLabel } from "./install/health";
+import { healthColumns, healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
   checkLiveHealthPhase,
@@ -940,12 +940,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           .update(installs)
           .set({
             status: "installed",
-            ...(health === null
-              ? {}
-              : {
-                  health_status: health.status,
-                  health_checked_at: new Date(health.checkedAt),
-                }),
+            ...(health === null ? {} : healthColumns(health, new Date(health.checkedAt))),
             updated_at: at,
           })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),

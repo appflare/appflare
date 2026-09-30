@@ -728,6 +728,7 @@ function Details({ install, isAdmin }: { install: InstallDetail; isAdmin: boolea
               <InstallHealth
                 installId={install.id}
                 status={install.healthStatus}
+                access={install.healthAccess}
                 checkedAt={install.healthCheckedAt}
                 canCheck={isAdmin && install.status === "installed" && install.activeJobId === null}
               />

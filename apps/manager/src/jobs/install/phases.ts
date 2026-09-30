@@ -25,7 +25,7 @@ import type { StepRunner } from "../run-job";
 import { JobError, type JobSteps } from "../steps";
 import { failureError, settleUnit } from "../units/result";
 import type { ArtifactHost } from "../units/units";
-import { cronChanges } from "../update/plan";
+import { ACCESS_PREVIEW_REASON, cronChanges } from "../update/plan";
 import { fetchWhole, sha256Hex, verifyArtifactManifest } from "./artifact";
 import { planAssetParts } from "./asset-parts";
 import type { ResourceBindingPlan, WorkflowPlan } from "./bindings";
@@ -694,13 +694,16 @@ export interface ProbePhaseOptions {
  * reach its own account's workers.dev hosts): one step per probe, a
  * `step.sleep` between probes. Any non-5xx answer is healthy. Returns the
  * status; throws `JobError` when the URL never serves, which fails the job
- * before anything serves the version.
+ * before anything serves the version. Returns null when Cloudflare Access
+ * answered in the version's place (`blocked`): the version was not checked,
+ * which is logged, and the job goes on as it does for a Worker without a
+ * preview URL.
  */
 export async function probeUntilHealthy(
   steps: JobSteps,
   step: StepRunner,
   opts: ProbePhaseOptions,
-): Promise<number> {
+): Promise<number | null> {
   const maxAttempts = opts.maxAttempts ?? HEALTH_MAX_ATTEMPTS;
   let firstProbeAt: number | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -720,13 +723,20 @@ export async function probeUntilHealthy(
       if (wrong !== null) throw new JobError(`GET ${opts.url}: ${wrong}`);
       if (verdict.verdict === "healthy") {
         log.info(`GET ${opts.url} -> ${verdict.status}; ${opts.healthyMessage}.`);
+      } else if (verdict.verdict === "blocked") {
+        log.warn(`GET ${opts.url}: ${ACCESS_PREVIEW_REASON}.`);
       } else {
         log.warn(`GET ${opts.url}: ${verdict.reason}; retrying in 2 seconds.`);
       }
-      return { at, status: verdict.verdict === "healthy" ? verdict.status : null };
+      return {
+        at,
+        status: verdict.verdict === "healthy" ? verdict.status : null,
+        blocked: verdict.verdict === "blocked",
+      };
     });
     firstProbeAt ??= checked.at;
     if (checked.status !== null) return checked.status;
+    if (checked.blocked) return null;
     await step.sleep(`${opts.label} wait ${attempt}`, HEALTH_RETRY_DELAY);
   }
   steps.current = `${opts.label} check`;
@@ -746,7 +756,8 @@ export interface LiveHealthResult extends HealthSettlement {
  * subrequest plus its log write), and a `step.sleep` between probes. Never throws for what the Worker answers: by now
  * everything is created or promoted, so the result is recorded on the install
  * instead (`verified`, `unverified`, `unhealthy`) and a warning is logged when
- * the Worker could not be verified.
+ * the Worker could not be verified. Cloudflare Access's sign-in redirect ends
+ * the check at once as `unverified`: Access answers before the Worker does.
  */
 export async function checkLiveHealthPhase(
   steps: JobSteps,
@@ -783,6 +794,10 @@ export async function checkLiveHealthPhase(
       );
       if (!decision.done) {
         log.warn(`GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`);
+      } else if (decision.access === true) {
+        log.warn(
+          `GET ${url}: ${decision.detail}, so Appflare could not reach the app to check it. Everything was created; open the app and sign in to check it.`,
+        );
       } else if (decision.status === "verified") {
         log.info(`GET ${url} -> ${decision.detail}; the Worker is serving.`);
       } else if (decision.status === "unhealthy") {
@@ -799,7 +814,12 @@ export async function checkLiveHealthPhase(
     firstProbeAt ??= checked.at;
     const { decision } = checked;
     if (decision.done) {
-      return { status: decision.status, detail: decision.detail, checkedAt: checked.at };
+      return {
+        status: decision.status,
+        detail: decision.detail,
+        ...(decision.access === true ? { access: true as const } : {}),
+        checkedAt: checked.at,
+      };
     }
     await step.sleep(`health wait ${attempt}`, `${decision.delaySeconds} seconds`);
   }

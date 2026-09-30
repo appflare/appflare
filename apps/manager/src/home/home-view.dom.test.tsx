@@ -52,6 +52,7 @@ function app(over: Partial<HomeApp> & { id: string; name: string }): HomeApp {
     updatedAt: "2026-09-24T12:00:00.000Z",
     uninstalledAt: null,
     healthStatus: "verified",
+    healthAccess: false,
     healthCheckedAt: null,
     updateNeeds: null,
     ...over,

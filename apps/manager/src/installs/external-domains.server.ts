@@ -44,7 +44,7 @@ import { WILDCARD_EXTERNAL_REFUSAL, wildcardOfManifest } from "./wildcard-domain
 import {
   applyDomainLive,
   beforeDomainRemoval,
-  domainServesApp,
+  domainIsLive,
   recordDomainLive,
   WorkersDevError,
 } from "./workers-dev.server";
@@ -650,7 +650,8 @@ export async function addExternalDomainCore(
  * records its owner still has to add; with `probe`, once it is active, one
  * request to the app through it. When the app answers, the domain is
  * recorded as live and, with `applyDefaults` (an admin is looking),
- * workers.dev may be turned off (`applyDomainLive`).
+ * workers.dev may be turned off (`applyDomainLive`). So does Cloudflare
+ * Access answering on the domain (`domainIsLive`).
  */
 export async function externalDomainStatusCore(
   deps: ExternalDomainDeps,
@@ -690,7 +691,7 @@ export async function externalDomainStatusCore(
     const probe = await probeHealth(deps.fetch, url);
     const settled = settleHealthProbe(probe, check.mode);
     status.health = { ...settled, url };
-    if (domainServesApp(probe, check.mode)) {
+    if (domainIsLive(probe, check.mode)) {
       if (request.applyDefaults === true) {
         const applied = await asExternalDomainError(() =>
           applyDomainLive(

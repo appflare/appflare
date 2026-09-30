@@ -13,6 +13,7 @@ import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { listSnapshotsCore, startRollbackCore, startUpdateCore } from "../installs/versions.server";
+import { accessLoginUrl } from "../test/access-sign-in";
 import {
   type ArtifactFixtureOptions,
   baseCatalog,
@@ -748,7 +749,11 @@ describe("update job", () => {
     // Previews stay on for the canary; the workers.dev URL stays off.
     expect(r.fake.state.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
     expect(r.fake.state.domainProbes).toEqual(["links.example.com"]);
-    expect(r.install).toMatchObject({ health_status: "verified", workers_dev_enabled: 0 });
+    expect(r.install).toMatchObject({
+      health_status: "verified",
+      health_access: 0,
+      workers_dev_enabled: 0,
+    });
     expect(r.logs.at(-1)?.message).toContain("at https://links.example.com/ (health: verified");
   });
 
@@ -869,6 +874,55 @@ describe("update job", () => {
     expect(right.error).toBeNull();
     expect(right.logs.at(-1)?.message).toContain(
       "at https://cut.appflare-dev.workers.dev/api/health",
+    );
+  });
+
+  it("goes on when Cloudflare Access answers the preview, and records the app as not verified", async () => {
+    const healthPath = {
+      ...NEW_APP,
+      catalog: {
+        install: {
+          tier: "artifact" as const,
+          packageManager: "pnpm" as const,
+          wranglerConfig: "wrangler.jsonc",
+          workerName: "cut",
+          // Access's answer counts under neither mode.
+          health: { path: "/api/health", mode: "any-response" as const },
+        },
+      },
+    };
+    const preview = "0a1b2c3d-cut.appflare-dev.workers.dev";
+    const live = "cut.appflare-dev.workers.dev";
+    const r = await update(healthPath, {
+      previews: [{ status: 302, body: "", location: accessLoginUrl(preview, "/api/health") }],
+      health: [{ status: 302, body: "", location: accessLoginUrl(live, "/api/health") }],
+    });
+    expect(r.error).toBeNull();
+    expect(r.job).toMatchObject({ status: "succeeded", worker_version_id: NEW_VERSION });
+    // One probe each: Access keeps answering, so neither check waits for it.
+    expect(r.step.names.filter((n) => /^(canary|health) check/.test(n))).toEqual([
+      "canary check 1",
+      "health check 1",
+    ]);
+    expect(r.step.sleeps.filter((n) => /^(canary|health) wait/.test(n))).toEqual([]);
+    expect(r.fake.state.deployments[0]?.versions).toEqual([
+      { version_id: NEW_VERSION, percentage: 100 },
+    ]);
+    expect(r.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: `GET https://${preview}/api/health: Cloudflare Access answered the preview URL with its sign-in page, so the new version was not checked before it serves traffic.`,
+      }),
+    );
+    expect(r.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: `GET https://${live}/api/health: Cloudflare Access asked for a sign-in, so Appflare could not reach the app to check it. Everything was created; open the app and sign in to check it.`,
+      }),
+    );
+    expect(r.install).toMatchObject({ health_status: "unverified", health_access: 1 });
+    expect(r.logs.at(-1)?.message).toBe(
+      `Updated cut from 1.0.0 to 1.1.0 at https://${live}/api/health (health: not verified yet (Cloudflare Access asked for a sign-in)).`,
     );
   });
 

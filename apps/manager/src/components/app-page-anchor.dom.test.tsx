@@ -123,6 +123,7 @@ const install = {
   updatedAt: "2026-09-27T09:00:00.000Z",
   uninstalledAt: null,
   healthStatus: "verified",
+  healthAccess: false,
   healthCheckedAt: "2026-09-27T09:00:00.000Z",
   currentVersionId: null,
   pinSha: null,

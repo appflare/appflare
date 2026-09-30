@@ -1,3 +1,4 @@
+import { isAccessTeamDomain } from "@appflare/cf-api";
 import {
   artifactManifestSchema,
   catalogManifestSchema,
@@ -22,16 +23,23 @@ import type { HealthStatus } from "../../db/schema";
  *
  * Both read the answer by the app's health mode (`install.health.mode`). The
  * default, `no-server-errors`, counts redirects and 4xx answers as serving and a 5xx as a failure.
- * `any-response` is for apps whose every route sits behind Cloudflare Access
- * or their own sign-in: no request without credentials can show whether such
- * an app is healthy, so any answer the Worker itself gives counts, a 5xx of
- * its own included. Cloudflare's error pages (`error code: <n>`, such as 1042
- * while the route goes live or 1101 when the Worker crashed) are not the
- * Worker's answer and are judged as before, and a plain 404 still waits out
- * the window, since a route that is still going live can answer one too.
- * The exception is a settings change: the app's URL was serving before that
- * job, so no route is going live and a plain 404 is the app's own answer; its
- * live check passes one at once (`routeWasLive`).
+ * `any-response` is for apps whose every route asks for a sign-in, their own
+ * or one they check from Cloudflare Access: no request without credentials
+ * can show whether such an app is healthy, so any answer the Worker itself
+ * gives counts, a 5xx of its own included. Cloudflare's error pages
+ * (`error code: <n>`, such as 1042 while the route goes live or 1101 when the
+ * Worker crashed) are not the Worker's answer and are judged as before, and a
+ * plain 404 still waits out the window, since a route that is still going
+ * live can answer one too. The exception is a settings change: the app's URL
+ * was serving before that job, so no route is going live and a plain 404 is
+ * the app's own answer; its live check passes one at once (`routeWasLive`).
+ *
+ * Cloudflare Access's own sign-in redirect is not the Worker's answer either,
+ * in any mode (`isAccessChallenge`): Access answers before the request reaches
+ * the Worker, so the check learns nothing about the app. The live check
+ * records it as `unverified` at once, a canary reports it as `blocked` (the
+ * new version could not be checked, which does not fail the job), and a
+ * domain check does not count it as the domain serving the app.
  */
 
 export type { HealthMode } from "@appflare/schema";
@@ -48,13 +56,20 @@ export type HealthProbe =
       bodyStart: string;
       /** The body up to {@link HEALTH_BODY_LIMIT} characters, for the version check. */
       body?: string;
+      /** The `Location` header, when the answer has one (see `isAccessChallenge`). */
+      location?: string;
     }
   | { kind: "error"; message: string };
 
+/**
+ * `blocked`: Cloudflare Access answered in the Worker's place, so the check
+ * never reached the app and says nothing about it either way.
+ */
 export type HealthVerdict =
   | { verdict: "healthy"; status: number }
   | { verdict: "retry"; reason: string }
-  | { verdict: "unhealthy"; reason: string };
+  | { verdict: "unhealthy"; reason: string }
+  | { verdict: "blocked"; reason: string };
 
 export function isEdge1042(probe: HealthProbe): boolean {
   return (
@@ -72,6 +87,34 @@ export function isEdgeErrorPage(probe: HealthProbe): boolean {
   return probe.kind === "response" && /^error code: \d+/.test(probe.bodyStart.trimStart());
 }
 
+/**
+ * Cloudflare Access answering in the Worker's place: a redirect to the
+ * team's sign-in page, `https://<team>.cloudflareaccess.com/cdn-cgi/access/login/<host>?...`.
+ * A request without an Access session to a protected workers.dev host, the
+ * Worker's own URL and its version preview URLs alike, was seen to get this
+ * 302 from the edge. Other answers Access may give (a 401 or 403 page) are
+ * not recognised: none has been seen for a plain GET.
+ */
+export function isAccessChallenge(probe: HealthProbe): boolean {
+  if (probe.kind !== "response" || probe.status < 300 || probe.status > 399) return false;
+  if (probe.location === undefined) return false;
+  let target: URL;
+  try {
+    target = new URL(probe.location);
+  } catch {
+    return false;
+  }
+  return (
+    target.protocol === "https:" &&
+    target.port === "" &&
+    isAccessTeamDomain(target.hostname) &&
+    target.pathname.startsWith("/cdn-cgi/access/")
+  );
+}
+
+/** How an Access sign-in redirect is described in logs and on the app page. */
+export const ACCESS_CHALLENGE_DETAIL = "Cloudflare Access asked for a sign-in";
+
 /** Under `any-response`, whether this answer counts as the app serving. */
 function anyResponsePass(probe: HealthProbe, mode: HealthMode): boolean {
   return mode === "any-response" && probe.kind === "response" && !isEdgeErrorPage(probe);
@@ -80,13 +123,16 @@ function anyResponsePass(probe: HealthProbe, mode: HealthMode): boolean {
 function describe(probe: HealthProbe): string {
   if (probe.kind === "error") return `connection failed (${probe.message})`;
   if (isEdge1042(probe)) return "404 error code: 1042 (route not live yet)";
+  if (isAccessChallenge(probe)) return ACCESS_CHALLENGE_DETAIL;
   return `HTTP ${probe.status}`;
 }
 
 /**
  * `attempt` is 1-based; `elapsedMs` is the time since the first probe. Retries
  * (while attempts remain) on 1042, connection errors, and 5xx within the grace
- * period; then any non-5xx answer is healthy.
+ * period; then any non-5xx answer is healthy. Cloudflare Access's sign-in
+ * redirect is `blocked` at once: Access keeps answering until someone changes
+ * its policy, so waiting would not reach the app.
  */
 export function classifyHealthProbe(
   probe: HealthProbe,
@@ -101,6 +147,7 @@ export function classifyHealthProbe(
       ? { verdict: "unhealthy", reason: `${describe(probe)} after ${attempt} attempts` }
       : { verdict: "retry", reason: describe(probe) };
   }
+  if (isAccessChallenge(probe)) return { verdict: "blocked", reason: describe(probe) };
   if (anyResponsePass(probe, mode)) return { verdict: "healthy", status: probe.status };
   if (probe.status >= 500) {
     return !last && elapsedMs < HEALTH_5XX_GRACE_MS
@@ -136,9 +183,11 @@ export function liveHealthScheduledMs(attempt: number): number {
  * what a route that is still propagating can answer. When the route was
  * already live before the job (a settings change keeps the URL that was
  * serving), a plain 404 cannot be propagation, so it is the app's own answer
- * and passes at once.
+ * and passes at once. `blocked` settles the check too, as `unverified`:
+ * Cloudflare Access answered in the app's place, and it keeps doing so for the
+ * rest of the window, so probing on would only use the window up.
  */
-export type LiveProbeClass = "pass" | "retry" | "soft-404";
+export type LiveProbeClass = "pass" | "retry" | "soft-404" | "blocked";
 
 export function classifyLiveProbe(
   probe: HealthProbe,
@@ -146,6 +195,7 @@ export function classifyLiveProbe(
   routeWasLive = false,
 ): LiveProbeClass {
   if (probe.kind === "error" || isEdge1042(probe)) return "retry";
+  if (isAccessChallenge(probe)) return "blocked";
   if (probe.status === 404) return routeWasLive && !isEdgeErrorPage(probe) ? "pass" : "soft-404";
   if (anyResponsePass(probe, mode)) return "pass";
   if (probe.status >= 500) return "retry";
@@ -156,13 +206,16 @@ export interface HealthSettlement {
   status: HealthStatus;
   /** What the last answer was, for the log and the install page. */
   detail: string;
+  /** Set when Cloudflare Access answered in the app's place (`isAccessChallenge`). */
+  access?: true;
 }
 
 /**
  * The health status one answer records when no more probes follow: any
  * non-5xx answer other than the 1042 page means the app serves (`verified`),
- * a 5xx means it serves errors (`unhealthy`), and no answer or the 1042 page
- * means it could not be reached (`unverified`).
+ * a 5xx means it serves errors (`unhealthy`), and no answer, the 1042 page or
+ * Cloudflare Access's sign-in redirect means it could not be reached
+ * (`unverified`).
  */
 export function settleHealthProbe(
   probe: HealthProbe,
@@ -171,9 +224,39 @@ export function settleHealthProbe(
   if (probe.kind === "error" || isEdge1042(probe)) {
     return { status: "unverified", detail: describe(probe) };
   }
+  if (isAccessChallenge(probe)) {
+    return { status: "unverified", detail: describe(probe), access: true };
+  }
   if (anyResponsePass(probe, mode)) return { status: "verified", detail: describe(probe) };
   if (probe.status >= 500) return { status: "unhealthy", detail: describe(probe) };
   return { status: "verified", detail: describe(probe) };
+}
+
+/**
+ * The install columns a settled check writes. `health_access` is written
+ * every time, so a check that reaches the app clears an earlier Access answer.
+ */
+export function healthColumns(
+  settled: HealthSettlement,
+  checkedAt: Date,
+): { health_status: HealthStatus; health_access: boolean; health_checked_at: Date } {
+  return {
+    health_status: settled.status,
+    health_access: settled.access === true,
+    health_checked_at: checkedAt,
+  };
+}
+
+/**
+ * Whether an install's recorded health is Cloudflare Access answering in the
+ * app's place. Only with `unverified`: a manager from before `health_access`
+ * rewrites the status and leaves the flag as it was.
+ */
+export function healthBehindAccess(
+  status: HealthStatus | null,
+  access: boolean | null | undefined,
+): boolean {
+  return status === "unverified" && access === true;
 }
 
 /** One line for a job's final log: "verified (HTTP 200)", "not verified yet (...)". */
@@ -188,7 +271,8 @@ export type LiveHealthDecision =
 
 /**
  * The live check's next move after its `attempt`th probe (1-based), taken
- * `elapsedMs` after the first. A passing answer settles at once; otherwise it
+ * `elapsedMs` after the first. A passing answer, or Cloudflare Access's
+ * sign-in redirect (as `unverified`), settles at once; otherwise it
  * waits the next backoff delay unless that would pass the window, in which
  * case the last answer settles the check. `elapsedMs` never counts less than
  * the waits already scheduled, so the window also ends when the clock does
@@ -203,7 +287,8 @@ export function decideLiveHealth(
   /** The URL served before the job, so a plain 404 is the app's answer (see `classifyLiveProbe`). */
   routeWasLive = false,
 ): LiveHealthDecision {
-  if (classifyLiveProbe(probe, mode, routeWasLive) === "pass") {
+  const kind = classifyLiveProbe(probe, mode, routeWasLive);
+  if (kind === "pass" || kind === "blocked") {
     return { done: true, ...settleHealthProbe(probe, mode) };
   }
   const delaySeconds = liveHealthDelaySeconds(attempt);
@@ -284,11 +369,13 @@ export async function probeHealth(
       headers: { "user-agent": "Appflare health check" },
     });
     const text = await response.text();
+    const location = response.headers.get("location");
     return {
       kind: "response",
       status: response.status,
       bodyStart: text.slice(0, 200),
       body: text.slice(0, HEALTH_BODY_LIMIT),
+      ...(location === null ? {} : { location }),
     };
   } catch (error) {
     return { kind: "error", message: error instanceof Error ? error.message : String(error) };

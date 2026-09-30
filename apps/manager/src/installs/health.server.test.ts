@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
+import { accessChallenge } from "../test/access-sign-in";
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { checkInstallHealthCore, HealthCheckError } from "./health.server";
@@ -25,6 +26,13 @@ async function healthRow() {
   return env.DB.prepare("SELECT health_status, health_checked_at FROM installs WHERE id = ?1")
     .bind(INSTALL_ID)
     .first<{ health_status: string | null; health_checked_at: number | null }>();
+}
+
+async function accessFlag() {
+  const row = await env.DB.prepare("SELECT health_access FROM installs WHERE id = ?1")
+    .bind(INSTALL_ID)
+    .first<{ health_access: number | null }>();
+  return row?.health_access;
 }
 
 beforeEach(async () => {
@@ -93,6 +101,31 @@ describe("checkInstallHealthCore", () => {
       detail: "404 error code: 1042 (route not live yet)",
     });
     expect((await healthRow())?.health_status).toBe("unverified");
+  });
+
+  it("records Cloudflare Access's sign-in redirect as not verified, naming Access", async () => {
+    await seedInstall();
+    const f = fakeFetch(() => accessChallenge("cut.appflare-dev.workers.dev"));
+    const result = await checkInstallHealthCore(
+      { db: env.DB, fetch: f.fetch, now: () => NOW },
+      { installId: INSTALL_ID },
+    );
+    expect(result).toEqual({
+      status: "unverified",
+      detail: "Cloudflare Access asked for a sign-in",
+      access: true,
+      url: "https://cut.appflare-dev.workers.dev/",
+      checkedAt: "2026-09-23T12:00:00.000Z",
+      recorded: true,
+    });
+    expect(await healthRow()).toEqual({ health_status: "unverified", health_checked_at: NOW });
+    expect(await accessFlag()).toBe(1);
+
+    // The next check that reaches the app clears the flag.
+    const reached = fakeFetch(() => new Response("ok"));
+    await checkInstallHealthCore({ db: env.DB, fetch: reached.fetch }, { installId: INSTALL_ID });
+    expect((await healthRow())?.health_status).toBe("verified");
+    expect(await accessFlag()).toBe(0);
   });
 
   it("does not record an answer when an update starts during the probe", async () => {

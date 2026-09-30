@@ -191,9 +191,9 @@ Points that need care:
   needs a login, so the check requests a path that answers; it defaults to `/`.
   `mode` defaults to `"no-server-errors"`: any answer but a server error (5xx)
   passes. Set it to `"any-response"` when every route of the app, its health path
-  included, sits behind Cloudflare Access or the app's own sign-in. Such an app can
-  answer the check with an error of its own, and any answer from its Worker then
-  counts as healthy. See [Health checks](/guides/health/#apps-behind-a-sign-in).
+  included, asks for a sign-in, its own or one it checks from Cloudflare Access.
+  Such an app can answer the check with an error of its own, and any answer from its
+  Worker then counts as healthy. See [Health checks](/guides/health/#apps-behind-a-sign-in).
 - **`install.buildCommand`.** One command, such as `pnpm --filter @scope/web build`,
   that the packer runs at the root of the repository after installing dependencies
   and before bundling, or a list of up to eight such commands run in order, such as

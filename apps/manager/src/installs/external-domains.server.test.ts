@@ -5,6 +5,7 @@ import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { type ReadyGateway, readGateway, setUpGatewayCore } from "../gateway/gateway.server";
+import { accessChallenge } from "../test/access-sign-in";
 import { fakeSaas, GATEWAY_ZONE } from "../test/fake-saas";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { externalDomainPhase } from "./external-domain-input";
@@ -435,6 +436,25 @@ describe("externalDomainStatusCore", () => {
     expect(status.health?.status).toBe("unhealthy");
     expect(saas.world.subdomain).toEqual([]);
     expect(domain).toEqual({ live_at: null });
+  });
+
+  it("counts Cloudflare Access answering through the domain as live, and turns workers.dev off", async () => {
+    const { saas, status, install, domain } = await probeActive(
+      true,
+      accessChallenge("go.customer.test"),
+    );
+    expect(status.health).toEqual({
+      status: "unverified",
+      detail: "Cloudflare Access asked for a sign-in",
+      access: true,
+      url: "https://go.customer.test/",
+    });
+    expect(status.workersDevTurnedOff).toBe(true);
+    expect(saas.world.subdomain).toEqual([
+      { script: "cut", enabled: false, previews_enabled: true },
+    ]);
+    expect(install).toEqual({ workers_dev_enabled: 0, served_domain: "go.customer.test" });
+    expect(domain).toEqual({ live_at: NOW.getTime() });
   });
 
   it("says so when Cloudflare no longer has the custom hostname", async () => {

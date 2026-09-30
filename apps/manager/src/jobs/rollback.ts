@@ -25,7 +25,7 @@ import {
   otherWorkerRoutePhase,
   setOtherWorkerCronsPhase,
 } from "./install/entry-worker-phases";
-import { healthCheckOfManifest, healthLabel } from "./install/health";
+import { healthCheckOfManifest, healthColumns, healthLabel } from "./install/health";
 import {
   checkLiveHealthPhase,
   lookupSubdomainPhase,
@@ -637,8 +637,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           .update(installs)
           .set({
             status: "installed",
-            health_status: health.status,
-            health_checked_at: new Date(health.checkedAt),
+            ...healthColumns(health, new Date(health.checkedAt)),
             updated_at: at,
           })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),

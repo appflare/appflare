@@ -1209,14 +1209,16 @@ export type CatalogSource = z.infer<typeof catalogSourceSchema>;
  *   as verified (a redirect or a 4xx still shows the Worker answered); a
  *   server error (5xx) counts as unhealthy.
  * - `any-response`: any answer the Worker itself gives counts as verified,
- *   server errors included, because an app behind Cloudflare Access or its
- *   own sign-in answers every unauthenticated request with a redirect, 401,
- *   403, or an error of its own.
+ *   server errors included, because an app that checks Cloudflare Access or
+ *   its own sign-in answers every unauthenticated request with a redirect,
+ *   401, 403, or an error of its own.
  *
  * Neither reads the body beyond the version check, and under both,
  * connection failures and Cloudflare's own error pages (`error code: 1042`
  * while the route goes live, or a Worker that crashed) are retried or
- * reported, since they are not the Worker's answer.
+ * reported, since they are not the Worker's answer. Nor is the redirect to
+ * Cloudflare Access's sign-in page that Access sends before a request
+ * reaches the Worker: it never counts as serving.
  */
 export const HEALTH_MODES = ["no-server-errors", "any-response"] as const;
 
@@ -1229,9 +1231,12 @@ export const healthModeSchema = z
     'Which answers of the Worker count as serving. `"no-server-errors"` (the default): any ' +
       "answer but a server error (5xx), so a redirect or a 404 passes and a 500 fails. " +
       '`"any-response"`: any answer the Worker itself gives, server errors included; use it ' +
-      "for an app whose health path sits behind Cloudflare Access or the app's own sign-in. " +
+      "for an app whose health path asks for a sign-in, its own or one it checks from " +
+      "Cloudflare Access. " +
       "Either way, connection failures and Cloudflare's own error pages (such as " +
-      "`error code: 1042` while the route goes live) are retried and never count as serving.",
+      "`error code: 1042` while the route goes live) are retried and never count as serving, " +
+      "and neither does the redirect to Cloudflare Access's sign-in page, which Access sends " +
+      "before the request reaches the Worker.",
   );
 export type HealthMode = z.infer<typeof healthModeSchema>;
 

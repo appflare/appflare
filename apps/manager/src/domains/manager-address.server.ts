@@ -27,7 +27,11 @@ import {
 } from "../installs/custom-domains.server";
 import { distinctLabels } from "../installs/display-name";
 import { readInstallNames } from "../installs/install-names.server";
-import type { HealthProbe } from "../jobs/install/health";
+import {
+  ACCESS_CHALLENGE_DETAIL,
+  type HealthProbe,
+  isAccessChallenge,
+} from "../jobs/install/health";
 import { reconcileJobs, type WorkflowLookup } from "../jobs/reconcile.server";
 import {
   activeSelfJob,
@@ -611,6 +615,7 @@ async function appServedBy(db: D1Database, workerName: string): Promise<string |
  */
 export function managerVerdict(probe: HealthProbe, version: string): string | null {
   if (probe.kind === "error") return `no connection (${probe.message})`;
+  if (isAccessChallenge(probe)) return ACCESS_CHALLENGE_DETAIL;
   if (probe.status !== 200) {
     const edge = /^error code: (\d+)/.exec(probe.bodyStart.trimStart());
     return edge ? `HTTP ${probe.status}, error code ${edge[1]}` : `HTTP ${probe.status}`;

@@ -1,5 +1,6 @@
 import type { ArtifactManifest } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
+import { accessLoginUrl } from "../../test/access-sign-in";
 import { buildArtifactFixture } from "../../test/artifact-fixture";
 import type { HealthProbe } from "../install/health";
 import {
@@ -299,6 +300,20 @@ describe("classifyManagerCanary", () => {
     ).toMatchObject({ verdict: "unhealthy" });
     expect(classifyManagerCanary(response(404, "Not found"), "0.2.0", 10, 0, 10)).toMatchObject({
       verdict: "unhealthy",
+    });
+  });
+
+  it("fails at once, naming Cloudflare Access, when Access answers the preview", () => {
+    const access: HealthProbe = {
+      kind: "response",
+      status: 302,
+      bodyStart: "",
+      location: accessLoginUrl("0a1b2c3d-appflare.appflare-dev.workers.dev", "/api/health"),
+    };
+    expect(classifyManagerCanary(access, "0.2.0", 1, 0)).toEqual({
+      verdict: "unhealthy",
+      reason:
+        "Cloudflare Access answered the preview with its sign-in page instead of Appflare. In Zero Trust, let Appflare's preview URLs answer /api/health without a sign-in (a Bypass policy for that path), then try again",
     });
   });
 });

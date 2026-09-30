@@ -22,6 +22,7 @@ const app = (over: Partial<AttentionApp> & { id: string }): AttentionApp => ({
   updateAvailable: false,
   updateNeeds: null,
   healthStatus: "verified",
+  healthAccess: false,
   healthCheckedAt: "2026-09-27T10:00:00.000Z",
   ...over,
 });
@@ -138,6 +139,19 @@ describe("attentionItems", () => {
       ["A", "unhealthy"],
       ["B", "unverified"],
     ]);
+  });
+
+  it("does not list an app whose last check Cloudflare Access answered, and gives it no dot", () => {
+    const items = attentionItems(
+      input({
+        apps: [
+          app({ id: "a", label: "Behind", healthStatus: "unverified", healthAccess: true }),
+          app({ id: "b", label: "Down", healthStatus: "unverified" }),
+        ],
+      }),
+    );
+    expect(items.map((i) => ("installId" in i ? i.installId : null))).toEqual(["b"]);
+    expect(appSignals(items).has("a")).toBe(false);
   });
 
   it("lists updates, with why an update waits for the admin (Review)", () => {

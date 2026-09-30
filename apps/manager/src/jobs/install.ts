@@ -63,7 +63,7 @@ import {
   type EntryUploadContext,
   planEntryQueueConsumers,
 } from "./install/entry-worker-phases";
-import { healthLabel } from "./install/health";
+import { healthColumns, healthLabel } from "./install/health";
 import { buildScriptMetadata, type CreatedResource, installVars } from "./install/metadata";
 import {
   applyD1BaselinePhase,
@@ -901,8 +901,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             artifact_url: source.zipUrl,
             artifact_digest: source.digest,
             ...source.provenance,
-            health_status: health.status,
-            health_checked_at: new Date(health.checkedAt),
+            ...healthColumns(health, new Date(health.checkedAt)),
             updated_at: at,
           })
           // Only from `installing`: an install whose job was settled from

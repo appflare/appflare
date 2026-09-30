@@ -528,6 +528,14 @@ export function updateSecretsUndoneMessage(jobId: string): string {
 export const NO_PREVIEW_REASON =
   "Workers that implement a Durable Object have no version preview URL, so the new version cannot be checked before it serves traffic; the health check after the update still runs";
 
+/**
+ * Why a canary did not check the new version although the preview URL
+ * answered: Cloudflare Access answered it in the Worker's place (logged; the
+ * job goes on, as it does without a preview).
+ */
+export const ACCESS_PREVIEW_REASON =
+  "Cloudflare Access answered the preview URL with its sign-in page, so the new version was not checked before it serves traffic";
+
 export const FULL_DEPLOY_REASON =
   "This version changes Durable Object classes (migrations), which Cloudflare applies only when the whole Worker is deployed at once. The update deploys it directly, without a preview check, and the change to the classes cannot be undone";
 

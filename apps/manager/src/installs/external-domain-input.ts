@@ -51,8 +51,12 @@ export interface ExternalDomainStatus {
   records: OwnerRecord[];
   /** Why it is not active yet, in Cloudflare's words. */
   errors: string[];
-  /** A probe of the app through the domain, when asked for and active. */
-  health: { status: HealthStatus; detail: string; url: string } | null;
+  /**
+   * A probe of the app through the domain, when asked for and active. `access`:
+   * Cloudflare Access answered with its sign-in page, so the domain is live
+   * but the app itself was not checked.
+   */
+  health: { status: HealthStatus; detail: string; url: string; access?: true } | null;
   /** ISO 8601 */
   checkedAt: string;
   /** The app answered through the domain, so this read turned workers.dev off. */

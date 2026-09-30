@@ -27,8 +27,9 @@ export const INSTALL_STATUSES = [
 
 /**
  * The last health check of an install's Worker URL: `verified` (it answered,
- * anything but a 5xx), `unverified` (no answer, or the edge's route-not-live
- * page), `unhealthy` (it answered with a 5xx).
+ * anything but a 5xx), `unverified` (no answer, the edge's route-not-live
+ * page, or Cloudflare Access's sign-in redirect), `unhealthy` (it answered
+ * with a 5xx).
  */
 export const HEALTH_STATUSES = ["verified", "unverified", "unhealthy"] as const;
 export type HealthStatus = (typeof HEALTH_STATUSES)[number];
@@ -196,6 +197,14 @@ export const installs = sqliteTable("installs", {
   source_ref: text("source_ref"),
   /** The last health check's result; null until one ran. Never fails a job. */
   health_status: text("health_status", { enum: HEALTH_STATUSES }),
+  /**
+   * Whether Cloudflare Access answered the last health check in the app's
+   * place (recorded with `health_status` `unverified`), so the check never
+   * reached the app. False when a check reached it; null until a check wrote
+   * it. Read it only together with `unverified`: a manager from before this
+   * column rewrites `health_status` and leaves it as it was.
+   */
+  health_access: integer("health_access", { mode: "boolean" }),
   /** When the last health check probed the Worker. */
   health_checked_at: timestamp("health_checked_at"),
   /** Whether the cron may update this install on its own (see `AUTO_UPDATE_CHOICES`). */

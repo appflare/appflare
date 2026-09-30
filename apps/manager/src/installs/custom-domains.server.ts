@@ -28,7 +28,7 @@ import { wildcardOfManifest } from "./wildcard-domain-input";
 import {
   applyDomainLive,
   beforeDomainRemoval,
-  domainServesApp,
+  domainIsLive,
   recordDomainLive,
   WorkersDevError,
 } from "./workers-dev.server";
@@ -538,6 +538,11 @@ export interface CustomDomainCheck extends VarsRefresh {
   status: HealthStatus;
   /** What the app answered ("HTTP 200", "connection failed (...)"). */
   detail: string;
+  /**
+   * Cloudflare Access answered with its sign-in page: the domain counts as
+   * live (`domainIsLive`), but the app itself was not checked.
+   */
+  access?: true;
   /** ISO 8601 */
   checkedAt: string;
   /** The app answered through the domain, so this check turned workers.dev off. */
@@ -550,7 +555,8 @@ export interface CustomDomainCheck extends VarsRefresh {
  * stays the check of its main address, and a new domain may take a while
  * before its certificate and DNS record are live. When the app answers, the
  * domain is recorded as live (an address the app is opened at) and, with
- * `api`, workers.dev may be turned off (`applyDomainLive`).
+ * `api`, workers.dev may be turned off (`applyDomainLive`). So does
+ * Cloudflare Access answering on the domain (`domainIsLive`).
  */
 export async function checkCustomDomainCore(
   deps: {
@@ -577,7 +583,7 @@ export async function checkCustomDomainCore(
   const settled = settleHealthProbe(probe, check.mode);
   let workersDevTurnedOff = false;
   let refresh: VarsRefresh = NO_VARS_REFRESH;
-  if (domainServesApp(probe, check.mode)) {
+  if (domainIsLive(probe, check.mode)) {
     const live = { installId: install.id, resourceId: domain.id, hostname: domain.name };
     if (deps.api === undefined) {
       await recordDomainLive(deps.db, live.resourceId, deps.now);

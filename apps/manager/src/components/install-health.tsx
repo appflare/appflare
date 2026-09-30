@@ -34,7 +34,30 @@ const HEALTH: Record<HealthStatus, { variant: BadgeVariant; label: string; hint:
   },
 };
 
-export function HealthBadge({ status }: { status: HealthStatus | null }) {
+/** The app page's words for a check Cloudflare Access answered in the app's place. */
+const BEHIND_ACCESS = {
+  label: "Behind Cloudflare Access",
+  hint: "Cloudflare Access answered, so Appflare can't check the app itself. Open the app and sign in to check it.",
+};
+
+/**
+ * `access`: Cloudflare Access answered the check in the app's place (recorded
+ * as `unverified`), which says nothing about the app either way.
+ */
+export function HealthBadge({
+  status,
+  access = false,
+}: {
+  status: HealthStatus | null;
+  access?: boolean;
+}) {
+  if (access && status === "unverified") {
+    return (
+      <Badge variant="neutral" appearance="dot">
+        {BEHIND_ACCESS.label}
+      </Badge>
+    );
+  }
   if (status === null) {
     return (
       <Badge variant="neutral" appearance="dot">
@@ -49,18 +72,26 @@ export function HealthBadge({ status }: { status: HealthStatus | null }) {
   );
 }
 
-/** The install page's health row: badge, when it was checked, and "Check now" for admins. */
+/**
+ * The install page's health row: badge, when it was checked, and "Check now"
+ * for admins. "Check now" records its result, including whether Cloudflare
+ * Access answered, and the page reloads the install to show it.
+ */
 export function InstallHealth({
   installId,
   status,
+  access,
   checkedAt,
   canCheck,
 }: {
   installId: string;
   status: HealthStatus | null;
+  /** Cloudflare Access answered the last check (see `HealthBadge`). */
+  access: boolean;
   checkedAt: string | null;
   canCheck: boolean;
 }) {
+  const behindAccess = access && status === "unverified";
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +111,7 @@ export function InstallHealth({
   return (
     <span className="grid gap-1.5">
       <span className="flex flex-wrap items-center gap-2">
-        <HealthBadge status={status} />
+        <HealthBadge status={status} access={access} />
         {checkedAt !== null && (
           <Text as="span" variant="secondary" size="sm">
             checked <Timestamp iso={checkedAt} />
@@ -100,7 +131,7 @@ export function InstallHealth({
       </span>
       {status !== null && status !== "verified" && (
         <Text as="span" variant="secondary" size="sm">
-          {HEALTH[status].hint}
+          {behindAccess ? BEHIND_ACCESS.hint : HEALTH[status].hint}
         </Text>
       )}
       {error !== null && (

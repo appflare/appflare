@@ -50,7 +50,7 @@ import {
   promoteOtherWorkerPhase,
   setOtherWorkerCronsPhase,
 } from "./install/entry-worker-phases";
-import { healthLabel } from "./install/health";
+import { healthColumns, healthLabel } from "./install/health";
 import { buildScriptMetadata, installVars } from "./install/metadata";
 import {
   applyD1BaselinePhase,
@@ -1099,8 +1099,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           .update(installs)
           .set({
             status: "installed",
-            health_status: health.status,
-            health_checked_at: new Date(health.checkedAt),
+            ...healthColumns(health, new Date(health.checkedAt)),
             updated_at: at,
           })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),

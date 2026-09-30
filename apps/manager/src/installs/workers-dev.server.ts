@@ -8,6 +8,7 @@ import {
   type HealthMode,
   type HealthProbe,
   healthCheckOfManifest,
+  isAccessChallenge,
   isEdgeErrorPage,
   probeHealth,
   settleHealthProbe,
@@ -41,10 +42,11 @@ import {
  * - "Serve on workers.dev" on the app page turns it on or off with one
  *   subdomain call and records the admin's choice (`manual`), which every
  *   later deploy sends again. Off is allowed only while one of the install's
- *   domains answers as the app, so the app always keeps an address.
- * - When a custom or external domain first answers as the app (the install
- *   job's domain step, or a check on the app page), `applyDomainLive` records
- *   it as live and, while the choice is `auto`, turns workers.dev off.
+ *   domains is live (`domainIsLive`), so the app always keeps an address.
+ * - When a custom or external domain first answers as the app, or Cloudflare
+ *   Access answers on it (`domainIsLive`; the install job's domain step, or a
+ *   check on the app page), `applyDomainLive` records it as live and, while
+ *   the choice is `auto`, turns workers.dev off.
  * - Before a domain is removed, `beforeDomainRemoval` turns workers.dev back
  *   on when it was the last live one and the choice is `auto`.
  */
@@ -69,9 +71,28 @@ export interface WorkersDevDeps {
 /** At most this many custom domains are probed before turning workers.dev off. */
 export const MAX_DOMAIN_PROBES = 3;
 
-/** Whether a probe shows the app itself answering (not an edge error page, not a 5xx). */
+/**
+ * Whether a probe shows the app itself answering: not an edge error page, not
+ * a 5xx, and not Cloudflare Access's sign-in redirect (`isAccessChallenge`),
+ * which Access sends before the request reaches the Worker.
+ */
 export function domainServesApp(probe: HealthProbe, mode: HealthMode): boolean {
   return settleHealthProbe(probe, mode).status === "verified" && !isEdgeErrorPage(probe);
+}
+
+/**
+ * Whether a probe shows the domain live, as an address of the app: the app
+ * answers through it (`domainServesApp`), or Cloudflare Access answers on it
+ * with its sign-in redirect. Access answering means HTTPS completed and
+ * Cloudflare serves the hostname, and the hostname can only lead to this
+ * app: a Workers custom domain belongs to exactly one Worker, and an
+ * external domain is probed only once Cloudflare reports it active. Counting
+ * it matters: while such a domain is not live, workers.dev stays on, and the
+ * app stays reachable there without Access. The install's health still
+ * records the Access answer as `unverified`.
+ */
+export function domainIsLive(probe: HealthProbe, mode: HealthMode): boolean {
+  return domainServesApp(probe, mode) || isAccessChallenge(probe);
 }
 
 async function activeJobOf(orm: Database, installId: string): Promise<string | null> {
@@ -178,7 +199,7 @@ export async function setWorkersDevCore(
     const tried: string[] = [];
     for (const hostname of hostnames.slice(0, MAX_DOMAIN_PROBES)) {
       const probe = await probeHealth(deps.fetch, `https://${hostname}${check.path}`);
-      if (domainServesApp(probe, check.mode)) {
+      if (domainIsLive(probe, check.mode)) {
         served = rows.find((r) => r.name === hostname) ?? null;
         break;
       }
@@ -249,8 +270,8 @@ export interface DomainLiveResult extends VarsRefresh {
 }
 
 /**
- * A custom or external domain of the install answered as the app: records it
- * as live, and turns workers.dev off when `workersDevWhenDomainLive` says so,
+ * A custom or external domain of the install answered as the app, or
+ * Cloudflare Access answered on it (`domainIsLive`): records it as live, and turns workers.dev off when `workersDevWhenDomainLive` says so,
  * with one subdomain call (version previews stay on, so update checks keep
  * working) and the domain recorded as the one that serves the app. Outside
  * the install job it changes nothing while a job of the app runs (that job

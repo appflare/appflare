@@ -24,11 +24,11 @@ recorded on the install.
 
 ## Apps behind a sign-in
 
-Some apps put every route behind Cloudflare Access or their own sign-in, so a
-request without credentials cannot tell whether the app works. A redirect to a
-sign-in page, a 401, or a 403 already counts as **Verified**, but some of these apps
-answer with an error of their own instead, for example while their sign-in is not
-configured yet.
+Some apps ask for a sign-in on every route, their own or one they check from
+Cloudflare Access, so a request without credentials cannot tell whether the app
+works. A redirect to the app's sign-in page, a 401, or a 403 from the app already
+counts as **Verified**, but some of these apps answer with an error of their own
+instead, for example while their sign-in is not configured yet.
 
 Such an app sets `install.health.mode` to `"any-response"` in its catalog manifest,
 instead of the default `"no-server-errors"`, which counts any answer but a server
@@ -39,18 +39,42 @@ retried, and a page Cloudflare serves because the Worker crashed (such as
 `error code: 1101`) still counts as a server error. An update's check of the new
 version before it serves traffic follows the same mode.
 
+## Apps behind Cloudflare Access
+
+When an app's address is protected by a Cloudflare Access application in your
+Zero Trust dashboard, Access answers a request without an Access sign-in before it
+reaches the app: it redirects to your team's sign-in page on
+`<team>.cloudflareaccess.com`. The check cannot sign in, so that answer says nothing
+about the app, under either health mode:
+
+- The health check stops at the first such answer, and the app's page shows
+  **Behind Cloudflare Access**: Appflare can't check the app itself. It never
+  counts as **Verified** or **Unhealthy**. The app is not listed on Home as not
+  responding, and the scheduled check does not report it as failing. The next
+  check that reaches the app replaces it.
+- When an update or a settings change gets this answer at the new version's
+  preview URL, it cannot check the new version before it serves traffic. The job
+  says so in its log and goes on, as it does for an app without preview URLs.
+- A custom or external domain where Access answers counts as live: Cloudflare
+  serves the name, and Access guards the app there. Appflare turns the
+  `workers.dev` URL off as it does for any live domain, so the app is not left
+  reachable there without Access. The domain's **Check now** says it is live
+  behind Cloudflare Access.
+
 ## The results
 
 | Badge | Status | Meaning |
 | --- | --- | --- |
 | **Verified** | `verified` | The Worker answered. |
 | **Not verified yet** | `unverified` | The Worker did not answer within 90 seconds: the connection failed, or Cloudflare still reported the route as not live. The app may be fine; its route may still have been going live. |
+| **Behind Cloudflare Access** | `unverified` | [Cloudflare Access](#apps-behind-cloudflare-access) answered in the app's place, so Appflare can't check the app itself. |
 | **Unhealthy** | `unhealthy` | The Worker answered with a server error (5xx). |
 | **Not checked** | | No check has run yet. |
 
 The app's page shows the result and when it was checked. An app that is not verified
 or unhealthy is listed on Home under **Needs attention** as not responding, with
-**Check again** for admins, and its row in the sidebar gets an amber dot.
+**Check again** for admins, and its row in the sidebar gets an amber dot. An app
+behind Cloudflare Access is not.
 
 ## Check again
 
