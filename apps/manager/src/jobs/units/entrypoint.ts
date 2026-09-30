@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import type { RemovalRelease } from "../../access/install-access.server";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import type { DomainCheckReport } from "../../installs/external-domains-poll.server";
 import type { DeliveryReport } from "../../notifications/deliver.server";
@@ -6,6 +7,7 @@ import type { HealthSweepReport } from "../../notifications/health-sweep.server"
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
 import type { SetSandboxBindingResult, WaitForSandboxContainersResult } from "../../sandbox/units";
 import type { CronTriggerScan } from "../install/cron-limit";
+import type { ProtectInstallUnitResult, SyncInstallAccessResult } from "./access";
 import type { D1SeedResult } from "./d1-seed";
 import type {
   AttachDomainResult,
@@ -91,6 +93,18 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   setSandboxBinding(input: unknown): Promise<UnitResult<SetSandboxBindingResult>> {
     return createJobUnits(this.env).setSandboxBinding(input);
+  }
+
+  protectInstall(input: unknown): Promise<UnitResult<ProtectInstallUnitResult>> {
+    return createJobUnits(this.env).protectInstall(input);
+  }
+
+  syncInstallAccess(input: unknown): Promise<UnitResult<SyncInstallAccessResult>> {
+    return createJobUnits(this.env).syncInstallAccess(input);
+  }
+
+  releaseAppAccess(input: unknown): Promise<UnitResult<RemovalRelease>> {
+    return createJobUnits(this.env).releaseAppAccess(input);
   }
 
   // Notification units (src/notifications/units.ts): delivery, the scheduled health check,

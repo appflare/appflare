@@ -92,6 +92,32 @@ describe("startInstallCore", () => {
       digest: f.digest,
       secrets: { ADMIN_PASSWORD: "hunter2-hunter2" },
     });
+    // Not asked for: not protected.
+    expect(h.created[0]?.params.access).toBeUndefined();
+  });
+
+  it("passes Cloudflare Access protection to the job and records it with the job's input", async () => {
+    const f = await buildArtifactFixture();
+    const h = harness(f);
+    await startInstallCore(h.deps, input({ access: true }));
+    expect(h.created[0]?.params.access).toBe(true);
+    const job = await env.DB.prepare("SELECT input_json FROM jobs WHERE id = 'id2'").first<{
+      input_json: string;
+    }>();
+    expect(JSON.parse(job?.input_json ?? "{}").access).toBe(true);
+  });
+
+  it("refuses Cloudflare Access protection together with an external domain", async () => {
+    const f = await buildArtifactFixture();
+    expect(() =>
+      resolveInstallInput(
+        f.manifest,
+        input({
+          access: true,
+          domain: { kind: "external", hostname: "go.customer.net", validation: "http" },
+        }),
+      ),
+    ).toThrow("Appflare can't yet protect external domains with Cloudflare Access");
   });
 
   it("records the catalog an app comes from, and passes it to the job", async () => {

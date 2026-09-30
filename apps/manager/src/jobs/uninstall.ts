@@ -23,7 +23,7 @@ import {
 import { detachExternalDomain, externalDetachMessage } from "../installs/external-domains.server";
 import { namesHeldElsewhere } from "../installs/removed-apps.server";
 import {
-  ACCESS_SERVICE_TOKEN_KIND,
+  ACCESS_KINDS,
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
   DATA_RESOURCE_KINDS,
@@ -304,7 +304,9 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       ];
       // Cloudflare Access protection goes too: the app's Access application
       // and its own service token, which hold no data.
-      const accessProtected = live.some((r) => r.kind === ACCESS_SERVICE_TOKEN_KIND);
+      const accessProtected = live.some((r) =>
+        (ACCESS_KINDS as readonly string[]).includes(r.kind),
+      );
       // Email routes are never kept either: mail to a deleted Worker bounces.
       const emailRoutes: EmailRouteRecord[] = live
         .filter((r) => r.kind === EMAIL_ROUTE_KIND)

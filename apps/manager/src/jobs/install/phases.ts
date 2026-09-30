@@ -39,7 +39,8 @@ import {
   type HealthProbe,
   type HealthSettlement,
   type HealthVerdict,
-  probeHealthThroughAccess,
+  lookupOnce,
+  probeThroughAccess,
   versionMismatch,
 } from "./health";
 import type { CreatedResource } from "./metadata";
@@ -712,16 +713,25 @@ export async function probeUntilHealthy(
 ): Promise<number | null> {
   const maxAttempts = opts.maxAttempts ?? HEALTH_MAX_ATTEMPTS;
   let firstProbeAt: number | null = null;
+  // The install's token for this URL, looked up once for the whole phase.
+  let credentials: (() => Promise<Record<string, string> | undefined>) | undefined;
+  // Once Access let the token through for this URL, later attempts send it at once.
+  let direct = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const checked = await steps.run(
       `${opts.label} check ${attempt}`,
       async ({ log, fetch, probeHeaders }) => {
         const at = steps.now();
         const { installId } = opts;
-        const probe: HealthProbe = await probeHealthThroughAccess(
+        if (installId !== undefined) {
+          credentials ??= lookupOnce(() => probeHeaders(installId, opts.url));
+        }
+        const { probe, tokenAccepted } = await probeThroughAccess(
           fetch,
           opts.url,
-          installId === undefined ? undefined : () => probeHeaders(installId, opts.url),
+          credentials,
+          {},
+          direct,
         );
         const elapsed = at - (firstProbeAt ?? at);
         const verdict =
@@ -745,10 +755,13 @@ export async function probeUntilHealthy(
           at,
           status: verdict.verdict === "healthy" ? verdict.status : null,
           blocked: verdict.verdict === "blocked",
+          tokenAccepted,
         };
       },
     );
     firstProbeAt ??= checked.at;
+    // A step output recorded before this was reported has none.
+    direct = checked.tokenAccepted === true;
     if (checked.status !== null) return checked.status;
     if (checked.blocked) return null;
     await step.sleep(`${opts.label} wait ${attempt}`, HEALTH_RETRY_DELAY);
@@ -797,16 +810,25 @@ export async function checkLiveHealthPhase(
       ? "check again from its page"
       : `check again from ${appPlace(opts.installId, "health", "its page")}`;
   let firstProbeAt: number | null = null;
+  // The install's token for this URL, looked up once for the whole phase.
+  let credentials: (() => Promise<Record<string, string> | undefined>) | undefined;
+  // Once Access let the token through for this URL, later attempts send it at once.
+  let direct = false;
   for (let attempt = 1; ; attempt++) {
     const checked = await steps.run(
       `health check ${attempt}`,
       async ({ log, fetch, probeHeaders }) => {
         const at = steps.now();
         const { installId } = opts;
-        const probe = await probeHealthThroughAccess(
+        if (installId !== undefined) {
+          credentials ??= lookupOnce(() => probeHeaders(installId, url));
+        }
+        const { probe, tokenAccepted } = await probeThroughAccess(
           fetch,
           url,
-          installId === undefined ? undefined : () => probeHeaders(installId, url),
+          credentials,
+          {},
+          direct,
         );
         const decision = decideLiveHealth(
           probe,
@@ -833,10 +855,12 @@ export async function checkLiveHealthPhase(
             `Could not verify ${url} after ${attempt} attempts (${decision.detail}). Everything was created; the route may still be going live. Open the app to check, or ${checkAgain}.`,
           );
         }
-        return { at, decision };
+        return { at, decision, tokenAccepted };
       },
     );
     firstProbeAt ??= checked.at;
+    // A step output recorded before this was reported has none.
+    direct = checked.tokenAccepted === true;
     const { decision } = checked;
     if (decision.done) {
       return {

@@ -65,6 +65,7 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
   worker_route: "Workers route",
   email_route: "Email route",
   access_service_token: "Access service token",
+  access_app: "Access application",
 };
 
 export function resourceKindLabel(kind: string): string {

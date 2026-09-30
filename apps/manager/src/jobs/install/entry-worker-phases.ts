@@ -152,8 +152,14 @@ export async function deployOtherWorkerPhase(
       workerName: string,
       plans: readonly ConsumerPlan[],
     ) => Promise<void>;
+    /**
+     * Leave its workers.dev address for the caller to turn on (an install
+     * protected with Cloudflare Access turns it on only once Access covers
+     * the Worker by its tag, previews included).
+     */
+    deferRoute?: boolean;
   },
-): Promise<{ versionId: string | null }> {
+): Promise<{ versionId: string | null; tag: string | null }> {
   const { run, now } = steps;
   const label = workerLabel(worker);
   const name = worker.scriptName;
@@ -194,7 +200,11 @@ export async function deployOtherWorkerPhase(
         versionId: result.versionId,
         bindings: (metadata.bindings ?? []).map((b) => `${b.type} ${b.name}`),
       });
-      return { versionId: result.versionId, scriptId: result.scriptId ?? name };
+      return {
+        versionId: result.versionId,
+        scriptId: result.scriptId ?? name,
+        tag: result.tag ?? null,
+      };
     } catch (error) {
       // A refused upload created no Worker: release the pending row, as for
       // the primary Worker.
@@ -258,8 +268,11 @@ export async function deployOtherWorkerPhase(
     });
   }
   await input.attachConsumers(steps, name, input.consumers);
-  if (worker.workersDev) await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
-  return { versionId: upload.versionId };
+  if (worker.workersDev && input.deferRoute !== true) {
+    await otherWorkerRoutePhase(steps, ctx.installId, worker, ctx.subdomain);
+  }
+  // A step output recorded before tags were read has none.
+  return { versionId: upload.versionId, tag: upload.tag ?? null };
 }
 
 /**

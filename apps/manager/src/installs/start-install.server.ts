@@ -54,6 +54,7 @@ import {
 import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
 import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
 import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
+import { ACCESS_EXTERNAL_DOMAIN_REFUSAL } from "./external-domain-input";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import {
   enteredDerivedVarProblems,
@@ -156,6 +157,8 @@ export interface ResolvedInstallInput {
   emailRouting?: { zoneId: string };
   /** The custom or external domain the install job adds; undefined for workers.dev only. */
   domain?: InstallDomainInput;
+  /** Protect the app with Cloudflare Access from its first request on. */
+  access?: true;
 }
 
 /**
@@ -283,6 +286,9 @@ export function resolveInstallInput(
     if (!checked.ok) throw new StartInstallError(checked.error);
     domain = { ...input.domain, hostname: checked.hostname };
   }
+  if (input.access === true && domain?.kind === "external") {
+    throw new StartInstallError(ACCESS_EXTERNAL_DOMAIN_REFUSAL);
+  }
   return {
     secrets,
     seed,
@@ -290,6 +296,7 @@ export function resolveInstallInput(
     vars,
     ...(input.emailRouting === undefined ? {} : { emailRouting: input.emailRouting }),
     ...(domain === undefined ? {} : { domain }),
+    ...(input.access === true ? { access: true as const } : {}),
   };
 }
 
@@ -378,6 +385,11 @@ export async function startInstallCore(
   }
   if (installer === null && input.appToken !== undefined) {
     throw new StartInstallError(`${manifest.catalog.name} takes no app token.`);
+  }
+  if (installer !== null && resolved.access === true) {
+    throw new StartInstallError(
+      `${manifest.catalog.name}'s own installer decides its Workers and addresses, so Appflare cannot protect it with Cloudflare Access yet. Install it without, then add an Access application for it under Zero Trust, Access, Applications.`,
+    );
   }
   if (installer !== null && resolved.domain !== undefined) {
     throw new StartInstallError(
@@ -488,6 +500,7 @@ export async function startInstallCore(
       requirementsConfirmed: input.requirementsConfirmed,
       ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
       ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
+      ...(resolved.access === true ? { access: true } : {}),
       ...(build === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
       // Names only: the app token lives in the Workflow params alone.
       ...(installer === null
@@ -641,6 +654,7 @@ export async function startInstallCore(
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
     ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
+    ...(resolved.access === true ? { access: true } : {}),
     ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
   };
   let instanceId: string;

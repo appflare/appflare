@@ -129,6 +129,62 @@ describe("health checks of a protected app in a job", () => {
     expect(JSON.stringify(result)).not.toContain("DO-NOT-LEAK");
   });
 
+  it("sends later attempts straight with the token once Access let it through", async () => {
+    await storeToken();
+    /** Behind Access; with the token, the route is not live yet (1042) twice, then the app. */
+    const answers = (tokenAnswers: Response[]) => (url: string, headers: Record<string, string>) =>
+      headers["CF-Access-Client-Secret"] === SECRET
+        ? (tokenAnswers.shift() ?? new Response('{"version":"2.0.0"}', { status: 200 }))
+        : accessChallenge(new URL(url).hostname);
+    const live = harness(
+      answers([
+        new Response("error code: 1042", { status: 404 }),
+        new Response("error code: 1042", { status: 404 }),
+      ]),
+    );
+    expect(
+      await checkLiveHealthPhase(live.steps, live.step, LIVE, undefined, { installId: INSTALL_ID }),
+    ).toMatchObject({ status: "verified" });
+    const withToken = (seen: Seen[]) =>
+      seen.map((x) => x.headers["CF-Access-Client-Secret"] === SECRET);
+    // The first attempt asks Access first; the next two go straight with the token.
+    expect(withToken(live.seen)).toEqual([false, true, true, true]);
+
+    const canary = harness(answers([new Response("error code: 1042", { status: 404 })]));
+    expect(
+      await probeUntilHealthy(canary.steps, canary.step, {
+        label: "canary",
+        url: PREVIEW,
+        healthyMessage: "the new version serves",
+        installId: INSTALL_ID,
+      }),
+    ).toBe(200);
+    expect(withToken(canary.seen)).toEqual([false, true, true]);
+  });
+
+  it("settles as behind Access when a probe sent straight with the token meets the sign-in", async () => {
+    await storeToken();
+    let tokenProbes = 0;
+    const { steps, step, seen } = harness((url, headers) => {
+      if (headers["CF-Access-Client-Secret"] !== SECRET)
+        return accessChallenge(new URL(url).hostname);
+      tokenProbes += 1;
+      // Accepted with a 1042 first; then (the token revoked meanwhile) the sign-in.
+      if (tokenProbes === 1) return new Response("error code: 1042", { status: 404 });
+      return accessChallenge(new URL(url).hostname);
+    });
+    const result = await checkLiveHealthPhase(steps, step, LIVE, undefined, {
+      installId: INSTALL_ID,
+    });
+    // Access answered in the app's place, as for any check that meets the sign-in.
+    expect(result).toMatchObject({ status: "unverified", access: true });
+    expect(seen.map((x) => x.headers["CF-Access-Client-Secret"] === SECRET)).toEqual([
+      false,
+      true,
+      true,
+    ]);
+  });
+
   it("checks the canary on a preview address the same way", async () => {
     await storeToken();
     const { steps, step } = harness(protectedApp);

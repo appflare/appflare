@@ -30,6 +30,7 @@ import { isNotFound, JobError } from "../errors";
 import {
   type HealthMode,
   type HealthSettlement,
+  lookupOnce,
   type ProbeHeadersFor,
   probeHealthThroughAccess,
   settleHealthProbe,
@@ -281,7 +282,9 @@ async function probeUntilServed(
   input: { url: string; mode: HealthMode; max: number; gapMs: number },
   probeHeaders?: ProbeHeadersFor,
 ): Promise<{ settled: HealthSettlement; serves: boolean; probes: number }> {
-  const credentials = probeHeaders === undefined ? undefined : () => probeHeaders(input.url);
+  // Looked up once for every probe of this call.
+  const credentials =
+    probeHeaders === undefined ? undefined : lookupOnce(() => probeHeaders(input.url));
   for (let probes = 1; ; probes++) {
     const probe = await probeHealthThroughAccess(fetch, input.url, credentials);
     const serves = domainIsLive(probe, input.mode);

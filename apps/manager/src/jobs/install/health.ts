@@ -401,6 +401,19 @@ export function isAccessChallengeFor(probe: HealthProbe, url: string): boolean {
 }
 
 /**
+ * `lookup`, run at most once: the first call's answer serves every later
+ * call. A phase that probes an address several times looks up the
+ * install's service token for it once, not once per probe.
+ */
+export function lookupOnce<T>(lookup: () => Promise<T>): () => Promise<T> {
+  let held: Promise<T> | undefined;
+  return () => {
+    held ??= lookup();
+    return held;
+  };
+}
+
+/**
  * A health check of a URL that may be behind Cloudflare Access: first
  * without credentials; only when that answer is Access's sign-in for the
  * same host ({@link isAccessChallengeFor}) are `credentials` asked for, and
@@ -414,11 +427,41 @@ export async function probeHealthThroughAccess(
   credentials?: () => Promise<Record<string, string> | undefined>,
   options: Omit<ProbeOptions, "headers"> = {},
 ): Promise<HealthProbe> {
+  return (await probeThroughAccess(fetchImpl, url, credentials, options)).probe;
+}
+
+/**
+ * {@link probeHealthThroughAccess}, also saying whether Access let the
+ * token through (`tokenAccepted`: a probe with it got anything but Access's
+ * sign-in). With `direct`, the probe carries the token at once, without the
+ * probe that asks Access first: for the later attempts of one health check
+ * whose earlier attempt saw Access's sign-in for this very URL and then the
+ * token let through, so each attempt costs one request instead of two. A
+ * direct probe that meets the sign-in again reports `tokenAccepted: false`,
+ * and the next attempt asks Access first again.
+ */
+export async function probeThroughAccess(
+  fetchImpl: (input: string, init?: RequestInit) => Promise<Response>,
+  url: string,
+  credentials?: () => Promise<Record<string, string> | undefined>,
+  options: Omit<ProbeOptions, "headers"> = {},
+  direct = false,
+): Promise<{ probe: HealthProbe; tokenAccepted: boolean }> {
+  if (direct && credentials !== undefined) {
+    const headers = await credentials();
+    if (headers !== undefined) {
+      const probe = await probeHealth(fetchImpl, url, { ...options, headers });
+      return { probe, tokenAccepted: !isAccessChallenge(probe) };
+    }
+  }
   const first = await probeHealth(fetchImpl, url, options);
-  if (credentials === undefined || !isAccessChallengeFor(first, url)) return first;
+  if (credentials === undefined || !isAccessChallengeFor(first, url)) {
+    return { probe: first, tokenAccepted: false };
+  }
   const headers = await credentials();
-  if (headers === undefined) return first;
-  return probeHealth(fetchImpl, url, { ...options, headers });
+  if (headers === undefined) return { probe: first, tokenAccepted: false };
+  const probe = await probeHealth(fetchImpl, url, { ...options, headers });
+  return { probe, tokenAccepted: !isAccessChallenge(probe) };
 }
 
 /**

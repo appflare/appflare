@@ -20,6 +20,7 @@ import { requirementLabel, requirementSentence } from "../catalog/requirements";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
+import { ACCESS_EXTERNAL_DOMAIN_REFUSAL } from "../installs/external-domain-input";
 import { installDomainInput, workerNameSchema } from "../installs/install-input";
 import { varsUseWorkerUrl } from "../installs/install-vars";
 import { workersDevUrl } from "../installs/post-install";
@@ -42,6 +43,12 @@ import {
   workerCountProblem,
 } from "./entry-workers";
 import {
+  coverWorkersPhase,
+  keepWorkersUnreachablePhase,
+  protectBeforeUploadPhase,
+  syncAccessAfterDomainPhase,
+} from "./install/access";
+import {
   type ArtifactOrigin,
   prebuiltBuildParams,
   resolveArtifactPhase,
@@ -61,6 +68,7 @@ import {
 import {
   deployOtherWorkerPhase,
   type EntryUploadContext,
+  otherWorkerRoutePhase,
   planEntryQueueConsumers,
 } from "./install/entry-worker-phases";
 import { healthColumns, healthLabel } from "./install/health";
@@ -177,6 +185,12 @@ export const installJobParams = z.object({
    * install needs them and they were off at the start; the job waits for it.
    */
   sandboxEnableJob: sandboxEnableJobField,
+  /**
+   * Protect the app with Cloudflare Access from its first request on (see
+   * ./install/access.ts). Optional because a job started by an earlier
+   * manager version does not carry it.
+   */
+  access: z.boolean().optional(),
 });
 export type InstallJobParams = z.infer<typeof installJobParams>;
 
@@ -190,6 +204,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
   if (!parsed.success) throw new NonRetryableError("invalid install job payload");
   const params = parsed.data;
   if (params.selfDeploying !== undefined) {
+    // Starting such an install refuses Access protection; never deploy one unprotected.
+    if (params.access === true) {
+      throw new NonRetryableError(
+        "an app deployed by its own installer cannot be protected with Cloudflare Access yet",
+      );
+    }
     // The app's own installer deploys it; there is no artifact to install.
     await runSelfDeployingInstall(ctx, { ...params, selfDeploying: params.selfDeploying });
     return;
@@ -218,6 +238,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           : null;
   if (origin === null) throw new NonRetryableError("invalid install job payload: no artifact");
 
+  /**
+   * With Cloudflare Access: the app's Workers from their first upload until
+   * Access covers them by their tags. A failure in between takes them off
+   * workers.dev with their previews before the job fails.
+   */
+  let uncovered: string[] = [];
   try {
     await run("start", async ({ log, orm }) => {
       await orm
@@ -316,6 +342,10 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         ...connectionStringProblems(databases, params.hyperdrive ?? {}),
         // Each Pipelines sink needs the token the admin entered for it.
         ...pipelineTokenProblems(streams, params.secrets),
+        // Checked when the install starts too; never protect only part of the app.
+        ...(params.access === true && params.domain?.kind === "external"
+          ? [ACCESS_EXTERNAL_DOMAIN_REFUSAL]
+          : []),
       ];
       if (problems.length > 0) throw new InstallError(problems.join(" "));
       // The upload reads and sends every module in one invocation; refuse
@@ -532,6 +562,24 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             workerName: params.workerName,
           });
 
+    // Cloudflare Access, when the admin asked for it: the application comes
+    // before anything of the app exists, covering each Worker's future
+    // workers.dev hostname, so the app is never reachable without it.
+    // Nothing of the app is created when this is refused. (An external
+    // domain is refused with protection for now, in the preflight above;
+    // the pending host and the sync after the domain step stay for when
+    // Access coverage of such domains is confirmed.)
+    const protect = params.access === true;
+    const accessExternalHosts = params.domain?.kind === "external" ? [params.domain.hostname] : [];
+    if (protect) {
+      await protectBeforeUploadPhase(steps, {
+        installId: params.installId,
+        appName: manifest.catalog.name,
+        workers: workers.map((w) => w.scriptName),
+        pendingExternalHosts: accessExternalHosts,
+      });
+    }
+
     // 3. Resources: check the name is free, create, then record.
     const created: CreatedResource[] = [];
     for (const res of toCreate) {
@@ -595,6 +643,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     /** Deploys the app's other Workers, each with its secrets, crons, consumers and route. */
     /** The version each other Worker serves once deployed, recorded on the install. */
     const otherVersions: Record<string, string> = {};
+    /** Each other Worker's script tag, for Cloudflare Access; null when its upload did not say. */
+    const otherTags: Record<string, string | null> = {};
     async function deployOthers(list: readonly EntryWorker[]): Promise<void> {
       for (const w of list) {
         const deployed = await deployOtherWorkerPhase(steps, entryContext, w, {
@@ -602,11 +652,15 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           consumers: queuePlan.consumers.get(w.scriptName) ?? [],
           attachConsumers: (s, name, plans) =>
             attachQueueConsumersPhase(s, params.installId, name, plans, created),
+          // With Access, routes wait until Access covers every Worker by its tag.
+          deferRoute: protect,
         });
         if (deployed.versionId !== null) otherVersions[w.scriptName] = deployed.versionId;
+        otherTags[w.scriptName] = deployed.tag;
       }
     }
     // The other Workers the primary one binds to exist before it is uploaded.
+    if (protect) uncovered = workers.map((w) => w.scriptName);
     await deployOthers(others.before);
 
     // 4. Static assets.
@@ -668,7 +722,11 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           versionId: result.versionId,
           bindings: (metadata.bindings ?? []).map((b) => `${b.type} ${b.name}`),
         });
-        return { versionId: result.versionId, scriptId: result.scriptId ?? params.workerName };
+        return {
+          versionId: result.versionId,
+          scriptId: result.scriptId ?? params.workerName,
+          tag: result.tag ?? null,
+        };
       } catch (error) {
         // A refused upload (4xx other than 429) created no Worker. Release the
         // pending row so an uninstall never deletes a same-named Worker made
@@ -720,6 +778,29 @@ export async function runInstall(ctx: JobContext): Promise<void> {
 
     // The other Workers that bind to the primary one, now that it exists.
     await deployOthers(others.after);
+
+    // Every Worker is uploaded: Cloudflare Access covers each by its tag
+    // (previews, custom domains and routes too) before any of them is
+    // turned on anywhere. On failure the Workers are taken off workers.dev
+    // with their previews, and the install fails.
+    if (protect) {
+      await coverWorkersPhase(steps, {
+        installId: params.installId,
+        appName: manifest.catalog.name,
+        workers: workers.map((w) => ({
+          name: w.scriptName,
+          // A step output recorded before tags were read has none: looked up.
+          tag: w.primary ? upload.tag : otherTags[w.scriptName],
+        })),
+        pendingExternalHosts: accessExternalHosts,
+      });
+      uncovered = [];
+      for (const w of [...others.before, ...others.after]) {
+        if (w.workersDev) {
+          await otherWorkerRoutePhase(steps, params.installId, w, subdomain);
+        }
+      }
+    }
 
     // 6. D1 migrations, wrangler-style, once for every Worker of the app,
     // then each database's schema files.
@@ -885,6 +966,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       }));
     }
 
+    // The external domain was covered before it was added; the application
+    // now lists exactly the domains the install has. Never fails the job.
+    if (protect && params.domain?.kind === "external") {
+      await syncAccessAfterDomainPhase(steps, params.installId);
+    }
+
     // 10. Record the install.
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
@@ -932,6 +1019,8 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     }
   } catch (error) {
     const reason = `${steps.current}: ${errorMessage(error)}`;
+    // Fail closed: nothing of an app meant to be behind Access stays reachable.
+    if (uncovered.length > 0) await keepWorkersUnreachablePhase(steps, uncovered);
     await step.do("mark install failed", async () => {
       const orm = createDb(db);
       const at = new Date(now());

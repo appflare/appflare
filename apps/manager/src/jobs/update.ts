@@ -458,6 +458,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     // A step output recorded before other Workers existed has none.
     const previousOthers = started.previousOthers ?? [];
     const previousOf = (name: string) => previousOthers.find((p) => p.scriptName === name);
+    // An update never changes which Workers an install has: a Worker new in
+    // this version is refused below, and one it drops is left in place until
+    // the uninstall. So a protected install's Cloudflare Access application
+    // (one `worker` destination per Worker, by its script tag, which the API
+    // documents as the script's immutable id) needs nothing here.
     const addedOthers = others.filter((w) => previousOf(w.scriptName) === undefined);
     const droppedOthers = previousOthers.filter(
       (p) => !others.some((w) => w.scriptName === p.scriptName),

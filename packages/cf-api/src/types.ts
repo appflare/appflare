@@ -84,6 +84,11 @@ export interface WorkerScript {
   handlers?: string[];
   /** The last Durable Object migration tag applied to the Worker, when it has one. */
   migration_tag?: string;
+  /**
+   * The script's tag, as the upload answered it ({@link ScriptUploadResult.tag}):
+   * what an Access `worker` destination names the Worker by.
+   */
+  tag?: string;
 }
 
 export interface ScriptUploadResult {

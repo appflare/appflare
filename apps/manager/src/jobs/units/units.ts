@@ -11,6 +11,7 @@ import {
   workerModuleSchema,
 } from "@appflare/schema";
 import { z } from "zod";
+import type { RemovalRelease } from "../../access/install-access.server";
 import { releaseFetch } from "../../catalog/release-fetch";
 import { releaseTokenOptions } from "../../github/release-access.server";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
@@ -42,6 +43,19 @@ import {
 import { assetsOnlyMetadata, uploadModule } from "../install/metadata";
 import { assetContentType } from "../install/mime";
 import { activeVersionId } from "../update/plan";
+import {
+  type ProtectInstallInput,
+  type ProtectInstallUnitResult,
+  protectInstallInputSchema,
+  type ReleaseAppAccessInput,
+  releaseAppAccessInputSchema,
+  runProtectInstall,
+  runReleaseAppAccess,
+  runSyncInstallAccess,
+  type SyncInstallAccessInput,
+  type SyncInstallAccessResult,
+  syncInstallAccessInputSchema,
+} from "./access";
 import {
   type CronTriggerCountInput,
   cronTriggerCountInputSchema,
@@ -178,6 +192,11 @@ export interface WorkerUploadResult {
   /** Whether the new version has a preview URL (`version` only; null when unknown). */
   hasPreview: boolean | null;
   modules: number;
+  /**
+   * The script's tag a `script` upload reports (what an Access `worker`
+   * destination names); null for `version`, or when Cloudflare did not say.
+   */
+  tag?: string | null;
 }
 
 export const d1MigrationsInputSchema = z.object({
@@ -327,6 +346,12 @@ export interface JobUnitsApi {
   ): Promise<UnitResult<WaitForSandboxContainersResult>>;
   /** Adds or removes the manager's own `SANDBOX` binding (new version, preview check, deploy). */
   setSandboxBinding(input: SetSandboxBindingInput): Promise<UnitResult<SetSandboxBindingResult>>;
+  /** Protects an install with its own Cloudflare Access application, or brings it in step. */
+  protectInstall(input: ProtectInstallInput): Promise<UnitResult<ProtectInstallUnitResult>>;
+  /** Rewrites what an install's Access application covers when its addresses changed. */
+  syncInstallAccess(input: SyncInstallAccessInput): Promise<UnitResult<SyncInstallAccessResult>>;
+  /** For "Remove Appflare": takes some installs' tokens out of their Access applications and deletes them. */
+  releaseAppAccess(input: ReleaseAppAccessInput): Promise<UnitResult<RemovalRelease>>;
 }
 
 /** The unit names, as RPC method names. */
@@ -485,6 +510,7 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
             scriptId: result.id ?? upload.workerName,
             hasPreview: null,
             modules: modules.length,
+            tag: typeof result.tag === "string" && result.tag.length > 0 ? result.tag : null,
           };
         }),
       ),
@@ -705,6 +731,18 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
     setSandboxBinding: (input) =>
       parsed(setSandboxBindingInputSchema, input, "setSandboxBinding", (request) =>
         runSetSandboxBinding(env, deps, request),
+      ),
+    protectInstall: (input) =>
+      parsed(protectInstallInputSchema, input, "protectInstall", (request) =>
+        runProtectInstall(env, deps, request),
+      ),
+    syncInstallAccess: (input) =>
+      parsed(syncInstallAccessInputSchema, input, "syncInstallAccess", (request) =>
+        runSyncInstallAccess(env, deps, request),
+      ),
+    releaseAppAccess: (input) =>
+      parsed(releaseAppAccessInputSchema, input, "releaseAppAccess", (request) =>
+        runReleaseAppAccess(env, deps, request),
       ),
   };
 }

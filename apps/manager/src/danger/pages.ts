@@ -141,6 +141,8 @@ export interface RemovalSummary {
   accessOn: boolean;
   /** Access applications the removal could not delete (complete removals only). */
   accessLeft: string[];
+  /** Apps protected with Cloudflare Access, whose Access applications stay (absent: none). */
+  protectedApps?: number;
 }
 
 function accessStatus(summary: RemovalSummary): string {
@@ -187,7 +189,11 @@ ${containers}</div>
 <ul>
 <li>Every app Appflare installed, with its Worker, databases, buckets, namespaces and secrets. They keep running, unmanaged: nothing updates them any more.</li>
 <li>Custom domains of apps, which keep serving them.</li>
-</ul>
+${
+  (summary.protectedApps ?? 0) > 0
+    ? `<li>The Cloudflare Access applications of apps Appflare protected, and the "Appflare users" policy they use, so those apps keep asking for a sign-in. Who can sign in is managed under Zero Trust, Access in the Cloudflare dashboard from now on.</li>`
+    : ""
+}</ul>
 <p>To manage the apps again, reinstall Appflare with the installer from the repository, as <a href="${INSTALL_DOCS_URL}" rel="noreferrer">the install guide</a> describes. It starts empty and does not know the apps already in the account.</p>
 ${TAIL}`;
 }

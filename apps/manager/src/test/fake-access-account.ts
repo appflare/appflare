@@ -4,8 +4,13 @@ import { createClient, type FetchLike } from "@appflare/cf-api";
  * Test-only: the Access objects protected apps use (service tokens, reusable
  * policies, applications with their own policies), kept in memory and
  * answered the way the Cloudflare API answers them, plus the account's zone
- * list. Tests delete things "in the dashboard" by editing the maps.
+ * list, its Zero Trust organization, its Workers (name and script tag) and
+ * its workers.dev subdomain. Tests delete things "in the dashboard" by
+ * editing the maps.
  */
+
+/** The team domain the fake organization answers with. */
+export const FAKE_TEAM_DOMAIN = "appflare-test.cloudflareaccess.com";
 
 export const FAKE_ACC = "acc0000000000000000000000000000a";
 const A = `/accounts/${FAKE_ACC}`;
@@ -46,6 +51,12 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
   const appPolicies = new Map<string, FakePolicy & { appId: string }>();
   const apps = new Map<string, FakeApp>();
   const zones: Array<{ id: string; name: string; status: string; account: { id: string } }> = [];
+  /** The account's Workers, as `GET /workers/scripts` lists them. */
+  const scripts: Array<{ id: string; tag: string }> = [];
+  /** The Zero Trust organization; null answers 404 (the account has none). */
+  const organization: { current: { auth_domain: string; name: string } | null } = {
+    current: { auth_domain: FAKE_TEAM_DOMAIN, name: "Appflare test" },
+  };
   const calls: FakeAccessCall[] = [];
   /** `METHOD /path` keys (a trailing `*` matches a prefix) answered with a 403. */
   const forbidden = new Set<string>();
@@ -110,6 +121,14 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
     if (refused) return json(403, null, [{ code: 10000, message: "Authentication error" }]);
     const one = { page: 1, total_pages: 1 };
 
+    if (key === `GET ${A}/access/organizations`) {
+      return organization.current === null
+        ? json(404, null, [{ code: 12130, message: "access.api.error.not_found" }])
+        : json(200, organization.current);
+    }
+    if (key === `GET ${A}/access/apps`) return json(200, [...apps.values()], [], one);
+    if (key === `GET ${A}/workers/scripts`) return json(200, scripts);
+    if (key === `GET ${A}/workers/subdomain`) return json(200, { subdomain: "appflare-dev" });
     if (key === `GET ${A}/access/service_tokens`) {
       return json(200, [...tokens.values()].map(publicToken), [], one);
     }
@@ -242,6 +261,8 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
     appPolicies,
     apps,
     zones,
+    scripts,
+    organization,
     calls,
     forbidden,
     /** `METHOD /path` of every call, account prefix removed. */

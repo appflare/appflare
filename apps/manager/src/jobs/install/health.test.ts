@@ -17,6 +17,7 @@ import {
   isEdgeErrorPage,
   LIVE_HEALTH_WINDOW_MS,
   liveHealthDelaySeconds,
+  lookupOnce,
   probeHealth,
   probeHealthThroughAccess,
   settleHealthProbe,
@@ -399,6 +400,19 @@ describe("Cloudflare Access's sign-in redirect", () => {
     }
     // A redirect that is not Access's is still the Worker's answer.
     expect(classifyHealthProbe(redirect("/login"), 1, 0).verdict).toBe("healthy");
+  });
+});
+
+describe("lookupOnce", () => {
+  it("runs the lookup once and answers every later call with it", async () => {
+    let lookups = 0;
+    const credentials = lookupOnce(async () => {
+      lookups += 1;
+      return { "CF-Access-Client-Id": "id" };
+    });
+    expect(await credentials()).toEqual({ "CF-Access-Client-Id": "id" });
+    expect(await credentials()).toEqual({ "CF-Access-Client-Id": "id" });
+    expect(lookups).toBe(1);
   });
 });
 

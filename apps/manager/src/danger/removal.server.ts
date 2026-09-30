@@ -4,6 +4,7 @@ import {
   FALLBACK_ORIGIN_NOT_SET,
 } from "@appflare/cf-api";
 import { SANDBOX_BUCKET_NAME, SANDBOX_WORKER_NAME } from "@appflare/schema";
+import { serviceTokenName } from "../access/install-access.server";
 import { createDb } from "../db/client";
 import { deleteSettings, SETTING, writeSettings } from "../db/settings";
 import { GATEWAY_WORKER_NAME, gatewayHostname } from "../gateway/gateway";
@@ -15,6 +16,7 @@ import {
   R2_OBJECTS_PER_LOCAL_STEP,
   R2_OBJECTS_PER_STEP,
 } from "../jobs/uninstall";
+import { RELEASES_PER_CALL } from "../jobs/units/access";
 import type { JobUnitsAccess } from "../jobs/units/client";
 import { failureError } from "../jobs/units/result";
 import { deletesBuildBucket } from "./danger";
@@ -33,7 +35,15 @@ import type { ManagerTargets, RemovalTargets } from "./removal-plan.server";
  *    table (the same pieces, in the same order, as turning it off);
  * 3. the sandbox Worker, then its two container applications (which
  *    Cloudflare keeps when the Worker goes) when the token has Containers;
- * 4. the manager's KV namespace, then its D1 database;
+ * 4. the manager's KV namespace; then, for apps protected with Cloudflare
+ *    Access, each app's own service token is taken out of its Access
+ *    application and deleted (the `releaseAppAccess` job unit, a few apps
+ *    per call, each call in an invocation of its own over `SELF`): the
+ *    applications and the "Appflare users" policy stay, so the apps stay
+ *    protected, and the tokens' secrets would be lost with the database
+ *    anyway. A failure there is reported and does not stop the removal:
+ *    a token left behind is named on the page, left for you to delete in
+ *    the Zero Trust dashboard. Then the D1 database;
  * 5. the Cloudflare Access applications in front of the manager, last, so a
  *    removal that stops at any earlier step leaves the manager protected.
  *
@@ -51,7 +61,8 @@ import type { ManagerTargets, RemovalTargets } from "./removal-plan.server";
  *
  * This runs in one request, not a Workflow: the sandbox bucket's pages each
  * cost one subrequest (each page runs in its own invocation over `SELF`),
- * and the rest is at most about 24 calls.
+ * and so does each call releasing up to ten protected apps' tokens; the
+ * rest is at most about 24 calls.
  */
 
 export type RemovalStepStatus = "done" | "skipped" | "failed";
@@ -310,6 +321,12 @@ export async function runRemoval(deps: RemovalDeps): Promise<RemovalOutcome> {
         deletedOrGone(() => api.kv.deleteNamespace(kvId)),
       );
     }
+    // Protected apps keep their Access applications; their tokens go.
+    const appAccess = targets.appAccessInstalls ?? [];
+    for (let i = 0; i < appAccess.length; i += RELEASES_PER_CALL) {
+      const chunk = appAccess.slice(i, i + RELEASES_PER_CALL);
+      await show(await releaseAppAccessStep(deps, chunk));
+    }
     if (d1Id !== null) {
       let result: StepResult;
       try {
@@ -352,6 +369,44 @@ export async function runRemoval(deps: RemovalDeps): Promise<RemovalOutcome> {
     }
   }
   return { kind: "complete", accessLeft, pageLost };
+}
+
+/**
+ * One call of the `releaseAppAccess` unit for up to `RELEASES_PER_CALL`
+ * protected apps, as a step result that never throws: a failure is shown,
+ * with what is left, and the removal goes on.
+ */
+async function releaseAppAccessStep(
+  deps: Pick<RemovalDeps, "api" | "units">,
+  installIds: string[],
+): Promise<RemovalStep> {
+  const n = installIds.length;
+  const label = `Take Appflare's health-check token out of ${n === 1 ? "a protected app" : `${n} protected apps`}`;
+  const leftBehind = (ids: readonly string[]) =>
+    `Their Access applications stay and keep the apps protected. Delete the service token${ids.length === 1 ? "" : "s"} ${ids.map((id) => `"${serviceTokenName(id)}"`).join(", ")} under Zero Trust, Access, Service credentials once no policy names ${ids.length === 1 ? "it" : "them"}.`;
+  try {
+    const answer = await deps.units.api.releaseAppAccess({
+      accountId: deps.api.accountId,
+      installIds,
+    });
+    if (!answer.ok) throw failureError(answer.failure);
+    const { failed } = answer.value;
+    if (failed.length === 0) {
+      return {
+        label,
+        status: "done",
+        detail:
+          "Done. The Access applications stay, so the apps keep asking for a sign-in; who gets in is managed in the Zero Trust dashboard from now on.",
+      };
+    }
+    return {
+      label,
+      status: "failed",
+      detail: `${failed.map((f) => f.message).join("; ")}. ${leftBehind(failed.map((f) => f.installId))}`,
+    };
+  } catch (error) {
+    return { label, status: "failed", detail: `${message(error)}. ${leftBehind(installIds)}` };
+  }
 }
 
 /**

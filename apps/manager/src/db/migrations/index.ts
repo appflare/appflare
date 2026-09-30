@@ -3,10 +3,12 @@
 import m0000 from "./0000_init.sql?raw";
 import m0001 from "./0001_health_access.sql?raw";
 import m0002 from "./0002_install_access.sql?raw";
+import m0003 from "./0003_install_access_app.sql?raw";
 
 /** Every migration in apply order. `schema_version` counts how many have been applied. */
 export const migrations: readonly { tag: string; sql: string }[] = [
   { tag: "0000_init", sql: m0000 },
   { tag: "0001_health_access", sql: m0001 },
   { tag: "0002_install_access", sql: m0002 },
+  { tag: "0003_install_access_app", sql: m0003 },
 ];

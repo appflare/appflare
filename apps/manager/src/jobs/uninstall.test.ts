@@ -394,6 +394,28 @@ describe("uninstall job: Cloudflare Access protection", () => {
     expect(JSON.stringify(r.logs)).not.toContain("DO-NOT-LEAK");
   });
 
+  it("marks the recorded Access application deleted with the token", async () => {
+    await seedInstall();
+    await recordProtectedInstall({
+      installId: "i1",
+      authSecret: "auth-secret-0123456789abcdef",
+      secret: "secret-DO-NOT-LEAK",
+    });
+    // As protecting the app records it: the application is a resource of its own.
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:access_app:app', 'i1', 'access_app', NULL, 'Appflare: Cut (cut)', 'app-i1', 1)`,
+    ).run();
+    const fake = fakeWorld();
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.step.names).toContain("remove Cloudflare Access protection");
+    expect(fake.world.calls).toContain("DELETE /access/apps/app-i1");
+    expect(r.state("i1:access_app:app")).toBe("deleted");
+    expect((await env.DB.prepare("SELECT * FROM install_access").all()).results).toEqual([]);
+  });
+
   it("only warns when the protection cannot be removed: the app is already gone", async () => {
     await seedInstall();
     await recordProtectedInstall({

@@ -8,7 +8,7 @@ import {
   type CreateAccessAppArgs,
   isServiceTokenInUse,
 } from "@appflare/cf-api";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import {
   ACCESS_FEATURE,
   permissionName,
@@ -17,7 +17,7 @@ import {
 import { createDb } from "../db/client";
 import { install_access, resources, user } from "../db/schema";
 import { deleteSettings, readSettings, SETTING, writeSettings } from "../db/settings";
-import { ACCESS_SERVICE_TOKEN_KIND } from "../installs/resource-kinds";
+import { ACCESS_APP_KIND, ACCESS_SERVICE_TOKEN_KIND } from "../installs/resource-kinds";
 import { openServiceTokenSecret, sealServiceTokenSecret } from "./service-token-secret";
 import { AccessToggleError, withAccessLock } from "./toggle.server";
 
@@ -36,6 +36,9 @@ import { AccessToggleError, withAccessLock } from "./toggle.server";
  *   but one that is not (never protected, or its application deleted in the
  *   dashboard) receives them as sent; with one token per install, a token
  *   that reaches an app's code opens nothing but that app.
+ *
+ * The install's Access application itself is made and kept in step by
+ * protect.server.ts, which composes these helpers.
  *
  * The users policy's id is a `settings` row; each install's token is an
  * `install_access` row (secret sealed, see service-token-secret.ts) and an
@@ -204,7 +207,9 @@ export async function anyProtectedInstall(d1: D1Database): Promise<boolean> {
 /**
  * Records the install's Access application and its token policy once they
  * exist (the install is then protected, and its health checks carry the
- * token), or clears them (null) once the application is gone.
+ * token), or clears them (null) once the application is gone: then its
+ * audience tag, team domain and destinations are cleared too, and its
+ * `access_app` resource is marked deleted.
  */
 export async function recordInstallProtection(
   d1: D1Database,
@@ -212,14 +217,40 @@ export async function recordInstallProtection(
   protection: { accessAppId: string; probesPolicyId: string } | null,
   now: Date = new Date(),
 ): Promise<void> {
-  await createDb(d1)
+  const orm = createDb(d1);
+  const row = orm
     .update(install_access)
     .set({
       access_app_id: protection?.accessAppId ?? null,
       probes_policy_id: protection?.probesPolicyId ?? null,
+      ...(protection === null
+        ? { access_aud: null, access_team_domain: null, access_destinations_json: null }
+        : {}),
       updated_at: now,
     })
     .where(eq(install_access.install_id, installId));
+  if (protection !== null) {
+    await row;
+    return;
+  }
+  await orm.batch([
+    row,
+    orm
+      .update(resources)
+      .set({ deleted_at: now })
+      .where(
+        and(
+          eq(resources.id, accessAppResourceId(installId)),
+          eq(resources.install_id, installId),
+          isNull(resources.deleted_at),
+        ),
+      ),
+  ]);
+}
+
+/** The resource row of the install's Access application (`<install>:access_app:app`). */
+export function accessAppResourceId(installId: string): string {
+  return `${installId}:${ACCESS_APP_KIND}:app`;
 }
 
 /** The resource row of the install's token (`<install>:access_service_token:token`). */
@@ -436,7 +467,17 @@ export async function removeInstallAccess(
 ): Promise<{ removed: boolean; usersPolicy: "none" | "in-use" | "removed" | "gone" | null }> {
   const record = await readInstallAccess(deps.db, installId);
   if (record === null) return { removed: false, usersPolicy: null };
-  const appId = record.accessAppId;
+  // An application whose creation was never recorded (its answer was lost)
+  // is found by its token policy, whose name carries the install id: its
+  // policy names the token, which cannot be deleted before it.
+  const appId =
+    record.accessAppId ??
+    (
+      await asAccessError(INSTALL_ACCESS_MESSAGES.policiesPermission, () =>
+        deps.client.access.listApps(),
+      )
+    ).find((app) => (app.policies ?? []).some((p) => p.name === probesPolicyName(installId)))?.id ??
+    null;
   if (appId !== null) {
     try {
       await asAccessError(INSTALL_ACCESS_MESSAGES.policiesPermission, () =>
@@ -754,28 +795,46 @@ const READ_ONLY_APP_FIELDS = new Set([
 ]);
 
 /**
- * The body that puts `app` back as it is, minus the install's token policy:
- * every setting the application answered with (destinations, session
- * duration, cookies, ...) and every other policy by id, "Appflare users"
- * included. A `PUT` resets what it leaves out, hence the full body.
+ * Every setting `app` answered with (destinations, session duration,
+ * cookies, ...), without the fields that are not settings: what a `PUT`
+ * sends back to keep them, since it resets whatever it leaves out.
  */
-export function appWithoutProbesPolicy(
-  app: AccessApp,
-  installId: string,
-  probesPolicyId: string | null,
-): CreateAccessAppArgs {
+export function accessAppSettings(app: AccessApp): Record<string, unknown> {
   const settings: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(app)) {
     if (READ_ONLY_APP_FIELDS.has(key)) continue;
     if (key === "domain" && (value === null || value === "")) continue;
     settings[key] = value;
   }
-  const policies = (app.policies ?? [])
-    .filter((p) => p.id !== probesPolicyId && p.name !== probesPolicyName(installId))
-    .map((p) =>
-      p.precedence === undefined ? { id: p.id } : { id: p.id, precedence: p.precedence },
-    );
-  return { ...settings, type: "self_hosted", policies } as CreateAccessAppArgs;
+  return settings;
+}
+
+/** `app`'s policies as references (`{ id, precedence }`), which a `PUT` keeps as they are. */
+export function policyReferences(
+  policies: AccessApp["policies"],
+): Array<{ id: string; precedence?: number }> {
+  return (policies ?? []).map((p) =>
+    p.precedence === undefined ? { id: p.id } : { id: p.id, precedence: p.precedence },
+  );
+}
+
+/**
+ * The body that puts `app` back as it is, minus the install's token policy:
+ * every setting the application answered with and every other policy by
+ * id, "Appflare users" included. A `PUT` resets what it leaves out, hence
+ * the full body.
+ */
+export function appWithoutProbesPolicy(
+  app: AccessApp,
+  installId: string,
+  probesPolicyId: string | null,
+): CreateAccessAppArgs {
+  const policies = policyReferences(
+    (app.policies ?? []).filter(
+      (p) => p.id !== probesPolicyId && p.name !== probesPolicyName(installId),
+    ),
+  );
+  return { ...accessAppSettings(app), type: "self_hosted", policies } as CreateAccessAppArgs;
 }
 
 export interface RemovalRelease {
@@ -790,14 +849,29 @@ export interface RemovalRelease {
  * answered, so destinations, session settings and the "Appflare users"
  * reference stay), then its token is deleted. The applications and "Appflare
  * users" stay, so every app keeps asking its users to sign in once the
- * manager is gone. One install failing does not stop the others.
+ * manager is gone. One install failing does not stop the others. With
+ * `installIds`, only those installs (the removal releases a few per call,
+ * each call in an invocation of its own).
  */
 export async function releaseAppAccessForRemoval(
   deps: Pick<InstallAccessDeps, "db" | "client" | "now">,
+  installIds?: readonly string[],
 ): Promise<RemovalRelease> {
   return withAccessLock(deps.db, async () => {
     const out: RemovalRelease = { released: [], failed: [] };
-    for (const record of await listInstallAccess(deps.db)) {
+    const records =
+      installIds === undefined
+        ? await listInstallAccess(deps.db)
+        : installIds.length === 0
+          ? []
+          : (
+              await createDb(deps.db)
+                .select()
+                .from(install_access)
+                .where(inArray(install_access.install_id, [...installIds]))
+                .orderBy(install_access.install_id)
+            ).map(recordOf);
+    for (const record of records) {
       try {
         const appId = record.accessAppId;
         if (appId !== null) {

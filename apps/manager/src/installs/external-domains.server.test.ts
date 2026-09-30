@@ -1,11 +1,15 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { createClient } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
+import { protectInstall } from "../access/protect.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { type ReadyGateway, readGateway, setUpGatewayCore } from "../gateway/gateway.server";
 import { accessChallenge } from "../test/access-sign-in";
+import { fakeAccessAccount } from "../test/fake-access-account";
+import { ACC, TOKEN } from "../test/fake-account";
 import { fakeSaas, GATEWAY_ZONE } from "../test/fake-saas";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { externalDomainPhase } from "./external-domain-input";
@@ -549,5 +553,54 @@ describe("parseExternalDomainRef", () => {
     expect(parseExternalDomainRef("ch1")).toBeNull();
     expect(parseExternalDomainRef(null)).toBeNull();
     expect(parseExternalDomainRef("a/b/c")).toBeNull();
+  });
+});
+
+describe("external domains of an app protected with Cloudflare Access", () => {
+  const AUTH = "auth-secret-0123456789abcdef0123456789";
+
+  /** One client for both fakes, with every call in one list, in order. */
+  async function protectedWorld() {
+    const saas = await withGateway();
+    const access = fakeAccessAccount({ now: () => NOW });
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    const order: string[] = [];
+    const fetch = async (input: string, init?: RequestInit) => {
+      const path = new URL(input).pathname;
+      order.push(`${init?.method ?? "GET"} ${path.replace(/^\/client\/v4\/accounts\/[^/]+/, "")}`);
+      return path.includes("/access/") || path.endsWith("/workers/scripts")
+        ? access.fetch(input, init)
+        : saas.fetch(input, init);
+    };
+    const api = createClient({ accountId: ACC, token: TOKEN, fetch });
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:worker:cut', ?1, 'worker', NULL, 'cut', 'cut', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+    ).run();
+    await protectInstall(
+      { db: env.DB, client: api, authSecret: AUTH, now: () => NOW },
+      { installId: INSTALL_ID },
+    );
+    order.length = 0;
+    return { saas, access, api, order, deps: { ...deps(saas), api } };
+  }
+
+  it("refuses an external domain for a protected app, before claiming or creating anything", async () => {
+    const w = await protectedWorld();
+    await expect(
+      addExternalDomainCore(w.deps, {
+        installId: INSTALL_ID,
+        hostname: "go.customer.test",
+        validation: "http",
+      }),
+    ).rejects.toThrow("Appflare can't yet protect external domains with Cloudflare Access");
+    expect(w.saas.world.hostnames).toEqual([]);
+    expect(await rows()).toEqual([]);
+    expect(w.order).toEqual([]);
   });
 });

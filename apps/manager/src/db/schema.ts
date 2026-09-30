@@ -61,6 +61,7 @@ export const RESOURCE_KINDS = [
   "worker_route",
   "email_route",
   "access_service_token",
+  "access_app",
 ] as const;
 
 /**
@@ -577,14 +578,15 @@ export const passkey_host = sqliteTable("passkey_host", {
  * Cloudflare Access protection of one install (access/install-access.server.ts):
  * the service token only the manager's health checks of this install sign
  * in with, and, once the install is protected, its Access application and
- * the `non_identity` policy on it that names the token. One token per
+ * the `non_identity` policy on it that names the token, with its audience
+ * tag, the team domain and the destinations last written to it. One token per
  * install, so a token only ever opens the app it was made for: an app that
  * is not behind Access receives the token's headers as they were sent.
  * `token_secret` is the client secret sealed with a key derived from
  * `BETTER_AUTH_SECRET` and bound to the install and token ids; it is never
  * stored in plain text. The token is also a `resources` row
- * (`access_service_token`), so everything made for the install stays
- * findable from it.
+ * (`access_service_token`), and so is the application (`access_app`), so
+ * everything made for the install stays findable from it.
  */
 export const install_access = sqliteTable("install_access", {
   install_id: text("install_id")
@@ -599,6 +601,16 @@ export const install_access = sqliteTable("install_access", {
   token_secret: text("token_secret").notNull(),
   /** When Cloudflare said the token expires; null when it did not say. */
   token_expires_at: timestamp("token_expires_at"),
+  /** The application's audience tag (the `aud` of its JWTs); null until it exists. */
+  access_aud: text("access_aud"),
+  /** The Zero Trust team domain (`<team>.cloudflareaccess.com`) its JWTs come from. */
+  access_team_domain: text("access_team_domain"),
+  /**
+   * What the application covers, as last written: `{ destinations, workerTags }`
+   * (access/protect.server.ts), so a change of the install's addresses is
+   * written only when it changes something.
+   */
+  access_destinations_json: text("access_destinations_json"),
   created_at: timestamp("created_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
 });
