@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Logo } from "./logo";
+import { MARK_SHAPES } from "./logo-morph";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,6 +12,7 @@ let reducedMotion = false;
 
 beforeEach(() => {
   reducedMotion = false;
+  vi.useFakeTimers({ now: 0, toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
   vi.spyOn(window, "matchMedia").mockImplementation(
     (query: string) =>
       ({
@@ -26,6 +28,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -35,7 +38,20 @@ function logo(): SVGSVGElement {
   return svg;
 }
 
-const morphing = () => logo().classList.contains("appflare-logo-morph");
+/** Whether the mark is anywhere but at rest: reshaped or turned. */
+const morphing = () => {
+  const shapes = [...logo().querySelectorAll("path[data-shape]")].map((path) =>
+    path.getAttribute("d"),
+  );
+  const turned = logo().querySelector(".appflare-morph-turn")?.hasAttribute("transform");
+  return shapes.length > 0 && (turned || shapes.some((d, index) => d !== MARK_SHAPES[index]));
+};
+
+function advance(ms: number) {
+  act(() => {
+    vi.advanceTimersByTime(ms);
+  });
+}
 
 /** React derives `onPointerEnter` from `pointerover` coming from outside the element. */
 function enter(pointerType: string) {
@@ -54,13 +70,6 @@ function leave() {
   });
 }
 
-function finish(animationName: string, type: "animationend" | "animationcancel" = "animationend") {
-  const turn = logo().querySelector(".appflare-morph-turn");
-  act(() => {
-    turn?.dispatchEvent(new AnimationEvent(type, { bubbles: true, animationName }));
-  });
-}
-
 describe("Logo", () => {
   it("draws the mark statically unless asked to move", () => {
     act(() => root.render(<Logo height={24} />));
@@ -71,46 +80,39 @@ describe("Logo", () => {
 
   it("plays the loading motion once when a mouse enters, and not again until it ends", () => {
     act(() => root.render(<Logo height={24} morphOnHover />));
-    expect(logo().querySelector("mask circle.appflare-morph-ring")).not.toBeNull();
+    expect(logo().querySelectorAll("path[data-shape]")).toHaveLength(5);
     expect(morphing()).toBe(false);
 
+    // The pass starts on the full mark, so the ring opens as the pointer arrives.
     enter("mouse");
+    advance(300);
     expect(morphing()).toBe(true);
 
-    // Leaving and coming back mid-pass neither stops nor restarts it.
+    // Leaving and coming back mid-pass neither stops nor restarts it: the
+    // pass ends 2 s after the first entry, when a restarted one would still
+    // be a spinning ring.
     leave();
+    advance(700);
     enter("mouse");
-    expect(morphing()).toBe(true);
-
-    finish("some-other-animation");
-    expect(morphing()).toBe(true);
-    finish("appflare-loader-turn");
+    advance(1100);
     expect(morphing()).toBe(false);
 
     leave();
     enter("pen");
-    expect(morphing()).toBe(true);
-  });
-
-  it("comes to rest when a pass is cancelled, and plays again on the next entry", () => {
-    act(() => root.render(<Logo height={24} morphOnHover />));
-    enter("mouse");
-    expect(morphing()).toBe(true);
-    finish("appflare-loader-ring", "animationcancel");
-    expect(morphing()).toBe(false);
-    leave();
-    enter("mouse");
+    advance(300);
     expect(morphing()).toBe(true);
   });
 
   it("leaves touch and reduced motion alone", () => {
     act(() => root.render(<Logo height={24} morphOnHover />));
     enter("touch");
+    advance(300);
     expect(morphing()).toBe(false);
     leave();
 
     reducedMotion = true;
     enter("mouse");
+    advance(300);
     expect(morphing()).toBe(false);
   });
 });

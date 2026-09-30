@@ -1,5 +1,5 @@
 import { cn } from "@cloudflare/kumo";
-import { type AnimationEvent, type PointerEvent, useEffect, useRef, useState } from "react";
+import { type PointerEvent, useState } from "react";
 import { MorphMark } from "./appflare-loader";
 import { CLOUD_ORANGE, CLOUD_PATH, INK_PATHS, VIEW_BOX } from "./logo-paths";
 
@@ -10,9 +10,6 @@ const INK = "light-dark(#000, #fff)";
 const MARK_PATHS = INK_PATHS.slice(0, 4);
 const LETTER_PATHS = INK_PATHS.slice(4);
 
-/** The loader's keyframes, which the pass plays; other animations in the logo are not ours. */
-const isOurs = (animationName: string) => animationName.startsWith("appflare-loader-");
-
 /**
  * One pass of the loading indicator's motion when a mouse or pen enters
  * the logo. A pass is never restarted before it ends, so the next one
@@ -21,30 +18,15 @@ const isOurs = (animationName: string) => animationName.startsWith("appflare-loa
  */
 function useMorphOnce(enabled: boolean) {
   const [playing, setPlaying] = useState(false);
-  const ref = useRef<SVGSVGElement>(null);
-  // React has no prop for `animationcancel`; a pass cut short (the element
-  // hidden mid-pass, say) must still clear, or the next hover would not play.
-  useEffect(() => {
-    const svg = ref.current;
-    if (!enabled || !svg) return;
-    const onCancel = (event: globalThis.AnimationEvent) => {
-      if (isOurs(event.animationName)) setPlaying(false);
-    };
-    svg.addEventListener("animationcancel", onCancel);
-    return () => svg.removeEventListener("animationcancel", onCancel);
-  }, [enabled]);
   const onPointerEnter = (event: PointerEvent) => {
     if (playing || event.pointerType === "touch") return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     setPlaying(true);
   };
-  const onAnimationEnd = (event: AnimationEvent) => {
-    if (isOurs(event.animationName)) setPlaying(false);
-  };
   return {
     playing,
-    ref,
-    handlers: enabled ? { onPointerEnter, onAnimationEnd } : {},
+    onPassEnd: () => setPlaying(false),
+    handlers: enabled ? { onPointerEnter } : {},
   };
 }
 
@@ -75,17 +57,20 @@ export function Logo({
       viewBox={`0 0 ${VIEW_BOX.width} ${VIEW_BOX.height}`}
       width={width}
       height={height}
-      className={cn("shrink-0", morph.playing && "appflare-logo-morph", className)}
+      className={cn("shrink-0", className)}
       role="img"
       aria-label="Appflare"
-      ref={morph.ref}
       {...morph.handlers}
     >
       {morphOnHover ? (
         <>
           {/* The square mark scaled into the logo's mark box, same place and size. */}
           <svg viewBox="0 0 44 44" width={VIEW_BOX.height} height={VIEW_BOX.height} aria-hidden>
-            <MorphMark ink={INK} />
+            <MorphMark
+              ink={INK}
+              motion={morph.playing ? "pass" : "rest"}
+              onPassEnd={morph.onPassEnd}
+            />
           </svg>
           <g style={{ fill: INK }}>
             {LETTER_PATHS.map((d) => (
