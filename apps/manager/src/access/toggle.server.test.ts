@@ -12,6 +12,7 @@ import { readAccessConfig, writeAccessConfig } from "./config";
 import {
   ACCESS_MESSAGES,
   AccessToggleError,
+  checkAccessMove,
   checkAccessPrerequisites,
   disableAccess,
   enableAccess,
@@ -174,6 +175,62 @@ describe("checkAccessPrerequisites", () => {
       ok: false,
       problem: "app-exists",
     });
+  });
+
+  it("refuses a hostname an application protects through its destinations", async () => {
+    const { deps } = setup({
+      ...readyRoutes(),
+      [`GET ${A}/access/apps`]: {
+        result: [
+          {
+            id: "multi",
+            aud: "x",
+            name: "Several addresses",
+            domain: null,
+            destinations: [
+              { type: "worker", worker_id: "tag-1" },
+              { type: "public", uri: "other.example.com" },
+              { type: "public", uri: HOST.toUpperCase() },
+            ],
+          },
+        ],
+        result_info: { page: 1, total_pages: 1 },
+      },
+    });
+    expect(await checkAccessPrerequisites(deps)).toEqual({
+      ok: false,
+      problem: "app-exists",
+      message: ACCESS_MESSAGES.appExists("Several addresses"),
+    });
+  });
+
+  it("refuses a hostname listed only in self_hosted_domains", async () => {
+    const { deps } = setup({
+      ...readyRoutes(),
+      [`GET ${A}/access/apps`]: {
+        result: [{ id: "old", aud: "x", name: "Old", self_hosted_domains: [HOST] }],
+        result_info: { page: 1, total_pages: 1 },
+      },
+    });
+    expect(await checkAccessPrerequisites(deps)).toMatchObject({ problem: "app-exists" });
+  });
+
+  it("does not count an application protecting only a path of the hostname", async () => {
+    const { deps } = setup({
+      ...readyRoutes(),
+      [`GET ${A}/access/apps`]: {
+        result: [
+          {
+            id: "path",
+            aud: "x",
+            domain: null,
+            destinations: [{ type: "public", uri: `${HOST}/open/*` }],
+          },
+        ],
+        result_info: { page: 1, total_pages: 1 },
+      },
+    });
+    expect(await checkAccessPrerequisites(deps)).toMatchObject({ ok: true });
   });
 
   it("refuses local development hosts", async () => {
@@ -357,5 +414,89 @@ describe("syncAccessAdmins", () => {
     });
     await enableAccess(deps);
     await expect(syncAccessAdmins(deps)).rejects.toThrow(ACCESS_MESSAGES.policyMissing);
+  });
+});
+
+describe("checkAccessMove", () => {
+  const TARGET = "gate.example.com";
+
+  async function accessOnHere() {
+    await writeAccessConfig(env.DB, {
+      appId: "app-1",
+      policyId: "pol-1",
+      healthAppId: "app-2",
+      aud: "aud-1",
+      teamDomain: TEAM,
+      domain: HOST,
+      enabledAt: NOW.toISOString(),
+    });
+  }
+
+  function appsRoute(extra: unknown[]): Routes {
+    return {
+      ...readyRoutes(),
+      [`GET ${A}/access/apps`]: {
+        result: [
+          { id: "app-1", aud: "aud-1", domain: HOST },
+          { id: "app-2", aud: "aud-2", domain: `${HOST}/api/health` },
+          ...extra,
+        ],
+        result_info: { page: 1, total_pages: 1 },
+      },
+    };
+  }
+
+  it("is null while protection is off", async () => {
+    const { api, deps } = setup(readyRoutes());
+    expect(await checkAccessMove(deps, TARGET)).toBeNull();
+    expect(api.calls).toHaveLength(0);
+  });
+
+  it("returns the protection when nothing else protects the new hostname", async () => {
+    await accessOnHere();
+    const { deps } = setup(appsRoute([]));
+    expect(await checkAccessMove(deps, TARGET)).toMatchObject({ appId: "app-1", domain: HOST });
+  });
+
+  it("refuses a hostname another application protects through its destinations", async () => {
+    await accessOnHere();
+    const { deps } = setup(
+      appsRoute([
+        {
+          id: "other",
+          aud: "x",
+          name: "Gate",
+          domain: null,
+          destinations: [{ type: "public", uri: TARGET }],
+        },
+      ]),
+    );
+    await expect(checkAccessMove(deps, TARGET)).rejects.toThrow(ACCESS_MESSAGES.appExists("Gate"));
+  });
+
+  it("refuses a health path written in another case", async () => {
+    await accessOnHere();
+    const { deps } = setup(
+      appsRoute([{ id: "other", aud: "x", name: "Upper", domain: `${TARGET}/API/Health` }]),
+    );
+    await expect(checkAccessMove(deps, TARGET)).rejects.toThrow(ACCESS_MESSAGES.appExists("Upper"));
+  });
+
+  it("refuses when another application's destinations cover the new health path", async () => {
+    await accessOnHere();
+    const { deps } = setup(
+      appsRoute([
+        {
+          id: "other",
+          aud: "x",
+          name: "Health",
+          domain: null,
+          destinations: [{ type: "public", uri: `${TARGET}/api/health` }],
+        },
+      ]),
+    );
+    await expect(checkAccessMove(deps, TARGET)).rejects.toThrow(
+      ACCESS_MESSAGES.appExists("Health"),
+    );
   });
 });

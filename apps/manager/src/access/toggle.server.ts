@@ -2,6 +2,7 @@ import {
   AccessCertsError,
   type AccessIdentityProvider,
   type AccessPolicyArgs,
+  accessAppCoverage,
   CloudflareApiError,
   type CloudflareClient,
   type FetchLike,
@@ -229,7 +230,9 @@ export async function checkAccessPrerequisites(deps: AccessToggleDeps): Promise<
     );
   }
 
-  const existing = apps.find((app) => (app.domain ?? "").toLowerCase() === hostname);
+  // An application may protect the hostname through `domain` or through one
+  // of several destinations (then `domain` is null), so read them all.
+  const existing = apps.find((app) => accessAppCoverage(app).uris.includes(hostname));
   if (existing !== undefined) {
     return problem("app-exists", ACCESS_MESSAGES.appExists(existing.name ?? existing.id));
   }
@@ -417,12 +420,14 @@ export async function checkAccessMove(
   }
   const ours = new Set([config.appId, config.healthAppId]);
   const target = hostname.toLowerCase();
-  const taken = apps.find(
-    (app) =>
-      !ours.has(app.id) &&
-      ((app.domain ?? "").toLowerCase() === target ||
-        (app.domain ?? "").toLowerCase() === `${target}/api/health`),
-  );
+  const takenUris = [target, `${target}/api/health`];
+  const taken = apps.find((app) => {
+    if (ours.has(app.id)) return false;
+    // Paths compared in lower case, as before: a false conflict is cheaper
+    // than a missed one.
+    const uris = accessAppCoverage(app).uris.map((uri) => uri.toLowerCase());
+    return takenUris.some((uri) => uris.includes(uri));
+  });
   if (taken !== undefined) {
     throw new AccessToggleError(ACCESS_MESSAGES.appExists(taken.name ?? taken.id));
   }
