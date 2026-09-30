@@ -9,87 +9,10 @@
 @source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
 
 /*
- * Appflare's loading indicator (`AppflareLoader`) and the logo's hover
- * (`Logo` with `morphOnHover`), both drawn by `MorphMark`: a circular mask
- * over the mark whose ring swells from a thin band (stroke 3.6 of the
- * 44-unit box) into a disc that uncovers the whole mark (stroke 42), while
- * the mark turns into place, holds, and turns on as the ring thins again.
- * One loop is 2 s; only `stroke-width` and `transform` move. At rest, with
- * neither class on an ancestor, the whole mark shows.
+ * Appflare's loading indicator (`AppflareLoader`) moves in script
+ * (`logo-morph.ts`, driven from `appflare-loader.tsx`). When the system asks
+ * for reduced motion the loader is the still mark, pulsing gently instead.
  */
-.appflare-morph-ring {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 42px;
-}
-
-.appflare-morph-turn {
-  transform-box: view-box;
-  transform-origin: 22px 22px;
-}
-
-.appflare-loader .appflare-morph-ring,
-.appflare-logo-morph .appflare-morph-ring {
-  animation-name: appflare-loader-ring;
-}
-
-.appflare-loader .appflare-morph-turn,
-.appflare-logo-morph .appflare-morph-turn {
-  animation-name: appflare-loader-turn;
-}
-
-.appflare-loader .appflare-morph-ring,
-.appflare-loader .appflare-morph-turn {
-  animation-duration: 2s;
-  animation-timing-function: ease-in-out;
-  animation-iteration-count: infinite;
-  animation-fill-mode: both;
-}
-
-/*
- * The logo's single pass is one whole loop that starts and ends at 66 %,
- * inside the hold where the full mark shows, so the logo neither jumps when
- * it starts nor when it comes to rest, and the ring starts to thin as soon
- * as the pointer arrives.
- */
-.appflare-logo-morph .appflare-morph-ring,
-.appflare-logo-morph .appflare-morph-turn {
-  animation-duration: 2s;
-  animation-timing-function: ease-in-out;
-  animation-delay: -1.32s;
-  animation-iteration-count: 1.66;
-}
-
-@keyframes appflare-loader-ring {
-  0%,
-  22% {
-    stroke-width: 3.6px;
-  }
-  45%,
-  68% {
-    stroke-width: 42px;
-  }
-  88%,
-  100% {
-    stroke-width: 3.6px;
-  }
-}
-
-@keyframes appflare-loader-turn {
-  0% {
-    transform: rotate(-180deg);
-    animation-timing-function: cubic-bezier(0.2, 0.6, 0.35, 1);
-  }
-  25%,
-  75% {
-    transform: rotate(0deg);
-    animation-timing-function: cubic-bezier(0.65, 0, 0.8, 0.4);
-  }
-  100% {
-    transform: rotate(180deg);
-  }
-}
-
 @keyframes appflare-loader-pulse {
   0%,
   100% {
@@ -100,15 +23,7 @@
   }
 }
 
-/* Reduced motion: the loader is the still mark, pulsing gently; the logo stays still. */
 @media (prefers-reduced-motion: reduce) {
-  .appflare-loader .appflare-morph-ring,
-  .appflare-loader .appflare-morph-turn,
-  .appflare-logo-morph .appflare-morph-ring,
-  .appflare-logo-morph .appflare-morph-turn {
-    animation: none;
-  }
-
   .appflare-loader {
     animation: appflare-loader-pulse 2s ease-in-out infinite both;
   }

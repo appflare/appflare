@@ -1,14 +1,28 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppflareLoader, loaderPixels } from "./appflare-loader";
+import { MARK_SHAPES } from "./logo-morph";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let container: HTMLDivElement;
 let root: Root;
 
+let reducedMotion = false;
+
 beforeEach(() => {
+  reducedMotion = false;
+  vi.useFakeTimers({ now: 0, toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+  vi.spyOn(window, "matchMedia").mockImplementation(
+    (query: string) =>
+      ({
+        matches: query === "(prefers-reduced-motion: reduce)" && reducedMotion,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }) as unknown as MediaQueryList,
+  );
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -17,7 +31,19 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
+
+/** The five shapes' path data, quadrants then cloud. */
+const shapes = (svg: SVGSVGElement | undefined) =>
+  [...(svg?.querySelectorAll("path[data-shape]") ?? [])].map((path) => path.getAttribute("d"));
+
+function advance(ms: number) {
+  act(() => {
+    vi.advanceTimersByTime(ms);
+  });
+}
 
 function loaders(): SVGSVGElement[] {
   return [...container.querySelectorAll<SVGSVGElement>("svg.appflare-loader")];
@@ -31,9 +57,9 @@ describe("AppflareLoader", () => {
     expect(svg?.getAttribute("aria-label")).toBe("Loading");
     expect(svg?.getAttribute("viewBox")).toBe("0 0 44 44");
     expect(svg?.getAttribute("class")).toContain("text-kumo-subtle");
-    // Four quadrants and the cloud, behind the ring mask.
-    expect(svg?.querySelectorAll("path")).toHaveLength(5);
-    expect(svg?.querySelector("mask circle.appflare-morph-ring")).not.toBeNull();
+    // Four quadrants and the cloud, drawn as the plain mark until the first frame.
+    expect(shapes(svg)).toEqual(MARK_SHAPES);
+    expect(svg?.querySelector("mask path[data-gap]")).not.toBeNull();
   });
 
   it("takes another label", () => {
@@ -86,10 +112,45 @@ describe("AppflareLoader", () => {
     const ids = loaders().map((svg) => {
       const id = svg.querySelector("mask")?.getAttribute("id") ?? "";
       expect(id).toMatch(/^[\w-]+$/);
-      expect(svg.querySelector(`g[mask="url(#${id})"]`)).not.toBeNull();
+      expect(svg.querySelector(`path[mask="url(#${id})"]`)).not.toBeNull();
       return id;
     });
     expect(ids).toHaveLength(2);
     expect(new Set(ids).size).toBe(2);
+  });
+
+  it("moves on every frame, every loader in step with the others", () => {
+    act(() =>
+      root.render(
+        <>
+          <AppflareLoader size="sm" />
+          <AppflareLoader size="lg" />
+        </>,
+      ),
+    );
+    // 0.8 s into the loop the arcs are growing into the quadrants.
+    advance(800);
+    const [small, large] = loaders();
+    expect(shapes(small)).not.toEqual(MARK_SHAPES);
+    expect(shapes(large)).toEqual(shapes(small));
+    expect(small?.querySelector("path[data-gap]")?.getAttribute("d")).not.toBe("");
+    // 0.2 s later the mark is whole and upright, in the hold.
+    advance(250);
+    expect(shapes(small)).toEqual(MARK_SHAPES);
+    expect(small?.querySelector(".appflare-morph-turn")?.hasAttribute("transform")).toBe(false);
+    expect(small?.querySelector("path[data-gap]")?.getAttribute("d")).toBe("");
+    // Then it opens into the ring again, turning.
+    advance(700);
+    expect(shapes(small)).not.toEqual(MARK_SHAPES);
+    expect(small?.querySelector(".appflare-morph-turn")?.getAttribute("transform")).toMatch(
+      /^rotate\(/,
+    );
+  });
+
+  it("stays the still mark when the system asks for reduced motion", () => {
+    reducedMotion = true;
+    act(() => root.render(<AppflareLoader />));
+    advance(800);
+    expect(shapes(loaders()[0])).toEqual(MARK_SHAPES);
   });
 });
