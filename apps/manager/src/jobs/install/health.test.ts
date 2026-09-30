@@ -12,11 +12,13 @@ import {
   healthColumns,
   healthPathOfManifest,
   isAccessChallenge,
+  isAccessChallengeFor,
   isEdge1042,
   isEdgeErrorPage,
   LIVE_HEALTH_WINDOW_MS,
   liveHealthDelaySeconds,
   probeHealth,
+  probeHealthThroughAccess,
   settleHealthProbe,
   versionMismatch,
 } from "./health";
@@ -397,5 +399,67 @@ describe("Cloudflare Access's sign-in redirect", () => {
     }
     // A redirect that is not Access's is still the Worker's answer.
     expect(classifyHealthProbe(redirect("/login"), 1, 0).verdict).toBe("healthy");
+  });
+});
+
+describe("probeHealthThroughAccess", () => {
+  const HOST = "cut.appflare-dev.workers.dev";
+  const PREVIEW = "0a1b2c3d-cut.appflare-dev.workers.dev";
+  const url = `https://${HOST}/api/health`;
+  const credentials = async () => ({ "CF-Access-Client-Secret": "s" });
+
+  it("probes again with the credentials only after Access's sign-in for the same host", async () => {
+    const sent: Array<Record<string, string>> = [];
+    const probe = await probeHealthThroughAccess(
+      async (_u, init) => {
+        const headers = { ...(init?.headers as Record<string, string>) };
+        sent.push(headers);
+        return headers["CF-Access-Client-Secret"] === "s"
+          ? new Response("ok")
+          : accessChallenge(HOST, "/api/health");
+      },
+      url,
+      credentials,
+    );
+    expect(probe).toMatchObject({ kind: "response", status: 200 });
+    expect(sent.map((h) => h["CF-Access-Client-Secret"])).toEqual([undefined, "s"]);
+  });
+
+  it("never sends them for an app's own answer, a redirect elsewhere, or another host's sign-in", async () => {
+    for (const answer of [
+      () => new Response("ok"),
+      () => new Response(null, { status: 302, headers: { location: "https://elsewhere.net/" } }),
+      () => accessChallenge(PREVIEW),
+    ]) {
+      let asked = 0;
+      const sent: Array<Record<string, string>> = [];
+      await probeHealthThroughAccess(
+        async (_u, init) => {
+          sent.push({ ...(init?.headers as Record<string, string>) });
+          return answer();
+        },
+        url,
+        async () => {
+          asked += 1;
+          return { "CF-Access-Client-Secret": "s" };
+        },
+      );
+      expect(asked).toBe(0);
+      expect(sent).toHaveLength(1);
+    }
+  });
+
+  it("keeps the sign-in answer when there are no credentials to send", async () => {
+    let calls = 0;
+    const probe = await probeHealthThroughAccess(
+      async () => {
+        calls += 1;
+        return accessChallenge(HOST);
+      },
+      url,
+      async () => undefined,
+    );
+    expect(calls).toBe(1);
+    expect(isAccessChallengeFor(probe, url)).toBe(true);
   });
 });

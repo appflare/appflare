@@ -15,7 +15,12 @@ import {
 } from "../cloudflare/token-template";
 import { createDb } from "../db/client";
 import { type HealthStatus, installs, resources } from "../db/schema";
-import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
+import {
+  healthCheckOfManifest,
+  type InstallProbeHeaders,
+  probeHealthThroughAccess,
+  settleHealthProbe,
+} from "../jobs/install/health";
 import { checkHostnameInZone } from "./custom-domain-input";
 import { CUSTOM_DOMAIN_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
 import {
@@ -562,6 +567,8 @@ export async function checkCustomDomainCore(
   deps: {
     db: D1Database;
     fetch: FetchLike;
+    /** The service token's headers, for a domain the account controls (Cloudflare Access). */
+    probeHeaders?: InstallProbeHeaders;
     /** For turning workers.dev off; without it a live domain is only recorded. */
     api?: () => Promise<Pick<CloudflareClient, "workers">>;
     now?: () => Date;
@@ -579,7 +586,12 @@ export async function checkCustomDomainCore(
   const domain = await readDomain(deps.db, request, { wildcard: true });
   const check = healthCheckOfManifest(install.manifestJson);
   const url = `https://${domain.name}${check.path}`;
-  const probe = await probeHealth(deps.fetch, url);
+  const { probeHeaders } = deps;
+  const probe = await probeHealthThroughAccess(
+    deps.fetch,
+    url,
+    probeHeaders === undefined ? undefined : () => probeHeaders(install.id, url),
+  );
   const settled = settleHealthProbe(probe, check.mode);
   let workersDevTurnedOff = false;
   let refresh: VarsRefresh = NO_VARS_REFRESH;

@@ -85,9 +85,9 @@ export class AccessToggleError extends Error {
   override name = "AccessToggleError";
 }
 
-const [APPS_GROUP, ORG_GROUP] = splitPermissionGroups().optional.filter(
-  (g) => g.onlyFor === ACCESS_FEATURE,
-);
+const ACCESS_GROUPS = splitPermissionGroups().optional.filter((g) => g.onlyFor === ACCESS_FEATURE);
+const APPS_GROUP = ACCESS_GROUPS.find((g) => g.key === "access");
+const ORG_GROUP = ACCESS_GROUPS.find((g) => g.key === "access_acct");
 const APPS_PERMISSION = APPS_GROUP ? permissionName(APPS_GROUP) : "Access: Apps and Policies: Edit";
 const ORG_PERMISSION = ORG_GROUP
   ? permissionName(ORG_GROUP)

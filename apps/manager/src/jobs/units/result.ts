@@ -58,6 +58,12 @@ export interface UnitEnv {
   GITHUB_TOKEN?: string;
   /** The sandbox Worker, whose `fetch` serves sandbox builds (artifact host kind `sandbox`). */
   SANDBOX?: unknown;
+  /**
+   * The manager's D1 and `BETTER_AUTH_SECRET`: a domain check reads the Access
+   * service token from D1 and opens its sealed secret (probe-credentials.server.ts).
+   */
+  DB?: D1Database;
+  BETTER_AUTH_SECRET?: string;
 }
 
 /** Test seams; production uses the global `fetch`, `Date.now`, and timers. */

@@ -39,7 +39,7 @@ import {
   type HealthProbe,
   type HealthSettlement,
   type HealthVerdict,
-  probeHealth,
+  probeHealthThroughAccess,
   versionMismatch,
 } from "./health";
 import type { CreatedResource } from "./metadata";
@@ -677,6 +677,12 @@ export interface ProbePhaseOptions {
   maxAttempts?: number;
   /** When set, a JSON answer reporting another `version` fails (see `versionMismatch`). */
   expectVersion?: string;
+  /**
+   * The install whose Worker this is: while it is protected with Cloudflare
+   * Access, the probe carries its own service token. Left out for Workers
+   * that are not the install's own address (another Worker of the app).
+   */
+  installId?: string;
   /** How the default verdict reads an answer (the app's `install.health.mode`). */
   mode?: HealthMode;
   /** Replaces the default verdict (`classifyHealthProbe`, any non-5xx is healthy). */
@@ -707,33 +713,41 @@ export async function probeUntilHealthy(
   const maxAttempts = opts.maxAttempts ?? HEALTH_MAX_ATTEMPTS;
   let firstProbeAt: number | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const checked = await steps.run(`${opts.label} check ${attempt}`, async ({ log, fetch }) => {
-      const at = steps.now();
-      const probe: HealthProbe = await probeHealth(fetch, opts.url);
-      const elapsed = at - (firstProbeAt ?? at);
-      const verdict =
-        opts.classify !== undefined
-          ? opts.classify(probe, attempt, elapsed, maxAttempts)
-          : classifyHealthProbe(probe, attempt, elapsed, maxAttempts, opts.mode);
-      if (verdict.verdict === "unhealthy") throw new JobError(verdict.reason);
-      const wrong =
-        verdict.verdict === "healthy" && opts.expectVersion !== undefined
-          ? versionMismatch(probe, opts.expectVersion)
-          : null;
-      if (wrong !== null) throw new JobError(`GET ${opts.url}: ${wrong}`);
-      if (verdict.verdict === "healthy") {
-        log.info(`GET ${opts.url} -> ${verdict.status}; ${opts.healthyMessage}.`);
-      } else if (verdict.verdict === "blocked") {
-        log.warn(`GET ${opts.url}: ${ACCESS_PREVIEW_REASON}.`);
-      } else {
-        log.warn(`GET ${opts.url}: ${verdict.reason}; retrying in 2 seconds.`);
-      }
-      return {
-        at,
-        status: verdict.verdict === "healthy" ? verdict.status : null,
-        blocked: verdict.verdict === "blocked",
-      };
-    });
+    const checked = await steps.run(
+      `${opts.label} check ${attempt}`,
+      async ({ log, fetch, probeHeaders }) => {
+        const at = steps.now();
+        const { installId } = opts;
+        const probe: HealthProbe = await probeHealthThroughAccess(
+          fetch,
+          opts.url,
+          installId === undefined ? undefined : () => probeHeaders(installId, opts.url),
+        );
+        const elapsed = at - (firstProbeAt ?? at);
+        const verdict =
+          opts.classify !== undefined
+            ? opts.classify(probe, attempt, elapsed, maxAttempts)
+            : classifyHealthProbe(probe, attempt, elapsed, maxAttempts, opts.mode);
+        if (verdict.verdict === "unhealthy") throw new JobError(verdict.reason);
+        const wrong =
+          verdict.verdict === "healthy" && opts.expectVersion !== undefined
+            ? versionMismatch(probe, opts.expectVersion)
+            : null;
+        if (wrong !== null) throw new JobError(`GET ${opts.url}: ${wrong}`);
+        if (verdict.verdict === "healthy") {
+          log.info(`GET ${opts.url} -> ${verdict.status}; ${opts.healthyMessage}.`);
+        } else if (verdict.verdict === "blocked") {
+          log.warn(`GET ${opts.url}: ${ACCESS_PREVIEW_REASON}.`);
+        } else {
+          log.warn(`GET ${opts.url}: ${verdict.reason}; retrying in 2 seconds.`);
+        }
+        return {
+          at,
+          status: verdict.verdict === "healthy" ? verdict.status : null,
+          blocked: verdict.verdict === "blocked",
+        };
+      },
+    );
     firstProbeAt ??= checked.at;
     if (checked.status !== null) return checked.status;
     if (checked.blocked) return null;
@@ -771,7 +785,10 @@ export async function checkLiveHealthPhase(
    */
   opts: {
     routeWasLive?: boolean;
-    /** The install checked, so a warning links to its health check. */
+    /**
+     * The install checked, so a warning links to its health check, and a
+     * protected install's probe carries its own service token.
+     */
     installId?: string;
   } = {},
 ): Promise<LiveHealthResult> {
@@ -781,36 +798,44 @@ export async function checkLiveHealthPhase(
       : `check again from ${appPlace(opts.installId, "health", "its page")}`;
   let firstProbeAt: number | null = null;
   for (let attempt = 1; ; attempt++) {
-    const checked = await steps.run(`health check ${attempt}`, async ({ log, fetch }) => {
-      const at = steps.now();
-      const probe = await probeHealth(fetch, url);
-      const decision = decideLiveHealth(
-        probe,
-        attempt,
-        at - (firstProbeAt ?? at),
-        undefined,
-        mode,
-        opts.routeWasLive === true,
-      );
-      if (!decision.done) {
-        log.warn(`GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`);
-      } else if (decision.access === true) {
-        log.warn(
-          `GET ${url}: ${decision.detail}, so Appflare could not reach the app to check it. Everything was created; open the app and sign in to check it.`,
+    const checked = await steps.run(
+      `health check ${attempt}`,
+      async ({ log, fetch, probeHeaders }) => {
+        const at = steps.now();
+        const { installId } = opts;
+        const probe = await probeHealthThroughAccess(
+          fetch,
+          url,
+          installId === undefined ? undefined : () => probeHeaders(installId, url),
         );
-      } else if (decision.status === "verified") {
-        log.info(`GET ${url} -> ${decision.detail}; the Worker is serving.`);
-      } else if (decision.status === "unhealthy") {
-        log.warn(
-          `GET ${url} -> ${decision.detail}: the Worker answers with a server error. Everything was created; open the app to check, or ${checkAgain}.`,
+        const decision = decideLiveHealth(
+          probe,
+          attempt,
+          at - (firstProbeAt ?? at),
+          undefined,
+          mode,
+          opts.routeWasLive === true,
         );
-      } else {
-        log.warn(
-          `Could not verify ${url} after ${attempt} attempts (${decision.detail}). Everything was created; the route may still be going live. Open the app to check, or ${checkAgain}.`,
-        );
-      }
-      return { at, decision };
-    });
+        if (!decision.done) {
+          log.warn(`GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`);
+        } else if (decision.access === true) {
+          log.warn(
+            `GET ${url}: ${decision.detail}, so Appflare could not reach the app to check it. Everything was created; open the app and sign in to check it.`,
+          );
+        } else if (decision.status === "verified") {
+          log.info(`GET ${url} -> ${decision.detail}; the Worker is serving.`);
+        } else if (decision.status === "unhealthy") {
+          log.warn(
+            `GET ${url} -> ${decision.detail}: the Worker answers with a server error. Everything was created; open the app to check, or ${checkAgain}.`,
+          );
+        } else {
+          log.warn(
+            `Could not verify ${url} after ${attempt} attempts (${decision.detail}). Everything was created; the route may still be going live. Open the app to check, or ${checkAgain}.`,
+          );
+        }
+        return { at, decision };
+      },
+    );
     firstProbeAt ??= checked.at;
     const { decision } = checked;
     if (decision.done) {

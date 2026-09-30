@@ -6,7 +6,8 @@ import { readSettings, SETTING } from "../db/settings";
 import {
   healthCheckOfManifest,
   healthColumns,
-  probeHealth,
+  type InstallProbeHeaders,
+  probeHealthThroughAccess,
   settleHealthProbe,
 } from "../jobs/install/health";
 import { readAppBaseUrl } from "./app-address.server";
@@ -29,6 +30,12 @@ export interface HealthCheckDeps {
   db: D1Database;
   /** The manager's `fetch` (it carries `global_fetch_strictly_public`). */
   fetch: FetchLike;
+  /**
+   * The service token's headers for the URL when the account controls it,
+   * so an app protected with Cloudflare Access answers the check itself;
+   * without it the check goes without them.
+   */
+  probeHeaders?: InstallProbeHeaders;
   now?: () => number;
 }
 
@@ -86,7 +93,12 @@ export async function checkInstallHealthCore(
   }
   const check = healthCheckOfManifest(row.manifestJson);
   const url = `${base}${check.path}`;
-  const probe = await probeHealth(deps.fetch, url);
+  const { probeHeaders } = deps;
+  const probe = await probeHealthThroughAccess(
+    deps.fetch,
+    url,
+    probeHeaders === undefined ? undefined : () => probeHeaders(input.installId, url),
+  );
   const checkedAt = new Date(now());
   const settled = settleHealthProbe(probe, check.mode);
   const written = await orm

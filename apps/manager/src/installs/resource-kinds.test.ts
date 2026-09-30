@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { RESOURCE_KIND_LABELS, resourceKindLabel } from "../components/format";
 import { RESOURCE_KINDS } from "../db/schema";
 import {
+  ACCESS_SERVICE_TOKEN_KIND,
   ADDRESS_KINDS,
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
@@ -44,6 +45,7 @@ describe("resource kinds", () => {
         (HYPERDRIVE_KINDS as readonly string[]).includes(kind),
         (PIPELINE_KINDS as readonly string[]).includes(kind),
         kind === R2_CATALOG_KIND,
+        kind === ACCESS_SERVICE_TOKEN_KIND,
       ].filter(Boolean);
       expect(treatments, kind).toHaveLength(1);
     }

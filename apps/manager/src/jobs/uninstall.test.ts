@@ -16,6 +16,7 @@ import {
 import { fakeSaas, GATEWAY_ZONE } from "../test/fake-saas";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
+import { recordProtectedInstall } from "../test/protected-install";
 import type { JobEnv } from "./run-job";
 import { API_STEP } from "./steps";
 import {
@@ -359,6 +360,69 @@ async function seedDomains(domains: Array<{ id: string; hostname: string; cfId: 
       .run();
   }
 }
+
+describe("uninstall job: Cloudflare Access protection", () => {
+  it("removes the app's Access application and its own service token before the Worker", async () => {
+    await seedInstall();
+    await recordProtectedInstall({
+      installId: "i1",
+      authSecret: "auth-secret-0123456789abcdef",
+      secret: "secret-DO-NOT-LEAK",
+    });
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:access_service_token:token', 'i1', 'access_service_token', NULL,
+         'Appflare health checks i1', 'tok-i1', 1)`,
+    ).run();
+    const fake = fakeWorld();
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    const names = r.step.names;
+    expect(names.indexOf("remove Cloudflare Access protection")).toBe(
+      names.indexOf("delete Worker cut") + 1,
+    );
+    const calls = fake.world.calls;
+    const worker = calls.indexOf("DELETE /workers/scripts/cut?force=true");
+    expect(calls.indexOf("DELETE /access/apps/app-i1")).toBeGreaterThan(worker);
+    expect(calls.indexOf("DELETE /access/apps/app-i1")).toBeLessThan(
+      calls.indexOf("DELETE /access/service_tokens/tok-i1"),
+    );
+    expect(r.state("i1:access_service_token:token")).toBe("deleted");
+    expect((await env.DB.prepare("SELECT * FROM install_access").all()).results).toEqual([]);
+    expect(JSON.stringify(r.logs)).not.toContain("DO-NOT-LEAK");
+  });
+
+  it("only warns when the protection cannot be removed: the app is already gone", async () => {
+    await seedInstall();
+    await recordProtectedInstall({
+      installId: "i1",
+      authSecret: "auth-secret-0123456789abcdef",
+      secret: "secret-DO-NOT-LEAK",
+    });
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:access_service_token:token', 'i1', 'access_service_token', NULL,
+         'Appflare health checks i1', 'tok-i1', 1)`,
+    ).run();
+    const fake = fakeWorld();
+    // A policy made in the dashboard still names the token.
+    fake.world.failOnce.set("DELETE /access/service_tokens/tok-i1", 400);
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+
+    expect(r.error).toBeNull();
+    expect(r.install?.status).toBe("uninstalled");
+    expect(fake.world.calls).toContain("DELETE /workers/scripts/cut?force=true");
+    const warning = r.logs.find((l) =>
+      l.message.includes("Could not remove the app's Cloudflare Access"),
+    );
+    expect(warning?.level).toBe("warn");
+    expect(warning?.message).toContain('"Appflare health checks i1" service token');
+    // What is left stays recorded, so it can still be found.
+    expect(r.state("i1:access_service_token:token")).toBe("live");
+  });
+});
 
 describe("uninstall job: wildcard domains", () => {
   async function seedWildcard() {

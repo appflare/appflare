@@ -153,11 +153,24 @@ export type ZeroTrustCapability =
   | { state: "none" }
   | CapabilityUnknown;
 
-/** The account-wide setup read besides the capabilities: workers.dev, Zero Trust, Analytics Engine. */
+/**
+ * Whether the token can read Access service tokens ("Access: Service
+ * Tokens"), which protecting installed apps with Cloudflare Access needs
+ * (each app gets one its health checks sign in with). A listing proves Read
+ * only (`readable`), not Edit; a refusal (`no-permission`) proves the token
+ * has neither, which is what the probe is for.
+ */
+export type AccessServiceTokensCapability = { state: "readable" } | CapabilityUnknown;
+
+/**
+ * The account-wide setup read besides the capabilities: workers.dev, Zero
+ * Trust, Analytics Engine, Access service tokens.
+ */
 export interface AccountSetupCapabilities {
   workersDev: WorkersDevCapability;
   zeroTrust: ZeroTrustCapability;
   analyticsEngine: AnalyticsEngineCapability;
+  accessServiceTokens: AccessServiceTokensCapability;
 }
 
 /** What the token can do with the account's domains. */
@@ -203,7 +216,7 @@ export interface CapabilityClient {
   zones: Pick<ReturnType<typeof createZones>, "listAccountZonesPage">;
   emailRouting: Pick<ReturnType<typeof createEmailRouting>, "getSettings">;
   workers: Pick<ReturnType<typeof createWorkers>, "getAccountSubdomain">;
-  access: Pick<ReturnType<typeof createAccess>, "getOrganization">;
+  access: Pick<ReturnType<typeof createAccess>, "getOrganization" | "listServiceTokens">;
   analyticsEngine: Pick<ReturnType<typeof createAnalyticsEngine>, "sql">;
 }
 
@@ -417,6 +430,22 @@ export async function probeZeroTrust(
 }
 
 /**
+ * Access service tokens: the list (never a secret). An answer means the
+ * token may read them (not necessarily create them); a 401 or 403 means it
+ * lacks the group.
+ */
+export async function probeAccessServiceTokens(
+  client: Pick<CapabilityClient, "access">,
+): Promise<AccessServiceTokensCapability> {
+  try {
+    await client.access.listServiceTokens();
+    return { state: "readable" };
+  } catch (error) {
+    return unknown(isRefusal(error) ? "no-permission" : "error", error);
+  }
+}
+
+/**
  * Whether the SQL service itself refused the query: a 403 whose body was not
  * the API's JSON envelope, so it carries no Cloudflare error code. The
  * gateway's refusals of a token always carry one (10000).
@@ -448,18 +477,19 @@ export async function probeAnalyticsEngine(
 }
 
 /**
- * The workers.dev, Zero Trust and Analytics Engine probes, concurrently; one
- * read call each. Never throws.
+ * The workers.dev, Zero Trust, Analytics Engine and Access service token
+ * probes, concurrently; one read call each. Never throws.
  */
 export async function probeAccountSetup(
   client: Pick<CapabilityClient, "workers" | "access" | "analyticsEngine">,
 ): Promise<AccountSetupCapabilities> {
-  const [workersDev, zeroTrust, analyticsEngine] = await Promise.all([
+  const [workersDev, zeroTrust, analyticsEngine, accessServiceTokens] = await Promise.all([
     probeWorkersDev(client),
     probeZeroTrust(client),
     probeAnalyticsEngine(client),
+    probeAccessServiceTokens(client),
   ]);
-  return { workersDev, zeroTrust, analyticsEngine };
+  return { workersDev, zeroTrust, analyticsEngine, accessServiceTokens };
 }
 
 /**

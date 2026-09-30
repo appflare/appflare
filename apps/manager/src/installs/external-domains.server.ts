@@ -688,6 +688,8 @@ export async function externalDomainStatusCore(
   if (request.probe === true && status.active && deps.fetch !== undefined) {
     const check = healthCheckOfManifest(install.manifestJson);
     const url = `https://${domain.name}${check.path}`;
+    // Never with the Access service token: an external domain's DNS is
+    // someone else's, and could point at a server that keeps the token.
     const probe = await probeHealth(deps.fetch, url);
     const settled = settleHealthProbe(probe, check.mode);
     status.health = { ...settled, url };

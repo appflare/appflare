@@ -519,6 +519,18 @@ describe("capabilityRows", () => {
       );
     });
 
+    it("names Access: Service Tokens when the token cannot even read them", () => {
+      const row = rows({ ...FREE, accessServiceTokens: NO_PERMISSION })["token-permissions"];
+      expect(row.state).toBe("ready");
+      expect(row.details.note).toBe(
+        "Optional permissions the token does not have: Access: Service Tokens (to protect apps).",
+      );
+      expect(
+        rows({ ...FREE, accessServiceTokens: { state: "readable" } })["token-permissions"].details
+          .note,
+      ).toBeNull();
+    });
+
     it("could not check before the probes ran", () => {
       expect(rows(null)["token-permissions"]).toMatchObject({
         state: "could-not-check",

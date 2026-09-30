@@ -215,6 +215,7 @@ describe("capabilitiesView", () => {
       workersDev: null,
       zeroTrust: null,
       analyticsEngine: null,
+      accessServiceTokens: null,
       plan: { plan: "paid", source: "detected" },
       manualPlan: "free",
       accountId: "acc1",

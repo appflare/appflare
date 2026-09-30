@@ -55,6 +55,8 @@ const FREE_ACCOUNT: Record<string, FakeRoute> = {
   },
   // Analytics Engine never turned on: the SQL service's own plain-text refusal.
   [`POST ${A}/analytics_engine/sql`]: { status: 403, text: "Authorization error" },
+  // A token without "Access: Service Tokens".
+  [`GET ${A}/access/service_tokens`]: FORBIDDEN,
 };
 
 /** The same account seen with a token that has no "Billing: Read" and no Containers permission. */
@@ -78,6 +80,7 @@ const PAID_ACCOUNT: Record<string, FakeRoute> = {
     result: { auth_domain: "paid-team.cloudflareaccess.com", name: "paid-team" },
   },
   [`POST ${A}/analytics_engine/sql`]: { result: null },
+  [`GET ${A}/access/service_tokens`]: { result: [], result_info: { page: 1, total_pages: 1 } },
 };
 
 async function configured() {
@@ -101,6 +104,7 @@ describe("capabilities after a token save", () => {
     );
     expect(api.keys().sort()).toEqual([
       `GET ${A}/access/organizations`,
+      `GET ${A}/access/service_tokens`,
       `GET ${A}/containers/applications`,
       `GET ${A}/r2/buckets`,
       `GET ${A}/subscriptions`,
@@ -121,6 +125,7 @@ describe("capabilities after a token save", () => {
       workersDev: { state: "registered", subdomain: "appflare-dev" },
       zeroTrust: { state: "none" },
       analyticsEngine: { state: "not-enabled" },
+      accessServiceTokens: { state: "unknown", reason: "no-permission" },
       plan: { plan: "free", source: "detected" },
     });
     expect(api.calls.find((c) => c.key.endsWith("/analytics_engine/sql"))?.body).toBe(
@@ -221,15 +226,16 @@ describe("the daily check", () => {
     expect(await refreshCapabilitiesDaily(cf, db, { now: EVENING, fetch: api.fetch })).toBe(
       "fresh",
     );
-    // Three account probes, the zone list, workers.dev, Zero Trust and
-    // Analytics Engine; no zone, so no Email Routing read.
-    expect(api.calls).toHaveLength(7);
+    // Three account probes, the zone list, workers.dev, Zero Trust,
+    // Analytics Engine and service tokens; no zone, so no Email Routing read.
+    expect(api.calls).toHaveLength(8);
     expect(await refreshCapabilitiesDaily(cf, db, { now: NEXT_DAY, fetch: api.fetch })).toBe(
       "checked",
     );
-    expect(api.calls).toHaveLength(14);
+    expect(api.calls).toHaveLength(16);
     const view = await readCapabilitiesView(db);
     expect(view.plan).toEqual({ plan: "paid", source: "detected" });
+    expect(view.accessServiceTokens).toEqual({ state: "readable" });
     expect(view.analyticsEngine).toEqual({ state: "enabled" });
   });
 

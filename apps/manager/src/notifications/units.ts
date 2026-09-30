@@ -1,5 +1,6 @@
 import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { z } from "zod";
+import { probeHeadersFromEnv } from "../access/probe-credentials.server";
 import { type CfClientEnv, getCfClient } from "../cloudflare/client.server";
 import {
   checkExternalDomains,
@@ -69,7 +70,15 @@ export function createNotificationUnits(
         return deliverDue(env, deps, eventId === undefined ? {} : { eventId });
       }),
     checkInstallsHealth: (input) =>
-      settle(() => checkInstallsHealth(env.DB, healthInput.parse(input).installIds, deps)),
+      settle(() =>
+        checkInstallsHealth(env.DB, healthInput.parse(input).installIds, {
+          ...deps,
+          probeHeaders: probeHeadersFromEnv(
+            env,
+            deps.fetch === undefined ? {} : { fetch: deps.fetch },
+          ),
+        }),
+      ),
     checkExternalDomains: (input) =>
       settle(async () => {
         domainsInput.parse(input);

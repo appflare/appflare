@@ -46,7 +46,7 @@ const optional = optionalGroupsByFeature();
  * are for; places in Settings are links (`message-links.ts`).
  */
 const FEATURE_PLACES: Readonly<Record<string, string>> = {
-  [ACCESS_FEATURE]: `"${ACCESS_FEATURE}" in ${settingsPlace("users", "access", "Cloudflare Access settings")}`,
+  [ACCESS_FEATURE]: `"Protect with Cloudflare Access" in ${settingsPlace("users", "access", "Cloudflare Access settings")}, and protecting installed apps with Cloudflare Access (Access: Service Tokens is only for apps: Appflare's health checks sign in to each protected app with that app's own service token)`,
   [CUSTOM_DOMAINS_FEATURE]: "Custom domains, added on each installed app's page",
   [EXTERNAL_DOMAINS_FEATURE]: `External domains (${settingsPlace("domains", "external-domains", "the domains settings")}, then on each installed app's page)`,
   [EMAIL_ROUTING_FEATURE]:

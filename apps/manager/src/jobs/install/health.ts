@@ -356,17 +356,86 @@ export function versionMismatch(probe: HealthProbe, expected: string): string | 
   return `the app reports version ${reported}, not ${expected}`;
 }
 
-/** GETs `url` once; never throws. Reads at most the start of the body. */
+/**
+ * Extra request headers for a health check of `url`: a protected install's
+ * own service token (`CF-Access-Client-Id` / `CF-Access-Client-Secret`) when
+ * the URL is one of that install's addresses (access/probe-credentials.server.ts),
+ * otherwise undefined. Never throws.
+ */
+export type ProbeHeadersFor = (url: string) => Promise<Record<string, string> | undefined>;
+
+/** {@link ProbeHeadersFor}, for the install `installId`: only its own token, only to its own addresses. */
+export type InstallProbeHeaders = (
+  installId: string,
+  url: string,
+) => Promise<Record<string, string> | undefined>;
+
+export interface ProbeOptions {
+  timeoutMs?: number;
+  /** Added to the request, such as {@link ProbeHeadersFor}'s answer. */
+  headers?: Record<string, string>;
+}
+
+/**
+ * Whether `probe` is Cloudflare Access's sign-in for `url`'s own host: an
+ * {@link isAccessChallenge} whose login path names that host
+ * (`/cdn-cgi/access/login/<host>`). Only then is Access known to be in front
+ * of that host right now, and so to strip a service token's headers before
+ * the Worker sees them.
+ */
+export function isAccessChallengeFor(probe: HealthProbe, url: string): boolean {
+  if (!isAccessChallenge(probe) || probe.kind !== "response" || probe.location === undefined) {
+    return false;
+  }
+  let host: string;
+  let path: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+    path = new URL(probe.location).pathname;
+  } catch {
+    return false;
+  }
+  return (
+    path === `/cdn-cgi/access/login/${host}` || path.startsWith(`/cdn-cgi/access/login/${host}/`)
+  );
+}
+
+/**
+ * A health check of a URL that may be behind Cloudflare Access: first
+ * without credentials; only when that answer is Access's sign-in for the
+ * same host ({@link isAccessChallengeFor}) are `credentials` asked for, and
+ * sent in one more probe of the same URL. So a token never reaches a Worker
+ * that answers for itself (Access is not in front of it), whatever Access
+ * settings say, and no token is even looked up while none is needed.
+ */
+export async function probeHealthThroughAccess(
+  fetchImpl: (input: string, init?: RequestInit) => Promise<Response>,
+  url: string,
+  credentials?: () => Promise<Record<string, string> | undefined>,
+  options: Omit<ProbeOptions, "headers"> = {},
+): Promise<HealthProbe> {
+  const first = await probeHealth(fetchImpl, url, options);
+  if (credentials === undefined || !isAccessChallengeFor(first, url)) return first;
+  const headers = await credentials();
+  if (headers === undefined) return first;
+  return probeHealth(fetchImpl, url, { ...options, headers });
+}
+
+/**
+ * GETs `url` once; never throws. Reads at most the start of the body.
+ * Redirects are never followed (`redirect: "manual"`), so `headers` only
+ * ever reach `url`'s own host.
+ */
 export async function probeHealth(
   fetchImpl: (input: string, init?: RequestInit) => Promise<Response>,
   url: string,
-  timeoutMs = 10_000,
+  options: ProbeOptions = {},
 ): Promise<HealthProbe> {
   try {
     const response = await fetchImpl(url, {
       redirect: "manual",
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: { "user-agent": "Appflare health check" },
+      signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
+      headers: { ...options.headers, "user-agent": "Appflare health check" },
     });
     const text = await response.text();
     const location = response.headers.get("location");

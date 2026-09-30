@@ -8,9 +8,10 @@ import {
   type HealthMode,
   type HealthProbe,
   healthCheckOfManifest,
+  type InstallProbeHeaders,
   isAccessChallenge,
   isEdgeErrorPage,
-  probeHealth,
+  probeHealthThroughAccess,
   settleHealthProbe,
 } from "../jobs/install/health";
 import { varsUseWorkerUrl } from "./install-vars";
@@ -63,6 +64,11 @@ export interface WorkersDevDeps {
   api: () => Promise<WorkersApi>;
   /** The manager's `fetch`, for probing custom domains. */
   fetch: FetchLike;
+  /**
+   * The service token's headers for a domain the account controls, so a
+   * domain in front of an app protected with Cloudflare Access shows the app.
+   */
+  probeHeaders?: InstallProbeHeaders;
   now?: () => Date;
   /** Deploys the settings again when they use the app's address; without it nothing is. */
   refreshVars?: RefreshVars;
@@ -198,7 +204,13 @@ export async function setWorkersDevCore(
     const check = healthCheckOfManifest(install.manifestJson);
     const tried: string[] = [];
     for (const hostname of hostnames.slice(0, MAX_DOMAIN_PROBES)) {
-      const probe = await probeHealth(deps.fetch, `https://${hostname}${check.path}`);
+      const url = `https://${hostname}${check.path}`;
+      const { probeHeaders } = deps;
+      const probe = await probeHealthThroughAccess(
+        deps.fetch,
+        url,
+        probeHeaders === undefined ? undefined : () => probeHeaders(input.installId, url),
+      );
       if (domainIsLive(probe, check.mode)) {
         served = rows.find((r) => r.name === hostname) ?? null;
         break;

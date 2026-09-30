@@ -128,6 +128,44 @@ describe("checkInstallHealthCore", () => {
     expect(await accessFlag()).toBe(0);
   });
 
+  it("asks for the install's own token only after Access's sign-in, and probes again with it", async () => {
+    await seedInstall();
+    const sent: Array<Record<string, string>> = [];
+    const asked: string[] = [];
+    const deps = (answer: (headers: Record<string, string>) => Response) => ({
+      db: env.DB,
+      fetch: async (_url: string, init?: RequestInit) => {
+        const headers = { ...(init?.headers as Record<string, string>) };
+        sent.push(headers);
+        return answer(headers);
+      },
+      probeHeaders: async (installId: string, url: string) => {
+        asked.push(`${installId} ${url}`);
+        return { "CF-Access-Client-Id": "id.access", "CF-Access-Client-Secret": "s" };
+      },
+      now: () => NOW,
+    });
+    const behindAccess = (headers: Record<string, string>) =>
+      headers["CF-Access-Client-Secret"] === "s"
+        ? new Response("ok")
+        : accessChallenge("cut.appflare-dev.workers.dev");
+    const result = await checkInstallHealthCore(deps(behindAccess), { installId: INSTALL_ID });
+    expect(asked).toEqual([`${INSTALL_ID} https://cut.appflare-dev.workers.dev/`]);
+    expect(sent.map((h) => h["CF-Access-Client-Secret"])).toEqual([undefined, "s"]);
+    expect(result.status).toBe("verified");
+    expect(JSON.stringify(result)).not.toContain("CF-Access");
+
+    // An app that answers for itself is never asked for, nor sent, a token.
+    sent.length = 0;
+    asked.length = 0;
+    await checkInstallHealthCore(
+      deps(() => new Response("ok")),
+      { installId: INSTALL_ID },
+    );
+    expect(asked).toEqual([]);
+    expect(sent).toHaveLength(1);
+  });
+
   it("does not record an answer when an update starts during the probe", async () => {
     await seedInstall();
     const f = fakeFetch(async () => {

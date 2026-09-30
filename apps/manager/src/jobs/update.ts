@@ -946,6 +946,7 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           maxAttempts: CANARY_MAX_ATTEMPTS,
           expectVersion: params.version,
           mode: healthMode,
+          installId: params.installId,
         });
       }
 
@@ -1072,7 +1073,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
 
     // 9. Live health check, recorded rather than fatal: the version already serves.
     const url = `${appBase}${healthPath}`;
-    const health = await checkLiveHealthPhase(steps, step, url, healthMode);
+    const health = await checkLiveHealthPhase(steps, step, url, healthMode, {
+      installId: params.installId,
+    });
 
     // 10. Post-deploy migrations, once no request reaches the previous code
     // and everything else about the new version (queue consumers, cron

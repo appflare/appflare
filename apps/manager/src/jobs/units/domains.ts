@@ -1,6 +1,7 @@
 import type { FetchLike } from "@appflare/cf-api";
 import { HEALTH_MODES } from "@appflare/schema";
 import { z } from "zod";
+import { probeCredentials, zoneNamesVia } from "../../access/probe-credentials.server";
 import { GATEWAY_SETUP_PLACE, gatewayHostname } from "../../gateway/gateway";
 import { GatewayError, gatewayStateSchema } from "../../gateway/gateway.server";
 import { checkHostnameInZone } from "../../installs/custom-domain-input";
@@ -29,7 +30,8 @@ import { isNotFound, JobError } from "../errors";
 import {
   type HealthMode,
   type HealthSettlement,
-  probeHealth,
+  type ProbeHeadersFor,
+  probeHealthThroughAccess,
   settleHealthProbe,
 } from "../install/health";
 import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result";
@@ -277,9 +279,11 @@ async function probeUntilServed(
   fetch: FetchLike,
   sleep: (ms: number) => Promise<void>,
   input: { url: string; mode: HealthMode; max: number; gapMs: number },
+  probeHeaders?: ProbeHeadersFor,
 ): Promise<{ settled: HealthSettlement; serves: boolean; probes: number }> {
+  const credentials = probeHeaders === undefined ? undefined : () => probeHeaders(input.url);
   for (let probes = 1; ; probes++) {
-    const probe = await probeHealth(fetch, input.url);
+    const probe = await probeHealthThroughAccess(fetch, input.url, credentials);
     const serves = domainIsLive(probe, input.mode);
     if (serves || probes >= input.max) {
       return { settled: settleHealthProbe(probe, input.mode), serves, probes };
@@ -312,6 +316,8 @@ export function runWaitForExternalDomain(
         throw error;
       }
       if (status.active) {
+        // Never with the Access service token: an external domain's DNS is
+        // someone else's, and could point at a server that keeps the token.
         const { settled, serves } = await probeUntilServed(fetch, sleep, {
           url: input.healthUrl,
           mode: input.healthMode,
@@ -344,6 +350,12 @@ export const CUSTOM_DOMAIN_MAX_PROBES_IN_PLACE = 3;
 
 export const waitForCustomDomainInputSchema = z.object({
   accountId: z.string().min(1),
+  /**
+   * The install the domain serves: while it is protected with Cloudflare
+   * Access, the probes carry its own service token. Optional, so a job of an
+   * older version calling this one still validates.
+   */
+  installId: z.string().min(1).optional(),
   /** The app's health URL on the domain. */
   healthUrl: z.string().url(),
   healthMode: z.enum(HEALTH_MODES),
@@ -368,13 +380,35 @@ export function runWaitForCustomDomain(
   input: WaitForCustomDomainInput,
 ): Promise<UnitResult<WaitForCustomDomainResult>> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  return runUnit(env, deps, input.accountId, async ({ log, fetch }) => {
-    const { settled, serves, probes } = await probeUntilServed(fetch, sleep, {
-      url: input.healthUrl,
-      mode: input.healthMode,
-      max: input.maxProbes,
-      gapMs: DOMAIN_PROBE_MS,
-    });
+  return runUnit(env, deps, input.accountId, async ({ log, fetch, cf }) => {
+    // The install's own token, only for its own recorded domain in one of
+    // the account's zones (probe-credentials.server.ts).
+    const { DB } = env;
+    const { installId } = input;
+    const probeHeaders: ProbeHeadersFor | undefined =
+      DB === undefined || installId === undefined
+        ? undefined
+        : (url) =>
+            probeCredentials(
+              {
+                db: DB,
+                authSecret: env.BETTER_AUTH_SECRET,
+                zoneNames: zoneNamesVia(async () => cf()),
+              },
+              installId,
+              url,
+            );
+    const { settled, serves, probes } = await probeUntilServed(
+      fetch,
+      sleep,
+      {
+        url: input.healthUrl,
+        mode: input.healthMode,
+        max: input.maxProbes,
+        gapMs: DOMAIN_PROBE_MS,
+      },
+      probeHeaders,
+    );
     log.info(
       serves
         ? settled.access === true

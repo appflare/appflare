@@ -60,6 +60,7 @@ export const RESOURCE_KINDS = [
   "dns_record",
   "worker_route",
   "email_route",
+  "access_service_token",
 ] as const;
 
 /**
@@ -570,4 +571,34 @@ export const passkey_host = sqliteTable("passkey_host", {
     .references(() => passkey.id, { onDelete: "cascade" }),
   hostname: text("hostname").notNull(),
   recorded_at: timestamp("recorded_at").notNull(),
+});
+
+/**
+ * Cloudflare Access protection of one install (access/install-access.server.ts):
+ * the service token only the manager's health checks of this install sign
+ * in with, and, once the install is protected, its Access application and
+ * the `non_identity` policy on it that names the token. One token per
+ * install, so a token only ever opens the app it was made for: an app that
+ * is not behind Access receives the token's headers as they were sent.
+ * `token_secret` is the client secret sealed with a key derived from
+ * `BETTER_AUTH_SECRET` and bound to the install and token ids; it is never
+ * stored in plain text. The token is also a `resources` row
+ * (`access_service_token`), so everything made for the install stays
+ * findable from it.
+ */
+export const install_access = sqliteTable("install_access", {
+  install_id: text("install_id")
+    .primaryKey()
+    .references(() => installs.id),
+  /** The Access application protecting the install; null until it exists. Set means protected. */
+  access_app_id: text("access_app_id"),
+  /** The application's own `non_identity` policy naming the token; null until it exists. */
+  probes_policy_id: text("probes_policy_id"),
+  token_id: text("token_id").notNull(),
+  token_client_id: text("token_client_id").notNull(),
+  token_secret: text("token_secret").notNull(),
+  /** When Cloudflare said the token expires; null when it did not say. */
+  token_expires_at: timestamp("token_expires_at"),
+  created_at: timestamp("created_at").notNull(),
+  updated_at: timestamp("updated_at").notNull(),
 });

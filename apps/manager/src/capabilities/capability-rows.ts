@@ -600,6 +600,7 @@ const OPTIONAL_PERMISSIONS = [
   { probe: "zone", name: "Zone (for domains)" },
   { probe: "emailRouting", name: "Zone Settings (for Email Routing)" },
   { probe: "zeroTrust", name: "Access: Organizations (for Zero Trust)" },
+  { probe: "accessServiceTokens", name: "Access: Service Tokens (to protect apps)" },
   { probe: "containers", name: "Containers (for sandbox builds)" },
 ] as const satisfies ReadonlyArray<{ probe: keyof CapabilitiesView; name: string }>;
 

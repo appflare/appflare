@@ -107,6 +107,15 @@ export const QUEUE_CONSUMER_KIND = "queue_consumer" as const;
 export const EMAIL_ROUTE_KIND = "email_route" as const;
 
 /**
+ * The Cloudflare Access service token the manager's health checks of a
+ * protected install sign in with (access/install-access.server.ts): `name`
+ * is the token's name, `cf_id` its id. One per install, never shared. It
+ * holds no data; it goes when the install stops being protected, after the
+ * install's Access application (whose policy names it).
+ */
+export const ACCESS_SERVICE_TOKEN_KIND = "access_service_token" as const;
+
+/**
  * A Hyperdrive configuration: the install's connection to a database that
  * lives outside Cloudflare, made from the connection string the admin
  * entered. It holds no data (the database is the admin's), but it holds the

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
+import { probeHeadersFromEnv } from "../access/probe-credentials.server";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { requireRole } from "../server/auth.server";
 import { addCustomDomainInput, customDomainInput } from "./custom-domain-input";
@@ -75,6 +76,7 @@ export const checkCustomDomain = createServerFn({ method: "POST" })
         {
           db: env.DB,
           fetch: (input, init) => fetch(input, init),
+          probeHeaders: probeHeadersFromEnv(env),
           api: () => getCfClient(env),
           refreshVars: varsRefresher(env),
         },

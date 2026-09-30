@@ -1,5 +1,9 @@
 import handler from "@tanstack/react-start/server-entry";
 import { accessGate } from "./access/gate";
+import {
+  renewInstallServiceTokens,
+  resyncAppAccessUsersIfFailed,
+} from "./access/install-access.server";
 import { versionCreatedAt } from "./auth/recovery.server";
 import { cleanUpRecoverySecret } from "./auth/recovery-cleanup.server";
 import { ensureAuthStorage } from "./auth/storage.server";
@@ -113,6 +117,10 @@ export default {
    * and sends nothing once an admin turns it off. It starts update jobs only for what automatic updates
    * allow (auto-update/), and only updates that need nothing from an admin. Last, it deletes a
    * recovery code secret that can no longer be used (auth/recovery-cleanup.server.ts).
+   * Between those, the upkeep of apps protected with Cloudflare Access
+   * (access/install-access.server.ts): each app's service token is refreshed
+   * once it has less than 30 days left, and "Appflare users" is synced again
+   * when its last update after a user change failed.
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
@@ -140,6 +148,36 @@ export default {
       if (capabilities === "checked") console.log("account capabilities checked");
     } catch (error) {
       console.error("account capability check failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // Apps protected with Cloudflare Access: D1 reads only, unless a token
+    // expires within 30 days, its secret no longer reads, or the users policy
+    // missed a change; never fails the run.
+    try {
+      const renewals = await renewInstallServiceTokens({
+        db: env.DB,
+        authSecret: env.BETTER_AUTH_SECRET,
+        client: () => getCfClient(env),
+      });
+      for (const r of renewals) {
+        const line = `access: service token of install ${r.installId} ${r.status}`;
+        if (r.status === "failed") console.error(line, { error: r.detail });
+        else if (r.status === "missing") console.warn(line);
+        else console.log(line);
+      }
+      const users = await resyncAppAccessUsersIfFailed({
+        db: env.DB,
+        client: () => getCfClient(env),
+      });
+      if (users === "resynced") console.log("access: users policy of protected apps synced again");
+      else if (users === "recreated") {
+        console.warn(
+          "access: users policy of protected apps was deleted and made again; protect each app again to use it",
+        );
+      }
+    } catch (error) {
+      console.error("access: upkeep of protected apps failed", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

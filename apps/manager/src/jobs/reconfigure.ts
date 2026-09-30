@@ -833,6 +833,7 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           maxAttempts: CANARY_MAX_ATTEMPTS,
           expectVersion: started.version,
           mode: healthMode,
+          installId: params.installId,
         });
       }
 
@@ -930,7 +931,10 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
     // app's URL was serving before this job, so a plain 404 is the app's own
     // answer (a setting such as a 404 home page), not a route going live.
     const health = redeploy
-      ? await checkLiveHealthPhase(steps, step, url, healthMode, { routeWasLive: true })
+      ? await checkLiveHealthPhase(steps, step, url, healthMode, {
+          routeWasLive: true,
+          installId: params.installId,
+        })
       : null;
 
     await run("finish", async ({ log, orm }) => {

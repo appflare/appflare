@@ -7,6 +7,7 @@
 export type { AssetManifestFile, AssetUploadManifest } from "./asset-hash";
 export { assetHash, buildAssetsManifest } from "./asset-hash";
 export type {
+  AccessServiceTokensCapability,
   AccountCapabilities,
   AccountSetupCapabilities,
   AnalyticsEngineCapability,
@@ -29,6 +30,7 @@ export {
   createCapabilityClient,
   detectedWorkersPlan,
   failureDetail,
+  probeAccessServiceTokens,
   probeAccountCapabilities,
   probeAccountSetup,
   probeAnalyticsEngine,

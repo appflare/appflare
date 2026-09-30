@@ -64,6 +64,7 @@ export const RESOURCE_KIND_LABELS: Record<string, string> = {
   dns_record: "DNS record",
   worker_route: "Workers route",
   email_route: "Email route",
+  access_service_token: "Access service token",
 };
 
 export function resourceKindLabel(kind: string): string {

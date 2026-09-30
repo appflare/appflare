@@ -628,6 +628,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       step,
       url,
       started.healthMode ?? DEFAULT_HEALTH_MODE,
+      { installId: params.installId },
     );
 
     await run("finish", async ({ log, orm }) => {
