@@ -419,6 +419,59 @@ describe("addCustomDomainCore", () => {
   });
 });
 
+describe("a protected app's public paths", () => {
+  it("are brought in step after a domain is added, and before and after one is removed", async () => {
+    const { world, api } = fakeZoneApi();
+    const synced: Array<{ id: string; change?: unknown; detached: boolean }> = [];
+    const d = {
+      ...deps(api),
+      syncAccess: async (id: string, change?: unknown) => {
+        synced.push({
+          id,
+          ...(change === undefined ? {} : { change }),
+          detached: world.calls.includes("DELETE /workers/domains/cfd-1"),
+        });
+        return null;
+      },
+    };
+    // After the domain is attached, from the records.
+    await addCustomDomainCore(d, add("cut.example.com"));
+    expect(synced).toEqual([{ id: INSTALL_ID, detached: false }]);
+    // Before it is released, leaving its hostname out; then from the records.
+    await removeCustomDomainCore(d, { installId: INSTALL_ID, resourceId: "i1:domain:id1" });
+    expect(synced.slice(1)).toEqual([
+      { id: INSTALL_ID, change: { leavingHosts: ["cut.example.com"] }, detached: false },
+      { id: INSTALL_ID, detached: true },
+    ]);
+  });
+
+  it("keep the domain attached when they cannot be taken off it first", async () => {
+    const { world, api } = fakeZoneApi();
+    const d = { ...deps(api), syncAccess: async () => null as string | null };
+    await addCustomDomainCore(d, add("cut.example.com"));
+    const failing = {
+      ...d,
+      syncAccess: async (_id: string, change?: unknown) =>
+        change === undefined
+          ? null
+          : "Another Access change is in progress. Try again in a minute.",
+    };
+    await expect(
+      removeCustomDomainCore(failing, { installId: INSTALL_ID, resourceId: "i1:domain:id1" }),
+    ).rejects.toThrow(
+      "The app's public paths could not be taken off cut.example.com in Cloudflare Access (Another Access change is in progress. Try again in a minute.), so the domain was not removed and still serves the app. Try again in a minute.",
+    );
+    expect(world.calls).not.toContain("DELETE /workers/domains/cfd-1");
+    expect((await domainRows())[0]?.deleted_at).toBeNull();
+  });
+
+  it("cost no Access call for an app Appflare does not protect", async () => {
+    const { world, api } = fakeZoneApi();
+    await addCustomDomainCore(deps(api), add("cut.example.com"));
+    expect(world.calls.filter((c) => c.includes("/access/"))).toEqual([]);
+  });
+});
+
 describe("removeCustomDomainCore", () => {
   it("detaches the domain and marks the resource deleted; one already gone counts", async () => {
     const { world, api } = fakeZoneApi();

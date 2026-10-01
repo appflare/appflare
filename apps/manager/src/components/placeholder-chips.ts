@@ -199,6 +199,9 @@ const CHIP_LABELS: Readonly<Record<PlaceholderKey, string>> = {
   workerName: "Worker name",
   accountId: "Account ID",
   wildcardHostname: "Wildcard domain",
+  accessTeamDomain: "Access team domain",
+  accessAud: "Access audience tag",
+  accessCertsUrl: "Access keys URL",
 };
 
 /** What a chip says after the name of one of the app's Workers. */
@@ -217,6 +220,9 @@ const CHIP_MEANINGS: Readonly<Record<PlaceholderKey, string>> = {
   workerName: "the app's Worker name",
   accountId: "your Cloudflare account ID",
   wildcardHostname: "the app's wildcard domain",
+  accessTeamDomain: "your Zero Trust team domain",
+  accessAud: "the audience tag of the app's Cloudflare Access application",
+  accessCertsUrl: "the address of your Zero Trust team's signing keys",
 };
 
 /** What a chip says. */
@@ -235,6 +241,9 @@ interface PlaceholderSources {
   workerName?: string | null;
   accountId?: string | null;
   wildcardHostname?: string | null;
+  accessTeamDomain?: string | null;
+  accessAud?: string | null;
+  accessCertsUrl?: string | null;
 }
 
 /** What the form knows a placeholder stands for; null or absent where it does not. */
@@ -275,6 +284,13 @@ export function describeChip(
   if (value !== null && value !== "") return `Filled in with ${value}`;
   if (chip.key === "wildcardHostname") {
     return "Filled in with the app's wildcard domain once it has one";
+  }
+  if (
+    chip.key === "accessTeamDomain" ||
+    chip.key === "accessAud" ||
+    chip.key === "accessCertsUrl"
+  ) {
+    return `Filled in with ${CHIP_MEANINGS[chip.key]} while the app is protected with Cloudflare Access; empty otherwise`;
   }
   if (chip.worker !== null) {
     return `Filled in with the ${WORKER_CHIP_LABELS[chip.key]} of the app's ${chip.worker} Worker ${when}`;

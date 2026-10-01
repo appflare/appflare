@@ -1,4 +1,10 @@
+import { eq } from "drizzle-orm";
+import { appPlace } from "../../components/app-links";
+import { install_access } from "../../db/schema";
+import { startVarsRefreshCore } from "../../installs/reconfigure.server";
 import { OFF_WORKERS_DEV } from "../../installs/workers-dev";
+import { sandboxBinding } from "../../sandbox/binding";
+import type { JobEnv } from "../run-job";
 import { errorMessage, isNotFound, type JobSteps } from "../steps";
 import { settleUnit } from "../units/result";
 
@@ -21,9 +27,10 @@ import { settleUnit } from "../units/result";
  *    switch, every Worker of the app is taken off workers.dev with its
  *    previews before the job fails (`keepWorkersUnreachablePhase`), so
  *    nothing of the app is reachable without Access.
- * 3. After an external domain was added (or not): the destinations brought
- *    in step with the domains the install really has. Never fails the job:
- *    the domain was covered from step 1 on.
+ * 3. Once the install is recorded: the destinations brought in step with
+ *    the domains the install really has, and its public paths made public.
+ *    Never fails the job: the domain was covered from step 1 on, and a
+ *    public path not yet public only asks for a sign-in.
  *
  * Either failure of 1 or 2 fails the install like any other step (the
  * install is `failed`, what was made stays recorded for the uninstall).
@@ -95,6 +102,48 @@ export async function coverWorkersPhase(
 }
 
 /**
+ * Turning protection on for an installed app (the settings change job with
+ * `access: "on"`): the application covering the app's recorded Workers by
+ * their tags (looked up in the account's script list), its external domains
+ * (`public` destinations), and its public paths. The unit takes the Access
+ * lock and reads the app's addresses under it, so an external domain
+ * claimed meanwhile is covered too.
+ */
+export async function protectInstalledPhase(
+  steps: JobSteps,
+  installId: string,
+): Promise<AccessProtection> {
+  return steps.run("protect with Cloudflare Access", async ({ log }) => {
+    const result = settleUnit(
+      await steps.units.api.protectInstall({ accountId: steps.accountId(), installId }),
+      log,
+    );
+    if (result.aud.length === 0) {
+      log.warn(
+        "Cloudflare did not report the audience tag of the app's Access application, so {{accessAud}} is empty.",
+      );
+    }
+    return { accessAppId: result.accessAppId, aud: result.aud, teamDomain: result.teamDomain };
+  });
+}
+
+/**
+ * Turning protection off (the settings change job with `access: "off"`),
+ * once the app's settings no longer carry its Access values: its public
+ * paths, its application, its service token, and "Appflare users" when no
+ * other app uses it.
+ */
+export async function unprotectPhase(steps: JobSteps, installId: string): Promise<void> {
+  await steps.run("remove Cloudflare Access protection", async ({ log }) => {
+    settleUnit(
+      await steps.units.api.unprotectInstall({ accountId: steps.accountId(), installId }),
+      log,
+    );
+    return {};
+  });
+}
+
+/**
  * The install failed after its first upload and before Access covered its
  * Workers by their tags: each Worker is taken off workers.dev with its
  * previews, so none answers without Access. A Worker that was never
@@ -136,29 +185,98 @@ export async function keepWorkersUnreachablePhase(
 }
 
 /**
- * Step 3: the destinations in step with the external domains the install
- * really has, once its domain step ran. Never throws.
+ * Step 3, and after an update, a rollback or a change of protection: the
+ * application in step with the addresses the install really has (an
+ * external domain the domain step did or did not add), and the app's public
+ * paths (`access.bypass`) made public on each address, or taken off. Runs
+ * after the install's manifest is recorded, which lists the paths; with
+ * `bypassPaths`, before a version that drops some of them serves, keeping
+ * only those it shares with the serving one. Never throws: a failure is
+ * recorded on the install and the cron tries again, and until then a public
+ * path asks for a sign-in like the rest of the app.
  */
-export async function syncAccessAfterDomainPhase(
+export async function syncAccessPhase(
   steps: JobSteps,
   installId: string,
+  opts: { bypassPaths?: readonly string[] } = {},
 ): Promise<void> {
   try {
-    await steps.run("update Cloudflare Access destinations", async ({ log }) => {
-      settleUnit(
-        await steps.units.api.syncInstallAccess({ accountId: steps.accountId(), installId }),
-        log,
-      );
-      return {};
-    });
+    await steps.run(
+      opts.bypassPaths === undefined
+        ? "update Cloudflare Access destinations"
+        : "take dropped public paths off Cloudflare Access",
+      async ({ log }) => {
+        settleUnit(
+          await steps.units.api.syncInstallAccess({
+            accountId: steps.accountId(),
+            installId,
+            ...(opts.bypassPaths === undefined ? {} : { bypassPaths: [...opts.bypassPaths] }),
+          }),
+          log,
+        );
+        return {};
+      },
+    );
   } catch (error) {
     await steps
-      .run("Cloudflare Access destinations not updated", async ({ log }) => {
+      .run("Cloudflare Access destinations not updated", async ({ log, orm }) => {
+        await orm
+          .update(install_access)
+          .set({ access_sync_failed_at: new Date(steps.now()) })
+          .where(eq(install_access.install_id, installId));
         log.warn(
-          `Could not bring the app's Cloudflare Access application in step with its domains (${errorMessage(error)}). The app stays protected; the application may still list a domain the app does not have.`,
+          `Could not bring the app's Cloudflare Access applications in step with its addresses and public paths (${errorMessage(error)}). The app stays protected; Appflare tries again within 30 minutes.`,
         );
         return {};
       })
       .catch(() => {});
   }
+}
+
+/**
+ * After a rollback whose version's settings use the Access placeholders and
+ * were deployed with another protection than the app has now (turned on or
+ * off since, or not recorded): a settings refresh (`refreshVars:
+ * ["access"]`) deploys them again with the current values, as a settings
+ * change would. Runs once the rollback is recorded and the install is free
+ * for the next job. Never throws; a refusal is a warning naming the way out.
+ */
+export async function accessValuesRefreshPhase(
+  steps: JobSteps,
+  env: Pick<JobEnv, "DB" | "JOBS" | "SANDBOX">,
+  installId: string,
+): Promise<void> {
+  const later = `Turn Cloudflare Access protection on again (or off) under ${appPlace(installId, "settings", "the app's settings")} to fill in the current values.`;
+  await steps
+    .run("settings for the current Cloudflare Access protection", async ({ log }) => {
+      const jobs = env.JOBS;
+      if (jobs === undefined) {
+        log.warn(`This version's settings carry Access values from another protection. ${later}`);
+        return {};
+      }
+      try {
+        const started = await startVarsRefreshCore(
+          {
+            db: env.DB,
+            sandboxConnected: sandboxBinding(env) !== undefined,
+            createJob: (id, params) => jobs.create({ id, params }),
+            now: () => new Date(steps.now()),
+            startedBy: "schedule",
+          },
+          installId,
+          ["access"],
+        );
+        if (started !== null) {
+          log.info(
+            `This version's settings carry Access values from another protection than the app has now, so a settings change (job ${started.jobId}) deploys them again with the current ones.`,
+          );
+        }
+      } catch (error) {
+        log.warn(
+          `This version's settings carry Access values from another protection than the app has now, and could not be deployed again (${errorMessage(error)}). ${later}`,
+        );
+      }
+      return {};
+    })
+    .catch(() => undefined);
 }

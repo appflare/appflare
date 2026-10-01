@@ -15,6 +15,7 @@ import {
   resolveVars,
   settingsVarFields,
   varsNeedRefresh,
+  varsUseAccess,
   varsUseAppUrl,
   varsUseWildcardHostname,
   varsUseWorkerUrl,
@@ -237,6 +238,24 @@ describe("{{wildcardHostname}}", () => {
     expect(varsUseWildcardHostname(plain, {})).toBe(false);
     expect(varsUseWildcardHostname(plain, { BASE: "https://{{ wildcardHostname }}" })).toBe(true);
     expect(varsUseWorkerUrl(m, {})).toBe(false);
+  });
+});
+
+describe("varsUseAccess", () => {
+  it("finds the Access placeholders in the wrangler config, a default, or an entered value", () => {
+    const own = manifest([{ type: "plain_text", name: "AUD", text: "{{accessAud}}" }], []);
+    expect(varsUseAccess(own, {})).toBe(true);
+    const json = manifest(
+      [{ type: "json", name: "ACCESS", json: { certs: "{{accessCertsUrl}}" } }],
+      [],
+    );
+    expect(varsUseAccess(json, {})).toBe(true);
+    const byDefault = manifest([], [v("TEAM", { default: "{{ accessTeamDomain }}" })]);
+    expect(varsUseAccess(byDefault, {})).toBe(true);
+    expect(varsUseAccess(byDefault, { TEAM: "team.cloudflareaccess.com" })).toBe(false);
+    expect(varsUseAccess(manifest([], [v("BASE", { default: "{{appUrl}}" })]), {})).toBe(false);
+    expect(varsNeedRefresh(byDefault, {}, ["access"])).toBe(true);
+    expect(varsNeedRefresh(byDefault, {}, ["appUrl", "wildcardHostname"])).toBe(false);
   });
 });
 

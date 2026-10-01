@@ -9,6 +9,11 @@ import {
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import {
+  type AccessAddressSync,
+  accessAddressSync,
+  publicPathsRefusal,
+} from "../access/address-sync.server";
+import {
   CUSTOM_DOMAINS_FEATURE,
   permissionName,
   splitPermissionGroups,
@@ -60,6 +65,16 @@ export interface CustomDomainDeps {
   newId?: () => string;
   /** Deploys the settings again when they use the app's address; without it nothing is. */
   refreshVars?: RefreshVars;
+  /**
+   * Brings a protected app's Access applications (its public paths) in step
+   * once its domains changed; by default through `api` (`accessAddressSync`).
+   */
+  syncAccess?: AccessAddressSync;
+}
+
+/** The sync of a protected app's Access applications after its domains changed. */
+function accessSyncOf(deps: CustomDomainDeps): AccessAddressSync {
+  return deps.syncAccess ?? accessAddressSync(deps.db, async () => deps.api, deps.now);
 }
 
 /** The permission groups by the dashboard's names, for messages. */
@@ -289,6 +304,8 @@ export async function addCustomDomainCore(
         : `The app started uninstalling while ${hostname} was being added, and Appflare could not remove the domain again. It is not recorded on this app, so the uninstall will not remove it; remove it from the Worker in the Cloudflare dashboard (Workers & Pages, the Worker, Domains).`,
     );
   }
+  // A protected app's public paths, on the new hostname too.
+  await accessSyncOf(deps)(install.id);
   return { ok: true, resourceId, hostname };
 }
 
@@ -468,6 +485,13 @@ export async function removeCustomDomainCore(
     throw new CustomDomainError("The uninstall removes this app's custom domains.");
   }
   const domain = await readDomain(deps.db, request);
+  // A protected app's public paths come off the hostname before it is
+  // released (and before anything else changes), so it never keeps one once it serves something else.
+  const syncAccess = accessSyncOf(deps);
+  const accessProblem = await syncAccess(request.installId, { leavingHosts: [domain.name] });
+  if (accessProblem !== null) {
+    throw new CustomDomainError(publicPathsRefusal(domain.name, accessProblem));
+  }
   // With workers.dev off, the last live domain is the app's only address.
   const removal = await asCustomDomainError(() =>
     beforeDomainRemoval(
@@ -484,6 +508,8 @@ export async function removeCustomDomainCore(
     .update(resources)
     .set({ deleted_at: (deps.now ?? (() => new Date()))() })
     .where(eq(resources.id, domain.id));
+  // And onto workers.dev when the removal turned it back on.
+  await syncAccess(request.installId);
   // The app's address moved: settings that use `{{appUrl}}` follow it.
   const refresh = removal.addressChanged
     ? await refreshSettings(deps.refreshVars, request.installId, ["appUrl"])
@@ -574,6 +600,8 @@ export async function checkCustomDomainCore(
     now?: () => Date;
     /** Deploys the settings again once the domain serves them; without it nothing is. */
     refreshVars?: RefreshVars;
+    /** Takes a protected app's public paths off workers.dev before it is turned off. */
+    syncAccess?: AccessAddressSync;
   },
   request: { installId: string; resourceId: string },
 ): Promise<CustomDomainCheck> {
@@ -608,6 +636,7 @@ export async function checkCustomDomainCore(
             api,
             ...(deps.now === undefined ? {} : { now: deps.now }),
             ...(deps.refreshVars === undefined ? {} : { refreshVars: deps.refreshVars }),
+            ...(deps.syncAccess === undefined ? {} : { syncAccess: deps.syncAccess }),
           },
           live,
         ),

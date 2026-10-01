@@ -2,6 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  accessOfferOf,
   catalogWorkerName,
   connectionStringProblems,
   hyperdriveDeclarations,
@@ -13,6 +14,7 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
+import { accessPlaceholderValues } from "../access/placeholder-values.server";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
@@ -20,7 +22,7 @@ import { requirementLabel, requirementSentence } from "../catalog/requirements";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { ACCESS_EXTERNAL_DOMAIN_REFUSAL } from "../installs/external-domain-input";
+import { accessRequiredRefusal } from "../installs/access-offer";
 import { installDomainInput, workerNameSchema } from "../installs/install-input";
 import { varsUseWorkerUrl } from "../installs/install-vars";
 import { workersDevUrl } from "../installs/post-install";
@@ -46,7 +48,7 @@ import {
   coverWorkersPhase,
   keepWorkersUnreachablePhase,
   protectBeforeUploadPhase,
-  syncAccessAfterDomainPhase,
+  syncAccessPhase,
 } from "./install/access";
 import {
   type ArtifactOrigin,
@@ -342,9 +344,9 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         ...connectionStringProblems(databases, params.hyperdrive ?? {}),
         // Each Pipelines sink needs the token the admin entered for it.
         ...pipelineTokenProblems(streams, params.secrets),
-        // Checked when the install starts too; never protect only part of the app.
-        ...(params.access === true && params.domain?.kind === "external"
-          ? [ACCESS_EXTERNAL_DOMAIN_REFUSAL]
+        // An app that must be protected is never installed without it.
+        ...(params.access !== true && accessOfferOf(manifest.catalog) === "required"
+          ? [accessRequiredRefusal(manifest.catalog.name)]
           : []),
       ];
       if (problems.length > 0) throw new InstallError(problems.join(" "));
@@ -565,20 +567,23 @@ export async function runInstall(ctx: JobContext): Promise<void> {
     // Cloudflare Access, when the admin asked for it: the application comes
     // before anything of the app exists, covering each Worker's future
     // workers.dev hostname, so the app is never reachable without it.
-    // Nothing of the app is created when this is refused. (An external
-    // domain is refused with protection for now, in the preflight above;
-    // the pending host and the sync after the domain step stay for when
-    // Access coverage of such domains is confirmed.)
+    // Nothing of the app is created when this is refused. An external
+    // domain the form asked for is covered here too (a `public`
+    // destination), before its custom hostname is made.
     const protect = params.access === true;
     const accessExternalHosts = params.domain?.kind === "external" ? [params.domain.hostname] : [];
-    if (protect) {
-      await protectBeforeUploadPhase(steps, {
-        installId: params.installId,
-        appName: manifest.catalog.name,
-        workers: workers.map((w) => w.scriptName),
-        pendingExternalHosts: accessExternalHosts,
-      });
-    }
+    // Its audience tag and team domain exist from here on, so the first
+    // upload already carries them (`{{accessAud}}` and the others).
+    const accessValues = protect
+      ? accessPlaceholderValues(
+          await protectBeforeUploadPhase(steps, {
+            installId: params.installId,
+            appName: manifest.catalog.name,
+            workers: workers.map((w) => w.scriptName),
+            pendingExternalHosts: accessExternalHosts,
+          }),
+        )
+      : null;
 
     // 3. Resources: check the name is free, create, then record.
     const created: CreatedResource[] = [];
@@ -637,6 +642,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       subdomain,
       accountId: steps.accountId(),
       wildcardHostname,
+      access: accessValues,
       placeholders,
       entryNames,
     };
@@ -692,6 +698,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         subdomain,
         accountId: steps.accountId(),
         wildcardHostname,
+        access: accessValues,
         ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
       });
       for (const warning of vars.warnings) log.warn(warning);
@@ -815,6 +822,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           subdomain,
           accountId: steps.accountId(),
           wildcardHostname,
+          access: accessValues,
           ...(placeholders === undefined ? {} : { entryWorkers: placeholders }),
         }).vars,
         secrets: params.secrets,
@@ -827,6 +835,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           appUrl: workersDevUrl(params.workerName, subdomain),
           accountId: steps.accountId(),
           wildcardHostname,
+          access: accessValues,
         },
       });
     for (const target of d1Databases) {
@@ -966,12 +975,6 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       }));
     }
 
-    // The external domain was covered before it was added; the application
-    // now lists exactly the domains the install has. Never fails the job.
-    if (protect && params.domain?.kind === "external") {
-      await syncAccessAfterDomainPhase(steps, params.installId);
-    }
-
     // 10. Record the install.
     await run("finish", async ({ log, orm }) => {
       const at = new Date(now());
@@ -1004,6 +1007,12 @@ export async function runInstall(ctx: JobContext): Promise<void> {
       );
       return {};
     });
+    // With Access: the application lists exactly the addresses the install
+    // has now (an external domain was covered before it was added), and the
+    // app's public paths (`access.bypass`) are made public on each of them,
+    // which needs the manifest recorded above. Until then those paths ask
+    // for a sign-in like the rest. Never fails the job.
+    if (protect) await syncAccessPhase(steps, params.installId);
     // The settings named the wildcard domain before its step ran; when the
     // step did not set it up, they are deployed again without it. Never throws.
     if (wildcardHostname !== null) {

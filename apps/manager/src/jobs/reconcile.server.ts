@@ -84,6 +84,17 @@ export function isRestoreJob(row: Pick<ActiveJobRow, "kind" | "input_json">): bo
   }
 }
 
+/** Whether the job row turns Cloudflare Access protection on or off (a `reconfigure` job with `access`). */
+export function isAccessChangeJob(row: Pick<ActiveJobRow, "kind" | "input_json">): boolean {
+  if (row.kind !== "reconfigure" || row.input_json == null) return false;
+  try {
+    const access = (JSON.parse(row.input_json) as { access?: unknown }).access;
+    return access === "on" || access === "off";
+  } catch {
+    return false;
+  }
+}
+
 /** Why a request job still running after {@link RESTORE_STALE_MS} is failed. */
 const REQUEST_ENDED: Record<"restore" | "self_rollback", string> = {
   restore:

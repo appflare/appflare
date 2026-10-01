@@ -1,5 +1,6 @@
 import { CloudflareApiError, type ScriptMetadata } from "@appflare/cf-api";
 import {
+  type AccessPlaceholderValues,
   type ArtifactManifest,
   type EntryWorkerPlaceholders,
   isOptionalSecret,
@@ -65,6 +66,8 @@ export interface EntryUploadContext {
   appUrl?: string;
   /** The install's wildcard domain, for `{{wildcardHostname}}`; null or absent without one. */
   wildcardHostname?: string | null;
+  /** The install's Cloudflare Access protection, for the Access placeholders; null or absent without. */
+  access?: AccessPlaceholderValues | null;
   placeholders: EntryWorkerPlaceholders | undefined;
   /** Each Worker's name within the entry to its installed name. */
   entryNames: Readonly<Record<string, string>>;
@@ -82,6 +85,7 @@ function workerMetadata(
     accountId: ctx.accountId,
     ...(ctx.appUrl === undefined ? {} : { appUrl: ctx.appUrl }),
     wildcardHostname: ctx.wildcardHostname ?? null,
+    access: ctx.access ?? null,
     ...(ctx.placeholders === undefined ? {} : { entryWorkers: ctx.placeholders }),
   });
   const metadata = buildScriptMetadata({

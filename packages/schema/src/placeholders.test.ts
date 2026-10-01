@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACCESS_PLACEHOLDERS,
   ENTRY_WORKER_PLACEHOLDER_SOURCE,
   hasEntryWorkerPlaceholder,
   hasPlaceholder,
@@ -9,6 +10,7 @@ import {
   PLACEHOLDER_FIELDS,
   PLACEHOLDER_NAMES,
   PLACEHOLDERS,
+  POST_INSTALL_PLACEHOLDERS,
   placeholderProblems,
   renderEntryWorkerPlaceholders,
   renderJsonPlaceholders,
@@ -33,6 +35,9 @@ describe("the placeholder list", () => {
       "workerName",
       "accountId",
       "wildcardHostname",
+      "accessTeamDomain",
+      "accessAud",
+      "accessCertsUrl",
       "stage",
     ]);
     for (const p of PLACEHOLDERS) expect(p.meaning.length).toBeGreaterThan(20);
@@ -52,8 +57,13 @@ describe("the placeholder list", () => {
   });
 
   it("says which fields take which", () => {
-    expect(PLACEHOLDER_FIELDS.postInstall).toEqual(INSTALL_PLACEHOLDERS);
+    expect(PLACEHOLDER_FIELDS.postInstall).toEqual(POST_INSTALL_PLACEHOLDERS);
     expect(PLACEHOLDER_FIELDS.varDefault).toEqual(INSTALL_PLACEHOLDERS);
+    // The Access values go to a var only, never to a note people read.
+    for (const name of ACCESS_PLACEHOLDERS) {
+      expect(PLACEHOLDER_FIELDS.varDefault).toContain(name);
+      expect(PLACEHOLDER_FIELDS.postInstall).not.toContain(name);
+    }
     expect(PLACEHOLDER_FIELDS.selfDeployingWorkerName).toEqual(["stage"]);
     expect(INSTALL_PLACEHOLDERS).not.toContain("stage");
     expect(STAGE_PLACEHOLDER).toBe("{{stage}}");
@@ -70,6 +80,23 @@ describe("the placeholder list", () => {
 });
 
 describe("renderPlaceholders", () => {
+  it("fills in the Access values of a protected install, and empty ones of an unprotected one", () => {
+    const text = "{{accessTeamDomain}}|{{ accessAud }}|{{accessCertsUrl}}";
+    expect(
+      renderPlaceholders(text, {
+        ...values,
+        access: {
+          teamDomain: "acme.cloudflareaccess.com",
+          aud: "a1b2",
+          certsUrl: "https://acme.cloudflareaccess.com/cdn-cgi/access/certs",
+        },
+      }),
+    ).toBe("acme.cloudflareaccess.com|a1b2|https://acme.cloudflareaccess.com/cdn-cgi/access/certs");
+    expect(renderPlaceholders(text, { ...values, access: null })).toBe("||");
+    // Not known (a form showing a default): kept as written.
+    expect(renderPlaceholders(text, values)).toBe(text);
+  });
+
   it("fills in the addresses, their hostnames and the Worker name", () => {
     expect(
       renderPlaceholders(
@@ -203,6 +230,18 @@ describe("placeholderProblems", () => {
     );
     expect(placeholderProblems("{{appUrl}}", "selfDeployingWorkerName")[0]).toContain(
       "this field takes {{stage}}",
+    );
+  });
+
+  it("takes the Access placeholders in a var's value only", () => {
+    expect(
+      placeholderProblems("{{accessTeamDomain}} {{accessAud}} {{accessCertsUrl}}", "varDefault"),
+    ).toEqual([]);
+    expect(placeholderProblems("{{accessAud}}", "postInstall")[0]).toContain(
+      "{{accessAud}} is not filled in here",
+    );
+    expect(placeholderProblems("{{accessAud:web}}", "varDefault", entry)[0]).toContain(
+      "has no per-Worker form",
     );
   });
 

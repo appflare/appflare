@@ -554,6 +554,15 @@ Points that need care:
     `tunnels.example.com`) for an entry with `install.wildcardHostname`, and is empty
     until the admin assigns one; assigning or removing it deploys the settings again,
     so the var follows the domain.
+  - `{{accessTeamDomain}}`, `{{accessAud}}` and `{{accessCertsUrl}}` are for an app
+    that checks Cloudflare Access's sign-in itself (see `access` below): the account's Zero Trust team domain (`<team>.cloudflareaccess.com`, no
+    scheme), the audience (AUD) tag of the app's Access application, and
+    `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, where the keys that
+    sign Access's JWTs are published. They work only in a var's value, never in
+    `postInstall` or a secret. All three are empty while the app is not protected,
+    so an app that checks them turns everyone away rather than trusting a request
+    without a sign-in. Turning protection on or off deploys the settings again with
+    the new values.
   - `{{stage}}` works only in the Worker names a self-deploying entry lists in
     `install.selfDeploying.workerNames`.
 
@@ -566,7 +575,7 @@ Points that need care:
   deploy`. When `vars` lists such a var, its `default` must be JSON text, such as
   `"[\"inbox@example.com\"]"`, and the install form asks for JSON.
 - **`requires`.** List account features the app needs beyond Workers, such as `r2`
-  or `workers-ai`.
+  or `workers-ai`. `access` means the app needs Cloudflare Access; see `access` below.
 - **`tokenPermissions`.** Only for apps that call the Cloudflare API with a token of
   their own, never Appflare's. Each entry names one permission group as the
   Cloudflare dashboard's token form shows it, where it applies, the access the app
@@ -586,6 +595,39 @@ Points that need care:
   Groups". The secret that takes the token sets `"cloudflareToken": true`, and the
   install form shows how to create the token next to it. At most one secret does,
   and it cannot be generated, derived or seed-only.
+- **`access`.** Appflare can put
+  any installed app behind Cloudflare Access, so only the manager's users reach it
+  (Appflare's own health checks get in with a service token of the app's own). The
+  install form offers it with the switch off. The optional `access` block changes
+  that:
+  - `"mode": "required"` for an app with no sign-in of its own, or one that relies
+    on Access's: it installs only protected, and its protection cannot be turned off.
+    Such an app installs only on accounts that have a Zero Trust organization and a
+    Cloudflare token with the Access permissions (Access: Apps and Policies,
+    Access: Service Tokens, and Access: Organizations, Identity Providers, and
+    Groups); on any other account the install is refused and says which is missing.
+  - `"mode": "recommended"` starts the install form's switch on.
+  - `"bypass"` lists paths that stay public while the app is protected, such as
+    share links or a webhook: `"bypass": ["/s/*", "/.well-known/*", "/api/webhook"]`.
+    Each starts with `/` and may end in `/*` for everything under it (`/s/*` does not
+    cover `/share`); no other wildcard, query or fragment, at most 10. They are public
+    on every address the app answers on: its workers.dev address while it is on, its
+    custom and external domains, and a wildcard domain's base and every name under it. They are
+    never public on version previews. Do not list the health check path: Appflare's
+    checks sign in with the app's token.
+
+  An entry with `"mode": "required"`, or with a var whose default uses one of the
+  Access placeholders, must also list `"access"` in `requires`. That is what keeps
+  it away from a manager too old to protect apps or fill those placeholders in:
+  such a manager does not know the `"access"` requirement and leaves the entry out
+  of its catalog, instead of installing the app unprotected or with the
+  placeholder as written.
+
+  Not for the self-deploying tier. Appflare's per-app service tokens are account
+  service tokens, so an Access rule an admin adds in the Zero Trust dashboard with
+  the **Any Access Service Token** selector lets them in too. An app that verifies
+  the `Cf-Access-Jwt-Assertion` header itself reads the Access placeholders above
+  from its vars.
 - **`authors`.** Who wrote the app upstream, shown on the catalog card and the app
   page: one or more `{ "name", "url"?, "github"?, "x"? }`, with handles written
   without `@`. Optional; without it the catalog lists the owner of `repo`. Changing

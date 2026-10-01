@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  ACCESS_PLACEHOLDER_SOURCE,
+  accessRequirementProblems,
+  catalogAccessSchema,
+} from "./access.ts";
 // With its extension: the JSON Schema export runs this file directly under
 // Node's type stripping, which resolves relative imports literally.
 import { buildEnvSchema } from "./build-env.ts";
@@ -356,6 +361,7 @@ export const requirementSchema = z.enum([
   "browser-rendering",
   "containers",
   "analytics-engine",
+  "access",
 ]);
 export type Requirement = z.infer<typeof requirementSchema>;
 
@@ -906,6 +912,11 @@ export const catalogVarSchema = z
           "`{{workerName}}` is the installed Worker's name and `{{accountId}}` the id of the " +
           "Cloudflare account. `{{wildcardHostname}}` becomes the hostname of the app's wildcard " +
           "domain (for an entry with `install.wildcardHostname`), empty until one is assigned. " +
+          "For an app Appflare protects with Cloudflare Access, `{{accessTeamDomain}}` becomes " +
+          "the team domain (`<team>.cloudflareaccess.com`), `{{accessAud}}` the audience tag of " +
+          "the app's Access application and `{{accessCertsUrl}}` the URL of the keys that sign " +
+          "Access's JWTs; all three are empty while the app is not protected, and filled in again " +
+          "when protection is turned on or off. " +
           "An entry of several Workers names one with `{{appUrl:<name>}}` and the like. When " +
           "the app's wrangler config gives this var a value that is not a string (an array, " +
           "object, number, or boolean), the var reaches the Worker as JSON and `default` must be " +
@@ -2131,7 +2142,11 @@ export const catalogManifestSchema = z
     requires: z
       .array(requirementSchema)
       .default([])
-      .describe("Account capabilities the app needs beyond the free Workers baseline."),
+      .describe(
+        'Account capabilities the app needs beyond the free Workers baseline. `"access"`: ' +
+          "the app needs Cloudflare Access (a Zero Trust organization); required with " +
+          '`access.mode: "required"` and whenever a var\'s default uses an Access placeholder.',
+      ),
     secrets: z.array(catalogSecretSchema).default([]),
     vars: z.array(catalogVarSchema).default([]),
     postInstall: z
@@ -2153,6 +2168,11 @@ export const catalogManifestSchema = z
     bump: catalogBumpSchema.default({ autoMerge: false }),
     /** Which edit of the entry's form and copy this is, for one build. */
     revision: catalogRevisionSchema.default(FIRST_CATALOG_REVISION),
+    /**
+     * How the app goes with Cloudflare Access (./access.ts). A manager from
+     * before this field strips it, like any key it does not know.
+     */
+    access: catalogAccessSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     for (const problem of seedManifestProblems(manifest)) {
@@ -2245,6 +2265,9 @@ export const catalogManifestSchema = z
     for (const problem of cloudflareTokenProblems(manifest)) {
       ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
     }
+    for (const problem of accessRequirementProblems(manifest)) {
+      ctx.addIssue({ code: "custom", path: problem.path, message: problem.message });
+    }
   })
   .superRefine((manifest, ctx) => {
     for (const problem of pipelineManifestProblems(manifest)) {
@@ -2253,6 +2276,22 @@ export const catalogManifestSchema = z
   })
   .superRefine((manifest, ctx) => {
     if (manifest.install.tier !== "self-deploying") return;
+    if (manifest.requires.includes("access")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["requires"],
+        message:
+          'requires "access" is not allowed for the self-deploying tier: Appflare cannot protect an app whose own installer decides its Workers and addresses',
+      });
+    }
+    if (manifest.access !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["access"],
+        message:
+          "access is not allowed for the self-deploying tier: the app's own installer decides its Workers and addresses, so Appflare cannot protect it with Cloudflare Access",
+      });
+    }
     if (manifest.resources?.hyperdrive !== undefined) {
       ctx.addIssue({
         code: "custom",
@@ -2334,13 +2373,64 @@ export const catalogManifestSchema = z
     });
   })
   // The refinements do not reach the JSON Schema; `allOf` states the
-  // self-deploying ones there (no optional, derived or seed-only secrets, no
+  // self-deploying ones there (no `access` block, no optional, derived or seed-only secrets, no
   // derived or seed-only vars, no Hyperdrive declarations, no D1 layout, no
   // Pipelines), and that Pipelines needs `plan: "paid"`. Whether a
   // `derive.from` names another secret, or a sink's `tokenSecret` names a
   // secret the install form asks for, cannot be said in JSON Schema.
   .meta({
     allOf: [
+      {
+        anyOf: [
+          {
+            properties: { install: { properties: { tier: { not: { const: "self-deploying" } } } } },
+          },
+          {
+            not: {
+              anyOf: [
+                { required: ["access"] },
+                {
+                  required: ["requires"],
+                  properties: { requires: { contains: { const: "access" } } },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      // `access.mode: "required"` needs `"access"` in `requires`.
+      {
+        anyOf: [
+          {
+            not: {
+              required: ["access"],
+              properties: {
+                access: { required: ["mode"], properties: { mode: { const: "required" } } },
+              },
+            },
+          },
+          { required: ["requires"], properties: { requires: { contains: { const: "access" } } } },
+        ],
+      },
+      // So does a var whose default uses an Access placeholder.
+      {
+        anyOf: [
+          {
+            not: {
+              required: ["vars"],
+              properties: {
+                vars: {
+                  contains: {
+                    required: ["default"],
+                    properties: { default: { type: "string", pattern: ACCESS_PLACEHOLDER_SOURCE } },
+                  },
+                },
+              },
+            },
+          },
+          { required: ["requires"], properties: { requires: { contains: { const: "access" } } } },
+        ],
+      },
       {
         anyOf: [
           {

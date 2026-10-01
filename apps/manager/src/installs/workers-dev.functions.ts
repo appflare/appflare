@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
+import { accessAddressSync } from "../access/address-sync.server";
 import { probeHeadersFromEnv } from "../access/probe-credentials.server";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { requireRole } from "../server/auth.server";
@@ -23,6 +24,7 @@ export const setWorkersDev = createServerFn({ method: "POST" })
           fetch: (input, init) => fetch(input, init),
           probeHeaders: probeHeadersFromEnv(env),
           refreshVars: varsRefresher(env),
+          syncAccess: accessAddressSync(env.DB, () => getCfClient(env)),
         },
         data,
       );

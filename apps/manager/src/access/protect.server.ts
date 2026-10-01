@@ -9,12 +9,11 @@ import {
   type CreateAccessAppArgs,
   isAccessTeamDomain,
 } from "@appflare/cf-api";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { createDb } from "../db/client";
 import { install_access, installs, resources } from "../db/schema";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
 import { installLabel } from "../installs/display-name";
-import { ACCESS_EXTERNAL_DOMAIN_REFUSAL } from "../installs/external-domain-input";
 import { recordedName } from "../installs/install-names.server";
 import {
   ACCESS_APP_KIND,
@@ -22,6 +21,15 @@ import {
   CUSTOM_HOSTNAME_KIND,
   WILDCARD_DOMAIN_KIND,
 } from "../installs/resource-kinds";
+import {
+  type BypassChange,
+  type BypassOutcome,
+  bypassPathsOfManifest,
+  isBypassAppOf,
+  recordedBypassAppId,
+  removeInstallBypassLocked,
+  syncInstallBypassLocked,
+} from "./bypass.server";
 import {
   accessAppResourceId,
   accessAppSettings,
@@ -70,14 +78,13 @@ import {
  * - one `public` destination per external domain (a Cloudflare for SaaS
  *   custom hostname served through the gateway Worker). These pass through
  *   the gateway Worker before the app's Worker, so a `worker` destination
- *   does not name them.
- *   TODO: Access coverage of SaaS custom hostnames through a `public`
- *   destination has not been checked against a live account yet. Until it
- *   is, protecting an install that has (or is about to get) an external
- *   domain is refused (`ACCESS_EXTERNAL_DOMAIN_REFUSAL`), here, when an
- *   install starts, and when an external domain is added, so these
- *   destinations are never written in practice; the code that computes
- *   and syncs them stays for when it is confirmed.
+ *   does not name them. Verified live 2026-10-01: a hostname routed through
+ *   a gateway Worker to the app's Worker over a service binding answered
+ *   200 under an application with only the app Worker's `worker`
+ *   destination, and Access's sign-in (302) once the application also had
+ *   a `public` destination for that hostname. A new external domain is
+ *   covered before its custom hostname is made, and a removed one taken off
+ *   after its custom hostname is deleted (installs/external-domains.server.ts).
  *
  * Every function that changes Cloudflare takes the Access lock itself
  * (`withAccessLock`), so they run from a server function or a job unit
@@ -86,8 +93,13 @@ import {
  * the install id), or by its own name when everything it covers is this
  * install's, and adopted instead of made twice.
  *
+ * An install whose catalog entry lists public paths (`access.bypass`) also
+ * gets a second application that keeps those paths public on every address
+ * (bypass.server.ts); it follows the install's application in every change
+ * here, and goes before it when protection comes off.
+ *
  * The lock is a lease of 60 seconds (toggle.server.ts). `protectInstall`
- * makes about 8 to 10 Cloudflare calls under it, each well under a second,
+ * makes about 8 to 12 Cloudflare calls under it, each well under a second,
  * so it finishes long before another change could take the lease over.
  */
 
@@ -118,6 +130,12 @@ export interface InstallProtection {
   /** `<team>.cloudflareaccess.com`: the issuer of those JWTs, and where their keys are. */
   teamDomain: string | null;
   coverage: AccessCoverageRecord | null;
+  /**
+   * When bringing its Access applications in step with its addresses or
+   * public paths last failed outside a job; the cron tries again. Null when
+   * the last sync succeeded.
+   */
+  syncFailedAt: Date | null;
 }
 
 export const PROTECT_MESSAGES = {
@@ -134,7 +152,6 @@ export const PROTECT_MESSAGES = {
     `The Cloudflare Access application "${other}" already covers ${covered.length === 1 ? covered[0] : `${covered.slice(0, -1).join(", ")} and ${covered.at(-1)}`}, an address of this app. Delete it under Zero Trust, Access, Applications, or keep using it and leave Appflare's protection off for this app.`,
   appMissing:
     "This app's Cloudflare Access application no longer exists. Protect the app again to make a new one.",
-  externalDomains: ACCESS_EXTERNAL_DOMAIN_REFUSAL,
 } as const;
 
 /** The application's name: says it is Appflare's, and which app and Worker it protects. */
@@ -274,7 +291,24 @@ function protectionOf(row: Row): InstallProtection | null {
     aud: row.access_aud,
     teamDomain: row.access_team_domain,
     coverage: parseCoverage(row.access_destinations_json),
+    syncFailedAt: row.access_sync_failed_at ?? null,
   };
+}
+
+/**
+ * Records that bringing the install's Access applications in step failed
+ * (`at`), or that it succeeded (null). The cron tries again while it is set
+ * (`resyncInstallAccessIfFailed`).
+ */
+export async function recordAccessSyncFailure(
+  d1: D1Database,
+  installId: string,
+  at: Date | null,
+): Promise<void> {
+  await createDb(d1)
+    .update(install_access)
+    .set({ access_sync_failed_at: at })
+    .where(eq(install_access.install_id, installId));
 }
 
 /**
@@ -523,6 +557,13 @@ export interface ProtectResult {
   aud: string;
   teamDomain: string;
   destinations: AccessDestination[];
+  /** What happened to the app's public paths (bypass.server.ts). */
+  bypass: { outcome: BypassOutcome; uris: string[] } | null;
+  /**
+   * Why the public paths could not be brought in step: they then ask for a
+   * sign-in like the rest of the app. Null when they could.
+   */
+  bypassProblem: string | null;
 }
 
 /**
@@ -577,9 +618,6 @@ async function protectLocked(
 
   // Read-only checks first: nothing is made for an install that cannot be protected.
   const recorded = await recordedAddresses(deps.db, installId);
-  if (recorded.externalDomains.length > 0 || (request.pendingExternalHosts ?? []).length > 0) {
-    throw new AccessToggleError(PROTECT_MESSAGES.externalDomains);
-  }
   const wanted: ProtectWorker[] = [
     ...(request.workers ?? recorded.workers.map((w) => ({ name: w }))),
   ];
@@ -609,6 +647,7 @@ async function protectLocked(
     tags: workers.flatMap((w) => (w.tag === null ? [] : [w.tag])),
   };
   const byId = record?.accessAppId ?? null;
+  const bypassId = await recordedBypassAppId(deps.db, installId);
   // An unrecorded application is this install's when its token policy says
   // so (the name carries the install id), or when it has this install's
   // application name and covers nothing but this install's addresses; an
@@ -618,7 +657,8 @@ async function protectLocked(
     apps.find((a) => (a.policies ?? []).some((p) => p.name === probesPolicyName(installId))) ??
     apps.find((a) => a.name === appName && coversOnly(a, footprint));
   for (const other of apps) {
-    if (other === ours) continue;
+    // The install's own public paths cover its own addresses, by design.
+    if (other === ours || isBypassAppOf(other, installId, bypassId)) continue;
     const covered = overlap(accessAppCoverage(other), footprint);
     if (covered.length > 0) {
       throw new AccessToggleError(PROTECT_MESSAGES.conflict(other.name ?? other.id, covered));
@@ -710,7 +750,26 @@ async function protectLocked(
       coverage: coverageOf(workers, destinations),
     },
   );
-  return { outcome, accessAppId: written.id, appName, aud, teamDomain, destinations };
+  // The public paths, once the rest is protected. A failure leaves them
+  // protected too (failing closed) and never undoes the protection.
+  let bypass: ProtectResult["bypass"] = null;
+  let bypassProblem: string | null = null;
+  try {
+    const synced = await syncInstallBypassLocked(deps, installId, { subdomain, apps });
+    bypass = { outcome: synced.outcome, uris: synced.destinations.map((d) => d.uri) };
+  } catch (error) {
+    bypassProblem = error instanceof Error ? error.message : String(error);
+  }
+  return {
+    outcome,
+    accessAppId: written.id,
+    appName,
+    aud,
+    teamDomain,
+    destinations,
+    bypass,
+    bypassProblem,
+  };
 }
 
 export type SyncOutcome =
@@ -725,13 +784,19 @@ export type SyncOutcome =
  * only when the destinations differ from those last written: a read of the
  * application, then a `PUT` of it as it is with the new destinations (so
  * settings an admin changed in the Zero Trust dashboard stay). Custom
- * domains and wildcard domains need nothing here: the Worker's own
+ * domains and wildcard domains need nothing there: the Worker's own
  * destination covers them.
+ *
+ * Then the install's public paths (bypass.server.ts), which do follow every
+ * address, workers.dev being turned on or off included: nothing when the
+ * entry lists none and none was made, else a read of the bypass application
+ * and a rewrite when it changed. A failure there is thrown after the
+ * install's own application is in step, and leaves the paths protected.
  */
 export async function syncInstallAccessDestinations(
   deps: Pick<InstallAccessDeps, "db" | "client" | "now">,
   installId: string,
-  opts: { pendingExternalHosts?: readonly string[] } = {},
+  opts: { pendingExternalHosts?: readonly string[]; change?: BypassChange } = {},
 ): Promise<SyncOutcome> {
   if ((await readInstallProtection(deps.db, installId)) === null) return "not-protected";
   return withAccessLock(deps.db, async (): Promise<SyncOutcome> => {
@@ -752,10 +817,21 @@ export async function syncInstallAccessDestinations(
       ],
     });
     const coverage = coverageOf(workers, destinations);
+    const bypassInStep = async () => {
+      await syncInstallBypassLocked(deps, installId, {
+        subdomain: await accountSubdomain(deps),
+        ...(opts.change === undefined ? {} : { change: opts.change }),
+      });
+      // Only a sync from the records settles a failure; one ahead of a change does not.
+      if (opts.change === undefined && protection.syncFailedAt !== null) {
+        await recordAccessSyncFailure(deps.db, installId, null);
+      }
+    };
     if (
       protection.coverage !== null &&
       sameDestinations(protection.coverage.destinations, destinations)
     ) {
+      await bypassInStep();
       return "unchanged";
     }
     let app: AccessApp;
@@ -775,13 +851,15 @@ export async function syncInstallAccessDestinations(
       await policiesCall(() => deps.client.access.updateApp(app.id, body));
     }
     await recordCoverage(deps, installId, coverage);
+    await bypassInStep();
     return "updated";
   });
 }
 
 /**
- * Takes Appflare's protection off the install: deletes its Access
- * application (its token policy goes with it), then its token, then
+ * Takes Appflare's protection off the install: deletes its public paths'
+ * application first (so no path is left public on its own), then its
+ * Access application (its token policy goes with it), then its token, then
  * "Appflare users" when no other app uses it, and forgets them. Already
  * gone counts as removed.
  */
@@ -789,5 +867,88 @@ export function unprotectInstall(
   deps: Pick<InstallAccessDeps, "db" | "client" | "now">,
   installId: string,
 ): ReturnType<typeof removeInstallAccess> {
-  return withAccessLock(deps.db, () => removeInstallAccess(deps, installId));
+  return withAccessLock(deps.db, () => removeInstallProtectionLocked(deps, installId));
+}
+
+/**
+ * {@link unprotectInstall} for a caller that holds the Access lock (the
+ * uninstall job). The public paths' application is looked for by name only
+ * when the entry lists public paths, so an app without any costs no call.
+ */
+export async function removeInstallProtectionLocked(
+  deps: Pick<InstallAccessDeps, "db" | "client" | "now">,
+  installId: string,
+): ReturnType<typeof removeInstallAccess> {
+  await removePublicPathsLocked(deps, installId);
+  return removeInstallAccess(deps, installId);
+}
+
+/**
+ * Deletes the install's public paths' application (`removeInstallBypassLocked`),
+ * looking for an unrecorded one by name only when the entry lists public
+ * paths. The uninstall job runs it before any address is released. Caller
+ * holds the Access lock.
+ */
+export async function removePublicPathsLocked(
+  deps: Pick<InstallAccessDeps, "db" | "client" | "now">,
+  installId: string,
+): Promise<{ removed: boolean }> {
+  const [install] = await createDb(deps.db)
+    .select({ manifestJson: installs.manifest_json })
+    .from(installs)
+    .where(eq(installs.id, installId))
+    .limit(1);
+  return removeInstallBypassLocked(deps, installId, {
+    lookUp: bypassPathsOfManifest(install?.manifestJson ?? null).length > 0,
+  });
+}
+
+/** At most this many installs are brought in step again per cron run (a few calls each). */
+export const ACCESS_RESYNCS_PER_RUN = 5;
+
+export interface AccessResync {
+  installId: string;
+  outcome: SyncOutcome | "failed";
+  detail?: string;
+}
+
+/**
+ * The cron: brings in step again the Access applications of protected
+ * installs whose last sync outside a job failed (a domain added or removed,
+ * workers.dev turned on or off), oldest failure first, at most
+ * {@link ACCESS_RESYNCS_PER_RUN}. A D1 read only when none failed. A
+ * failure stays recorded for the next run.
+ */
+export async function resyncInstallAccessIfFailed(deps: {
+  db: D1Database;
+  client: () => Promise<CloudflareClient>;
+  now?: () => Date;
+}): Promise<AccessResync[]> {
+  const due = await createDb(deps.db)
+    .select({ installId: install_access.install_id })
+    .from(install_access)
+    .where(
+      and(isNotNull(install_access.access_sync_failed_at), isNotNull(install_access.access_app_id)),
+    )
+    .orderBy(install_access.access_sync_failed_at)
+    .limit(ACCESS_RESYNCS_PER_RUN);
+  if (due.length === 0) return [];
+  const client = await deps.client();
+  const out: AccessResync[] = [];
+  for (const { installId } of due) {
+    try {
+      const outcome = await syncInstallAccessDestinations(
+        { db: deps.db, client, ...(deps.now === undefined ? {} : { now: deps.now }) },
+        installId,
+      );
+      out.push({ installId, outcome });
+    } catch (error) {
+      out.push({
+        installId,
+        outcome: "failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return out;
 }

@@ -71,6 +71,8 @@ export interface FailedJob {
   restore: boolean;
   /** A deletion of the data an uninstall kept (recorded as an `uninstall` job). */
   deleteRetained: boolean;
+  /** A settings change that turns Cloudflare Access protection on or off. */
+  accessChange?: boolean;
   /** The version an update or install was moving to, when the job recorded one. */
   version: string | null;
   /** ISO 8601 */

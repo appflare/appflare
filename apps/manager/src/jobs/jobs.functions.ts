@@ -21,7 +21,7 @@ import {
 import { requireSession } from "../server/auth.server";
 import { type JobListRow, listRecentJobs } from "./job-list.server";
 import { readJobLogs } from "./job-logs.server";
-import { isRestoreJob, reconcileJobs } from "./reconcile.server";
+import { isAccessChangeJob, isRestoreJob, reconcileJobs } from "./reconcile.server";
 
 export type { BuildProgressView } from "../sandbox/progress";
 export type { JobListRow } from "./job-list.server";
@@ -53,6 +53,8 @@ export interface JobView {
   kind: string;
   /** A database restore (recorded as a `rollback` job). */
   restore: boolean;
+  /** A settings change that turns Cloudflare Access protection on or off. */
+  accessChange?: boolean;
   /** A deletion of the data an uninstall kept (recorded as an `uninstall` job). */
   deleteRetained: boolean;
   status: "queued" | "running" | "succeeded" | "failed";
@@ -244,6 +246,7 @@ export const getJob = createServerFn({ method: "GET" })
       sourceBuild: job.kind === "source_build" ? sourceBuildOfInput(job.input_json) : null,
       addressMove: job.kind === "move_address" ? addressMoveOf(job.input_json) : null,
       restore: isRestoreJob(job),
+      accessChange: isAccessChangeJob(job),
       deleteRetained: isDeleteRetainedJob(job),
       status: job.status,
       error: job.error,

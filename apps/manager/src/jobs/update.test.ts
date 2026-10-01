@@ -8,6 +8,7 @@ import {
   withRevisedCatalog,
 } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
+import { protectInstall } from "../access/protect.server";
 import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
@@ -20,6 +21,7 @@ import {
   buildArtifactFixture,
   ZIP_URL,
 } from "../test/artifact-fixture";
+import { fakeAccessAccount } from "../test/fake-access-account";
 import {
   DEFAULT_MULTIPART_RULE,
   type FakeAccount,
@@ -2481,5 +2483,61 @@ describe("update job, an app of many Workers", () => {
     }
     expect(JSON.parse(String(r.install?.worker_versions_json))).toEqual(r.oldVersions);
     expect(r.install?.current_version_id).toBe(OLD_VERSION);
+  });
+});
+
+describe("update job, an app protected with Cloudflare Access", () => {
+  it("takes public paths the new version drops off before it serves, and adds its own after", async () => {
+    const access = fakeAccessAccount();
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    const uris = () =>
+      [...access.apps.values()]
+        .filter((a) => String(a.name).endsWith("public paths"))
+        .flatMap((a) => (a.destinations as Array<{ uri: string }>).map((d) => d.uri));
+    const seen: string[][] = [];
+    const r = await update(
+      { ...NEW_APP, catalog: { ...NEW_APP.catalog, access: { bypass: ["/s/*", "/new/*"] } } },
+      {},
+      {
+        manifestJson: JSON.stringify({
+          version: "1.0.0",
+          worker: { migrations: [] },
+          catalog: { name: "Cut", access: { bypass: ["/s/*", "/old/*"] } },
+        }),
+      },
+      {},
+      "self",
+      async () => {
+        await env.DB.prepare(
+          "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+        ).run();
+        await protectInstall(
+          { db: env.DB, client: access.client, authSecret: "a".repeat(32) },
+          { installId: INSTALL_ID },
+        );
+      },
+      (fake) => async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path.includes("/access/") || path.endsWith("/workers/scripts")) {
+          const response = await access.fetch(String(input), init);
+          if (init?.method === "PUT") seen.push(uris());
+          return response;
+        }
+        return fake.fetch(String(input), init);
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const at = (name: string) => r.step.names.indexOf(name);
+    expect(at("take dropped public paths off Cloudflare Access")).toBeLessThan(
+      at("promote version"),
+    );
+    expect(at("update Cloudflare Access destinations")).toBeGreaterThan(at("finish"));
+    expect(uris()).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/new/*",
+    ]);
+    // Before the new version served, only the path both versions share was public.
+    expect(seen).toContainEqual(["cut.appflare-dev.workers.dev/s/*"]);
   });
 });

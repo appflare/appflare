@@ -37,6 +37,11 @@ export const REQUIREMENTS: Record<Requirement, { label: string; sentence: string
     label: "Containers",
     sentence: "The app runs Containers, which need the Workers Paid plan on the account.",
   },
+  access: {
+    label: "Cloudflare Access",
+    sentence:
+      "The app runs behind Cloudflare Access, which needs a Zero Trust organization on the account and a Cloudflare token with the Access permissions. The install checks both before it creates anything.",
+  },
   "analytics-engine": {
     label: "Analytics Engine",
     sentence:

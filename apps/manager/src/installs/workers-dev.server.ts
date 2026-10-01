@@ -2,6 +2,7 @@ import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { artifactManifestSchema } from "@appflare/schema";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
+import type { AccessAddressSync } from "../access/address-sync.server";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import {
@@ -72,6 +73,12 @@ export interface WorkersDevDeps {
   now?: () => Date;
   /** Deploys the settings again when they use the app's address; without it nothing is. */
   refreshVars?: RefreshVars;
+  /**
+   * Brings a protected app's public paths in step with workers.dev being
+   * on or off (`accessAddressSync`); without it they follow at the next
+   * change of the app's domains or protection.
+   */
+  syncAccess?: AccessAddressSync;
 }
 
 /** At most this many custom domains are probed before turning workers.dev off. */
@@ -224,6 +231,10 @@ export async function setWorkersDevCore(
     }
   }
 
+  // Turning workers.dev off: a protected app's public paths come off it first.
+  if (!input.enabled && deps.syncAccess !== undefined) {
+    await deps.syncAccess(input.installId, { workersDev: false });
+  }
   const api = await deps.api();
   await api.workers.enableSubdomain(install.workerName, workersDevSubdomain(input.enabled));
   await orm
@@ -236,6 +247,8 @@ export async function setWorkersDevCore(
     })
     .where(eq(installs.id, input.installId));
   if (served !== null) await markLive(orm, served.id, (deps.now ?? (() => new Date()))());
+  // Turning it on: the public paths follow onto it, from the records.
+  if (input.enabled && deps.syncAccess !== undefined) await deps.syncAccess(input.installId);
   // The app's address moved between workers.dev and a domain.
   const refresh = await refreshSettings(deps.refreshVars, input.installId, ["appUrl"]);
   return { enabled: input.enabled, servedBy: served?.name ?? null, ...refresh };
@@ -298,6 +311,8 @@ export async function applyDomainLive(
     api: () => Promise<WorkersApi>;
     now?: () => Date;
     refreshVars?: RefreshVars;
+    /** Takes a protected app's public paths off workers.dev before it is turned off. */
+    syncAccess?: AccessAddressSync;
   },
   request: DomainLiveRequest,
 ): Promise<DomainLiveResult> {
@@ -320,6 +335,9 @@ export async function applyDomainLive(
     (install.status !== "installed" || (await activeJobOf(orm, request.installId)) !== null)
   ) {
     return { turnedOff: false, kept: "busy", ...NO_VARS_REFRESH };
+  }
+  if (deps.syncAccess !== undefined) {
+    await deps.syncAccess(request.installId, { workersDev: false });
   }
   const api = await deps.api();
   await api.workers.enableSubdomain(install.workerName, workersDevSubdomain(false));

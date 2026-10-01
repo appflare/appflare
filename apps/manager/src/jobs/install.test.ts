@@ -3159,9 +3159,84 @@ describe("install job, an app protected with Cloudflare Access", () => {
     expect(access.cf.apps.size).toBe(1);
   });
 
-  it("refuses protection together with an external domain before anything is made", async () => {
+  it("uploads the Worker with the Access values from the first upload on, and makes its public paths public", async () => {
     const access = protectedWorld();
-    // A job whose start did not refuse it (the form refuses it first).
+    const r = await install(
+      {
+        bindings: [{ type: "plain_text", name: "POLICY_AUD", text: "{{accessAud}}" }],
+        catalog: {
+          vars: [
+            { name: "HOME_PAGE", label: "Home page", optional: true },
+            { name: "TEAM", label: "Team", default: "{{accessTeamDomain}}" },
+            { name: "CERTS", label: "Keys", default: "{{accessCertsUrl}}" },
+          ],
+          access: { mode: "required", bypass: ["/s/*"] },
+          requires: ["access"],
+        },
+      },
+      access.world,
+      // An entry that requires protection is protected without asking.
+      { requirementsConfirmed: true },
+      {},
+      undefined,
+      "self",
+      addUser,
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    const main = [...access.cf.apps.values()].find((a) => a.name === "Appflare: Cut (cut)");
+    const bindings = (r.fake.state.metadata?.bindings ?? []) as Array<{
+      type: string;
+      name: string;
+      text?: string;
+    }>;
+    const text = (name: string) => bindings.find((b) => b.name === name)?.text;
+    expect(main?.aud).toMatch(/^aud-/);
+    expect(text("POLICY_AUD")).toBe(main?.aud);
+    expect(text("TEAM")).toBe("appflare-test.cloudflareaccess.com");
+    expect(text("CERTS")).toBe("https://appflare-test.cloudflareaccess.com/cdn-cgi/access/certs");
+    // The public paths, once the install (and its manifest) is recorded.
+    const at = (name: string) => r.step.names.indexOf(name);
+    expect(at("update Cloudflare Access destinations")).toBeGreaterThan(at("finish"));
+    const bypass = [...access.cf.apps.values()].find((a) =>
+      a.name?.toString().endsWith("public paths"),
+    );
+    expect(bypass?.destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev/s/*" },
+    ]);
+  });
+
+  it("refuses to start an app whose entry requires protection without it", async () => {
+    const fixture = await buildArtifactFixture({
+      catalog: { access: { mode: "required" }, requires: ["access"] },
+    });
+    await expect(start(fixture, { access: false, requirementsConfirmed: true })).rejects.toThrow(
+      "must be protected with Cloudflare Access",
+    );
+  });
+
+  it("refuses an install job without protection for an app whose entry requires it", async () => {
+    const access = protectedWorld();
+    const r = await install(
+      { catalog: { access: { mode: "required" }, requires: ["access"] } },
+      access.world,
+      { requirementsConfirmed: true },
+      { access: false },
+      undefined,
+      "self",
+      addUser,
+    );
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toContain("must be protected with Cloudflare Access");
+    expect(r.step.names).not.toContain("upload Worker script");
+  });
+
+  it("covers an external domain the form asked for before anything of the app exists", async () => {
+    const access = protectedWorld();
+    // No gateway here, so the domain step only reports it could not add the
+    // domain; the application covered it from the start, then lists exactly
+    // the domains the install has.
+    const seen: unknown[] = [];
     const r = await install(
       {},
       access.world,
@@ -3171,10 +3246,15 @@ describe("install job, an app protected with Cloudflare Access", () => {
       "self",
       addUser,
     );
-    expect(r.job?.status).toBe("failed");
-    expect(r.job?.error).toContain("preflight checks");
-    expect(r.job?.error).toContain("Appflare can't yet protect external domains");
-    expect(access.cf.calls).toEqual([]);
-    expect(r.step.names).not.toContain("protect with Cloudflare Access");
+    for (const c of access.cf.calls) {
+      if (c.key.endsWith("/access/apps") && c.key.startsWith("POST")) seen.push(c.body);
+    }
+    expect(r.job?.status).toBe("succeeded");
+    expect((seen[0] as { destinations: unknown[] }).destinations).toEqual([
+      { type: "public", uri: "cut.appflare-dev.workers.dev" },
+      { type: "public", uri: "go.customer.net" },
+    ]);
+    const [app] = [...access.cf.apps.values()];
+    expect(app?.destinations).toEqual([{ type: "worker", worker_id: "tag-cut" }]);
   });
 });

@@ -52,9 +52,9 @@ import {
   sandboxFirstGuardSql,
 } from "../sandbox/auto-enable.server";
 import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
+import { installAccessChoice } from "./access-offer";
 import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
 import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
-import { ACCESS_EXTERNAL_DOMAIN_REFUSAL } from "./external-domain-input";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
 import {
   enteredDerivedVarProblems,
@@ -132,6 +132,12 @@ export interface StartInstallDeps {
    * Without it such an install is refused until they are enabled in Settings.
    */
   sandboxAutoEnable?: SandboxAutoEnableDeps;
+  /**
+   * For an install protected with Cloudflare Access: why the account or the
+   * token cannot protect it (`accessCapabilityProblem`), null when they can.
+   * Without it the install job's first Access step refuses instead.
+   */
+  accessPreflight?: () => Promise<string | null>;
   now?: () => Date;
   newId?: () => string;
 }
@@ -286,9 +292,10 @@ export function resolveInstallInput(
     if (!checked.ok) throw new StartInstallError(checked.error);
     domain = { ...input.domain, hostname: checked.hostname };
   }
-  if (input.access === true && domain?.kind === "external") {
-    throw new StartInstallError(ACCESS_EXTERNAL_DOMAIN_REFUSAL);
-  }
+  // An entry that requires protection is protected unless the form said
+  // otherwise, which is refused.
+  const accessChoice = installAccessChoice(catalog, input.access);
+  if (!accessChoice.ok) throw new StartInstallError(accessChoice.error);
   return {
     secrets,
     seed,
@@ -296,7 +303,7 @@ export function resolveInstallInput(
     vars,
     ...(input.emailRouting === undefined ? {} : { emailRouting: input.emailRouting }),
     ...(domain === undefined ? {} : { domain }),
-    ...(input.access === true ? { access: true as const } : {}),
+    ...(accessChoice.access ? { access: true as const } : {}),
   };
 }
 
@@ -390,6 +397,16 @@ export async function startInstallCore(
     throw new StartInstallError(
       `${manifest.catalog.name}'s own installer decides its Workers and addresses, so Appflare cannot protect it with Cloudflare Access yet. Install it without, then add an Access application for it under Zero Trust, Access, Applications.`,
     );
+  }
+  // An app that is protected, or whose entry needs Access (`requires: ["access"]`).
+  const needsAccess = resolved.access === true || manifest.catalog.requires.includes("access");
+  if (installer === null && needsAccess && deps.accessPreflight !== undefined) {
+    const problem = await deps.accessPreflight();
+    if (problem !== null) {
+      throw new StartInstallError(
+        `${manifest.catalog.name} needs Cloudflare Access, which this account cannot provide yet: ${problem}`,
+      );
+    }
   }
   if (installer !== null && resolved.domain !== undefined) {
     throw new StartInstallError(

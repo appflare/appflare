@@ -428,6 +428,13 @@ export const snapshots = sqliteTable(
      */
     worker_versions_json: text("worker_versions_json"),
     /**
+     * The audience tag of the Cloudflare Access protection the snapshot's
+     * version was deployed with (what `{{accessAud}}` became), `""` when the
+     * install was not protected; null for snapshots taken before it was
+     * recorded. A rollback compares it with the protection the app has now.
+     */
+    access_aud: text("access_aud"),
+    /**
      * The Hyperdrive configurations the snapshot's version binds, as
      * `{ [binding]: configuration id }` (`{}` when none); null for snapshots
      * taken before it was recorded. A rollback needs every one of them live.
@@ -611,6 +618,12 @@ export const install_access = sqliteTable("install_access", {
    * written only when it changes something.
    */
   access_destinations_json: text("access_destinations_json"),
+  /**
+   * When bringing the install's Access applications in step with its
+   * addresses or public paths last failed outside a job; null when the last
+   * sync succeeded. The cron tries again while it is set.
+   */
+  access_sync_failed_at: timestamp("access_sync_failed_at"),
   created_at: timestamp("created_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
 });

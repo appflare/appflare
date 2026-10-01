@@ -284,6 +284,7 @@ const MARKER_HOSTS = {
   workerUrl: "worker-url.appflare.invalid",
   appUrl: "app-url.appflare.invalid",
   wildcardHostname: "wildcard-hostname.appflare.invalid",
+  access: "access.appflare.invalid",
 } as const;
 
 /**
@@ -305,6 +306,10 @@ function varsMention(
     workerUrl: url("workerUrl"),
     appUrl: url("appUrl"),
     wildcardHostname: marker === "wildcardHostname" ? host : "",
+    access:
+      marker === "access"
+        ? { teamDomain: host, aud: host, certsUrl: `https://${host}/certs` }
+        : null,
   });
   const declared = manifest.catalog.install.workers;
   const entry =
@@ -362,11 +367,25 @@ export function varsUseWildcardHostname(
 }
 
 /**
- * The values an app's settings are filled in with that can change without a
- * settings change: the wildcard domain (`{{wildcardHostname}}`) and the
- * address the app is served at (`{{appUrl}}`, `{{appHostname}}`).
+ * Whether any var the Worker gets is filled in with the install's Cloudflare
+ * Access protection (`{{accessTeamDomain}}`, `{{accessAud}}`,
+ * `{{accessCertsUrl}}`), so turning protection on or off deploys the
+ * settings again.
  */
-export const VARS_REFRESH_REASONS = ["wildcardHostname", "appUrl"] as const;
+export function varsUseAccess(
+  manifest: VarManifest,
+  userVars: Readonly<Record<string, string>>,
+): boolean {
+  return varsMention(manifest, userVars, "access");
+}
+
+/**
+ * The values an app's settings are filled in with that can change without a
+ * settings change: the wildcard domain (`{{wildcardHostname}}`), the
+ * address the app is served at (`{{appUrl}}`, `{{appHostname}}`), and its
+ * Cloudflare Access protection (`{{accessAud}}` and the other two).
+ */
+export const VARS_REFRESH_REASONS = ["wildcardHostname", "appUrl", "access"] as const;
 export type VarsRefreshReason = (typeof VARS_REFRESH_REASONS)[number];
 
 /** Whether any var the Worker gets is filled in with one of the values in `changed`. */

@@ -301,6 +301,26 @@ describe("runScheduledUpdates", () => {
     expect((await run(fixture)).created.map((c) => c.id)).toEqual(["job1"]);
   });
 
+  it("leaves an update to a version that must run behind Cloudflare Access for an admin", async () => {
+    const required = await buildArtifactFixture({
+      ...NEW_APP,
+      catalog: { access: { mode: "required" }, requires: ["access"] },
+    });
+    await cacheIndex(required);
+    await settings({ apps: "on" });
+    const r = await run(required);
+    expect(r.created).toEqual([]);
+    expect(r.outcome.apps[0]).toMatchObject({
+      status: "left",
+      version: "1.1.0",
+      reason: expect.stringContaining("Turn protection on for the app first"),
+    });
+    const waiting = await env.DB.prepare("SELECT auto_update_waiting FROM installs WHERE id = ?1")
+      .bind(INSTALL_ID)
+      .first<{ auto_update_waiting: string | null }>();
+    expect(waiting?.auto_update_waiting).toBe("1.1.0");
+  });
+
   it("remembers an update it left for an admin and tries only a newer version", async () => {
     const withSecret = await buildArtifactFixture({
       ...NEW_APP,

@@ -1,5 +1,6 @@
 import {
   type ArtifactManifest,
+  accessOfferOf,
   appTokenPermissions,
   artifactManifestSchema,
   type CatalogManifest,
@@ -11,6 +12,8 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { readAccessPlaceholderValues } from "../access/placeholder-values.server";
+import { PROTECT_MESSAGES, readInstallProtection } from "../access/protect.server";
 import { effectiveManifest } from "../catalog/revisions.server";
 import { createDb, type Database } from "../db/client";
 import { type BuildKind, installs, resources } from "../db/schema";
@@ -36,9 +39,12 @@ import { lastDurableObjectTagOf, updatePath } from "../jobs/update/plan";
 import { sandboxBinding } from "../sandbox/binding";
 import { activeSandboxJob, sandboxBusyMessage } from "../sandbox/busy";
 import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
+import type { StartAccessChangeInput } from "./access-change-input";
+import { accessRequiredOffRefusal } from "./access-offer";
 import { readAppBaseUrl } from "./app-address.server";
 import { appTokenSecret } from "./app-token-secret";
 import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
+import { recordedName } from "./install-names.server";
 import {
   enteredDerivedVarProblems,
   enteredVarFields,
@@ -97,6 +103,10 @@ export interface InstallSettings {
     appUrl: string | null;
     /** The wildcard domain's base hostname; null (filled in empty) without one. */
     wildcardHostname: string | null;
+    /** The Access placeholders' values; null (filled in empty) while the app is not protected. */
+    accessTeamDomain?: string | null;
+    accessAud?: string | null;
+    accessCertsUrl?: string | null;
     /** An app of several Workers: what the per-Worker forms (`{{appUrl:<name>}}`) become. */
     entryWorkers?: EntryWorkerPlaceholders;
   };
@@ -264,7 +274,7 @@ async function settingsPlaceholders(
   install: InstallRow,
   subdomain: string | null,
 ): Promise<InstallSettings["placeholders"]> {
-  const [appUrl, wildcard] = await Promise.all([
+  const [appUrl, wildcard, access] = await Promise.all([
     // Where the app is reached: its custom domain while workers.dev is off.
     readAppBaseUrl(orm, install, subdomain),
     orm
@@ -278,6 +288,7 @@ async function settingsPlaceholders(
           isNull(resources.retained_at),
         ),
       ),
+    readAccessPlaceholderValues(orm, install.id),
   ]);
   const catalog = parseStoredManifest(install.manifest_json)?.catalog;
   const entryWorkers =
@@ -289,6 +300,9 @@ async function settingsPlaceholders(
     workerUrl: subdomain ? workersDevBase(install.worker_name, subdomain) : null,
     appUrl,
     wildcardHostname: wildcardHostnameOf(wildcard),
+    accessTeamDomain: access?.teamDomain ?? null,
+    accessAud: access?.aud ?? null,
+    accessCertsUrl: access?.certsUrl ?? null,
     ...(entryWorkers === undefined ? {} : { entryWorkers }),
   };
 }
@@ -537,6 +551,95 @@ export async function startVarsRefreshCore(
       refreshVars: [...changed],
       // Nothing the admin entered changes; the value it follows already did.
       ...(ctx.skipsPreview !== null ? { confirmNoPreview: true } : {}),
+    },
+  });
+}
+
+export interface StartAccessChangeDeps extends StartReconfigureDeps {
+  /**
+   * Why the account or the token cannot protect an app now
+   * (`accessCapabilityProblem`), null when they can; asked before turning
+   * protection on. Without it the job's first Access step refuses instead.
+   */
+  accessPreflight?: () => Promise<string | null>;
+}
+
+/**
+ * Turns Cloudflare Access protection of an installed app on or off: checks
+ * what can be checked now, then starts the `reconfigure` job with `access`
+ * (see jobs/reconfigure.ts), which changes the protection under the Access
+ * lock, checking again there, and deploys the app's settings again when
+ * they use the Access placeholders (`refreshVars: ["access"]`): after the
+ * protection is made when turning it on, before it is removed when turning
+ * it off. Refused for an app deployed by its own installer, for turning off
+ * an app whose catalog entry requires protection (or one that is not
+ * protected), for turning on an app with an external domain, while another
+ * job of the app runs, and when the account cannot protect apps. Turning it
+ * on for an app already protected brings its protection in step again (a
+ * repair, after "Appflare users" was made anew, say). Returns the job id.
+ */
+export async function startAccessChangeCore(
+  deps: StartAccessChangeDeps,
+  request: StartAccessChangeInput,
+): Promise<{ jobId: string }> {
+  const install = await readInstall(deps.db, request.installId);
+  const name = recordedName(install);
+  if (install.build_kind === "self-deploying") {
+    throw new VersionActionError(PROTECT_MESSAGES.selfDeploying(name));
+  }
+  const refusal = statusRefusal(install.status);
+  if (refusal !== null) throw new VersionActionError(refusal);
+  const signed = parseManifest(install.manifest_json);
+  const ctx = await settingsContext(deps.db, install, deps.sandboxConnected === true);
+  if (signed === null || ctx === null) {
+    throw new VersionActionError(
+      "Appflare has no readable record of this app's version; update or reinstall it to change its protection.",
+    );
+  }
+  const isProtected = (await readInstallProtection(deps.db, install.id)) !== null;
+  if (request.access === "off") {
+    if (accessOfferOf(signed.catalog) === "required") {
+      throw new VersionActionError(accessRequiredOffRefusal(signed.catalog.name));
+    }
+    if (!isProtected) {
+      throw new VersionActionError(
+        `${name} is not protected with Cloudflare Access by Appflare; there is nothing to turn off.`,
+      );
+    }
+  } else {
+    if (deps.accessPreflight !== undefined) {
+      const problem = await deps.accessPreflight();
+      if (problem !== null) throw new VersionActionError(problem);
+    }
+  }
+  const stored = parseStoredVars(install.config_json);
+  // Every Worker of the app, with the form of the newest revision, as a
+  // settings refresh reads them.
+  const workers = entryWorkers({ ...signed, catalog: ctx.catalog }, install.worker_name);
+  const refresh = workers.some((w) => varsNeedRefresh(w.manifest, stored, ["access"]));
+  if (refresh && ctx.problem !== null) throw new VersionActionError(ctx.problem);
+  const jobId = (deps.newId ?? (() => ulid()))();
+  return claim(deps, {
+    installId: install.id,
+    kind: "reconfigure",
+    inputJson: JSON.stringify({
+      installId: install.id,
+      version: install.catalog_version,
+      vars: [],
+      secrets: { set: [], unset: [] },
+      access: request.access,
+      ...(refresh ? { refreshVars: ["access"] } : {}),
+    }),
+    params: {
+      kind: "reconfigure",
+      jobId,
+      installId: install.id,
+      vars: stored,
+      secrets: { set: {}, unset: [] },
+      access: request.access,
+      ...(refresh ? { refreshVars: ["access" as const] } : {}),
+      // Nothing the admin entered changes; the values the settings follow do.
+      ...(refresh && ctx.skipsPreview !== null ? { confirmNoPreview: true } : {}),
     },
   });
 }

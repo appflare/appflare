@@ -9,17 +9,6 @@ import { VALIDATION_METHODS } from "../gateway/gateway";
  * in the UI.
  */
 
-/**
- * Why an external domain and Cloudflare Access protection do not go
- * together yet: an external domain is a Cloudflare for SaaS custom hostname
- * served through the gateway Worker, and whether an Access `public`
- * destination guards such a hostname has not been checked against a live
- * account. Until it has, Appflare refuses the combination rather than show
- * an app as protected on an address that may not be.
- */
-export const ACCESS_EXTERNAL_DOMAIN_REFUSAL =
-  "Appflare can't yet protect external domains with Cloudflare Access. Add the external domain without protection, or remove the protection first.";
-
 const installId = z.string().min(1).max(64);
 
 export const addExternalDomainInput = z.object({

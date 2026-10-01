@@ -4,6 +4,7 @@ import {
   renewInstallServiceTokens,
   resyncAppAccessUsersIfFailed,
 } from "./access/install-access.server";
+import { resyncInstallAccessIfFailed } from "./access/protect.server";
 import { versionCreatedAt } from "./auth/recovery.server";
 import { cleanUpRecoverySecret } from "./auth/recovery-cleanup.server";
 import { ensureAuthStorage } from "./auth/storage.server";
@@ -164,6 +165,14 @@ export default {
         const line = `access: service token of install ${r.installId} ${r.status}`;
         if (r.status === "failed") console.error(line, { error: r.detail });
         else if (r.status === "missing") console.warn(line);
+        else console.log(line);
+      }
+      for (const r of await resyncInstallAccessIfFailed({
+        db: env.DB,
+        client: () => getCfClient(env),
+      })) {
+        const line = `access: applications of install ${r.installId} brought in step again: ${r.outcome}`;
+        if (r.outcome === "failed") console.error(line, { error: r.detail });
         else console.log(line);
       }
       const users = await resyncAppAccessUsersIfFailed({

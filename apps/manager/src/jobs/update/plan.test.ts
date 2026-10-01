@@ -2,6 +2,7 @@ import type { ArtifactManifest, CatalogPipeline } from "@appflare/schema";
 import { describe, expect, it } from "vitest";
 import { classifyHealthProbe } from "../install/health";
 import {
+  accessUpdateRefusal,
   activeVersionId,
   appliedDurableObjectTag,
   bookmarksJson,
@@ -604,6 +605,7 @@ describe("snapshot shape", () => {
       target_catalog_version: "1.1.0",
       config_json: '{"HOME_PAGE":"admin"}',
       hyperdrive_json: '{"HYPERDRIVE":"hd-1"}',
+      access_aud: null,
     });
   });
 
@@ -688,5 +690,19 @@ describe("missingSecrets", () => {
   it("never asks for a seed-only secret, which only the install used", () => {
     const declared = [secret("A"), { ...secret("FIRST_ADMIN_PASSWORD"), seedOnly: true }];
     expect(missingSecrets(declared, [])).toEqual([secret("A")]);
+  });
+});
+
+describe("accessUpdateRefusal", () => {
+  it("refuses a version that requires Access for an unprotected install only", () => {
+    const required = { access: { mode: "required" } };
+    expect(accessUpdateRefusal({ catalog: required, isProtected: false })).toBe(
+      "This version must run behind Cloudflare Access. Turn protection on for the app first, then update.",
+    );
+    expect(accessUpdateRefusal({ catalog: required, isProtected: true })).toBeNull();
+    expect(
+      accessUpdateRefusal({ catalog: { access: { mode: "recommended" } }, isProtected: false }),
+    ).toBeNull();
+    expect(accessUpdateRefusal({ catalog: {}, isProtected: false })).toBeNull();
   });
 });

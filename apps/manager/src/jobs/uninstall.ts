@@ -2,7 +2,7 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { removeInstallAccess } from "../access/install-access.server";
+import { removeInstallProtectionLocked, removePublicPathsLocked } from "../access/protect.server";
 import { withAccessLock } from "../access/toggle.server";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
@@ -441,6 +441,23 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
     steps.setAccountId(started.accountId);
     const { workerName } = started;
 
+    // A protected app's public paths go before any of its addresses is
+    // released, so a hostname that serves something else later never keeps
+    // one. Removing them only makes those paths ask for a sign-in, and
+    // nothing is deleted yet, so a failure here fails the uninstall.
+    if (started.accessProtected === true) {
+      await run("remove public paths from Cloudflare Access", async ({ log, cf }) => {
+        const removed = await withAccessLock(env.DB, () =>
+          removePublicPathsLocked(
+            { db: env.DB, client: cf(), now: () => new Date(now()) },
+            params.installId,
+          ),
+        );
+        if (removed.removed) log.info("Deleted the Access application of the app's public paths.");
+        return {};
+      });
+    }
+
     // A job started before email routes existed carries no list.
     await removeEmailRoutesPhase(steps, started.emailRoutes ?? [], workerName);
 
@@ -584,7 +601,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       await run("remove Cloudflare Access protection", async ({ log, cf }) => {
         try {
           const removed = await withAccessLock(env.DB, () =>
-            removeInstallAccess(
+            removeInstallProtectionLocked(
               { db: env.DB, client: cf(), now: () => new Date(now()) },
               params.installId,
             ),

@@ -29,6 +29,10 @@ describe("formatDate and formatExactDateTime", () => {
 describe("jobKindLabel", () => {
   it("names a job by its kind, and the restore and kept-data deletion by their flags", () => {
     expect(jobKindLabel({ kind: "uninstall" })).toBe("Uninstall");
+    expect(jobKindLabel({ kind: "reconfigure" })).toBe("Settings change");
+    expect(jobKindLabel({ kind: "reconfigure", accessChange: true })).toBe(
+      "Cloudflare Access change",
+    );
     expect(jobKindLabel({ kind: "uninstall", deleteRetained: true })).toBe("Delete retained data");
     expect(jobKindLabel({ kind: "rollback", restore: true })).toBe("Database restore");
     expect(jobKindLabel({ kind: "self_update" })).toBe("Appflare update");

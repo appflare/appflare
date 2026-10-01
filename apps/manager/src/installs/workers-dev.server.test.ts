@@ -109,6 +109,28 @@ describe("setWorkersDevCore", () => {
     expect(await stored()).toBe(1);
   });
 
+  it("takes a protected app's public paths off workers.dev before turning it off", async () => {
+    await addDomain("01B", "links.example.com");
+    const w = world({ "links.example.com": "access" });
+    const synced: Array<{ id: string; change?: unknown; turnedOff: boolean }> = [];
+    await setWorkersDevCore(
+      {
+        ...w.deps,
+        syncAccess: async (id, change) => {
+          synced.push({
+            id,
+            ...(change === undefined ? {} : { change }),
+            turnedOff: w.subdomainCalls.length > 0,
+          });
+          return null;
+        },
+      },
+      { installId: INSTALL_ID, enabled: false },
+    );
+    // Off: the public paths come off workers.dev before it is turned off.
+    expect(synced).toEqual([{ id: INSTALL_ID, change: { workersDev: false }, turnedOff: false }]);
+  });
+
   it("turns it off when Cloudflare Access answers on a domain, since that domain is live", async () => {
     await addDomain("01A", "pending.example.com");
     await addDomain("01B", "links.example.com");

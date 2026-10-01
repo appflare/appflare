@@ -4,6 +4,7 @@ import {
   type CatalogPipeline,
   type CatalogPipelines,
   type CatalogSecret,
+  catalogAccessSchema,
   catalogPipelinesSchema,
   catalogR2BucketSchema,
   type DoMigration,
@@ -64,6 +65,40 @@ export function updateRefusal(input: {
     return `${targetVersion} is older than the installed version ${installedVersion}`;
   }
   return null;
+}
+
+/**
+ * Why an update to a version whose catalog entry requires Cloudflare Access
+ * (`access.mode: "required"`) cannot run on an install Appflare does not
+ * protect: that version must never serve without it. Protection is turned
+ * on first, as a change of its own; null when nothing stands in the way.
+ */
+export function accessUpdateRefusal(input: {
+  catalog: { access?: { mode?: string | undefined } | undefined };
+  isProtected: boolean;
+  /** What the admin asked for: an update (default) or a rollback to the version. */
+  action?: "update" | "roll back";
+}): string | null {
+  if (input.isProtected || input.catalog.access?.mode !== "required") return null;
+  return `This version must run behind Cloudflare Access. Turn protection on for the app first, then ${input.action ?? "update"}.`;
+}
+
+/**
+ * The `access` block of a stored artifact manifest's catalog entry, read on
+ * its own (a snapshot's manifest may predate other fields); empty when it
+ * has none or cannot be read.
+ */
+export function accessOfManifestJson(manifestJson: string | null): {
+  access?: { mode?: string | undefined };
+} {
+  if (manifestJson === null) return {};
+  try {
+    const access = (JSON.parse(manifestJson) as { catalog?: { access?: unknown } }).catalog?.access;
+    const parsed = catalogAccessSchema.safeParse(access);
+    return parsed.success ? { access: parsed.data } : {};
+  } catch {
+    return {};
+  }
 }
 
 /** A live `resources` row of the install, as the update job reads it. */
@@ -748,6 +783,12 @@ export interface InstallState {
 }
 
 export interface SnapshotInput {
+  /**
+   * The audience tag of the Access protection the serving version was
+   * deployed with: `""` when the install was not protected, null when not
+   * known.
+   */
+  accessAud?: string | null;
   id: string;
   installId: string;
   jobId: string;
@@ -836,6 +877,7 @@ export function snapshotRow(input: SnapshotInput): typeof snapshots.$inferInsert
         ? null
         : JSON.stringify(input.otherVersions),
     hyperdrive_json: JSON.stringify(input.hyperdrive ?? {}),
+    access_aud: input.accessAud ?? null,
   };
 }
 

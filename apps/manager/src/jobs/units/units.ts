@@ -52,9 +52,13 @@ import {
   runProtectInstall,
   runReleaseAppAccess,
   runSyncInstallAccess,
+  runUnprotectInstall,
   type SyncInstallAccessInput,
   type SyncInstallAccessResult,
   syncInstallAccessInputSchema,
+  type UnprotectInstallInput,
+  type UnprotectInstallResult,
+  unprotectInstallInputSchema,
 } from "./access";
 import {
   type CronTriggerCountInput,
@@ -350,6 +354,8 @@ export interface JobUnitsApi {
   protectInstall(input: ProtectInstallInput): Promise<UnitResult<ProtectInstallUnitResult>>;
   /** Rewrites what an install's Access application covers when its addresses changed. */
   syncInstallAccess(input: SyncInstallAccessInput): Promise<UnitResult<SyncInstallAccessResult>>;
+  /** Takes Appflare's Cloudflare Access protection off an install (public paths, application, token). */
+  unprotectInstall(input: UnprotectInstallInput): Promise<UnitResult<UnprotectInstallResult>>;
   /** For "Remove Appflare": takes some installs' tokens out of their Access applications and deletes them. */
   releaseAppAccess(input: ReleaseAppAccessInput): Promise<UnitResult<RemovalRelease>>;
 }
@@ -739,6 +745,10 @@ export function createJobUnits(env: UnitEnv, deps: UnitDeps = {}): JobUnitsServe
     syncInstallAccess: (input) =>
       parsed(syncInstallAccessInputSchema, input, "syncInstallAccess", (request) =>
         runSyncInstallAccess(env, deps, request),
+      ),
+    unprotectInstall: (input) =>
+      parsed(unprotectInstallInputSchema, input, "unprotectInstall", (request) =>
+        runUnprotectInstall(env, deps, request),
       ),
     releaseAppAccess: (input) =>
       parsed(releaseAppAccessInputSchema, input, "releaseAppAccess", (request) =>

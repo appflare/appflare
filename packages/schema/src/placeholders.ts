@@ -77,6 +77,32 @@ export const PLACEHOLDERS = [
       "(`tunnels.example.com`, no scheme); empty while none is assigned.",
   },
   {
+    name: "accessTeamDomain",
+    perWorker: false,
+    meaning:
+      "For an app Appflare protects with Cloudflare Access, the account's Zero Trust team " +
+      "domain, `<team>.cloudflareaccess.com` (no scheme). The JWT Access sends the app in the " +
+      "`Cf-Access-Jwt-Assertion` header is issued by `https://<team>.cloudflareaccess.com`. " +
+      "Empty while the app is not protected.",
+  },
+  {
+    name: "accessAud",
+    perWorker: false,
+    meaning:
+      "For an app Appflare protects with Cloudflare Access, the audience (AUD) tag of the app's " +
+      "Access application: the `aud` claim of the JWT Access sends the app. Empty while the app " +
+      "is not protected. When protection is turned on or off, the manager fills the app's " +
+      "settings in again.",
+  },
+  {
+    name: "accessCertsUrl",
+    perWorker: false,
+    meaning:
+      "For an app Appflare protects with Cloudflare Access, where the keys that sign its JWTs " +
+      "are published: `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`. Empty while " +
+      "the app is not protected.",
+  },
+  {
     name: "stage",
     perWorker: false,
     meaning:
@@ -103,10 +129,19 @@ export const PER_WORKER_PLACEHOLDER_NAMES: readonly PerWorkerPlaceholderName[] =
   ).map((p) => p.name);
 
 /**
- * The placeholders the manager fills in when it renders an app's text: every
- * one but `{{stage}}`, which only names a self-deploying entry's Workers.
+ * The placeholders of an app protected with Cloudflare Access: what the app
+ * verifies Access's JWTs with. Only a var's value takes them; each is empty
+ * while the app is not protected.
  */
-export const INSTALL_PLACEHOLDERS = [
+export const ACCESS_PLACEHOLDERS = [
+  "accessTeamDomain",
+  "accessAud",
+  "accessCertsUrl",
+] as const satisfies readonly PlaceholderName[];
+export type AccessPlaceholder = (typeof ACCESS_PLACEHOLDERS)[number];
+
+/** The placeholders a post-install note takes: the install's addresses and names. */
+export const POST_INSTALL_PLACEHOLDERS = [
   "appUrl",
   "appHostname",
   "workerUrl",
@@ -114,6 +149,15 @@ export const INSTALL_PLACEHOLDERS = [
   "workerName",
   "accountId",
   "wildcardHostname",
+] as const satisfies readonly PlaceholderName[];
+
+/**
+ * The placeholders the manager fills in when it renders an app's text: every
+ * one but `{{stage}}`, which only names a self-deploying entry's Workers.
+ */
+export const INSTALL_PLACEHOLDERS = [
+  ...POST_INSTALL_PLACEHOLDERS,
+  ...ACCESS_PLACEHOLDERS,
 ] as const satisfies readonly PlaceholderName[];
 export type InstallPlaceholder = (typeof INSTALL_PLACEHOLDERS)[number];
 
@@ -124,13 +168,16 @@ export const STAGE_PLACEHOLDER = "{{stage}}";
  * The fields of a catalog manifest whose text may hold placeholders, and the
  * ones each takes:
  *
- * - `postInstall`: `postInstall[].content`;
+ * - `postInstall`: `postInstall[].content`, without the Access ones (a note
+ *   people read has no use for a JWT audience tag);
  * - `varDefault`: `vars[].default`, and (for the packer) the string values
  *   of the wrangler config's `vars`, which the manager renders the same way;
  * - `selfDeployingWorkerName`: `install.selfDeploying.workerNames[]`.
+ *
+ * Secrets take none: their values are entered or generated, never filled in.
  */
 export const PLACEHOLDER_FIELDS = {
-  postInstall: INSTALL_PLACEHOLDERS,
+  postInstall: POST_INSTALL_PLACEHOLDERS,
   varDefault: INSTALL_PLACEHOLDERS,
   selfDeployingWorkerName: ["stage"],
 } as const satisfies Record<string, readonly PlaceholderName[]>;
@@ -207,6 +254,23 @@ export interface PlaceholderValues {
    * known (a form showing a default); `{{wildcardHostname}}` is then kept.
    */
   wildcardHostname?: string | null;
+  /**
+   * What `{{accessTeamDomain}}`, `{{accessAud}}` and `{{accessCertsUrl}}`
+   * become: the install's Cloudflare Access protection. Null when the app
+   * is not protected, which fills all three in empty. Absent where it is not
+   * known (a form showing a default); they are then kept as written.
+   */
+  access?: AccessPlaceholderValues | null;
+}
+
+/** The values of the Access placeholders for a protected install. */
+export interface AccessPlaceholderValues {
+  /** `<team>.cloudflareaccess.com`. */
+  teamDomain: string;
+  /** The audience tag of the install's Access application. */
+  aud: string;
+  /** `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`. */
+  certsUrl: string;
 }
 
 /** `text` with every {@link INSTALL_PLACEHOLDERS} entry filled in; whitespace inside the braces is allowed. */
@@ -227,6 +291,12 @@ export function renderPlaceholders(text: string, values: PlaceholderValues): str
         return values.accountId ?? match;
       case "wildcardHostname":
         return values.wildcardHostname === undefined ? match : (values.wildcardHostname ?? "");
+      case "accessTeamDomain":
+        return values.access === undefined ? match : (values.access?.teamDomain ?? "");
+      case "accessAud":
+        return values.access === undefined ? match : (values.access?.aud ?? "");
+      case "accessCertsUrl":
+        return values.access === undefined ? match : (values.access?.certsUrl ?? "");
     }
   });
 }

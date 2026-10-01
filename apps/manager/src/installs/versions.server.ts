@@ -12,6 +12,7 @@ import {
 } from "@appflare/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
+import { readInstallProtection } from "../access/protect.server";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { installAppKey, unsignedTierRefusal } from "../catalog/sources";
@@ -38,6 +39,8 @@ import {
 import { StepLog } from "../jobs/step-log";
 import type { UpdateJobParams } from "../jobs/update";
 import {
+  accessOfManifestJson,
+  accessUpdateRefusal,
   hyperdriveRollbackRefusal,
   lastDurableObjectTagOf,
   missingSecrets,
@@ -68,6 +71,15 @@ import { snapshotHasSameCode } from "./rollback-copy";
 
 export class VersionActionError extends Error {
   override name = "VersionActionError";
+}
+
+/**
+ * The new version must run behind Cloudflare Access and the app is not
+ * protected: an admin turns protection on first. Automatic updates leave
+ * such an update for an admin, as one that needs a value or a confirmation.
+ */
+export class AccessRequiredUpdateError extends VersionActionError {
+  override name = "AccessRequiredUpdateError";
 }
 
 export interface StartJobDeps<P> {
@@ -316,6 +328,12 @@ export async function startUpdateCore(
       workerExportsOf(install.manifest_json),
     ).skipPreview;
   }
+  // A version that must run behind Cloudflare Access never serves without it.
+  const accessRefusal = accessUpdateRefusal({
+    catalog,
+    isProtected: (await readInstallProtection(deps.db, install.id)) !== null,
+  });
+  if (accessRefusal !== null) throw new AccessRequiredUpdateError(accessRefusal);
   const recorded = await createDb(deps.db)
     .select({ kind: resources.kind, name: resources.name })
     .from(resources)
@@ -591,6 +609,13 @@ export async function startRollbackCore(
     await liveHyperdriveIds(createDb(deps.db), install.id),
   );
   if (lost !== null) throw new VersionActionError(lost);
+  // A version that must run behind Cloudflare Access never serves without it.
+  const accessRefusal = accessUpdateRefusal({
+    catalog: accessOfManifestJson(snapshot.manifest_json),
+    isProtected: (await readInstallProtection(deps.db, install.id)) !== null,
+    action: "roll back",
+  });
+  if (accessRefusal !== null) throw new VersionActionError(accessRefusal);
   const jobId = (deps.newId ?? (() => ulid()))();
   return claim(deps, {
     installId: install.id,

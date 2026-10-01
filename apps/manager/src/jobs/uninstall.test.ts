@@ -394,6 +394,66 @@ describe("uninstall job: Cloudflare Access protection", () => {
     expect(JSON.stringify(r.logs)).not.toContain("DO-NOT-LEAK");
   });
 
+  /** A protected Cut with a custom domain and the Access application of its public paths. */
+  async function seedProtectedWithPaths() {
+    await seedInstall();
+    await recordProtectedInstall({
+      installId: "i1",
+      authSecret: "auth-secret-0123456789abcdef",
+      secret: "secret-DO-NOT-LEAK",
+    });
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:access_app:bypass', 'i1', 'access_app', NULL, 'Appflare: Cut (cut) public paths', 'bypass-i1', 1)`,
+    ).run();
+    await seedDomains([{ id: "dom-a", hostname: "cut.example.com", cfId: "cfd-a" }]);
+  }
+
+  it("removes the public paths before any address is released, the application after the Worker", async () => {
+    await seedProtectedWithPaths();
+    const fake = fakeWorld();
+    fake.world.domains.set("cfd-a", { hostname: "cut.example.com", service: "cut" });
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.error).toBeNull();
+    const names = r.step.names;
+    expect(names.indexOf("remove public paths from Cloudflare Access")).toBeLessThan(
+      names.indexOf("remove custom domain cut.example.com"),
+    );
+    const calls = fake.world.calls;
+    expect(calls.indexOf("DELETE /access/apps/bypass-i1")).toBeLessThan(
+      calls.indexOf("DELETE /workers/domains/cfd-a"),
+    );
+    expect(calls.indexOf("DELETE /access/apps/app-i1")).toBeGreaterThan(
+      calls.indexOf("DELETE /workers/scripts/cut?force=true"),
+    );
+    expect(r.state("i1:access_app:bypass")).toBe("deleted");
+  });
+
+  it("fails before anything is deleted when the public paths cannot be removed", async () => {
+    await seedProtectedWithPaths();
+    const world = fakeWorld();
+    // Refused every time it is tried (a step is retried).
+    const fake = {
+      ...world,
+      fetch: async (input: string, init?: RequestInit) => {
+        if (init?.method === "DELETE" && String(input).includes("/access/apps/bypass-i1")) {
+          world.world.calls.push("DELETE /access/apps/bypass-i1");
+          return Response.json(
+            { success: false, errors: [{ code: 10000, message: "Authentication error" }] },
+            { status: 403 },
+          );
+        }
+        return world.fetch(input, init);
+      },
+    };
+    const r = await uninstall({ installId: "i1", deleteResources: [] }, fake);
+    expect(r.job?.status).toBe("failed");
+    expect(r.job?.error).toMatch(/^remove public paths from Cloudflare Access: /);
+    expect(fake.world.calls).not.toContain("DELETE /workers/domains/cfd-a");
+    expect(fake.world.calls).not.toContain("DELETE /workers/scripts/cut?force=true");
+    expect(r.state("dom-a")).toBe("live");
+  });
+
   it("marks the recorded Access application deleted with the token", async () => {
     await seedInstall();
     await recordProtectedInstall({

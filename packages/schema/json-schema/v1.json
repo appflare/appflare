@@ -2669,7 +2669,7 @@
     },
     "requires": {
       "default": [],
-      "description": "Account capabilities the app needs beyond the free Workers baseline.",
+      "description": "Account capabilities the app needs beyond the free Workers baseline. `\"access\"`: the app needs Cloudflare Access (a Zero Trust organization); required with `access.mode: \"required\"` and whenever a var's default uses an Access placeholder.",
       "type": "array",
       "items": {
         "type": "string",
@@ -2680,7 +2680,8 @@
           "workers-ai",
           "browser-rendering",
           "containers",
-          "analytics-engine"
+          "analytics-engine",
+          "access"
         ]
       }
     },
@@ -2935,7 +2936,7 @@
           },
           "default": {
             "type": "string",
-            "description": "Value the form starts with, filled in on every install, update and settings change. `{{appUrl}}` becomes the address the app is served at (its custom domain while workers.dev is off for it, else its workers.dev URL; no trailing slash) and `{{appHostname}}` that address's hostname; `{{workerUrl}}` and `{{workerHostname}}` are always the workers.dev address (`https://<worker name>.<account subdomain>.workers.dev`); `{{workerName}}` is the installed Worker's name and `{{accountId}}` the id of the Cloudflare account. `{{wildcardHostname}}` becomes the hostname of the app's wildcard domain (for an entry with `install.wildcardHostname`), empty until one is assigned. An entry of several Workers names one with `{{appUrl:<name>}}` and the like. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{appUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
+            "description": "Value the form starts with, filled in on every install, update and settings change. `{{appUrl}}` becomes the address the app is served at (its custom domain while workers.dev is off for it, else its workers.dev URL; no trailing slash) and `{{appHostname}}` that address's hostname; `{{workerUrl}}` and `{{workerHostname}}` are always the workers.dev address (`https://<worker name>.<account subdomain>.workers.dev`); `{{workerName}}` is the installed Worker's name and `{{accountId}}` the id of the Cloudflare account. `{{wildcardHostname}}` becomes the hostname of the app's wildcard domain (for an entry with `install.wildcardHostname`), empty until one is assigned. For an app Appflare protects with Cloudflare Access, `{{accessTeamDomain}}` becomes the team domain (`<team>.cloudflareaccess.com`), `{{accessAud}}` the audience tag of the app's Access application and `{{accessCertsUrl}}` the URL of the keys that sign Access's JWTs; all three are empty while the app is not protected, and filled in again when protection is turned on or off. An entry of several Workers names one with `{{appUrl:<name>}}` and the like. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{appUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
           },
           "optional": {
             "default": false,
@@ -3904,6 +3905,33 @@
       "minimum": 1,
       "maximum": 1000000,
       "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving `source`: the released artifact stays as it is, and managers show the new form without an update. `tagline`, `licenseNote` and `authors` need no revision: the catalog shows them from the current manifest. Anything else needs a new build, so move `source` instead."
+    },
+    "access": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "required",
+            "recommended"
+          ],
+          "description": "`\"required\"`: the app is always installed behind Cloudflare Access, and its protection cannot be turned off. For an app with no sign-in of its own, or one that relies on Access's. It installs only on accounts with a Zero Trust organization and a Cloudflare token with the Access permissions. `\"recommended\"`: the install form's protection switch starts on. Leave it out to offer protection with the switch off."
+        },
+        "bypass": {
+          "minItems": 1,
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:/[A-Za-z0-9._~@:+=,-]+)+(?:/\\*)?$",
+            "maxLength": 128
+          },
+          "description": "Paths that stay public while the app is protected, such as share links (`\"/s/*\"`), `\"/.well-known/*\"` or a webhook (`\"/api/webhook\"`). Each starts with `/` and may end in `/*` for everything under it (`/s/*` does not cover `/share`); no other wildcard, query or fragment. At most 10. They stay public on every address the app answers on (its workers.dev address and its domains). The health check path is not made public: Appflare's health checks sign in with a token of their own.",
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "description": "How the app goes with Cloudflare Access, which Appflare can put in front of any installed app so that only the manager's users reach it (and Appflare's own health checks, with a service token of the app's own). Without this block protection is offered at install, switched off. An app that verifies Access's sign-in itself reads the `{{accessTeamDomain}}`, `{{accessAud}}` and `{{accessCertsUrl}}` placeholders from a var. Not for the self-deploying tier."
     }
   },
   "required": [
@@ -3920,6 +3948,119 @@
   ],
   "additionalProperties": false,
   "allOf": [
+    {
+      "anyOf": [
+        {
+          "properties": {
+            "install": {
+              "properties": {
+                "tier": {
+                  "not": {
+                    "const": "self-deploying"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "access"
+                ]
+              },
+              {
+                "required": [
+                  "requires"
+                ],
+                "properties": {
+                  "requires": {
+                    "contains": {
+                      "const": "access"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "not": {
+            "required": [
+              "access"
+            ],
+            "properties": {
+              "access": {
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "const": "required"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "requires"
+          ],
+          "properties": {
+            "requires": {
+              "contains": {
+                "const": "access"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "not": {
+            "required": [
+              "vars"
+            ],
+            "properties": {
+              "vars": {
+                "contains": {
+                  "required": [
+                    "default"
+                  ],
+                  "properties": {
+                    "default": {
+                      "type": "string",
+                      "pattern": "\\{\\{\\s*(?:accessTeamDomain|accessAud|accessCertsUrl)\\s*\\}\\}"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "required": [
+            "requires"
+          ],
+          "properties": {
+            "requires": {
+              "contains": {
+                "const": "access"
+              }
+            }
+          }
+        }
+      ]
+    },
     {
       "anyOf": [
         {

@@ -147,6 +147,7 @@ describe("protectInstall", () => {
         destinations: [{ type: "worker", worker_id: "tag-cut" }],
         workerTags: { cut: "tag-cut" },
       },
+      syncFailedAt: null,
     });
     expect(await resourceRows("access_app")).toEqual([
       {
@@ -266,21 +267,36 @@ describe("protectInstall", () => {
     expect(cf.appPolicies.size).toBe(1);
   });
 
-  it("refuses an install with an external domain, recorded or about to be added", async () => {
+  it("covers an external domain with a public destination, recorded or about to be added", async () => {
     const { cf, deps } = setup();
-    await expect(
-      protectInstall(deps, { installId: INSTALL_ID, pendingExternalHosts: ["go.customer.net"] }),
-    ).rejects.toThrow(PROTECT_MESSAGES.externalDomains);
+    const pending = await protectInstall(deps, {
+      installId: INSTALL_ID,
+      pendingExternalHosts: ["Go.Customer.net"],
+    });
+    expect(pending.destinations).toEqual([
+      { type: "worker", worker_id: "tag-cut" },
+      { type: "public", uri: "go.customer.net" },
+    ]);
     await env.DB.prepare(
       `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
        VALUES ('i1:custom_hostname:x', ?1, 'custom_hostname', 'APP_I1', 'go.customer.net', 'z/ch', 1)`,
     )
       .bind(INSTALL_ID)
       .run();
-    await expect(protectInstall(deps, { installId: INSTALL_ID })).rejects.toThrow(
-      "Appflare can't yet protect external domains with Cloudflare Access",
-    );
-    expect(cf.calls).toEqual([]);
+    // Recorded now: the sync keeps it.
+    await syncInstallAccessDestinations(deps, INSTALL_ID);
+    expect([...cf.apps.values()][0]?.destinations).toContainEqual({
+      type: "public",
+      uri: "go.customer.net",
+    });
+    // Removed: the destination comes off.
+    await env.DB.prepare(
+      "UPDATE resources SET deleted_at = 2 WHERE id = 'i1:custom_hostname:x'",
+    ).run();
+    expect(await syncInstallAccessDestinations(deps, INSTALL_ID)).toBe("updated");
+    expect([...cf.apps.values()][0]?.destinations).toEqual([
+      { type: "worker", worker_id: "tag-cut" },
+    ]);
   });
 
   it("takes over an application by its name only when it covers nothing but this install", async () => {

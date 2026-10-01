@@ -107,9 +107,34 @@ describe("startInstallCore", () => {
     expect(JSON.parse(job?.input_json ?? "{}").access).toBe(true);
   });
 
-  it("refuses Cloudflare Access protection together with an external domain", async () => {
+  it("checks the account can provide Cloudflare Access for an app that needs it, before anything is recorded", async () => {
+    const f = await buildArtifactFixture({ catalog: { requires: ["access"] } });
+    const h = harness(f);
+    const checked: string[] = [];
+    const refusing = {
+      ...h.deps,
+      accessPreflight: async () => {
+        checked.push("asked");
+        return "This Cloudflare account has no Zero Trust organization yet.";
+      },
+    };
+    await expect(
+      startInstallCore(refusing, input({ requirementsConfirmed: true })),
+    ).rejects.toThrow(
+      "Cut needs Cloudflare Access, which this account cannot provide yet: This Cloudflare account has no Zero Trust organization yet.",
+    );
+    expect(checked).toEqual(["asked"]);
+    expect(h.created).toEqual([]);
+    expect(await env.DB.prepare("SELECT id FROM installs").first()).toBeNull();
+    // An app that needs nothing of Access is not checked.
+    const plain = harness(await buildArtifactFixture());
+    await startInstallCore({ ...plain.deps, accessPreflight: async () => "never asked" }, input());
+    expect(plain.created).toHaveLength(1);
+  });
+
+  it("takes Cloudflare Access protection together with an external domain", async () => {
     const f = await buildArtifactFixture();
-    expect(() =>
+    expect(
       resolveInstallInput(
         f.manifest,
         input({
@@ -117,7 +142,10 @@ describe("startInstallCore", () => {
           domain: { kind: "external", hostname: "go.customer.net", validation: "http" },
         }),
       ),
-    ).toThrow("Appflare can't yet protect external domains with Cloudflare Access");
+    ).toMatchObject({
+      access: true,
+      domain: { kind: "external", hostname: "go.customer.net" },
+    });
   });
 
   it("records the catalog an app comes from, and passes it to the job", async () => {

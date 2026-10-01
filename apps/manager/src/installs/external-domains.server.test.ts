@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { createClient } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { protectInstall } from "../access/protect.server";
+import { ACCESS_MESSAGES, withAccessLock } from "../access/toggle.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
@@ -590,17 +591,99 @@ describe("external domains of an app protected with Cloudflare Access", () => {
     return { saas, access, api, order, deps: { ...deps(saas), api } };
   }
 
-  it("refuses an external domain for a protected app, before claiming or creating anything", async () => {
+  it("covers a new external domain before its custom hostname is made, and takes it off around its removal", async () => {
     const w = await protectedWorld();
+    // An entry with public paths: they follow the domain too.
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?2 WHERE id = ?1")
+      .bind(
+        INSTALL_ID,
+        JSON.stringify({
+          version: "1.0.0",
+          catalog: { name: "Cut", access: { bypass: ["/s/*"] } },
+        }),
+      )
+      .run();
+    const added = await addExternalDomainCore(w.deps, {
+      installId: INSTALL_ID,
+      hostname: "go.customer.test",
+      validation: "http",
+    });
+    const apps = () => [...w.access.apps.values()];
+    const main = apps().find((a) => !String(a.name).endsWith("public paths"));
+    const bypass = () => apps().find((a) => String(a.name).endsWith("public paths"));
+    expect(main?.destinations).toContainEqual({ type: "public", uri: "go.customer.test" });
+    expect(bypass()?.destinations).toContainEqual({ type: "public", uri: "go.customer.test/s/*" });
+    const create = w.order.findIndex(
+      (o) => o.startsWith("POST ") && o.endsWith("/custom_hostnames"),
+    );
+    const cover = w.order.indexOf(`PUT /access/apps/${main?.id}`);
+    expect(cover).toBeGreaterThanOrEqual(0);
+    expect(cover).toBeLessThan(create);
+
+    w.order.length = 0;
+    await removeExternalDomainCore(w.deps, { installId: INSTALL_ID, resourceId: added.resourceId });
+    const removed = w.order.findIndex(
+      (o) => o.startsWith("DELETE ") && o.includes("/custom_hostnames/"),
+    );
+    // The public paths come off first, the hostname's own destination after.
+    expect(w.order.indexOf(`PUT /access/apps/${bypass()?.id}`)).toBeLessThan(removed);
+    expect(w.order.lastIndexOf(`PUT /access/apps/${main?.id}`)).toBeGreaterThan(removed);
+    expect(main?.id === undefined ? undefined : w.access.apps.get(main.id)?.destinations).toEqual([
+      { type: "worker", worker_id: "tag-cut" },
+    ]);
+    expect(bypass()?.destinations).not.toContainEqual({
+      type: "public",
+      uri: "go.customer.test/s/*",
+    });
+  });
+
+  it("keeps an external domain when its public paths cannot be taken off first", async () => {
+    const w = await protectedWorld();
+    const added = await addExternalDomainCore(w.deps, {
+      installId: INSTALL_ID,
+      hostname: "go.customer.test",
+      validation: "http",
+    });
     await expect(
-      addExternalDomainCore(w.deps, {
-        installId: INSTALL_ID,
-        hostname: "go.customer.test",
-        validation: "http",
-      }),
-    ).rejects.toThrow("Appflare can't yet protect external domains with Cloudflare Access");
-    expect(w.saas.world.hostnames).toEqual([]);
+      removeExternalDomainCore(
+        { ...w.deps, syncAccess: async () => "Another Access change is in progress." },
+        { installId: INSTALL_ID, resourceId: added.resourceId },
+      ),
+    ).rejects.toThrow("The app's public paths could not be taken off go.customer.test");
+    expect(w.saas.world.hostnames).toHaveLength(1);
+  });
+
+  it("claims the name only under the Access lock, so it cannot race protecting the app", async () => {
+    const saas = await withGateway();
+    // Protecting the app holds the lock: the add is refused before it claims anything.
+    await expect(
+      withAccessLock(env.DB, () =>
+        addExternalDomainCore(deps(saas), {
+          installId: INSTALL_ID,
+          hostname: "go.customer.test",
+          validation: "http",
+        }),
+      ),
+    ).rejects.toThrow(ACCESS_MESSAGES.busy);
     expect(await rows()).toEqual([]);
-    expect(w.order).toEqual([]);
+    expect(saas.world.hostnames).toEqual([]);
+  });
+
+  it("makes protecting the app cover an external domain claimed before it", async () => {
+    const saas = await withGateway();
+    await addExternalDomainCore(deps(saas), {
+      installId: INSTALL_ID,
+      hostname: "go.customer.test",
+      validation: "http",
+    });
+    const access = fakeAccessAccount({ now: () => NOW });
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+    ).run();
+    const result = await protectInstall(
+      { db: env.DB, client: access.client, authSecret: "a".repeat(32), now: () => NOW },
+      { installId: INSTALL_ID, workers: [{ name: "cut", tag: "tag-cut" }] },
+    );
+    expect(result.destinations).toContainEqual({ type: "public", uri: "go.customer.test" });
   });
 });

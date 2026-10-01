@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { accessCapabilityProblem } from "../access/preflight.server";
 import { hasRole } from "../auth/roles";
 import { getCatalogManifest } from "../catalog/app-manifest.server";
 import { findCatalogApp } from "../catalog/merged.server";
@@ -60,6 +61,7 @@ export const startInstall = createServerFn({ method: "POST" })
             const api = await getCfClient(env);
             return (await api.workers.listScripts()).map((s) => s.id);
           },
+          accessPreflight: async () => accessCapabilityProblem(await getCfClient(env)),
         },
         data,
       );

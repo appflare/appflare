@@ -7,7 +7,11 @@ import type { HealthSweepReport } from "../../notifications/health-sweep.server"
 import { createNotificationUnits, type NotificationUnitResult } from "../../notifications/units";
 import type { SetSandboxBindingResult, WaitForSandboxContainersResult } from "../../sandbox/units";
 import type { CronTriggerScan } from "../install/cron-limit";
-import type { ProtectInstallUnitResult, SyncInstallAccessResult } from "./access";
+import type {
+  ProtectInstallUnitResult,
+  SyncInstallAccessResult,
+  UnprotectInstallResult,
+} from "./access";
 import type { D1SeedResult } from "./d1-seed";
 import type {
   AttachDomainResult,
@@ -101,6 +105,10 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   syncInstallAccess(input: unknown): Promise<UnitResult<SyncInstallAccessResult>> {
     return createJobUnits(this.env).syncInstallAccess(input);
+  }
+
+  unprotectInstall(input: unknown): Promise<UnitResult<UnprotectInstallResult>> {
+    return createJobUnits(this.env).unprotectInstall(input);
   }
 
   releaseAppAccess(input: unknown): Promise<UnitResult<RemovalRelease>> {
