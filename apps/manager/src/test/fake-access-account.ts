@@ -193,6 +193,7 @@ export function fakeAccessAccount(opts: { now?: () => Date } = {}) {
       const id = decodeURIComponent(policyOp[1] ?? "");
       const p = policies.get(id);
       if (p === undefined) return notFound();
+      if (request.method === "GET") return json(200, { ...p, app_count: appCount(id) });
       if (request.method === "PUT") {
         const next = { ...(body as Omit<FakePolicy, "id">), id };
         policies.set(id, next);

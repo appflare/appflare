@@ -1,4 +1,6 @@
 import {
+  accessBypassPaths,
+  accessOfferOf,
   appTokenPermissions,
   type CatalogManifest,
   catalogWorkerName,
@@ -13,7 +15,10 @@ import {
 import { Banner, Input, Link, Text } from "@cloudflare/kumo";
 import { DownloadSimpleIcon, InfoIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useState } from "react";
+import { storedAccessProblem } from "../access/app-access";
 import type { AccountPlan } from "../account/plan";
+import type { CapabilitiesView } from "../capabilities/capabilities";
+import { accessStartsOn } from "../installs/access-offer";
 import { appTokenSecret } from "../installs/app-token-secret";
 import { DISPLAY_NAME_MAX_LENGTH, displayNameProblem } from "../installs/display-name";
 import type { InstallDomainInput } from "../installs/install-input";
@@ -33,6 +38,7 @@ import { CronTriggersField } from "./cron-triggers-field";
 import { connectionsComplete, DatabaseFields } from "./database-fields";
 import { EmailRoutingFields } from "./email-routing-fields";
 import { TechnicalNamesProvider, TechnicalNamesSwitch, useShowTechnicalNames } from "./field-label";
+import { InstallAccessField, useAppAccessCheck } from "./install-access-field";
 import { InstallDomainFields } from "./install-domain-fields";
 import { useJobStarted } from "./job-started";
 import { ErrorMessageBanner } from "./message-text";
@@ -85,7 +91,10 @@ export function installFormNotice(
  * if it does not need Workers Paid itself, the Workers Paid confirmation is
  * offered as optional and skips the job's count of the account's triggers.
  * An address besides workers.dev (a custom or external domain) can be
- * chosen; the install job adds it once the Worker serves.
+ * chosen; the install job adds it once the Worker serves. Under the address,
+ * "Protect with Cloudflare Access" (./install-access-field.tsx) puts every
+ * address of the app behind a Cloudflare sign-in for Appflare's users; an
+ * app deployed by its own installer is not offered it.
  * When Settings records the account as on Workers Paid, no Workers Paid
  * confirmation is shown and it counts as given; otherwise ticking one also
  * offers "Remember this for the account", which records the plan.
@@ -123,6 +132,7 @@ export function InstallForm({
   accountPlan = "free",
   planDetected = false,
   reviewedBuildId = null,
+  capabilities = null,
 }: {
   catalog: CatalogManifest;
   /**
@@ -167,6 +177,11 @@ export function InstallForm({
    * release; null for a catalog install.
    */
   reviewedBuildId?: string | null;
+  /**
+   * The account's stored capability probes, for what already shows the
+   * account cannot protect apps with Cloudflare Access; null when unknown.
+   */
+  capabilities?: Pick<CapabilitiesView, "zeroTrust" | "accessServiceTokens"> | null;
 }) {
   const jobStarted = useJobStarted();
   const [workerName, setWorkerName] = useState(defaultWorkerName);
@@ -206,6 +221,15 @@ export function InstallForm({
     (value: InstallDomainInput | null, complete: boolean) => setDomain({ value, complete }),
     [],
   );
+  // Cloudflare Access: not for an app whose own installer decides its Workers.
+  const offersAccess = installer === null;
+  const accessOffer = accessOfferOf(catalog);
+  const [accessTicked, setAccessTicked] = useState(() => accessStartsOn(catalog));
+  const accessCheck = useAppAccessCheck(offersAccess && canInstall && blockedReason === null);
+  // The live check, once it answered; until then what the stored probes show.
+  const accessProblem =
+    accessCheck !== null ? accessCheck.problem : storedAccessProblem(capabilities);
+  const accessOn = accessOffer === "required" || (accessTicked && accessProblem === null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNames] = useShowTechnicalNames();
@@ -282,7 +306,9 @@ export function InstallForm({
     (installer === null || appToken.trim().length > 0) &&
     (catalog.requires.length === 0 || requirementsConfirmed) &&
     (!receivesEmail || (emailZoneId !== null && emailReady)) &&
-    (installer !== null || domain.complete);
+    (installer !== null || domain.complete) &&
+    // An app that requires protection waits until the account can give it.
+    !(accessOffer === "required" && accessCheck?.problem != null);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -301,6 +327,7 @@ export function InstallForm({
         requirementsConfirmed,
         ...(receivesEmail && emailZoneId !== null ? { emailRouting: { zoneId: emailZoneId } } : {}),
         ...(installer === null && domain.value !== null ? { domain: domain.value } : {}),
+        ...(offersAccess ? { access: accessOn } : {}),
       };
       const { jobId } =
         reviewedBuildId !== null
@@ -379,6 +406,19 @@ export function InstallForm({
                   disabled={disabled}
                   onChange={onDomainChange}
                   wildcard={catalog.install.wildcardHostname ?? null}
+                />
+              )}
+
+              {offersAccess && (
+                <InstallAccessField
+                  appName={catalog.name}
+                  offer={accessOffer}
+                  publicPaths={accessBypassPaths(catalog)}
+                  checked={accessTicked}
+                  onCheckedChange={setAccessTicked}
+                  problem={accessProblem}
+                  check={accessCheck}
+                  disabled={disabled}
                 />
               )}
 

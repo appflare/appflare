@@ -61,6 +61,11 @@ about the app, under either health mode:
   reachable there without Access. The domain's **Check now** says it is live
   behind Cloudflare Access.
 
+An app that [Appflare protects](/guides/protect-apps/#health-checks) is checked
+through Access instead: once Access asks for a sign-in, the check signs in with the
+app's own service token and reports on the app as usual. It never sends that token
+to an external domain.
+
 ## The results
 
 | Badge | Status | Meaning |

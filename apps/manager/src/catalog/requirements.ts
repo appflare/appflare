@@ -1,4 +1,5 @@
 import type { InstallTier, Requirement } from "@appflare/schema";
+import type { DocsTopic } from "../docs-topics";
 
 /**
  * What each catalog `requires` value asks of the Cloudflare account, as shown
@@ -40,7 +41,7 @@ export const REQUIREMENTS: Record<Requirement, { label: string; sentence: string
   access: {
     label: "Cloudflare Access",
     sentence:
-      "The app runs behind Cloudflare Access, which needs a Zero Trust organization on the account and a Cloudflare token with the Access permissions. The install checks both before it creates anything.",
+      "The app runs behind Cloudflare Access: every address of it asks for a sign-in, and only Appflare's users get in. That needs a Zero Trust organization on the account and a Cloudflare token with the Access permissions; the install checks both before it creates anything.",
   },
   "analytics-engine": {
     label: "Analytics Engine",
@@ -111,4 +112,14 @@ export function requirementSentence(
     if (sentence !== undefined) return sentence;
   }
   return byName[value]?.sentence ?? null;
+}
+
+/** The docs page that explains a requirement further, where one does. */
+const REQUIREMENT_DOCS: Partial<Record<string, DocsTopic>> = {
+  access: "protectApps",
+};
+
+/** Where the docs explain `value` further; null when the sentence says it all. */
+export function requirementDocs(value: string): DocsTopic | null {
+  return REQUIREMENT_DOCS[value] ?? null;
 }

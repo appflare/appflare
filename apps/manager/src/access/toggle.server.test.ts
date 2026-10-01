@@ -17,6 +17,7 @@ import {
   disableAccess,
   enableAccess,
   listAdminEmails,
+  loginMethodName,
   syncAccessAdmins,
 } from "./toggle.server";
 
@@ -498,5 +499,28 @@ describe("checkAccessMove", () => {
     await expect(checkAccessMove(deps, TARGET)).rejects.toThrow(
       ACCESS_MESSAGES.appExists("Health"),
     );
+  });
+});
+
+describe("loginMethodName", () => {
+  const idp = (type: string, name: string, config: Record<string, unknown> = {}) =>
+    ({ id: `idp-${type}`, type, name, config }) as Parameters<typeof loginMethodName>[0];
+
+  it("adds the provider's own name only when it says more than the type", () => {
+    // The type's words already hold the name.
+    expect(loginMethodName(idp("onetimepin", "One-time PIN"))).toBe(
+      "One-time PIN (a code sent by email)",
+    );
+    // The name holds the type's words, and more.
+    expect(loginMethodName(idp("github", "GitHub (work)"))).toBe("GitHub (work)");
+    // Neither holds the other.
+    expect(loginMethodName(idp("google", "Company SSO"))).toBe("Google: Company SSO");
+    expect(loginMethodName(idp("github", "  "))).toBe("GitHub");
+  });
+
+  it("says when the Cloudflare account method admits only the account's members", () => {
+    expect(
+      loginMethodName(idp("cloudflare", "Cloudflare", { restrict_to_account_members: true })),
+    ).toBe("Cloudflare account (members of this Cloudflare account only)");
   });
 });

@@ -15,7 +15,8 @@ import type { AccountNeed, NeedTone } from "../catalog/account-needs";
 import type { AppLink, SettingItem } from "../catalog/app-page";
 import { maintainerProfile } from "../catalog/authors";
 import type { InstalledRef } from "../catalog/catalog.functions";
-import { DocsLink } from "./docs-link";
+import { requirementDocs } from "../catalog/requirements";
+import { DocsLink, RequirementDocsLink } from "./docs-link";
 import { PageSection } from "./page-section";
 import { StatusBadge } from "./status-badge";
 import { Tooltip } from "./tooltip";
@@ -75,7 +76,8 @@ const NEED_ICONS: Record<NeedTone, { icon: Icon; className: string }> = {
  * counts it (or `explanation`, when given, says what the need means for
  * this app), then its actions: the Cloudflare dashboard page that fixes it,
  * in a new tab ("Turn on in Cloudflare", "Upgrade"), and a quieter link to
- * its row on Your account ("See in Your account", "Choose plan").
+ * its row on Your account ("See in Your account", "Choose plan"). A need
+ * the docs explain further (Cloudflare Access) also links there.
  */
 export function NeedRow({
   need,
@@ -86,6 +88,8 @@ export function NeedRow({
 }) {
   const { icon: NeedIcon, className } = NEED_ICONS[need.tone];
   const line = explanation ?? need.reason;
+  // Cloudflare Access has a page of its own in the docs.
+  const docs = requirementDocs(need.key) !== null;
   return (
     <li className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] content-start items-center gap-x-2 gap-y-0.5">
       <NeedIcon aria-hidden weight="fill" size={18} className={`shrink-0 ${className}`} />
@@ -100,7 +104,7 @@ export function NeedRow({
           </Text>
         </span>
       )}
-      {(need.fix !== null || need.more !== null) && (
+      {(need.fix !== null || need.more !== null || docs) && (
         // On a phone the two links stack, in the banner and on the page alike;
         // side by side, the banner's narrower column would break them unevenly.
         <span className="col-start-2 flex flex-col items-start gap-y-1 pt-0.5 text-sm sm:flex-row sm:flex-wrap sm:gap-x-4">
@@ -121,6 +125,7 @@ export function NeedRow({
                 </Link>
               </span>
             ))}
+          {docs && <RequirementDocsLink value={need.key} />}
         </span>
       )}
     </li>

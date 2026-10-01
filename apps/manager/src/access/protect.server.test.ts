@@ -148,6 +148,9 @@ describe("protectInstall", () => {
         workerTags: { cut: "tag-cut" },
       },
       syncFailedAt: null,
+      // The users policy the application names, to tell when it was made anew.
+      usersPolicyId: users?.id,
+      appMissingAt: null,
     });
     expect(await resourceRows("access_app")).toEqual([
       {

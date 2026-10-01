@@ -52,7 +52,8 @@ export function zeroTrustDashboardUrl(accountId: string | null | undefined, path
  * The dashboard pages Appflare sends people to, in the account it runs in
  * (`:account` while the id is not known, so the dashboard asks). The routes
  * are the ones Cloudflare's own docs link to (cloudflare-docs
- * `src/content/dash-routes/*.json`, read 2026-09-24). The workers.dev
+ * `src/content/dash-routes/*.json`, read 2026-09-24; Access applications
+ * from `zero-trust.json`, read 2026-10-01). The workers.dev
  * registration page is where wrangler sends people
  * (`/<account id>/workers/onboarding`, wrangler 4.136.2).
  */
@@ -66,6 +67,8 @@ export function dashboardLinks(accountId: string | null) {
     domains: dashboardUrl(accountId, "domains/overview"),
     emailRouting: dashboardUrl(accountId, "email-service/routing"),
     zeroTrust: zeroTrustDashboardUrl(accountId, "home"),
+    /** Access applications, in the Zero Trust dashboard; it has no documented link to one application. */
+    accessApps: zeroTrustDashboardUrl(accountId, "access/apps"),
     /** Account-owned tokens; a user token is edited from the profile's API Tokens page. */
     accountApiTokens: dashboardUrl(accountId, "api-tokens"),
   };

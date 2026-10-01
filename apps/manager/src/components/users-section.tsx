@@ -241,8 +241,7 @@ const APP_ACCESS_NOT_UPDATED =
   "The Cloudflare Access policy of your protected apps was not updated. Appflare tries again within 30 minutes.";
 
 /** When "Appflare users" was deleted in the Cloudflare dashboard. */
-const APP_ACCESS_POLICY_MISSING =
-  'The Cloudflare Access policy of your protected apps ("Appflare users") was deleted in the Cloudflare dashboard. Appflare makes it again within 30 minutes; then protect each app again so people can sign in to it.';
+const APP_ACCESS_POLICY_MISSING = `The Cloudflare Access policy of your protected apps ("Appflare users") was deleted in the Cloudflare dashboard. Appflare makes it again within 30 minutes; each protected app's page then offers "Protect again", which lets people sign in to it again.`;
 
 /** Stands in for the user before any row's action has been picked; its dialogs stay closed until then. */
 const NO_USER = { id: "", name: "", email: "" } as const;

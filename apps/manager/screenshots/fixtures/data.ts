@@ -5,6 +5,7 @@ import {
   type IndexJson,
   indexJsonSchema,
 } from "@appflare/schema";
+import type { AppAccessCheck, InstallAccessView } from "../../src/access/app-access";
 import type { CatalogDetail } from "../../src/catalog/catalog.functions";
 import { installVarFields } from "../../src/installs/install-vars";
 import type { InstallSettings } from "../../src/installs/reconfigure.server";
@@ -91,6 +92,7 @@ const view = {
   workersDev: { state: "registered", subdomain: "example" },
   zeroTrust: { state: "exists", teamDomain: "example.cloudflareaccess.com" },
   analyticsEngine: { state: "enabled" },
+  accessServiceTokens: { state: "readable" },
   plan: { plan: "paid", source: "detected" },
   manualPlan: null,
   accountId: "1a2b3c4d1a2b3c4d1a2b3c4d1a2b3c4d",
@@ -339,6 +341,70 @@ const managerAddress =
         movingTo: null,
       };
 
+const installSettings: InstallSettings = {
+  slug: "cut",
+  kind: "artifact",
+  unavailable: null,
+  fields: [
+    {
+      name: "HOME_PAGE",
+      label: "Home page",
+      help: "Choose what visitors see on the home page.",
+      required: false,
+      kind: "text",
+      shownDefault: "default",
+      options: null,
+      stored: null,
+    },
+  ],
+  placeholders: {
+    workerName: "links",
+    workerUrl: "https://links.example.workers.dev",
+    appUrl: "https://links.example.com",
+    wildcardHostname: null,
+  },
+  secrets: [
+    {
+      name: "ADMIN_PASSWORD",
+      label: "Admin password",
+      help: "Used to sign in to the app.",
+      generate: "password",
+      declared: true,
+      optional: false,
+      present: true,
+    },
+  ],
+  databases: [],
+  canRemoveSecrets: true,
+  email: null,
+  skipsPreview: null,
+  installer: null,
+  appToken: null,
+};
+
+/** The short links app is protected with Cloudflare Access; the others are not. */
+function accessView(id: string): InstallAccessView {
+  const protectedApp = id === "install-cut";
+  return {
+    offer: "recommended",
+    protected: protectedApp,
+    appName: protectedApp ? "Appflare: Short links (links)" : null,
+    teamDomain: protectedApp ? "example.cloudflareaccess.com" : null,
+    publicPaths: ["/s/*"],
+    syncFailedAt: null,
+    usesAccessValues: false,
+    users: 3,
+    repair: null,
+  };
+}
+
+const accessCheck: AppAccessCheck = {
+  problem: null,
+  users: 3,
+  loginMethods: ["One-time PIN (a code sent by email)", "GitHub"],
+  oneTimePin: true,
+};
+
 function argument(args: unknown[], key: string): string {
   const first = args[0] as { data?: Record<string, string> } | undefined;
   return first?.data?.[key] ?? "";
@@ -387,47 +453,15 @@ export function fixture(name: string, args: unknown[]): unknown {
     }),
     getCatalogEntry: () => detail(argument(args, "slug")),
     getInstall: () => installDetail(argument(args, "installId")),
-    listSnapshots: () => [],
-    getInstallSettings: (): InstallSettings => ({
-      slug: "cut",
-      kind: "artifact",
-      unavailable: null,
-      fields: [
-        {
-          name: "HOME_PAGE",
-          label: "Home page",
-          help: "Choose what visitors see on the home page.",
-          required: false,
-          kind: "text",
-          shownDefault: "default",
-          options: null,
-          stored: null,
-        },
-      ],
-      placeholders: {
-        workerName: "links",
-        workerUrl: "https://links.example.workers.dev",
-        appUrl: "https://links.example.com",
-        wildcardHostname: null,
-      },
-      secrets: [
-        {
-          name: "ADMIN_PASSWORD",
-          label: "Admin password",
-          help: "Used to sign in to the app.",
-          generate: "password",
-          declared: true,
-          optional: false,
-          present: true,
-        },
-      ],
-      databases: [],
-      canRemoveSecrets: true,
-      email: null,
-      skipsPreview: null,
-      installer: null,
-      appToken: null,
+    getInstallPage: () => ({
+      install: installDetail(argument(args, "installId")),
+      snapshots: [],
+      settings: installSettings,
+      access: accessView(argument(args, "installId")),
     }),
+    checkAppAccess: () => accessCheck,
+    listSnapshots: () => [],
+    getInstallSettings: (): InstallSettings => installSettings,
     startUpdate: (): StartUpdateResult => ({
       version: "0.1.1",
       needsSecrets: [

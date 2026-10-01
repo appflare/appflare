@@ -97,8 +97,9 @@ the dashboard a minute later, delete it there.
 - Every app Appflare installed, with its Worker, databases, buckets, namespaces and
   secrets. They keep running, unmanaged: nothing updates them any more.
 - Custom domains of apps, which keep serving them.
-- The Cloudflare Access application of each app Appflare protects, and the "Appflare
-  users" policy they use, so those apps keep asking for a sign-in. Who can sign in is
+- The Cloudflare Access application of each app Appflare
+  [protects](/guides/protect-apps/), and the "Appflare users" policy they use, so
+  those apps keep asking for a sign-in. Who can sign in is
   managed under **Zero Trust**, **Access** in the Cloudflare dashboard from then on.
 - The `Appflare` API token. Nothing uses it any more: revoke it in the Cloudflare
   dashboard, with any tokens you created for apps that you no longer need.

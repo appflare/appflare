@@ -624,6 +624,20 @@ export const install_access = sqliteTable("install_access", {
    * sync succeeded. The cron tries again while it is set.
    */
   access_sync_failed_at: timestamp("access_sync_failed_at"),
+  /**
+   * The "Appflare users" policy the application references, as last
+   * protected. When "Appflare users" is made again (it was deleted in the
+   * dashboard), the setting names the new one and this the old one, so the
+   * app must be protected again to let people in. Null while not protected.
+   */
+  users_policy_id: text("users_policy_id"),
+  /**
+   * When the cron found the install's Access application, or the one that
+   * keeps its public paths open, gone from the account (deleted in the
+   * dashboard): the addresses no longer ask for a sign-in until the app is
+   * protected again. Null while both exist.
+   */
+  access_app_missing_at: timestamp("access_app_missing_at"),
   created_at: timestamp("created_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
 });

@@ -2,7 +2,7 @@
 "@appflare/manager": minor
 ---
 
-Protection with Cloudflare Access can now be turned on or off for an installed app, and follows the catalog's `access` block. No page offers the switch yet; the server functions exist for admins.
+Protection with Cloudflare Access can now be turned on or off for an installed app, and follows the catalog's `access` block.
 
 - Turning it on or off runs the app's settings change job with the protection change inside it. On: the app is protected first (under the Access lock, covering its external domains too), then its settings that use the Access placeholders are deployed again with the new audience tag and team domain. Off: the settings are deployed again first with those values empty, so an app that checks them turns everyone away rather than trusting a request, then the protection is removed. The job ends with a health check. Turning it off is refused for an app whose catalog entry requires protection.
 - An app whose entry requires protection is protected at install without asking; a start that asks for no protection is refused, and so is one on an account without a Zero Trust organization or a token without the Access permissions, with the words the Settings checks use.

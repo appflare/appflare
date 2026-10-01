@@ -9,15 +9,11 @@ import {
   isServiceTokenInUse,
 } from "@appflare/cf-api";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
-import {
-  ACCESS_FEATURE,
-  permissionName,
-  splitPermissionGroups,
-} from "../cloudflare/token-template";
 import { createDb } from "../db/client";
 import { install_access, resources, user } from "../db/schema";
 import { deleteSettings, readSettings, SETTING, writeSettings } from "../db/settings";
 import { ACCESS_APP_KIND, ACCESS_SERVICE_TOKEN_KIND } from "../installs/resource-kinds";
+import { INSTALL_ACCESS_MESSAGES, USERS_POLICY_NAME } from "./messages";
 import { openServiceTokenSecret, sealServiceTokenSecret } from "./service-token-secret";
 import { AccessToggleError, withAccessLock } from "./toggle.server";
 
@@ -76,7 +72,6 @@ export interface InstallAccessRecord {
   expiresAt: Date | null;
 }
 
-export const USERS_POLICY_NAME = "Appflare users";
 /** Cloudflare's default validity; the cron refreshes a token well before it ends. */
 export const SERVICE_TOKEN_DURATION = "8760h";
 /** The cron refreshes a token once it has less than this left. */
@@ -96,27 +91,7 @@ export function probesPolicyName(installId: string): string {
   return `Appflare health checks ${installId}`;
 }
 
-const ACCESS_GROUPS = splitPermissionGroups().optional.filter((g) => g.onlyFor === ACCESS_FEATURE);
-const nameOf = (key: string, fallback: string) => {
-  const group = ACCESS_GROUPS.find((g) => g.key === key);
-  return group === undefined ? fallback : permissionName(group);
-};
-const POLICIES_PERMISSION = nameOf("access", "Access: Apps and Policies: Edit");
-const TOKENS_PERMISSION = nameOf("access_service_token", "Access: Service Tokens: Edit");
-
-export const INSTALL_ACCESS_MESSAGES = {
-  policiesPermission: `The Cloudflare token cannot manage Access applications and policies. Add the ${POLICIES_PERMISSION} permission to the token, then rotate it under Cloudflare token.`,
-  tokensPermission: `The Cloudflare token cannot manage Access service tokens. Add the ${TOKENS_PERMISSION} permission to the token, then rotate it under Cloudflare token.`,
-  noAuthSecret:
-    "This Worker has no BETTER_AUTH_SECRET, so Appflare cannot keep a service token's secret safely.",
-  noUsers: "There are no Appflare users to allow through Cloudflare Access.",
-  usersPolicyMissing: `The "${USERS_POLICY_NAME}" Access policy was deleted in the Cloudflare dashboard. Appflare makes it again within 30 minutes, but each protected app must then be protected again to let people in.`,
-  notRecorded: "This app has no Cloudflare Access service token recorded.",
-  tokenMissing:
-    "This app's Cloudflare Access service token no longer exists. Protecting the app again makes a new one.",
-  tokenInUse:
-    "This app's Cloudflare Access service token is still named in an Access policy. Remove the app's Access application (or the token from its policy) first, then try again.",
-} as const;
+export { INSTALL_ACCESS_MESSAGES, USERS_POLICY_NAME };
 
 export function usersPolicy(emails: readonly string[]): AccessReusablePolicyArgs {
   return {
@@ -224,7 +199,13 @@ export async function recordInstallProtection(
       access_app_id: protection?.accessAppId ?? null,
       probes_policy_id: protection?.probesPolicyId ?? null,
       ...(protection === null
-        ? { access_aud: null, access_team_domain: null, access_destinations_json: null }
+        ? {
+            access_aud: null,
+            access_team_domain: null,
+            access_destinations_json: null,
+            users_policy_id: null,
+            access_app_missing_at: null,
+          }
         : {}),
       updated_at: now,
     })

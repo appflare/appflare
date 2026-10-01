@@ -1,6 +1,6 @@
 import { CloudflareApiError, type CloudflareClient, isAccessTeamDomain } from "@appflare/cf-api";
-import { INSTALL_ACCESS_MESSAGES } from "./install-access.server";
-import { ACCESS_MESSAGES } from "./toggle.server";
+import type { AppAccessProblem } from "./app-access";
+import { ACCESS_MESSAGES, INSTALL_ACCESS_MESSAGES } from "./messages";
 
 /**
  * Whether the account and the Cloudflare token can protect an app with
@@ -22,29 +22,47 @@ function status(error: unknown): number | null {
 
 const refused = (error: unknown) => status(error) === 401 || status(error) === 403;
 
-/** Why the account cannot protect an app now, in the admin's words; null when it can. */
-export async function accessCapabilityProblem(
+/** What stands in the way of protecting an app now, and where it is fixed; null when nothing does. */
+export async function accessCapabilityCheck(
   client: Pick<CloudflareClient, "access">,
-): Promise<string | null> {
+): Promise<AppAccessProblem | null> {
   try {
     const domain = (await client.access.getOrganization()).auth_domain;
     if (!isAccessTeamDomain(domain)) {
-      return `The Zero Trust organization's team domain "${domain}" is not a cloudflareaccess.com domain, which Appflare cannot verify tokens from.`;
+      return {
+        kind: "team-domain",
+        message: `The Zero Trust organization's team domain "${domain}" is not a cloudflareaccess.com domain, which Appflare cannot verify tokens from.`,
+      };
     }
   } catch (error) {
-    if (status(error) === 404) return ACCESS_MESSAGES.noOrganization;
-    if (refused(error)) return ACCESS_MESSAGES.organizationPermission;
+    if (status(error) === 404) {
+      return { kind: "no-organization", message: ACCESS_MESSAGES.noOrganization };
+    }
+    if (refused(error)) {
+      return { kind: "organization-permission", message: ACCESS_MESSAGES.organizationPermission };
+    }
     return null;
   }
   try {
     await client.access.listApps();
   } catch (error) {
-    if (refused(error)) return INSTALL_ACCESS_MESSAGES.policiesPermission;
+    if (refused(error)) {
+      return { kind: "policies-permission", message: INSTALL_ACCESS_MESSAGES.policiesPermission };
+    }
   }
   try {
     await client.access.listServiceTokens();
   } catch (error) {
-    if (refused(error)) return INSTALL_ACCESS_MESSAGES.tokensPermission;
+    if (refused(error)) {
+      return { kind: "tokens-permission", message: INSTALL_ACCESS_MESSAGES.tokensPermission };
+    }
   }
   return null;
+}
+
+/** Why the account cannot protect an app now, in the admin's words; null when it can. */
+export async function accessCapabilityProblem(
+  client: Pick<CloudflareClient, "access">,
+): Promise<string | null> {
+  return (await accessCapabilityCheck(client))?.message ?? null;
 }

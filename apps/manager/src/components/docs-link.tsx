@@ -1,5 +1,6 @@
 import { Link, LinkButton } from "@cloudflare/kumo";
 import { QuestionIcon } from "@phosphor-icons/react";
+import { requirementDocs } from "../catalog/requirements";
 import { type DocsTopic, docsUrl } from "../docs-topics";
 import { Tooltip } from "./tooltip";
 
@@ -43,5 +44,20 @@ export function DocsLink({
         />
       }
     />
+  );
+}
+
+/**
+ * "Learn more" for a catalog requirement the docs explain further (Cloudflare
+ * Access), with a space before it; nothing for the others.
+ */
+export function RequirementDocsLink({ value }: { value: string }) {
+  const topic = requirementDocs(value);
+  if (topic === null) return null;
+  return (
+    <>
+      {" "}
+      <DocsLink topic={topic} variant="inline" />
+    </>
   );
 }

@@ -17,6 +17,7 @@ import { messageSegments } from "./message-links";
 const PAGE_SOURCES = import.meta.glob<string>(
   [
     "../routes/_app/apps/$installId.tsx",
+    "./app-access-section.tsx",
     "./app-settings-section.tsx",
     "./custom-domains-section.tsx",
     "./external-domains-section.tsx",
@@ -92,7 +93,7 @@ describe("appPlace", () => {
 describe("the app page", () => {
   it("has an element for every section a link can name", () => {
     const source = Object.values(PAGE_SOURCES).join("\n");
-    expect(Object.keys(PAGE_SOURCES)).toHaveLength(6);
+    expect(Object.keys(PAGE_SOURCES)).toHaveLength(7);
     for (const id of Object.keys(APP_SECTIONS)) {
       expect(source, id).toMatch(new RegExp(`\\bid="${id}"`));
     }

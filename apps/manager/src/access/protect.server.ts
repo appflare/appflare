@@ -136,6 +136,13 @@ export interface InstallProtection {
    * the last sync succeeded.
    */
   syncFailedAt: Date | null;
+  /** The "Appflare users" policy its application references, as last protected. */
+  usersPolicyId: string | null;
+  /**
+   * When the cron found its Access application, or its public paths' one,
+   * gone from the account; null while both exist. Protecting it clears it.
+   */
+  appMissingAt: Date | null;
 }
 
 export const PROTECT_MESSAGES = {
@@ -292,6 +299,8 @@ function protectionOf(row: Row): InstallProtection | null {
     teamDomain: row.access_team_domain,
     coverage: parseCoverage(row.access_destinations_json),
     syncFailedAt: row.access_sync_failed_at ?? null,
+    usersPolicyId: row.users_policy_id ?? null,
+    appMissingAt: row.access_app_missing_at ?? null,
   };
 }
 
@@ -337,6 +346,7 @@ async function recordProtection(
     aud: string;
     teamDomain: string;
     coverage: AccessCoverageRecord;
+    usersPolicyId: string;
   },
 ): Promise<void> {
   const at = (deps.now ?? (() => new Date()))();
@@ -350,6 +360,8 @@ async function recordProtection(
         access_aud: protection.aud,
         access_team_domain: protection.teamDomain,
         access_destinations_json: JSON.stringify(protection.coverage),
+        users_policy_id: protection.usersPolicyId,
+        access_app_missing_at: null,
         updated_at: at,
       })
       .where(eq(install_access.install_id, installId)),
@@ -748,6 +760,7 @@ async function protectLocked(
       aud,
       teamDomain,
       coverage: coverageOf(workers, destinations),
+      usersPolicyId: users.policyId,
     },
   );
   // The public paths, once the rest is protected. A failure leaves them

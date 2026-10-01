@@ -362,6 +362,7 @@ function InstallPanel({
         cronTriggers={detail.cronTriggers}
         accountPlan={detail.accountPlan}
         planDetected={detail.capabilities.plan.source === "detected"}
+        capabilities={detail.capabilities}
       />
       {detail.sourceBuilds && (
         <BuildFromSourceCard

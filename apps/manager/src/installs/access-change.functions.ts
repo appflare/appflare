@@ -1,5 +1,8 @@
 import { env } from "cloudflare:workers";
+import { CloudflareApiError } from "@appflare/cf-api";
 import { createServerFn } from "@tanstack/react-start";
+import type { AppAccessCheck } from "../access/app-access";
+import { checkAppAccessCore } from "../access/app-access.server";
 import { accessCapabilityProblem } from "../access/preflight.server";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { jobCreator } from "../jobs/create-job.server";
@@ -37,3 +40,24 @@ export const startAccessChange = createServerFn({ method: "POST" })
       throw error;
     }
   });
+
+/**
+ * Admin only. Whether the account can protect apps with Cloudflare Access
+ * now (the same check an install or a change of protection starts with),
+ * how many Appflare users get in, and the organization's login methods, for
+ * the install form's protection checkbox and the app page's dialog. Reads
+ * only.
+ */
+export const checkAppAccess = createServerFn({ method: "POST" }).handler(
+  async (): Promise<AppAccessCheck> => {
+    await requireRole("admin");
+    try {
+      return await checkAppAccessCore({ db: env.DB, client: await getCfClient(env) });
+    } catch (error) {
+      if (error instanceof CfTokenNotConfiguredError || error instanceof CloudflareApiError) {
+        throw new Error(error.message);
+      }
+      throw error;
+    }
+  },
+);

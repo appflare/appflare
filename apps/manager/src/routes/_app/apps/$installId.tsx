@@ -13,8 +13,10 @@ import { ArrowRightIcon, InfoIcon, PackageIcon, WarningCircleIcon } from "@phosp
 import { createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
+import type { InstallAccessView } from "../../../access/app-access";
 import { startedByLabel } from "../../../auto-update/auto-update";
 import { InstallAutoUpdateCard } from "../../../auto-update/install-auto-update-card";
+import { AppAccessSection } from "../../../components/app-access-section";
 import { AppCredentialsCard } from "../../../components/app-credentials-card";
 import {
   APP_TAB_LABELS,
@@ -78,8 +80,8 @@ type Tab = AppTab;
  * danger zone (uninstall, finishing an uninstall, or once uninstalled
  * deleting what was kept or forgetting the app). Settings: the app's
  * settings and secrets (admins change them and redeploy) and automatic
- * updates. Domains and email: the workers.dev switch, custom domains, external domains, email
- * routes. Resources: what the install created, and what an uninstall kept.
+ * updates. Domains and email: the workers.dev switch, custom domains, external domains,
+ * Cloudflare Access protection, email routes. Resources: what the install created, and what an uninstall kept.
  * Jobs: versions to roll back to, and every job with who started it. The
  * tab is in the URL (`?tab=`), so links and reloads keep it. A link to one
  * section (`#secrets`, see `app-links.ts`) opens the tab that holds it.
@@ -110,7 +112,7 @@ function tabsFor(install: InstallDetail): readonly Tab[] {
 }
 
 function InstallPage() {
-  const { install, snapshots, settings } = Route.useLoaderData();
+  const { install, snapshots, settings, access } = Route.useLoaderData();
   const { viewer } = Route.useRouteContext();
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
@@ -179,7 +181,7 @@ function InstallPage() {
       {tab === "settings" && (
         <SettingsTab install={install} settings={settings} isAdmin={isAdmin} />
       )}
-      {tab === "domains" && <DomainsTab install={install} isAdmin={isAdmin} />}
+      {tab === "domains" && <DomainsTab install={install} access={access} isAdmin={isAdmin} />}
       {tab === "resources" && <ResourcesTab install={install} />}
       {tab === "jobs" && <JobsTab install={install} snapshots={snapshots} isAdmin={isAdmin} />}
     </>
@@ -297,7 +299,15 @@ function SecretNamesSection({ names }: { names: readonly string[] }) {
   );
 }
 
-function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boolean }) {
+function DomainsTab({
+  install,
+  access,
+  isAdmin,
+}: {
+  install: InstallDetail;
+  access: InstallAccessView | null;
+  isAdmin: boolean;
+}) {
   return (
     <>
       {isAdmin && install.build.kind !== "self-deploying" && (
@@ -324,6 +334,8 @@ function DomainsTab({ install, isAdmin }: { install: InstallDetail; isAdmin: boo
         </Section>
       )}
       <ExternalDomainsSection install={install} isAdmin={isAdmin} />
+      {/* After the addresses: it covers every one of them. */}
+      {access !== null && <AppAccessSection install={install} access={access} isAdmin={isAdmin} />}
       <Section id="email" title="Email" className={FLUSH_RING_CLASS}>
         <SectionBody className="gap-3">
           {install.emailRoutes.length === 0 ? (

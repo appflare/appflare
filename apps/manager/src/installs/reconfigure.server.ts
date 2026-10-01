@@ -573,8 +573,8 @@ export interface StartAccessChangeDeps extends StartReconfigureDeps {
  * protection is made when turning it on, before it is removed when turning
  * it off. Refused for an app deployed by its own installer, for turning off
  * an app whose catalog entry requires protection (or one that is not
- * protected), for turning on an app with an external domain, while another
- * job of the app runs, and when the account cannot protect apps. Turning it
+ * protected), while another job of the app runs, and when the account
+ * cannot protect apps. Turning it
  * on for an app already protected brings its protection in step again (a
  * repair, after "Appflare users" was made anew, say). Returns the job id.
  */

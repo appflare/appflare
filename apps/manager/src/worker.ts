@@ -5,6 +5,7 @@ import {
   resyncAppAccessUsersIfFailed,
 } from "./access/install-access.server";
 import { resyncInstallAccessIfFailed } from "./access/protect.server";
+import { checkProtectedAppsExist } from "./access/upkeep.server";
 import { versionCreatedAt } from "./auth/recovery.server";
 import { cleanUpRecoverySecret } from "./auth/recovery-cleanup.server";
 import { ensureAuthStorage } from "./auth/storage.server";
@@ -152,9 +153,11 @@ export default {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    // Apps protected with Cloudflare Access: D1 reads only, unless a token
-    // expires within 30 days, its secret no longer reads, or the users policy
-    // missed a change; never fails the run.
+    // Apps protected with Cloudflare Access: D1 reads, then while any app is
+    // protected two Cloudflare reads (are their Access applications and the
+    // users policy still there?), and more only when a token expires within
+    // 30 days, its secret no longer reads, the users policy missed a change
+    // or was deleted; never fails the run.
     try {
       const renewals = await renewInstallServiceTokens({
         db: env.DB,
@@ -187,6 +190,33 @@ export default {
       }
     } catch (error) {
       console.error("access: upkeep of protected apps failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // Apart from the upkeep above, so a failure there never skips it.
+    try {
+      const upkeep = await checkProtectedAppsExist({ db: env.DB, client: () => getCfClient(env) });
+      for (const id of upkeep.missing) {
+        console.warn(`access: the Access application of install ${id} is gone; protect it again`);
+      }
+      for (const id of upkeep.found) {
+        console.log(`access: the Access application of install ${id} is there again`);
+      }
+      if (upkeep.listError !== null) {
+        console.error("access: could not list Access applications", { error: upkeep.listError });
+      }
+      if (upkeep.usersPolicy === "recreated") {
+        console.warn(
+          "access: users policy of protected apps was deleted and made again; protect each app again to use it",
+        );
+      } else if (upkeep.usersPolicy === "failed") {
+        console.error("access: could not check the users policy of protected apps", {
+          error: upkeep.usersPolicyError,
+        });
+      }
+    } catch (error) {
+      // The Access lock was held (a change in progress), or D1 failed: next run.
+      console.error("access: check that protected apps' Access applications exist failed", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

@@ -99,6 +99,7 @@ finds it off, the install is refused. Turn on Analytics Engine once in the
 dashboard, then choose **Check again** in **Settings > Your account > What this account can run**.
 Cloudflare Access is checked as well: an app that needs it installs only once the
 account has a Zero Trust organization and Appflare's token has the Access permissions.
+See [Protect apps with Cloudflare Access](/guides/protect-apps/).
 
 | Requirement | What it means |
 | --- | --- |

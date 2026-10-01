@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import type { InstallAccessView } from "../access/app-access";
+import { readInstallAccessView } from "../access/app-access.server";
 import { accessCapabilityProblem } from "../access/preflight.server";
 import { hasRole } from "../auth/roles";
 import { getCatalogManifest } from "../catalog/app-manifest.server";
@@ -87,12 +89,14 @@ export const renameInstall = createServerFn({ method: "POST" })
     }
   });
 
-/** What `/apps/$installId` shows: the install, its snapshots and its settings. */
+/** What `/apps/$installId` shows: the install, its snapshots, its settings and its Cloudflare Access protection. */
 export interface InstallPage {
   /** Null when there is no such install. */
   install: InstallDetail | null;
   snapshots: SnapshotView[];
   settings: InstallSettings | null;
+  /** Null for an app Appflare cannot protect, and for one that is gone. */
+  access: InstallAccessView | null;
 }
 
 /**
@@ -104,12 +108,13 @@ export const getInstallPage = createServerFn({ method: "GET" })
   .validator(installIdInput)
   .handler(async ({ data }): Promise<InstallPage> => {
     const session = await requireSession();
-    const [install, snapshots, settings] = await Promise.all([
+    const [install, snapshots, settings, access] = await Promise.all([
       readInstallDetail(data.installId),
       listSnapshotsCore(env.DB, data.installId, {
         withBookmarks: hasRole(session.user.role, "admin"),
       }),
       readInstallPageSettings(data.installId),
+      readInstallAccessView(env.DB, data.installId),
     ]);
-    return { install, snapshots, settings };
+    return { install, snapshots, settings, access };
   });
