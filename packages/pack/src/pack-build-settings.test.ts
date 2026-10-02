@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -128,6 +128,22 @@ describe("static assets", () => {
     expect(lines).toContain(
       "left .git, .wrangler, node_modules, docs/node_modules out of the static assets: a project's own .git, .wrangler, node_modules directories are never served",
     );
+  }, 120_000);
+  it("never include the wrangler config the packer writes, even when .assetsignore asks for it", async () => {
+    write("index.html", "<h1>hi</h1>\n");
+    write("sub/.appflare.wrangler.jsonc", "{}\n");
+    write(".assetsignore", "src\nwrangler.jsonc\n!.appflare.wrangler.jsonc\n");
+    // The patch writes `.appflare.wrangler.jsonc` beside the config, here
+    // inside the assets directory.
+    setUp(
+      { ...WORKER, vars: { A: "1", B: "2" }, assets: { directory: "." } },
+      catalog({}, { configPatch: { vars: { A: null } } }),
+    );
+    const result = await run();
+    const routes = result.manifest.assets.files.map((f) => f.route);
+    expect(routes).toContain("/index.html");
+    expect(routes.filter((r) => r.endsWith(".appflare.wrangler.jsonc"))).toEqual([]);
+    expect(existsSync(path.join(dir, ".appflare.wrangler.jsonc"))).toBe(true);
   }, 120_000);
 });
 

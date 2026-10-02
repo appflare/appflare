@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { PASSTHROUGH_BINDING_TYPES, pipelineNames, planBindings, resourceName } from "./bindings";
+import {
+  PASSTHROUGH_BINDING_TYPES,
+  pipelineNames,
+  planBindings,
+  resourceName,
+  withWorkflowRefs,
+} from "./bindings";
 
 describe("Pipelines bindings", () => {
   const sink = (bucket: string, table = "events") => ({
@@ -141,6 +147,44 @@ describe("planBindings", () => {
     expect(plan.problems[0]).toMatch(/Workflow binding W points at another Worker/);
   });
 
+  describe("a Workflow another Worker of the app defines", () => {
+    const defining = {
+      type: "workflow",
+      name: "SITE_AUDIT",
+      workflow_name: "site-audit",
+      class_name: "SiteAudit",
+    };
+    const running = { ...defining, name: "AUDIT", script_name: "{{workerName:audit}}" };
+
+    it("plans the Workflow once, with the binding that defines it, and names the other binding after it", () => {
+      const plan = planBindings("open-seo", [running, defining]);
+      expect(plan.problems).toEqual([]);
+      expect(plan.workflows).toEqual([
+        { binding: "SITE_AUDIT", name: "open-seo-site-audit", className: "SiteAudit" },
+      ]);
+      expect(plan.workflowRefs).toEqual([{ binding: "AUDIT", workflow: "SITE_AUDIT" }]);
+      expect(withWorkflowRefs({ SITE_AUDIT: "open-seo-site-audit" }, plan.workflowRefs)).toEqual({
+        SITE_AUDIT: "open-seo-site-audit",
+        AUDIT: "open-seo-site-audit",
+      });
+    });
+
+    it("refuses a binding to a Workflow no Worker of the app defines", () => {
+      const plan = planBindings("open-seo", [running]);
+      expect(plan.workflows).toEqual([]);
+      expect(plan.problems).toEqual([
+        'Workflow binding AUDIT runs the Workflow "site-audit" of another Worker of the app, which defines no Workflow of that name.',
+      ]);
+    });
+
+    it("still refuses a Workflow of a Worker outside the app", () => {
+      const plan = planBindings("open-seo", [defining, { ...running, script_name: "open-seo" }]);
+      expect(plan.problems).toEqual([
+        'Workflow binding AUDIT points at another Worker ("open-seo"); Appflare installs self-contained apps only.',
+      ]);
+    });
+  });
+
   it("plans a Vectorize index with the dimensions and metric the binding records", () => {
     const plan = planBindings("second-brain", [
       { type: "vectorize", name: "VECTORIZE", dimensions: 384, metric: "cosine" },
@@ -250,7 +294,13 @@ describe("service bindings in catalog apps", () => {
         { type: "service", name: "WORKER_SELF_REFERENCE", service: "self" },
         { type: "service", name: "JOBS", service: "self", entrypoint: "Jobs" },
       ]);
-      expect(plan).toEqual({ resources: [], durableObjects: [], workflows: [], problems: [] });
+      expect(plan).toEqual({
+        resources: [],
+        durableObjects: [],
+        workflows: [],
+        workflowRefs: [],
+        problems: [],
+      });
     }
   });
 

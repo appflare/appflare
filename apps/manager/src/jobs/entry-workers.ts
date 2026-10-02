@@ -97,9 +97,10 @@ export function entryScriptNamesOf(
 /**
  * Every binding of every Worker of the app, one per binding name, for the
  * plans that create resources: bindings of one name share one resource. For a
- * Durable Object binding the Worker that implements the class wins over one
- * that binds it from another Worker (`script_name` naming an entry Worker),
- * so the class is recorded once, with the Worker that has it.
+ * Durable Object or Workflow binding the Worker that implements the class
+ * wins over one that binds it from another Worker (`script_name` naming an
+ * entry Worker), so the class, or the Workflow, is recorded once, with the
+ * Worker that has it.
  */
 export function entryBindings(manifest: ArtifactManifest): WorkerBinding[] {
   const byName = new Map<string, WorkerBinding>();
@@ -108,8 +109,8 @@ export function entryBindings(manifest: ArtifactManifest): WorkerBinding[] {
     if (seen === undefined) {
       byName.set(binding.name, binding);
     } else if (
-      seen.type === "durable_object_namespace" &&
-      binding.type === "durable_object_namespace" &&
+      (seen.type === "durable_object_namespace" || seen.type === "workflow") &&
+      binding.type === seen.type &&
       entryWorkerRefName(seen.script_name) !== null &&
       entryWorkerRefName(binding.script_name) === null
     ) {

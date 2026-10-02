@@ -1,7 +1,12 @@
 import path from "node:path";
 import { type CatalogManifest, catalogWorkerName, type WranglerFacts } from "@appflare/schema";
 import { unstable_readConfig } from "wrangler";
-import { applyConfigPatches, workerSpecs, writeInlineConfigs } from "./config-patch.ts";
+import {
+  applyConfigPatches,
+  readableWranglerConfig,
+  workerSpecs,
+  writeInlineConfigs,
+} from "./config-patch.ts";
 import { copyTemplateConfig, readConfigArgs, resolveWranglerConfig } from "./config-redirect.ts";
 import { unsupportedWranglerSections } from "./wrangler-config.ts";
 
@@ -86,7 +91,12 @@ export function inspectWranglerConfig(
   }
   // A template (`wrangler.toml.example`) is read under its real name, as the pack reads it.
   const target =
-    patched.get(configPath) ?? resolveWranglerConfig(root, copyTemplateConfig(root, configPath));
+    patched.get(configPath) ??
+    readableWranglerConfig(
+      root,
+      resolveWranglerConfig(root, copyTemplateConfig(root, configPath)),
+      options.logger,
+    );
   const read = readConfigArgs(target);
   const config = unstable_readConfig(read.args, read.options) as unknown;
   if (!isRecord(config)) throw new Error("wrangler did not return a config");

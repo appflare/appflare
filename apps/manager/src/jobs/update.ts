@@ -648,7 +648,11 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
     snapshotOthers = others.length === 0 ? null : snapshot.otherVersions;
     previousVersion = started.fromVersion;
 
-    // 3. Resources for new bindings; nothing is deleted.
+    // 3. Resources for new bindings; nothing is deleted. A version upload
+    // creates no Workflow: one new in this version exists only once the
+    // version of the Worker that defines it is deployed (another Worker's
+    // upload may already bind it through its script_name, but runs it only
+    // after that; seen live on Cloudflare).
     for (const wf of diff.newWorkflows) await checkWorkflowNamePhase(steps, wf);
     const bound = [...diff.existing, ...queueDiff.existing];
     for (const res of [...diff.toCreate, ...queueDiff.toCreate]) {

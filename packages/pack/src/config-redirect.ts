@@ -22,12 +22,29 @@ export const DEPLOY_CONFIG_PATH = ".wrangler/deploy/config.json";
 
 /** Which wrangler config the packer builds from. */
 export interface WranglerConfigTarget {
-  /** Absolute path of the catalog manifest's `install.wranglerConfig`. */
+  /**
+   * Absolute path of the catalog manifest's `install.wranglerConfig` (or the
+   * Worker's): the app's own config, which relative paths such as a D1
+   * binding's `migrations_dir` are read against.
+   */
   declaredPath: string;
   /** Absolute path of the config wrangler deploys; `declaredPath` without a redirect. */
   effectivePath: string;
-  /** Absolute path of the redirect file, or null when there is none. */
+  /**
+   * Absolute path of the redirect file wrangler follows to `effectivePath`
+   * (run from the declared config's directory without `--config`), or null
+   * when wrangler reads `effectivePath` with `--config`.
+   */
   deployConfigPath: string | null;
+  /**
+   * Set when `effectivePath` is a config the build generated for an
+   * auxiliary Worker: the redirect lists it in `auxiliaryWorkers`, which
+   * wrangler never follows, so it can only be read with `--config`, and
+   * only once the fields wrangler takes from a redirected config alone are
+   * gone (`readableWranglerConfig` in config-patch.ts). The redirect file it
+   * was found through.
+   */
+  auxiliaryOf?: string;
 }
 
 /** The build left a redirect the packer cannot follow. */
@@ -135,33 +152,121 @@ export function resolveWranglerConfig(checkoutDir: string, declared: string): Wr
       `the build left ${shown}, but it has no "configPath" naming the wrangler config to deploy`,
     );
   }
-  const effectivePath = path.resolve(path.dirname(deployConfigPath), target);
-  if (!existsSync(effectivePath) || !statSync(effectivePath).isFile()) {
-    throw new ConfigRedirectError(
-      `${shown} points at ${checkoutRelative(root, effectivePath)}, which does not exist`,
-    );
+  const effectivePath = generatedConfigPath(root, deployConfigPath, target);
+  // A build of several Workers (the Cloudflare Vite plugin's
+  // `auxiliaryWorkers`) generates a config for each, and its redirect points
+  // at the entry Worker's alone. Each generated config records the config it
+  // was generated from (`userConfigPath`), so a declared config the redirect
+  // does not point at is found among the others.
+  const source = generatedFrom(effectivePath);
+  if (source === null || samePath(source, declaredPath)) {
+    return { declaredPath, effectivePath, deployConfigPath };
   }
-  // Checked on the real path of an existing file, so symlinks cannot escape.
-  if (!isInside(root, effectivePath)) {
-    throw new ConfigRedirectError(`${shown} points at ${target}, which is outside the checkout`);
+  const listed =
+    typeof parsed === "object" && parsed !== null && "auxiliaryWorkers" in parsed
+      ? parsed.auxiliaryWorkers
+      : undefined;
+  for (const entry of Array.isArray(listed) ? listed : []) {
+    const configPath =
+      typeof entry === "object" && entry !== null && "configPath" in entry
+        ? entry.configPath
+        : undefined;
+    if (typeof configPath !== "string" || configPath.length === 0) continue;
+    const auxiliary = generatedConfigPath(root, deployConfigPath, configPath);
+    const from = generatedFrom(auxiliary);
+    if (from !== null && samePath(from, declaredPath)) {
+      return {
+        declaredPath,
+        effectivePath: auxiliary,
+        deployConfigPath: null,
+        auxiliaryOf: deployConfigPath,
+      };
+    }
   }
-  return { declaredPath, effectivePath, deployConfigPath };
+  throw new ConfigRedirectError(
+    `the build left ${shown}, which deploys ${checkoutRelative(root, effectivePath)}, generated from ` +
+      `${checkoutRelative(root, path.resolve(root, source))}; none of the configs it generated was generated ` +
+      `from ${checkoutRelative(root, declaredPath)} (its "auxiliaryWorkers" list no such Worker), so the ` +
+      "build did not build this Worker",
+  );
 }
 
 /**
- * How to run wrangler against `target`: with `--config` for the declared
- * config, or, when the build left a redirect, from the declared config's
- * directory without `--config`, which is the only way wrangler reads a
- * redirected config as one. Passing the generated config to `--config`
- * makes wrangler treat it as a hand-written config and refuse the fields
- * build tools write into it (`legacy_env`, for one).
+ * The absolute path of a config a redirect at `deployConfigPath` names as
+ * `configPath`, checked to exist inside the checkout; throws
+ * {@link ConfigRedirectError} otherwise, as wrangler would refuse it too.
+ */
+function generatedConfigPath(root: string, deployConfigPath: string, configPath: string): string {
+  const shown = checkoutRelative(root, deployConfigPath);
+  const resolved = path.resolve(path.dirname(deployConfigPath), configPath);
+  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+    throw new ConfigRedirectError(
+      `${shown} points at ${checkoutRelative(root, resolved)}, which does not exist`,
+    );
+  }
+  // Checked on the real path of an existing file, so symlinks cannot escape.
+  if (!isInside(root, resolved)) {
+    throw new ConfigRedirectError(
+      `${shown} points at ${configPath}, which is outside the checkout`,
+    );
+  }
+  return resolved;
+}
+
+/**
+ * The config a build generated `absPath` from, as the generated config
+ * records it (`userConfigPath`, which the Cloudflare Vite plugin writes with
+ * `configPath`), or null when `absPath` does not say or names itself: a
+ * config written by hand, or by a tool that records nothing. Wrangler
+ * 4.136.2 calls a config redirected when the two differ
+ * (`isRedirectedConfig`).
+ */
+export function generatedFrom(absPath: string): string | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(absPath, "utf8"));
+  } catch {
+    // Not JSON (a TOML or JSONC config): written by hand, not generated.
+    return null;
+  }
+  const source =
+    typeof raw === "object" && raw !== null && "userConfigPath" in raw
+      ? raw.userConfigPath
+      : undefined;
+  if (typeof source !== "string" || source.length === 0) return null;
+  const resolved = path.resolve(path.dirname(absPath), source);
+  return samePath(resolved, absPath) ? null : resolved;
+}
+
+/** Whether two paths name one file, through symlinks when both exist. */
+function samePath(a: string, b: string): boolean {
+  const ra = path.resolve(a);
+  const rb = path.resolve(b);
+  if (ra === rb) return true;
+  try {
+    return realpathSync(ra) === realpathSync(rb);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * How to run wrangler against `target`: with `--config` for the config it
+ * names (the declared config, or the config the packer wrote in its place),
+ * or, when the build left a redirect, from the declared config's directory
+ * without `--config`, which is the only way wrangler reads a redirected
+ * config as one. Passing a generated config to `--config` makes wrangler
+ * treat it as a hand-written config and refuse the fields build tools write
+ * into it (`legacy_env`, for one); `readableWranglerConfig` in
+ * config-patch.ts writes a copy without them for a generated config that
+ * no redirect leads to.
  */
 export function dryRunInvocation(
   target: WranglerConfigTarget,
   checkoutDir: string,
 ): { cwd: string; configArgs: string[] } {
   if (target.deployConfigPath === null) {
-    return { cwd: checkoutDir, configArgs: ["--config", target.declaredPath] };
+    return { cwd: checkoutDir, configArgs: ["--config", target.effectivePath] };
   }
   return { cwd: path.dirname(target.declaredPath), configArgs: [] };
 }
@@ -178,7 +283,7 @@ export function readConfigArgs(target: WranglerConfigTarget): {
   options: { useRedirectIfAvailable?: boolean };
 } {
   if (target.deployConfigPath === null) {
-    return { args: { config: target.declaredPath }, options: {} };
+    return { args: { config: target.effectivePath }, options: {} };
   }
   return { args: { script: target.declaredPath }, options: { useRedirectIfAvailable: true } };
 }

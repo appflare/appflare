@@ -31,6 +31,8 @@ export {
   applyConfigPatches,
   ConfigPatchError,
   inlineConfigWorkerName,
+  REDIRECT_ONLY_FIELDS,
+  readableWranglerConfig,
   readRawWranglerConfig,
   type WorkerSpec,
   type WriteInlineConfigsOptions,
@@ -42,6 +44,7 @@ export {
   ConfigTemplateError,
   copyTemplateConfig,
   DEPLOY_CONFIG_PATH,
+  generatedFrom,
   resolveWranglerConfig,
   type WranglerConfigTarget,
 } from "./config-redirect.ts";

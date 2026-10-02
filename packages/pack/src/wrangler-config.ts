@@ -549,8 +549,9 @@ export interface CollectBindingsOptions {
   /**
    * For one Worker of an app of several: every Worker of the entry, by the
    * name its wrangler config gives it, to its name within the entry. A service
-   * binding's `service` or a Durable Object binding's `script_name` that names
-   * one of them is recorded as `{{workerName:<name>}}`.
+   * binding's `service`, or a Durable Object or Workflow binding's
+   * `script_name`, that names one of them is recorded as
+   * `{{workerName:<name>}}`.
    */
   entryWorkers?: ReadonlyMap<string, string>;
   /**
@@ -808,24 +809,25 @@ export function collectBindings(
     bindings.push(selfServiceBinding(svc, config.name, entryWorkers));
   }
   for (const wf of config.workflows ?? []) {
-    if (
-      wf.script_name !== undefined &&
-      wf.script_name !== config.name &&
-      entryWorkers?.has(wf.script_name) === true
-    ) {
-      throw new ServiceBindingError(
-        `the wrangler config's Workflow binding ${wf.binding} runs the Workflow of the Worker "${wf.script_name}"; ` +
-          "Appflare installs each Workflow with the Worker that defines it, so bind it there",
-      );
-    }
     // Upload-metadata shape for a workflow binding (verified against wrangler
     // 4.136.2: `type: "workflow", name: <binding>, workflow_name, class_name,
     // script_name`). All four are code/config references, not account ids, so the
     // whole binding survives to the artifact; the manager passes it through.
+    // In an app of several Workers, a Workflow another of them defines is
+    // named by that Worker's name within the entry: the manager creates the
+    // Workflow with that Worker and points this binding at it. One naming
+    // this Worker defines its Workflow, as one naming no Worker does.
+    const inEntry = wf.script_name === undefined ? undefined : entryWorkers?.get(wf.script_name);
+    const scriptName =
+      entryWorkers !== undefined && wf.script_name === config.name
+        ? undefined
+        : inEntry !== undefined
+          ? entryWorkerRef(inEntry)
+          : wf.script_name;
     push("workflow", wf.binding, {
       workflow_name: wf.name,
       class_name: wf.class_name,
-      script_name: wf.script_name,
+      script_name: scriptName,
     });
   }
   for (const mail of config.send_email ?? []) {
