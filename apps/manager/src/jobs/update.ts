@@ -9,8 +9,9 @@ import {
 } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { bypassPathsOfManifest } from "../access/bypass.server";
+import { writeAcceptedBypass } from "../access/accepted-paths.server";
 import { readAccessPlaceholderValues } from "../access/placeholder-values.server";
+import { storedBypassPaths } from "../access/stored-access.server";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
@@ -434,10 +435,15 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
           | AccessPlaceholderValues
           | null
           | undefined,
-        // The public paths of the serving version (absent in a step output recorded before them).
-        bypassPathsBefore: [...bypassPathsOfManifest(install.manifest_json)] as
-          | string[]
-          | undefined,
+        // The public paths of the serving version, as the newest revision
+        // recorded for its release lists them (absent in a step output
+        // recorded before them).
+        bypassPathsBefore: [
+          ...(await storedBypassPaths(orm, {
+            manifestJson: install.manifest_json,
+            artifactDigest: install.artifact_digest,
+          })),
+        ] as string[] | undefined,
         origin,
         resources: recorded,
       };
@@ -1052,6 +1058,9 @@ export async function runUpdate(ctx: JobContext): Promise<void> {
         .update(installs)
         .set({ ...record, updated_at: new Date(now()) })
         .where(eq(installs.id, params.installId));
+      // An update is an admin's action that carries the version's public
+      // paths: a protected app's are accepted (nothing for one not protected).
+      await writeAcceptedBypass(orm, params.installId, accessBypassPaths(manifest.catalog));
       return {};
     });
 

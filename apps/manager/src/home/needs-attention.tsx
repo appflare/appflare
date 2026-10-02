@@ -7,6 +7,7 @@ import {
 } from "@phosphor-icons/react";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { appLink } from "../components/app-links";
 import { BusyButton } from "../components/busy-button";
 import { Section, SectionRows } from "../components/section";
 import type { StartUpdateHandle } from "../components/update-banner";
@@ -154,6 +155,15 @@ function AttentionRow({
     case "not-responding":
       action = isAdmin ? (
         <CheckAgainButton installId={item.installId} />
+      ) : (
+        <ManageLink installId={item.installId} />
+      );
+      break;
+    case "access-required":
+      action = isAdmin ? (
+        <LinkButton href={appLink(item.installId, "access")} variant="secondary">
+          Turn on
+        </LinkButton>
       ) : (
         <ManageLink installId={item.installId} />
       );

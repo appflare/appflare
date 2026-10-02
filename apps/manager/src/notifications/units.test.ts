@@ -41,6 +41,16 @@ describe("notification units over SELF", () => {
     });
   });
 
+  it("run each part of the Access upkeep as plain lines, without asking Cloudflare when nothing is protected", async () => {
+    for (const part of [
+      "refreshAccessRevisions",
+      "renewAccessTokens",
+      "resyncAccessApps",
+    ] as const) {
+      expect(await self?.[part]({})).toEqual({ ok: true, value: { lines: [] } });
+    }
+  });
+
   it("validate their input on arrival", async () => {
     expect(await self?.deliverNotifications({ eventId: 5 })).toMatchObject({ ok: false });
     expect(

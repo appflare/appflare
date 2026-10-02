@@ -9,6 +9,7 @@ import { SETTING, writeSettings } from "../db/settings";
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import { FAKE_ACC, fakeAccessAccount } from "../test/fake-access-account";
 import { recordProtectedInstall } from "../test/protected-install";
+import { recordFixtureRevision, setInstallRelease } from "../test/recorded-revision";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { checkAppAccessCore, readInstallAccessView } from "./app-access.server";
 import { ACCESS_MESSAGES, INSTALL_ACCESS_MESSAGES } from "./messages";
@@ -104,6 +105,7 @@ describe("readInstallAccessView", () => {
       appName: null,
       teamDomain: null,
       publicPaths: ["/s/*", "/api/webhook"],
+      pendingPublicPaths: [],
       syncFailedAt: null,
       usesAccessValues: false,
       users: 2,
@@ -142,10 +144,40 @@ describe("readInstallAccessView", () => {
       appName: "Appflare: Cut (cut)",
       teamDomain: "team.cloudflareaccess.com",
       publicPaths: [],
+      pendingPublicPaths: [],
       syncFailedAt: "2026-10-01T10:00:00.000Z",
       usesAccessValues: true,
       users: 2,
       repair: "sync-failed",
+    });
+  });
+
+  it("reads the entry's access block and vars from the revision recorded for the release", async () => {
+    // Released without a word about Access; a revision requires protection,
+    // keeps a share path public and reads the team name from a var.
+    const f = await buildArtifactFixture({
+      revision: {
+        requires: ["access"],
+        access: { mode: "required", bypass: ["/s/*"] },
+        vars: [{ name: "ACCESS_TEAM", label: "Team", default: "{{accessTeamName}}" }],
+      },
+    });
+    await setInstallRelease(INSTALL_ID, f);
+    const before = await readInstallAccessView(env.DB, INSTALL_ID);
+    expect(before).toMatchObject({ offer: "offered", publicPaths: [], usesAccessValues: false });
+    await recordFixtureRevision(f);
+    expect(await readInstallAccessView(env.DB, INSTALL_ID)).toMatchObject({
+      offer: "required",
+      publicPaths: ["/s/*"],
+      usesAccessValues: true,
+    });
+    // A revision recorded for another release is never applied.
+    await env.DB.prepare("UPDATE installs SET artifact_digest = ?2 WHERE id = ?1")
+      .bind(INSTALL_ID, "e".repeat(64))
+      .run();
+    expect(await readInstallAccessView(env.DB, INSTALL_ID)).toMatchObject({
+      offer: "offered",
+      publicPaths: [],
     });
   });
 

@@ -19,7 +19,7 @@ import { ulid } from "ulidx";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { parseStoredCapabilities } from "../capabilities/capabilities";
 import { analyticsEngineRefusal } from "../catalog/requirement-checks";
-import { requirementLabel } from "../catalog/requirements";
+import { requirementLabel, requirementsToConfirm } from "../catalog/requirements";
 import { OFFICIAL_CATALOG_ID, unsignedTierRefusal } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
@@ -187,9 +187,10 @@ export function resolveInstallInput(
       `${catalog.name} needs Workers Paid. Confirm that this account is on Workers Paid.`,
     );
   }
-  if (catalog.requires.length > 0 && !input.requirementsConfirmed) {
+  const toConfirm = requirementsToConfirm(catalog);
+  if (toConfirm.length > 0 && !input.requirementsConfirmed) {
     throw new StartInstallError(
-      `${catalog.name} needs: ${catalog.requires.map(requirementLabel).join(", ")}. Confirm that this account meets these requirements.`,
+      `${catalog.name} needs: ${toConfirm.map(requirementLabel).join(", ")}. Confirm that this account meets these requirements.`,
     );
   }
   const formSecrets = enteredSecrets(catalog.secrets);
@@ -398,9 +399,11 @@ export async function startInstallCore(
       `${manifest.catalog.name}'s own installer decides its Workers and addresses, so Appflare cannot protect it with Cloudflare Access yet. Install it without, then add an Access application for it under Zero Trust, Access, Applications.`,
     );
   }
-  // An app that is protected, or whose entry needs Access (`requires: ["access"]`).
-  const needsAccess = resolved.access === true || manifest.catalog.requires.includes("access");
-  if (installer === null && needsAccess && deps.accessPreflight !== undefined) {
+  // Only an app that will be protected: the admin turned protection on, or
+  // its entry requires it (`installAccessChoice` turns it on then). An entry
+  // that lists `"access"` without requiring protection installs unprotected
+  // on any account; the value only keeps it from managers too old to protect apps.
+  if (installer === null && resolved.access === true && deps.accessPreflight !== undefined) {
     const problem = await deps.accessPreflight();
     if (problem !== null) {
       throw new StartInstallError(

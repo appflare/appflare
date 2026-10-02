@@ -86,6 +86,14 @@ export const PLACEHOLDERS = [
       "Empty while the app is not protected.",
   },
   {
+    name: "accessTeamName",
+    perWorker: false,
+    meaning:
+      "For an app Appflare protects with Cloudflare Access, the account's Zero Trust team " +
+      "name: the `<team>` of `<team>.cloudflareaccess.com`, for an app that builds the team's " +
+      "addresses itself. Empty while the app is not protected.",
+  },
+  {
     name: "accessAud",
     perWorker: false,
     meaning:
@@ -135,6 +143,7 @@ export const PER_WORKER_PLACEHOLDER_NAMES: readonly PerWorkerPlaceholderName[] =
  */
 export const ACCESS_PLACEHOLDERS = [
   "accessTeamDomain",
+  "accessTeamName",
   "accessAud",
   "accessCertsUrl",
 ] as const satisfies readonly PlaceholderName[];
@@ -255,10 +264,11 @@ export interface PlaceholderValues {
    */
   wildcardHostname?: string | null;
   /**
-   * What `{{accessTeamDomain}}`, `{{accessAud}}` and `{{accessCertsUrl}}`
-   * become: the install's Cloudflare Access protection. Null when the app
-   * is not protected, which fills all three in empty. Absent where it is not
-   * known (a form showing a default); they are then kept as written.
+   * What `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and
+   * `{{accessCertsUrl}}` become: the install's Cloudflare Access protection.
+   * Null when the app is not protected, which fills all four in empty.
+   * Absent where it is not known (a form showing a default); they are then
+   * kept as written.
    */
   access?: AccessPlaceholderValues | null;
 }
@@ -267,10 +277,29 @@ export interface PlaceholderValues {
 export interface AccessPlaceholderValues {
   /** `<team>.cloudflareaccess.com`. */
   teamDomain: string;
+  /**
+   * `<team>`. Absent in values recorded before it existed (a job's step
+   * output): {@link accessTeamNameOf} works it out from `teamDomain`.
+   */
+  teamName?: string;
   /** The audience tag of the install's Access application. */
   aud: string;
   /** `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`. */
   certsUrl: string;
+}
+
+/** The Zero Trust team domain's suffix: `<team>.cloudflareaccess.com`. */
+const ACCESS_TEAM_DOMAIN_SUFFIX = ".cloudflareaccess.com";
+
+/**
+ * The team name of a Zero Trust team domain: `ada` for
+ * `ada.cloudflareaccess.com`; empty for an empty domain.
+ */
+export function accessTeamNameOf(teamDomain: string): string {
+  const domain = teamDomain.toLowerCase();
+  return domain.endsWith(ACCESS_TEAM_DOMAIN_SUFFIX)
+    ? domain.slice(0, -ACCESS_TEAM_DOMAIN_SUFFIX.length)
+    : (domain.split(".")[0] ?? "");
 }
 
 /** `text` with every {@link INSTALL_PLACEHOLDERS} entry filled in; whitespace inside the braces is allowed. */
@@ -293,6 +322,12 @@ export function renderPlaceholders(text: string, values: PlaceholderValues): str
         return values.wildcardHostname === undefined ? match : (values.wildcardHostname ?? "");
       case "accessTeamDomain":
         return values.access === undefined ? match : (values.access?.teamDomain ?? "");
+      case "accessTeamName":
+        return values.access === undefined
+          ? match
+          : values.access === null
+            ? ""
+            : (values.access.teamName ?? accessTeamNameOf(values.access.teamDomain));
       case "accessAud":
         return values.access === undefined ? match : (values.access?.aud ?? "");
       case "accessCertsUrl":

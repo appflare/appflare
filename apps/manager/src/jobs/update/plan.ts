@@ -1,6 +1,7 @@
 import type { WorkerDeployment } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  type CatalogAccess,
   type CatalogPipeline,
   type CatalogPipelines,
   type CatalogSecret,
@@ -86,10 +87,12 @@ export function accessUpdateRefusal(input: {
 /**
  * The `access` block of a stored artifact manifest's catalog entry, read on
  * its own (a snapshot's manifest may predate other fields); empty when it
- * has none or cannot be read.
+ * has none or cannot be read. The signed copy only: what applies to an
+ * install or a snapshot is `storedCatalogAccess`, which reads a recorded
+ * revision of the release first.
  */
 export function accessOfManifestJson(manifestJson: string | null): {
-  access?: { mode?: string | undefined };
+  access?: CatalogAccess;
 } {
   if (manifestJson === null) return {};
   try {

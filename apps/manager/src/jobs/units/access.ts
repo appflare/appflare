@@ -59,6 +59,8 @@ export const protectInstallInputSchema = z.object({
   workers: z.array(workerSchema).min(1).max(20).optional(),
   appName: z.string().min(1).max(200).optional(),
   pendingExternalHosts: z.array(z.string().min(1).max(300)).max(10).optional(),
+  /** The public paths the admin accepts by protecting it (`ProtectRequest.acceptPaths`). */
+  acceptPaths: z.array(z.string().min(1).max(200)).max(20).optional(),
 });
 export type ProtectInstallInput = z.infer<typeof protectInstallInputSchema>;
 
@@ -151,6 +153,7 @@ export function runProtectInstall(
         ...(input.pendingExternalHosts === undefined
           ? {}
           : { pendingExternalHosts: input.pendingExternalHosts }),
+        ...(input.acceptPaths === undefined ? {} : { acceptPaths: input.acceptPaths }),
       });
       const covers = result.destinations.map(describeDestination);
       const what = {

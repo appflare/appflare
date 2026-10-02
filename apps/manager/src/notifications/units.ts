@@ -1,6 +1,14 @@
 import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { z } from "zod";
 import { probeHeadersFromEnv } from "../access/probe-credentials.server";
+import {
+  type AccessUpkeepDeps,
+  type AccessUpkeepEnv,
+  type AccessUpkeepReport,
+  refreshAccessRevisions,
+  renewAccessTokens,
+  resyncAccessApps,
+} from "../access/upkeep-run.server";
 import { type CfClientEnv, getCfClient } from "../cloudflare/client.server";
 import {
   checkExternalDomains,
@@ -30,11 +38,21 @@ export interface NotificationUnitsApi {
   checkInstallsHealth(input: unknown): Promise<NotificationUnitResult<HealthSweepReport>>;
   /** The scheduled check of external domains (installs/external-domains-poll.server.ts). */
   checkExternalDomains(input: unknown): Promise<NotificationUnitResult<DomainCheckReport>>;
+  /**
+   * The scheduled upkeep of apps protected with Cloudflare Access, in three
+   * parts, each its own call (access/upkeep-run.server.ts).
+   */
+  refreshAccessRevisions(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>>;
+  renewAccessTokens(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>>;
+  resyncAccessApps(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>>;
 }
 
 export interface NotificationUnitsEnv extends CfClientEnv {
   DB: D1Database;
   BETTER_AUTH_SECRET?: string;
+  /** The catalog caches, for the Access upkeep's revision check. */
+  KV?: KVNamespace;
+  CATALOG_INDEX_URL?: string;
 }
 
 export interface NotificationUnitsDeps {
@@ -50,6 +68,7 @@ const healthInput = z.object({
   installIds: z.array(z.string().min(1).max(64)).max(HEALTH_CHECKS_PER_CALL),
 });
 const domainsInput = z.object({});
+const accessUpkeepInput = z.object({});
 
 async function settle<T>(run: () => Promise<T>): Promise<NotificationUnitResult<T>> {
   try {
@@ -63,6 +82,25 @@ export function createNotificationUnits(
   env: NotificationUnitsEnv,
   deps: NotificationUnitsDeps = {},
 ): NotificationUnitsApi {
+  /** One part of the Access upkeep, with this unit's environment and dependencies. */
+  const accessPart = (
+    part: (env: AccessUpkeepEnv, deps: AccessUpkeepDeps) => Promise<AccessUpkeepReport>,
+    input: unknown,
+  ) =>
+    settle(async () => {
+      accessUpkeepInput.parse(input);
+      const kv = env.KV;
+      if (kv === undefined) throw new Error("the catalog cache is not available");
+      const { now, api } = deps;
+      return part(
+        { ...env, KV: kv },
+        {
+          ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+          ...(api === undefined ? {} : { client: async () => api }),
+          ...(now === undefined ? {} : { now: () => new Date(now()) }),
+        },
+      );
+    });
   return {
     deliverNotifications: (input) =>
       settle(() => {
@@ -90,6 +128,9 @@ export function createNotificationUnits(
           ...(deps.now === undefined ? {} : { now: deps.now }),
         });
       }),
+    refreshAccessRevisions: (input) => accessPart(refreshAccessRevisions, input),
+    renewAccessTokens: (input) => accessPart(renewAccessTokens, input),
+    resyncAccessApps: (input) => accessPart(resyncAccessApps, input),
   };
 }
 

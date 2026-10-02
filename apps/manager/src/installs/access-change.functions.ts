@@ -3,12 +3,14 @@ import { CloudflareApiError } from "@appflare/cf-api";
 import { createServerFn } from "@tanstack/react-start";
 import type { AppAccessCheck } from "../access/app-access";
 import { checkAppAccessCore } from "../access/app-access.server";
+import { makePublicPathsCore } from "../access/make-public.server";
 import { accessCapabilityProblem } from "../access/preflight.server";
+import { AccessToggleError } from "../access/toggle.server";
 import { CfTokenNotConfiguredError, getCfClient } from "../cloudflare/client.server";
 import { jobCreator } from "../jobs/create-job.server";
 import { sandboxBinding } from "../sandbox/binding";
 import { requireRole } from "../server/auth.server";
-import { startAccessChangeInput } from "./access-change-input";
+import { makePublicPathsInput, startAccessChangeInput } from "./access-change-input";
 import { startAccessChangeCore } from "./reconfigure.server";
 import { VersionActionError } from "./versions.server";
 
@@ -61,3 +63,32 @@ export const checkAppAccess = createServerFn({ method: "POST" }).handler(
     }
   },
 );
+
+/**
+ * Admin only. Makes public, on a protected app, the paths its card showed as
+ * waiting (a revision added them; until an admin accepts them they ask for a
+ * sign-in) that its catalog entry still lists, then brings its Access
+ * applications in step. Answers why that sync failed (the cron tries again),
+ * or null, and the paths that still wait.
+ */
+export const makePublicPaths = createServerFn({ method: "POST" })
+  .validator(makePublicPathsInput)
+  .handler(
+    async ({
+      data,
+    }): Promise<{ problem: string | null; accepted: string[]; pending: string[] }> => {
+      await requireRole("admin");
+      try {
+        return await makePublicPathsCore(
+          { db: env.DB, client: () => getCfClient(env) },
+          data.installId,
+          data.paths,
+        );
+      } catch (error) {
+        if (error instanceof AccessToggleError || error instanceof CfTokenNotConfiguredError) {
+          throw new Error(error.message);
+        }
+        throw error;
+      }
+    },
+  );

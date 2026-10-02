@@ -47,8 +47,9 @@ export interface CreatedResource {
  * while workers.dev is off, `appBaseUrl`; the workers.dev URL when absent),
  * `{{accountId}}` from the account the job works in, and
  * `{{wildcardHostname}}` from the install's wildcard domain (empty without
- * one), and `{{accessTeamDomain}}`, `{{accessAud}}` and `{{accessCertsUrl}}`
- * from its Cloudflare Access protection (empty without). The job logs the warnings: a stored value the app can no longer read
+ * one), and `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and
+ * `{{accessCertsUrl}}` from its Cloudflare Access protection (empty without).
+ * The job logs the warnings: a stored value the app can no longer read
  * falls back to the default instead of failing the job.
  */
 export function installVars(

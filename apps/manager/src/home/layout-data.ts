@@ -15,6 +15,8 @@ import type { AccountAttentionRow, Downgrade, FailedJob } from "./attention";
 export interface HomeApp extends InstallRow {
   /** Why its update waits for an admin's input; null when Update can start it (see `AttentionApp`). */
   updateNeeds: string | null;
+  /** Its catalog entry now requires Cloudflare Access and Appflare does not protect it (see `AttentionApp`). */
+  accessRequired?: boolean;
 }
 
 export interface LayoutData {

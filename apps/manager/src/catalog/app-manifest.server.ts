@@ -182,6 +182,7 @@ async function loadRevisedCatalog(
       release.artifactDigest,
       { text, file, catalog },
       new Date(),
+      release.artifact.catalog,
     );
   }
   return catalog;

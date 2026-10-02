@@ -2,6 +2,8 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
 import {
   type ArtifactManifest,
+  accessBypassPaths,
+  accessNeededOnlyIfProtected,
   accessOfferOf,
   catalogWorkerName,
   connectionStringProblems,
@@ -18,7 +20,11 @@ import { accessPlaceholderValues } from "../access/placeholder-values.server";
 import { parseStoredCapabilities, resolveAccountPlan } from "../capabilities/capabilities";
 import { CatalogTrustError, catalogTrust } from "../catalog/catalogs.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
-import { requirementLabel, requirementSentence } from "../catalog/requirements";
+import {
+  requirementLabel,
+  requirementSentence,
+  requirementsToConfirm,
+} from "../catalog/requirements";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -321,18 +327,21 @@ export async function runInstall(ctx: JobContext): Promise<void> {
         );
       }
       const { requires } = manifest.catalog;
+      // Cloudflare Access, when the entry needs it only while the app is
+      // protected, is no requirement to confirm: protection is checked itself.
+      const toConfirm = requirementsToConfirm(manifest.catalog);
       if (requires.length > 0) {
-        if (params.requirementsConfirmed === false) {
+        if (toConfirm.length > 0 && params.requirementsConfirmed === false) {
           throw new InstallError(
-            `this app needs ${requires.map(requirementLabel).join(", ")}; confirm the account meets these requirements to install it`,
+            `this app needs ${toConfirm.map(requirementLabel).join(", ")}; confirm the account meets these requirements to install it`,
           );
         }
         for (const requirement of requires) {
           log.info(
-            `Requires ${requirementLabel(requirement)}: ${requirementSentence(requirement, { tier: manifest.catalog.install.tier, provisionsEmailRouting: manifest.catalog.install.emailRouting !== undefined }) ?? "see the app's catalog page."}`,
+            `Requires ${requirementLabel(requirement)}: ${requirementSentence(requirement, { tier: manifest.catalog.install.tier, provisionsEmailRouting: manifest.catalog.install.emailRouting !== undefined, accessIfProtected: accessNeededOnlyIfProtected(manifest.catalog) }) ?? "see the app's catalog page."}`,
           );
         }
-        if (params.requirementsConfirmed === true) {
+        if (toConfirm.length > 0 && params.requirementsConfirmed === true) {
           log.info("The admin confirmed this account meets these requirements.");
         }
       }
@@ -581,6 +590,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
             appName: manifest.catalog.name,
             workers: workers.map((w) => w.scriptName),
             pendingExternalHosts: accessExternalHosts,
+            acceptPaths: accessBypassPaths(manifest.catalog),
           }),
         )
       : null;
@@ -800,6 +810,7 @@ export async function runInstall(ctx: JobContext): Promise<void> {
           tag: w.primary ? upload.tag : otherTags[w.scriptName],
         })),
         pendingExternalHosts: accessExternalHosts,
+        acceptPaths: accessBypassPaths(manifest.catalog),
       });
       uncovered = [];
       for (const w of [...others.before, ...others.after]) {

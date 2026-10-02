@@ -2669,7 +2669,7 @@
     },
     "requires": {
       "default": [],
-      "description": "Account capabilities the app needs beyond the free Workers baseline. `\"access\"`: the app needs Cloudflare Access (a Zero Trust organization); required with `access.mode: \"required\"` and whenever a var's default uses an Access placeholder.",
+      "description": "Account capabilities the app needs beyond the free Workers baseline. `\"access\"`: the app goes with Cloudflare Access. The account needs a Zero Trust organization only while the app is protected (always, with `access.mode: \"required\"`), and the value keeps the entry away from managers too old to protect apps. Required with `access.mode: \"required\"` and whenever a var's default uses an Access placeholder.",
       "type": "array",
       "items": {
         "type": "string",
@@ -2936,7 +2936,7 @@
           },
           "default": {
             "type": "string",
-            "description": "Value the form starts with, filled in on every install, update and settings change. `{{appUrl}}` becomes the address the app is served at (its custom domain while workers.dev is off for it, else its workers.dev URL; no trailing slash) and `{{appHostname}}` that address's hostname; `{{workerUrl}}` and `{{workerHostname}}` are always the workers.dev address (`https://<worker name>.<account subdomain>.workers.dev`); `{{workerName}}` is the installed Worker's name and `{{accountId}}` the id of the Cloudflare account. `{{wildcardHostname}}` becomes the hostname of the app's wildcard domain (for an entry with `install.wildcardHostname`), empty until one is assigned. For an app Appflare protects with Cloudflare Access, `{{accessTeamDomain}}` becomes the team domain (`<team>.cloudflareaccess.com`), `{{accessAud}}` the audience tag of the app's Access application and `{{accessCertsUrl}}` the URL of the keys that sign Access's JWTs; all three are empty while the app is not protected, and filled in again when protection is turned on or off. An entry of several Workers names one with `{{appUrl:<name>}}` and the like. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{appUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
+            "description": "Value the form starts with, filled in on every install, update and settings change. `{{appUrl}}` becomes the address the app is served at (its custom domain while workers.dev is off for it, else its workers.dev URL; no trailing slash) and `{{appHostname}}` that address's hostname; `{{workerUrl}}` and `{{workerHostname}}` are always the workers.dev address (`https://<worker name>.<account subdomain>.workers.dev`); `{{workerName}}` is the installed Worker's name and `{{accountId}}` the id of the Cloudflare account. `{{wildcardHostname}}` becomes the hostname of the app's wildcard domain (for an entry with `install.wildcardHostname`), empty until one is assigned. For an app Appflare protects with Cloudflare Access, `{{accessTeamDomain}}` becomes the team domain (`<team>.cloudflareaccess.com`), `{{accessTeamName}}` the team name alone (`<team>`), `{{accessAud}}` the audience tag of the app's Access application and `{{accessCertsUrl}}` the URL of the keys that sign Access's JWTs; all four are empty while the app is not protected, and filled in again when protection is turned on or off. An entry of several Workers names one with `{{appUrl:<name>}}` and the like. When the app's wrangler config gives this var a value that is not a string (an array, object, number, or boolean), the var reaches the Worker as JSON and `default` must be JSON text, for example `[\"{{appUrl}}\"]`. Without `default`, the form starts with the wrangler config's value. For a `type: \"select\"` var, `default` must be one of the `options` values."
           },
           "optional": {
             "default": false,
@@ -3904,7 +3904,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 1000000,
-      "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, `secrets`, `vars`, `postInstall` or `bump` without moving `source`: the released artifact stays as it is, and managers show the new form without an update. `tagline`, `licenseNote` and `authors` need no revision: the catalog shows them from the current manifest. Anything else needs a new build, so move `source` instead."
+      "description": "Which edit of this entry's form and copy the catalog publishes for the build its `source` already released, starting at 1 (the default when omitted). Raise it by one to publish a change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump` or `access`, or to add `\"access\"` to `requires`, without moving `source`: the released artifact stays as it is, and managers show the new form without an update. `tagline`, `licenseNote` and `authors` need no revision: the catalog shows them from the current manifest. Anything else needs a new build, so move `source` instead."
     },
     "access": {
       "type": "object",
@@ -3931,7 +3931,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "How the app goes with Cloudflare Access, which Appflare can put in front of any installed app so that only the manager's users reach it (and Appflare's own health checks, with a service token of the app's own). Without this block protection is offered at install, switched off. An app that verifies Access's sign-in itself reads the `{{accessTeamDomain}}`, `{{accessAud}}` and `{{accessCertsUrl}}` placeholders from a var. Not for the self-deploying tier."
+      "description": "How the app goes with Cloudflare Access, which Appflare can put in front of any installed app so that only the manager's users reach it (and Appflare's own health checks, with a service token of the app's own). Without this block protection is offered at install, switched off. An app that verifies Access's sign-in itself reads the `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and `{{accessCertsUrl}}` placeholders from a var. Not for the self-deploying tier."
     }
   },
   "required": [
@@ -4039,7 +4039,7 @@
                   "properties": {
                     "default": {
                       "type": "string",
-                      "pattern": "\\{\\{\\s*(?:accessTeamDomain|accessAud|accessCertsUrl)\\s*\\}\\}"
+                      "pattern": "\\{\\{\\s*(?:accessTeamDomain|accessTeamName|accessAud|accessCertsUrl)\\s*\\}\\}"
                     }
                   }
                 }

@@ -1,24 +1,32 @@
 import { Badge, Banner, Button, Link, Text } from "@cloudflare/kumo";
 import {
   ArrowsClockwiseIcon,
+  GlobeIcon,
   LockKeyIcon,
   LockKeyOpenIcon,
   WarningIcon,
 } from "@phosphor-icons/react";
+import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import {
+  ACCESS_NOW_REQUIRED_TITLE,
   ACCESS_REPAIR_REASONS,
   type AppAccessCheck,
   accessProblemFix,
   accessRequiredLine,
   type InstallAccessView,
+  pendingPublicPathsLine,
   publicPathsLine,
   signInNote,
   whoGetsIn,
   zeroTrustUsersNote,
 } from "../access/app-access";
 import { dashboardLinks } from "../cloudflare/dashboard-links";
-import { checkAppAccess, startAccessChange } from "../installs/access-change.functions";
+import {
+  checkAppAccess,
+  makePublicPaths,
+  startAccessChange,
+} from "../installs/access-change.functions";
 import type { InstallDetail } from "../installs/installs.functions";
 import { AppflareLoader } from "./appflare-loader";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -81,6 +89,19 @@ export function AppAccessSection({
       action={canTurnOn ? <TurnOnDialog install={install} access={access} again={false} /> : null}
     >
       <SectionBody>
+        {required && !access.protected && (
+          <Banner
+            variant="alert"
+            icon={<WarningIcon weight="fill" />}
+            title={ACCESS_NOW_REQUIRED_TITLE}
+            description={`${accessRequiredLine(install.name)} Appflare never protects it on its own, and holds its updates until it is protected.`}
+            action={
+              canTurnOn ? (
+                <TurnOnDialog install={install} access={access} again={false} label="Turn on" />
+              ) : undefined
+            }
+          />
+        )}
         {access.syncFailedAt !== null && (
           <Banner
             variant="alert"
@@ -122,15 +143,23 @@ export function AppAccessSection({
             its own. {whoGetsIn(access.users)} {publicPathsLine(access.publicPaths)}
           </Text>
         )}
+        {access.protected && access.pendingPublicPaths.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Text variant="secondary" size="sm">
+              {pendingPublicPathsLine(access.pendingPublicPaths)} They ask for a sign-in until an
+              admin makes them public.
+            </Text>
+            {isAdmin && <MakePublicDialog install={install} paths={access.pendingPublicPaths} />}
+          </div>
+        )}
         {usersNote !== null && (
           <Text variant="secondary" size="sm">
             {usersNote}
           </Text>
         )}
-        {required && (
+        {required && access.protected && (
           <Text variant="secondary" size="sm">
-            {access.protected ? "It cannot be turned off. " : ""}
-            {accessRequiredLine(install.name)}
+            It cannot be turned off. {accessRequiredLine(install.name)}
           </Text>
         )}
         {isAdmin && !idle && install.activeJobId !== null && (
@@ -179,10 +208,13 @@ function TurnOnDialog({
   install,
   access,
   again,
+  label = "Protect with Cloudflare Access",
 }: {
   install: InstallDetail;
   access: InstallAccessView;
   again: boolean;
+  /** The trigger's words when turning it on. */
+  label?: string;
 }) {
   const [state, setState] = useState<CheckState>({ step: "checking" });
   const [checkError, setCheckError] = useState<string | null>(null);
@@ -210,7 +242,7 @@ function TurnOnDialog({
           </Button>
         ) : (
           <Button {...p} variant="primary" icon={<LockKeyIcon />}>
-            Protect with Cloudflare Access
+            {label}
           </Button>
         )
       }
@@ -299,6 +331,44 @@ function TurnOffDialog({ install, access }: { install: InstallDetail; access: In
       }
       actionLabel="Turn off"
       onConfirm={start}
+    />
+  );
+}
+
+/**
+ * Accepting the paths a catalog revision added to the entry's public paths:
+ * after a confirmation, since anyone then reaches them without a sign-in.
+ * Runs at once (no job); a sync that fails is retried by the cron.
+ */
+function MakePublicDialog({ install, paths }: { install: InstallDetail; paths: string[] }) {
+  const router = useRouter();
+  return (
+    <ConfirmDialog
+      trigger={(p) => (
+        <Button {...p} variant="secondary" icon={<GlobeIcon />}>
+          Make public
+        </Button>
+      )}
+      title={`Make ${paths.join(", ")} public`}
+      description={`Anyone can then reach ${paths.length === 1 ? "this path" : "these paths"} of ${install.label} without signing in, on every address of the app.`}
+      actionLabel="Make public"
+      destructive={false}
+      onConfirm={async () => {
+        const result = await makePublicPaths({ data: { installId: install.id, paths } });
+        await router.invalidate();
+        if (result.problem !== null) {
+          // Accepted already; only Cloudflare is behind, and the cron catches up.
+          throw new Error(
+            `Accepted, but Cloudflare Access was not updated yet: ${result.problem} Appflare tries again within 30 minutes.`,
+          );
+        }
+        if (result.pending.length > 0) {
+          // The catalog changed since the page loaded: what it added since waits.
+          throw new Error(
+            `The catalog changed meanwhile: ${result.pending.join(", ")} still asks for a sign-in. Review it on the card.`,
+          );
+        }
+      }}
     />
   );
 }

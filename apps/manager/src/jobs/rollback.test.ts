@@ -2,7 +2,9 @@ import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { FetchLike } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
+import { readAcceptedBypass } from "../access/accepted-paths.server";
 import { protectInstall } from "../access/protect.server";
+import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { listSnapshotsCore, startRollbackCore } from "../installs/versions.server";
@@ -11,6 +13,7 @@ import { fakeAccessAccount } from "../test/fake-access-account";
 import { type FakeAccount, fakeAccount, NEW_VERSION, TOKEN } from "../test/fake-account";
 import { fakeStep } from "../test/fake-step";
 import { recordProtectedInstall } from "../test/protected-install";
+import { recordFixtureRevision } from "../test/recorded-revision";
 import { INSTALL_ID, OLD_MANIFEST, OLD_VERSION, seedInstall } from "../test/seed-install";
 import { type RollbackJobParams, runRollback } from "./rollback";
 import type { JobEnv } from "./run-job";
@@ -741,28 +744,40 @@ describe("rollback job, an app protected with Cloudflare Access", () => {
    * snapshot of 1.0.0 (public path `/s/*`, a var filled in with
    * `{{accessAud}}`) deployed before the app was protected.
    */
-  async function protectedWorld(snapshotAud: string | null) {
+  async function protectedWorld(
+    snapshotAud: string | null,
+    /** Both versions' entries say it in a revision recorded for their release, not when built. */
+    revised = false,
+  ) {
+    const currentEntry = { access: { bypass: ["/s/*", "/old/*"] } };
+    const beforeEntry = {
+      vars: [{ name: "POLICY_AUD", label: "Audience", default: "{{accessAud}}", optional: true }],
+      requires: ["access" as const],
+      access: { bypass: ["/s/*"] },
+    };
     const current = await buildArtifactFixture({
       version: "1.1.0",
-      catalog: { access: { bypass: ["/s/*", "/old/*"] } },
+      ...(revised ? { revision: currentEntry } : { catalog: currentEntry }),
     });
     const before = await buildArtifactFixture({
       version: "1.0.0",
-      catalog: {
-        vars: [{ name: "POLICY_AUD", label: "Audience", default: "{{accessAud}}", optional: true }],
-        requires: ["access"],
-        access: { bypass: ["/s/*"] },
-      },
+      ...(revised ? { revision: beforeEntry } : { catalog: beforeEntry }),
     });
     const manifestText = (f: typeof current) => new TextDecoder().decode(f.manifestBytes);
-    await env.DB.prepare("UPDATE installs SET manifest_json = ?2 WHERE id = ?1")
-      .bind(INSTALL_ID, manifestText(current))
+    await env.DB.prepare(
+      "UPDATE installs SET manifest_json = ?2, artifact_digest = ?3 WHERE id = ?1",
+    )
+      .bind(INSTALL_ID, manifestText(current), current.digest)
       .run();
     await env.DB.prepare(
-      "UPDATE snapshots SET manifest_json = ?2, access_aud = ?3, config_json = '{}' WHERE id = 'upd1'",
+      "UPDATE snapshots SET manifest_json = ?2, artifact_digest = ?4, access_aud = ?3, config_json = '{}' WHERE id = 'upd1'",
     )
-      .bind(INSTALL_ID, manifestText(before), snapshotAud)
+      .bind(INSTALL_ID, manifestText(before), snapshotAud, before.digest)
       .run();
+    if (revised) {
+      await recordFixtureRevision(current);
+      await recordFixtureRevision(before);
+    }
     await env.DB.prepare(
       `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
        VALUES ('i1:worker:cut', ?1, 'worker', NULL, 'cut', 'cut', 1)`,
@@ -822,6 +837,32 @@ describe("rollback job, an app protected with Cloudflare Access", () => {
     expect(bypassUris(w.access)).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
     // The old version was deployed unprotected: its settings get the current audience tag.
     expect(created).toHaveLength(1);
+    expect(created[0]?.params).toMatchObject({ kind: "reconfigure", refreshVars: ["access"] });
+  });
+
+  it("reads both versions' public paths and settings from the revisions recorded for their releases", async () => {
+    const w = await protectedWorld("", true);
+    expect(bypassUris(w.access)).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/old/*",
+    ]);
+    const created: Array<{ id: string; params: unknown }> = [];
+    const r = await rollback({}, w.route, {
+      JOBS: {
+        create: async (o: { id: string; params: unknown }) => {
+          created.push(o);
+          return { id: o.id };
+        },
+      },
+    });
+    expect(r.error).toBeNull();
+    expect(r.step.names.indexOf("take dropped public paths off Cloudflare Access")).toBeLessThan(
+      r.step.names.indexOf("deploy snapshot version"),
+    );
+    expect(bypassUris(w.access)).toEqual(["cut.appflare-dev.workers.dev/s/*"]);
+    // The rollback accepted the snapshot's version's public paths.
+    expect(await readAcceptedBypass(createDb(env.DB), INSTALL_ID)).toEqual(["/s/*"]);
+    // The revision's var reads the Access values: deployed again with the current ones.
     expect(created[0]?.params).toMatchObject({ kind: "reconfigure", refreshVars: ["access"] });
   });
 

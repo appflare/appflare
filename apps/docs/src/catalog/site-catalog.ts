@@ -2,6 +2,7 @@ import {
   type CatalogAuthor,
   type FeaturedItem,
   type InstallTier,
+  indexAccessNeededOnlyIfProtected,
   isFeaturedItemActive,
   type Plan,
 } from "@appflare/schema";
@@ -35,6 +36,11 @@ export interface SiteApp {
   requires: string[];
   /** The services the catalog worked out. */
   services: string[];
+  /**
+   * The app lists Cloudflare Access without requiring protection
+   * (`indexAccessNeededOnlyIfProtected`): it needs it only if protected.
+   */
+  accessIfProtected: boolean;
   lastVerified: string | null;
   addedAt: string;
   authors: CatalogAuthor[];
@@ -102,6 +108,7 @@ export function siteCatalog(snapshot: CatalogSnapshot): SiteCatalog {
       tier: app.tier,
       requires: app.requires,
       services: app.services,
+      accessIfProtected: indexAccessNeededOnlyIfProtected(app),
       lastVerified: app.lastVerified,
       addedAt: app.addedAt,
       authors: app.authors,

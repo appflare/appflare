@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ACCESS_REQUIREMENT, type AccessOffer, accessOfferOf, type CatalogAccess } from "./access";
 import { sha256Schema } from "./artifact";
 import {
   catalogAuthorSchema,
@@ -181,6 +182,18 @@ export const indexAppSchema = z
      * copy is current.
      */
     catalogManifest: indexCatalogManifestSchema.optional(),
+    /**
+     * How the entry offers Cloudflare Access protection, from its (revised)
+     * catalog manifest: `"required"`, `"recommended"` or `"offered"`
+     * ({@link indexAccessOffer}); absent for a self-deploying entry, and in
+     * rows written before this field. A plain string, not the enum, so a
+     * manager still reads a row with a value added later (anything but
+     * `"required"` is read as protection being optional). Managers that
+     * predate it strip it. It tells an app that needs Cloudflare Access
+     * only while protected from one that always does
+     * ({@link indexAccessNeededOnlyIfProtected}).
+     */
+    accessOffer: z.string().min(1).optional(),
   })
   .superRefine((app, ctx) => {
     if (app.tier === "artifact" && app.artifacts === undefined) {
@@ -220,6 +233,34 @@ export const indexAppSchema = z
     }
   });
 export type IndexApp = z.infer<typeof indexAppSchema>;
+
+/**
+ * The index row's `accessOffer` for a catalog manifest (the revised one when
+ * the entry has a revision): how it offers Cloudflare Access protection, or
+ * undefined for a self-deploying entry, which cannot be protected.
+ */
+export function indexAccessOffer(catalog: {
+  access?: CatalogAccess | undefined;
+  install: { tier: string };
+}): AccessOffer | undefined {
+  return catalog.install.tier === "self-deploying" ? undefined : accessOfferOf(catalog);
+}
+
+/**
+ * Whether an index row's app needs Cloudflare Access only while it is
+ * protected: it lists `"access"` in `requires` and its row says protection
+ * is not required. A row without `accessOffer` (written before the field)
+ * says nothing, so its `"access"` counts as always needed.
+ */
+export function indexAccessNeededOnlyIfProtected(
+  app: Pick<IndexApp, "requires"> & { accessOffer?: string | undefined },
+): boolean {
+  return (
+    app.requires.includes(ACCESS_REQUIREMENT) &&
+    app.accessOffer !== undefined &&
+    app.accessOffer !== "required"
+  );
+}
 
 /** The prebuilt artifact of an entry, or null when it has none (a sandbox tier entry). */
 export function indexAppArtifact(app: Pick<IndexApp, "artifacts">): IndexArtifacts | null {

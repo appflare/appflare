@@ -50,8 +50,18 @@ export interface InstallAccessView {
   appName: string | null;
   /** `<team>.cloudflareaccess.com`, where people sign in; null while not protected. */
   teamDomain: string | null;
-  /** Paths the entry keeps public while the app is protected. */
+  /**
+   * Paths that stay public while the app is protected: those the entry lists
+   * and an admin accepted, while it is protected; those the entry lists,
+   * while it is not (protecting it accepts them).
+   */
   publicPaths: string[];
+  /**
+   * Paths a catalog revision added to the entry since an admin last accepted
+   * its public paths: listed, but asking for a sign-in until an admin makes
+   * them public. Empty while the app is not protected.
+   */
+  pendingPublicPaths: string[];
   /** ISO 8601: when bringing the Access applications in step last failed; null when it did not. */
   syncFailedAt: string | null;
   /** The app's settings use the Access values, so a change of protection deploys it again. */
@@ -192,3 +202,12 @@ export function publicPathsLine(paths: readonly string[]): string {
 export function accessRequiredLine(appName: string): string {
   return `${appName}'s catalog entry requires it: the app relies on Cloudflare Access to keep people out.`;
 }
+
+/** "The catalog now lists /x/* as public.": revision-added paths waiting for an admin. */
+export function pendingPublicPathsLine(paths: readonly string[]): string {
+  return `The catalog now lists ${paths.join(", ")} as public.`;
+}
+
+/** The warning on an unprotected app whose catalog entry now requires protection. */
+export const ACCESS_NOW_REQUIRED_TITLE =
+  "The catalog now says this app must run behind Cloudflare Access.";

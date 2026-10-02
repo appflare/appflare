@@ -15,6 +15,7 @@ import { fakeAccessAccount } from "../test/fake-access-account";
 import { ACC, fakeAccount, TOKEN } from "../test/fake-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
+import { recordFixtureRevision } from "../test/recorded-revision";
 import { INSTALL_ID, OLD_VERSION, seedInstall } from "../test/seed-install";
 import { isAccessChangeJob } from "./reconcile.server";
 import { accessFailureNote, type ReconfigureJobParams, runReconfigure } from "./reconfigure";
@@ -263,6 +264,43 @@ describe("turning protection off", () => {
         { installId: INSTALL_ID, access: "on" },
       ),
     ).rejects.toThrow("deployed by its own installer");
+  });
+});
+
+describe("with a revision of the release", () => {
+  it("deploys the revision's Access values, opens its public paths, and keeps a protection it requires on", async () => {
+    // Released without a word about Access; a revision requires protection,
+    // keeps share links public and builds the team's address from its name.
+    const w = await world({
+      ...PLAIN,
+      revision: {
+        requires: ["access"],
+        access: { mode: "required", bypass: ["/s/*"] },
+        vars: [
+          { name: "TITLE", label: "Title", default: "Cut" },
+          {
+            name: "ACCESS_URL",
+            label: "Team address",
+            default: "https://{{accessTeamName}}.cloudflareaccess.com",
+            optional: true,
+          },
+        ],
+      },
+    });
+    await recordFixtureRevision(w.fixture);
+    const r = await change(w, "on");
+    expect(r.error).toBeNull();
+    expect(r.params).toMatchObject({ access: "on", refreshVars: ["access"] });
+    expect(uploadedVars(w)).toMatchObject({
+      ACCESS_URL: "https://appflare-test.cloudflareaccess.com",
+    });
+    const bypass = [...w.access.apps.values()].find((a) => String(a.name).endsWith("public paths"));
+    expect(bypass?.destinations).toContainEqual({
+      type: "public",
+      uri: "cut.appflare-dev.workers.dev/s/*",
+    });
+    await expect(change(w, "off")).rejects.toThrow("cannot be turned off");
+    expect(await readInstallProtection(env.DB, INSTALL_ID)).not.toBeNull();
   });
 });
 

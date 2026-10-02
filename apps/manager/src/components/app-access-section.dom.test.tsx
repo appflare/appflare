@@ -11,6 +11,12 @@ import type { InstallDetail } from "../installs/installs.functions";
 const server = vi.hoisted(() => ({
   checkAppAccess: vi.fn<() => Promise<AppAccessCheck>>(),
   startAccessChange: vi.fn(async (_: unknown) => ({ jobId: "job-access" })),
+  makePublicPaths: vi.fn(async (_: unknown) => ({
+    problem: null,
+    accepted: ["/s/*", "/x/*"],
+    pending: [] as string[],
+  })),
+  invalidate: vi.fn(async () => {}),
   jobStarted: vi.fn(async (_jobId: string, _title: string) => {}),
 }));
 vi.mock("./job-started", () => ({ useJobStarted: () => server.jobStarted }));
@@ -18,7 +24,9 @@ vi.mock("./use-account-id", () => ({ useAccountId: () => "0123456789abcdef012345
 vi.mock("../installs/access-change.functions", () => ({
   checkAppAccess: server.checkAppAccess,
   startAccessChange: server.startAccessChange,
+  makePublicPaths: server.makePublicPaths,
 }));
+vi.mock("@tanstack/react-router", () => ({ useRouter: () => ({ invalidate: server.invalidate }) }));
 
 const { AppAccessSection } = await import("./app-access-section");
 
@@ -39,6 +47,7 @@ const PROTECTED: InstallAccessView = {
   appName: "Appflare: Links (links)",
   teamDomain: "example.cloudflareaccess.com",
   publicPaths: [],
+  pendingPublicPaths: [],
   syncFailedAt: null,
   usesAccessValues: false,
   users: 3,
@@ -164,6 +173,36 @@ describe("AppAccessSection", () => {
     const text = await show({ ...PROTECTED, repair: "incomplete" }, { isAdmin: false });
     expect(text).toContain("record of this app's Access application is incomplete");
     expect(button("Protect again")).toBeUndefined();
+  });
+
+  it("lists paths a catalog revision added, with Make public for admins only", async () => {
+    const access = { ...PROTECTED, publicPaths: ["/s/*"], pendingPublicPaths: ["/x/*"] };
+    const member = await show(access, { isAdmin: false });
+    expect(member).toContain("The catalog now lists /x/* as public.");
+    expect(button("Make public")).toBeUndefined();
+    const text = await show(access);
+    expect(text).toContain("The catalog now lists /x/* as public.");
+    await click(button("Make public"));
+    expect(page()).toContain("Anyone can then reach this path of Links without signing in");
+    const confirm = [...document.body.querySelectorAll("button")].filter(
+      (b) => b.textContent?.trim() === "Make public",
+    );
+    await click(confirm.at(-1));
+    expect(server.makePublicPaths).toHaveBeenCalledWith({
+      data: { installId: "install-links", paths: ["/x/*"] },
+    });
+    expect(server.invalidate).toHaveBeenCalled();
+  });
+
+  it("warns when the catalog now requires protection of an unprotected app, with Turn on for admins", async () => {
+    const access = { ...OFF, offer: "required" as const };
+    const member = await show(access, { isAdmin: false });
+    expect(member).toContain("The catalog now says this app must run behind Cloudflare Access.");
+    expect(button("Turn on")).toBeUndefined();
+    const text = await show(access);
+    expect(text).toContain("The catalog now says this app must run behind Cloudflare Access.");
+    expect(text).toContain("Appflare never protects it on its own");
+    expect(button("Turn on")).toBeDefined();
   });
 
   it("offers no way off for an app whose entry requires protection", async () => {

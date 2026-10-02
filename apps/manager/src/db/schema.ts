@@ -620,7 +620,8 @@ export const install_access = sqliteTable("install_access", {
   access_destinations_json: text("access_destinations_json"),
   /**
    * When bringing the install's Access applications in step with its
-   * addresses or public paths last failed outside a job; null when the last
+   * addresses or public paths last failed outside a job, or when a catalog
+   * revision of its release changed its public paths; null when the last
    * sync succeeded. The cron tries again while it is set.
    */
   access_sync_failed_at: timestamp("access_sync_failed_at"),
@@ -638,6 +639,15 @@ export const install_access = sqliteTable("install_access", {
    * protected again. Null while both exist.
    */
   access_app_missing_at: timestamp("access_app_missing_at"),
+  /**
+   * JSON array: the public paths an admin accepted for the app, set by every
+   * action of theirs that carries the entry's paths (installing or
+   * protecting it, protecting it again, an update, a rollback, "Make public").
+   * Only paths both the entry lists and this holds are made public, so a
+   * catalog revision can take a path off on its own but never add one
+   * (access/bypass.server.ts). Null reads as none.
+   */
+  accepted_bypass_json: text("accepted_bypass_json"),
   created_at: timestamp("created_at").notNull(),
   updated_at: timestamp("updated_at").notNull(),
 });

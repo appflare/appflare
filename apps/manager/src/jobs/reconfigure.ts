@@ -445,8 +445,9 @@ export async function runReconfigure(ctx: JobContext): Promise<void> {
           | AccessPlaceholderValues
           | null
           | undefined,
-        // Whether the signed catalog entry requires protection (`access.mode`).
-        accessRequired: signed.success && accessOfferOf(signed.data.catalog) === "required",
+        // Whether the catalog entry requires protection (`access.mode`), as
+        // the newest revision recorded for the release says.
+        accessRequired: effective !== null && accessOfferOf(effective.catalog) === "required",
         resources: rows
           .filter((r) => r.kind !== EMAIL_ROUTE_KIND)
           .map(

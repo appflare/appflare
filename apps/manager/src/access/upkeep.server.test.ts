@@ -10,7 +10,7 @@ import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { readInstallAccessView } from "./app-access.server";
 import { USERS_POLICY_NAME } from "./install-access.server";
 import { protectInstall } from "./protect.server";
-import { checkProtectedAppsExist } from "./upkeep.server";
+import { checkProtectedAppsExist, DELETION_CHECKS_PER_RUN } from "./upkeep.server";
 
 /**
  * The cron's check that protected apps' Access applications and the
@@ -123,6 +123,30 @@ describe("checkProtectedAppsExist", () => {
     expect(result.missing).toEqual([]);
     expect(cf.keys()).toContainEqual(expect.stringMatching(/^GET \/access\/apps\/[^/]+$/));
     expect(await repairOf(INSTALL_ID)).toBeNull();
+  });
+
+  it("reads at most a few applications one by one per run, leaving the rest for the next", async () => {
+    await seed();
+    const { cf } = setup();
+    // Twelve protected installs the listing leaves out.
+    for (let i = 0; i < 12; i++) {
+      await env.DB.prepare(
+        `INSERT INTO installs (id, app_slug, worker_name, instance_name, catalog_version,
+           artifact_url, status, installed_at, updated_at)
+         VALUES (?1, 'cut', ?1, ?1, '1.0.0', 'https://artifacts.test/c.zip', 'installed', 1, 1)`,
+      )
+        .bind(`p${i}`)
+        .run();
+      await env.DB.prepare(
+        `INSERT INTO install_access (install_id, access_app_id, token_id, token_client_id,
+           token_secret, created_at, updated_at) VALUES (?1, ?2, 't', 'c', 's', 1, 1)`,
+      )
+        .bind(`p${i}`, `gone-${i}`)
+        .run();
+    }
+    await checkProtectedAppsExist({ db: env.DB, client: async () => cf.client, now: () => NOW });
+    const reads = cf.keys().filter((k) => /^GET \/access\/apps\/[^/]+$/.test(k));
+    expect(reads).toHaveLength(DELETION_CHECKS_PER_RUN);
   });
 
   it("marks an app whose public paths' application was deleted", async () => {

@@ -1,11 +1,11 @@
 import handler from "@tanstack/react-start/server-entry";
 import { accessGate } from "./access/gate";
 import {
-  renewInstallServiceTokens,
-  resyncAppAccessUsersIfFailed,
-} from "./access/install-access.server";
-import { resyncInstallAccessIfFailed } from "./access/protect.server";
-import { checkProtectedAppsExist } from "./access/upkeep.server";
+  ACCESS_UPKEEP_IN_PLACE,
+  ACCESS_UPKEEP_PARTS,
+  accessUpkeepNeeded,
+  logAccessUpkeep,
+} from "./access/upkeep-run.server";
 import { versionCreatedAt } from "./auth/recovery.server";
 import { cleanUpRecoverySecret } from "./auth/recovery-cleanup.server";
 import { ensureAuthStorage } from "./auth/storage.server";
@@ -20,6 +20,7 @@ import { addressRedirect, serveRequest } from "./domains/address-redirect";
 import { reconcileManagerAddress } from "./domains/manager-address.server";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
 import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
+import { selfNotificationUnits } from "./notifications/units";
 import { reportTelemetry } from "./telemetry/report.server";
 
 /**
@@ -120,9 +121,10 @@ export default {
    * allow (auto-update/), and only updates that need nothing from an admin. Last, it deletes a
    * recovery code secret that can no longer be used (auth/recovery-cleanup.server.ts).
    * Between those, the upkeep of apps protected with Cloudflare Access
-   * (access/install-access.server.ts): each app's service token is refreshed
-   * once it has less than 30 days left, and "Appflare users" is synced again
-   * when its last update after a user change failed.
+   * (access/upkeep-run.server.ts), as three SELF units: newer catalog
+   * revisions of their releases; service tokens with less than 30 days left
+   * and "Appflare users" after a failed update; Access applications whose
+   * sync failed or is due, and a check that they still exist.
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
@@ -153,70 +155,27 @@ export default {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    // Apps protected with Cloudflare Access: D1 reads, then while any app is
-    // protected two Cloudflare reads (are their Access applications and the
-    // users policy still there?), and more only when a token expires within
-    // 30 days, its secret no longer reads, the users policy missed a change
-    // or was deleted; never fails the run.
+    // Apps protected with Cloudflare Access (access/upkeep-run.server.ts), in
+    // three parts, in this order: newer catalog revisions of their releases
+    // (which mark apps whose public paths changed), service tokens and the
+    // users policy, then Access applications due a sync and the check that
+    // they still exist. Each a SELF unit with its own invocation and
+    // subrequest budget (in place without the binding); nothing at all while
+    // no app has an Access record; never fails the run.
     try {
-      const renewals = await renewInstallServiceTokens({
-        db: env.DB,
-        authSecret: env.BETTER_AUTH_SECRET,
-        client: () => getCfClient(env),
-      });
-      for (const r of renewals) {
-        const line = `access: service token of install ${r.installId} ${r.status}`;
-        if (r.status === "failed") console.error(line, { error: r.detail });
-        else if (r.status === "missing") console.warn(line);
-        else console.log(line);
-      }
-      for (const r of await resyncInstallAccessIfFailed({
-        db: env.DB,
-        client: () => getCfClient(env),
-      })) {
-        const line = `access: applications of install ${r.installId} brought in step again: ${r.outcome}`;
-        if (r.outcome === "failed") console.error(line, { error: r.detail });
-        else console.log(line);
-      }
-      const users = await resyncAppAccessUsersIfFailed({
-        db: env.DB,
-        client: () => getCfClient(env),
-      });
-      if (users === "resynced") console.log("access: users policy of protected apps synced again");
-      else if (users === "recreated") {
-        console.warn(
-          "access: users policy of protected apps was deleted and made again; protect each app again to use it",
-        );
+      if (await accessUpkeepNeeded(env.DB)) {
+        const units = selfNotificationUnits(env);
+        for (const part of ACCESS_UPKEEP_PARTS) {
+          const result =
+            units === undefined
+              ? { ok: true as const, value: await ACCESS_UPKEEP_IN_PLACE[part](env) }
+              : await units[part]({});
+          if (result.ok) logAccessUpkeep(result.value);
+          else console.error(`access: upkeep (${part}) failed`, { error: result.error });
+        }
       }
     } catch (error) {
       console.error("access: upkeep of protected apps failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    // Apart from the upkeep above, so a failure there never skips it.
-    try {
-      const upkeep = await checkProtectedAppsExist({ db: env.DB, client: () => getCfClient(env) });
-      for (const id of upkeep.missing) {
-        console.warn(`access: the Access application of install ${id} is gone; protect it again`);
-      }
-      for (const id of upkeep.found) {
-        console.log(`access: the Access application of install ${id} is there again`);
-      }
-      if (upkeep.listError !== null) {
-        console.error("access: could not list Access applications", { error: upkeep.listError });
-      }
-      if (upkeep.usersPolicy === "recreated") {
-        console.warn(
-          "access: users policy of protected apps was deleted and made again; protect each app again to use it",
-        );
-      } else if (upkeep.usersPolicy === "failed") {
-        console.error("access: could not check the users policy of protected apps", {
-          error: upkeep.usersPolicyError,
-        });
-      }
-    } catch (error) {
-      // The Access lock was held (a change in progress), or D1 failed: next run.
-      console.error("access: check that protected apps' Access applications exist failed", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

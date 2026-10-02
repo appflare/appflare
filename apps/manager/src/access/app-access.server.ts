@@ -1,12 +1,14 @@
 import { CloudflareApiError, type CloudflareClient } from "@appflare/cf-api";
-import { accessOfferOf } from "@appflare/schema";
+import { accessBypassPaths, accessOfferOf } from "@appflare/schema";
 import { and, eq, isNull } from "drizzle-orm";
+import { storedRevisedCatalog } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { installs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
 import { varsNeedRefresh } from "../installs/install-vars";
 import { entryWorkers, parseStoredManifest } from "../jobs/entry-workers";
 import { parseStoredVars } from "../jobs/reconfigure/plan";
+import { acceptedOf, pendingOf, readAcceptedBypass } from "./accepted-paths.server";
 import { type AppAccessCheck, accessRepairOf, type InstallAccessView } from "./app-access";
 import { bypassPathsOfManifest } from "./bypass.server";
 import { accessAppResourceId, listUserEmails } from "./install-access.server";
@@ -62,6 +64,7 @@ export async function readInstallAccessView(
         status: installs.status,
         buildKind: installs.build_kind,
         manifestJson: installs.manifest_json,
+        artifactDigest: installs.artifact_digest,
         configJson: installs.config_json,
         workerName: installs.worker_name,
       })
@@ -80,18 +83,26 @@ export async function readInstallAccessView(
   if (install === undefined || install.status === "uninstalled") return null;
   if (install.buildKind === "self-deploying") return null;
   const signed = parseStoredManifest(install.manifestJson);
+  // The newest revision recorded for the release may change the entry's
+  // `access` block and its vars without a new build.
+  const revised = signed === null ? null : await storedRevisedCatalog(orm, install);
+  const catalog = revised ?? signed?.catalog ?? null;
   const stored = parseStoredVars(install.configJson);
+  const listed =
+    revised === null ? bypassPathsOfManifest(install.manifestJson) : accessBypassPaths(revised);
+  const accepted = protection === null ? [] : await readAcceptedBypass(orm, installId);
   return {
-    offer: signed === null ? "offered" : accessOfferOf(signed.catalog),
+    offer: catalog === null ? "offered" : accessOfferOf(catalog),
     protected: protection !== null,
     appName: protection === null ? null : (app?.name ?? null),
     teamDomain: protection?.teamDomain ?? null,
-    publicPaths: [...bypassPathsOfManifest(install.manifestJson)],
+    publicPaths: protection === null ? [...listed] : acceptedOf(listed, accepted),
+    pendingPublicPaths: protection === null ? [] : pendingOf(listed, accepted),
     syncFailedAt: protection?.syncFailedAt?.toISOString() ?? null,
     usesAccessValues:
       signed !== null &&
-      entryWorkers(signed, install.workerName).some((w) =>
-        varsNeedRefresh(w.manifest, stored, ["access"]),
+      entryWorkers({ ...signed, catalog: revised ?? signed.catalog }, install.workerName).some(
+        (w) => varsNeedRefresh(w.manifest, stored, ["access"]),
       ),
     users: emails.length,
     repair: accessRepairOf({

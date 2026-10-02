@@ -148,7 +148,10 @@ export function appStats(app: SiteApp, now: Date): AppStat[] {
 export interface NeedItem {
   key: string;
   name: string;
-  /** "This app needs it" or "This app uses it"; null in the plain list. */
+  /**
+   * "This app needs it", "This app uses it", or for Cloudflare Access an app
+   * needs only while protected, "Only if you protect it"; null in the plain list.
+   */
   words: string | null;
 }
 
@@ -157,6 +160,9 @@ export interface AccountNeeds {
   /** A quiet line under the list, when it may be incomplete. */
   note: string | null;
 }
+
+/** Why an app that needs Cloudflare Access only while protected lists it. */
+export const ACCESS_IF_PROTECTED_WORDS = "Only if you protect it";
 
 /** A requirement without a service of its own, spelled out from its id. */
 function requirementName(requirement: string): string {
@@ -183,7 +189,11 @@ export function accountNeeds(app: SiteApp): AccountNeeds {
   for (const id of ids) {
     const name = serviceName(id);
     if (name === null) continue;
-    items.push({ key: id, name, words: serviceNeedWords(declared.has(id)) });
+    const words =
+      id === "access" && app.accessIfProtected
+        ? ACCESS_IF_PROTECTED_WORDS
+        : serviceNeedWords(declared.has(id));
+    items.push({ key: id, name, words });
   }
   for (const requirement of app.requires) {
     if (serviceName(requirement) !== null) continue;

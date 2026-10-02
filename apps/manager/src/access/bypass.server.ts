@@ -19,12 +19,14 @@ import {
   CUSTOM_HOSTNAME_KIND,
   WILDCARD_DOMAIN_KIND,
 } from "../installs/resource-kinds";
+import { acceptedOf, readAcceptedBypass, writeAcceptedBypass } from "./accepted-paths.server";
 import {
   accessAppSettings,
   INSTALL_ACCESS_MESSAGES,
   policyReferences,
   readInstallAccess,
 } from "./install-access.server";
+import { storedBypassPaths } from "./stored-access.server";
 import { AccessToggleError } from "./toggle.server";
 
 /**
@@ -143,7 +145,11 @@ export function bypassDestinations(
   );
 }
 
-/** The public paths a stored artifact manifest declares; none when it declares none or is unreadable. */
+/**
+ * The public paths a stored artifact manifest declares; none when it
+ * declares none or is unreadable. The signed copy only: what applies to an
+ * install is `storedBypassPaths`, which reads a recorded revision first.
+ */
 export function bypassPathsOfManifest(manifestJson: string | null): readonly string[] {
   if (manifestJson === null) return [];
   try {
@@ -246,6 +252,7 @@ async function wantedBypass(
       displayName: installs.display_name,
       appSlug: installs.app_slug,
       manifestJson: installs.manifest_json,
+      artifactDigest: installs.artifact_digest,
       workersDev: installs.workers_dev_enabled,
     })
     .from(installs)
@@ -261,7 +268,22 @@ async function wantedBypass(
   }
   // Only an install Appflare protects has public paths: without protection everything is public.
   if ((await readInstallAccess(d1, installId))?.accessAppId == null) return null;
-  const paths = change.paths ?? bypassPathsOfManifest(install.manifestJson);
+  // The entry's paths as the newest revision recorded for the release lists
+  // them, of which only those an admin accepted are made public: a revision
+  // may take a path off on its own, never add one.
+  const listed = await storedBypassPaths(orm, install);
+  const accepted = await readAcceptedBypass(orm, installId);
+  if (
+    change.paths === undefined &&
+    install.manifestJson !== null &&
+    accepted.some((p) => !listed.includes(p))
+  ) {
+    // A path the entry no longer lists is no longer accepted either, so the
+    // catalog listing it again later needs an admin again. (An install still
+    // being made has no release on record yet: nothing is dropped then.)
+    await writeAcceptedBypass(orm, installId, acceptedOf(accepted, listed));
+  }
+  const paths = acceptedOf(change.paths ?? listed, accepted);
   if (paths.length === 0) return null;
   const rows = await orm
     .select({ kind: resources.kind, name: resources.name })

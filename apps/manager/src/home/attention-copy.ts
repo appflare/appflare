@@ -55,6 +55,12 @@ export function attentionCopy(item: AttentionItem): { title: string; description
             ? "It answered its last check with an error."
             : "It did not answer its last check. It may still have been starting up.",
       };
+    case "access-required":
+      return {
+        title: `${item.label} must run behind Cloudflare Access`,
+        description:
+          "The catalog now says this app must run behind Cloudflare Access. Appflare never protects it on its own, and holds its updates until it is protected.",
+      };
     case "update":
       return {
         title: `${item.label} ${item.latestVersion} is available`,

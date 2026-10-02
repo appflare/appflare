@@ -53,6 +53,8 @@ export async function protectBeforeUploadPhase(
     /** Every Worker of the app, by installed name, none uploaded yet. */
     workers: readonly string[];
     pendingExternalHosts: readonly string[];
+    /** The entry's public paths, which the admin accepted by installing it protected. */
+    acceptPaths: readonly string[];
   },
 ): Promise<AccessProtection> {
   return steps.run("protect with Cloudflare Access", async ({ log }) => {
@@ -63,6 +65,7 @@ export async function protectBeforeUploadPhase(
         appName: input.appName,
         workers: input.workers.map((name) => ({ name, tag: null })),
         pendingExternalHosts: [...input.pendingExternalHosts],
+        acceptPaths: [...input.acceptPaths],
       }),
       log,
     );
@@ -82,6 +85,7 @@ export async function coverWorkersPhase(
     appName: string;
     workers: ReadonlyArray<{ name: string; tag: string | null | undefined }>;
     pendingExternalHosts: readonly string[];
+    acceptPaths: readonly string[];
   },
 ): Promise<AccessProtection> {
   return steps.run("cover the app's Workers with Cloudflare Access", async ({ log }) => {
@@ -94,6 +98,7 @@ export async function coverWorkersPhase(
           typeof w.tag === "string" ? { name: w.name, tag: w.tag } : { name: w.name },
         ),
         pendingExternalHosts: [...input.pendingExternalHosts],
+        acceptPaths: [...input.acceptPaths],
       }),
       log,
     );

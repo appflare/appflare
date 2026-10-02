@@ -1,14 +1,21 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import type { CatalogManifest } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
+import { recordCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { user } from "../db/schema";
+import { sha256Hex } from "../jobs/install/artifact";
+import { buildArtifactFixture, REVISED_URL } from "../test/artifact-fixture";
 import { fakeAccessAccount } from "../test/fake-access-account";
 import { SUBDOMAIN } from "../test/fake-account";
+import { recordFixtureRevision, setInstallRelease } from "../test/recorded-revision";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
+import { readAcceptedBypass } from "./accepted-paths.server";
 import { accessAddressSync } from "./address-sync.server";
+import { readInstallAccessView } from "./app-access.server";
 import {
   BYPASS_MESSAGES,
   bypassAppResourceId,
@@ -18,6 +25,7 @@ import {
   bypassPolicyName,
   MAX_ACCESS_APP_DESTINATIONS,
 } from "./bypass.server";
+import { makePublicPathsCore } from "./make-public.server";
 import {
   protectInstall,
   readInstallProtection,
@@ -333,6 +341,113 @@ describe("public paths ahead of a change", () => {
     expect(uris()).toEqual([`${HOST}/hook`, "links.example.com/hook"]);
     await syncInstallAccessDestinations(deps, INSTALL_ID);
     expect(uris()).toHaveLength(4);
+  });
+});
+
+/** Records a later revision of the fixture's release with these public paths. */
+async function recordLaterRevision(
+  f: Awaited<ReturnType<typeof buildArtifactFixture>>,
+  revision: number,
+  bypass: string[],
+) {
+  const later = { ...f.revised?.catalog, revision, access: { bypass } } as CatalogManifest;
+  const text = JSON.stringify(later);
+  const bytes = new TextEncoder().encode(text);
+  await recordCatalogRevision(
+    createDb(env.DB),
+    f.digest,
+    {
+      catalog: later,
+      text,
+      file: {
+        url: REVISED_URL,
+        sha256: await sha256Hex(bytes),
+        keyId: f.manifest.keyId,
+        signature: await f.signBytes(bytes),
+      },
+    },
+    NOW,
+    f.manifest.catalog,
+  );
+}
+
+describe("public paths from a revision of the release", () => {
+  /** A protected install of a release with public path `/s/*`, whose revisions change it. */
+  async function revisedWorld(revision: { access: { bypass: string[] } }) {
+    const f = await buildArtifactFixture({ catalog: { access: { bypass: ["/s/*"] } }, revision });
+    await seedInstall({
+      manifestJson: new TextDecoder().decode(f.manifestBytes),
+      resources: [{ kind: "worker", name: "cut", cfId: "cut" }],
+    });
+    await setInstallRelease(INSTALL_ID, f);
+    const { cf, deps } = setup();
+    await protectInstall(deps, { installId: INSTALL_ID });
+    expect(bypassApps(cf)[0]?.destinations).toEqual([{ type: "public", uri: `${HOST}/s/*` }]);
+    await recordFixtureRevision(f, NOW);
+    // Marked for the cron, which brings the public paths in step.
+    expect((await readInstallProtection(env.DB, INSTALL_ID))?.syncFailedAt).toEqual(NOW);
+    await resyncInstallAccessIfFailed({ db: env.DB, client: async () => cf.client });
+    return { f, cf, deps };
+  }
+
+  it("does not make a path a revision adds public until an admin makes it public", async () => {
+    const { cf } = await revisedWorld({ access: { bypass: ["/s/*", "/x/*"] } });
+    expect(bypassApps(cf)[0]?.destinations).toEqual([{ type: "public", uri: `${HOST}/s/*` }]);
+    expect(await readInstallAccessView(env.DB, INSTALL_ID)).toMatchObject({
+      publicPaths: ["/s/*"],
+      pendingPublicPaths: ["/x/*"],
+    });
+    const made = await makePublicPathsCore(
+      { db: env.DB, client: async () => cf.client, now: () => NOW },
+      INSTALL_ID,
+      ["/x/*"],
+    );
+    expect(made).toEqual({ problem: null, accepted: ["/s/*", "/x/*"], pending: [] });
+    expect(bypassApps(cf)[0]?.destinations).toEqual([
+      { type: "public", uri: `${HOST}/s/*` },
+      { type: "public", uri: `${HOST}/x/*` },
+    ]);
+    expect((await readInstallAccessView(env.DB, INSTALL_ID))?.pendingPublicPaths).toEqual([]);
+  });
+
+  it("accepts only the paths the card showed, not one a revision added after the page loaded", async () => {
+    const { f, cf } = await revisedWorld({ access: { bypass: ["/s/*", "/x/*"] } });
+    // The card shows /x/* waiting; meanwhile the catalog adds /y/*.
+    const shown = (await readInstallAccessView(env.DB, INSTALL_ID))?.pendingPublicPaths ?? [];
+    expect(shown).toEqual(["/x/*"]);
+    await recordLaterRevision(f, 3, ["/s/*", "/x/*", "/y/*"]);
+    const made = await makePublicPathsCore(
+      { db: env.DB, client: async () => cf.client, now: () => NOW },
+      INSTALL_ID,
+      // A path the entry no longer lists is not accepted either.
+      [...shown, "/gone/*"],
+    );
+    expect(made).toEqual({ problem: null, accepted: ["/s/*", "/x/*"], pending: ["/y/*"] });
+    expect(bypassApps(cf)[0]?.destinations).toEqual([
+      { type: "public", uri: `${HOST}/s/*` },
+      { type: "public", uri: `${HOST}/x/*` },
+    ]);
+    expect((await readInstallAccessView(env.DB, INSTALL_ID))?.pendingPublicPaths).toEqual(["/y/*"]);
+  });
+
+  it("takes a path a revision removes off on its own, and asks again if a later one lists it", async () => {
+    const { f, cf } = await revisedWorld({ access: { bypass: ["/x/*"] } });
+    // /s/* is gone; /x/* waits for an admin.
+    expect(bypassApps(cf)).toHaveLength(0);
+    expect(await readAcceptedBypass(createDb(env.DB), INSTALL_ID)).toEqual([]);
+    // A later revision lists /s/* again: it was dropped, so it is not accepted any more.
+    await recordLaterRevision(f, 3, ["/s/*"]);
+    await resyncInstallAccessIfFailed({ db: env.DB, client: async () => cf.client });
+    expect(bypassApps(cf)).toHaveLength(0);
+    expect((await readInstallAccessView(env.DB, INSTALL_ID))?.pendingPublicPaths).toEqual(["/s/*"]);
+  });
+
+  it("refuses Make public for an app that is not protected", async () => {
+    await seed({ bypass: ["/s/*"] });
+    const { cf } = setup();
+    await expect(
+      makePublicPathsCore({ db: env.DB, client: async () => cf.client }, INSTALL_ID, ["/s/*"]),
+    ).rejects.toThrow("not protected");
   });
 });
 

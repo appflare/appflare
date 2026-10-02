@@ -913,10 +913,11 @@ export const catalogVarSchema = z
           "Cloudflare account. `{{wildcardHostname}}` becomes the hostname of the app's wildcard " +
           "domain (for an entry with `install.wildcardHostname`), empty until one is assigned. " +
           "For an app Appflare protects with Cloudflare Access, `{{accessTeamDomain}}` becomes " +
-          "the team domain (`<team>.cloudflareaccess.com`), `{{accessAud}}` the audience tag of " +
-          "the app's Access application and `{{accessCertsUrl}}` the URL of the keys that sign " +
-          "Access's JWTs; all three are empty while the app is not protected, and filled in again " +
-          "when protection is turned on or off. " +
+          "the team domain (`<team>.cloudflareaccess.com`), `{{accessTeamName}}` the team name " +
+          "alone (`<team>`), `{{accessAud}}` the audience tag of the app's Access application and " +
+          "`{{accessCertsUrl}}` the URL of the keys that sign Access's JWTs; all four are empty " +
+          "while the app is not protected, and filled in again when protection is turned on or " +
+          "off. " +
           "An entry of several Workers names one with `{{appUrl:<name>}}` and the like. When " +
           "the app's wrangler config gives this var a value that is not a string (an array, " +
           "object, number, or boolean), the var reaches the Worker as JSON and `default` must be " +
@@ -2054,8 +2055,9 @@ export const catalogRevisionSchema = z
     "Which edit of this entry's form and copy the catalog publishes for the build its `source` " +
       "already released, starting at 1 (the default when omitted). Raise it by one to publish a " +
       "change to `name`, `summary`, `homepage`, `license`, `categories`, `maintainers`, " +
-      "`secrets`, `vars`, `postInstall` or `bump` without moving `source`: the released artifact " +
-      "stays as it is, and managers show the new form without an update. `tagline`, " +
+      '`secrets`, `vars`, `postInstall`, `bump` or `access`, or to add `"access"` to ' +
+      "`requires`, without moving `source`: the released artifact stays as it is, and managers " +
+      "show the new form without an update. `tagline`, " +
       "`licenseNote` and `authors` need no revision: the catalog shows them from the current " +
       "manifest. Anything else needs a new build, so move `source` instead.",
   );
@@ -2144,7 +2146,9 @@ export const catalogManifestSchema = z
       .default([])
       .describe(
         'Account capabilities the app needs beyond the free Workers baseline. `"access"`: ' +
-          "the app needs Cloudflare Access (a Zero Trust organization); required with " +
+          "the app goes with Cloudflare Access. The account needs a Zero Trust organization " +
+          'only while the app is protected (always, with `access.mode: "required"`), and the ' +
+          "value keeps the entry away from managers too old to protect apps. Required with " +
           '`access.mode: "required"` and whenever a var\'s default uses an Access placeholder.',
       ),
     secrets: z.array(catalogSecretSchema).default([]),

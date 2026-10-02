@@ -253,6 +253,12 @@ describe("varsUseAccess", () => {
     const byDefault = manifest([], [v("TEAM", { default: "{{ accessTeamDomain }}" })]);
     expect(varsUseAccess(byDefault, {})).toBe(true);
     expect(varsUseAccess(byDefault, { TEAM: "team.cloudflareaccess.com" })).toBe(false);
+    // The team name alone, as an app that builds the team's address itself reads it.
+    const teamName = manifest(
+      [],
+      [v("ACCESS_URL", { default: "https://{{accessTeamName}}.cloudflareaccess.com" })],
+    );
+    expect(varsUseAccess(teamName, {})).toBe(true);
     expect(varsUseAccess(manifest([], [v("BASE", { default: "{{appUrl}}" })]), {})).toBe(false);
     expect(varsNeedRefresh(byDefault, {}, ["access"])).toBe(true);
     expect(varsNeedRefresh(byDefault, {}, ["appUrl", "wildcardHostname"])).toBe(false);

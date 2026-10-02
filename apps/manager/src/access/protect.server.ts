@@ -21,6 +21,7 @@ import {
   CUSTOM_HOSTNAME_KIND,
   WILDCARD_DOMAIN_KIND,
 } from "../installs/resource-kinds";
+import { writeAcceptedBypass } from "./accepted-paths.server";
 import {
   type BypassChange,
   type BypassOutcome,
@@ -43,6 +44,7 @@ import {
   readInstallAccess,
   removeInstallAccess,
 } from "./install-access.server";
+import { storedBypassPaths } from "./stored-access.server";
 import {
   ACCESS_MESSAGES,
   ACCESS_SESSION_DURATION,
@@ -560,6 +562,12 @@ export interface ProtectRequest {
   appName?: string;
   /** External domains about to be added: covered before they serve anything. */
   pendingExternalHosts?: readonly string[];
+  /**
+   * The public paths the admin accepts by protecting the app: the entry's
+   * (`access.bypass`) as the install job read it. Default: those of the
+   * release the install runs.
+   */
+  acceptPaths?: readonly string[];
 }
 
 export interface ProtectResult {
@@ -609,6 +617,7 @@ async function protectLocked(
       displayName: installs.display_name,
       appSlug: installs.app_slug,
       manifestJson: installs.manifest_json,
+      artifactDigest: installs.artifact_digest,
     })
     .from(installs)
     .where(eq(installs.id, installId))
@@ -763,6 +772,15 @@ async function protectLocked(
       usersPolicyId: users.policyId,
     },
   );
+  // Protecting is an admin's action, so it accepts the entry's public paths:
+  // those the caller carries (an install, whose record has no release yet),
+  // else those of the release the install runs.
+  const orm = createDb(deps.db);
+  await writeAcceptedBypass(
+    orm,
+    installId,
+    request.acceptPaths ?? (await storedBypassPaths(orm, install)),
+  );
   // The public paths, once the rest is protected. A failure leaves them
   // protected too (failing closed) and never undoes the protection.
   let bypass: ProtectResult["bypass"] = null;
@@ -906,18 +924,23 @@ export async function removePublicPathsLocked(
   deps: Pick<InstallAccessDeps, "db" | "client" | "now">,
   installId: string,
 ): Promise<{ removed: boolean }> {
-  const [install] = await createDb(deps.db)
-    .select({ manifestJson: installs.manifest_json })
+  const orm = createDb(deps.db);
+  const [install] = await orm
+    .select({ manifestJson: installs.manifest_json, artifactDigest: installs.artifact_digest })
     .from(installs)
     .where(eq(installs.id, installId))
     .limit(1);
-  return removeInstallBypassLocked(deps, installId, {
-    lookUp: bypassPathsOfManifest(install?.manifestJson ?? null).length > 0,
-  });
+  // The signed copy's paths too: a revision may have dropped paths that
+  // were made public before it was recorded.
+  const lookUp =
+    install !== undefined &&
+    (bypassPathsOfManifest(install.manifestJson).length > 0 ||
+      (await storedBypassPaths(orm, install)).length > 0);
+  return removeInstallBypassLocked(deps, installId, { lookUp });
 }
 
 /** At most this many installs are brought in step again per cron run (a few calls each). */
-export const ACCESS_RESYNCS_PER_RUN = 5;
+export const ACCESS_RESYNCS_PER_RUN = 3;
 
 export interface AccessResync {
   installId: string;

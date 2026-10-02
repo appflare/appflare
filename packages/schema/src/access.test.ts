@@ -6,6 +6,7 @@ import {
   ACCESS_PLACEHOLDER_SOURCE,
   accessBypassPathProblem,
   accessBypassPaths,
+  accessNeededOnlyIfProtected,
   accessOfferOf,
   catalogAccessSchema,
   MAX_ACCESS_BYPASS_PATHS,
@@ -95,7 +96,27 @@ describe("the access block", () => {
       expect(catalogManifestSchema.safeParse(entry).success).toBe(true);
     }
     expect(usesAccessPlaceholders("x {{accessCertsUrl}}")).toBe(true);
+    expect(usesAccessPlaceholders("https://{{accessTeamName}}.cloudflareaccess.com")).toBe(true);
     expect(usesAccessPlaceholders("{{appUrl}}")).toBe(false);
+    const teamName = catalogManifestSchema.safeParse({
+      ...manifest,
+      vars: [{ name: "ACCESS_TEAM", label: "Team", default: "{{accessTeamName}}" }],
+    });
+    expect(teamName.error?.issues[0]?.path).toEqual(["vars", 0, "default"]);
+  });
+
+  it('counts "access" as needed only while protected unless the mode is required', () => {
+    expect(accessNeededOnlyIfProtected({ requires: ["access"] })).toBe(true);
+    expect(
+      accessNeededOnlyIfProtected({ requires: ["access"], access: { mode: "recommended" } }),
+    ).toBe(true);
+    expect(
+      accessNeededOnlyIfProtected({ requires: ["access"], access: { mode: "required" } }),
+    ).toBe(false);
+    // Nothing to say about an entry that does not list it.
+    expect(accessNeededOnlyIfProtected({ requires: [], access: { mode: "recommended" } })).toBe(
+      false,
+    );
   });
 
   it('is hidden by an index schema that does not know the "access" requirement', () => {

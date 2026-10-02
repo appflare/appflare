@@ -76,6 +76,7 @@ function input(over: Partial<AttentionInput> = {}): AttentionInput {
 const EVERYTHING = input({
   apps: [
     app({ id: "links", label: "Links", latestVersion: "1.1.0", updateAvailable: true }),
+    app({ id: "share", label: "Share", accessRequired: true }),
     app({ id: "stats", label: "Stats", healthStatus: "unhealthy" }),
     app({ id: "chat", label: "Chat" }),
   ],
@@ -94,11 +95,35 @@ describe("attentionItems", () => {
     expect(SEVERITY_ORDER).toEqual([
       "failed-job",
       "not-responding",
+      "access-required",
       "update",
       "account",
       "deploy-copy",
       "downgrade",
     ]);
+  });
+
+  it("lists an installed app whose entry now requires Cloudflare Access while it is not protected", () => {
+    const items = attentionItems(
+      input({
+        isAdmin: false,
+        apps: [
+          app({ id: "share", label: "Share", accessRequired: true }),
+          app({ id: "busy", label: "Busy", accessRequired: true, status: "updating" }),
+          app({ id: "fine", label: "Fine", accessRequired: false }),
+        ],
+      }),
+    );
+    expect(items).toEqual([
+      { kind: "access-required", key: "access:share", installId: "share", label: "Share" },
+    ]);
+    const [item] = items;
+    if (item === undefined) throw new Error("no row");
+    expect(attentionCopy(item)).toEqual({
+      title: "Share must run behind Cloudflare Access",
+      description:
+        "The catalog now says this app must run behind Cloudflare Access. Appflare never protects it on its own, and holds its updates until it is protected.",
+    });
   });
 
   it("is empty when nothing needs attention", () => {
@@ -236,7 +261,7 @@ describe("attentionItems", () => {
 describe("the sidebar's count and dots", () => {
   it("counts every row on Home", () => {
     const items = attentionItems(EVERYTHING);
-    expect(attentionBadge(items)).toEqual({ count: 6, label: "6 things need your attention" });
+    expect(attentionBadge(items)).toEqual({ count: 7, label: "7 things need your attention" });
     expect(attentionBadge(items.slice(0, 1))).toEqual({
       count: 1,
       label: "1 thing needs your attention",

@@ -90,7 +90,15 @@ export interface AppNeedsOf {
   plan: Plan;
   requires: readonly string[];
   tier: InstallTier;
+  /**
+   * The entry needs Cloudflare Access only while the app is protected
+   * (`accessNeededOnlyIfProtected`): its row says so.
+   */
+  accessIfProtected?: boolean | undefined;
 }
+
+/** Why an app that needs Cloudflare Access only while protected counts it. */
+const ACCESS_IF_PROTECTED_WORDS = "Needed only if you protect this app with Cloudflare Access";
 
 /** The capability rows as they stand with this app in the account. */
 type RowsById = ReadonlyMap<CapabilityId, CapabilityRow>;
@@ -106,6 +114,8 @@ interface NeedsContext {
    * Appflare can tell, rather than saying it needs it.
    */
   declared: ReadonlySet<PrimitiveId>;
+  /** See {@link AppNeedsOf.accessIfProtected}. */
+  accessIfProtected: boolean;
   rows: RowsById;
 }
 
@@ -131,6 +141,7 @@ function needsContext(
     primitives,
     services,
     declared,
+    accessIfProtected: app.accessIfProtected === true,
     rows: new Map(rows.map((row) => [row.id, row])),
   };
 }
@@ -213,10 +224,26 @@ function planNeed(ctx: NeedsContext): AccountNeed {
  * needs it; otherwise it was worked out from what the app binds, and the
  * app uses it.
  */
-function capabilityNeed(key: string, row: CapabilityRow, declared: boolean): AccountNeed {
+function capabilityNeed(
+  key: string,
+  row: CapabilityRow,
+  declared: boolean,
+  /**
+   * Why the app counts it when it needs it only in some cases, in place of
+   * "This app needs it". Then what is off stays "Not set up", quietly: the
+   * install does not need it.
+   */
+  onlyIf?: string,
+): AccountNeed {
   if (row.state === "ready") return ready(key, row.name);
-  // Built with this app in the account, a probe row is never "Not set up".
-  const state = row.state === "not-set-up" ? "needs-action" : row.state;
+  // Built with this app in the account, a probe row is never "Not set up",
+  // unless the app needs it only in some cases.
+  const state =
+    onlyIf !== undefined && row.state === "needs-action"
+      ? "not-set-up"
+      : row.state === "not-set-up" && onlyIf === undefined
+        ? "needs-action"
+        : row.state;
   const fix =
     row.action !== null && "href" in row.action
       ? { label: row.action.label, href: row.action.href }
@@ -225,8 +252,8 @@ function capabilityNeed(key: string, row: CapabilityRow, declared: boolean): Acc
     key,
     name: row.name,
     state: CAPABILITY_STATE_LABELS[state],
-    tone: state === "could-not-check" ? "unknown" : "missing",
-    reason: `${serviceNeedWords(declared)}. ${row.why}`,
+    tone: state === "could-not-check" || onlyIf !== undefined ? "unknown" : "missing",
+    reason: `${onlyIf ?? serviceNeedWords(declared)}. ${row.why}`,
     fix,
     more: seeInYourAccount(row.id),
   };
@@ -271,7 +298,12 @@ function primitiveOnly(status: PrimitiveStatus): AccountNeed {
 function primitiveNeed(id: PrimitiveId, ctx: NeedsContext): AccountNeed {
   const capability = NEED_CAPABILITIES[id];
   if (capability !== undefined) {
-    return capabilityNeed(id, rowOf(ctx.rows, capability), ctx.declared.has(id));
+    return capabilityNeed(
+      id,
+      rowOf(ctx.rows, capability),
+      ctx.declared.has(id),
+      id === "access" && ctx.accessIfProtected ? ACCESS_IF_PROTECTED_WORDS : undefined,
+    );
   }
   const status = primitiveStatus(id, ctx.view, ctx.primitives);
   if (WITH_WORKERS_PAID.has(id) && status.availability !== "available") {

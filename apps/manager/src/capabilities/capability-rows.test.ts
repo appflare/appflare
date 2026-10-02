@@ -627,6 +627,22 @@ describe("installedNeeds", () => {
     );
     expect(needs).toMatchObject({ total: 3, r2: 1, emailRouting: 1, zone: 1, sandbox: 1 });
   });
+
+  it("counts Zero Trust for an app that needs Access only while protected only once it is protected", () => {
+    const optional = {
+      services: ["access"],
+      requires: ["access" as const],
+      plan: "free" as const,
+      tier: "artifact" as const,
+      accessOffer: "recommended",
+    };
+    const install = { appSlug: "share", catalogId: null, origin: "catalog" as const };
+    expect(installedNeeds([install], () => optional).access).toBe(0);
+    expect(installedNeeds([{ ...install, accessProtected: true }], () => optional).access).toBe(1);
+    // Any protected install needs it, whatever its entry says.
+    const plain = { services: [], requires: [], plan: "free" as const, tier: "artifact" as const };
+    expect(installedNeeds([{ ...install, accessProtected: true }], () => plain).access).toBe(1);
+  });
 });
 
 describe("catalogNeeds", () => {
@@ -663,5 +679,18 @@ describe("catalogNeeds", () => {
       access: 1,
       sandbox: 2,
     });
+  });
+
+  it('does not count Zero Trust for an app whose "access" holds only while protected', () => {
+    const app = {
+      services: ["access"],
+      requires: ["access" as const],
+      plan: "free" as const,
+      tier: "artifact" as const,
+    };
+    expect(catalogNeeds([{ ...app, accessOffer: "offered" }]).access).toBe(0);
+    expect(catalogNeeds([{ ...app, accessOffer: "required" }]).access).toBe(1);
+    // A row from before the field: counted, as before.
+    expect(catalogNeeds([app]).access).toBe(1);
   });
 });

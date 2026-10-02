@@ -308,7 +308,7 @@ function varsMention(
     wildcardHostname: marker === "wildcardHostname" ? host : "",
     access:
       marker === "access"
-        ? { teamDomain: host, aud: host, certsUrl: `https://${host}/certs` }
+        ? { teamDomain: host, teamName: host, aud: host, certsUrl: `https://${host}/certs` }
         : null,
   });
   const declared = manifest.catalog.install.workers;
@@ -368,9 +368,9 @@ export function varsUseWildcardHostname(
 
 /**
  * Whether any var the Worker gets is filled in with the install's Cloudflare
- * Access protection (`{{accessTeamDomain}}`, `{{accessAud}}`,
- * `{{accessCertsUrl}}`), so turning protection on or off deploys the
- * settings again.
+ * Access protection (`{{accessTeamDomain}}`, `{{accessTeamName}}`,
+ * `{{accessAud}}`, `{{accessCertsUrl}}`), so turning protection on or off
+ * deploys the settings again.
  */
 export function varsUseAccess(
   manifest: VarManifest,

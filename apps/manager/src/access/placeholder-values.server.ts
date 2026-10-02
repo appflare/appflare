@@ -1,12 +1,12 @@
 import { accessCertsUrl, isAccessTeamDomain } from "@appflare/cf-api";
-import type { AccessPlaceholderValues } from "@appflare/schema";
+import { type AccessPlaceholderValues, accessTeamNameOf } from "@appflare/schema";
 import { and, eq, isNotNull } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { install_access } from "../db/schema";
 
 /**
- * What an app's `{{accessTeamDomain}}`, `{{accessAud}}` and
- * `{{accessCertsUrl}}` are filled in with: its Cloudflare Access protection
+ * What an app's `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}`
+ * and `{{accessCertsUrl}}` are filled in with: its Cloudflare Access protection
  * as recorded (access/protect.server.ts), or null when Appflare does not
  * protect it, which fills them in empty. Every deploy reads them here (or,
  * for an install protected before its first upload, from the protection it
@@ -24,6 +24,7 @@ export function accessPlaceholderValues(protection: {
       : "";
   return {
     teamDomain,
+    teamName: accessTeamNameOf(teamDomain),
     aud: protection.aud ?? "",
     certsUrl: teamDomain === "" ? "" : accessCertsUrl(teamDomain),
   };

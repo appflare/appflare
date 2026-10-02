@@ -391,6 +391,7 @@ function accessView(id: string): InstallAccessView {
     appName: protectedApp ? "Appflare: Short links (links)" : null,
     teamDomain: protectedApp ? "example.cloudflareaccess.com" : null,
     publicPaths: ["/s/*"],
+    pendingPublicPaths: [],
     syncFailedAt: null,
     usesAccessValues: false,
     users: 3,

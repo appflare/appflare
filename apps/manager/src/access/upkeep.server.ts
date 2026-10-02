@@ -54,6 +54,13 @@ async function confirmedDeleted(client: CloudflareClient, appId: string): Promis
   }
 }
 
+/**
+ * At most this many applications are read one by one per run to confirm
+ * they are gone (a 404 each), so the check stays within its unit's
+ * subrequest budget; the rest wait for the next run.
+ */
+export const DELETION_CHECKS_PER_RUN = 8;
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -92,6 +99,7 @@ export async function checkProtectedAppsExist(deps: {
         })
         .from(install_access)
         .where(isNotNull(install_access.access_app_id));
+      let checks = 0;
       for (const row of rows) {
         if (row.appId === null) continue;
         const bypassId = await recordedBypassAppId(deps.db, row.installId);
@@ -103,6 +111,8 @@ export async function checkProtectedAppsExist(deps: {
         let gone = false;
         if (row.missingAt === null) {
           for (const id of unlisted) {
+            if (checks >= DELETION_CHECKS_PER_RUN) break;
+            checks += 1;
             if (await confirmedDeleted(client, id)) {
               gone = true;
               break;

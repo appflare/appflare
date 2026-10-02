@@ -2,6 +2,7 @@ import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createClient } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
+import { writeAcceptedBypass } from "../access/accepted-paths.server";
 import { protectInstall } from "../access/protect.server";
 import { ACCESS_MESSAGES, withAccessLock } from "../access/toggle.server";
 import { createDb } from "../db/client";
@@ -603,6 +604,8 @@ describe("external domains of an app protected with Cloudflare Access", () => {
         }),
       )
       .run();
+    // Accepted by an admin, as protecting or updating the app does.
+    await writeAcceptedBypass(createDb(env.DB), INSTALL_ID, ["/s/*"]);
     const added = await addExternalDomainCore(w.deps, {
       installId: INSTALL_ID,
       hostname: "go.customer.test",

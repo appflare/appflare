@@ -10,6 +10,7 @@ import { migrations } from "../db/migrations/index";
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import { ACC, fakeAccount, NEW_VERSION, TOKEN } from "../test/fake-account";
 import { recordProtectedInstall } from "../test/protected-install";
+import { recordFixtureRevision } from "../test/recorded-revision";
 import { INSTALL_ID, OLD_VERSION, seedInstall } from "../test/seed-install";
 import {
   listSnapshotsCore,
@@ -416,6 +417,30 @@ describe("startRollbackCore", () => {
     expect(await startRollbackCore(deps, { installId: INSTALL_ID, snapshotId: "upd1" })).toEqual({
       jobId: "rb1",
     });
+  });
+
+  it("reads whether the snapshot's version must be protected from the revision recorded for its release", async () => {
+    await seedWithSnapshot();
+    // Released without a word about Access; a revision requires protection.
+    const f = await buildArtifactFixture({
+      revision: { requires: ["access"], access: { mode: "required" } },
+    });
+    await env.DB.prepare(
+      "UPDATE snapshots SET manifest_json = ?1, artifact_digest = ?2 WHERE id = 'upd1'",
+    )
+      .bind(new TextDecoder().decode(f.manifestBytes), f.digest)
+      .run();
+    await recordFixtureRevision(f);
+    const deps = {
+      db: env.DB,
+      createJob: async (id: string) => ({ id }),
+      newId: () => "rb1",
+    };
+    await expect(
+      startRollbackCore(deps, { installId: INSTALL_ID, snapshotId: "upd1" }),
+    ).rejects.toThrow(
+      "This version must run behind Cloudflare Access. Turn protection on for the app first, then roll back.",
+    );
   });
 
   it("refuses a snapshot of the version that serves now, or of another install", async () => {

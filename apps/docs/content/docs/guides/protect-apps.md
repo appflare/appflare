@@ -76,7 +76,27 @@ A catalog entry can say how its app goes with Access:
 
 An app that requires Access lists **Cloudflare Access** among
 [its requirements](/guides/catalog/#requirements), and installs only once the
-account [has what it needs](#what-you-need).
+account [has what it needs](#what-you-need). An app that can use Access without
+requiring it, such as one that reads Access's sign-in once it is protected, may list
+it too: its catalog page then says Access is needed only if you protect the app, and
+it installs unprotected on any account. The account is checked only when you tick
+the checkbox.
+
+The catalog can change how an app goes with Access after it is released, without a
+new version: the install form and the app's page then show the new choice. For an app
+that is already protected, Appflare looks for such changes every 30 minutes, seven
+protected apps a run; opening the app's page picks a change up at once.
+
+- **A public path the catalog drops** stops being public on its own, in the same run.
+- **A public path the catalog adds** stays behind the sign-in until an admin agrees.
+  The app's **Cloudflare Access** card says **The catalog now lists /x/\* as public.**,
+  and admins get **Make public**; members see the line without the button. Installing
+  the app protected, protecting it (or protecting it again), updating it and rolling
+  it back also accept the paths its entry lists at that moment.
+- **Protection the catalog now requires** for an app you left unprotected is never
+  turned on for you. The card warns **The catalog now says this app must run behind
+  Cloudflare Access.** with **Turn on** for admins, Home lists the app under **Needs
+  attention**, and its updates wait until it is protected.
 
 ## Turn it on at install
 
@@ -116,7 +136,9 @@ change it.
 
 Each runs a [settings change job](/guides/settings/#what-the-job-does), listed as
 **Cloudflare Access change**, whose log opens. An app that reads the Access values in
-its settings (to check Access's sign-in itself) is deployed again in the same job:
+its settings (to check Access's sign-in itself: the Zero Trust team domain or team
+name, the audience tag of its Access application, the address of the team's signing
+keys) is deployed again in the same job:
 after the protection is made when turning it on, and before it is removed when
 turning it off, so the app is never left trusting a sign-in that no longer comes.
 

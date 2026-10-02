@@ -6,3 +6,11 @@ export const startAccessChangeInput = z.object({
   access: z.enum(["on", "off"]),
 });
 export type StartAccessChangeInput = z.infer<typeof startAccessChangeInput>;
+
+/** Client-safe input of the server function that makes a protected app's newly listed public paths public. */
+export const makePublicPathsInput = z.object({
+  installId: z.string().min(1).max(64),
+  /** The paths the card showed as waiting: only these are accepted. */
+  paths: z.array(z.string().min(1).max(200)).min(1).max(20),
+});
+export type MakePublicPathsInput = z.infer<typeof makePublicPathsInput>;

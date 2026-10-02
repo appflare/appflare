@@ -20,7 +20,12 @@ import { ACCESS_PLACEHOLDERS } from "./placeholders.ts";
  * A manager from before the block strips `access` and leaves the
  * placeholders as written; its index schema does not know the `"access"`
  * requirement, so it leaves such an entry out of its catalog instead of
- * installing it unprotected.
+ * installing it unprotected. Without `mode: "required"` the requirement
+ * holds only while the app is protected ({@link accessNeededOnlyIfProtected}).
+ *
+ * A catalog revision may add, change or remove the block and add `"access"`
+ * to `requires` (`revision.ts`): neither changes the Worker, and a manager
+ * reads both from the revised catalog manifest.
  *
  * This module imports nothing but zod and placeholders: `catalog.ts` imports
  * it, and the JSON Schema export runs `catalog.ts` directly under Node's type
@@ -138,8 +143,8 @@ export const catalogAccessSchema = z
       "app so that only the manager's users reach it (and Appflare's own health checks, with a " +
       "service token of the app's own). Without this block protection is offered at install, " +
       "switched off. An app that verifies Access's sign-in itself reads the " +
-      "`{{accessTeamDomain}}`, `{{accessAud}}` and `{{accessCertsUrl}}` placeholders from a " +
-      "var. Not for the self-deploying tier.",
+      "`{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and `{{accessCertsUrl}}` " +
+      "placeholders from a var. Not for the self-deploying tier.",
   });
 export type CatalogAccess = z.infer<typeof catalogAccessSchema>;
 
@@ -157,6 +162,20 @@ export function accessBypassPaths(catalog: {
 
 /** The `requires` value of an entry that needs Cloudflare Access to work. */
 export const ACCESS_REQUIREMENT = "access";
+
+/**
+ * Whether an entry's `"access"` requirement holds only while the app is
+ * protected: it lists `"access"` without `access.mode: "required"`, so it
+ * installs unprotected on any account, and the account needs a Zero Trust
+ * organization only once protection is turned on. The value still keeps the
+ * entry away from managers too old to protect apps.
+ */
+export function accessNeededOnlyIfProtected(catalog: {
+  access?: CatalogAccess | undefined;
+  requires: readonly string[];
+}): boolean {
+  return catalog.requires.includes(ACCESS_REQUIREMENT) && accessOfferOf(catalog) !== "required";
+}
 
 /** The regular expression source of an Access placeholder as written in a value. */
 export const ACCESS_PLACEHOLDER_SOURCE = `\\{\\{\\s*(?:${ACCESS_PLACEHOLDERS.join("|")})\\s*\\}\\}`;

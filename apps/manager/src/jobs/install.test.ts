@@ -1712,7 +1712,9 @@ describe("install job", () => {
       { requirementsConfirmed: true },
     );
     expect(r.job?.status).toBe("failed");
-    expect(r.job?.error).toMatch(/it changes requires, which only a new build can change/);
+    expect(r.job?.error).toMatch(
+      /it adds "r2" to requires; a revision may add only "access", and anything else needs a new build/,
+    );
   });
 
   it("renames Workflows per install and refuses a name that is taken", async () => {
@@ -3204,6 +3206,11 @@ describe("install job, an app protected with Cloudflare Access", () => {
     expect(bypass?.destinations).toEqual([
       { type: "public", uri: "cut.appflare-dev.workers.dev/s/*" },
     ]);
+    // Installing it protected accepted the entry's public paths.
+    const accepted = await env.DB.prepare(
+      "SELECT accepted_bypass_json AS json FROM install_access",
+    ).first<{ json: string }>();
+    expect(JSON.parse(accepted?.json ?? "null")).toEqual(["/s/*"]);
   });
 
   it("refuses to start an app whose entry requires protection without it", async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ACCESS_PLACEHOLDERS,
+  accessTeamNameOf,
   ENTRY_WORKER_PLACEHOLDER_SOURCE,
   hasEntryWorkerPlaceholder,
   hasPlaceholder,
@@ -36,6 +37,7 @@ describe("the placeholder list", () => {
       "accountId",
       "wildcardHostname",
       "accessTeamDomain",
+      "accessTeamName",
       "accessAud",
       "accessCertsUrl",
       "stage",
@@ -81,20 +83,36 @@ describe("the placeholder list", () => {
 
 describe("renderPlaceholders", () => {
   it("fills in the Access values of a protected install, and empty ones of an unprotected one", () => {
-    const text = "{{accessTeamDomain}}|{{ accessAud }}|{{accessCertsUrl}}";
+    const text = "{{accessTeamDomain}}|{{accessTeamName}}|{{ accessAud }}|{{accessCertsUrl}}";
     expect(
       renderPlaceholders(text, {
         ...values,
         access: {
           teamDomain: "acme.cloudflareaccess.com",
+          teamName: "acme",
           aud: "a1b2",
           certsUrl: "https://acme.cloudflareaccess.com/cdn-cgi/access/certs",
         },
       }),
-    ).toBe("acme.cloudflareaccess.com|a1b2|https://acme.cloudflareaccess.com/cdn-cgi/access/certs");
-    expect(renderPlaceholders(text, { ...values, access: null })).toBe("||");
+    ).toBe(
+      "acme.cloudflareaccess.com|acme|a1b2|https://acme.cloudflareaccess.com/cdn-cgi/access/certs",
+    );
+    expect(renderPlaceholders(text, { ...values, access: null })).toBe("|||");
     // Not known (a form showing a default): kept as written.
     expect(renderPlaceholders(text, values)).toBe(text);
+  });
+
+  it("works the team name out of the team domain when the values do not carry it", () => {
+    // A job's step output recorded before the team name existed.
+    expect(
+      renderPlaceholders("https://{{accessTeamName}}.cloudflareaccess.com", {
+        ...values,
+        access: { teamDomain: "acme-co.cloudflareaccess.com", aud: "a1b2", certsUrl: "" },
+      }),
+    ).toBe("https://acme-co.cloudflareaccess.com");
+    expect(accessTeamNameOf("acme-co.cloudflareaccess.com")).toBe("acme-co");
+    expect(accessTeamNameOf("Acme.CloudflareAccess.com")).toBe("acme");
+    expect(accessTeamNameOf("")).toBe("");
   });
 
   it("fills in the addresses, their hostnames and the Worker name", () => {
@@ -235,8 +253,14 @@ describe("placeholderProblems", () => {
 
   it("takes the Access placeholders in a var's value only", () => {
     expect(
-      placeholderProblems("{{accessTeamDomain}} {{accessAud}} {{accessCertsUrl}}", "varDefault"),
+      placeholderProblems(
+        "{{accessTeamDomain}} {{accessTeamName}} {{accessAud}} {{accessCertsUrl}}",
+        "varDefault",
+      ),
     ).toEqual([]);
+    expect(placeholderProblems("{{accessTeamName}}", "postInstall")[0]).toContain(
+      "{{accessTeamName}} is not filled in here",
+    );
     expect(placeholderProblems("{{accessAud}}", "postInstall")[0]).toContain(
       "{{accessAud}} is not filled in here",
     );

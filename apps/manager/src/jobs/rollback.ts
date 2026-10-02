@@ -6,9 +6,11 @@ import {
 } from "@appflare/schema";
 import { and, eq, inArray, isNull, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { bypassPathsOfManifest } from "../access/bypass.server";
+import { writeAcceptedBypass } from "../access/accepted-paths.server";
 import { readAccessPlaceholderValues } from "../access/placeholder-values.server";
+import { storedBypassPaths, storedCatalogAccess } from "../access/stored-access.server";
 import { effectiveAutoUpdate, settingOn } from "../auto-update/auto-update";
+import { type StoredRelease, storedEffectiveManifest } from "../catalog/revisions.server";
 import { appPlace } from "../components/app-links";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources, snapshots } from "../db/schema";
@@ -25,7 +27,6 @@ import { appBaseUrl, domainHostnames } from "../installs/workers-dev";
 import {
   entryWorkers,
   mergedWorkerVersions,
-  parseStoredManifest,
   parseWorkerVersions,
   storedOtherWorkers,
 } from "./entry-workers";
@@ -58,7 +59,6 @@ import type { JobContext } from "./run-job";
 import { StepLog } from "./step-log";
 import { createJobSteps, errorMessage, JobError } from "./steps";
 import {
-  accessOfManifestJson,
   accessUpdateRefusal,
   declaredLifecycleOf,
   hyperdriveRollbackRefusal,
@@ -212,18 +212,42 @@ interface RollbackAccessPlan {
   refreshValues: boolean;
 }
 
+/** An install's or a snapshot's record of its release, as the stored-release helpers read it. */
+function storedRelease(row: {
+  manifest_json: string | null;
+  artifact_digest: string | null;
+}): StoredRelease {
+  return { manifestJson: row.manifest_json, artifactDigest: row.artifact_digest };
+}
+
 async function rollbackAccessPlan(
   orm: Database,
   installId: string,
-  install: { manifest_json: string | null; config_json: string | null; worker_name: string },
-  snapshot: { manifest_json: string | null; config_json: string | null; access_aud: string | null },
+  install: {
+    manifest_json: string | null;
+    artifact_digest: string | null;
+    config_json: string | null;
+    worker_name: string;
+  },
+  snapshot: {
+    manifest_json: string | null;
+    artifact_digest: string | null;
+    config_json: string | null;
+    access_aud: string | null;
+  },
 ): Promise<RollbackAccessPlan> {
   const current = await readAccessPlaceholderValues(orm, installId);
-  const before = bypassPathsOfManifest(install.manifest_json);
+  // Each version's entry as the newest revision recorded for its release says.
+  const before = await storedBypassPaths(orm, storedRelease(install));
   const after =
-    snapshot.manifest_json === null ? before : bypassPathsOfManifest(snapshot.manifest_json);
+    snapshot.manifest_json === null
+      ? before
+      : await storedBypassPaths(orm, storedRelease(snapshot));
   const sharedPaths = before.filter((p) => after.includes(p));
-  const manifest = parseStoredManifest(snapshot.manifest_json ?? install.manifest_json);
+  const manifest = await storedEffectiveManifest(
+    orm,
+    storedRelease(snapshot.manifest_json === null ? install : snapshot),
+  );
   const vars = parseStoredVars(snapshot.config_json ?? install.config_json);
   const usesAccess =
     manifest !== null &&
@@ -273,6 +297,15 @@ export async function runRollback(ctx: JobContext): Promise<void> {
       .where(eq(snapshots.id, params.snapshotId))
       .limit(1);
     if (snapshot === undefined) return;
+    // A rollback is an admin's action that carries the version's public
+    // paths: a protected app's are accepted (nothing for one not protected).
+    if (snapshot.manifest_json !== null) {
+      await writeAcceptedBypass(
+        orm,
+        params.installId,
+        await storedBypassPaths(orm, storedRelease(snapshot)),
+      );
+    }
     await orm
       .update(installs)
       .set(
@@ -482,7 +515,7 @@ export async function runRollback(ctx: JobContext): Promise<void> {
           // Checked when the rollback starts too: a version that must run
           // behind Cloudflare Access never serves an unprotected app.
           const refusal = accessUpdateRefusal({
-            catalog: accessOfManifestJson(snapshot.manifest_json),
+            catalog: await storedCatalogAccess(orm, storedRelease(snapshot)),
             isProtected: plan.protected,
             action: "roll back",
           });

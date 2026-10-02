@@ -171,6 +171,7 @@ beforeEach(() => {
       appName: null,
       teamDomain: null,
       publicPaths: [],
+      pendingPublicPaths: [],
       syncFailedAt: null,
       usesAccessValues: false,
       users: 2,

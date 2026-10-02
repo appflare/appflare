@@ -200,6 +200,7 @@ const CHIP_LABELS: Readonly<Record<PlaceholderKey, string>> = {
   accountId: "Account ID",
   wildcardHostname: "Wildcard domain",
   accessTeamDomain: "Access team domain",
+  accessTeamName: "Access team name",
   accessAud: "Access audience tag",
   accessCertsUrl: "Access keys URL",
 };
@@ -221,6 +222,7 @@ const CHIP_MEANINGS: Readonly<Record<PlaceholderKey, string>> = {
   accountId: "your Cloudflare account ID",
   wildcardHostname: "the app's wildcard domain",
   accessTeamDomain: "your Zero Trust team domain",
+  accessTeamName: "your Zero Trust team name",
   accessAud: "the audience tag of the app's Cloudflare Access application",
   accessCertsUrl: "the address of your Zero Trust team's signing keys",
 };
@@ -242,6 +244,7 @@ interface PlaceholderSources {
   accountId?: string | null;
   wildcardHostname?: string | null;
   accessTeamDomain?: string | null;
+  accessTeamName?: string | null;
   accessAud?: string | null;
   accessCertsUrl?: string | null;
 }
@@ -287,6 +290,7 @@ export function describeChip(
   }
   if (
     chip.key === "accessTeamDomain" ||
+    chip.key === "accessTeamName" ||
     chip.key === "accessAud" ||
     chip.key === "accessCertsUrl"
   ) {

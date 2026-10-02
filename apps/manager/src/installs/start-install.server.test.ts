@@ -107,29 +107,68 @@ describe("startInstallCore", () => {
     expect(JSON.parse(job?.input_json ?? "{}").access).toBe(true);
   });
 
-  it("checks the account can provide Cloudflare Access for an app that needs it, before anything is recorded", async () => {
+  it("checks the account can provide Cloudflare Access for an app that will be protected, before anything is recorded", async () => {
+    const checked: string[] = [];
+    const refusingPreflight = async () => {
+      checked.push("asked");
+      return "This Cloudflare account has no Zero Trust organization yet.";
+    };
+    const refusal =
+      "Cut needs Cloudflare Access, which this account cannot provide yet: This Cloudflare account has no Zero Trust organization yet.";
+    // Protection required by the entry: always checked.
+    const required = harness(
+      await buildArtifactFixture({
+        catalog: { requires: ["access"], access: { mode: "required" } },
+      }),
+    );
+    await expect(
+      startInstallCore(
+        { ...required.deps, accessPreflight: refusingPreflight },
+        input({ requirementsConfirmed: true }),
+      ),
+    ).rejects.toThrow(refusal);
+    expect(checked).toEqual(["asked"]);
+    expect(required.created).toEqual([]);
+    expect(await env.DB.prepare("SELECT id FROM installs").first()).toBeNull();
+    // Protection turned on by the admin: checked too.
+    const ticked = harness(await buildArtifactFixture({ catalog: { requires: ["access"] } }));
+    await expect(
+      startInstallCore(
+        { ...ticked.deps, accessPreflight: refusingPreflight },
+        input({ access: true }),
+      ),
+    ).rejects.toThrow(refusal);
+    expect(checked).toEqual(["asked", "asked"]);
+    expect(ticked.created).toEqual([]);
+  });
+
+  it('installs an entry that lists "access" without requiring it unprotected, on any account, with nothing to confirm', async () => {
+    // The requirement holds only while the app is protected: the admin left
+    // protection off, so the account's Zero Trust is never asked about.
     const f = await buildArtifactFixture({ catalog: { requires: ["access"] } });
     const h = harness(f);
-    const checked: string[] = [];
-    const refusing = {
-      ...h.deps,
-      accessPreflight: async () => {
-        checked.push("asked");
-        return "This Cloudflare account has no Zero Trust organization yet.";
-      },
-    };
-    await expect(
-      startInstallCore(refusing, input({ requirementsConfirmed: true })),
-    ).rejects.toThrow(
-      "Cut needs Cloudflare Access, which this account cannot provide yet: This Cloudflare account has no Zero Trust organization yet.",
-    );
-    expect(checked).toEqual(["asked"]);
-    expect(h.created).toEqual([]);
-    expect(await env.DB.prepare("SELECT id FROM installs").first()).toBeNull();
-    // An app that needs nothing of Access is not checked.
+    await startInstallCore({ ...h.deps, accessPreflight: async () => "never asked" }, input());
+    expect(h.created).toHaveLength(1);
+    expect(h.created[0]?.params).not.toHaveProperty("access");
+    // An app that needs nothing of Access is not checked either.
     const plain = harness(await buildArtifactFixture());
-    await startInstallCore({ ...plain.deps, accessPreflight: async () => "never asked" }, input());
+    await startInstallCore(
+      {
+        ...plain.deps,
+        newId: (() => {
+          let n = 10;
+          return () => `id${++n}`;
+        })(),
+        accessPreflight: async () => "never asked",
+      },
+      input({ workerName: "cut-2" }),
+    );
     expect(plain.created).toHaveLength(1);
+    // Another requirement still asks for the confirmation.
+    const r2 = await buildArtifactFixture({ catalog: { requires: ["access", "r2"] } });
+    expect(() => resolveInstallInput(r2.manifest, input())).toThrow(
+      "Cut needs: R2. Confirm that this account meets these requirements.",
+    );
   });
 
   it("takes Cloudflare Access protection together with an external domain", async () => {

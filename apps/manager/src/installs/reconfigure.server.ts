@@ -105,6 +105,7 @@ export interface InstallSettings {
     wildcardHostname: string | null;
     /** The Access placeholders' values; null (filled in empty) while the app is not protected. */
     accessTeamDomain?: string | null;
+    accessTeamName?: string | null;
     accessAud?: string | null;
     accessCertsUrl?: string | null;
     /** An app of several Workers: what the per-Worker forms (`{{appUrl:<name>}}`) become. */
@@ -301,6 +302,7 @@ async function settingsPlaceholders(
     appUrl,
     wildcardHostname: wildcardHostnameOf(wildcard),
     accessTeamDomain: access?.teamDomain ?? null,
+    accessTeamName: access?.teamName ?? null,
     accessAud: access?.aud ?? null,
     accessCertsUrl: access?.certsUrl ?? null,
     ...(entryWorkers === undefined ? {} : { entryWorkers }),
@@ -598,8 +600,9 @@ export async function startAccessChangeCore(
   }
   const isProtected = (await readInstallProtection(deps.db, install.id)) !== null;
   if (request.access === "off") {
-    if (accessOfferOf(signed.catalog) === "required") {
-      throw new VersionActionError(accessRequiredOffRefusal(signed.catalog.name));
+    // The form of the newest revision: a revision may make protection required.
+    if (accessOfferOf(ctx.catalog) === "required") {
+      throw new VersionActionError(accessRequiredOffRefusal(ctx.catalog.name));
     }
     if (!isProtected) {
       throw new VersionActionError(

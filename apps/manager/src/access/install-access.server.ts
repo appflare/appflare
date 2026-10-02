@@ -169,6 +169,15 @@ export async function listInstallAccess(d1: D1Database): Promise<InstallAccessRe
   return rows.map(recordOf);
 }
 
+/** The ids of the installs Appflare protects with Cloudflare Access. */
+export async function protectedInstallIds(d1: D1Database): Promise<Set<string>> {
+  const rows = await createDb(d1)
+    .select({ id: install_access.install_id })
+    .from(install_access)
+    .where(isNotNull(install_access.access_app_id));
+  return new Set(rows.map((r) => r.id));
+}
+
 /** Whether any install is protected by Appflare (has its Access application recorded). */
 export async function anyProtectedInstall(d1: D1Database): Promise<boolean> {
   const [row] = await createDb(d1)

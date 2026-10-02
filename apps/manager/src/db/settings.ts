@@ -56,6 +56,12 @@ export const SETTING = {
   appAccessUsersPolicyId: "app_access_users_policy_id",
   appAccessUsersSyncFailedAt: "app_access_users_sync_failed_at",
   /**
+   * The id of the last protected install whose catalog revision the cron
+   * checked (access/revision-refresh.server.ts), so each run goes on from
+   * there and every protected install is reached in turn.
+   */
+  appAccessRevisionCursor: "app_access_revision_cursor",
+  /**
    * The account's Workers plan as an admin stated it, `free` or `paid`. A
    * plan the capability probes detect wins over it; it applies when they
    * cannot tell (the token has no "Billing: Read"). Absent means free.

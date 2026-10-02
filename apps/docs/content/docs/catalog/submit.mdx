@@ -554,12 +554,15 @@ Points that need care:
     `tunnels.example.com`) for an entry with `install.wildcardHostname`, and is empty
     until the admin assigns one; assigning or removing it deploys the settings again,
     so the var follows the domain.
-  - `{{accessTeamDomain}}`, `{{accessAud}}` and `{{accessCertsUrl}}` are for an app
-    that checks Cloudflare Access's sign-in itself (see `access` below): the account's Zero Trust team domain (`<team>.cloudflareaccess.com`, no
-    scheme), the audience (AUD) tag of the app's Access application, and
+  - `{{accessTeamDomain}}`, `{{accessTeamName}}`, `{{accessAud}}` and
+    `{{accessCertsUrl}}` are for an app that checks Cloudflare Access's sign-in
+    itself (see `access` below): the account's Zero Trust team domain
+    (`<team>.cloudflareaccess.com`, no scheme), the team name alone (`<team>`, for
+    an app that builds `https://<team>.cloudflareaccess.com` itself), the audience
+    (AUD) tag of the app's Access application, and
     `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, where the keys that
     sign Access's JWTs are published. They work only in a var's value, never in
-    `postInstall` or a secret. All three are empty while the app is not protected,
+    `postInstall` or a secret. All four are empty while the app is not protected,
     so an app that checks them turns everyone away rather than trusting a request
     without a sign-in. Turning protection on or off deploys the settings again with
     the new values.
@@ -575,7 +578,9 @@ Points that need care:
   deploy`. When `vars` lists such a var, its `default` must be JSON text, such as
   `"[\"inbox@example.com\"]"`, and the install form asks for JSON.
 - **`requires`.** List account features the app needs beyond Workers, such as `r2`
-  or `workers-ai`. `access` means the app needs Cloudflare Access; see `access` below.
+  or `workers-ai`. `access` means the app goes with Cloudflare Access: the account
+  needs a Zero Trust organization only while the app is protected, which with
+  `"mode": "required"` is always; see `access` below.
 - **`tokenPermissions`.** Only for apps that call the Cloudflare API with a token of
   their own, never Appflare's. Each entry names one permission group as the
   Cloudflare dashboard's token form shows it, where it applies, the access the app
@@ -621,7 +626,13 @@ Points that need care:
   it away from a manager too old to protect apps or fill those placeholders in:
   such a manager does not know the `"access"` requirement and leaves the entry out
   of its catalog, instead of installing the app unprotected or with the
-  placeholder as written.
+  placeholder as written. Without `"mode": "required"` the requirement holds only
+  while the app is protected: the app still installs, unprotected, on an account
+  without Zero Trust, and its catalog page says Access is needed only if you
+  protect it.
+
+  A released app can take up the `access` block, change it or drop it, and add
+  `"access"` to `requires`, with a [revision](#after-merge) instead of a new pin.
 
   Not for the self-deploying tier. Appflare's per-app service tokens are account
   service tokens, so an Access rule an admin adds in the Zero Trust dashboard with
@@ -881,10 +892,17 @@ exceptions:
 - a change to `authors`, `tagline` or `licenseNote` alone, which `index.json` reads
   from the manifest;
 - a change to the form or copy only (`name`, `summary`, `homepage`, `license`,
-  `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump`) together
-  with `revision` raised by one (it starts at 1 when omitted). CI signs and
-  publishes the revised manifest without building anything; managers switch to the
-  new form without an update. Anything else, such as `install`, `requires`, `plan`
-  or `tokenPermissions`, changes what gets built or provisioned and needs a new pin.
+  `categories`, `maintainers`, `secrets`, `vars`, `postInstall`, `bump`), or to how
+  the app goes with Cloudflare Access (the `access` block, and adding `"access"` to
+  `requires`), together with `revision` raised by one (it starts at 1 when
+  omitted). CI signs and publishes the revised manifest without building anything;
+  managers switch to the new form without an update. For an app that is already
+  protected, a manager checks for a revision every 30 minutes (seven protected apps a
+  run): a path a revised `bypass` drops stops being public in the same run, but a
+  path it adds stays behind the sign-in until an admin of that manager makes it
+  public, and `"mode": "required"` on an app installed unprotected asks its admin to
+  turn protection on rather than doing it. Anything else, such as
+  `install`, `plan`, `tokenPermissions` or another change to `requires`, changes
+  what gets built or provisioned and needs a new pin.
   Once a revision is published, any further change to the manifest, `authors`,
   `tagline` and `licenseNote` included, needs the next revision.

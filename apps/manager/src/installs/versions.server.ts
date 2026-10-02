@@ -13,6 +13,7 @@ import {
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { readInstallProtection } from "../access/protect.server";
+import { storedCatalogAccess } from "../access/stored-access.server";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { cronTriggerCount } from "../catalog/cron-triggers";
 import { installAppKey, unsignedTierRefusal } from "../catalog/sources";
@@ -39,7 +40,6 @@ import {
 import { StepLog } from "../jobs/step-log";
 import type { UpdateJobParams } from "../jobs/update";
 import {
-  accessOfManifestJson,
   accessUpdateRefusal,
   hyperdriveRollbackRefusal,
   lastDurableObjectTagOf,
@@ -609,9 +609,13 @@ export async function startRollbackCore(
     await liveHyperdriveIds(createDb(deps.db), install.id),
   );
   if (lost !== null) throw new VersionActionError(lost);
-  // A version that must run behind Cloudflare Access never serves without it.
+  // A version that must run behind Cloudflare Access never serves without it,
+  // as the newest revision recorded for its release says.
   const accessRefusal = accessUpdateRefusal({
-    catalog: accessOfManifestJson(snapshot.manifest_json),
+    catalog: await storedCatalogAccess(createDb(deps.db), {
+      manifestJson: snapshot.manifest_json,
+      artifactDigest: snapshot.artifact_digest,
+    }),
     isProtected: (await readInstallProtection(deps.db, install.id)) !== null,
     action: "roll back",
   });

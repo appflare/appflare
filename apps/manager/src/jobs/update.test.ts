@@ -8,6 +8,7 @@ import {
   withRevisedCatalog,
 } from "@appflare/schema";
 import { beforeEach, describe, expect, it } from "vitest";
+import { readAcceptedBypass } from "../access/accepted-paths.server";
 import { protectInstall } from "../access/protect.server";
 import { readCatalogRevision } from "../catalog/revisions.server";
 import { createDb } from "../db/client";
@@ -32,6 +33,7 @@ import {
 } from "../test/fake-account";
 import { fakeSelf } from "../test/fake-self";
 import { fakeStep } from "../test/fake-step";
+import { recordFixtureRevision, setInstallRelease } from "../test/recorded-revision";
 import {
   cacheIndex,
   INSTALL_ID,
@@ -2539,5 +2541,67 @@ describe("update job, an app protected with Cloudflare Access", () => {
     ]);
     // Before the new version served, only the path both versions share was public.
     expect(seen).toContainEqual(["cut.appflare-dev.workers.dev/s/*"]);
+  });
+
+  it("reads both versions' public paths from the revisions recorded for their releases", async () => {
+    // Neither release lists public paths; revisions of both do.
+    const installed = await buildArtifactFixture({
+      version: "1.0.0",
+      bindings: [
+        { type: "kv_namespace", name: "CUT_KV" },
+        { type: "d1", name: "DB" },
+      ],
+      revision: { access: { bypass: ["/s/*", "/old/*"] } },
+    });
+    const access = fakeAccessAccount();
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    const uris = () =>
+      [...access.apps.values()]
+        .filter((a) => String(a.name).endsWith("public paths"))
+        .flatMap((a) => (a.destinations as Array<{ uri: string }>).map((d) => d.uri));
+    const seen: string[][] = [];
+    const r = await update(
+      { ...NEW_APP, revision: { access: { bypass: ["/s/*", "/new/*"] } } },
+      {},
+      { manifestJson: new TextDecoder().decode(installed.manifestBytes) },
+      {},
+      "self",
+      async () => {
+        await setInstallRelease(INSTALL_ID, installed);
+        await recordFixtureRevision(installed);
+        await env.DB.prepare(
+          "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+        ).run();
+        await protectInstall(
+          { db: env.DB, client: access.client, authSecret: "a".repeat(32) },
+          { installId: INSTALL_ID },
+        );
+        expect(uris()).toEqual([
+          "cut.appflare-dev.workers.dev/s/*",
+          "cut.appflare-dev.workers.dev/old/*",
+        ]);
+      },
+      (fake) => async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path.includes("/access/") || path.endsWith("/workers/scripts")) {
+          const response = await access.fetch(String(input), init);
+          if (init?.method === "PUT") seen.push(uris());
+          return response;
+        }
+        return fake.fetch(String(input), init);
+      },
+    );
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names.indexOf("take dropped public paths off Cloudflare Access")).toBeLessThan(
+      r.step.names.indexOf("promote version"),
+    );
+    expect(seen).toContainEqual(["cut.appflare-dev.workers.dev/s/*"]);
+    expect(uris()).toEqual([
+      "cut.appflare-dev.workers.dev/s/*",
+      "cut.appflare-dev.workers.dev/new/*",
+    ]);
+    // The update accepted the new version's public paths.
+    expect(await readAcceptedBypass(createDb(env.DB), INSTALL_ID)).toEqual(["/s/*", "/new/*"]);
   });
 });

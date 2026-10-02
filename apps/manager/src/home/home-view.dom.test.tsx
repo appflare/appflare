@@ -262,6 +262,16 @@ describe("Home", () => {
     expect(browse?.getAttribute("href")).toBe("/catalog");
   });
 
+  it("asks to turn on Cloudflare Access for an app whose entry now requires it", () => {
+    const share = app({ id: "s", name: "Share", accessRequired: true });
+    render([share]);
+    expect(section()?.textContent).toContain("Share must run behind Cloudflare Access");
+    expect(buttons(section())).toEqual(["Turn on"]);
+    expect(section()?.querySelector("a[href='/apps/s#access']")?.textContent).toBe("Turn on");
+    render([share], { isAdmin: false });
+    expect(buttons(section())).toEqual(["Manage"]);
+  });
+
   it("gives members the list without the admin actions", () => {
     render(FULL, { isAdmin: false, input: { ...FULL_INPUT, deployCopy: null } });
     expect(buttons(section())).toEqual([

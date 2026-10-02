@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { RemovalRelease } from "../../access/install-access.server";
+import type { AccessUpkeepReport } from "../../access/upkeep-run.server";
 import type { EmailRoutingInspection } from "../../installs/email-routing.server";
 import type { DomainCheckReport } from "../../installs/external-domains-poll.server";
 import type { DeliveryReport } from "../../notifications/deliver.server";
@@ -127,5 +128,19 @@ export class JobUnits extends WorkerEntrypoint<Env> {
 
   checkExternalDomains(input: unknown): Promise<NotificationUnitResult<DomainCheckReport>> {
     return createNotificationUnits(this.env).checkExternalDomains(input);
+  }
+
+  // The scheduled upkeep of apps protected with Cloudflare Access, in three
+  // parts with a budget each (src/access/upkeep-run.server.ts).
+  refreshAccessRevisions(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>> {
+    return createNotificationUnits(this.env).refreshAccessRevisions(input);
+  }
+
+  renewAccessTokens(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>> {
+    return createNotificationUnits(this.env).renewAccessTokens(input);
+  }
+
+  resyncAccessApps(input: unknown): Promise<NotificationUnitResult<AccessUpkeepReport>> {
+    return createNotificationUnits(this.env).resyncAccessApps(input);
   }
 }
