@@ -18,6 +18,7 @@ const EXPECTED_TABLES = [
   "catalogs",
   "featured_dismissals",
   "github_tokens",
+  "install_access",
   "installs",
   "job_logs",
   "jobs",

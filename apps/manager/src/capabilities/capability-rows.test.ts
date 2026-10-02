@@ -519,6 +519,18 @@ describe("capabilityRows", () => {
       );
     });
 
+    it("names Access: Service Tokens when the token cannot even read them", () => {
+      const row = rows({ ...FREE, accessServiceTokens: NO_PERMISSION })["token-permissions"];
+      expect(row.state).toBe("ready");
+      expect(row.details.note).toBe(
+        "Optional permissions the token does not have: Access: Service Tokens (to protect apps).",
+      );
+      expect(
+        rows({ ...FREE, accessServiceTokens: { state: "readable" } })["token-permissions"].details
+          .note,
+      ).toBeNull();
+    });
+
     it("could not check before the probes ran", () => {
       expect(rows(null)["token-permissions"]).toMatchObject({
         state: "could-not-check",
@@ -615,6 +627,22 @@ describe("installedNeeds", () => {
     );
     expect(needs).toMatchObject({ total: 3, r2: 1, emailRouting: 1, zone: 1, sandbox: 1 });
   });
+
+  it("counts Zero Trust for an app that needs Access only while protected only once it is protected", () => {
+    const optional = {
+      services: ["access"],
+      requires: ["access" as const],
+      plan: "free" as const,
+      tier: "artifact" as const,
+      accessOffer: "recommended",
+    };
+    const install = { appSlug: "share", catalogId: null, origin: "catalog" as const };
+    expect(installedNeeds([install], () => optional).access).toBe(0);
+    expect(installedNeeds([{ ...install, accessProtected: true }], () => optional).access).toBe(1);
+    // Any protected install needs it, whatever its entry says.
+    const plain = { services: [], requires: [], plan: "free" as const, tier: "artifact" as const };
+    expect(installedNeeds([{ ...install, accessProtected: true }], () => plain).access).toBe(1);
+  });
 });
 
 describe("catalogNeeds", () => {
@@ -651,5 +679,18 @@ describe("catalogNeeds", () => {
       access: 1,
       sandbox: 2,
     });
+  });
+
+  it('does not count Zero Trust for an app whose "access" holds only while protected', () => {
+    const app = {
+      services: ["access"],
+      requires: ["access" as const],
+      plan: "free" as const,
+      tier: "artifact" as const,
+    };
+    expect(catalogNeeds([{ ...app, accessOffer: "offered" }]).access).toBe(0);
+    expect(catalogNeeds([{ ...app, accessOffer: "required" }]).access).toBe(1);
+    // A row from before the field: counted, as before.
+    expect(catalogNeeds([app]).access).toBe(1);
   });
 });

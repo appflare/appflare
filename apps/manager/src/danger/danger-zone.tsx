@@ -233,6 +233,12 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
               Appflare's KV namespace (catalog caches), <Mono>{manager.kvId}</Mono>.
             </li>
           )}
+          {(targets.appAccessInstalls ?? []).length > 0 && (
+            <li>
+              The Cloudflare Access service tokens Appflare's health checks used for protected apps,
+              taken out of their Access applications first.
+            </li>
+          )}
           {manager.d1Id !== null && (
             <li>
               Appflare's D1 database, <Mono>{manager.d1Id}</Mono>: users, passkeys, jobs and their
@@ -292,6 +298,27 @@ function RemovalReviewBody({ review }: { review: RemovalReview }) {
               {stays.customDomains === 1
                 ? "The custom domain of an app, which keeps serving it."
                 : `${stays.customDomains} custom domains of apps, which keep serving them.`}
+            </li>
+          )}
+          {stays.protectedApps.length > 0 && (
+            <li>
+              The Cloudflare Access application of{" "}
+              {stays.protectedApps.length === 1
+                ? "the app protected with Access"
+                : `the ${stays.protectedApps.length} apps protected with Access`}
+              {stays.usersPolicy && ', and the "Appflare users" policy they use'}, so{" "}
+              {stays.protectedApps.length === 1 ? "it keeps" : "they keep"} asking for a sign-in.
+              Who can sign in is then managed in the Cloudflare dashboard under Zero Trust, Access.
+              <span className="text-kumo-subtle">
+                {" "}
+                ({stays.protectedApps.map((a) => a.label).join(", ")})
+              </span>
+            </li>
+          )}
+          {stays.protectedApps.length === 0 && stays.usersPolicy && (
+            <li>
+              The "Appflare users" Cloudflare Access policy, for any Access application that still
+              uses it. Manage or delete it in the Cloudflare dashboard under Zero Trust, Access.
             </li>
           )}
           {sandbox.worker === "sandbox" && sandbox.containerApps === null && (

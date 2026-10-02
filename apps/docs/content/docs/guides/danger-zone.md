@@ -71,8 +71,12 @@ In this order, each step one call to the Cloudflare API:
    `appflare-sandbox-standard-2`, which Cloudflare keeps when the Worker is deleted. This
    needs Containers: Edit on Appflare's token; without it the review says so, and you
    delete them yourself under **Workers**, **Containers**.
-4. The manager's KV namespace, then its D1 database, with every user, passkey, job
-   log, snapshot record, notification channel and setting.
+4. The manager's KV namespace. Then, for each app Appflare protects with Cloudflare
+   Access, the service token Appflare's health checks used for it: taken out of the
+   app's Access application, then deleted. One that cannot be is named on the page, left
+   for you to delete under **Zero Trust**, **Access**, **Service credentials**; it does
+   not stop the removal. Then the D1 database, with every user, passkey, job log,
+   snapshot record, notification channel and setting.
 5. The Cloudflare Access applications in front of the manager, if
    [Access protection](/security/) is on. They go after the database, so a removal
    that stops earlier leaves the manager protected. One that cannot be deleted at this
@@ -93,6 +97,10 @@ the dashboard a minute later, delete it there.
 - Every app Appflare installed, with its Worker, databases, buckets, namespaces and
   secrets. They keep running, unmanaged: nothing updates them any more.
 - Custom domains of apps, which keep serving them.
+- The Cloudflare Access application of each app Appflare
+  [protects](/guides/protect-apps/), and the "Appflare users" policy they use, so
+  those apps keep asking for a sign-in. Who can sign in is
+  managed under **Zero Trust**, **Access** in the Cloudflare dashboard from then on.
 - The `Appflare` API token. Nothing uses it any more: revoke it in the Cloudflare
   dashboard, with any tokens you created for apps that you no longer need.
 

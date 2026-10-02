@@ -9,13 +9,23 @@ import {
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import {
+  type AccessAddressSync,
+  accessAddressSync,
+  publicPathsRefusal,
+} from "../access/address-sync.server";
+import {
   CUSTOM_DOMAINS_FEATURE,
   permissionName,
   splitPermissionGroups,
 } from "../cloudflare/token-template";
 import { createDb } from "../db/client";
 import { type HealthStatus, installs, resources } from "../db/schema";
-import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
+import {
+  healthCheckOfManifest,
+  type InstallProbeHeaders,
+  probeHealthThroughAccess,
+  settleHealthProbe,
+} from "../jobs/install/health";
 import { checkHostnameInZone } from "./custom-domain-input";
 import { CUSTOM_DOMAIN_KIND, WILDCARD_DOMAIN_KIND } from "./resource-kinds";
 import {
@@ -28,7 +38,7 @@ import { wildcardOfManifest } from "./wildcard-domain-input";
 import {
   applyDomainLive,
   beforeDomainRemoval,
-  domainServesApp,
+  domainIsLive,
   recordDomainLive,
   WorkersDevError,
 } from "./workers-dev.server";
@@ -55,6 +65,16 @@ export interface CustomDomainDeps {
   newId?: () => string;
   /** Deploys the settings again when they use the app's address; without it nothing is. */
   refreshVars?: RefreshVars;
+  /**
+   * Brings a protected app's Access applications (its public paths) in step
+   * once its domains changed; by default through `api` (`accessAddressSync`).
+   */
+  syncAccess?: AccessAddressSync;
+}
+
+/** The sync of a protected app's Access applications after its domains changed. */
+function accessSyncOf(deps: CustomDomainDeps): AccessAddressSync {
+  return deps.syncAccess ?? accessAddressSync(deps.db, async () => deps.api, deps.now);
 }
 
 /** The permission groups by the dashboard's names, for messages. */
@@ -284,6 +304,8 @@ export async function addCustomDomainCore(
         : `The app started uninstalling while ${hostname} was being added, and Appflare could not remove the domain again. It is not recorded on this app, so the uninstall will not remove it; remove it from the Worker in the Cloudflare dashboard (Workers & Pages, the Worker, Domains).`,
     );
   }
+  // A protected app's public paths, on the new hostname too.
+  await accessSyncOf(deps)(install.id);
   return { ok: true, resourceId, hostname };
 }
 
@@ -463,6 +485,13 @@ export async function removeCustomDomainCore(
     throw new CustomDomainError("The uninstall removes this app's custom domains.");
   }
   const domain = await readDomain(deps.db, request);
+  // A protected app's public paths come off the hostname before it is
+  // released (and before anything else changes), so it never keeps one once it serves something else.
+  const syncAccess = accessSyncOf(deps);
+  const accessProblem = await syncAccess(request.installId, { leavingHosts: [domain.name] });
+  if (accessProblem !== null) {
+    throw new CustomDomainError(publicPathsRefusal(domain.name, accessProblem));
+  }
   // With workers.dev off, the last live domain is the app's only address.
   const removal = await asCustomDomainError(() =>
     beforeDomainRemoval(
@@ -479,6 +508,8 @@ export async function removeCustomDomainCore(
     .update(resources)
     .set({ deleted_at: (deps.now ?? (() => new Date()))() })
     .where(eq(resources.id, domain.id));
+  // And onto workers.dev when the removal turned it back on.
+  await syncAccess(request.installId);
   // The app's address moved: settings that use `{{appUrl}}` follow it.
   const refresh = removal.addressChanged
     ? await refreshSettings(deps.refreshVars, request.installId, ["appUrl"])
@@ -538,6 +569,11 @@ export interface CustomDomainCheck extends VarsRefresh {
   status: HealthStatus;
   /** What the app answered ("HTTP 200", "connection failed (...)"). */
   detail: string;
+  /**
+   * Cloudflare Access answered with its sign-in page: the domain counts as
+   * live (`domainIsLive`), but the app itself was not checked.
+   */
+  access?: true;
   /** ISO 8601 */
   checkedAt: string;
   /** The app answered through the domain, so this check turned workers.dev off. */
@@ -550,17 +586,22 @@ export interface CustomDomainCheck extends VarsRefresh {
  * stays the check of its main address, and a new domain may take a while
  * before its certificate and DNS record are live. When the app answers, the
  * domain is recorded as live (an address the app is opened at) and, with
- * `api`, workers.dev may be turned off (`applyDomainLive`).
+ * `api`, workers.dev may be turned off (`applyDomainLive`). So does
+ * Cloudflare Access answering on the domain (`domainIsLive`).
  */
 export async function checkCustomDomainCore(
   deps: {
     db: D1Database;
     fetch: FetchLike;
+    /** The service token's headers, for a domain the account controls (Cloudflare Access). */
+    probeHeaders?: InstallProbeHeaders;
     /** For turning workers.dev off; without it a live domain is only recorded. */
     api?: () => Promise<Pick<CloudflareClient, "workers">>;
     now?: () => Date;
     /** Deploys the settings again once the domain serves them; without it nothing is. */
     refreshVars?: RefreshVars;
+    /** Takes a protected app's public paths off workers.dev before it is turned off. */
+    syncAccess?: AccessAddressSync;
   },
   request: { installId: string; resourceId: string },
 ): Promise<CustomDomainCheck> {
@@ -573,11 +614,16 @@ export async function checkCustomDomainCore(
   const domain = await readDomain(deps.db, request, { wildcard: true });
   const check = healthCheckOfManifest(install.manifestJson);
   const url = `https://${domain.name}${check.path}`;
-  const probe = await probeHealth(deps.fetch, url);
+  const { probeHeaders } = deps;
+  const probe = await probeHealthThroughAccess(
+    deps.fetch,
+    url,
+    probeHeaders === undefined ? undefined : () => probeHeaders(install.id, url),
+  );
   const settled = settleHealthProbe(probe, check.mode);
   let workersDevTurnedOff = false;
   let refresh: VarsRefresh = NO_VARS_REFRESH;
-  if (domainServesApp(probe, check.mode)) {
+  if (domainIsLive(probe, check.mode)) {
     const live = { installId: install.id, resourceId: domain.id, hostname: domain.name };
     if (deps.api === undefined) {
       await recordDomainLive(deps.db, live.resourceId, deps.now);
@@ -590,6 +636,7 @@ export async function checkCustomDomainCore(
             api,
             ...(deps.now === undefined ? {} : { now: deps.now }),
             ...(deps.refreshVars === undefined ? {} : { refreshVars: deps.refreshVars }),
+            ...(deps.syncAccess === undefined ? {} : { syncAccess: deps.syncAccess }),
           },
           live,
         ),

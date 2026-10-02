@@ -1,5 +1,11 @@
 import handler from "@tanstack/react-start/server-entry";
 import { accessGate } from "./access/gate";
+import {
+  ACCESS_UPKEEP_IN_PLACE,
+  ACCESS_UPKEEP_PARTS,
+  accessUpkeepNeeded,
+  logAccessUpkeep,
+} from "./access/upkeep-run.server";
 import { versionCreatedAt } from "./auth/recovery.server";
 import { cleanUpRecoverySecret } from "./auth/recovery-cleanup.server";
 import { ensureAuthStorage } from "./auth/storage.server";
@@ -14,6 +20,7 @@ import { addressRedirect, serveRequest } from "./domains/address-redirect";
 import { reconcileManagerAddress } from "./domains/manager-address.server";
 import { finalizeSelfUpdates } from "./jobs/self-update/record";
 import { scheduledExternalDomainCheck, scheduledNotifications } from "./notifications/cron.server";
+import { selfNotificationUnits } from "./notifications/units";
 import { reportTelemetry } from "./telemetry/report.server";
 
 /**
@@ -113,6 +120,11 @@ export default {
    * and sends nothing once an admin turns it off. It starts update jobs only for what automatic updates
    * allow (auto-update/), and only updates that need nothing from an admin. Last, it deletes a
    * recovery code secret that can no longer be used (auth/recovery-cleanup.server.ts).
+   * Between those, the upkeep of apps protected with Cloudflare Access
+   * (access/upkeep-run.server.ts), as three SELF units: newer catalog
+   * revisions of their releases; service tokens with less than 30 days left
+   * and "Appflare users" after a failed update; Access applications whose
+   * sync failed or is due, and a check that they still exist.
    */
   async scheduled(_controller, env) {
     if ((await migrated(env)) !== null) return;
@@ -140,6 +152,30 @@ export default {
       if (capabilities === "checked") console.log("account capabilities checked");
     } catch (error) {
       console.error("account capability check failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // Apps protected with Cloudflare Access (access/upkeep-run.server.ts), in
+    // three parts, in this order: newer catalog revisions of their releases
+    // (which mark apps whose public paths changed), service tokens and the
+    // users policy, then Access applications due a sync and the check that
+    // they still exist. Each a SELF unit with its own invocation and
+    // subrequest budget (in place without the binding); nothing at all while
+    // no app has an Access record; never fails the run.
+    try {
+      if (await accessUpkeepNeeded(env.DB)) {
+        const units = selfNotificationUnits(env);
+        for (const part of ACCESS_UPKEEP_PARTS) {
+          const result =
+            units === undefined
+              ? { ok: true as const, value: await ACCESS_UPKEEP_IN_PLACE[part](env) }
+              : await units[part]({});
+          if (result.ok) logAccessUpkeep(result.value);
+          else console.error(`access: upkeep (${part}) failed`, { error: result.error });
+        }
+      }
+    } catch (error) {
+      console.error("access: upkeep of protected apps failed", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

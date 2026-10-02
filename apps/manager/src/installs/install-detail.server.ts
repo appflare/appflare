@@ -22,7 +22,7 @@ import { isUpdateAvailable } from "../catalog/versions";
 import { createDb } from "../db/client";
 import { type BuildKind, installs, type JobStarter, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
+import { isAccessChangeJob, isRestoreJob, reconcileJobs } from "../jobs/reconcile.server";
 import { recordedCatalog } from "../jobs/self-deploying/phases";
 import { sandboxBinding } from "../sandbox/binding";
 import { type AddressDomain, appAddress } from "./app-address";
@@ -194,6 +194,8 @@ export interface InstallDetail extends InstallRow {
     restore: boolean;
     /** A deletion of the data an uninstall kept (recorded as an `uninstall` job). */
     deleteRetained: boolean;
+    /** A settings change that turns Cloudflare Access protection on or off. */
+    accessChange?: boolean;
     status: string;
     error: string | null;
     startedAt: string | null;
@@ -420,6 +422,7 @@ export async function readInstallDetail(installId: string): Promise<InstallDetai
       id: j.id,
       kind: j.kind,
       restore: isRestoreJob(j),
+      accessChange: isAccessChangeJob(j),
       deleteRetained: isDeleteRetainedJob(j),
       status: j.status,
       error: j.error,

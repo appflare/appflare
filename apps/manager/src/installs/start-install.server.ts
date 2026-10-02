@@ -19,7 +19,7 @@ import { ulid } from "ulidx";
 import { readAccountPlan, writeAccountPlan } from "../account/plan.server";
 import { parseStoredCapabilities } from "../capabilities/capabilities";
 import { analyticsEngineRefusal } from "../catalog/requirement-checks";
-import { requirementLabel } from "../catalog/requirements";
+import { requirementLabel, requirementsToConfirm } from "../catalog/requirements";
 import { OFFICIAL_CATALOG_ID, unsignedTierRefusal } from "../catalog/sources";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
@@ -52,6 +52,7 @@ import {
   sandboxFirstGuardSql,
 } from "../sandbox/auto-enable.server";
 import { ENABLE_SANDBOX_PLACE } from "../sandbox/connect-copy";
+import { installAccessChoice } from "./access-offer";
 import { derivedVarValues, withDerivedSecrets } from "./derived-secrets";
 import { DISPLAY_NAME_MAX_LENGTH } from "./display-name";
 import type { InstallDomainInput, StartInstallInput } from "./install-input";
@@ -131,6 +132,12 @@ export interface StartInstallDeps {
    * Without it such an install is refused until they are enabled in Settings.
    */
   sandboxAutoEnable?: SandboxAutoEnableDeps;
+  /**
+   * For an install protected with Cloudflare Access: why the account or the
+   * token cannot protect it (`accessCapabilityProblem`), null when they can.
+   * Without it the install job's first Access step refuses instead.
+   */
+  accessPreflight?: () => Promise<string | null>;
   now?: () => Date;
   newId?: () => string;
 }
@@ -156,6 +163,8 @@ export interface ResolvedInstallInput {
   emailRouting?: { zoneId: string };
   /** The custom or external domain the install job adds; undefined for workers.dev only. */
   domain?: InstallDomainInput;
+  /** Protect the app with Cloudflare Access from its first request on. */
+  access?: true;
 }
 
 /**
@@ -178,9 +187,10 @@ export function resolveInstallInput(
       `${catalog.name} needs Workers Paid. Confirm that this account is on Workers Paid.`,
     );
   }
-  if (catalog.requires.length > 0 && !input.requirementsConfirmed) {
+  const toConfirm = requirementsToConfirm(catalog);
+  if (toConfirm.length > 0 && !input.requirementsConfirmed) {
     throw new StartInstallError(
-      `${catalog.name} needs: ${catalog.requires.map(requirementLabel).join(", ")}. Confirm that this account meets these requirements.`,
+      `${catalog.name} needs: ${toConfirm.map(requirementLabel).join(", ")}. Confirm that this account meets these requirements.`,
     );
   }
   const formSecrets = enteredSecrets(catalog.secrets);
@@ -283,6 +293,10 @@ export function resolveInstallInput(
     if (!checked.ok) throw new StartInstallError(checked.error);
     domain = { ...input.domain, hostname: checked.hostname };
   }
+  // An entry that requires protection is protected unless the form said
+  // otherwise, which is refused.
+  const accessChoice = installAccessChoice(catalog, input.access);
+  if (!accessChoice.ok) throw new StartInstallError(accessChoice.error);
   return {
     secrets,
     seed,
@@ -290,6 +304,7 @@ export function resolveInstallInput(
     vars,
     ...(input.emailRouting === undefined ? {} : { emailRouting: input.emailRouting }),
     ...(domain === undefined ? {} : { domain }),
+    ...(accessChoice.access ? { access: true as const } : {}),
   };
 }
 
@@ -378,6 +393,23 @@ export async function startInstallCore(
   }
   if (installer === null && input.appToken !== undefined) {
     throw new StartInstallError(`${manifest.catalog.name} takes no app token.`);
+  }
+  if (installer !== null && resolved.access === true) {
+    throw new StartInstallError(
+      `${manifest.catalog.name}'s own installer decides its Workers and addresses, so Appflare cannot protect it with Cloudflare Access yet. Install it without, then add an Access application for it under Zero Trust, Access, Applications.`,
+    );
+  }
+  // Only an app that will be protected: the admin turned protection on, or
+  // its entry requires it (`installAccessChoice` turns it on then). An entry
+  // that lists `"access"` without requiring protection installs unprotected
+  // on any account; the value only keeps it from managers too old to protect apps.
+  if (installer === null && resolved.access === true && deps.accessPreflight !== undefined) {
+    const problem = await deps.accessPreflight();
+    if (problem !== null) {
+      throw new StartInstallError(
+        `${manifest.catalog.name} needs Cloudflare Access, which this account cannot provide yet: ${problem}`,
+      );
+    }
   }
   if (installer !== null && resolved.domain !== undefined) {
     throw new StartInstallError(
@@ -488,6 +520,7 @@ export async function startInstallCore(
       requirementsConfirmed: input.requirementsConfirmed,
       ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
       ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
+      ...(resolved.access === true ? { access: true } : {}),
       ...(build === null ? {} : { sandboxBuild: true, buildConfirmed: true }),
       // Names only: the app token lives in the Workflow params alone.
       ...(installer === null
@@ -641,6 +674,7 @@ export async function startInstallCore(
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
     ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
+    ...(resolved.access === true ? { access: true } : {}),
     ...(enableJobId === null ? {} : { sandboxEnableJob: enableJobId }),
   };
   let instanceId: string;

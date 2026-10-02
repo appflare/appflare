@@ -1,10 +1,17 @@
 import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { createClient } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
+import { writeAcceptedBypass } from "../access/accepted-paths.server";
+import { protectInstall } from "../access/protect.server";
+import { ACCESS_MESSAGES, withAccessLock } from "../access/toggle.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { type ReadyGateway, readGateway, setUpGatewayCore } from "../gateway/gateway.server";
+import { accessChallenge } from "../test/access-sign-in";
+import { fakeAccessAccount } from "../test/fake-access-account";
+import { ACC, TOKEN } from "../test/fake-account";
 import { fakeSaas, GATEWAY_ZONE } from "../test/fake-saas";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { externalDomainPhase } from "./external-domain-input";
@@ -437,6 +444,25 @@ describe("externalDomainStatusCore", () => {
     expect(domain).toEqual({ live_at: null });
   });
 
+  it("counts Cloudflare Access answering through the domain as live, and turns workers.dev off", async () => {
+    const { saas, status, install, domain } = await probeActive(
+      true,
+      accessChallenge("go.customer.test"),
+    );
+    expect(status.health).toEqual({
+      status: "unverified",
+      detail: "Cloudflare Access asked for a sign-in",
+      access: true,
+      url: "https://go.customer.test/",
+    });
+    expect(status.workersDevTurnedOff).toBe(true);
+    expect(saas.world.subdomain).toEqual([
+      { script: "cut", enabled: false, previews_enabled: true },
+    ]);
+    expect(install).toEqual({ workers_dev_enabled: 0, served_domain: "go.customer.test" });
+    expect(domain).toEqual({ live_at: NOW.getTime() });
+  });
+
   it("says so when Cloudflare no longer has the custom hostname", async () => {
     const saas = await withGateway();
     const { resourceId } = await addExternalDomainCore(deps(saas), {
@@ -529,5 +555,138 @@ describe("parseExternalDomainRef", () => {
     expect(parseExternalDomainRef("ch1")).toBeNull();
     expect(parseExternalDomainRef(null)).toBeNull();
     expect(parseExternalDomainRef("a/b/c")).toBeNull();
+  });
+});
+
+describe("external domains of an app protected with Cloudflare Access", () => {
+  const AUTH = "auth-secret-0123456789abcdef0123456789";
+
+  /** One client for both fakes, with every call in one list, in order. */
+  async function protectedWorld() {
+    const saas = await withGateway();
+    const access = fakeAccessAccount({ now: () => NOW });
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    const order: string[] = [];
+    const fetch = async (input: string, init?: RequestInit) => {
+      const path = new URL(input).pathname;
+      order.push(`${init?.method ?? "GET"} ${path.replace(/^\/client\/v4\/accounts\/[^/]+/, "")}`);
+      return path.includes("/access/") || path.endsWith("/workers/scripts")
+        ? access.fetch(input, init)
+        : saas.fetch(input, init);
+    };
+    const api = createClient({ accountId: ACC, token: TOKEN, fetch });
+    await env.DB.prepare(
+      `INSERT INTO resources (id, install_id, kind, binding, name, cf_id, created_at)
+       VALUES ('i1:worker:cut', ?1, 'worker', NULL, 'cut', 'cut', 1)`,
+    )
+      .bind(INSTALL_ID)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+    ).run();
+    await protectInstall(
+      { db: env.DB, client: api, authSecret: AUTH, now: () => NOW },
+      { installId: INSTALL_ID },
+    );
+    order.length = 0;
+    return { saas, access, api, order, deps: { ...deps(saas), api } };
+  }
+
+  it("covers a new external domain before its custom hostname is made, and takes it off around its removal", async () => {
+    const w = await protectedWorld();
+    // An entry with public paths: they follow the domain too.
+    await env.DB.prepare("UPDATE installs SET manifest_json = ?2 WHERE id = ?1")
+      .bind(
+        INSTALL_ID,
+        JSON.stringify({
+          version: "1.0.0",
+          catalog: { name: "Cut", access: { bypass: ["/s/*"] } },
+        }),
+      )
+      .run();
+    // Accepted by an admin, as protecting or updating the app does.
+    await writeAcceptedBypass(createDb(env.DB), INSTALL_ID, ["/s/*"]);
+    const added = await addExternalDomainCore(w.deps, {
+      installId: INSTALL_ID,
+      hostname: "go.customer.test",
+      validation: "http",
+    });
+    const apps = () => [...w.access.apps.values()];
+    const main = apps().find((a) => !String(a.name).endsWith("public paths"));
+    const bypass = () => apps().find((a) => String(a.name).endsWith("public paths"));
+    expect(main?.destinations).toContainEqual({ type: "public", uri: "go.customer.test" });
+    expect(bypass()?.destinations).toContainEqual({ type: "public", uri: "go.customer.test/s/*" });
+    const create = w.order.findIndex(
+      (o) => o.startsWith("POST ") && o.endsWith("/custom_hostnames"),
+    );
+    const cover = w.order.indexOf(`PUT /access/apps/${main?.id}`);
+    expect(cover).toBeGreaterThanOrEqual(0);
+    expect(cover).toBeLessThan(create);
+
+    w.order.length = 0;
+    await removeExternalDomainCore(w.deps, { installId: INSTALL_ID, resourceId: added.resourceId });
+    const removed = w.order.findIndex(
+      (o) => o.startsWith("DELETE ") && o.includes("/custom_hostnames/"),
+    );
+    // The public paths come off first, the hostname's own destination after.
+    expect(w.order.indexOf(`PUT /access/apps/${bypass()?.id}`)).toBeLessThan(removed);
+    expect(w.order.lastIndexOf(`PUT /access/apps/${main?.id}`)).toBeGreaterThan(removed);
+    expect(main?.id === undefined ? undefined : w.access.apps.get(main.id)?.destinations).toEqual([
+      { type: "worker", worker_id: "tag-cut" },
+    ]);
+    expect(bypass()?.destinations).not.toContainEqual({
+      type: "public",
+      uri: "go.customer.test/s/*",
+    });
+  });
+
+  it("keeps an external domain when its public paths cannot be taken off first", async () => {
+    const w = await protectedWorld();
+    const added = await addExternalDomainCore(w.deps, {
+      installId: INSTALL_ID,
+      hostname: "go.customer.test",
+      validation: "http",
+    });
+    await expect(
+      removeExternalDomainCore(
+        { ...w.deps, syncAccess: async () => "Another Access change is in progress." },
+        { installId: INSTALL_ID, resourceId: added.resourceId },
+      ),
+    ).rejects.toThrow("The app's public paths could not be taken off go.customer.test");
+    expect(w.saas.world.hostnames).toHaveLength(1);
+  });
+
+  it("claims the name only under the Access lock, so it cannot race protecting the app", async () => {
+    const saas = await withGateway();
+    // Protecting the app holds the lock: the add is refused before it claims anything.
+    await expect(
+      withAccessLock(env.DB, () =>
+        addExternalDomainCore(deps(saas), {
+          installId: INSTALL_ID,
+          hostname: "go.customer.test",
+          validation: "http",
+        }),
+      ),
+    ).rejects.toThrow(ACCESS_MESSAGES.busy);
+    expect(await rows()).toEqual([]);
+    expect(saas.world.hostnames).toEqual([]);
+  });
+
+  it("makes protecting the app cover an external domain claimed before it", async () => {
+    const saas = await withGateway();
+    await addExternalDomainCore(deps(saas), {
+      installId: INSTALL_ID,
+      hostname: "go.customer.test",
+      validation: "http",
+    });
+    const access = fakeAccessAccount({ now: () => NOW });
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+    ).run();
+    const result = await protectInstall(
+      { db: env.DB, client: access.client, authSecret: "a".repeat(32), now: () => NOW },
+      { installId: INSTALL_ID, workers: [{ name: "cut", tag: "tag-cut" }] },
+    );
+    expect(result.destinations).toContainEqual({ type: "public", uri: "go.customer.test" });
   });
 });

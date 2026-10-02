@@ -25,7 +25,7 @@ import type { StepRunner } from "../run-job";
 import { JobError, type JobSteps } from "../steps";
 import { failureError, settleUnit } from "../units/result";
 import type { ArtifactHost } from "../units/units";
-import { cronChanges } from "../update/plan";
+import { ACCESS_PREVIEW_REASON, cronChanges } from "../update/plan";
 import { fetchWhole, sha256Hex, verifyArtifactManifest } from "./artifact";
 import { planAssetParts } from "./asset-parts";
 import type { ResourceBindingPlan, WorkflowPlan } from "./bindings";
@@ -39,7 +39,8 @@ import {
   type HealthProbe,
   type HealthSettlement,
   type HealthVerdict,
-  probeHealth,
+  lookupOnce,
+  probeThroughAccess,
   versionMismatch,
 } from "./health";
 import type { CreatedResource } from "./metadata";
@@ -677,6 +678,12 @@ export interface ProbePhaseOptions {
   maxAttempts?: number;
   /** When set, a JSON answer reporting another `version` fails (see `versionMismatch`). */
   expectVersion?: string;
+  /**
+   * The install whose Worker this is: while it is protected with Cloudflare
+   * Access, the probe carries its own service token. Left out for Workers
+   * that are not the install's own address (another Worker of the app).
+   */
+  installId?: string;
   /** How the default verdict reads an answer (the app's `install.health.mode`). */
   mode?: HealthMode;
   /** Replaces the default verdict (`classifyHealthProbe`, any non-5xx is healthy). */
@@ -694,39 +701,69 @@ export interface ProbePhaseOptions {
  * reach its own account's workers.dev hosts): one step per probe, a
  * `step.sleep` between probes. Any non-5xx answer is healthy. Returns the
  * status; throws `JobError` when the URL never serves, which fails the job
- * before anything serves the version.
+ * before anything serves the version. Returns null when Cloudflare Access
+ * answered in the version's place (`blocked`): the version was not checked,
+ * which is logged, and the job goes on as it does for a Worker without a
+ * preview URL.
  */
 export async function probeUntilHealthy(
   steps: JobSteps,
   step: StepRunner,
   opts: ProbePhaseOptions,
-): Promise<number> {
+): Promise<number | null> {
   const maxAttempts = opts.maxAttempts ?? HEALTH_MAX_ATTEMPTS;
   let firstProbeAt: number | null = null;
+  // The install's token for this URL, looked up once for the whole phase.
+  let credentials: (() => Promise<Record<string, string> | undefined>) | undefined;
+  // Once Access let the token through for this URL, later attempts send it at once.
+  let direct = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const checked = await steps.run(`${opts.label} check ${attempt}`, async ({ log, fetch }) => {
-      const at = steps.now();
-      const probe: HealthProbe = await probeHealth(fetch, opts.url);
-      const elapsed = at - (firstProbeAt ?? at);
-      const verdict =
-        opts.classify !== undefined
-          ? opts.classify(probe, attempt, elapsed, maxAttempts)
-          : classifyHealthProbe(probe, attempt, elapsed, maxAttempts, opts.mode);
-      if (verdict.verdict === "unhealthy") throw new JobError(verdict.reason);
-      const wrong =
-        verdict.verdict === "healthy" && opts.expectVersion !== undefined
-          ? versionMismatch(probe, opts.expectVersion)
-          : null;
-      if (wrong !== null) throw new JobError(`GET ${opts.url}: ${wrong}`);
-      if (verdict.verdict === "healthy") {
-        log.info(`GET ${opts.url} -> ${verdict.status}; ${opts.healthyMessage}.`);
-      } else {
-        log.warn(`GET ${opts.url}: ${verdict.reason}; retrying in 2 seconds.`);
-      }
-      return { at, status: verdict.verdict === "healthy" ? verdict.status : null };
-    });
+    const checked = await steps.run(
+      `${opts.label} check ${attempt}`,
+      async ({ log, fetch, probeHeaders }) => {
+        const at = steps.now();
+        const { installId } = opts;
+        if (installId !== undefined) {
+          credentials ??= lookupOnce(() => probeHeaders(installId, opts.url));
+        }
+        const { probe, tokenAccepted } = await probeThroughAccess(
+          fetch,
+          opts.url,
+          credentials,
+          {},
+          direct,
+        );
+        const elapsed = at - (firstProbeAt ?? at);
+        const verdict =
+          opts.classify !== undefined
+            ? opts.classify(probe, attempt, elapsed, maxAttempts)
+            : classifyHealthProbe(probe, attempt, elapsed, maxAttempts, opts.mode);
+        if (verdict.verdict === "unhealthy") throw new JobError(verdict.reason);
+        const wrong =
+          verdict.verdict === "healthy" && opts.expectVersion !== undefined
+            ? versionMismatch(probe, opts.expectVersion)
+            : null;
+        if (wrong !== null) throw new JobError(`GET ${opts.url}: ${wrong}`);
+        if (verdict.verdict === "healthy") {
+          log.info(`GET ${opts.url} -> ${verdict.status}; ${opts.healthyMessage}.`);
+        } else if (verdict.verdict === "blocked") {
+          log.warn(`GET ${opts.url}: ${ACCESS_PREVIEW_REASON}.`);
+        } else {
+          log.warn(`GET ${opts.url}: ${verdict.reason}; retrying in 2 seconds.`);
+        }
+        return {
+          at,
+          status: verdict.verdict === "healthy" ? verdict.status : null,
+          blocked: verdict.verdict === "blocked",
+          tokenAccepted,
+        };
+      },
+    );
     firstProbeAt ??= checked.at;
+    // A step output recorded before this was reported has none.
+    direct = checked.tokenAccepted === true;
     if (checked.status !== null) return checked.status;
+    if (checked.blocked) return null;
     await step.sleep(`${opts.label} wait ${attempt}`, HEALTH_RETRY_DELAY);
   }
   steps.current = `${opts.label} check`;
@@ -746,7 +783,8 @@ export interface LiveHealthResult extends HealthSettlement {
  * subrequest plus its log write), and a `step.sleep` between probes. Never throws for what the Worker answers: by now
  * everything is created or promoted, so the result is recorded on the install
  * instead (`verified`, `unverified`, `unhealthy`) and a warning is logged when
- * the Worker could not be verified.
+ * the Worker could not be verified. Cloudflare Access's sign-in redirect ends
+ * the check at once as `unverified`: Access answers before the Worker does.
  */
 export async function checkLiveHealthPhase(
   steps: JobSteps,
@@ -760,7 +798,10 @@ export async function checkLiveHealthPhase(
    */
   opts: {
     routeWasLive?: boolean;
-    /** The install checked, so a warning links to its health check. */
+    /**
+     * The install checked, so a warning links to its health check, and a
+     * protected install's probe carries its own service token.
+     */
     installId?: string;
   } = {},
 ): Promise<LiveHealthResult> {
@@ -769,37 +810,65 @@ export async function checkLiveHealthPhase(
       ? "check again from its page"
       : `check again from ${appPlace(opts.installId, "health", "its page")}`;
   let firstProbeAt: number | null = null;
+  // The install's token for this URL, looked up once for the whole phase.
+  let credentials: (() => Promise<Record<string, string> | undefined>) | undefined;
+  // Once Access let the token through for this URL, later attempts send it at once.
+  let direct = false;
   for (let attempt = 1; ; attempt++) {
-    const checked = await steps.run(`health check ${attempt}`, async ({ log, fetch }) => {
-      const at = steps.now();
-      const probe = await probeHealth(fetch, url);
-      const decision = decideLiveHealth(
-        probe,
-        attempt,
-        at - (firstProbeAt ?? at),
-        undefined,
-        mode,
-        opts.routeWasLive === true,
-      );
-      if (!decision.done) {
-        log.warn(`GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`);
-      } else if (decision.status === "verified") {
-        log.info(`GET ${url} -> ${decision.detail}; the Worker is serving.`);
-      } else if (decision.status === "unhealthy") {
-        log.warn(
-          `GET ${url} -> ${decision.detail}: the Worker answers with a server error. Everything was created; open the app to check, or ${checkAgain}.`,
+    const checked = await steps.run(
+      `health check ${attempt}`,
+      async ({ log, fetch, probeHeaders }) => {
+        const at = steps.now();
+        const { installId } = opts;
+        if (installId !== undefined) {
+          credentials ??= lookupOnce(() => probeHeaders(installId, url));
+        }
+        const { probe, tokenAccepted } = await probeThroughAccess(
+          fetch,
+          url,
+          credentials,
+          {},
+          direct,
         );
-      } else {
-        log.warn(
-          `Could not verify ${url} after ${attempt} attempts (${decision.detail}). Everything was created; the route may still be going live. Open the app to check, or ${checkAgain}.`,
+        const decision = decideLiveHealth(
+          probe,
+          attempt,
+          at - (firstProbeAt ?? at),
+          undefined,
+          mode,
+          opts.routeWasLive === true,
         );
-      }
-      return { at, decision };
-    });
+        if (!decision.done) {
+          log.warn(`GET ${url}: ${decision.reason}; retrying in ${decision.delaySeconds} seconds.`);
+        } else if (decision.access === true) {
+          log.warn(
+            `GET ${url}: ${decision.detail}, so Appflare could not reach the app to check it. Everything was created; open the app and sign in to check it.`,
+          );
+        } else if (decision.status === "verified") {
+          log.info(`GET ${url} -> ${decision.detail}; the Worker is serving.`);
+        } else if (decision.status === "unhealthy") {
+          log.warn(
+            `GET ${url} -> ${decision.detail}: the Worker answers with a server error. Everything was created; open the app to check, or ${checkAgain}.`,
+          );
+        } else {
+          log.warn(
+            `Could not verify ${url} after ${attempt} attempts (${decision.detail}). Everything was created; the route may still be going live. Open the app to check, or ${checkAgain}.`,
+          );
+        }
+        return { at, decision, tokenAccepted };
+      },
+    );
     firstProbeAt ??= checked.at;
+    // A step output recorded before this was reported has none.
+    direct = checked.tokenAccepted === true;
     const { decision } = checked;
     if (decision.done) {
-      return { status: decision.status, detail: decision.detail, checkedAt: checked.at };
+      return {
+        status: decision.status,
+        detail: decision.detail,
+        ...(decision.access === true ? { access: true as const } : {}),
+        checkedAt: checked.at,
+      };
     }
     await step.sleep(`health wait ${attempt}`, `${decision.delaySeconds} seconds`);
   }

@@ -8,6 +8,48 @@
       "when": 1790638129696,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790777737349,
+      "tag": "0001_health_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790784429688,
+      "tag": "0002_install_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790796940203,
+      "tag": "0003_install_access_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790858300246,
+      "tag": "0004_access_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790867825926,
+      "tag": "0005_access_users_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790906185343,
+      "tag": "0006_access_accepted_bypass",
+      "breakpoints": true
     }
   ]
 }

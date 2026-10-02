@@ -5,7 +5,7 @@ import { createDb } from "../../db/client";
 import { installs, jobs, resources } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import { cleanupSandboxBuildsPhase } from "../install/artifact-source";
-import { healthLabel } from "../install/health";
+import { healthColumns, healthLabel } from "../install/health";
 import { lookupSubdomainPhase } from "../install/phases";
 import type { ReconfigureJobParams } from "../reconfigure";
 import {
@@ -211,8 +211,7 @@ export async function runSelfDeployingReconfigure(
           .update(installs)
           .set({
             status: "installed",
-            health_status: health.status,
-            health_checked_at: new Date(health.checkedAt),
+            ...healthColumns(health, new Date(health.checkedAt)),
             updated_at: at,
           })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),

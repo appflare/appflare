@@ -1,3 +1,4 @@
+import { accessNeededOnlyIfProtected, indexAccessNeededOnlyIfProtected } from "@appflare/schema";
 import { Banner, Button, Empty } from "@cloudflare/kumo";
 import { PlusIcon, StorefrontIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
@@ -138,7 +139,17 @@ function AppPage({
   }, [revealRequest]);
 
   const requires = [...new Set([...app.requires, ...(catalog?.requires ?? [])])];
-  const needsOf: AppNeedsOf = { plan: app.plan, requires, tier: app.tier };
+  const needsOf: AppNeedsOf = {
+    plan: app.plan,
+    requires,
+    tier: app.tier,
+    // From the catalog manifest (a revision's, when there is one), else
+    // from what the index row says of it.
+    accessIfProtected:
+      catalog !== null
+        ? accessNeededOnlyIfProtected({ ...catalog, requires })
+        : indexAccessNeededOnlyIfProtected(app),
+  };
   const checks = requirementChecks(needsOf, detail.capabilities);
   const images = detail.images.screenshots;
   const paragraphs = descriptionParagraphs(app.summary);
@@ -336,6 +347,7 @@ function InstallPanel({
                 : requirementSentence(check.key, {
                     tier: app.tier,
                     provisionsEmailRouting: catalog.install.emailRouting !== undefined,
+                    accessIfProtected: needsOf.accessIfProtected === true,
                   }),
           }))}
           confirmed={requirementsConfirmed}
@@ -362,6 +374,7 @@ function InstallPanel({
         cronTriggers={detail.cronTriggers}
         accountPlan={detail.accountPlan}
         planDetected={detail.capabilities.plan.source === "detected"}
+        capabilities={detail.capabilities}
       />
       {detail.sourceBuilds && (
         <BuildFromSourceCard

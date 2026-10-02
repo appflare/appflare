@@ -344,6 +344,7 @@ async function revisedCatalogPhase(
         release.digest,
         { text, file: ref, catalog },
         new Date(steps.now()),
+        artifact.catalog,
       );
       log.info(
         `Verified revision ${ref.revision} of the catalog manifest for ${artifact.app} ${artifact.version} (signed with key "${ref.keyId}"): the settings form comes from it, the Worker from the signed release.`,

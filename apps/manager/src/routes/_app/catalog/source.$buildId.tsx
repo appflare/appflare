@@ -20,7 +20,7 @@ import { AppflareLoader } from "../../../components/appflare-loader";
 import { BusyButton } from "../../../components/busy-button";
 import { PrimitiveBadges } from "../../../components/catalog-badges";
 import { DescriptionItem, DescriptionList } from "../../../components/description-list";
-import { DocsLink } from "../../../components/docs-link";
+import { DocsLink, RequirementDocsLink } from "../../../components/docs-link";
 import { TechnicalNamesSwitch, useShowTechnicalNames } from "../../../components/field-label";
 import { resourceKindLabel } from "../../../components/format";
 import { InstallForm } from "../../../components/install-form";
@@ -330,6 +330,7 @@ function Review({
           accountPlan={review.accountPlan}
           planDetected={review.planDetected}
           reviewedBuildId={build.id}
+          capabilities={review.capabilities}
         />
       )}
       {waiting && build.purpose === "update" && (
@@ -617,6 +618,7 @@ function Requirements({
                       {check.key === "plan"
                         ? "Built in a container, which needs the Workers Paid plan on this account."
                         : requirementSentence(check.key, { tier: "sandbox" })}{" "}
+                      <RequirementDocsLink value={check.key} />
                       {check.key !== "plan" && (
                         <CapabilityBadge badge={requirementBadge(check.key, review.capabilities)} />
                       )}

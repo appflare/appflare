@@ -90,6 +90,26 @@ describe("what an app needs on the account", () => {
     }
   });
 
+  it("says Cloudflare Access is needed only if the app is protected, quietly, when protection is optional", () => {
+    const rows = accountRows(LACKING);
+    const optional = byKey(
+      accountNeeds({ ...app("free", ["access"]), accessIfProtected: true }, uses(), LACKING),
+      "access",
+    );
+    expect(optional).toMatchObject({
+      state: CAPABILITY_STATE_LABELS["not-set-up"],
+      tone: "unknown",
+      reason: `Needed only if you protect this app with Cloudflare Access. ${rows.get("zero-trust")?.why}`,
+    });
+    expect(optional.fix).not.toBeNull();
+    const required = byKey(accountNeeds(app("free", ["access"]), uses(), LACKING), "access");
+    expect(required).toMatchObject({
+      state: CAPABILITY_STATE_LABELS["needs-action"],
+      tone: "missing",
+      reason: `This app needs it. ${rows.get("zero-trust")?.why}`,
+    });
+  });
+
   it("says the app uses what was worked out from its bindings, with the same state and actions", () => {
     const declared = byKey(accountNeeds(app("free", ["r2"]), uses("r2"), LACKING), "r2");
     const inferred = byKey(accountNeeds(app(), uses("r2"), LACKING), "r2");

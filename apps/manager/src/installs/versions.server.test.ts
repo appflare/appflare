@@ -9,6 +9,8 @@ import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import { ACC, fakeAccount, NEW_VERSION, TOKEN } from "../test/fake-account";
+import { recordProtectedInstall } from "../test/protected-install";
+import { recordFixtureRevision } from "../test/recorded-revision";
 import { INSTALL_ID, OLD_VERSION, seedInstall } from "../test/seed-install";
 import {
   listSnapshotsCore,
@@ -90,6 +92,36 @@ describe("startUpdateCore", () => {
     });
     const install = await env.DB.prepare("SELECT status FROM installs").first();
     expect(install).toEqual({ status: "updating" });
+  });
+
+  it("refuses a version that must run behind Cloudflare Access while the app is not protected", async () => {
+    const fixture = await buildArtifactFixture({
+      version: "1.1.0",
+      catalog: { access: { mode: "required" }, requires: ["access"] },
+    });
+    await seedInstall({ resources: [ADMIN_SECRET] });
+    const created: unknown[] = [];
+    const deps = {
+      db: env.DB,
+      loadApp: async () => fixture.index,
+      loadManifest: async () => fixture.manifest,
+      createJob: async (id: string, params: unknown) => {
+        created.push(params);
+        return { id };
+      },
+      newId: () => "job1",
+    };
+    await expect(startUpdateCore(deps, { installId: INSTALL_ID })).rejects.toThrow(
+      "This version must run behind Cloudflare Access. Turn protection on for the app first, then update.",
+    );
+    expect(created).toEqual([]);
+    // Once protected, it updates.
+    await recordProtectedInstall({
+      installId: INSTALL_ID,
+      authSecret: "a".repeat(32),
+      secret: "s",
+    });
+    expect(await startUpdateCore(deps, { installId: INSTALL_ID })).toEqual({ jobId: "job1" });
   });
 
   it("refuses when the catalog has nothing newer, and while another job runs", async () => {
@@ -362,6 +394,55 @@ describe("startUpdateCore: what an update needs first", () => {
 });
 
 describe("startRollbackCore", () => {
+  it("refuses a version that must run behind Cloudflare Access while the app is not protected", async () => {
+    await seedWithSnapshot();
+    await env.DB.prepare("UPDATE snapshots SET manifest_json = ?1 WHERE id = 'upd1'")
+      .bind(JSON.stringify({ version: "1.0.0", catalog: { access: { mode: "required" } } }))
+      .run();
+    const deps = {
+      db: env.DB,
+      createJob: async (id: string) => ({ id }),
+      newId: () => "rb1",
+    };
+    await expect(
+      startRollbackCore(deps, { installId: INSTALL_ID, snapshotId: "upd1" }),
+    ).rejects.toThrow(
+      "This version must run behind Cloudflare Access. Turn protection on for the app first, then roll back.",
+    );
+    await recordProtectedInstall({
+      installId: INSTALL_ID,
+      authSecret: "a".repeat(32),
+      secret: "s",
+    });
+    expect(await startRollbackCore(deps, { installId: INSTALL_ID, snapshotId: "upd1" })).toEqual({
+      jobId: "rb1",
+    });
+  });
+
+  it("reads whether the snapshot's version must be protected from the revision recorded for its release", async () => {
+    await seedWithSnapshot();
+    // Released without a word about Access; a revision requires protection.
+    const f = await buildArtifactFixture({
+      revision: { requires: ["access"], access: { mode: "required" } },
+    });
+    await env.DB.prepare(
+      "UPDATE snapshots SET manifest_json = ?1, artifact_digest = ?2 WHERE id = 'upd1'",
+    )
+      .bind(new TextDecoder().decode(f.manifestBytes), f.digest)
+      .run();
+    await recordFixtureRevision(f);
+    const deps = {
+      db: env.DB,
+      createJob: async (id: string) => ({ id }),
+      newId: () => "rb1",
+    };
+    await expect(
+      startRollbackCore(deps, { installId: INSTALL_ID, snapshotId: "upd1" }),
+    ).rejects.toThrow(
+      "This version must run behind Cloudflare Access. Turn protection on for the app first, then roll back.",
+    );
+  });
+
   it("refuses a snapshot of the version that serves now, or of another install", async () => {
     await seedWithSnapshot();
     await env.DB.prepare("UPDATE installs SET current_version_id = ?1").bind(OLD_VERSION).run();

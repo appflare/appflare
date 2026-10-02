@@ -3,7 +3,13 @@ import { and, eq } from "drizzle-orm";
 import { createDb } from "../db/client";
 import { type HealthStatus, installs } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
-import { healthCheckOfManifest, probeHealth, settleHealthProbe } from "../jobs/install/health";
+import {
+  healthCheckOfManifest,
+  healthColumns,
+  type InstallProbeHeaders,
+  probeHealthThroughAccess,
+  settleHealthProbe,
+} from "../jobs/install/health";
 import { readAppBaseUrl } from "./app-address.server";
 
 /**
@@ -11,7 +17,9 @@ import { readAppBaseUrl } from "./app-address.server";
  * workers.dev URL, or its primary custom domain while workers.dev is off) at its
  * health path (the catalog's `install.health.path`, `/` by default), recorded on the
  * install the way the jobs' final health check records it. One probe, no
- * retries: the admin can press the button again.
+ * retries: the admin can press the button again. Cloudflare Access's sign-in
+ * redirect records `unverified`, never `verified` or `unhealthy`, so the
+ * scheduled check behind "Health check failing" never reports it either.
  */
 
 export class HealthCheckError extends Error {
@@ -22,6 +30,12 @@ export interface HealthCheckDeps {
   db: D1Database;
   /** The manager's `fetch` (it carries `global_fetch_strictly_public`). */
   fetch: FetchLike;
+  /**
+   * The service token's headers for the URL when the account controls it,
+   * so an app protected with Cloudflare Access answers the check itself;
+   * without it the check goes without them.
+   */
+  probeHeaders?: InstallProbeHeaders;
   now?: () => number;
 }
 
@@ -29,6 +43,8 @@ export interface HealthCheckResult {
   status: HealthStatus;
   /** What the Worker answered ("HTTP 200", "connection failed (...)"). */
   detail: string;
+  /** Cloudflare Access answered with its sign-in page (recorded as `unverified`). */
+  access?: true;
   url: string;
   /** ISO 8601 */
   checkedAt: string;
@@ -77,12 +93,17 @@ export async function checkInstallHealthCore(
   }
   const check = healthCheckOfManifest(row.manifestJson);
   const url = `${base}${check.path}`;
-  const probe = await probeHealth(deps.fetch, url);
+  const { probeHeaders } = deps;
+  const probe = await probeHealthThroughAccess(
+    deps.fetch,
+    url,
+    probeHeaders === undefined ? undefined : () => probeHeaders(input.installId, url),
+  );
   const checkedAt = new Date(now());
   const settled = settleHealthProbe(probe, check.mode);
   const written = await orm
     .update(installs)
-    .set({ health_status: settled.status, health_checked_at: checkedAt })
+    .set(healthColumns(settled, checkedAt))
     .where(and(eq(installs.id, input.installId), eq(installs.status, "installed")))
     .returning({ id: installs.id });
   return { ...settled, url, checkedAt: checkedAt.toISOString(), recorded: written.length > 0 };

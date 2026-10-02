@@ -10,7 +10,7 @@ import { installs, jobs, resources } from "../../db/schema";
 import { readSettings, SETTING } from "../../db/settings";
 import type { InstallJobParams } from "../install";
 import { cleanupSandboxBuildsPhase } from "../install/artifact-source";
-import { healthLabel } from "../install/health";
+import { healthColumns, healthLabel } from "../install/health";
 import {
   checkLiveHealthPhase,
   type LiveHealthResult,
@@ -255,8 +255,7 @@ export async function runSelfDeployingInstall(
             build_kind: "self-deploying",
             sandbox_image: deployed.image,
             built_at: at,
-            health_status: health.status,
-            health_checked_at: new Date(health.checkedAt),
+            ...healthColumns(health, new Date(health.checkedAt)),
             updated_at: at,
           })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "installing"))),
@@ -471,8 +470,7 @@ export async function runSelfDeployingUpdate(
           .update(installs)
           .set({
             status: "installed",
-            health_status: health.status,
-            health_checked_at: new Date(health.checkedAt),
+            ...healthColumns(health, new Date(health.checkedAt)),
             updated_at: at,
           })
           .where(and(eq(installs.id, params.installId), eq(installs.status, "updating"))),

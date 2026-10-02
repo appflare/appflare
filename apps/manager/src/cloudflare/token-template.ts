@@ -54,8 +54,15 @@ export interface PermissionGroup {
   manual?: true;
 }
 
-/** The settings feature that puts the manager behind Cloudflare Access. */
-export const ACCESS_FEATURE = "Protect with Cloudflare Access";
+/**
+ * Cloudflare Access, for both of its uses: putting Appflare itself behind a
+ * sign-in ("Protect with Cloudflare Access" in Settings), and protecting
+ * installed apps, which share one reusable policy and each have their own
+ * service token the manager's health checks sign in with
+ * (access/install-access.server.ts). One feature name, so the token form
+ * lists the Access groups together.
+ */
+export const ACCESS_FEATURE = "Cloudflare Access";
 
 /**
  * The install page feature that serves an app on a hostname in one of the
@@ -130,8 +137,9 @@ export const TOKEN_PERMISSION_GROUPS = [
   { key: "queues", type: "edit", label: "Queues" },
   // Create and delete Vectorize indexes for apps that bind them.
   { key: "vectorize", type: "edit", label: "Vectorize" },
-  // Create, update, and delete the self-hosted Access application (and its
-  // policy) that puts the manager behind Cloudflare Access.
+  // Create, update, and delete the self-hosted Access applications (and their
+  // policies) that put the manager or an installed app behind Cloudflare
+  // Access, and the reusable policies protected apps share.
   { key: "access", type: "edit", label: "Access: Apps and Policies", onlyFor: ACCESS_FEATURE },
   // Read the account's Zero Trust organization: its team domain issues and
   // signs the Access tokens the manager verifies.
@@ -139,6 +147,18 @@ export const TOKEN_PERMISSION_GROUPS = [
     key: "access_acct",
     type: "read",
     label: "Access: Organizations, Identity Providers, and Groups",
+    onlyFor: ACCESS_FEATURE,
+  },
+  // Create, refresh, rotate and delete each protected app's own service
+  // token, which the manager's health checks of that app sign in with; only
+  // protecting apps uses it. Not in the template page's table: the dashboard labels the group
+  // `access_service_token_write` ("Access: Service Tokens Write" in the
+  // published list Hyperdrive's key comes from, below), so the key is
+  // `access_service_token` by the label rule above.
+  {
+    key: "access_service_token",
+    type: "edit",
+    label: "Access: Service Tokens",
     onlyFor: ACCESS_FEATURE,
   },
   // List the zones a custom domain's hostname can be in.

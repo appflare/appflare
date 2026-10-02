@@ -216,8 +216,9 @@ The token template requests:
 | Queues | Edit | Queues for apps that use them. |
 | Vectorize | Edit | Vectorize indexes for apps that bind them. |
 | Account Settings | Read | Finding the account the token belongs to. |
-| Access: Apps and Policies | Edit | Only for [Protect with Cloudflare Access](/security/#protect-with-cloudflare-access): creating, updating, and deleting the Access applications and policy that guard the manager. |
-| Access: Organizations, Identity Providers, and Groups | Read | Only for [Protect with Cloudflare Access](/security/#protect-with-cloudflare-access): reading the Zero Trust organization's team domain and login methods. |
+| Access: Apps and Policies | Edit | Only for Cloudflare Access: creating, updating, and deleting the Access applications and policies that guard the manager ([Protect with Cloudflare Access](/security/#protect-with-cloudflare-access)) or an installed app. |
+| Access: Organizations, Identity Providers, and Groups | Read | Only for Cloudflare Access: reading the Zero Trust organization's team domain and login methods. |
+| Access: Service Tokens | Edit | Only for protecting installed apps with Cloudflare Access: each protected app gets its own service token, used only by Appflare's health checks of that app. Appflare creates it, renews it before it expires, and deletes it when the app stops being protected or is uninstalled. |
 | Zone | Read | Only for [custom domains](/guides/custom-domains/), [external domains](/guides/external-domains/) and [apps that receive email](/guides/email-apps/): listing your domains. External domains need it on all zones of the account, to tell whether a hostname is in one of your own domains. |
 | DNS | Edit | Only for [custom domains](/guides/custom-domains/): seeing, and with your consent replacing, the DNS records at a new domain's hostname; for [external domains](/guides/external-domains/): adding the gateway's DNS record; and for [apps that receive email](/guides/email-apps/): reading a domain's MX records before turning Email Routing on. |
 | Workers Routes | Edit | Only for [custom domains](/guides/custom-domains/): attaching an app's Worker to a hostname; and for [external domains](/guides/external-domains/): routing the gateway domain's requests to the gateway Worker. |

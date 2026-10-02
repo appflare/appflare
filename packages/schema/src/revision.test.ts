@@ -5,6 +5,7 @@ import {
   catalogFieldChanges,
   catalogRevisionProblem,
   REVISABLE_CATALOG_FIELDS,
+  requirementsRevisionProblem,
   revisedArtifactProblem,
   withRevisedCatalog,
 } from "./revision";
@@ -92,18 +93,95 @@ describe("catalog manifest revision", () => {
     ).toMatch(/revision 2 is not above revision 3/);
   });
 
+  it("accepts a revision that adds, changes or removes the access block", () => {
+    const recommended = { mode: "recommended" as const, bypass: ["/s/*"] };
+    expect(
+      catalogRevisionProblem(released, { ...released, revision: 2, access: recommended }),
+    ).toBe(null);
+    const protectedRelease = { ...released, access: recommended };
+    expect(
+      catalogRevisionProblem(protectedRelease, {
+        ...protectedRelease,
+        revision: 2,
+        access: { bypass: ["/s/*", "/api/webhook"] },
+      }),
+    ).toBeNull();
+    const { access: _gone, ...withoutAccess } = protectedRelease;
+    expect(catalogRevisionProblem(protectedRelease, { ...withoutAccess, revision: 2 })).toBeNull();
+    expect(REVISABLE_CATALOG_FIELDS).toContain("access");
+  });
+
+  it('accepts a revision that adds "access" to requires, and no other requirement change', () => {
+    const required = catalogManifestSchema.parse({
+      ...released,
+      revision: 2,
+      requires: ["access"],
+      access: { mode: "required" },
+    });
+    expect(catalogRevisionProblem(released, required)).toBeNull();
+    // With a var that reads the Access values, too.
+    const withVar = catalogManifestSchema.parse({
+      ...released,
+      revision: 2,
+      requires: ["access"],
+      vars: [{ name: "ACCESS_TEAM", label: "Team", default: "{{accessTeamName}}" }],
+    });
+    expect(catalogRevisionProblem(released, withVar)).toBeNull();
+    const r2 = { ...released, requires: ["r2" as const] };
+    expect(
+      catalogRevisionProblem(r2, { ...r2, revision: 2, requires: ["r2", "access"] }),
+    ).toBeNull();
+    // Order is not a change.
+    expect(
+      catalogRevisionProblem(
+        { ...released, requires: ["r2", "access"] },
+        { ...released, revision: 2, requires: ["access", "r2"] },
+      ),
+    ).toBeNull();
+    expect(
+      catalogRevisionProblem(released, { ...released, revision: 2, requires: ["access", "r2"] }),
+    ).toBe(
+      'it adds "r2" to requires; a revision may add only "access", and anything else needs a new build',
+    );
+    expect(catalogRevisionProblem(r2, { ...r2, revision: 2, requires: [] })).toBe(
+      'it removes "r2" from requires, which only a new build can change',
+    );
+    // The signed Worker may read the Access values: "access" stays once released.
+    const withAccess = { ...released, requires: ["access" as const] };
+    expect(catalogRevisionProblem(withAccess, { ...withAccess, revision: 2, requires: [] })).toBe(
+      'it removes "access" from requires, which only a new build can change',
+    );
+    expect(requirementsRevisionProblem(["zone"], ["zone", "access"])).toBeNull();
+  });
+
+  it('holds the revised manifest to the schema\'s "access" requirement rules', () => {
+    // A revision is parsed like any catalog manifest, so one that uses an
+    // Access placeholder or requires protection without listing "access"
+    // never reaches the field comparison.
+    for (const revised of [
+      { ...released, revision: 2, access: { mode: "required" } },
+      {
+        ...released,
+        revision: 2,
+        vars: [{ name: "AUD", label: "Audience", default: "{{accessAud}}" }],
+      },
+    ]) {
+      expect(catalogManifestSchema.safeParse(revised).success).toBe(false);
+    }
+  });
+
   it("refuses changes that only a new build can make, naming them", () => {
     const moved = {
       ...released,
       revision: 2,
       source: { ref: "v0.2.0", sha: "1".repeat(40) },
       install: { ...released.install, buildCommand: "pnpm build" },
-      requires: ["r2" as const],
+      plan: "paid" as const,
     };
     expect(catalogRevisionProblem(released, moved)).toBe(
-      "it changes install, requires, source, which only a new build can change",
+      "it changes install, plan, source, which only a new build can change",
     );
-    for (const field of ["slug", "repo", "plan", "tokenPermissions"]) {
+    for (const field of ["slug", "repo", "plan", "requires", "tokenPermissions"]) {
       expect(REVISABLE_CATALOG_FIELDS).not.toContain(field);
     }
   });

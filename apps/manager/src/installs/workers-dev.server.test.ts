@@ -4,6 +4,7 @@ import type { CloudflareClient, EnableSubdomainArgs } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
+import { accessChallenge } from "../test/access-sign-in";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import type { VarsRefreshReason } from "./install-vars";
 import {
@@ -18,7 +19,7 @@ import {
  * fake answers from the install's custom domains.
  */
 
-type Answer = { status: number; body: string } | "unreachable";
+type Answer = { status: number; body: string } | "access" | "unreachable";
 
 function world(answers: Record<string, Answer> = {}) {
   const subdomainCalls: Array<{ name: string; args: EnableSubdomainArgs }> = [];
@@ -39,6 +40,7 @@ function world(answers: Record<string, Answer> = {}) {
       probes.push(host);
       const answer = answers[host];
       if (answer === undefined || answer === "unreachable") throw new Error("connect failed");
+      if (answer === "access") return accessChallenge(host);
       return new Response(answer.body, { status: answer.status });
     },
   };
@@ -105,6 +107,41 @@ describe("setWorkersDevCore", () => {
     );
     expect(w.subdomainCalls).toEqual([]);
     expect(await stored()).toBe(1);
+  });
+
+  it("takes a protected app's public paths off workers.dev before turning it off", async () => {
+    await addDomain("01B", "links.example.com");
+    const w = world({ "links.example.com": "access" });
+    const synced: Array<{ id: string; change?: unknown; turnedOff: boolean }> = [];
+    await setWorkersDevCore(
+      {
+        ...w.deps,
+        syncAccess: async (id, change) => {
+          synced.push({
+            id,
+            ...(change === undefined ? {} : { change }),
+            turnedOff: w.subdomainCalls.length > 0,
+          });
+          return null;
+        },
+      },
+      { installId: INSTALL_ID, enabled: false },
+    );
+    // Off: the public paths come off workers.dev before it is turned off.
+    expect(synced).toEqual([{ id: INSTALL_ID, change: { workersDev: false }, turnedOff: false }]);
+  });
+
+  it("turns it off when Cloudflare Access answers on a domain, since that domain is live", async () => {
+    await addDomain("01A", "pending.example.com");
+    await addDomain("01B", "links.example.com");
+    const w = world({ "pending.example.com": "unreachable", "links.example.com": "access" });
+    const result = await setWorkersDevCore(w.deps, { installId: INSTALL_ID, enabled: false });
+    expect(result).toMatchObject({ enabled: false, servedBy: "links.example.com" });
+    expect(w.subdomainCalls).toEqual([
+      { name: "cut", args: { enabled: false, previews_enabled: true } },
+    ]);
+    expect(await stored()).toBe(0);
+    expect(await servedDomain()).toBe("links.example.com");
   });
 
   it("turns it off once a custom domain serves the app, keeping previews on", async () => {

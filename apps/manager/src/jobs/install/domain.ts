@@ -301,6 +301,7 @@ export async function installDomainPhase(
         const result = settleUnit(
           await steps.units.api.waitForCustomDomain({
             accountId: steps.accountId(),
+            installId: request.installId,
             healthUrl: `https://${attached.hostname}${request.health.path}`,
             healthMode: request.health.mode,
             maxProbes: steps.units.remote

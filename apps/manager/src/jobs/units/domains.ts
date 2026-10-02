@@ -1,6 +1,7 @@
 import type { FetchLike } from "@appflare/cf-api";
 import { HEALTH_MODES } from "@appflare/schema";
 import { z } from "zod";
+import { probeCredentials, zoneNamesVia } from "../../access/probe-credentials.server";
 import { GATEWAY_SETUP_PLACE, gatewayHostname } from "../../gateway/gateway";
 import { GatewayError, gatewayStateSchema } from "../../gateway/gateway.server";
 import { checkHostnameInZone } from "../../installs/custom-domain-input";
@@ -23,12 +24,15 @@ import {
   WildcardDomainError,
   type WildcardPart,
 } from "../../installs/wildcard-domains.server";
-import { domainServesApp } from "../../installs/workers-dev.server";
+import { ACCESS_DOMAIN_NOTE } from "../../installs/workers-dev";
+import { domainIsLive } from "../../installs/workers-dev.server";
 import { isNotFound, JobError } from "../errors";
 import {
   type HealthMode,
   type HealthSettlement,
-  probeHealth,
+  lookupOnce,
+  type ProbeHeadersFor,
+  probeHealthThroughAccess,
   settleHealthProbe,
 } from "../install/health";
 import { runUnit, type UnitDeps, type UnitEnv, type UnitResult } from "./result";
@@ -257,23 +261,33 @@ export type WaitForExternalDomainInput = z.infer<typeof waitForExternalDomainInp
 export interface WaitForExternalDomainResult {
   status: ExternalDomainStatus;
   polls: number;
-  /** The app itself answered through the domain (not an edge error page). */
+  /**
+   * The domain is live (`domainIsLive`): the app answered through it, or
+   * Cloudflare Access answered on it (then `health.access` is set).
+   */
   serves: boolean;
 }
 
 /**
- * Probes `url` until the app answers through it (`domainServesApp`), every
- * `gapMs`, at most `max` times. A new domain answers with a TLS failure or an
- * edge error page until its certificate and record are live.
+ * Probes `url` until the domain is live (`domainIsLive`: the app answers
+ * through it, or Cloudflare Access answers on it), every `gapMs`, at most
+ * `max` times. A new domain answers with a TLS failure or an edge error page
+ * until its certificate and record are live. When Access answered,
+ * `settled.access` says so: the domain is live, but the app itself was not
+ * checked.
  */
 async function probeUntilServed(
   fetch: FetchLike,
   sleep: (ms: number) => Promise<void>,
   input: { url: string; mode: HealthMode; max: number; gapMs: number },
+  probeHeaders?: ProbeHeadersFor,
 ): Promise<{ settled: HealthSettlement; serves: boolean; probes: number }> {
+  // Looked up once for every probe of this call.
+  const credentials =
+    probeHeaders === undefined ? undefined : lookupOnce(() => probeHeaders(input.url));
   for (let probes = 1; ; probes++) {
-    const probe = await probeHealth(fetch, input.url);
-    const serves = domainServesApp(probe, input.mode);
+    const probe = await probeHealthThroughAccess(fetch, input.url, credentials);
+    const serves = domainIsLive(probe, input.mode);
     if (serves || probes >= input.max) {
       return { settled: settleHealthProbe(probe, input.mode), serves, probes };
     }
@@ -305,6 +319,8 @@ export function runWaitForExternalDomain(
         throw error;
       }
       if (status.active) {
+        // Never with the Access service token: an external domain's DNS is
+        // someone else's, and could point at a server that keeps the token.
         const { settled, serves } = await probeUntilServed(fetch, sleep, {
           url: input.healthUrl,
           mode: input.healthMode,
@@ -313,7 +329,9 @@ export function runWaitForExternalDomain(
         });
         status.health = { ...settled, url: input.healthUrl };
         log.info(
-          `${status.hostname} is active with its certificate; the app answered ${settled.detail}.`,
+          settled.access === true
+            ? `${status.hostname} is active with its certificate. ${ACCESS_DOMAIN_NOTE}`
+            : `${status.hostname} is active with its certificate; the app answered ${settled.detail}.`,
         );
         return { status, polls: poll, serves };
       }
@@ -335,6 +353,12 @@ export const CUSTOM_DOMAIN_MAX_PROBES_IN_PLACE = 3;
 
 export const waitForCustomDomainInputSchema = z.object({
   accountId: z.string().min(1),
+  /**
+   * The install the domain serves: while it is protected with Cloudflare
+   * Access, the probes carry its own service token. Optional, so a job of an
+   * older version calling this one still validates.
+   */
+  installId: z.string().min(1).optional(),
   /** The app's health URL on the domain. */
   healthUrl: z.string().url(),
   healthMode: z.enum(HEALTH_MODES),
@@ -345,7 +369,10 @@ export type WaitForCustomDomainInput = z.infer<typeof waitForCustomDomainInputSc
 export interface WaitForCustomDomainResult {
   health: HealthSettlement & { url: string };
   probes: number;
-  /** The app itself answered through the domain (not an edge error page). */
+  /**
+   * The domain is live (`domainIsLive`): the app answered through it, or
+   * Cloudflare Access answered on it (then `health.access` is set).
+   */
   serves: boolean;
 }
 
@@ -356,16 +383,40 @@ export function runWaitForCustomDomain(
   input: WaitForCustomDomainInput,
 ): Promise<UnitResult<WaitForCustomDomainResult>> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  return runUnit(env, deps, input.accountId, async ({ log, fetch }) => {
-    const { settled, serves, probes } = await probeUntilServed(fetch, sleep, {
-      url: input.healthUrl,
-      mode: input.healthMode,
-      max: input.maxProbes,
-      gapMs: DOMAIN_PROBE_MS,
-    });
+  return runUnit(env, deps, input.accountId, async ({ log, fetch, cf }) => {
+    // The install's own token, only for its own recorded domain in one of
+    // the account's zones (probe-credentials.server.ts).
+    const { DB } = env;
+    const { installId } = input;
+    const probeHeaders: ProbeHeadersFor | undefined =
+      DB === undefined || installId === undefined
+        ? undefined
+        : (url) =>
+            probeCredentials(
+              {
+                db: DB,
+                authSecret: env.BETTER_AUTH_SECRET,
+                zoneNames: zoneNamesVia(async () => cf()),
+              },
+              installId,
+              url,
+            );
+    const { settled, serves, probes } = await probeUntilServed(
+      fetch,
+      sleep,
+      {
+        url: input.healthUrl,
+        mode: input.healthMode,
+        max: input.maxProbes,
+        gapMs: DOMAIN_PROBE_MS,
+      },
+      probeHeaders,
+    );
     log.info(
       serves
-        ? `${input.healthUrl} reached the app (${settled.detail}).`
+        ? settled.access === true
+          ? `${input.healthUrl}: ${ACCESS_DOMAIN_NOTE}`
+          : `${input.healthUrl} reached the app (${settled.detail}).`
         : `${input.healthUrl} did not reach the app after ${probes} probe(s) (${settled.detail}).`,
     );
     return { health: { ...settled, url: input.healthUrl }, probes, serves };

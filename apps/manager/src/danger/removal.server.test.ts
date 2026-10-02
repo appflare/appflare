@@ -3,12 +3,14 @@ import { env } from "cloudflare:workers";
 import { createClient } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { writeAccessConfig } from "../access/config";
+import { protectInstall } from "../access/protect.server";
 import { createDb } from "../db/client";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
 import { readSettings, SETTING, writeSettings } from "../db/settings";
 import type { GatewayState } from "../gateway/gateway.server";
 import { R2_MAX_PAGES_PER_RUN, R2_OBJECTS_PER_STEP } from "../jobs/uninstall";
+import { fakeAccessAccount } from "../test/fake-access-account";
 import { ACC, TOKEN } from "../test/fake-account";
 import {
   ACCOUNT_NAME,
@@ -20,8 +22,9 @@ import {
   MANAGER_WORKFLOW,
 } from "../test/fake-removal";
 import { fakeSelf } from "../test/fake-self";
+import { INSTALL_ID, seedInstall } from "../test/seed-install";
 import { deleteManagerWorker, type RemovalStep, runRemoval } from "./removal.server";
-import { findRemovalTargets, type RemovalTargets } from "./removal-plan.server";
+import { findRemovalTargets, type RemovalTargets, readRemovalStays } from "./removal-plan.server";
 
 /**
  * Removing Appflare, against the local D1 and a stateful fake of the
@@ -109,6 +112,7 @@ describe("findRemovalTargets", () => {
         ],
       },
       accessAppIds: ["access-health", "access-app"],
+      appAccessInstalls: [],
     });
     // Six reads, nothing else.
     expect(account.calls).toEqual([
@@ -361,6 +365,100 @@ describe("runRemoval", () => {
       expect(w.account.remainingObjects()).toBe(deletes ? 0 : 1);
     },
   );
+});
+
+describe("apps protected with Cloudflare Access", () => {
+  const AUTH = "auth-secret-0123456789abcdef0123456789";
+
+  /** An installed app protected by Appflare, in the local D1 and a fake of the account's Access objects. */
+  async function protectedApp() {
+    const access = fakeAccessAccount();
+    access.scripts.push({ id: "cut", tag: "tag-cut" });
+    await seedInstall({ resources: [{ kind: "worker", name: "cut", cfId: "cut" }] });
+    await writeSettings(createDb(env.DB), { [SETTING.workerName]: MANAGER_WORKER });
+    await env.DB.prepare(
+      "INSERT INTO user (id, name, email, role) VALUES ('u1', 'Owner', 'owner@example.com', 'admin')",
+    ).run();
+    await protectInstall(
+      { db: env.DB, client: access.client, authSecret: AUTH },
+      { installId: INSTALL_ID },
+    );
+    return access;
+  }
+
+  it("lists their Access applications and the users policy under what stays", async () => {
+    await protectedApp();
+    const stays = await readRemovalStays(env.DB);
+    expect(stays.protectedApps).toEqual([{ label: "cut", workerName: "cut" }]);
+    expect(stays.usersPolicy).toBe(true);
+    const { api } = world();
+    expect((await findRemovalTargets(env.DB, api)).appAccessInstalls).toEqual([INSTALL_ID]);
+  });
+
+  it("takes each app's token out of its application and deletes it; the application stays", async () => {
+    const access = await protectedApp();
+    const account = fakeRemovalAccount();
+    const fetch = (input: string, init?: RequestInit) =>
+      new URL(input).pathname.includes("/access/") &&
+      !new URL(input).pathname.includes("/access/apps/access-")
+        ? access.fetch(input, init)
+        : account.fetch(input, init);
+    const api = createClient({ accountId: ACC, token: TOKEN, fetch });
+    const self = fakeSelf({ CF_API_TOKEN: TOKEN, DB: env.DB, BETTER_AUTH_SECRET: AUTH }, { fetch });
+    const targets = await findRemovalTargets(env.DB, api);
+    const steps: RemovalStep[] = [];
+    const outcome = await runRemoval({
+      db: env.DB,
+      api,
+      units: { api: self, remote: true },
+      targets,
+      emit: async (step) => {
+        steps.push(step);
+      },
+      sleep: async () => {},
+    });
+    expect(outcome.kind).toBe("complete");
+    const labels = steps.map((s) => s.label);
+    const release = labels.indexOf("Take Appflare's health-check token out of a protected app");
+    expect(steps[release]?.status).toBe("done");
+    expect(release).toBeLessThan(labels.indexOf("Delete the manager's D1 database"));
+    expect(self.calls.filter((c) => c.unit === "releaseAppAccess")).toHaveLength(1);
+    // The app stays protected for Appflare's users; the token and its policy are gone.
+    const [app] = [...access.apps.values()];
+    expect(app?.policies.map((p) => p.name)).toEqual(["Appflare users"]);
+    expect(access.tokens.size).toBe(0);
+    expect(access.appPolicies.size).toBe(0);
+    expect(access.policies.size).toBe(1);
+  });
+
+  it("reports a token it could not take out, and still completes", async () => {
+    const access = await protectedApp();
+    access.forbidden.add(`GET /accounts/${ACC}/access/apps/*`);
+    const account = fakeRemovalAccount();
+    const fetch = (input: string, init?: RequestInit) =>
+      new URL(input).pathname.includes("/access/") &&
+      !new URL(input).pathname.includes("/access/apps/access-")
+        ? access.fetch(input, init)
+        : account.fetch(input, init);
+    const api = createClient({ accountId: ACC, token: TOKEN, fetch });
+    const self = fakeSelf({ CF_API_TOKEN: TOKEN, DB: env.DB, BETTER_AUTH_SECRET: AUTH }, { fetch });
+    const steps: RemovalStep[] = [];
+    const outcome = await runRemoval({
+      db: env.DB,
+      api,
+      units: { api: self, remote: true },
+      targets: await findRemovalTargets(env.DB, api),
+      emit: async (step) => {
+        steps.push(step);
+      },
+      sleep: async () => {},
+    });
+    expect(outcome.kind).toBe("complete");
+    const failed = steps.find((s) => s.label.startsWith("Take Appflare's health-check token"));
+    expect(failed?.status).toBe("failed");
+    expect(failed?.detail).toContain(`"Appflare health checks ${INSTALL_ID}"`);
+    expect(access.apps.size).toBe(1);
+  });
 });
 
 describe("findRemovalTargets and Appflare's address", () => {

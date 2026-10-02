@@ -7,6 +7,13 @@ import {
 } from "@appflare/cf-api";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { ulid } from "ulidx";
+import {
+  type AccessAddressSync,
+  accessAddressSync,
+  publicPathsRefusal,
+} from "../access/address-sync.server";
+import { syncInstallAccessDestinations } from "../access/protect.server";
+import { AccessToggleError, withAccessLock } from "../access/toggle.server";
 import { createDb } from "../db/client";
 import { installs, resources } from "../db/schema";
 import {
@@ -44,7 +51,7 @@ import { WILDCARD_EXTERNAL_REFUSAL, wildcardOfManifest } from "./wildcard-domain
 import {
   applyDomainLive,
   beforeDomainRemoval,
-  domainServesApp,
+  domainIsLive,
   recordDomainLive,
   WorkersDevError,
 } from "./workers-dev.server";
@@ -59,7 +66,43 @@ import {
  * hostname id>`, binding = the gateway's binding). Removing one undoes the
  * three, the binding only with the install's last external domain. Adding,
  * removing and reading the status run in the request (a few calls each).
+ *
+ * For an app Appflare protects with Cloudflare Access, a new external domain
+ * is covered by the app's Access application (a `public` destination, and
+ * its public paths) before its custom hostname is made, and taken off once
+ * the custom hostname is deleted; its public paths come off before
+ * (access/protect.server.ts; Access coverage of such a hostname verified
+ * live 2026-10-01). Health checks never send the app's Access token to an
+ * external domain: its DNS is someone else's.
  */
+
+/**
+ * Brings a protected app's Access application in step with its recorded
+ * external domains (nothing for an app Appflare does not protect). Throws
+ * with a message for people when that fails.
+ */
+async function syncAccess(deps: ExternalDomainDeps, installId: string): Promise<void> {
+  try {
+    await syncInstallAccessDestinations(
+      { db: deps.db, client: deps.api, ...(deps.now === undefined ? {} : { now: deps.now }) },
+      installId,
+    );
+  } catch (error) {
+    throw new ExternalDomainError(
+      `The app's Cloudflare Access application could not be updated for its external domains: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/** `run` under the Access lock; another Access change holding it is refused in this module's words. */
+async function underAccessLock<T>(db: D1Database, run: () => Promise<T>): Promise<T> {
+  try {
+    return await withAccessLock(db, run);
+  } catch (error) {
+    if (error instanceof AccessToggleError) throw new ExternalDomainError(error.message);
+    throw error;
+  }
+}
 
 export class ExternalDomainError extends Error {
   override name = "ExternalDomainError";
@@ -74,6 +117,11 @@ export interface ExternalDomainDeps {
   newId?: () => string;
   /** Deploys the settings again when they use the app's address; without it nothing is. */
   refreshVars?: RefreshVars;
+  /**
+   * Brings a protected app's Access applications in step around a removal
+   * (`accessAddressSync`); by default through `api`.
+   */
+  syncAccess?: AccessAddressSync;
 }
 
 /** `cf_id` of an external domain: which zone the custom hostname is on, and its id. */
@@ -565,6 +613,21 @@ export async function releaseExternalDomain(
   await createDb(db).update(resources).set({ deleted_at: at }).where(eq(resources.id, rowId));
 }
 
+/** The sync of a protected app's Access applications around a change of its domains. */
+function accessSyncOf(deps: ExternalDomainDeps): AccessAddressSync {
+  return deps.syncAccess ?? accessAddressSync(deps.db, async () => deps.api, deps.now);
+}
+
+/**
+ * After an external domain is gone: its destination comes off the app's
+ * Access application. Never throws: the domain no longer serves the app, so
+ * a destination left behind protects a name nobody uses; a failure is
+ * recorded on the install and the cron tries again.
+ */
+async function syncAccessAfterRemoval(deps: ExternalDomainDeps, installId: string): Promise<void> {
+  await accessSyncOf(deps)(installId);
+}
+
 /** Why a hostname cannot be claimed, for the admin. */
 export function claimRefusal(
   hostname: string,
@@ -607,12 +670,17 @@ export async function addExternalDomainCore(
   });
   if (!format.ok) throw new ExternalDomainError(format.error);
   const hostname = format.hostname;
-  const claim = await claimExternalDomain(deps.db, {
-    id: externalDomainResourceId(install.id, (deps.newId ?? (() => ulid()))()),
-    installId: install.id,
-    hostname,
-    binding: gatewayBindingName(install.id),
-    at: now(),
+  // The claim under the Access lock: protecting the app reads its external
+  // domains under the same lock, so a claim is either seen by protection
+  // being made, or made after it and covered by the sync below.
+  const claim = await underAccessLock(deps.db, async () => {
+    return claimExternalDomain(deps.db, {
+      id: externalDomainResourceId(install.id, (deps.newId ?? (() => ulid()))()),
+      installId: install.id,
+      hostname,
+      binding: gatewayBindingName(install.id),
+      at: now(),
+    });
   });
   const refusal = claimRefusal(hostname, claim, install.id);
   if (refusal !== null) throw new ExternalDomainError(refusal);
@@ -620,6 +688,13 @@ export async function addExternalDomainCore(
     throw new ExternalDomainError(`${hostname} is already a domain of this app.`);
   }
   if (claim.kind !== "claimed" && claim.kind !== "mine") throw new ExternalDomainError(hostname);
+  // Covered by the app's Access protection (with the claim) before it can serve anything.
+  try {
+    await syncAccess(deps, install.id);
+  } catch (error) {
+    if (claim.kind === "claimed") await releaseExternalDomain(deps.db, claim.id, now());
+    throw error;
+  }
   let attached: AttachedExternalDomain;
   try {
     attached = await attachExternalDomain(deps.api, {
@@ -635,6 +710,7 @@ export async function addExternalDomainCore(
     // the way back), so the claim stays and Remove cleans up after it.
     if (error instanceof ExternalDomainError || error instanceof GatewayError) {
       await releaseExternalDomain(deps.db, claim.id, now());
+      await syncAccessAfterRemoval(deps, install.id);
     }
     throw error;
   }
@@ -650,7 +726,8 @@ export async function addExternalDomainCore(
  * records its owner still has to add; with `probe`, once it is active, one
  * request to the app through it. When the app answers, the domain is
  * recorded as live and, with `applyDefaults` (an admin is looking),
- * workers.dev may be turned off (`applyDomainLive`).
+ * workers.dev may be turned off (`applyDomainLive`). So does Cloudflare
+ * Access answering on the domain (`domainIsLive`).
  */
 export async function externalDomainStatusCore(
   deps: ExternalDomainDeps,
@@ -687,10 +764,12 @@ export async function externalDomainStatusCore(
   if (request.probe === true && status.active && deps.fetch !== undefined) {
     const check = healthCheckOfManifest(install.manifestJson);
     const url = `https://${domain.name}${check.path}`;
+    // Never with the Access service token: an external domain's DNS is
+    // someone else's, and could point at a server that keeps the token.
     const probe = await probeHealth(deps.fetch, url);
     const settled = settleHealthProbe(probe, check.mode);
     status.health = { ...settled, url };
-    if (domainServesApp(probe, check.mode)) {
+    if (domainIsLive(probe, check.mode)) {
       if (request.applyDefaults === true) {
         const applied = await asExternalDomainError(() =>
           applyDomainLive(
@@ -729,6 +808,14 @@ export async function removeExternalDomainCore(
     throw new ExternalDomainError("The uninstall removes this app's external domains.");
   }
   const domain = await readDomain(deps.db, request);
+  // A protected app's public paths come off the hostname before anything
+  // else changes, so it is never released with one left on it.
+  const accessProblem = await accessSyncOf(deps)(request.installId, {
+    leavingHosts: [domain.name],
+  });
+  if (accessProblem !== null) {
+    throw new ExternalDomainError(publicPathsRefusal(domain.name, accessProblem));
+  }
   const others = await orm
     .select({ id: resources.id, kind: resources.kind })
     .from(resources)
@@ -762,6 +849,7 @@ export async function removeExternalDomainCore(
     .update(resources)
     .set({ deleted_at: (deps.now ?? (() => new Date()))() })
     .where(eq(resources.id, domain.id));
+  await syncAccessAfterRemoval(deps, request.installId);
   // The app's address moved: settings that use `{{appUrl}}` follow it.
   const refresh = removal.addressChanged
     ? await refreshSettings(deps.refreshVars, request.installId, ["appUrl"])

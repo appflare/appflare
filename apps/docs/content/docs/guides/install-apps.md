@@ -60,6 +60,13 @@ later on the app's **Domains and email** tab. A
 [self-deploying app](/guides/builds/#self-deploying-apps) has no **Address**: its
 own installer decides where its Workers answer.
 
+**Protect with Cloudflare Access.** Puts every address of the app behind a
+Cloudflare sign-in that lets in only Appflare's users. The form says how many people
+that is, how they sign in, and which paths stay public. It starts ticked when the
+app's catalog entry recommends it, and is ticked and fixed when the entry requires
+it. While the account cannot protect apps, it is disabled and says why. See
+[Protect apps with Cloudflare Access](/guides/protect-apps/).
+
 Select **Install**. The manager starts an install job and opens its live log.
 
 ## Apps with a database elsewhere

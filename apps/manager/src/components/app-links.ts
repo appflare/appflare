@@ -36,6 +36,7 @@ export const APP_SECTIONS = {
   "workers-dev": { tab: "domains", title: "workers.dev URL" },
   domains: { tab: "domains", title: "Custom domains" },
   "external-domains": { tab: "domains", title: "External domains" },
+  access: { tab: "domains", title: "Cloudflare Access" },
   email: { tab: "domains", title: "Email" },
   resources: { tab: "resources", title: "Resources" },
   "kept-resources": { tab: "resources", title: "Kept in the account" },

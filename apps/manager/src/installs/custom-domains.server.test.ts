@@ -4,6 +4,7 @@ import { createClient } from "@appflare/cf-api";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createMigrator } from "../db/migrate";
 import { migrations } from "../db/migrations/index";
+import { accessChallenge } from "../test/access-sign-in";
 import { buildArtifactFixture } from "../test/artifact-fixture";
 import { ACC, TOKEN } from "../test/fake-account";
 import { INSTALL_ID, seedInstall } from "../test/seed-install";
@@ -418,6 +419,59 @@ describe("addCustomDomainCore", () => {
   });
 });
 
+describe("a protected app's public paths", () => {
+  it("are brought in step after a domain is added, and before and after one is removed", async () => {
+    const { world, api } = fakeZoneApi();
+    const synced: Array<{ id: string; change?: unknown; detached: boolean }> = [];
+    const d = {
+      ...deps(api),
+      syncAccess: async (id: string, change?: unknown) => {
+        synced.push({
+          id,
+          ...(change === undefined ? {} : { change }),
+          detached: world.calls.includes("DELETE /workers/domains/cfd-1"),
+        });
+        return null;
+      },
+    };
+    // After the domain is attached, from the records.
+    await addCustomDomainCore(d, add("cut.example.com"));
+    expect(synced).toEqual([{ id: INSTALL_ID, detached: false }]);
+    // Before it is released, leaving its hostname out; then from the records.
+    await removeCustomDomainCore(d, { installId: INSTALL_ID, resourceId: "i1:domain:id1" });
+    expect(synced.slice(1)).toEqual([
+      { id: INSTALL_ID, change: { leavingHosts: ["cut.example.com"] }, detached: false },
+      { id: INSTALL_ID, detached: true },
+    ]);
+  });
+
+  it("keep the domain attached when they cannot be taken off it first", async () => {
+    const { world, api } = fakeZoneApi();
+    const d = { ...deps(api), syncAccess: async () => null as string | null };
+    await addCustomDomainCore(d, add("cut.example.com"));
+    const failing = {
+      ...d,
+      syncAccess: async (_id: string, change?: unknown) =>
+        change === undefined
+          ? null
+          : "Another Access change is in progress. Try again in a minute.",
+    };
+    await expect(
+      removeCustomDomainCore(failing, { installId: INSTALL_ID, resourceId: "i1:domain:id1" }),
+    ).rejects.toThrow(
+      "The app's public paths could not be taken off cut.example.com in Cloudflare Access (Another Access change is in progress. Try again in a minute.), so the domain was not removed and still serves the app. Try again in a minute.",
+    );
+    expect(world.calls).not.toContain("DELETE /workers/domains/cfd-1");
+    expect((await domainRows())[0]?.deleted_at).toBeNull();
+  });
+
+  it("cost no Access call for an app Appflare does not protect", async () => {
+    const { world, api } = fakeZoneApi();
+    await addCustomDomainCore(deps(api), add("cut.example.com"));
+    expect(world.calls.filter((c) => c.includes("/access/"))).toEqual([]);
+  });
+});
+
 describe("removeCustomDomainCore", () => {
   it("detaches the domain and marks the resource deleted; one already gone counts", async () => {
     const { world, api } = fakeZoneApi();
@@ -691,6 +745,42 @@ describe("checkCustomDomainCore", () => {
     ).first();
     return { world, result, install, domain };
   }
+
+  it("records the domain as live when Cloudflare Access answers on it, and turns workers.dev off", async () => {
+    const { world, api } = fakeZoneApi();
+    await addCustomDomainCore(deps(api), add("cut.example.com"));
+    const result = await checkCustomDomainCore(
+      {
+        db: env.DB,
+        now: () => NOW,
+        fetch: async () => accessChallenge("cut.example.com"),
+        api: async () => api,
+      },
+      { installId: INSTALL_ID, resourceId: "i1:domain:id1" },
+    );
+    // Live, but the app itself was not checked.
+    expect(result).toEqual({
+      hostname: "cut.example.com",
+      url: "https://cut.example.com/",
+      status: "unverified",
+      detail: "Cloudflare Access asked for a sign-in",
+      access: true,
+      checkedAt: NOW.toISOString(),
+      workersDevTurnedOff: true,
+      settingsJobId: null,
+      settingsNote: null,
+    });
+    // workers.dev goes off, so the app is not left reachable there without Access.
+    expect(world.subdomain).toEqual([{ script: "cut", enabled: false, previews_enabled: true }]);
+    const install = await env.DB.prepare(
+      "SELECT workers_dev_enabled, served_domain FROM installs",
+    ).first();
+    expect(install).toEqual({ workers_dev_enabled: 0, served_domain: "cut.example.com" });
+    const live = await env.DB.prepare(
+      "SELECT live_at FROM resources WHERE kind = 'domain'",
+    ).first();
+    expect(live).toEqual({ live_at: NOW.getTime() });
+  });
 
   it("records the domain as live once the app answers, and turns workers.dev off", async () => {
     const { world, result, install, domain } = await checkReaching({ withApi: true });

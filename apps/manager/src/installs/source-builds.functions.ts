@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import {
+  accessNeededOnlyIfProtected,
   type CatalogManifest,
   type CatalogSecret,
   catalogWorkerName,
@@ -264,7 +265,14 @@ export const getSourceBuild = createServerFn({ method: "GET" })
         },
         requires: facts.requires,
         checks: requirementChecks(
-          { plan: manifest.catalog.plan, requires: facts.requires },
+          {
+            plan: manifest.catalog.plan,
+            requires: facts.requires,
+            accessIfProtected: accessNeededOnlyIfProtected({
+              ...manifest.catalog,
+              requires: facts.requires,
+            }),
+          },
           capabilities,
         ),
         problems: facts.problems,

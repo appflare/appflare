@@ -26,6 +26,7 @@ import { type FormEvent, useId, useState } from "react";
 import type { Role } from "../auth/roles";
 import {
   type AccessPolicyOutcome,
+  type AppAccessPolicyOutcome,
   addUser,
   changeUserRole,
   deleteUser,
@@ -235,6 +236,13 @@ function UserRowMenu({
 const ACCESS_NOT_UPDATED =
   'The Cloudflare Access policy was not updated. Use "Re-sync admins" under Cloudflare Access.';
 
+/** When "Appflare users", the policy of apps protected with Cloudflare Access, missed a change. */
+const APP_ACCESS_NOT_UPDATED =
+  "The Cloudflare Access policy of your protected apps was not updated. Appflare tries again within 30 minutes.";
+
+/** When "Appflare users" was deleted in the Cloudflare dashboard. */
+const APP_ACCESS_POLICY_MISSING = `The Cloudflare Access policy of your protected apps ("Appflare users") was deleted in the Cloudflare dashboard. Appflare makes it again within 30 minutes; each protected app's page then offers "Protect again", which lets people sign in to it again.`;
+
 /** Stands in for the user before any row's action has been picked; its dialogs stay closed until then. */
 const NO_USER = { id: "", name: "", email: "" } as const;
 
@@ -291,11 +299,18 @@ function UserConfirmDialog({
   const router = useRouter();
   const toasts = useKumoToastManager();
 
-  function reportAccess(outcome: AccessPolicyOutcome) {
+  function reportAccess(outcome: AccessPolicyOutcome, appOutcome: AppAccessPolicyOutcome) {
     if (outcome === "failed") {
       toasts.add({
         title: "Access policy not updated",
         description: ACCESS_NOT_UPDATED,
+        variant: "error",
+      });
+    }
+    if (appOutcome === "failed" || appOutcome === "missing") {
+      toasts.add({
+        title: "Protected apps' Access policy not updated",
+        description: appOutcome === "missing" ? APP_ACCESS_POLICY_MISSING : APP_ACCESS_NOT_UPDATED,
         variant: "error",
       });
     }
@@ -312,10 +327,10 @@ function UserConfirmDialog({
             ? `${u.email} will be able to install, update and uninstall apps, change settings, and add users. Only you can change roles or delete users.`
             : `${u.email} will be able to see everything but change nothing, apart from their own passkeys.`,
           onConfirm: async () => {
-            const { accessPolicy } = await changeUserRole({
+            const { accessPolicy, appAccessPolicy } = await changeUserRole({
               data: { userId: u.id, role: a.role },
             });
-            reportAccess(accessPolicy);
+            reportAccess(accessPolicy, appAccessPolicy);
             await router.invalidate();
           },
         };
@@ -345,8 +360,8 @@ function UserConfirmDialog({
           description: `Deletes ${u.email} with their password and passkeys, and signs them out everywhere. Installed apps, jobs and settings stay as they are.`,
           confirmText: u.email,
           onConfirm: async () => {
-            const { accessPolicy } = await deleteUser({ data: { userId: u.id } });
-            reportAccess(accessPolicy);
+            const { accessPolicy, appAccessPolicy } = await deleteUser({ data: { userId: u.id } });
+            reportAccess(accessPolicy, appAccessPolicy);
             await router.invalidate();
           },
         };
@@ -380,6 +395,8 @@ type Created = {
   temporaryPassword: string;
   /** Whether the Cloudflare Access allow policy took the new admin in. */
   accessPolicy: "off" | "updated" | "failed";
+  /** Whether "Appflare users", the policy of protected apps, took the new user in. */
+  appAccessPolicy: AppAccessPolicyOutcome;
 };
 
 /**
@@ -421,6 +438,7 @@ export function AddUserDialog() {
         email: result.user.email,
         temporaryPassword: result.temporaryPassword,
         accessPolicy: result.accessPolicy,
+        appAccessPolicy: result.appAccessPolicy,
       });
       await router.invalidate();
     } catch (err) {
@@ -494,6 +512,18 @@ export function AddUserDialog() {
                   icon={<WarningCircleIcon weight="fill" />}
                   title="Not added to the Cloudflare Access policy"
                   description={`Cloudflare Access will keep ${created.email} out until the policy lists them. Use "Re-sync admins" under Cloudflare Access.`}
+                />
+              )}
+              {(created.appAccessPolicy === "failed" || created.appAccessPolicy === "missing") && (
+                <Banner
+                  variant="error"
+                  icon={<WarningCircleIcon weight="fill" />}
+                  title="Not added to the Access policy of your protected apps yet"
+                  description={
+                    created.appAccessPolicy === "missing"
+                      ? APP_ACCESS_POLICY_MISSING
+                      : `Cloudflare Access keeps ${created.email} out of your protected apps until the policy lists them. Appflare tries again within 30 minutes.`
+                  }
                 />
               )}
             </div>

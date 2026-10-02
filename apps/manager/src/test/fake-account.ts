@@ -12,6 +12,13 @@ export const ACC = "acc0000000000000000000000000000a";
 export const TOKEN = "cf-test-token-DO-NOT-LEAK";
 export const SUBDOMAIN = "appflare-dev";
 
+/** One answer of a workers.dev URL or a domain; `location` becomes the `Location` header. */
+export interface UrlAnswer {
+  status: number;
+  body: string;
+  location?: string;
+}
+
 export interface FakeAccount {
   /** Newest first, as Cloudflare lists them. */
   deployments: Array<{ id: string; versions: Array<{ version_id: string; percentage: number }> }>;
@@ -41,9 +48,9 @@ export interface FakeAccount {
   workflows: string[];
   calls: string[];
   /** Answers of the canonical URL, in order (the last one repeats). */
-  health: Array<{ status: number; body: string }>;
+  health: Array<UrlAnswer>;
   /** Answers of any version preview URL, in order (the last one repeats). */
-  previews: Array<{ status: number; body: string }>;
+  previews: Array<UrlAnswer>;
   previewHosts: string[];
   /** `has_preview` of uploaded versions. */
   hasPreview: boolean;
@@ -78,7 +85,7 @@ export interface FakeAccount {
   /** The sandbox Worker's version at 100% (`GET /workers/scripts/appflare-sandbox/deployments`). */
   sandboxDeployed: string;
   /** Answers of custom domain hosts, in order per host (the last one repeats). */
-  domainHealth: Record<string, Array<{ status: number; body: string }>>;
+  domainHealth: Record<string, Array<UrlAnswer>>;
   /** Custom domain hosts probed, in order. */
   domainProbes: string[];
   /** A version upload answers without the new version's id (the version is made all the same). */
@@ -162,9 +169,12 @@ export function fakeAccount(fixture: ArtifactFixture | null, over: Partial<FakeA
     Response.json({ success: true, errors: [], messages: [], result, ...extra });
   const fail = (status: number, message: string) =>
     Response.json({ success: false, errors: [{ code: 10000, message }] }, { status });
-  const next = (list: Array<{ status: number; body: string }>) => {
+  const next = (list: Array<UrlAnswer>) => {
     const answer = list.length > 1 ? list.shift() : list[0];
-    return new Response(answer?.body ?? "", { status: answer?.status ?? 500 });
+    return new Response(answer?.body ?? "", {
+      status: answer?.status ?? 500,
+      ...(answer?.location === undefined ? {} : { headers: { location: answer.location } }),
+    });
   };
 
   async function cloudflare(request: Request): Promise<Response> {

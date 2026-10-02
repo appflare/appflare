@@ -6,6 +6,7 @@ import { createMigrator } from "../../db/migrate";
 import { migrations } from "../../db/migrations/index";
 import { setUpGatewayCore } from "../../gateway/gateway.server";
 import type { InstallDomainInput } from "../../installs/install-input";
+import { accessChallenge } from "../../test/access-sign-in";
 import { ACC, TOKEN } from "../../test/fake-account";
 import { fakeSaas, GATEWAY_ZONE } from "../../test/fake-saas";
 import { fakeSelf } from "../../test/fake-self";
@@ -277,6 +278,60 @@ describe("installDomainPhase", () => {
     expect(await installRow()).toMatchObject({ workers_dev_enabled: 1 });
     expect(await liveDomains()).toEqual([]);
     expect(r.servedBy).toBeNull();
+  });
+
+  it("counts a custom domain where Cloudflare Access answers as live, and turns workers.dev off", async () => {
+    const saas = fakeSaas();
+    const r = await run({ kind: "custom", zoneId: "z-own", hostname: "app.own.example" }, saas, {
+      answer: () => accessChallenge("app.own.example"),
+    });
+    expect(r.step.names).toEqual([
+      "add custom domain app.own.example",
+      "wait for app.own.example",
+      "app.own.example is live",
+    ]);
+    expect(r.probes).toEqual(["https://app.own.example/"]);
+    expect(r.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
+    expect(await installRow()).toMatchObject({
+      workers_dev_enabled: 0,
+      served_domain: "app.own.example",
+    });
+    expect(await liveDomains()).toEqual(["app.own.example"]);
+    expect(r.servedBy).toBe("app.own.example");
+    expect(r.logs.map((l) => l.message)).toContain(
+      "https://app.own.example/: Live behind Cloudflare Access. Access answered with its sign-in page, so Appflare can't check the app itself through this domain.",
+    );
+  });
+
+  it("counts an active external domain where Cloudflare Access answers as live", async () => {
+    const saas = await gateway();
+    const realFetch = saas.fetch;
+    saas.fetch = async (input, init) => {
+      const response = await realFetch(input, init);
+      if (input.includes("/custom_hostnames/ch-")) saas.activate("go.customer.test");
+      return response;
+    };
+    const r = await run(
+      { kind: "external", hostname: "go.customer.test", validation: "http" },
+      saas,
+      { answer: () => accessChallenge("go.customer.test") },
+    );
+    expect(r.step.names).toEqual([
+      "add external domain go.customer.test",
+      "wait for go.customer.test",
+      "go.customer.test is live",
+    ]);
+    expect(r.probes).toEqual(["https://go.customer.test/"]);
+    expect(r.subdomainCalls).toEqual([{ enabled: false, previews_enabled: true }]);
+    expect(await installRow()).toMatchObject({
+      workers_dev_enabled: 0,
+      served_domain: "go.customer.test",
+    });
+    expect(await liveDomains()).toEqual(["go.customer.test"]);
+    expect(r.servedBy).toBe("go.customer.test");
+    expect(r.logs.map((l) => l.message)).toContain(
+      "go.customer.test is active with its certificate. Live behind Cloudflare Access. Access answered with its sign-in page, so Appflare can't check the app itself through this domain.",
+    );
   });
 
   it("keeps workers.dev on when the app's settings use its workers.dev URL", async () => {

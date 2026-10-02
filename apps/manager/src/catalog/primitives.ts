@@ -115,9 +115,31 @@ const PROVIDED: Partial<Record<PrimitiveId, string>> = {
     "Provided by you: a PostgreSQL or MySQL database outside Cloudflare, whose connection string you enter when you install. Hyperdrive, included on every Workers plan, connects the app to it.",
 };
 
-const NOT_CHECKED: Partial<Record<PrimitiveId, string>> = {
-  access: "Needs Cloudflare Access (Zero Trust) on this account. Appflare does not check for it.",
-};
+/** Cloudflare Access: the account's Zero Trust organization, as the probe found it. */
+function accessStatus(view: CapabilitiesView | null): PrimitiveStatus {
+  const id = "access";
+  const probe = view?.zeroTrust;
+  if (probe?.state === "exists") {
+    return {
+      id,
+      availability: "available",
+      reason: `Detected: Zero Trust is set up, team domain ${probe.teamDomain}.`,
+    };
+  }
+  if (probe?.state === "none") {
+    return {
+      id,
+      availability: "unavailable",
+      reason:
+        "Detected: this account has no Zero Trust organization yet. Create one in the Cloudflare dashboard (Zero Trust; the Free plan covers up to 50 users).",
+    };
+  }
+  return {
+    id,
+    availability: "unknown",
+    reason: "Needs Cloudflare Access (Zero Trust) on this account; Appflare could not check.",
+  };
+}
 
 /** A domain on the account, as the zone probe found it. */
 function zoneStatus(view: CapabilitiesView | null): PrimitiveStatus {
@@ -233,7 +255,7 @@ function paidPlanStatus(id: PrimitiveId, view: CapabilitiesView | null): Primiti
  * Whether this account offers `id`. Primitives every plan includes are
  * available; R2, Containers, domains, Email Routing and Analytics Engine
  * follow the capability probes; key-value Durable Objects and Containers without a probe result
- * follow the plan; Access is not probed, so it stays unknown.
+ * follow the plan; Access follows the Zero Trust probe.
  */
 export function primitiveStatus(
   id: PrimitiveId,
@@ -246,9 +268,8 @@ export function primitiveStatus(
   }
   const provided = PROVIDED[id];
   if (provided !== undefined) return { id, availability: "provided", reason: provided };
-  const notChecked = NOT_CHECKED[id];
-  if (notChecked !== undefined) return { id, availability: "unknown", reason: notChecked };
   if (id === "zone") return zoneStatus(view);
+  if (id === "access") return accessStatus(view);
   if (id === "email-routing") return emailRoutingStatus(view);
   if (id === "analytics-engine") return analyticsEngineStatus(view);
   // Pipelines is in open beta for Workers Paid accounts only.

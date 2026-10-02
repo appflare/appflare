@@ -15,6 +15,25 @@ const probed = capabilitiesView(null, {
 });
 
 describe("requirementChecks", () => {
+  it('leaves out an "access" the app needs only while protected', () => {
+    const noZeroTrust = capabilitiesView(null, {
+      checkedAt: "2026-09-24T12:00:00.000Z",
+      r2: { state: "enabled" },
+      containers: { state: "needs-workers-paid" },
+      workersPlan: { state: "free" },
+      zeroTrust: { state: "none" },
+    });
+    const conditional = requirementChecks(
+      { plan: "free", requires: ["access"], accessIfProtected: true },
+      noZeroTrust,
+    );
+    expect(conditional).toEqual({ met: [], pending: [] });
+    const required = requirementChecks({ plan: "free", requires: ["access"] }, noZeroTrust);
+    expect(required.pending.map((c) => [c.key, c.availability])).toEqual([
+      ["access", "unavailable"],
+    ]);
+  });
+
   it("keeps what the account is known to offer out of the warning", () => {
     const checks = requirementChecks(
       { plan: "free", requires: ["r2", "workers-ai", "zone", "email-routing"] },

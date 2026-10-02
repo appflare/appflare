@@ -40,6 +40,7 @@ import {
 } from "../installs/external-domains.functions";
 import type { CustomDomainView, InstallDetail } from "../installs/installs.functions";
 import { WILDCARD_EXTERNAL_REFUSAL } from "../installs/wildcard-domain-input";
+import { ACCESS_DOMAIN_NOTE } from "../installs/workers-dev";
 import { AppflareLoader } from "./appflare-loader";
 import { BusyButton, BusyMark, busyActionProps } from "./busy-button";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -172,7 +173,7 @@ function ExternalDomainRow({
         // The domain just went live (and workers.dev may be off): show the new address.
         if (
           next.workersDevTurnedOff === true ||
-          (!domain.live && next.health?.status === "verified")
+          (!domain.live && (next.health?.status === "verified" || next.health?.access === true))
         ) {
           await router.invalidate();
           await settingsRefresh(next, NEW_ADDRESS_SETTINGS, { follow: false });
@@ -253,9 +254,11 @@ function DomainState({ status }: { status: ExternalDomainStatus }) {
         <Text variant="secondary">Serving with its own certificate.</Text>
         {status.health !== null && (
           <>
-            <HealthBadge status={status.health.status} />
+            <HealthBadge status={status.health.status} access={status.health.access === true} />
             <Text as="span" variant="secondary" size="sm">
-              {status.health.detail} at {formatTime(status.checkedAt)}
+              {status.health.access === true
+                ? `${ACCESS_DOMAIN_NOTE} Checked at ${formatTime(status.checkedAt)}.`
+                : `${status.health.detail} at ${formatTime(status.checkedAt)}`}
             </Text>
           </>
         )}

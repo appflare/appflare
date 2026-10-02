@@ -7,6 +7,7 @@
 export type { AssetManifestFile, AssetUploadManifest } from "./asset-hash";
 export { assetHash, buildAssetsManifest } from "./asset-hash";
 export type {
+  AccessServiceTokensCapability,
   AccountCapabilities,
   AccountSetupCapabilities,
   AnalyticsEngineCapability,
@@ -29,6 +30,7 @@ export {
   createCapabilityClient,
   detectedWorkersPlan,
   failureDetail,
+  probeAccessServiceTokens,
   probeAccountCapabilities,
   probeAccountSetup,
   probeAnalyticsEngine,
@@ -58,10 +60,13 @@ export type { WorkerModule, WorkerModuleType } from "./modules";
 export { buildUploadFormData, MODULE_CONTENT_TYPES } from "./modules";
 
 export {
+  ACCESS_SERVICE_TOKEN_IN_USE,
   AccessCertsError,
+  accessAppCoverage,
   accessCertsUrl,
   fetchAccessCerts,
   isAccessTeamDomain,
+  isServiceTokenInUse,
 } from "./namespaces/access";
 export type {
   AnalyticsEngineSqlColumn,

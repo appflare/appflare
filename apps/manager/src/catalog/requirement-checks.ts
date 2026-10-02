@@ -30,8 +30,13 @@ export interface RequirementChecks {
   pending: RequirementCheck[];
 }
 
+/**
+ * `accessIfProtected`: the entry needs Cloudflare Access only while the app
+ * is protected (`accessNeededOnlyIfProtected`), so `"access"` is no check
+ * of its own: the install form checks it when protection is turned on.
+ */
 export function requirementChecks(
-  app: { plan: Plan; requires: readonly string[] },
+  app: { plan: Plan; requires: readonly string[]; accessIfProtected?: boolean | undefined },
   view: CapabilitiesView,
 ): RequirementChecks {
   const checks: RequirementCheck[] = [];
@@ -39,6 +44,7 @@ export function requirementChecks(
     checks.push({ key: "plan", label: "Workers Paid", ...workersPaidStatus(view) });
   }
   for (const requirement of app.requires) {
+    if (requirement === "access" && app.accessIfProtected === true) continue;
     const primitive = requirementPrimitive(requirement);
     const status =
       primitive === null

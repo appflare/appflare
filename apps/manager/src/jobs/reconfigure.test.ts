@@ -14,6 +14,7 @@ import { migrations } from "../db/migrations/index";
 import { readInstallSettingsCore, startReconfigureCore } from "../installs/reconfigure.server";
 import type { StartReconfigureInput } from "../installs/reconfigure-input";
 import { listSnapshotsCore, startRollbackCore } from "../installs/versions.server";
+import { accessLoginUrl } from "../test/access-sign-in";
 import {
   type ArtifactFixture,
   type ArtifactFixtureOptions,
@@ -526,6 +527,23 @@ describe("settings change job", () => {
     expect(r.secrets.every((s) => s.deleted_at === null)).toBe(true);
     expect(r.logs.at(-1)?.message).toBe(
       'Settings change failed at "canary check 6". Version version-1 was uploaded but never promoted; the previous version keeps serving all traffic with the previous settings and secrets. The Worker\'s newest version has the previous secret values back, so the next update does not pick up the new ones.',
+    );
+  });
+
+  it("promotes the new settings when Cloudflare Access answers the preview, saying it was not checked", async () => {
+    const location = accessLoginUrl("version--cut.appflare-dev.workers.dev");
+    const r = await reconfigure({ world: { previews: [{ status: 302, body: "", location }] } });
+    expect(r.error).toBeNull();
+    expect(r.job?.status).toBe("succeeded");
+    expect(r.step.names.filter((n) => n.startsWith("canary check"))).toEqual(["canary check 1"]);
+    expect(r.fake.state.calls).toContain("POST /workers/scripts/cut/deployments");
+    expect(r.logs).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: expect.stringContaining(
+          ": Cloudflare Access answered the preview URL with its sign-in page, so the new version was not checked before it serves traffic.",
+        ),
+      }),
     );
   });
 

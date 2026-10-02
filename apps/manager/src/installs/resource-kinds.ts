@@ -107,6 +107,30 @@ export const QUEUE_CONSUMER_KIND = "queue_consumer" as const;
 export const EMAIL_ROUTE_KIND = "email_route" as const;
 
 /**
+ * The Cloudflare Access service token the manager's health checks of a
+ * protected install sign in with (access/install-access.server.ts): `name`
+ * is the token's name, `cf_id` its id. One per install, never shared. It
+ * holds no data; it goes when the install stops being protected, after the
+ * install's Access application (whose policy names it).
+ */
+export const ACCESS_SERVICE_TOKEN_KIND = "access_service_token" as const;
+
+/**
+ * The Cloudflare Access application Appflare put in front of a protected
+ * install (access/protect.server.ts): `name` is the application's name,
+ * `cf_id` its id. It covers every Worker of the install (their workers.dev
+ * and preview URLs, custom domains and routes) and its external domains. It
+ * holds no data. An uninstall removes it only after the Worker and every
+ * address are gone, so the app is never reachable without it while the
+ * uninstall runs; removing Appflare from the account keeps it, so the app
+ * stays protected.
+ */
+export const ACCESS_APP_KIND = "access_app" as const;
+
+/** What Appflare's Access protection of an install consists of, removed together. */
+export const ACCESS_KINDS = [ACCESS_APP_KIND, ACCESS_SERVICE_TOKEN_KIND] as const;
+
+/**
  * A Hyperdrive configuration: the install's connection to a database that
  * lives outside Cloudflare, made from the connection string the admin
  * entered. It holds no data (the database is the admin's), but it holds the

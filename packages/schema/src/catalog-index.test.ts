@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   featuredItemSchema,
   INDEX_ONLY_CATALOG_FIELDS,
+  indexAccessNeededOnlyIfProtected,
+  indexAccessOffer,
   indexAppArtifact,
   indexAppSchema,
   indexJsonSchema,
@@ -158,6 +160,39 @@ describe("indexJsonSchema", () => {
         catalogManifest,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("an index row's accessOffer", () => {
+  const row = validIndex.apps[0];
+  it("is optional, takes any value a later catalog writes, and is stripped by a row schema that does not know it", () => {
+    for (const accessOffer of [undefined, "required", "recommended", "offered", "later-mode"]) {
+      const parsed = indexAppSchema.safeParse({ ...row, accessOffer });
+      expect(parsed.success).toBe(true);
+      expect(parsed.data?.accessOffer).toBe(accessOffer);
+    }
+    // What a manager from before the field does with it: the row schema is a
+    // plain object, which drops keys it does not know instead of the row.
+    const older = indexAppSchema.safeParse({ ...row, laterField: { mode: "required" } });
+    expect(older.success).toBe(true);
+    expect(older.data).not.toHaveProperty("laterField");
+  });
+
+  it('says whether an app that lists "access" needs it only while protected', () => {
+    const access = { requires: ["access" as const] };
+    expect(indexAccessNeededOnlyIfProtected({ ...access, accessOffer: "offered" })).toBe(true);
+    expect(indexAccessNeededOnlyIfProtected({ ...access, accessOffer: "recommended" })).toBe(true);
+    expect(indexAccessNeededOnlyIfProtected({ ...access, accessOffer: "required" })).toBe(false);
+    // A row from before the field: always needed, as before.
+    expect(indexAccessNeededOnlyIfProtected(access)).toBe(false);
+    expect(indexAccessNeededOnlyIfProtected({ requires: [], accessOffer: "offered" })).toBe(false);
+  });
+
+  it("is written from the manifest's access block, and not for a self-deploying entry", () => {
+    const artifact = { install: { tier: "artifact" } };
+    expect(indexAccessOffer(artifact)).toBe("offered");
+    expect(indexAccessOffer({ ...artifact, access: { mode: "required" } })).toBe("required");
+    expect(indexAccessOffer({ install: { tier: "self-deploying" } })).toBeUndefined();
   });
 });
 

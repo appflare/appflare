@@ -41,6 +41,7 @@ describe("readFailedJobs", () => {
         kind: "update",
         restore: false,
         deleteRetained: false,
+        accessChange: false,
         version: "1.1.0",
         finishedAt: new Date(2_000).toISOString(),
       },

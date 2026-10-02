@@ -254,6 +254,23 @@ const shots = [
     cropBottomSelector: "#install",
   },
   {
+    name: "install-access",
+    path: "/catalog/cloudmark#install",
+    expected: "Install Cloudmark",
+    blur: true,
+    wait: 600,
+    viewportHeight: 1600,
+    resetScroll: true,
+    cropSelector: "#install-access",
+  },
+  {
+    name: "apps-access",
+    path: "/apps/install-cut?tab=domains",
+    expected: "Cloudflare Access",
+    scroll: "Cloudflare Access",
+    cropSelector: "#access",
+  },
+  {
     name: "apps-installed-overview",
     path: "/apps/install-cut",
     expected: "Short links",

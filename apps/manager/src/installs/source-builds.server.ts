@@ -723,6 +723,7 @@ export async function installSourceBuildCore(
     buildId: prebuilt.buildId,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
     ...(resolved.domain === undefined ? {} : { domain: resolved.domain }),
+    ...(resolved.access === true ? { access: true } : {}),
   });
   const displayName = input.displayName ?? null;
   const [, claimedInstall, claimedJob] = await deps.db.batch([
@@ -812,6 +813,7 @@ export async function installSourceBuildCore(
     requirementsConfirmed: input.requirementsConfirmed,
     ...(resolved.emailRouting === undefined ? {} : { emailRouting: resolved.emailRouting }),
     ...(resolved.domain === undefined ? {} : { domain: resolved.domain as InstallDomainInput }),
+    ...(resolved.access === true ? { access: true } : {}),
   };
   try {
     const instance = await deps.createJob(jobId, params);

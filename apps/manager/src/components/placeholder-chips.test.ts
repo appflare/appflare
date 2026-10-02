@@ -190,4 +190,14 @@ describe("placeholder chips", () => {
       ),
     ).toBe("Filled in with the hostname of the app's api Worker when it installs");
   });
+
+  it("say what the Access team name chip is filled in with, protected or not", () => {
+    expect(chipLabel({ key: "accessTeamName", worker: null })).toBe("Access team name");
+    expect(
+      describeChip({ key: "accessTeamName", worker: null }, { accessTeamName: "acme" }, "now"),
+    ).toBe("Filled in with acme");
+    expect(describeChip({ key: "accessTeamName", worker: null }, {}, "when it installs")).toBe(
+      "Filled in with your Zero Trust team name while the app is protected with Cloudflare Access; empty otherwise",
+    );
+  });
 });

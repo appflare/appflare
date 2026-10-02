@@ -1,5 +1,10 @@
 import type { CapabilityUnknown } from "@appflare/cf-api/capabilities";
-import { type IndexApp, isServiceId, type ServiceId } from "@appflare/schema";
+import {
+  type IndexApp,
+  indexAccessNeededOnlyIfProtected,
+  isServiceId,
+  type ServiceId,
+} from "@appflare/schema";
 import { listWords } from "@appflare/schema/catalog-display";
 import { dashboardLinks } from "../cloudflare/dashboard-links";
 import { settingsLink } from "../components/settings-links";
@@ -137,8 +142,13 @@ function servicesOf(app: Pick<IndexApp, "services">): Set<ServiceId> {
   return new Set(app.services.filter(isServiceId));
 }
 
+/**
+ * An app that lists Cloudflare Access without requiring protection
+ * (`indexAccessNeededOnlyIfProtected`) does not count as needing Zero
+ * Trust: it installs and runs without it.
+ */
 export function catalogNeeds(
-  apps: ReadonlyArray<Pick<IndexApp, "services" | "requires" | "plan" | "tier">>,
+  apps: ReadonlyArray<Pick<IndexApp, "services" | "requires" | "plan" | "tier" | "accessOffer">>,
 ): CatalogNeeds {
   const needs: CatalogNeeds = {
     total: apps.length,
@@ -157,7 +167,7 @@ export function catalogNeeds(
     if (services.has("analytics-engine")) needs.analyticsEngine++;
     if (services.has("zone") || services.has("email-routing")) needs.zone++;
     if (services.has("email-routing")) needs.emailRouting++;
-    if (services.has("access")) needs.access++;
+    if (services.has("access") && !indexAccessNeededOnlyIfProtected(app)) needs.access++;
     if (app.tier !== "artifact") needs.sandbox++;
   }
   return needs;
@@ -169,9 +179,19 @@ export interface InstallOfApp {
   /** Null for the official catalog, and for an install from a repository. */
   catalogId: string | null;
   origin: "catalog" | "repository" | "source";
+  /**
+   * Appflare protects it with Cloudflare Access, so it needs Zero Trust
+   * whatever its entry says; absent when not known (counted by its entry).
+   */
+  accessProtected?: boolean;
 }
 
-type NeedsOfApp = Pick<IndexApp, "services" | "requires" | "plan" | "tier">;
+type NeedsOfApp = Pick<IndexApp, "services" | "requires" | "plan" | "tier" | "accessOffer">;
+
+/** A protected install's app: it needs Cloudflare Access now. */
+function protectedApp(app: NeedsOfApp): NeedsOfApp {
+  return { ...app, services: [...app.services, "access"], accessOffer: "required" };
+}
 
 /** An app built from a repository: it is built in the account's sandbox. */
 const BUILT_FROM_SOURCE: NeedsOfApp = { requires: [], services: [], plan: "paid", tier: "sandbox" };
@@ -180,16 +200,17 @@ const BUILT_FROM_SOURCE: NeedsOfApp = { requires: [], services: [], plan: "paid"
  * What the apps in the account need, from their catalog entries (`find`
  * returns the entry an install came from, or undefined when no cached
  * catalog lists it any more). An install built from a repository needs
- * sandbox builds.
+ * sandbox builds; one Appflare protects with Cloudflare Access needs Zero
+ * Trust.
  */
 export function installedNeeds(
   installs: readonly InstallOfApp[],
   find: (install: InstallOfApp) => NeedsOfApp | undefined,
 ): CatalogNeeds {
   const apps = installs.flatMap((install): NeedsOfApp[] => {
-    if (install.origin !== "catalog") return [BUILT_FROM_SOURCE];
-    const app = find(install);
-    return app === undefined ? [] : [app];
+    const app = install.origin !== "catalog" ? BUILT_FROM_SOURCE : find(install);
+    if (app === undefined) return [];
+    return [install.accessProtected === true ? protectedApp(app) : app];
   });
   return catalogNeeds(apps);
 }
@@ -600,6 +621,7 @@ const OPTIONAL_PERMISSIONS = [
   { probe: "zone", name: "Zone (for domains)" },
   { probe: "emailRouting", name: "Zone Settings (for Email Routing)" },
   { probe: "zeroTrust", name: "Access: Organizations (for Zero Trust)" },
+  { probe: "accessServiceTokens", name: "Access: Service Tokens (to protect apps)" },
   { probe: "containers", name: "Containers (for sandbox builds)" },
 ] as const satisfies ReadonlyArray<{ probe: keyof CapabilitiesView; name: string }>;
 

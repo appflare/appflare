@@ -186,10 +186,24 @@ describe("primitiveStatus", () => {
     expect(AVAILABILITY_LABELS.provided).toBe("Provided by you");
   });
 
-  it("leaves Access unknown: nothing probes it", () => {
+  it("follows the Zero Trust probe for Access", () => {
+    const access = (zeroTrust: unknown) =>
+      primitiveStatus(
+        "access",
+        capabilitiesView(null, stored({ zeroTrust } as Parameters<typeof stored>[0])),
+        plain,
+      );
+    expect(access({ state: "exists", teamDomain: "acme.cloudflareaccess.com" })).toMatchObject({
+      availability: "available",
+      reason: expect.stringContaining("acme.cloudflareaccess.com"),
+    });
+    expect(access({ state: "none" })).toMatchObject({
+      availability: "unavailable",
+      reason: expect.stringContaining("no Zero Trust organization"),
+    });
     expect(primitiveStatus("access", capabilitiesView(null, stored()), plain)).toMatchObject({
       availability: "unknown",
-      reason: expect.stringMatching(/does not check/),
+      reason: expect.stringMatching(/could not check/),
     });
   });
 

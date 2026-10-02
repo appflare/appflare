@@ -100,6 +100,10 @@ vi.mock("../installs/versions.functions", () => ({
   restoreDatabase: vi.fn(),
 }));
 vi.mock("../installs/workers-dev.functions", () => ({ setWorkersDev: vi.fn() }));
+vi.mock("../installs/access-change.functions", () => ({
+  checkAppAccess: vi.fn(),
+  startAccessChange: vi.fn(),
+}));
 
 const { Route } = await import("../routes/_app/apps/$installId");
 
@@ -123,6 +127,7 @@ const install = {
   updatedAt: "2026-09-27T09:00:00.000Z",
   uninstalledAt: null,
   healthStatus: "verified",
+  healthAccess: false,
   healthCheckedAt: "2026-09-27T09:00:00.000Z",
   currentVersionId: null,
   pinSha: null,
@@ -156,7 +161,23 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  loader.current = { install, snapshots: [], settings: null };
+  loader.current = {
+    install,
+    snapshots: [],
+    settings: null,
+    access: {
+      offer: "offered",
+      protected: false,
+      appName: null,
+      teamDomain: null,
+      publicPaths: [],
+      pendingPublicPaths: [],
+      syncFailedAt: null,
+      usesAccessValues: false,
+      users: 2,
+      repair: null,
+    },
+  };
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -196,6 +217,12 @@ describe("the app page, opened from a link to a section", () => {
     act(() => secrets?.querySelector<HTMLElement>('[role="switch"]')?.click());
     expect(secrets?.textContent).toContain("ADMIN_PASSWORD");
     expect(container.querySelector("#danger-zone")).toBeNull();
+  });
+
+  it("opens Domains and email for #access, with the Cloudflare Access card on it", () => {
+    renderAt("#access");
+    expect(selectedTab()).toBe("Domains and email");
+    expect(container.querySelector("#access")?.textContent).toContain("Cloudflare Access");
   });
 
   it("opens the tab of a later link without a reload", () => {

@@ -511,3 +511,26 @@ describe("Worker Loader bindings", () => {
     expect(workersPaidBindingProblem([{ type: "ai", name: "AI" }], "free")).toBeNull();
   });
 });
+
+describe('an Access placeholder in a wrangler config var needs requires "access"', () => {
+  const withVar = (requires: string[]) => ({
+    ...validArtifact,
+    worker: {
+      ...validArtifact.worker,
+      bindings: [
+        ...validArtifact.worker.bindings,
+        { type: "plain_text", name: "POLICY_AUD", text: "{{accessAud}}" },
+      ],
+    },
+    catalog: { ...validArtifact.catalog, requires },
+  });
+
+  it("is refused without it, and read with it", () => {
+    const refused = artifactManifestSchema.safeParse(withVar([]));
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues.map((i) => i.message).join(" ")).toContain(
+      "the wrangler config's var POLICY_AUD uses an Access placeholder, so the catalog manifest's requires must list \"access\"",
+    );
+    expect(artifactManifestSchema.safeParse(withVar(["access"])).success).toBe(true);
+  });
+});

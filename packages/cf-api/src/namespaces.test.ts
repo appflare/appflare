@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createClient } from "./client";
+import { CloudflareApiError } from "./errors";
 import { type FakeResponseSpec, makeFakeFetch } from "./fake-fetch";
+import { ACCESS_SERVICE_TOKEN_IN_USE, isServiceTokenInUse } from "./namespaces/access";
 import { isAddressableObjectKey } from "./namespaces/r2";
 
 const TOKEN = "cf-token-DO-NOT-LEAK-123";
@@ -807,6 +809,233 @@ describe("access", () => {
     expect(req.url).toBe(`${A}/access/apps/app1/policies/pol1`);
     expect(await req.request.json()).toMatchObject({
       include: [{ email: { email: "a@example.com" } }],
+    });
+  });
+
+  it("createApp sends destinations and reusable policy references", async () => {
+    const { fake, client } = make({
+      result: {
+        id: "app2",
+        aud: "aud2",
+        domain: null,
+        destinations: [
+          { type: "worker", worker_id: "tag123" },
+          { type: "public", uri: "notes.example.com" },
+        ],
+      },
+    });
+    const body = {
+      type: "self_hosted" as const,
+      name: "notes",
+      session_duration: "24h",
+      app_launcher_visible: false,
+      destinations: [
+        { type: "worker" as const, worker_id: "tag123" },
+        { type: "public" as const, uri: "notes.example.com" },
+      ],
+      policies: [
+        { id: "users", precedence: 1 },
+        { id: "probes", precedence: 2 },
+      ],
+    };
+    const app = await client.access.createApp(body);
+    expect(app.domain).toBeNull();
+    expect(app.destinations).toHaveLength(2);
+    const req = fake.last();
+    expect(req.method).toBe("POST");
+    expect(req.url).toBe(`${A}/access/apps`);
+    expect(await req.request.json()).toEqual(body);
+  });
+
+  it("createApp accepts an inline bypass policy for a public path", async () => {
+    const { fake, client } = make({ result: { id: "app3", aud: "aud3" } });
+    await client.access.createApp({
+      type: "self_hosted",
+      name: "notes (public)",
+      destinations: [{ type: "public", uri: "notes.example.com/open/*" }],
+      policies: [{ name: "Public", decision: "bypass", include: [{ everyone: {} }] }],
+    });
+    expect(await fake.last().request.json()).toMatchObject({
+      destinations: [{ type: "public", uri: "notes.example.com/open/*" }],
+      policies: [{ name: "Public", decision: "bypass", include: [{ everyone: {} }] }],
+    });
+  });
+
+  it("updateApp -> PUT /access/apps/{id} with changed destinations", async () => {
+    const { fake, client } = make({ result: { id: "app2", aud: "aud2", domain: null } });
+    const app = await client.access.updateApp("app2", {
+      type: "self_hosted",
+      name: "notes",
+      destinations: [{ type: "public", uri: "notes.example.org" }],
+      policies: [{ id: "users", precedence: 1 }],
+    });
+    expect(app.aud).toBe("aud2");
+    const req = fake.last();
+    expect(req.method).toBe("PUT");
+    expect(req.url).toBe(`${A}/access/apps/app2`);
+    expect(await req.request.json()).toMatchObject({
+      destinations: [{ type: "public", uri: "notes.example.org" }],
+    });
+  });
+
+  it("listReusablePolicies -> GET /access/policies, following every page", async () => {
+    const pages = makeFakeFetch((req) => {
+      const page = Number(req.query.get("page"));
+      return {
+        result: [{ id: `pol${page}`, reusable: true }],
+        result_info: { page, per_page: 100, total_pages: 2 },
+      };
+    });
+    const paged = createClient({ accountId: ACCOUNT, token: TOKEN, fetch: pages.fetch });
+    expect((await paged.access.listReusablePolicies()).map((p) => p.id)).toEqual(["pol1", "pol2"]);
+    expect(pages.calls.map((c) => c.url.split("?")[0])).toEqual([
+      `${A}/access/policies`,
+      `${A}/access/policies`,
+    ]);
+    expect(pages.calls.map((c) => c.query.get("page"))).toEqual(["1", "2"]);
+  });
+
+  it("getReusablePolicy -> GET /access/policies/{id}", async () => {
+    const { fake, client } = make({ result: { id: "pol1", app_count: 3 } });
+    expect((await client.access.getReusablePolicy("pol1")).app_count).toBe(3);
+    expect(fake.last().method).toBe("GET");
+    expect(fake.last().url).toBe(`${A}/access/policies/pol1`);
+  });
+
+  it("createReusablePolicy -> POST /access/policies (allow, by email)", async () => {
+    const { fake, client } = make({ result: { id: "users", reusable: true } });
+    const policy = {
+      name: "Appflare users",
+      decision: "allow" as const,
+      include: [{ email: { email: "a@example.com" } }],
+    };
+    expect((await client.access.createReusablePolicy(policy)).id).toBe("users");
+    const req = fake.last();
+    expect(req.method).toBe("POST");
+    expect(req.url).toBe(`${A}/access/policies`);
+    expect(await req.request.json()).toEqual(policy);
+  });
+
+  it("createReusablePolicy -> POST /access/policies (non_identity, one service token)", async () => {
+    const { fake, client } = make({ result: { id: "probes" } });
+    await client.access.createReusablePolicy({
+      name: "Appflare probes",
+      decision: "non_identity",
+      include: [{ service_token: { token_id: "tok1" } }],
+    });
+    expect(await fake.last().request.json()).toEqual({
+      name: "Appflare probes",
+      decision: "non_identity",
+      include: [{ service_token: { token_id: "tok1" } }],
+    });
+  });
+
+  it("updateReusablePolicy -> PUT /access/policies/{id}", async () => {
+    const { fake, client } = make({ result: { id: "users", app_count: 2 } });
+    const updated = await client.access.updateReusablePolicy("users", {
+      name: "Appflare users",
+      decision: "allow",
+      include: [{ email: { email: "b@example.com" } }],
+    });
+    expect(updated.app_count).toBe(2);
+    const req = fake.last();
+    expect(req.method).toBe("PUT");
+    expect(req.url).toBe(`${A}/access/policies/users`);
+    expect(await req.request.json()).toMatchObject({
+      include: [{ email: { email: "b@example.com" } }],
+    });
+  });
+
+  it("deleteReusablePolicy -> DELETE /access/policies/{id}", async () => {
+    const { fake, client } = make({ result: { id: "users" } });
+    await client.access.deleteReusablePolicy("users");
+    expect(fake.last().method).toBe("DELETE");
+    expect(fake.last().url).toBe(`${A}/access/policies/users`);
+  });
+
+  it("listServiceTokens -> GET /access/service_tokens, following every page", async () => {
+    const pages = makeFakeFetch((req) => {
+      const page = Number(req.query.get("page"));
+      return {
+        result: [{ id: `tok${page}`, name: `t${page}`, client_id: `c${page}.access` }],
+        result_info: { page, per_page: 100, total_pages: 2 },
+      };
+    });
+    const client = createClient({ accountId: ACCOUNT, token: TOKEN, fetch: pages.fetch });
+    expect((await client.access.listServiceTokens()).map((t) => t.id)).toEqual(["tok1", "tok2"]);
+    expect(pages.calls[0]?.url.split("?")[0]).toBe(`${A}/access/service_tokens`);
+    expect(pages.calls.map((c) => c.query.get("page"))).toEqual(["1", "2"]);
+  });
+
+  it("createServiceToken -> POST /access/service_tokens and returns the secret", async () => {
+    const { fake, client } = make({
+      result: {
+        id: "tok1",
+        name: "Appflare probes",
+        client_id: "abc.access",
+        client_secret: "secret-value",
+        duration: "8760h",
+      },
+    });
+    const token = await client.access.createServiceToken({
+      name: "Appflare probes",
+      duration: "8760h",
+    });
+    expect(token).toMatchObject({ id: "tok1", client_id: "abc.access" });
+    expect(token.client_secret).toBe("secret-value");
+    const req = fake.last();
+    expect(req.method).toBe("POST");
+    expect(req.url).toBe(`${A}/access/service_tokens`);
+    expect(await req.request.json()).toEqual({ name: "Appflare probes", duration: "8760h" });
+  });
+
+  it("deleteServiceToken -> DELETE /access/service_tokens/{id}", async () => {
+    const { fake, client } = make({ result: { id: "tok1", name: "t", client_id: "c" } });
+    await client.access.deleteServiceToken("tok1");
+    expect(fake.last().method).toBe("DELETE");
+    expect(fake.last().url).toBe(`${A}/access/service_tokens/tok1`);
+  });
+
+  it("deleteServiceToken surfaces a token still in a policy as recognisable (12139)", async () => {
+    const { client } = make({
+      status: 400,
+      errors: [
+        { code: ACCESS_SERVICE_TOKEN_IN_USE, message: "access.api.error.service_token_in_use" },
+      ],
+    });
+    const error = await client.access.deleteServiceToken("tok1").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CloudflareApiError);
+    expect(isServiceTokenInUse(error)).toBe(true);
+  });
+
+  it("isServiceTokenInUse is false for other failures", async () => {
+    const { client } = make({ status: 404, errors: [{ code: 12130, message: "not found" }] });
+    const error = await client.access.deleteServiceToken("tok1").catch((e: unknown) => e);
+    expect(isServiceTokenInUse(error)).toBe(false);
+    expect(isServiceTokenInUse(new Error("access.api.error.service_token_in_use"))).toBe(false);
+  });
+
+  it("refreshServiceToken -> POST /access/service_tokens/{id}/refresh", async () => {
+    const { fake, client } = make({ result: { id: "tok1", name: "t", client_id: "c" } });
+    await client.access.refreshServiceToken("tok1");
+    expect(fake.last().method).toBe("POST");
+    expect(fake.last().url).toBe(`${A}/access/service_tokens/tok1/refresh`);
+  });
+
+  it("rotateServiceToken -> POST /access/service_tokens/{id}/rotate", async () => {
+    const { fake, client } = make({
+      result: { id: "tok1", name: "t", client_id: "c", client_secret: "new-secret" },
+    });
+    expect((await client.access.rotateServiceToken("tok1")).client_secret).toBe("new-secret");
+    expect(fake.last().method).toBe("POST");
+    expect(fake.last().url).toBe(`${A}/access/service_tokens/tok1/rotate`);
+    expect(await fake.last().request.json()).toEqual({});
+
+    await client.access.rotateServiceToken("tok1", {
+      previousSecretExpiresAt: "2026-10-01T00:00:00Z",
+    });
+    expect(await fake.last().request.json()).toEqual({
+      previous_client_secret_expires_at: "2026-10-01T00:00:00Z",
     });
   });
 });

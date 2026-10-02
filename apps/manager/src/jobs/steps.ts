@@ -1,7 +1,9 @@
 import { type CloudflareClient, createClient, type FetchLike } from "@appflare/cf-api";
+import { probeCredentials, zoneNamesVia } from "../access/probe-credentials.server";
 import { apiBaseOption } from "../cloudflare/api-base";
 import { createDb, type Database } from "../db/client";
 import { errorMessage, JobError, toStepError } from "./errors";
+import type { InstallProbeHeaders } from "./install/health";
 import type { JobContext, StepConfig } from "./run-job";
 import { StepLog } from "./step-log";
 import { type JobUnitsAccess, jobUnits } from "./units/client";
@@ -39,6 +41,13 @@ export interface StepTools {
   orm: Database;
   /** 1-based attempt of this step (Workflows retries a failed step). */
   attempt: number;
+  /**
+   * A protected install's own service token headers for a health check of
+   * one of its addresses (access/probe-credentials.server.ts). Use them in
+   * the request only; never return them from the step, or they would be
+   * stored with it.
+   */
+  probeHeaders: InstallProbeHeaders;
 }
 
 export interface JobSteps {
@@ -121,6 +130,16 @@ export function createJobSteps(ctx: JobContext, jobId: string): JobSteps {
             },
             orm: createDb(db),
             attempt: stepCtx?.attempt ?? 1,
+            probeHeaders: (installId, url) =>
+              probeCredentials(
+                {
+                  db,
+                  authSecret: env.BETTER_AUTH_SECRET,
+                  zoneNames: zoneNamesVia(async () => client(log)),
+                },
+                installId,
+                url,
+              ),
           });
           await log.flush(db, jobId);
           return value;

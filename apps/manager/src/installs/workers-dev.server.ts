@@ -2,14 +2,17 @@ import type { CloudflareClient, FetchLike } from "@appflare/cf-api";
 import { artifactManifestSchema } from "@appflare/schema";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
+import type { AccessAddressSync } from "../access/address-sync.server";
 import { createDb, type Database } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import {
   type HealthMode,
   type HealthProbe,
   healthCheckOfManifest,
+  type InstallProbeHeaders,
+  isAccessChallenge,
   isEdgeErrorPage,
-  probeHealth,
+  probeHealthThroughAccess,
   settleHealthProbe,
 } from "../jobs/install/health";
 import { varsUseWorkerUrl } from "./install-vars";
@@ -41,10 +44,11 @@ import {
  * - "Serve on workers.dev" on the app page turns it on or off with one
  *   subdomain call and records the admin's choice (`manual`), which every
  *   later deploy sends again. Off is allowed only while one of the install's
- *   domains answers as the app, so the app always keeps an address.
- * - When a custom or external domain first answers as the app (the install
- *   job's domain step, or a check on the app page), `applyDomainLive` records
- *   it as live and, while the choice is `auto`, turns workers.dev off.
+ *   domains is live (`domainIsLive`), so the app always keeps an address.
+ * - When a custom or external domain first answers as the app, or Cloudflare
+ *   Access answers on it (`domainIsLive`; the install job's domain step, or a
+ *   check on the app page), `applyDomainLive` records it as live and, while
+ *   the choice is `auto`, turns workers.dev off.
  * - Before a domain is removed, `beforeDomainRemoval` turns workers.dev back
  *   on when it was the last live one and the choice is `auto`.
  */
@@ -61,17 +65,47 @@ export interface WorkersDevDeps {
   api: () => Promise<WorkersApi>;
   /** The manager's `fetch`, for probing custom domains. */
   fetch: FetchLike;
+  /**
+   * The service token's headers for a domain the account controls, so a
+   * domain in front of an app protected with Cloudflare Access shows the app.
+   */
+  probeHeaders?: InstallProbeHeaders;
   now?: () => Date;
   /** Deploys the settings again when they use the app's address; without it nothing is. */
   refreshVars?: RefreshVars;
+  /**
+   * Brings a protected app's public paths in step with workers.dev being
+   * on or off (`accessAddressSync`); without it they follow at the next
+   * change of the app's domains or protection.
+   */
+  syncAccess?: AccessAddressSync;
 }
 
 /** At most this many custom domains are probed before turning workers.dev off. */
 export const MAX_DOMAIN_PROBES = 3;
 
-/** Whether a probe shows the app itself answering (not an edge error page, not a 5xx). */
+/**
+ * Whether a probe shows the app itself answering: not an edge error page, not
+ * a 5xx, and not Cloudflare Access's sign-in redirect (`isAccessChallenge`),
+ * which Access sends before the request reaches the Worker.
+ */
 export function domainServesApp(probe: HealthProbe, mode: HealthMode): boolean {
   return settleHealthProbe(probe, mode).status === "verified" && !isEdgeErrorPage(probe);
+}
+
+/**
+ * Whether a probe shows the domain live, as an address of the app: the app
+ * answers through it (`domainServesApp`), or Cloudflare Access answers on it
+ * with its sign-in redirect. Access answering means HTTPS completed and
+ * Cloudflare serves the hostname, and the hostname can only lead to this
+ * app: a Workers custom domain belongs to exactly one Worker, and an
+ * external domain is probed only once Cloudflare reports it active. Counting
+ * it matters: while such a domain is not live, workers.dev stays on, and the
+ * app stays reachable there without Access. The install's health still
+ * records the Access answer as `unverified`.
+ */
+export function domainIsLive(probe: HealthProbe, mode: HealthMode): boolean {
+  return domainServesApp(probe, mode) || isAccessChallenge(probe);
 }
 
 async function activeJobOf(orm: Database, installId: string): Promise<string | null> {
@@ -177,8 +211,14 @@ export async function setWorkersDevCore(
     const check = healthCheckOfManifest(install.manifestJson);
     const tried: string[] = [];
     for (const hostname of hostnames.slice(0, MAX_DOMAIN_PROBES)) {
-      const probe = await probeHealth(deps.fetch, `https://${hostname}${check.path}`);
-      if (domainServesApp(probe, check.mode)) {
+      const url = `https://${hostname}${check.path}`;
+      const { probeHeaders } = deps;
+      const probe = await probeHealthThroughAccess(
+        deps.fetch,
+        url,
+        probeHeaders === undefined ? undefined : () => probeHeaders(input.installId, url),
+      );
+      if (domainIsLive(probe, check.mode)) {
         served = rows.find((r) => r.name === hostname) ?? null;
         break;
       }
@@ -191,6 +231,10 @@ export async function setWorkersDevCore(
     }
   }
 
+  // Turning workers.dev off: a protected app's public paths come off it first.
+  if (!input.enabled && deps.syncAccess !== undefined) {
+    await deps.syncAccess(input.installId, { workersDev: false });
+  }
   const api = await deps.api();
   await api.workers.enableSubdomain(install.workerName, workersDevSubdomain(input.enabled));
   await orm
@@ -203,6 +247,8 @@ export async function setWorkersDevCore(
     })
     .where(eq(installs.id, input.installId));
   if (served !== null) await markLive(orm, served.id, (deps.now ?? (() => new Date()))());
+  // Turning it on: the public paths follow onto it, from the records.
+  if (input.enabled && deps.syncAccess !== undefined) await deps.syncAccess(input.installId);
   // The app's address moved between workers.dev and a domain.
   const refresh = await refreshSettings(deps.refreshVars, input.installId, ["appUrl"]);
   return { enabled: input.enabled, servedBy: served?.name ?? null, ...refresh };
@@ -249,8 +295,8 @@ export interface DomainLiveResult extends VarsRefresh {
 }
 
 /**
- * A custom or external domain of the install answered as the app: records it
- * as live, and turns workers.dev off when `workersDevWhenDomainLive` says so,
+ * A custom or external domain of the install answered as the app, or
+ * Cloudflare Access answered on it (`domainIsLive`): records it as live, and turns workers.dev off when `workersDevWhenDomainLive` says so,
  * with one subdomain call (version previews stay on, so update checks keep
  * working) and the domain recorded as the one that serves the app. Outside
  * the install job it changes nothing while a job of the app runs (that job
@@ -265,6 +311,8 @@ export async function applyDomainLive(
     api: () => Promise<WorkersApi>;
     now?: () => Date;
     refreshVars?: RefreshVars;
+    /** Takes a protected app's public paths off workers.dev before it is turned off. */
+    syncAccess?: AccessAddressSync;
   },
   request: DomainLiveRequest,
 ): Promise<DomainLiveResult> {
@@ -287,6 +335,9 @@ export async function applyDomainLive(
     (install.status !== "installed" || (await activeJobOf(orm, request.installId)) !== null)
   ) {
     return { turnedOff: false, kept: "busy", ...NO_VARS_REFRESH };
+  }
+  if (deps.syncAccess !== undefined) {
+    await deps.syncAccess(request.installId, { workersDev: false });
   }
   const api = await deps.api();
   await api.workers.enableSubdomain(install.workerName, workersDevSubdomain(false));

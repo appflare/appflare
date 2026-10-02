@@ -1,5 +1,6 @@
 import {
   type ArtifactManifest,
+  accessBypassPaths,
   type CatalogManifest,
   catalogManifestSchema,
   type IndexCatalogManifest,
@@ -9,9 +10,10 @@ import {
   verifySignature,
   withRevisedCatalog,
 } from "@appflare/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Database } from "../db/client";
-import { catalog_revisions } from "../db/schema";
+import { catalog_revisions, install_access, installs } from "../db/schema";
+import { parseStoredManifest } from "../jobs/entry-workers";
 import { ArtifactError, sha256Hex } from "../jobs/install/artifact";
 
 /**
@@ -29,6 +31,10 @@ import { ArtifactError, sha256Hex } from "../jobs/install/artifact";
  * forms and copy (secrets, vars, post-install notes, name, ...) come from the
  * newest revision this manager verified for that release, recorded in
  * `catalog_revisions` by the release's digest, else from the signed copy.
+ * The same goes for how the app goes with Cloudflare Access (`access`, and
+ * `"access"` in `requires`): every decision about an install's protection
+ * reads the revised catalog manifest of the release it runs
+ * ({@link storedRevisedCatalog}).
  * Form fields reach the Worker (var defaults become its vars, generated
  * secrets its secrets), so a revision is accepted only when its bytes match
  * the index, its signature verifies with the embedded keys under the key id
@@ -159,12 +165,20 @@ export async function readCatalogRevision(
  * same revision with other bytes, which the catalog never publishes (it must
  * raise the revision to change the file). Writes only when something changes
  * (D1 writes are metered). Returns whether it wrote. Throws `ArtifactError`.
+ *
+ * A revision starts no job, but one that changes the paths a protected app
+ * keeps public (`access.bypass`) must reach its Access applications: the
+ * protected installs of the release are marked for the cron's resync
+ * ({@link markPublicPathsResync}). `released` is the catalog manifest the
+ * release was built with, which applies while no revision is recorded;
+ * without it a revision that lists public paths marks them.
  */
 export async function recordCatalogRevision(
   orm: Database,
   artifactDigest: string,
   revised: { text: string; file: IndexCatalogManifest; catalog: CatalogManifest },
   now: Date,
+  released?: Pick<CatalogManifest, "access">,
 ): Promise<boolean> {
   const revision = revised.catalog.revision;
   const { sha256, keyId, signature } = revised.file;
@@ -190,7 +204,45 @@ export async function recordCatalogRevision(
     .insert(catalog_revisions)
     .values(values)
     .onConflictDoUpdate({ target: catalog_revisions.artifact_digest, set });
+  const before = accessBypassPaths(current?.catalog ?? released ?? {});
+  if (!samePaths(before, accessBypassPaths(revised.catalog))) {
+    await markPublicPathsResync(orm, artifactDigest, now);
+  }
   return true;
+}
+
+function samePaths(a: readonly string[], b: readonly string[]): boolean {
+  const key = (paths: readonly string[]) => [...new Set(paths)].sort().join("\n");
+  return key(a) === key(b);
+}
+
+/**
+ * Marks the protected installs of the release with `artifactDigest` for the
+ * cron's Access resync (`resyncInstallAccessIfFailed`), which brings their
+ * public paths in step with the revision now recorded; until it runs, their
+ * pages offer "Protect again". Installs already marked keep their mark.
+ */
+export async function markPublicPathsResync(
+  orm: Database,
+  artifactDigest: string,
+  now: Date,
+): Promise<void> {
+  await orm
+    .update(install_access)
+    .set({ access_sync_failed_at: now })
+    .where(
+      and(
+        isNotNull(install_access.access_app_id),
+        isNull(install_access.access_sync_failed_at),
+        inArray(
+          install_access.install_id,
+          orm
+            .select({ id: installs.id })
+            .from(installs)
+            .where(eq(installs.artifact_digest, artifactDigest)),
+        ),
+      ),
+    );
 }
 
 /** The recorded revision applies to `manifest`: its release's key, and only form and copy changed. */
@@ -228,6 +280,50 @@ export async function effectiveManifest(
 ): Promise<ArtifactManifest> {
   const recorded = await recordedRevisionFor(orm, manifest, artifactDigest);
   return recorded === null ? manifest : withRevisedCatalog(manifest, recorded.catalog);
+}
+
+/** An install's or a snapshot's record of the release it runs (or ran). */
+export interface StoredRelease {
+  /** The signed `manifest.json` (`installs.manifest_json`, `snapshots.manifest_json`). */
+  manifestJson: string | null;
+  /** Its sha256 (`artifact_digest`); null for records that predate it. */
+  artifactDigest: string | null;
+}
+
+/**
+ * The revised catalog manifest that applies to a stored release: the newest
+ * revision recorded for it, when it applies to the stored signed manifest
+ * ({@link recordedRevisionFor}). Null when there is none, or when the stored
+ * manifest cannot be read (a snapshot from before a field existed); the
+ * stored manifest's own catalog then applies. One D1 read when a digest is
+ * recorded, none otherwise.
+ *
+ * What decides about an installed app's Cloudflare Access protection
+ * (whether it must stay protected, what stays public, whether its settings
+ * use the Access values) reads its `access` and `vars` from here first.
+ */
+export async function storedRevisedCatalog(
+  orm: Database,
+  stored: StoredRelease,
+): Promise<CatalogManifest | null> {
+  if (stored.manifestJson === null || stored.artifactDigest === null) return null;
+  const recorded = await readCatalogRevision(orm, stored.artifactDigest);
+  if (recorded === null) return null;
+  const manifest = parseStoredManifest(stored.manifestJson);
+  return manifest !== null && revisionApplies(manifest, recorded) ? recorded.catalog : null;
+}
+
+/**
+ * The stored signed artifact manifest with the revision that applies to it
+ * ({@link storedRevisedCatalog}); null when it cannot be read.
+ */
+export async function storedEffectiveManifest(
+  orm: Database,
+  stored: StoredRelease,
+): Promise<ArtifactManifest | null> {
+  const signed = parseStoredManifest(stored.manifestJson);
+  if (signed === null) return null;
+  return effectiveManifest(orm, signed, stored.artifactDigest);
 }
 
 /**

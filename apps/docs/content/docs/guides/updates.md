@@ -47,7 +47,10 @@ The update job:
    The current version keeps serving.
 5. Checks the new version at its preview URL before any traffic reaches it. A
    server error, or a health path that reports a different version, fails the job
-   here and nothing changes.
+   here and nothing changes. When
+   [Cloudflare Access](/guides/health/#apps-behind-cloudflare-access) answers the
+   preview URL with its sign-in page, the new version cannot be checked; the log
+   says so and the job goes on.
 6. Applies new D1 migrations.
 7. Switches all traffic to the new version.
 8. Runs a [health check](/guides/health/) and records the result.

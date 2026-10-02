@@ -2,6 +2,8 @@ import { NonRetryableError } from "cloudflare:workflows";
 import { CloudflareApiError } from "@appflare/cf-api";
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import { removeInstallProtectionLocked, removePublicPathsLocked } from "../access/protect.server";
+import { withAccessLock } from "../access/toggle.server";
 import { createDb } from "../db/client";
 import { installs, jobs, resources } from "../db/schema";
 import { readSettings, SETTING } from "../db/settings";
@@ -21,6 +23,7 @@ import {
 import { detachExternalDomain, externalDetachMessage } from "../installs/external-domains.server";
 import { namesHeldElsewhere } from "../installs/removed-apps.server";
 import {
+  ACCESS_KINDS,
   CUSTOM_DOMAIN_KIND,
   CUSTOM_HOSTNAME_KIND,
   DATA_RESOURCE_KINDS,
@@ -299,6 +302,11 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
           ).flatMap((r) => (r.binding === null ? [] : [r.binding])),
         ),
       ];
+      // Cloudflare Access protection goes too: the app's Access application
+      // and its own service token, which hold no data.
+      const accessProtected = live.some((r) =>
+        (ACCESS_KINDS as readonly string[]).includes(r.kind),
+      );
       // Email routes are never kept either: mail to a deleted Worker bounces.
       const emailRoutes: EmailRouteRecord[] = live
         .filter((r) => r.kind === EMAIL_ROUTE_KIND)
@@ -372,6 +380,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
       }
       log.info(
         `Uninstalling Worker "${install.workerName}". ` +
+          (accessProtected ? "Removing its Cloudflare Access protection. " : "") +
           (emailRoutes.length > 0
             ? `Removing email routes: ${emailRoutes.map((r) => r.name).join(", ")}. `
             : "") +
@@ -410,6 +419,7 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         gatewayBindings,
         consumers,
         emailRoutes,
+        accessProtected,
         workflows,
         hyperdrive,
         kept,
@@ -430,6 +440,23 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
     });
     steps.setAccountId(started.accountId);
     const { workerName } = started;
+
+    // A protected app's public paths go before any of its addresses is
+    // released, so a hostname that serves something else later never keeps
+    // one. Removing them only makes those paths ask for a sign-in, and
+    // nothing is deleted yet, so a failure here fails the uninstall.
+    if (started.accessProtected === true) {
+      await run("remove public paths from Cloudflare Access", async ({ log, cf }) => {
+        const removed = await withAccessLock(env.DB, () =>
+          removePublicPathsLocked(
+            { db: env.DB, client: cf(), now: () => new Date(now()) },
+            params.installId,
+          ),
+        );
+        if (removed.removed) log.info("Deleted the Access application of the app's public paths.");
+        return {};
+      });
+    }
 
     // A job started before email routes existed carries no list.
     await removeEmailRoutesPhase(steps, started.emailRoutes ?? [], workerName);
@@ -564,6 +591,34 @@ export async function runUninstall(ctx: JobContext): Promise<void> {
         );
       return {};
     });
+
+    // After the Worker and every address it answered on are gone, so the app
+    // is never reachable without Access while this runs: its Access
+    // application and its own service token. Nothing is exposed any more by
+    // then, so a failure is a warning with what is left, never the job's.
+    // A run started before protection existed carries no flag.
+    if (started.accessProtected === true) {
+      await run("remove Cloudflare Access protection", async ({ log, cf }) => {
+        try {
+          const removed = await withAccessLock(env.DB, () =>
+            removeInstallProtectionLocked(
+              { db: env.DB, client: cf(), now: () => new Date(now()) },
+              params.installId,
+            ),
+          );
+          log.info(
+            removed.removed
+              ? "Removed the app's Cloudflare Access application and its service token."
+              : "The app's Cloudflare Access protection was already removed.",
+          );
+        } catch (error) {
+          log.warn(
+            `Could not remove the app's Cloudflare Access protection (${errorMessage(error)}). The app is gone, so nothing is exposed; delete its Access application and its "Appflare health checks ${params.installId}" service token under Zero Trust, Access.`,
+          );
+        }
+        return {};
+      });
+    }
 
     // A run started before Workflows were listed deletes none (the Worker step marked them).
     for (const workflow of started.workflows ?? []) {
